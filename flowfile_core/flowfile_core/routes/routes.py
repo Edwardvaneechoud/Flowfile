@@ -144,10 +144,16 @@ router = APIRouter(dependencies=[Depends(get_current_active_user)])
 _MANAGED_FLOW_STEM_DISALLOWED_RE = re.compile(r"[^A-Za-z0-9_-]+")
 
 
-def get_flow_or_404(flow_id: int | None):
-    flow = flow_file_handler.get_flow(flow_id)
+def get_flow_or_404(flow_id: int | None, current_user, detail: str = "could not find the flow"):
+    """Return the in-memory flow when it is open in ``current_user``'s session, else 404.
+
+    Every logged-in route that addresses a flow by id resolves it here. A flow id is not a
+    secret (it is stored in the flow's file), so an unscoped lookup would let any user read
+    or edit another user's open flow. Another user's flow answers exactly like a missing one.
+    """
+    flow = flow_file_handler.get_flow(flow_id, current_user.id)
     if flow is None:
-        raise HTTPException(404, "could not find the flow")
+        raise HTTPException(404, detail)
     return flow
 
 
@@ -276,7 +282,10 @@ def register_flow(flow_data: schemas.FlowSettings, current_user=Depends(get_curr
         The ID of the newly registered flow.
     """
     user_id = current_user.id if current_user else None
-    return flow_file_handler.register_flow(flow_data, user_id=user_id)
+    try:
+        return flow_file_handler.register_flow(flow_data, user_id=user_id)
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
 
 
 @router.get("/active_flowfile_sessions/", response_model=list[schemas.FlowSettingsResponse])
@@ -315,6 +324,7 @@ async def trigger_fetch_node_data(
     node_id: int,
     background_tasks: BackgroundTasks,
     performance_mode: bool = False,
+    current_user=Depends(get_current_active_user),
 ):
     """Fetches and refreshes the data for a specific node.
 
@@ -322,7 +332,7 @@ async def trigger_fetch_node_data(
     result — enough for the Explore Data drawer, which charts through the worker
     and never reads the example rows the default (preview) path materialises.
     """
-    flow = flow_file_handler.get_flow(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     lock = get_flow_run_lock(flow_id)
     async with lock:
         try:
@@ -572,46 +582,39 @@ async def run_flow(
         A JSON response indicating that the flow has started.
     """
     logger.info("starting to run...")
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        # Frontend's flow_id has drifted from the in-memory handler — typically
-        # after a Save As or backend restart. Surface a 404 so the UI can prompt
-        # a reload instead of falling through to an AttributeError 500.
-        raise HTTPException(
-            status_code=404,
-            detail=f"Flow {flow_id} is no longer in memory. Reload the flow and try again.",
-        )
+    # A drifted flow_id (after a Save As or backend restart) gets a 404 so the UI can prompt a reload.
+    flow = get_flow_or_404(
+        flow_id, current_user, detail=f"Flow {flow_id} is no longer in memory. Reload the flow and try again."
+    )
     user_id = current_user.id if current_user else None
     await _start_run(flow, flow_id, user_id, background_tasks)
     return RunStartedResponse(content={"message": "Data started", "flow_id": flow_id}, status_code=status.HTTP_200_OK)
 
 
 @router.post("/flow/cancel/", tags=["editor"])
-def cancel_flow(flow_id: int):
+def cancel_flow(flow_id: int, current_user=Depends(get_current_active_user)):
     """Cancels a currently running flow execution."""
-    flow = flow_file_handler.get_flow(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     if not flow.flow_settings.is_running:
         raise HTTPException(422, "Flow is not running")
     flow.cancel()
 
 
 @router.post("/flow/apply_standard_layout/", tags=["editor"], response_model=OperationResponse)
-def apply_standard_layout(flow_id: int) -> OperationResponse:
-    flow = get_flow_or_404(flow_id)
+def apply_standard_layout(flow_id: int, current_user=Depends(get_current_active_user)) -> OperationResponse:
+    flow = get_flow_or_404(flow_id, current_user)
     with edit_flow(flow, "Apply standard layout", HistoryActionType.APPLY_LAYOUT) as txn:
         flow.apply_layout()
     return OperationResponse(success=True, history=txn.history)
 
 
 @router.get("/flow/run_status/", tags=["editor"], response_model=output_model.RunInformation)
-def get_run_status(flow_id: int, response: Response):
+def get_run_status(flow_id: int, response: Response, current_user=Depends(get_current_active_user)):
     """Retrieves the run status information for a specific flow.
 
     Returns a 202 Accepted status while the flow is running, and 200 OK when finished.
     """
-    flow = flow_file_handler.get_flow(flow_id)
-    if not flow:
-        raise HTTPException(status_code=404, detail="Flow not found")
+    flow = get_flow_or_404(flow_id, current_user, detail="Flow not found")
     if flow.flow_settings.is_running:
         response.status_code = status.HTTP_202_ACCEPTED
     else:
@@ -620,15 +623,15 @@ def get_run_status(flow_id: int, response: Response):
 
 
 @router.post("/transform/manual_input", tags=["transform"])
-def add_manual_input(manual_input: input_schema.NodeManualInput):
-    flow = get_flow_or_404(manual_input.flow_id)
+def add_manual_input(manual_input: input_schema.NodeManualInput, current_user=Depends(get_current_active_user)):
+    flow = get_flow_or_404(manual_input.flow_id, current_user)
     with edit_flow(flow, "Update manual_input settings", HistoryActionType.UPDATE_SETTINGS, manual_input.node_id):
         flow.add_datasource(manual_input)
 
 
 @router.post("/transform/add_input/", tags=["transform"])
-def add_flow_input(input_data: input_schema.NodeDatasource):
-    flow = get_flow_or_404(input_data.flow_id)
+def add_flow_input(input_data: input_schema.NodeDatasource, current_user=Depends(get_current_active_user)):
+    flow = get_flow_or_404(input_data.flow_id, current_user)
     with edit_flow(flow, "Update datasource settings", HistoryActionType.UPDATE_SETTINGS, input_data.node_id):
         try:
             flow.add_datasource(input_data)
@@ -639,7 +642,10 @@ def add_flow_input(input_data: input_schema.NodeDatasource):
 
 @router.post("/editor/copy_node", tags=["editor"], response_model=OperationResponse)
 def copy_node(
-    node_id_to_copy_from: int, flow_id_to_copy_from: int, node_promise: input_schema.NodePromise
+    node_id_to_copy_from: int,
+    flow_id_to_copy_from: int,
+    node_promise: input_schema.NodePromise,
+    current_user=Depends(get_current_active_user),
 ) -> OperationResponse:
     """Copies an existing node's settings to a new node promise.
 
@@ -651,8 +657,10 @@ def copy_node(
     Returns:
         OperationResponse with current history state.
     """
-    flow = get_flow_or_404(node_promise.flow_id)
-    flow_to_copy_from = flow if flow_id_to_copy_from == node_promise.flow_id else get_flow_or_404(flow_id_to_copy_from)
+    flow = get_flow_or_404(node_promise.flow_id, current_user)
+    flow_to_copy_from = (
+        flow if flow_id_to_copy_from == node_promise.flow_id else get_flow_or_404(flow_id_to_copy_from, current_user)
+    )
     logger.info(f"Copying data {node_promise.node_type}")
     with edit_flow(
         flow, f"Paste {node_promise.node_type} node", HistoryActionType.COPY_NODE, node_id=node_promise.node_id
@@ -674,7 +682,12 @@ def copy_node(
 
 @router.post("/editor/add_node/", tags=["editor"], response_model=OperationResponse)
 def add_node(
-    flow_id: int, node_id: int, node_type: str, pos_x: int | float = 0, pos_y: int | float = 0
+    flow_id: int,
+    node_id: int,
+    node_type: str,
+    pos_x: int | float = 0,
+    pos_y: int | float = 0,
+    current_user=Depends(get_current_active_user),
 ) -> OperationResponse | None:
     """Adds a new, unconfigured node (a "promise") to the flow graph.
 
@@ -692,7 +705,7 @@ def add_node(
         pos_x = int(pos_x)
     if isinstance(pos_y, float):
         pos_y = int(pos_y)
-    flow = get_flow_or_404(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     logger.info(f"Adding a promise for {node_type}")
     with edit_flow(flow, f"Add {node_type} node", HistoryActionType.ADD_NODE, node_id=node_id) as txn:
         require_node_id_free(flow, node_id)
@@ -727,14 +740,14 @@ def add_node(
 
 
 @router.post("/editor/delete_node/", tags=["editor"], response_model=OperationResponse)
-def delete_node(flow_id: int | None, node_id: int) -> OperationResponse:
+def delete_node(flow_id: int | None, node_id: int, current_user=Depends(get_current_active_user)) -> OperationResponse:
     """Deletes a node from the flow graph.
 
     Returns:
         OperationResponse with current history state.
     """
     logger.info("Deleting node")
-    flow = get_flow_or_404(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     with edit_flow(flow, "Delete node", HistoryActionType.DELETE_NODE, node_id=node_id) as txn:
         node = flow.get_node(node_id)
         if node is None:
@@ -745,18 +758,22 @@ def delete_node(flow_id: int | None, node_id: int) -> OperationResponse:
 
 
 @router.post("/editor/delete_connection/", tags=["editor"], response_model=OperationResponse)
-def delete_node_connection(flow_id: int, node_connection: input_schema.NodeConnection = None) -> OperationResponse:
+def delete_node_connection(
+    flow_id: int,
+    node_connection: input_schema.NodeConnection = None,
+    current_user=Depends(get_current_active_user),
+) -> OperationResponse:
     """Deletes a connection (edge) between two nodes.
 
     Returns:
         OperationResponse with current history state.
     """
     flow_id = int(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     logger.info(
         f"Deleting connection node {node_connection.output_connection.node_id} "
         f"to node {node_connection.input_connection.node_id}"
     )
-    flow = get_flow_or_404(flow_id)
     from_id = node_connection.output_connection.node_id
     to_id = node_connection.input_connection.node_id
     with edit_flow(flow, f"Delete connection {from_id} -> {to_id}", HistoryActionType.DELETE_CONNECTION) as txn:
@@ -857,13 +874,15 @@ def get_db_connections(
 
 
 @router.post("/editor/connect_node/", tags=["editor"], response_model=OperationResponse)
-def connect_node(flow_id: int, node_connection: input_schema.NodeConnection) -> OperationResponse:
+def connect_node(
+    flow_id: int, node_connection: input_schema.NodeConnection, current_user=Depends(get_current_active_user)
+) -> OperationResponse:
     """Creates a connection (edge) between two nodes in the flow graph.
 
     Returns:
         OperationResponse with current history state.
     """
-    flow = get_flow_or_404(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     from_id = node_connection.output_connection.node_id
     to_id = node_connection.input_connection.node_id
     with edit_flow(flow, f"Connect {from_id} -> {to_id}", HistoryActionType.ADD_CONNECTION) as txn:
@@ -898,9 +917,11 @@ def _bounds_from_request(req: schemas.CreateGroupRequest | schemas.UpdateGroupRe
 
 
 @router.post("/editor/create_group/", tags=["editor"], response_model=GroupOperationResponse)
-def create_group(flow_id: int, request: schemas.CreateGroupRequest) -> GroupOperationResponse:
+def create_group(
+    flow_id: int, request: schemas.CreateGroupRequest, current_user=Depends(get_current_active_user)
+) -> GroupOperationResponse:
     """Create a visual group around a set of nodes. Returns the new server-assigned group."""
-    flow = get_flow_or_404(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     with edit_flow(flow, f"Create group '{request.name}'", HistoryActionType.CREATE_GROUP) as txn:
         if request.group_id is not None and request.group_id <= flow.group_id_ceiling:
             message = f"Group id {request.group_id} is not above every id this flow has held."
@@ -918,9 +939,11 @@ def create_group(flow_id: int, request: schemas.CreateGroupRequest) -> GroupOper
 
 
 @router.post("/editor/update_group/", tags=["editor"], response_model=GroupOperationResponse)
-def update_group(flow_id: int, group_id: int, request: schemas.UpdateGroupRequest) -> GroupOperationResponse:
+def update_group(
+    flow_id: int, group_id: int, request: schemas.UpdateGroupRequest, current_user=Depends(get_current_active_user)
+) -> GroupOperationResponse:
     """Rename / recolor / move / resize / collapse a group box."""
-    flow = get_flow_or_404(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     with edit_flow(flow, "Update group", HistoryActionType.UPDATE_GROUP) as txn:
         txn.description = _group_label("Update", flow, group_id)
         try:
@@ -938,9 +961,9 @@ def update_group(flow_id: int, group_id: int, request: schemas.UpdateGroupReques
 
 
 @router.post("/editor/delete_group/", tags=["editor"], response_model=OperationResponse)
-def delete_group(flow_id: int, group_id: int) -> OperationResponse:
+def delete_group(flow_id: int, group_id: int, current_user=Depends(get_current_active_user)) -> OperationResponse:
     """Delete a group box (ungroup). Member nodes are kept."""
-    flow = get_flow_or_404(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     with edit_flow(flow, "Delete group", HistoryActionType.DELETE_GROUP) as txn:
         txn.description = _group_label("Delete", flow, group_id)
         flow.delete_group(group_id)
@@ -948,9 +971,11 @@ def delete_group(flow_id: int, group_id: int) -> OperationResponse:
 
 
 @router.post("/editor/group/add_nodes/", tags=["editor"], response_model=GroupOperationResponse)
-def add_nodes_to_group(flow_id: int, group_id: int, request: schemas.GroupMembershipRequest) -> GroupOperationResponse:
+def add_nodes_to_group(
+    flow_id: int, group_id: int, request: schemas.GroupMembershipRequest, current_user=Depends(get_current_active_user)
+) -> GroupOperationResponse:
     """Add nodes to an existing group."""
-    flow = get_flow_or_404(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     with edit_flow(flow, "Add nodes to group", HistoryActionType.UPDATE_GROUP_MEMBERSHIP) as txn:
         try:
             group = flow.add_nodes_to_group(group_id, request.node_ids)
@@ -960,22 +985,26 @@ def add_nodes_to_group(flow_id: int, group_id: int, request: schemas.GroupMember
 
 
 @router.post("/editor/group/remove_nodes/", tags=["editor"], response_model=OperationResponse)
-def remove_nodes_from_group(flow_id: int, request: schemas.GroupMembershipRequest) -> OperationResponse:
+def remove_nodes_from_group(
+    flow_id: int, request: schemas.GroupMembershipRequest, current_user=Depends(get_current_active_user)
+) -> OperationResponse:
     """Remove nodes from their group; a group emptied this way is pruned."""
-    flow = get_flow_or_404(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     with edit_flow(flow, "Remove nodes from group", HistoryActionType.UPDATE_GROUP_MEMBERSHIP) as txn:
         flow.remove_nodes_from_group(request.node_ids)
     return OperationResponse(success=True, history=txn.history)
 
 
 @router.post("/editor/update_layout/", tags=["editor"], response_model=OperationResponse)
-def update_layout(flow_id: int, request: schemas.UpdateLayoutRequest) -> OperationResponse:
+def update_layout(
+    flow_id: int, request: schemas.UpdateLayoutRequest, current_user=Depends(get_current_active_user)
+) -> OperationResponse:
     """Persist dragged node positions, group bounds and/or comment bounds (one drag-end -> one call).
 
     ``record_history=False`` applies the change without an undo step of its own, so it folds
     into the preceding step (outside a batch; inside ``apply_operations`` the batch records).
     """
-    flow = get_flow_or_404(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     with edit_flow(flow, "Update layout", HistoryActionType.MOVE_NODES, record=request.record_history) as txn:
         flow.set_node_positions(request.node_positions)
         flow.set_group_bounds(request.group_bounds)
@@ -997,9 +1026,11 @@ def _comment_to_schema(comment: schemas.CommentInformation) -> schemas.FlowfileC
 
 
 @router.post("/editor/create_comment/", tags=["editor"], response_model=CommentOperationResponse)
-def create_comment(flow_id: int, request: schemas.CreateCommentRequest) -> CommentOperationResponse:
+def create_comment(
+    flow_id: int, request: schemas.CreateCommentRequest, current_user=Depends(get_current_active_user)
+) -> CommentOperationResponse:
     """Create a canvas comment. Returns the new server-assigned comment."""
-    flow = get_flow_or_404(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     with edit_flow(flow, "Add comment", HistoryActionType.CREATE_COMMENT) as txn:
         comment = flow.create_comment(
             request.text, request.x_position, request.y_position, width=request.width, height=request.height
@@ -1008,9 +1039,11 @@ def create_comment(flow_id: int, request: schemas.CreateCommentRequest) -> Comme
 
 
 @router.post("/editor/update_comment/", tags=["editor"], response_model=CommentOperationResponse)
-def update_comment(flow_id: int, comment_id: int, request: schemas.UpdateCommentRequest) -> CommentOperationResponse:
+def update_comment(
+    flow_id: int, comment_id: int, request: schemas.UpdateCommentRequest, current_user=Depends(get_current_active_user)
+) -> CommentOperationResponse:
     """Edit, move or resize a canvas comment."""
-    flow = get_flow_or_404(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     values = (request.x_position, request.y_position, request.width, request.height)
     bounds = schemas.CommentBounds(*values) if all(value is not None for value in values) else None
     with edit_flow(flow, "Update comment", HistoryActionType.UPDATE_COMMENT) as txn:
@@ -1022,9 +1055,9 @@ def update_comment(flow_id: int, comment_id: int, request: schemas.UpdateComment
 
 
 @router.post("/editor/delete_comment/", tags=["editor"], response_model=OperationResponse)
-def delete_comment(flow_id: int, comment_id: int) -> OperationResponse:
+def delete_comment(flow_id: int, comment_id: int, current_user=Depends(get_current_active_user)) -> OperationResponse:
     """Delete a canvas comment."""
-    flow = get_flow_or_404(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     with edit_flow(flow, "Delete comment", HistoryActionType.DELETE_COMMENT) as txn:
         flow.delete_comment(comment_id)
     return OperationResponse(success=True, history=txn.history)
@@ -1058,7 +1091,7 @@ def apply_operations(
     the graph is restored to its pre-batch state and the error is re-raised with the op's
     status code and a detail prefixed ``Operation <i> (<op>): ``.
     """
-    flow = get_flow_or_404(request.flow_id)
+    flow = get_flow_or_404(request.flow_id, current_user)
     with edit_flow(flow, request.label, HistoryActionType.BATCH) as txn:
         _run_operations(flow, request.flow_id, request.operations, current_user)
     # A drawer's save-with-operations is one update_settings op: hand back that node's fingerprint.
@@ -1106,48 +1139,51 @@ def _batch_settings(operation: schemas.EditorOperation, flow_id: int) -> dict:
 def _apply_operation(flow_id: int, operation: schemas.EditorOperation, current_user) -> None:
     match operation.op:
         case "add_node":
-            add_node(flow_id, operation.node_id, operation.node_type, operation.pos_x, operation.pos_y)
+            add_node(flow_id, operation.node_id, operation.node_type, operation.pos_x, operation.pos_y, current_user)
         case "update_settings":
             add_generic_settings(_batch_settings(operation, flow_id), operation.node_type, current_user=current_user)
         case "delete_node":
-            delete_node(flow_id, operation.node_id)
+            delete_node(flow_id, operation.node_id, current_user)
         case "connect":
-            connect_node(flow_id, operation.connection)
+            connect_node(flow_id, operation.connection, current_user)
         case "delete_connection":
-            delete_node_connection(flow_id, operation.connection)
+            delete_node_connection(flow_id, operation.connection, current_user)
         case "update_layout":
-            update_layout(flow_id, operation.layout)
+            update_layout(flow_id, operation.layout, current_user)
         case "copy_node":
             if operation.node_promise.flow_id != flow_id:
                 raise HTTPException(422, "node_promise.flow_id does not match the batch flow_id")
-            copy_node(operation.node_id_to_copy_from, operation.flow_id_to_copy_from, operation.node_promise)
+            copy_node(
+                operation.node_id_to_copy_from, operation.flow_id_to_copy_from, operation.node_promise, current_user
+            )
         case "delete_comment":
-            delete_comment(flow_id, operation.comment_id)
+            delete_comment(flow_id, operation.comment_id, current_user)
         case "insert_on_edge":
-            insert_node_on_edge(get_flow_or_404(flow_id), operation.node_id, operation.connection)
+            insert_node_on_edge(get_flow_or_404(flow_id, current_user), operation.node_id, operation.connection)
         case "update_user_defined_settings":
             from flowfile_core.routes.user_defined_components import update_user_defined_node
 
             settings = _batch_settings(operation, flow_id)
             update_user_defined_node(settings, operation.node_type, current_user=current_user)
         case "set_flow_parameters":
-            get_flow_or_404(flow_id).flow_settings.parameters = list(operation.parameters)
+            get_flow_or_404(flow_id, current_user).flow_settings.parameters = list(operation.parameters)
         case "create_group":
-            create_group(flow_id, operation.group)
+            create_group(flow_id, operation.group, current_user)
         case "update_group":
-            update_group(flow_id, operation.group_id, operation.group)
+            update_group(flow_id, operation.group_id, operation.group, current_user)
         case "nest_group":
             try:
-                get_flow_or_404(flow_id).nest_group(operation.group_id, operation.parent_group_id)
+                get_flow_or_404(flow_id, current_user).nest_group(operation.group_id, operation.parent_group_id)
             except ValueError as exc:
                 raise HTTPException(422, str(exc)) from exc
         case "delete_group":
-            delete_group(flow_id, operation.group_id)
+            delete_group(flow_id, operation.group_id, current_user)
         case "add_nodes_to_group":
             membership = schemas.GroupMembershipRequest(node_ids=operation.node_ids)
-            add_nodes_to_group(flow_id, operation.group_id, membership)
+            add_nodes_to_group(flow_id, operation.group_id, membership, current_user)
         case "remove_nodes_from_group":
-            remove_nodes_from_group(flow_id, schemas.GroupMembershipRequest(node_ids=operation.node_ids))
+            membership = schemas.GroupMembershipRequest(node_ids=operation.node_ids)
+            remove_nodes_from_group(flow_id, membership, current_user)
 
 
 @router.post(
@@ -1234,30 +1270,25 @@ def get_expressions() -> list[str]:
 
 
 @router.get("/editor/flow", tags=["editor"], response_model=schemas.FlowSettingsResponse)
-def get_flow(flow_id: int):
+def get_flow(flow_id: int, current_user=Depends(get_current_active_user)):
     """Retrieves the settings for a specific flow (including runtime dirty state)."""
     flow_id = int(flow_id)
-    result = get_flow_settings(flow_id)
+    result = get_flow_settings(flow_id, current_user)
     return result
 
 
 @router.get("/editor/laziness_check", tags=["editor"])
-def check_flow_laziness(flow_id: int):
+def check_flow_laziness(flow_id: int, current_user=Depends(get_current_active_user)):
     """Check whether a flow supports fully lazy execution for virtual tables."""
-    flow = flow_file_handler.get_flow(int(flow_id))
-    if flow is None:
-        raise HTTPException(404, "Flow not found")
+    flow = get_flow_or_404(int(flow_id), current_user, detail="Flow not found")
     is_lazy, reasons = flow.check_flow_laziness()
     return {"is_optimizable": is_lazy, "blockers": reasons}
 
 
 @router.get("/editor/code_to_polars", tags=[], response_model=str)
-def get_generated_code(flow_id: int) -> str:
+def get_generated_code(flow_id: int, current_user=Depends(get_current_active_user)) -> str:
     """Generates and returns a Python script with Polars code representing the flow."""
-    flow_id = int(flow_id)
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(404, "could not find the flow")
+    flow = get_flow_or_404(int(flow_id), current_user)
     try:
         return export_flow_to_polars(flow)
     except UnsupportedNodeError as e:
@@ -1265,12 +1296,9 @@ def get_generated_code(flow_id: int) -> str:
 
 
 @router.get("/editor/code_to_flowframe", tags=[], response_model=str)
-def get_generated_flowframe_code(flow_id: int) -> str:
+def get_generated_flowframe_code(flow_id: int, current_user=Depends(get_current_active_user)) -> str:
     """Generates and returns a Python script with FlowFrame code representing the flow."""
-    flow_id = int(flow_id)
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(404, "could not find the flow")
+    flow = get_flow_or_404(int(flow_id), current_user)
     try:
         return export_flow_to_flowframe(flow)
     except UnsupportedNodeError as e:
@@ -1295,24 +1323,20 @@ def confirm_flowframe_code_export() -> Response:
 
 
 @router.get("/editor/share_link", tags=["editor"], response_model=output_model.ShareLinkResponse)
-def get_share_link(flow_id: int) -> output_model.ShareLinkResponse:
+def get_share_link(flow_id: int, current_user=Depends(get_current_active_user)) -> output_model.ShareLinkResponse:
     """Encodes the live flow as a link that opens it in the browser-only editor.
 
     Serialises the in-memory graph only — no disk I/O, no save. Nodes the
     browser build cannot run identically travel as settings-free placeholders,
     which is also what keeps executable settings out of the link.
     """
-    flow = flow_file_handler.get_flow(int(flow_id))
-    if flow is None:
-        raise HTTPException(404, "could not find the flow")
+    flow = get_flow_or_404(int(flow_id), current_user)
     return build_share_link(flow)
 
 
-def _export_project_manifest(flow_id: int) -> output_model.ProjectExportManifest:
+def _export_project_manifest(flow_id: int, current_user) -> output_model.ProjectExportManifest:
     """(Internal) Export a flow as a project manifest, mapping errors to HTTP statuses."""
-    flow = flow_file_handler.get_flow(int(flow_id))
-    if flow is None:
-        raise HTTPException(404, "could not find the flow")
+    flow = get_flow_or_404(int(flow_id), current_user)
     try:
         return export_flow_to_project(flow)
     except UnsupportedNodeError as e:
@@ -1320,15 +1344,17 @@ def _export_project_manifest(flow_id: int) -> output_model.ProjectExportManifest
 
 
 @router.get("/editor/code_to_project", tags=[], response_model=output_model.ProjectExportManifest)
-def get_generated_project(flow_id: int) -> output_model.ProjectExportManifest:
+def get_generated_project(
+    flow_id: int, current_user=Depends(get_current_active_user)
+) -> output_model.ProjectExportManifest:
     """Generates a multi-file Python project (FlowFrame code) representing the flow."""
-    return _export_project_manifest(flow_id)
+    return _export_project_manifest(flow_id, current_user)
 
 
 @router.get("/editor/code_to_project/zip", tags=[])
-def download_generated_project(flow_id: int) -> Response:
+def download_generated_project(flow_id: int, current_user=Depends(get_current_active_user)) -> Response:
     """Generates the project export and returns it as a zip archive."""
-    manifest = _export_project_manifest(flow_id)
+    manifest = _export_project_manifest(flow_id, current_user)
     return Response(
         content=project_to_zip_bytes(manifest),
         media_type="application/zip",
@@ -1337,7 +1363,9 @@ def download_generated_project(flow_id: int) -> Response:
 
 
 @router.post("/editor/code_to_project/save", tags=[], response_model=output_model.ProjectSaveResponse)
-def save_generated_project(request: output_model.ProjectSaveRequest) -> output_model.ProjectSaveResponse:
+def save_generated_project(
+    request: output_model.ProjectSaveRequest, current_user=Depends(get_current_active_user)
+) -> output_model.ProjectSaveResponse:
     """Generates the project export and writes it into a directory on the server.
 
     The target directory is validated with the same sandbox rules as the file
@@ -1347,7 +1375,7 @@ def save_generated_project(request: output_model.ProjectSaveRequest) -> output_m
     rejected with 409 unless ``overwrite`` is set. Existing files are only
     overwritten file-by-file, never deleted.
     """
-    manifest = _export_project_manifest(request.flow_id)
+    manifest = _export_project_manifest(request.flow_id, current_user)
     sandbox_root = None if is_electron_mode() else storage.user_data_directory
     try:
         explorer = SecureFileExplorer(request.target_directory, sandbox_root)
@@ -1507,9 +1535,7 @@ def rename_flow(body: RenameFlowInput, current_user=Depends(get_current_active_u
     rename would silently vanish when the tab is closed.
     """
     user_id = current_user.id if current_user else None
-    flow = flow_file_handler.get_flow(body.flow_id, user_id)
-    if flow is None:
-        raise HTTPException(404, "could not find the flow")
+    flow = get_flow_or_404(body.flow_id, current_user)
     name = body.name.strip()
     if not name:
         raise HTTPException(422, "Flow name cannot be empty")
@@ -1547,9 +1573,9 @@ def rename_flow(body: RenameFlowInput, current_user=Depends(get_current_active_u
 # ==================== History/Undo-Redo Endpoints ====================
 
 
-def _history_step(flow_id: int, step: Callable[[Any], UndoRedoResult]) -> UndoRedoResult:
+def _history_step(flow_id: int, current_user, step: Callable[[Any], UndoRedoResult]) -> UndoRedoResult:
     """Undo or redo on an idle flow. Not edit_flow: an outer transaction would record the restore as a step."""
-    flow = get_flow_or_404(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     with flow.edit_lock():
         if flow.flow_settings.is_running:
             raise HTTPException(422, "Flow is running")
@@ -1557,19 +1583,19 @@ def _history_step(flow_id: int, step: Callable[[Any], UndoRedoResult]) -> UndoRe
 
 
 @router.post("/editor/undo/", tags=["editor"], response_model=UndoRedoResult)
-def undo_action(flow_id: int) -> UndoRedoResult:
+def undo_action(flow_id: int, current_user=Depends(get_current_active_user)) -> UndoRedoResult:
     """Undo the last action on the flow graph."""
-    return _history_step(flow_id, lambda flow: flow.undo())
+    return _history_step(flow_id, current_user, lambda flow: flow.undo())
 
 
 @router.post("/editor/redo/", tags=["editor"], response_model=UndoRedoResult)
-def redo_action(flow_id: int) -> UndoRedoResult:
+def redo_action(flow_id: int, current_user=Depends(get_current_active_user)) -> UndoRedoResult:
     """Redo the last undone action on the flow graph."""
-    return _history_step(flow_id, lambda flow: flow.redo())
+    return _history_step(flow_id, current_user, lambda flow: flow.redo())
 
 
 @router.get("/editor/history_status/", tags=["editor"], response_model=HistoryState)
-def get_history_status(flow_id: int) -> HistoryState:
+def get_history_status(flow_id: int, current_user=Depends(get_current_active_user)) -> HistoryState:
     """Get the current state of the history system for a flow.
 
     Args:
@@ -1578,9 +1604,7 @@ def get_history_status(flow_id: int) -> HistoryState:
     Returns:
         HistoryState with information about available undo/redo operations.
     """
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(404, "Could not find the flow")
+    flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
     return flow.get_history_state()
 
 
@@ -1631,15 +1655,13 @@ async def flow_events(flow_id: int, current_user=Depends(get_current_active_user
 
 
 @router.post("/editor/history_clear/", tags=["editor"])
-def clear_history(flow_id: int):
+def clear_history(flow_id: int, current_user=Depends(get_current_active_user)):
     """Clear all history for a flow.
 
     Args:
         flow_id: The ID of the flow to clear history for.
     """
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(404, "Could not find the flow")
+    flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
     flow.clear_history()
     return {"message": "History cleared successfully"}
 
@@ -1761,7 +1783,7 @@ def add_generic_settings(
     flow_id = int(input_data.get("flow_id"))
     node_id = int(input_data.get("node_id"))
     logger.info(f"Updating the data for flow: {flow_id}, node {node_id}")
-    flow = get_flow_or_404(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     add_func = getattr(flow, "add_" + node_type)
     parsed_input = None
     setting_name_ref = "node" + node_type.replace("_", "")
@@ -1882,9 +1904,7 @@ def fetch_rest_api_sample(
     except Exception as e:
         raise HTTPException(422, str(e)) from e
 
-    flow = flow_file_handler.get_flow(node.flow_id)
-    if flow is None:
-        raise HTTPException(404, "could not find the flow")
+    flow = get_flow_or_404(node.flow_id, current_user)
 
     # Resolve the credential to an encrypted token (stored secret by name, or an
     # inline plaintext); the worker decrypts it. Never persist inline plaintext.
@@ -1988,7 +2008,12 @@ def preview_dynamic_rename(request: DynamicRenamePreviewRequest) -> DynamicRenam
 
 @router.get("/node", response_model=output_model.NodeData, tags=["editor"])
 def get_node(
-    flow_id: int, node_id: int, get_data: bool = False, include_output: bool = True, include_inputs: bool = True
+    flow_id: int,
+    node_id: int,
+    get_data: bool = False,
+    include_output: bool = True,
+    include_inputs: bool = True,
+    current_user=Depends(get_current_active_user),
 ):
     """Retrieves the complete state and data preview for a single node.
 
@@ -2004,7 +2029,7 @@ def get_node(
     columns with a follow-up full fetch.
     """
     logging.info(f"Getting node {node_id} from flow {flow_id}")
-    flow = flow_file_handler.get_flow(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     node = flow.get_node(node_id)
     if node is None:
         raise HTTPException(422, "Not found")
@@ -2018,16 +2043,16 @@ def get_node(
 
 
 @router.get("/node/input_names", tags=["editor"])
-def get_node_input_names(flow_id: int, node_id: int) -> list[output_model.NodeInputNameInfo]:
+def get_node_input_names(
+    flow_id: int, node_id: int, current_user=Depends(get_current_active_user)
+) -> list[output_model.NodeInputNameInfo]:
     """Returns the named inputs available for a kernel node.
 
     Each entry contains the input name (derived from the source node's
     ``node_reference`` or fallback ``df_{id}``), the source node ID, and
     its type. The frontend uses this for autocomplete and display.
     """
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(404, "Flow not found")
+    flow = get_flow_or_404(flow_id, current_user, detail="Flow not found")
     node = flow.get_node(node_id)
     if node is None:
         raise HTTPException(404, "Node not found")
@@ -2047,9 +2072,11 @@ def get_node_input_names(flow_id: int, node_id: int) -> list[output_model.NodeIn
 
 
 @router.post("/node/description/", tags=["editor"], response_model=OperationResponse)
-def update_description_node(flow_id: int, node_id: int, description: str = Body(...)) -> OperationResponse:
+def update_description_node(
+    flow_id: int, node_id: int, description: str = Body(...), current_user=Depends(get_current_active_user)
+) -> OperationResponse:
     """Updates the description text for a specific node (an empty text restores the auto description)."""
-    flow = get_flow_or_404(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     with edit_flow(flow, "Edit description", HistoryActionType.UPDATE_SETTINGS, node_id=node_id) as txn:
         node = flow.get_node(node_id)
         if node is None:
@@ -2061,7 +2088,7 @@ def update_description_node(flow_id: int, node_id: int, description: str = Body(
 
 
 @router.get("/node/description", response_model=output_model.NodeDescriptionResponse, tags=["editor"])
-def get_description_node(flow_id: int, node_id: int):
+def get_description_node(flow_id: int, node_id: int, current_user=Depends(get_current_active_user)):
     """Retrieves the description text for a specific node.
 
     Returns the user-provided description if set, otherwise falls back
@@ -2069,10 +2096,7 @@ def get_description_node(flow_id: int, node_id: int):
     The response includes an `is_auto_generated` flag so the frontend
     knows whether to refresh the description after settings changes.
     """
-    try:
-        node = flow_file_handler.get_flow(flow_id).get_node(node_id)
-    except Exception:
-        raise HTTPException(404, "Could not find the node") from None
+    node = get_flow_or_404(flow_id, current_user, detail="Could not find the node").get_node(node_id)
     if node is None:
         raise HTTPException(404, "Could not find the node")
     description, is_auto_generated = node.resolve_description()
@@ -2080,7 +2104,9 @@ def get_description_node(flow_id: int, node_id: int):
 
 
 @router.post("/node/reference/", tags=["editor"], response_model=OperationResponse)
-def update_reference_node(flow_id: int, node_id: int, reference: str = Body(...)) -> OperationResponse:
+def update_reference_node(
+    flow_id: int, node_id: int, reference: str = Body(...), current_user=Depends(get_current_active_user)
+) -> OperationResponse:
     """Updates the reference identifier for a specific node.
 
     The reference must be:
@@ -2088,7 +2114,7 @@ def update_reference_node(flow_id: int, node_id: int, reference: str = Body(...)
     - No spaces allowed
     - Unique across all nodes in the flow
     """
-    flow = get_flow_or_404(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     with edit_flow(flow, "Edit reference", HistoryActionType.UPDATE_SETTINGS, node_id=node_id) as txn:
         node = flow.get_node(node_id)
         if node is None:
@@ -2124,44 +2150,52 @@ def _reference_error(flow, node_id: int, reference: str) -> str | None:
 
 
 @router.get("/node/reference", tags=["editor"])
-def get_reference_node(flow_id: int, node_id: int):
+def get_reference_node(flow_id: int, node_id: int, current_user=Depends(get_current_active_user)):
     """Retrieves the reference identifier for a specific node."""
-    try:
-        node = flow_file_handler.get_flow(flow_id).get_node(node_id)
-    except Exception:
-        raise HTTPException(404, "Could not find the node") from None
+    node = get_flow_or_404(flow_id, current_user, detail="Could not find the node").get_node(node_id)
     if node is None:
         raise HTTPException(404, "Could not find the node")
     return node.setting_input.node_reference or ""
 
 
 @router.get("/node/validate_reference", tags=["editor"])
-def validate_node_reference(flow_id: int, node_id: int, reference: str):
+def validate_node_reference(flow_id: int, node_id: int, reference: str, current_user=Depends(get_current_active_user)):
     """Validates if a reference is valid and unique for a node.
 
     Returns:
         Dict with 'valid' (bool) and 'error' (str or None) fields.
     """
-    flow = get_flow_or_404(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     # Empty means "use the default df_<node_id>".
     error = _reference_error(flow, node_id, reference) if reference else None
     return {"valid": error is None, "error": error}
 
 
 @router.get("/node/data", response_model=output_model.TableExample, tags=["editor"])
-def get_table_example(flow_id: int, node_id: int, output_handle: str = DEFAULT_OUTPUT_HANDLE):
+def get_table_example(
+    flow_id: int,
+    node_id: int,
+    output_handle: str = DEFAULT_OUTPUT_HANDLE,
+    current_user=Depends(get_current_active_user),
+):
     """Retrieves a data preview (schema and sample rows) for a node's output.
 
     For multi-output nodes, ``output_handle`` selects which named output to
     preview (e.g. ``"output-0"``, ``"output-1"``); the default is the first.
     """
-    flow = flow_file_handler.get_flow(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     node = flow.get_node(node_id)
     return node.get_table_example(True, output_handle=output_handle)
 
 
 @router.get("/node/column_stats", response_model=output_model.FileColumn, tags=["editor"])
-def get_node_column_stats(flow_id: int, node_id: int, column_name: str, output_handle: str = DEFAULT_OUTPUT_HANDLE):
+def get_node_column_stats(
+    flow_id: int,
+    node_id: int,
+    column_name: str,
+    output_handle: str = DEFAULT_OUTPUT_HANDLE,
+    current_user=Depends(get_current_active_user),
+):
     """Computes on-demand statistics for one column of a node's cached result.
 
     Runs a single bounded aggregate (counts, uniques, min/max) over the result
@@ -2169,9 +2203,7 @@ def get_node_column_stats(flow_id: int, node_id: int, column_name: str, output_h
     column's updated ``FileColumn``, the same shape ``table_schema`` ships.
     Query parameters (not path segments): column names contain ``/`` and ``.``.
     """
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(404, "Could not find the flow")
+    flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
     node = flow.get_node(node_id)
     if node is None:
         raise HTTPException(404, "Could not find the node")
@@ -2206,7 +2238,7 @@ def export_node_data(
 
     TSV is also capped at 100,000 cells. Larger exports belong in a write node.
     """
-    _, node = _get_analysis_node(flow_id, node_id, current_user.id)
+    _, node = _get_analysis_node(flow_id, node_id, current_user)
     try:
         engine = node.get_cached_result(output_handle)
     except ColumnStatsUnavailable as e:
@@ -2241,9 +2273,11 @@ def export_node_data(
 
 
 @router.get("/node/downstream_node_ids", response_model=list[int], tags=["editor"])
-async def get_downstream_node_ids(flow_id: int, node_id: int) -> list[int]:
+async def get_downstream_node_ids(
+    flow_id: int, node_id: int, current_user=Depends(get_current_active_user)
+) -> list[int]:
     """Gets a list of all node IDs that are downstream dependencies of a given node."""
-    flow = flow_file_handler.get_flow(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     node = flow.get_node(node_id)
     return list(node.get_all_dependent_node_ids())
 
@@ -2295,7 +2329,7 @@ def _save_flow_impl(
         raise HTTPException(422, "namespace_id requires register_in_catalog=True")
     if flow_path is not None:
         flow_path = validate_path_under_cwd(flow_path)
-    flow = flow_file_handler.get_flow(flow_id)
+    flow = get_flow_or_404(flow_id, current_user)
     current_path = flow.flow_settings.path or flow.flow_settings.save_location
 
     if flow_path is None:
@@ -2426,9 +2460,7 @@ def save_flow_to_catalog(
     # the result against the same allowlist as a defense-in-depth backstop.
     safe_stem = _MANAGED_FLOW_STEM_DISALLOWED_RE.sub("_", display_name).strip("_-") or "flow"
 
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(404, "Flow not found")
+    flow = get_flow_or_404(flow_id, current_user, detail="Flow not found")
 
     # Refuse before any side effect (ghost cleanup, YAML write) when the caller
     # may neither write the target namespace nor manage a flow already at the path.
@@ -2553,9 +2585,7 @@ def overwrite_flow_in_catalog(
     Returns the (possibly new) flow id so the frontend can switch to the target.
     """
     user_id = current_user.id if current_user else None
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(404, "Flow not found")
+    flow = get_flow_or_404(flow_id, current_user, detail="Flow not found")
 
     target = find_registration_by_registration_id(target_registration_id)
     if target is None:
@@ -2623,20 +2653,18 @@ def _touch_flow_registration(registration_id: int) -> None:
 
 
 @router.get("/flow_data", tags=["manager"])
-def get_flow_frontend_data(flow_id: int | None = 1):
+def get_flow_frontend_data(flow_id: int | None = 1, current_user=Depends(get_current_active_user)):
     """Retrieves the data needed to render the flow graph in the frontend."""
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(404, "could not find the flow")
+    flow = get_flow_or_404(flow_id, current_user)
     return flow.get_frontend_data()
 
 
 @router.get("/flow_settings", tags=["manager"], response_model=schemas.FlowSettingsResponse)
-def get_flow_settings(flow_id: int | None = 1) -> schemas.FlowSettingsResponse:
+def get_flow_settings(
+    flow_id: int | None = 1, current_user=Depends(get_current_active_user)
+) -> schemas.FlowSettingsResponse:
     """Retrieves the main settings for a flow (including dirty-state info)."""
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(404, "could not find the flow")
+    get_flow_or_404(flow_id, current_user)
     return _with_display_name(flow_file_handler.get_flow_info_with_runtime(flow_id))
 
 
@@ -2653,7 +2681,7 @@ _SERVER_OWNED_FLOW_SETTINGS = (
 
 
 @router.post("/flow_settings", tags=["manager"])
-def update_flow_settings(flow_settings: schemas.FlowSettings):
+def update_flow_settings(flow_settings: schemas.FlowSettings, current_user=Depends(get_current_active_user)):
     """Updates the user-editable settings of a flow.
 
     Identity (name, path, save location, catalog registration), run state and history
@@ -2662,7 +2690,7 @@ def update_flow_settings(flow_settings: schemas.FlowSettings):
     the undo scope, so this records no step; it runs as a transaction to serialize with
     graph edits and refresh the dirty flag.
     """
-    flow = get_flow_or_404(flow_settings.flow_id)
+    flow = get_flow_or_404(flow_settings.flow_id, current_user)
     with flow.transaction("Update flow settings"):
         live = flow.flow_settings
         server_owned = {field: getattr(live, field) for field in _SERVER_OWNED_FLOW_SETTINGS}
@@ -2670,26 +2698,22 @@ def update_flow_settings(flow_settings: schemas.FlowSettings):
 
 
 @router.get("/flow_data/v2", tags=["manager"])
-def get_vue_flow_data(flow_id: int) -> schemas.VueFlowInput:
+def get_vue_flow_data(flow_id: int, current_user=Depends(get_current_active_user)) -> schemas.VueFlowInput:
     """Retrieves the flow data formatted for the Vue-based frontend."""
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(404, "could not find the flow")
+    flow = get_flow_or_404(flow_id, current_user)
     data = flow.get_vue_flow_input()
     return data
 
 
 @router.get("/flow/artifacts", tags=["editor"])
-def get_flow_artifacts(flow_id: int):
+def get_flow_artifacts(flow_id: int, current_user=Depends(get_current_active_user)):
     """Returns artifact visualization data for the canvas.
 
     Includes per-node artifact summaries (for badges/tooltips) and
     artifact edges (for dashed-line connections between publisher and
     consumer nodes).
     """
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(404, "Could not find the flow")
+    flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
     ctx = flow.artifact_context
     return {
         "nodes": ctx.get_node_summaries(),
@@ -2698,24 +2722,20 @@ def get_flow_artifacts(flow_id: int):
 
 
 @router.get("/flow/settings_validation", tags=["editor"], response_model=FlowSettingsValidation)
-def get_flow_settings_validation(flow_id: int) -> FlowSettingsValidation:
+def get_flow_settings_validation(flow_id: int, current_user=Depends(get_current_active_user)) -> FlowSettingsValidation:
     """Conservative static check: node settings that reference missing input columns."""
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(404, "Could not find the flow")
+    flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
     return validate_flow_settings(flow)
 
 
 @router.get("/flow/node_upstream_ids", tags=["editor"])
-def get_node_upstream_ids(flow_id: int, node_id: int):
+def get_node_upstream_ids(flow_id: int, node_id: int, current_user=Depends(get_current_active_user)):
     """Return the transitive upstream node IDs for a given node.
 
     Used by the frontend to determine which artifacts are actually
     reachable (via the DAG) from a specific python_script node.
     """
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(404, "Could not find the flow")
+    flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
     return {"upstream_node_ids": flow._get_upstream_node_ids(node_id)}
 
 
@@ -2734,7 +2754,9 @@ def _resolve_node_kernel_id(node) -> str | None:
 
 
 @router.get("/flow/node_available_artifacts", tags=["editor"])
-def get_node_available_artifacts(flow_id: int, node_id: int, kernel_id: str | None = None):
+def get_node_available_artifacts(
+    flow_id: int, node_id: int, kernel_id: str | None = None, current_user=Depends(get_current_active_user)
+):
     """Return available artifact metadata for a node.
 
     Merges run-observed artifacts (published in a prior run) with artifacts
@@ -2742,9 +2764,7 @@ def get_node_available_artifacts(flow_id: int, node_id: int, kernel_id: str | No
     frontend's artifact pickers work before the flow has ever run. Observed
     wins on name conflict.
     """
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(404, "Could not find the flow")
+    flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
     node = flow.get_node(node_id)
     if node is None:
         raise HTTPException(404, "Could not find the node")
@@ -2784,24 +2804,16 @@ def get_graphic_walker_input(flow_id: int, node_id: int, current_user=Depends(ge
 
     Carries no rows: aggregation runs on the worker via ``/analysis_data/compute``.
     """
-    _flow, node = _get_analysis_node(flow_id, node_id, current_user.id if current_user else None)
+    _flow, node = _get_analysis_node(flow_id, node_id, current_user)
     if not node_viz.has_result_to_visualize(node):
         logger.error("The data is not refreshed and available for analysis")
         raise HTTPException(422, "The data is not refreshed and available for analysis")
     return AnalyticsProcessor.process_graphic_walker_input(node)
 
 
-def _get_analysis_node(flow_id: int, node_id: int, user_id: int | None):
-    """Resolve a node for the explorer, scoped to the caller's own open flows.
-
-    ``get_flow(flow_id, user_id)`` returns None when the flow isn't in that user's
-    session, so a caller can't chart someone else's data by guessing a flow_id.
-    Both editor open paths (`import_flow`, `register_flow`) register the session,
-    so anything the drawer can reach is visible here.
-    """
-    flow = flow_file_handler.get_flow(flow_id, user_id)
-    if flow is None:
-        raise HTTPException(404, f"Flow {flow_id} is no longer in memory")
+def _get_analysis_node(flow_id: int, node_id: int, current_user):
+    """Resolve a node for the explorer, scoped to the caller's own open flows."""
+    flow = get_flow_or_404(flow_id, current_user, detail=f"Flow {flow_id} is no longer in memory")
     node = flow.get_node(node_id)
     if node is None:
         raise HTTPException(404, f"Node {node_id} not found in flow {flow_id}")
@@ -2819,7 +2831,7 @@ def compute_node_visualization(
     aggregation; the worker's session cache keeps the node's lazy frame warm so
     successive calls skip the load.
     """
-    flow, node = _get_analysis_node(body.flow_id, body.node_id, current_user.id if current_user else None)
+    flow, node = _get_analysis_node(body.flow_id, body.node_id, current_user)
     try:
         return node_viz.compute_node_rows(flow, node, body.payload, body.max_rows)
     except node_viz.NodeNotRunError as exc:
@@ -2836,7 +2848,7 @@ def get_node_visualization_fields(
     current_user=Depends(get_current_active_user),
 ):
     """Return the Graphic Walker field schema for an Explore Data node's result."""
-    flow, node = _get_analysis_node(body.flow_id, body.node_id, current_user.id if current_user else None)
+    flow, node = _get_analysis_node(body.flow_id, body.node_id, current_user)
     try:
         return node_viz.get_node_fields(flow, node)
     except node_viz.NodeNotRunError as exc:
@@ -2848,10 +2860,13 @@ def get_node_visualization_fields(
 
 
 @router.get("/custom_functions/instant_result", tags=[])
-async def get_instant_function_result(flow_id: int, node_id: int, func_string: str):
+async def get_instant_function_result(
+    flow_id: int, node_id: int, func_string: str, current_user=Depends(get_current_active_user)
+):
     """Executes a simple, instant function on a node's data and returns the result."""
+    flow = get_flow_or_404(flow_id, current_user)
     try:
-        node = flow_file_handler.get_node(flow_id, node_id)
+        node = flow_file_handler.get_node(flow.flow_id, node_id)
         result = await asyncio.to_thread(get_instant_func_results, node, func_string)
         return result
     except Exception as e:
@@ -2861,10 +2876,12 @@ async def get_instant_function_result(flow_id: int, node_id: int, func_string: s
 @router.post("/custom_functions/formula_chain_check", tags=[])
 async def check_formula_chain(
     request: output_model.FormulaChainRequest,
+    current_user=Depends(get_current_active_user),
 ) -> output_model.FormulaChainCheckResponse:
     """Validates a formula node's entries, each against the schema its predecessors leave behind."""
+    flow = get_flow_or_404(request.flow_id, current_user)
     try:
-        node = flow_file_handler.get_node(request.flow_id, request.node_id)
+        node = flow_file_handler.get_node(flow.flow_id, request.node_id)
         return await asyncio.to_thread(get_formula_chain_check, node, request.entries)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -2873,10 +2890,12 @@ async def check_formula_chain(
 @router.post("/custom_functions/formula_chain_instant_result", tags=[])
 async def get_formula_chain_instant_function_result(
     request: output_model.FormulaChainInstantRequest,
+    current_user=Depends(get_current_active_user),
 ) -> output_model.InstantFuncResult:
     """Evaluates one formula entry on a preview row, with the entries above it applied first."""
+    flow = get_flow_or_404(request.flow_id, current_user)
     try:
-        node = flow_file_handler.get_node(request.flow_id, request.node_id)
+        node = flow_file_handler.get_node(flow.flow_id, request.node_id)
         return await asyncio.to_thread(get_formula_chain_instant_result, node, request.entries, request.index)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e

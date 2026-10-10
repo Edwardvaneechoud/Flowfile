@@ -108,7 +108,7 @@ async def generate_node_code_route(
     · 503 AI off. Soft failures (timeout, parse error, declined) return 200 + degraded."""
     _ensure_known_provider(body.provider)
 
-    flow = flow_file_handler.get_flow(body.flow_id)
+    flow = flow_file_handler.get_flow(body.flow_id, current_user.id)
     if flow is None:
         raise HTTPException(status_code=422, detail=f"Flow {body.flow_id} not found")
 
