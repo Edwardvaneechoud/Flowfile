@@ -38,6 +38,7 @@ from flowfile_frame.callable_utils import _get_function_source, process_callable
 from flowfile_frame.cloud_storage.frame_helpers import add_write_ff_to_cloud_storage
 from flowfile_frame.config import logger
 from flowfile_frame.expr import Column, Expr, col, lit
+from flowfile_frame.flow_group import FlowGroup
 from flowfile_frame.group_frame import GroupByFrame
 from flowfile_frame.join import _create_join_mappings, _normalize_columns_to_list
 from flowfile_frame.lazy_methods import PURE_TRANSFORMS, _refuse_frame_argument, add_lazyframe_methods
@@ -2919,6 +2920,22 @@ class FlowFrame:
             >>> df = df.filter(col("age") > 18).set_group("Clean customer data")
         """
         self.flow_graph.assign_node_to_named_group(self.node_id, name, color=color)
+        return self
+
+    def add_to_group(self, group: FlowGroup) -> FlowFrame:
+        """Put this frame's node in ``group``, a :class:`~flowfile_frame.flow_group.FlowGroup`.
+
+        Returns ``self`` for chaining. Organizational only: the group is a box on the canvas and
+        never changes execution or results. The group is placed on this frame's graph the first
+        time a node joins it, its parent groups first. Unrelated to :meth:`group_by` (aggregation).
+
+        Example:
+            >>> cleaning = ff.FlowGroup("Cleaning", color="blue")
+            >>> df = df.filter(col("age") > 18).add_to_group(cleaning)
+        """
+        if not isinstance(group, FlowGroup):
+            raise NativeNodeError(f"add_to_group takes a ff.FlowGroup, got {type(group).__name__}")
+        group._add_node(self.flow_graph, self.node_id)
         return self
 
     def to_graph(self):

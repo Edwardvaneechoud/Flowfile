@@ -42,7 +42,7 @@ _CONNECTION_HELPERS = (
 _FL_CALLS = (
     "col", "lit", "len", "when", "from_raw_data", "read_csv", "scan_csv", "scan_parquet", "read_excel", "list_files",
     "read_database", "read_kafka", "read_api", "read_from_cloud_storage", "read_catalog_table", "read_catalog_sql",
-    "write_catalog_table", "write_database", "write_to_cloud_storage", "Gate", "RunFlow", "PythonScript",
+    "write_catalog_table", "write_database", "write_to_cloud_storage", "Gate", "FlowGroup", "RunFlow", "PythonScript",
     "polars_code", "sql", "canvas_node", "FlowInput", "flow_ref", "concat", "FuzzyMapping", "Parameter",
     "add_flow_parameter",
 )  # fmt: skip
@@ -99,7 +99,8 @@ _FORMULA_DT = (
 )  # fmt: skip
 
 _FRAME_METHODS = (
-    "apply_model", "data_cleansing", "drop", "dynamic_rename", "evaluate_model", "explode_hierarchy", "filter",
+    "add_to_group", "apply_model", "data_cleansing", "drop", "dynamic_rename", "evaluate_model",
+    "explode_hierarchy", "filter",
     "filter_split", "fuzzy_join", "group_by", "head", "join", "multi_field_formula", "pivot", "polars_code",
     "random_split", "rename", "sample", "select", "solve_graph", "sort", "text_to_rows", "to_flow_output",
     "train_model", "unique", "unpivot", "wait_for", "with_columns", "with_row_index", "write_csv", "write_excel",
@@ -119,8 +120,8 @@ ALLOWLIST: dict[str, dict[str, str]] = {
     "Expr": {**{name: CALL for name in _EXPR_METHODS}, "str": READ, "dt": READ},
     "StringNS": {name: CALL for name in ("contains", "starts_with", "ends_with", "join", *_FORMULA_STR)},
     "DateTimeNS": {name: CALL for name in _FORMULA_DT},
-    "Gate": {"then": READ, "otherwise": READ},
-    "NodeOutputs": {"output": READ, "[]": SUBSCRIPT},
+    "Gate": {"then": READ, "otherwise": READ, "add_to_group": CALL},
+    "NodeOutputs": {"output": READ, "[]": SUBSCRIPT, "add_to_group": CALL},
     "CustomNodes": {"*": READ, "[]": SUBSCRIPT},
     "CustomNodeFactory": {"__call__": CALL, "node": CALL},
     "ScriptFunction": {"__call__": CALL, "node": CALL},
@@ -184,11 +185,13 @@ COMPARE_OPERATORS: frozenset[str] = frozenset({"Eq", "NotEq", "Lt", "LtE", "Gt",
 ARGUMENT_KINDS: dict[tuple[str, str], dict[int | str, str]] = {
     ("ff", "add_flow_parameter"): {0: "graph", "flow": "graph"},
     ("ff", "FlowInput"): {"flow_graph": "graph", "sample": "pl_frame"},
+    ("ff", "FlowGroup"): {"parent_group": "FlowGroup"},
     ("ff", "polars_code"): {0: "polars_code_def", "code": "polars_code_def"},
     ("FlowFrame", "polars_code"): {0: "polars_code_def", "code": "polars_code_def"},
+    **{(kind, "add_to_group"): {0: "FlowGroup", "group": "FlowGroup"} for kind in ("FlowFrame", "Gate", "NodeOutputs")},
 }
 """Arguments (position or keyword) that also take one non-data kind: the session graph ``flow``, a flow
-input's sample frame, or a Polars Code ``def``."""
+input's sample frame, a Polars Code ``def``, or a visual group (``ff.FlowGroup``)."""
 
 REFUSED_KEYWORDS: dict[tuple[str, str], frozenset[str]] = {
     ("ff", "RunFlow"): frozenset({"name", "schema", "overwrite"}),

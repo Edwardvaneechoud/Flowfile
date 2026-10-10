@@ -5,7 +5,8 @@ Three sources, all built Docker-free under the test session's scratch DB and sto
 * the codegen corpus: flows built by ``tests/flowfile/test_code_generator.py``. Its builders live inline in
   its test functions, so each listed test runs with an ``export_func`` that raises at the first export and
   hands back the flow as built. Only tests without Docker, Kafka or catalog-wipe side effects are listed;
-* frame-built native nodes (a parameter gate with then/else, a flow input and output);
+* frame-built native nodes (a parameter gate with then/else, nested visual groups over a formula gate and a
+  union, a flow input and output);
 * the showcase demo (``flowfile_frame/tests/fixtures/demo_catalog_pipeline.py``): a seeded catalog with the
   ``sales`` and ``regions`` tables, its child flow registered through ``publish_clean_orders``, the
   ``mood_emoji`` custom node installed, and ``build_sales_analytics`` built with ``register_flow`` stubbed.
@@ -118,6 +119,20 @@ def build_native_gate() -> FlowGraph:
     full = gate.then.with_columns(ff.lit("full").alias("mode"))
     quick = gate.otherwise.group_by("region").agg(ff.col("amount").sum()).with_columns(ff.lit("quick").alias("mode"))
     return ff.concat([full, quick], how="diagonal_relaxed").flow_graph
+
+
+def build_native_groups() -> FlowGraph:
+    """Nested visual groups over a fused chain, a gate (both exits) and a union, built from Python."""
+    import flowfile as ff
+
+    outer = ff.FlowGroup("Clean data", color="blue")
+    inner = ff.FlowGroup("Inner step", parent_group=outer)
+    source = ff.from_dict({"region": ["N", "S", "N"], "amount": [1.0, 2.0, 3.0]})
+    kept = source.filter(ff.col("amount") > 1).add_to_group(outer).select(["region", "amount"]).add_to_group(inner)
+    gate = ff.Gate(kept, formula="[amount] > 2").add_to_group(outer)
+    big = gate.then.with_columns(ff.lit("big").alias("size")).add_to_group(inner)
+    small = gate.otherwise.with_columns(ff.lit("small").alias("size"))
+    return ff.concat([big, small], how="diagonal_relaxed").add_to_group(outer).flow_graph
 
 
 def build_native_flow_io() -> FlowGraph:
@@ -278,6 +293,7 @@ def build_corpus(tmp_dir_factory: Callable[[str], Path]) -> list[tuple[str, Flow
     """The Docker-free part of the corpus: the codegen flows and the frame-built native nodes."""
     corpus = [(name.removeprefix("test_"), capture_codegen_flow(name, tmp_dir_factory(name))) for name in CODEGEN_TESTS]
     corpus.append(("native_gate", build_native_gate()))
+    corpus.append(("native_groups", build_native_groups()))
     corpus.append(("native_flow_io", build_native_flow_io()))
     corpus.append(("python_script_cells", build_python_script_cells()))
     corpus.append(("drawer_script", build_drawer_script()))

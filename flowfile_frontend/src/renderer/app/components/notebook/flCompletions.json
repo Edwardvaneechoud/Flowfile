@@ -121,6 +121,12 @@
       "doc_first_line": "A class representing a Directed Acyclic Graph (DAG) for data processing pipelines."
     },
     {
+      "name": "FlowGroup",
+      "kind": "class",
+      "signature": "(name='Group', *, color=None, parent_group=None)",
+      "doc_first_line": "A visual group of canvas nodes: a named, optionally coloured box, optionally nested in another group."
+    },
+    {
       "name": "FlowInformation",
       "kind": "class",
       "signature": "(*, flow_id, flow_name='', flow_settings, data={}, node_starts, node_connections=[], groups=<factory>, comments=<factory>)",
@@ -532,7 +538,7 @@
       "name": "get_all_available_cloud_storage_connections",
       "kind": "function",
       "signature": "()",
-      "doc_first_line": ""
+      "doc_first_line": "The current user's cloud storage connections, public fields only (no secrets)."
     },
     {
       "name": "get_all_available_database_connections",

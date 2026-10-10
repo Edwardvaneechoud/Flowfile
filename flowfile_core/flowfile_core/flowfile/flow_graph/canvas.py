@@ -12,9 +12,14 @@ from flowfile_core.schemas.history_schema import (
 
 
 class CanvasMixin(GraphMixinBase):
+    @property
+    def group_id_ceiling(self) -> int:
+        """The highest group id this flow has held; a new group numbers above it, freed ids are never reused."""
+        return max([self._group_id_seq, *self._groups])
+
     def _next_group_id(self) -> int:
         """Allocate a monotonically increasing group id (never reuses a freed id this session)."""
-        self._group_id_seq = max([self._group_id_seq, *self._groups]) + 1
+        self._group_id_seq = self.group_id_ceiling + 1
         return self._group_id_seq
 
     def _member_node_ids(self, group_id: int) -> list[int]:
@@ -98,27 +103,35 @@ class CanvasMixin(GraphMixinBase):
         bounds: schemas.GroupBounds | None = None,
         parent_group_id: int | None = None,
         child_group_ids: list[int] | None = None,
+        group_id: int | None = None,
     ) -> schemas.GroupInformation:
         """Create a visual group. Organizational only.
 
         Members are the given nodes (group_id) and child groups (their parent_group_id).
         The new group itself nests under parent_group_id. Bounds are computed when not supplied.
+        ``group_id`` names the new group's id (a batch refers to the group it creates); it must be
+        above :attr:`group_id_ceiling`, else ``ValueError``.
         """
+        if group_id is not None and group_id <= self.group_id_ceiling:
+            raise ValueError(f"Group id {group_id} is not above every id this flow has held ({self.group_id_ceiling})")
 
         def _do() -> schemas.GroupInformation:
-            group_id = self._next_group_id()
-            group = schemas.GroupInformation(id=group_id, name=name, color=color, parent_group_id=parent_group_id)
+            if group_id is None:
+                new_id = self._next_group_id()
+            else:
+                new_id = self._group_id_seq = group_id
+            group = schemas.GroupInformation(id=new_id, name=name, color=color, parent_group_id=parent_group_id)
             if bounds is not None:
                 group.x_position, group.y_position, group.width, group.height = bounds
-            self._groups[group_id] = group
+            self._groups[new_id] = group
             for node_id in node_ids:
-                self._set_node_group(node_id, group_id)
+                self._set_node_group(node_id, new_id)
             for cid in child_group_ids or []:
                 child = self._groups.get(cid)
-                if child is not None and not self._is_ancestor_group(cid, group_id):
-                    child.parent_group_id = group_id
+                if child is not None and not self._is_ancestor_group(cid, new_id):
+                    child.parent_group_id = new_id
             if bounds is None:
-                self._recompute_group_bounds(group_id)
+                self._recompute_group_bounds(new_id)
             return group
 
         return self._execute_with_history(_do, HistoryActionType.CREATE_GROUP, f"Create group '{name}'")
@@ -149,6 +162,34 @@ class CanvasMixin(GraphMixinBase):
             return group
 
         return self._execute_with_history(_do, HistoryActionType.UPDATE_GROUP, f"Update group '{group.name}'")
+
+    def nest_group(self, group_id: int, parent_group_id: int | None) -> schemas.GroupInformation:
+        """Nest a group under ``parent_group_id`` (``None`` lifts it to the top level) and refit its new parents."""
+        group = self._groups.get(group_id)
+        if group is None:
+            raise ValueError(f"Group {group_id} does not exist")
+        if parent_group_id is not None:
+            if parent_group_id not in self._groups:
+                raise ValueError(f"Group {parent_group_id} does not exist")
+            if self._is_ancestor_group(group_id, parent_group_id):
+                raise ValueError(f"Group {group_id} cannot nest inside itself or one of its sub-groups")
+
+        def _do() -> schemas.GroupInformation:
+            group.parent_group_id = parent_group_id
+            for ancestor_id in self._ancestor_group_ids(group_id):
+                self._recompute_group_bounds(ancestor_id)
+            return group
+
+        return self._execute_with_history(_do, HistoryActionType.UPDATE_GROUP, f"Nest group '{group.name}'")
+
+    def _ancestor_group_ids(self, group_id: int) -> list[int]:
+        """The ids of a group's parents, nearest first; cycle-safe."""
+        ancestors, seen, current = [], {group_id}, self._groups.get(group_id)
+        while current is not None and current.parent_group_id is not None and current.parent_group_id not in seen:
+            seen.add(current.parent_group_id)
+            ancestors.append(current.parent_group_id)
+            current = self._groups.get(current.parent_group_id)
+        return ancestors
 
     def delete_group(self, group_id: int) -> None:
         """Remove a group box (ungroup). Members and sub-groups lift up one level."""

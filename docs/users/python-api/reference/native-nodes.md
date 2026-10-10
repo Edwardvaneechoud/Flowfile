@@ -19,6 +19,7 @@ Every class returns an object with the same accessors:
 | `.outputs` | The output names, in handle order (`output-0` first). |
 | `.node_id`, `.node`, `.flow_graph` | The node id, the placed core `FlowNode`, and the graph it lives on. |
 | `.node_reference` | The node's reference, `None` for the default `df_<node_id>`. Settable; see below. |
+| `.add_to_group(group)` | Puts the node in a [visual group](visual-ui.md#visual-groups) (`ff.FlowGroup`) and returns the node, so it chains. Organizational only. |
 
 The `custom_node(...)` factory and a `@ff.python_script` function are callables instead: calling one returns the output frame, and its `.node(...)` method returns the node object with these accessors.
 

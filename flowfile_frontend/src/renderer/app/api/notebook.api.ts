@@ -50,11 +50,12 @@ export interface NotebookUpdate {
   default_kernel_id?: string | null;
 }
 
-/** One cell of `GET /notebook/render`; a `cell-<first node id>` cell is one statement spanning `node_ids`. */
+/** One cell of `GET /notebook/render`; a `cell-<first node id>` cell is one statement spanning `node_ids`;
+ * the `groups` cell declares the canvas's visual groups (`ff.FlowGroup`). */
 export interface RenderedCell {
   cell_id: string;
   node_ids: number[];
-  kind: "imports" | "parameters" | "node";
+  kind: "imports" | "parameters" | "groups" | "node";
   code: string;
   status: "code" | "placeholder" | "unsupported";
   reason: string | null;

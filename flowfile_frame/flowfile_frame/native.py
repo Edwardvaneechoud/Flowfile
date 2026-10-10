@@ -26,7 +26,7 @@ from flowfile_core.configs import node_store
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
-from flowfile_core.flowfile.flow_graph_utils import combine_flow_graphs_with_mapping
+from flowfile_core.flowfile.flow_graph_utils import _create_group_id_mapping, combine_flow_graphs_with_mapping
 from flowfile_core.flowfile.flow_node.flow_node import DeferredNodeError, FlowNode
 from flowfile_core.flowfile.flow_node.input_handles import input_handle
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE, output_handle
@@ -38,6 +38,7 @@ from flowfile_core.schemas.analysis_schemas.graphic_walker_schemas import Graphi
 from flowfile_core.schemas.schemas import NodeTemplate, get_settings_class_for_node_type
 from flowfile_frame._identity import current_user_id
 from flowfile_frame.enums import NodeType, NodeTypeLiteral, _literal
+from flowfile_frame.flow_group import FlowGroup, rebind_groups
 from flowfile_frame.notebook import NotebookMode, current
 from flowfile_frame.utils import _implicit_graph, generate_node_id, set_node_id
 from flowfile_frame.utils import data as node_id_data
@@ -858,6 +859,7 @@ def merge_frames(frames: Sequence[FlowFrame]) -> FlowGraph:
         combined_graph, node_mappings = combine_flow_graphs_with_mapping(*unique_graphs)
     except HTTPException as exc:
         raise NativeNodeError(str(exc.detail)) from exc
+    rebind_groups(unique_graphs, combined_graph, _create_group_id_mapping(tuple(unique_graphs)))
     for frame in frames:
         if frame.flow_graph is combined_graph:
             continue  # the same frame object passed twice
@@ -969,6 +971,16 @@ class NativeNode:
     def get_output(self, name: str | FlowOutput) -> FlowFrame:
         """The output frame named ``name`` (a name or a ``FlowOutput``); the spelled-out ``node[name]``."""
         return self[name]
+
+    def add_to_group(self, group: FlowGroup):
+        """Put this node in ``group``, a :class:`~flowfile_frame.flow_group.FlowGroup`; returns the node.
+
+        Organisational only: the group is a box on the canvas and never changes execution.
+        """
+        if not isinstance(group, FlowGroup):
+            raise NativeNodeError(f"add_to_group takes a ff.FlowGroup, got {type(group).__name__}")
+        group._add_node(self.flow_graph, self.node_id)
+        return self
 
     def _build(
         self,

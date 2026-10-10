@@ -273,6 +273,7 @@ def plan_push(flow: FlowGraph, user, request: NotebookPushRequest) -> tuple[Reco
         live["flowfile_settings"]["parameters"],
         result.flowfile_data["flowfile_settings"]["parameters"],
         live_cells=live_cells(request.provenance),
+        group_id_ceiling=flow.group_id_ceiling,
     )
     plan.warnings.extend(result.warnings)
     plan.warnings.extend(kernel_warnings(result.flowfile_data, user.id))

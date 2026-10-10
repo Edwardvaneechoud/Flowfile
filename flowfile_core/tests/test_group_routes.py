@@ -189,3 +189,37 @@ def test_create_group_rejected_while_running():
         assert resp.status_code == 422
     finally:
         flow_file_handler.get_flow(flow_id).flow_settings.is_running = False
+
+
+
+def test_apply_operations_group_ops_build_nested_groups_in_one_undo_step():
+    flow_id = make_flow(956)
+    undo_before = client.get("/editor/history_status/", params={"flow_id": flow_id}).json()["undo_count"]
+    ops = [
+        {"op": "create_group", "group": {"group_id": 1, "name": "Outer", "color": "blue", "node_ids": [1]}},
+        {"op": "create_group", "group": {"group_id": 2, "name": "Inner", "parent_group_id": 1, "node_ids": []}},
+        {"op": "add_nodes_to_group", "group_id": 2, "node_ids": [2]},
+        {"op": "update_group", "group_id": 2, "group": {"name": "Inner step"}},
+    ]
+    resp = client.post("/editor/apply_operations/", json={"flow_id": flow_id, "label": "groups", "operations": ops})
+    assert resp.status_code == 200, resp.text
+    graph = flow_file_handler.get_flow(flow_id)
+    assert graph._groups[2].parent_group_id == 1 and graph._groups[1].color == "blue"
+    assert graph._groups[2].name == "Inner step"
+    assert graph.get_node(1).setting_input.group_id == 1 and graph.get_node(2).setting_input.group_id == 2
+    assert resp.json()["history"]["undo_count"] == undo_before + 1
+
+    nest = [{"op": "nest_group", "group_id": 2, "parent_group_id": None}, {"op": "delete_group", "group_id": 1}]
+    resp = client.post("/editor/apply_operations/", json={"flow_id": flow_id, "label": "lift", "operations": nest})
+    assert resp.status_code == 200, resp.text
+    assert set(graph._groups) == {2} and graph._groups[2].parent_group_id is None
+    assert graph.get_node(1).setting_input.group_id is None
+
+    taken = [{"op": "create_group", "group": {"group_id": 2, "name": "Again", "node_ids": [1]}}]
+    refused = client.post("/editor/apply_operations/", json={"flow_id": flow_id, "label": "bad", "operations": taken})
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["detail"]["code"] == "GROUP_ID_TAKEN"
+
+    assert client.post("/editor/undo/", params={"flow_id": flow_id}).status_code == 200
+    assert client.post("/editor/undo/", params={"flow_id": flow_id}).status_code == 200
+    assert graph._groups == {} and graph.get_node(1).setting_input.group_id is None

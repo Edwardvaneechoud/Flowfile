@@ -502,6 +502,34 @@ def _with_description(code: str, description: str) -> str | None:
     return f"{before}{separator}description={json.dumps(description, ensure_ascii=False)}{rest}"
 
 
+def _with_group(code: str, group_var: str) -> str | None:
+    """``.add_to_group(<group_var>)`` on the value the last statement assigns to one name or evaluates.
+
+    A statement assigning a tuple (``train, test = ...``) gets a line ``<first name>.add_to_group(...)``
+    after it instead. ``None`` when the code ends in no statement a group call can follow.
+    """
+    try:
+        last = (ast.parse(code).body or [None])[-1]
+    except SyntaxError:
+        return None
+    if isinstance(last, ast.Assign) and len(last.targets) == 1 and isinstance(last.targets[0], ast.Tuple):
+        names = [target.id for target in last.targets[0].elts if isinstance(target, ast.Name)]
+        return f"{code.rstrip()}\n{names[0]}.add_to_group({group_var})" if names else None
+    if isinstance(last, ast.Assign) and len(last.targets) == 1 and isinstance(last.targets[0], ast.Name):
+        value = last.value
+    elif isinstance(last, ast.Expr):
+        value = last.value
+    else:
+        return None
+    if not isinstance(value, ast.Call | ast.Attribute | ast.Subscript | ast.Name):
+        return None
+    lines = code.split("\n")
+    line = lines[value.end_lineno - 1]
+    col = len(line.encode("utf-8")[: value.end_col_offset].decode("utf-8", errors="ignore"))
+    offset = sum(len(prior) + 1 for prior in lines[: value.end_lineno - 1]) + col
+    return f"{code[:offset]}.add_to_group({group_var}){code[offset:]}"
+
+
 # Generated variable names are uniquified against these so they never shadow a
 # Python builtin or keyword (e.g. a split literally named ``sorted`` or ``type``).
 _RESERVED_NAMES: frozenset[str] = frozenset(keyword.kwlist) | frozenset(dir(builtins))
@@ -1821,6 +1849,7 @@ class FlowGraphCodeConverter(
 
         fused = render_pipeline(emissions, consumers)
         rename = self._plan_boundary_names(emissions, {em.node_id for em in fused}, node_by_id)
+        rename.update(self._plan_group_names(fused, rename))
         body = self._apply_renames([line for em in fused for line in em.lines], rename)
         self._fused = []
         for em in fused:
@@ -1853,6 +1882,14 @@ class FlowGraphCodeConverter(
     def parameters(self) -> list:
         """The flow parameters the wrapper declares as ``run_etl_pipeline(*, name=default)`` keyword arguments."""
         return list(self._codegen_params)
+
+    def _plan_group_names(self, fused: list[NodeEmission], rename: dict[str, str]) -> dict[str, str]:
+        """Renames for the visual-group tokens the body references; the Polars export names no groups."""
+        return {}
+
+    def group_lines(self) -> list[str]:
+        """The ``ff.FlowGroup(...)`` declarations the body's ``add_to_group`` calls refer to, parents first."""
+        return []
 
     def _render_body_with_gates(self) -> list[str]:
         """Emit the body with real ``if`` blocks around gated segments.
@@ -2372,17 +2409,64 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
         self.decorated_scripts = decorated_scripts
         self._blocked: set[int] = set()
         self._statuses: dict | None = None
+        self._tagged_groups: set[int] = set()
+        self._group_names: dict[int, str] = {}
         self.imports.add("import flowfile as ff")
 
     def _compute_gate_conditions(self, execution_plan) -> None:
         """Gates emit as ``ff.Gate``; the if-block machinery belongs to the Polars export."""
 
     def _render_body(self) -> list[str]:
-        """The body, preceded by the ``flow`` graph that ``ff.FlowInput(flow_graph=flow)`` builds on."""
+        """The body, preceded by the ``flow`` graph that ``ff.FlowInput(flow_graph=flow)`` builds on and the
+        ``ff.FlowGroup`` declarations its ``add_to_group`` calls name."""
         body = super()._render_body()
+        declarations = self.group_lines()
+        if declarations:
+            body = [*declarations, "", *body]
         if any(f"flow_graph={FLOW_VAR}" in line for line in body):
             return [f"{FLOW_VAR} = ff.create_flow_graph()", "", *body]
         return body
+
+    def _declared_group_ids(self) -> list[int]:
+        """Every group a tagged node is in, with its ancestors, parents before children (then by id)."""
+        groups = self.flow_graph._groups
+        declared: set[int] = set()
+        for group_id in self._tagged_groups:
+            current = groups.get(group_id)
+            while current is not None and current.id not in declared:
+                declared.add(current.id)
+                current = groups.get(current.parent_group_id) if current.parent_group_id is not None else None
+        return sorted(declared, key=lambda gid: (self.flow_graph._group_depth(gid), gid))
+
+    def _plan_group_names(self, fused: list[NodeEmission], rename: dict[str, str]) -> dict[str, str]:
+        """Name each declared group after its label (``cleaning``), numbered on a collision with any body name."""
+        if not self._tagged_groups:
+            return {}
+        used = set(_RESERVED_NAMES) | self._imported_names() | set(rename.values()) | {FLOW_VAR}
+        used |= {token for em in fused for line in em.lines for token in re.findall(r"[A-Za-z_]\w*", line)}
+        self._group_names = {}
+        for group_id in self._declared_group_ids():
+            slug = re.sub(r"[^a-z0-9]+", "_", self.flow_graph._groups[group_id].name.lower()).strip("_") or "group"
+            if slug[0].isdigit():
+                slug = f"group_{slug}"
+            self._group_names[group_id] = self._uniquify(slug, used)
+        return {self._group_token(gid): name for gid, name in self._group_names.items()}
+
+    def group_lines(self) -> list[str]:
+        lines = []
+        for group_id in self._declared_group_ids():
+            group = self.flow_graph._groups[group_id]
+            args = [self._py_str(group.name)]
+            if group.color:
+                args.append(f"color={json.dumps(group.color)}")
+            if group.parent_group_id in self._group_names:
+                args.append(f"parent_group={self._group_names[group.parent_group_id]}")
+            lines.append(f"{self._group_names[group_id]} = ff.FlowGroup({', '.join(args)})")
+        return lines
+
+    @staticmethod
+    def _group_token(group_id: int) -> str:
+        return f"_group_{group_id}"
 
     def _var_label(self, node: FlowNode) -> str:
         return _NATIVE_LABELS.get(node.node_type) or super()._var_label(node)
@@ -2430,6 +2514,26 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
         self.code_lines[start:end] = [*described.split("\n"), ""]
         self._node_spans[-1] = (node, var, start, len(self.code_lines))
 
+    def _tag_group(self, node: FlowNode) -> None:
+        """Add ``.add_to_group(<group token>)`` to the statement the node's span assigns, when it is in a group.
+
+        The token is renamed to the group's variable with the boundary names. A flow output is skipped:
+        ``to_flow_output`` returns its input frame, so a call on it would group the wrong node.
+        """
+        group_id = getattr(node.setting_input, "group_id", None)
+        if group_id is None or group_id not in self.flow_graph._groups or node.node_type == "flow_output":
+            return
+        if not self._node_spans or self._node_spans[-1][0] is not node:
+            return
+        _, var, start, end = self._node_spans[-1]
+        tagged = _with_group("\n".join(self.code_lines[start:end]).rstrip(), self._group_token(group_id))
+        if tagged is None:
+            self.warnings.append(f"Node {node.node_id}: its group has no frame call to attach to")
+            return
+        self.code_lines[start:end] = [*tagged.split("\n"), ""]
+        self._node_spans[-1] = (node, var, start, len(self.code_lines))
+        self._tagged_groups.add(group_id)
+
     def _producer_ids(self, node: FlowNode) -> list[int]:
         keyed = node.node_inputs.keyed_inputs or {}
         return self._raw_producer_ids(node) + [source.node_id for source in keyed.values() if source is not None]
@@ -2473,7 +2577,8 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
         """With placeholders on, a node whose handler cannot express it rolls back and becomes a placeholder."""
         if not self.placeholders:
             super()._generate_node_code(node)
-            return self._describe(node)
+            self._describe(node)
+            return self._tag_group(node)
         reason = self._static_placeholder_reason(node)
         if reason is None:
             mark = (len(self.code_lines), len(self.unsupported_nodes), len(self._node_spans), len(self.output_nodes))
@@ -2489,7 +2594,8 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
                 elif len(self._node_spans) == mark[2]:
                     reason = "renders no code"
             if reason is None:
-                return self._describe(node)
+                self._describe(node)
+                return self._tag_group(node)
             del self.code_lines[mark[0] :], self.unsupported_nodes[mark[1] :], self._node_spans[mark[2] :]
             del self.output_nodes[mark[3] :]
             self.imports, self.node_handle_var_mapping, self._module_helpers = saved
@@ -2506,6 +2612,7 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
         self._add_code(f"{var} = ff.canvas_node({', '.join(args)})  # {comment}")
         if node.node_template.output > 0:
             self.last_node_var = var
+        self._tag_group(node)
 
     def _custom_node_input_expr(self, input_var: str) -> str:
         """Bridge a FlowFrame input down to the polars LazyFrame ``process()`` expects."""

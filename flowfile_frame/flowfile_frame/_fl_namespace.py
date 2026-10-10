@@ -101,6 +101,7 @@ from flowfile_frame.custom_node import CustomNode, custom_node
 from flowfile_frame.custom_nodes import custom_nodes
 from flowfile_frame.expr import col, column, count, cum_count, len, lit, max, mean, min, sum, when
 from flowfile_frame.flow_frame import FlowFrame
+from flowfile_frame.flow_group import FlowGroup
 from flowfile_frame.group_frame import GroupByFrame
 from flowfile_frame.kernels import kernels
 from flowfile_frame.notebook_cells import canvas_node
@@ -192,6 +193,7 @@ __all__ = [
     "FuzzyMapping",
     # Native node classes
     "Gate",
+    "FlowGroup",
     "Node",
     "NativeNodeError",
     "FlowInput",
