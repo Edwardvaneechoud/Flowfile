@@ -174,7 +174,7 @@
               class="chip-input__input"
               :placeholder="
                 formModels.length === 0
-                  ? 'e.g. moonshotai/kimi-k2:free — press Enter to add'
+                  ? 'e.g. qwen/qwen3.6-35b-a3b — press Enter to add'
                   : 'Add another…'
               "
               @keydown.enter.prevent="handleAddModel"

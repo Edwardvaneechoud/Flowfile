@@ -3033,26 +3033,7 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
         self, settings: input_schema.NodeFuzzyMatch, var_name: str, input_vars: dict[str, str]
     ) -> None:
         """Handle fuzzy match nodes using FlowFrame's native fuzzy_join method."""
-        fuzzy_match_handler = transform_schema.FuzzyMatchInputManager(settings.join_input)
-        left_df = input_vars.get("main", input_vars.get("main_0", "df_left"))
-        right_df = input_vars.get("right", input_vars.get("main_1", "df_right"))
-
-        if left_df == right_df:
-            right_df = "df_right"
-            self._add_code(f"{right_df} = {left_df}")
-
-        # Drop into node-local temps so a fanned-out upstream frame isn't rebound.
-        if fuzzy_match_handler.left_select.has_drop_cols():
-            left_drop_cols = [c.old_name for c in fuzzy_match_handler.left_select.non_jk_drop_columns]
-            fuzzy_left = f"_fuzzy_left_{settings.node_id}"
-            self._add_code(f"{fuzzy_left} = {left_df}.drop({left_drop_cols})")
-            left_df = fuzzy_left
-        if fuzzy_match_handler.right_select.has_drop_cols():
-            right_drop_cols = [c.old_name for c in fuzzy_match_handler.right_select.non_jk_drop_columns]
-            fuzzy_right = f"_fuzzy_right_{settings.node_id}"
-            self._add_code(f"{fuzzy_right} = {right_df}.drop({right_drop_cols})")
-            right_df = fuzzy_right
-
+        left_df, right_df, fuzzy_match_handler = self._fuzzy_match_inputs(settings, input_vars)
         fuzzy_join_mapping_settings = self._transform_fuzzy_mappings_to_string(
             fuzzy_match_handler.join_mapping, prefix="ff."
         )

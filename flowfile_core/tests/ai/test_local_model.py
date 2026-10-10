@@ -26,10 +26,12 @@ def _tmp_storage(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
     original = storage._base_dir
     storage._base_dir = tmp_path
     manager.stop()
+    manager._install_progress = None
     try:
         yield tmp_path
     finally:
         manager.stop()
+        manager._install_progress = None
         storage._base_dir = original
 
 
@@ -70,10 +72,13 @@ def test_status_not_installed(_tmp_storage):  # type: ignore[no-untyped-def]
     assert st["running"] is False
     assert st["any_model_installed"] is False
     assert st["install_dir"].endswith("local_model")
-    # The catalog is surfaced for the UI picker; nothing installed yet.
+    # The catalog is surfaced for the UI picker; nothing installed yet, so
+    # the legacy (Qwen2.5) entries are hidden from the install list.
     ids = {m["id"] for m in st["models"]}
-    assert ids == set(manager.MODELS)
+    assert ids == {mid for mid, spec in manager.MODELS.items() if not spec.legacy}
     assert all(m["installed"] is False for m in st["models"])
+    assert all(m["legacy"] is False for m in st["models"])
+    assert st["ctx_size_max"] == manager.MODELS[manager.DEFAULT_MODEL_ID].max_ctx
 
 
 def test_extract_archive_preserves_symlinks(tmp_path):  # type: ignore[no-untyped-def]
@@ -181,7 +186,8 @@ def test_install_rejects_bad_gguf_header(_tmp_storage, monkeypatch):  # type: ig
 def test_local_provider_config():
     p = LocalProvider(api_base="http://127.0.0.1:1234/v1", api_key="sk-local")
     assert p.name == "local"
-    assert p.model == "openai/qwen2.5-coder-3b"
+    assert p.model == f"openai/{manager.DEFAULT_MODEL_ID}"
+    assert p.model == "openai/qwen3.5-4b"
     assert p.api_base == "http://127.0.0.1:1234/v1"
     assert p.supports_tools is False
     assert isinstance(p, Provider)
@@ -190,26 +196,38 @@ def test_local_provider_config():
 # Catalog                                                                      #
 
 
-def test_catalog_default_is_coder_3b_and_no_llama():
-    # Llama-3.2-3B was dropped (poor flow generation); Qwen2.5-Coder-3B is the
-    # recommended default the one-click setup installs.
-    assert manager.DEFAULT_MODEL_ID == "qwen2.5-coder-3b"
+def test_catalog_default_is_qwen35_4b_and_no_llama():
+    # Llama-3.2-3B was dropped (poor flow generation); Qwen3.5 4B is the
+    # recommended default the one-click setup installs. The Qwen2.5 entries
+    # stay as legacy so an existing download is still served and deletable.
+    assert manager.DEFAULT_MODEL_ID == "qwen3.5-4b"
     assert manager.DEFAULT_MODEL_ID in manager.MODELS
+    assert manager.MODELS[manager.DEFAULT_MODEL_ID].legacy is False
     assert "llama-3.2-3b" not in manager.MODELS
     assert all("llama" not in mid for mid in manager.MODELS)
+    current = [mid for mid, spec in manager.MODELS.items() if not spec.legacy]
+    assert current == ["qwen3.5-2b", "qwen3.5-4b", "qwen3.5-9b"]
+    legacy = [mid for mid, spec in manager.MODELS.items() if spec.legacy]
+    assert legacy == ["qwen2.5-coder-1.5b", "qwen2.5-coder-3b", "qwen2.5-7b"]
+    # Current entries first, so the UI lists the new models before the old.
+    assert list(manager.MODELS) == current + legacy
+    for spec in manager.MODELS.values():
+        assert spec.file.lower().endswith("q4_k_m.gguf"), spec.id
 
 
 # Context-window sidecar                                                       #
 
 
 def test_ctx_size_clamps_and_persists(_tmp_storage):  # type: ignore[no-untyped-def]
-    # Below the floor → clamped up; above the ceiling → clamped down; both
-    # round-trip through the sidecar.
+    # Below the floor → clamped up; above the ceiling (the selected model's
+    # ``max_ctx``) → clamped down; both round-trip through the sidecar.
+    max_ctx = manager.max_ctx_size()
+    assert max_ctx == manager.MODELS[manager.DEFAULT_MODEL_ID].max_ctx
     assert manager.set_ctx_size(10) == manager._MIN_CTX_SIZE
     assert manager.get_ctx_size() == manager._MIN_CTX_SIZE
-    assert manager.set_ctx_size(10_000_000) == manager._MAX_CTX_SIZE
-    assert manager.get_ctx_size() == manager._MAX_CTX_SIZE
-    mid = (manager._MIN_CTX_SIZE + manager._MAX_CTX_SIZE) // 2
+    assert manager.set_ctx_size(10_000_000) == max_ctx
+    assert manager.get_ctx_size() == max_ctx
+    mid = (manager._MIN_CTX_SIZE + max_ctx) // 2
     assert manager.set_ctx_size(mid) == mid
     assert manager.get_ctx_size() == mid
 
@@ -413,3 +431,153 @@ def test_start_route_maps_boot_failure_to_503(monkeypatch):  # type: ignore[no-u
     with pytest.raises(HTTPException) as ei:
         asyncio.run(local_model_routes.local_model_start(current_user=object()))
     assert ei.value.status_code == 503
+
+
+# Per-model context + legacy entries                                          #
+
+
+def test_ctx_size_clamps_to_the_selected_models_window(_tmp_storage, monkeypatch):  # type: ignore[no-untyped-def]
+    """A Qwen3.5 pick allows a larger window than the legacy Qwen2.5 pick; the
+    persisted value is re-clamped on read, so switching to a smaller-window
+    model never boots the server past what it supports."""
+    monkeypatch.setattr(manager, "_model_installed", lambda mid: True)
+    manager.set_selected_model_id("qwen3.5-4b")
+    assert manager.max_ctx_size() == 131072
+    assert manager.set_ctx_size(65536) == 65536
+    assert manager.get_ctx_size() == 65536
+
+    manager.set_selected_model_id("qwen2.5-coder-3b")
+    assert manager.max_ctx_size() == 32768
+    assert manager.get_ctx_size() == 32768  # same sidecar, re-clamped
+    assert manager.status()["ctx_size_max"] == 32768
+    assert manager.set_ctx_size(40000) == 32768
+
+
+class _Unlinkable:
+    def __init__(self, mid: str, sink: list[str]) -> None:
+        self.mid, self.sink = mid, sink
+
+    def unlink(self, missing_ok: bool = False) -> None:
+        self.sink.append(self.mid)
+
+
+def test_legacy_model_hidden_unless_installed(_tmp_storage, monkeypatch):  # type: ignore[no-untyped-def]
+    """A superseded entry is not offered for install, but an existing download
+    stays visible, selectable and deletable (``installed_model_ids`` still
+    walks it; per-model delete still resolves it)."""
+    legacy = "qwen2.5-coder-3b"
+    assert manager.MODELS[legacy].legacy is True
+    assert legacy not in {m["id"] for m in manager.status()["models"]}
+
+    installed = {legacy}
+    monkeypatch.setattr(manager, "_model_installed", lambda mid: mid in installed)
+    models = {m["id"]: m for m in manager.status()["models"]}
+    assert legacy in models
+    assert models[legacy]["legacy"] is True
+    assert models[legacy]["installed"] is True
+    assert "qwen2.5-7b" not in models  # the other legacy entries stay hidden
+    assert manager.installed_model_ids() == [legacy]
+    # Existing users keep their model: nothing else installed, so the legacy
+    # download is what the server runs until they switch.
+    assert manager.get_selected_model_id() == legacy
+
+    manager.set_active_model(legacy)
+    assert manager.get_selected_model_id() == legacy
+
+    unlinked: list[str] = []
+    monkeypatch.setattr(manager, "_model_path", lambda mid: _Unlinkable(mid, unlinked))
+    manager.uninstall(legacy)
+    assert unlinked == [legacy]
+
+
+# _spawn arguments                                                             #
+
+
+def _capture_spawn_cmd(monkeypatch, model_id: str) -> list[str]:  # type: ignore[no-untyped-def]
+    captured: dict[str, list[str]] = {}
+
+    class _Proc:
+        def poll(self):  # type: ignore[no-untyped-def]
+            return None
+
+    def fake_popen(cmd, **_kwargs):  # type: ignore[no-untyped-def]
+        captured["cmd"] = list(cmd)
+        return _Proc()
+
+    monkeypatch.setattr(manager, "_free_port", lambda: 12345)
+    monkeypatch.setattr(manager.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(manager, "_health_ok", lambda port: True)
+    server = manager._spawn(manager.Path("llama-server"), manager.Path("m.gguf"), model_id)
+    assert server.model_id == model_id
+    return captured["cmd"]
+
+
+def test_spawn_turns_thinking_off_and_applies_model_sampling(_tmp_storage, monkeypatch):  # type: ignore[no-untyped-def]
+    """Thinking is disabled in one place for every surface (chat, Simple
+    build, JSON) and the Qwen3.5 entries get Qwen's non-thinking sampling."""
+    cmd = _capture_spawn_cmd(monkeypatch, "qwen3.5-4b")
+    joined = " ".join(cmd)
+    assert "--jinja" in cmd
+    assert "--reasoning off" in joined
+    assert "--reasoning-budget" not in cmd  # left Qwen3.5 reasoning on; see _spawn
+    assert "--temp 0.7 --top-p 0.8 --top-k 20" in joined
+    assert cmd.index("--ctx-size") < cmd.index("--jinja")
+
+
+def test_spawn_legacy_model_gets_no_sampling_overrides(_tmp_storage, monkeypatch):  # type: ignore[no-untyped-def]
+    cmd = _capture_spawn_cmd(monkeypatch, "qwen2.5-coder-3b")
+    assert "--jinja" in cmd  # harmless on a model without a thinking mode
+    assert "--reasoning off" in " ".join(cmd)
+    assert "--temp" not in cmd
+
+
+# Install progress survives a page reload                                      #
+
+
+def test_install_progress_observable_during_and_after(_tmp_storage, monkeypatch):  # type: ignore[no-untyped-def]
+    """``install_progress()`` (and ``status()["install"]``) shows the running
+    install's latest event while it runs and its terminal event afterwards, so
+    a reloaded page can re-attach instead of seeing "not installed"."""
+    assert manager.install_progress() is None
+    assert manager.status()["install"] is None
+
+    _fake_install_io(monkeypatch)
+    seen: list[dict] = []
+
+    def observing_download(url, dest, on_progress, phase):  # type: ignore[no-untyped-def]
+        on_progress({"phase": phase, "received": 5, "total": 10})
+        seen.append(manager.status()["install"])
+        dest.write_bytes(b"GGUF" + b"\x00" * 1_200_000)
+
+    monkeypatch.setattr(manager, "_download_to_file", observing_download)
+    manager.install()
+
+    assert seen == [
+        {
+            "phase": "downloading_model",
+            "received": 5,
+            "total": 10,
+            "model_id": manager.DEFAULT_MODEL_ID,
+            "active": True,
+        }
+    ]
+    final = manager.install_progress()
+    assert final["phase"] == "done"
+    assert final["active"] is False
+    assert final["model_id"] == manager.DEFAULT_MODEL_ID
+
+
+def test_install_progress_records_failure(_tmp_storage, monkeypatch):  # type: ignore[no-untyped-def]
+    _fake_install_io(monkeypatch)
+
+    def bad_model(url, dest, on_progress, phase):  # type: ignore[no-untyped-def]
+        dest.write_bytes(b"NOTG" + b"\x00" * 1_200_000)
+
+    monkeypatch.setattr(manager, "_download_to_file", bad_model)
+    with pytest.raises(manager.LocalModelError):
+        manager.install("qwen3.5-2b")
+    final = manager.status()["install"]
+    assert final["active"] is False
+    assert final["phase"] == "error"
+    assert final["model_id"] == "qwen3.5-2b"
+    assert "GGUF" in final["error"]

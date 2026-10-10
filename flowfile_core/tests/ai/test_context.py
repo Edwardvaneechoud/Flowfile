@@ -1968,3 +1968,50 @@ def test_sql_query_user_instruction_uses_input_1_in_example() -> None:
     # as table names. Make sure those don't reappear.
     assert "FROM orders" not in instruction
     assert "FROM customers" not in instruction
+
+
+
+# 9. On-device (``local=True``) prompt variant
+
+
+_ASSIST_SURFACES = ("explain", "docgen", "lineage")
+
+
+@pytest.mark.parametrize("surface", _ASSIST_SURFACES)
+def test_local_assist_prompt_is_small_and_footer_free(surface: SurfaceLiteral) -> None:
+    """The on-device variant has to fit a 16k window next to the flow and
+    the conversation: ~3k tokens, no agent-mode footer, one line per node."""
+    text = assemble_system_prompt(surface, local=True)
+    assert estimate_tokens(text) <= 3000, estimate_tokens(text)
+    assert "agent mode" not in text.lower()
+    assert "Assist mode" in text
+    assert "Simple build" in text
+    assert "## Flowfile node reference" in text
+    assert "- Filter data (Transformations):" in text
+    assert "### filter" not in text
+
+
+@pytest.mark.parametrize("surface", _ASSIST_SURFACES)
+def test_cloud_assist_prompt_is_unchanged_by_the_local_flag(surface: SurfaceLiteral) -> None:
+    """``local=False`` (the default) is the cloud prompt byte for byte:
+    the assist.md footer and the full per-node reference stay."""
+    text = assemble_system_prompt(surface)
+    assert text == assemble_system_prompt(surface, local=False)
+    assert "auto-switch to agent mode" in text
+    assert "### filter" in text
+    assert "Simple build" not in text
+    assert "local_assist" not in text
+
+
+@pytest.mark.parametrize("surface", ("cmd_k", "agent_complex", "agent_staged"))
+def test_local_flag_only_affects_assist_level_surfaces(surface: SurfaceLiteral) -> None:
+    assert assemble_system_prompt(surface, local=True) == assemble_system_prompt(surface)
+
+
+def test_first_sentence_keeps_abbreviations_and_caps_length() -> None:
+    from flowfile_core.ai.context.builder import _first_sentence
+
+    assert _first_sentence("**Row-wise only.** Use it for X. More.") == "Row-wise only."
+    assert _first_sentence("Rename with a rule, e.g. `[name]`. Second sentence.") == "Rename with a rule, e.g. `[name]`."
+    assert _first_sentence("A " * 200).endswith("…")
+    assert len(_first_sentence("A " * 200)) <= 160

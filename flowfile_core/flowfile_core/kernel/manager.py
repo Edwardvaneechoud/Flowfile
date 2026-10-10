@@ -693,7 +693,7 @@ class KernelManager:
         When the frontend sends only ``flow_id`` and ``node_id`` (without
         pre-built filesystem paths), this method resolves the actual paths
         on the shared volume and translates them for the kernel container.
-        If ``input_paths`` is already populated (e.g. from ``flow_graph.py``),
+        If ``input_paths`` is already populated (e.g. from the ``flow_graph`` package),
         this is a no-op.
         """
         if request.input_paths or not request.flow_id or not request.node_id:

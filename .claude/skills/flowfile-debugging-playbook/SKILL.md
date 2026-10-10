@@ -303,7 +303,7 @@ commands shown before relying on the numbers in a new session.
 - `results_exists` worker-down behavior: `grep -n "def results_exists" -A 15 flowfile_core/flowfile_core/flowfile/flow_data_engine/subprocess_operations/subprocess_operations.py`.
 - `invalidate_cache` escape hatch: `grep -n "def invalidate_cache" -A 10 flowfile_core/flowfile_core/flowfile/flow_node/flow_node.py`.
 - "Flow no longer in memory" 404 message/route: `grep -n "no longer in memory" flowfile_core/flowfile_core/routes/routes.py`.
-- CORS-masked-500 guard comment: `grep -n "CORS" flowfile_core/flowfile_core/flowfile/flow_graph.py`.
+- CORS-masked-500 guard comment: `grep -n "CORS" flowfile_core/flowfile_core/flowfile/flow_graph/connections.py`.
 - Kernel host port range: `grep -n "_BASE_PORT\|_PORT_RANGE" flowfile_core/flowfile_core/kernel/manager.py`.
 - Kernel container naming: `grep -n 'f"flowfile-kernel-' flowfile_core/flowfile_core/kernel/manager.py`.
 - AI prompt log CLI: `python -m flowfile_core.ai.prompt_log tail 5` (run against a scratch `FLOWFILE_DB_PATH`/`FLOWFILE_STORAGE_DIR` first if you don't want to touch real data).
