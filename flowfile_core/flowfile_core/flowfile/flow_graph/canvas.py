@@ -144,8 +144,9 @@ class CanvasMixin(GraphMixinBase):
         color: schemas.GroupColor | None = None,
         bounds: schemas.GroupBounds | None = None,
         collapsed: bool | None = None,
+        clear_color: bool = False,
     ) -> schemas.GroupInformation:
-        """Rename / recolor / move / resize / collapse a group box."""
+        """Rename / recolor / move / resize / collapse a group box; ``clear_color`` restores the default tint."""
         group = self._groups.get(group_id)
         if group is None:
             raise ValueError(f"Group {group_id} does not exist")
@@ -153,6 +154,8 @@ class CanvasMixin(GraphMixinBase):
         def _do() -> schemas.GroupInformation:
             if name is not None:
                 group.name = name
+            if clear_color:
+                group.color = None
             if color is not None:
                 group.color = color
             if bounds is not None:
@@ -164,7 +167,8 @@ class CanvasMixin(GraphMixinBase):
         return self._execute_with_history(_do, HistoryActionType.UPDATE_GROUP, f"Update group '{group.name}'")
 
     def nest_group(self, group_id: int, parent_group_id: int | None) -> schemas.GroupInformation:
-        """Nest a group under ``parent_group_id`` (``None`` lifts it to the top level) and refit its new parents."""
+        """Nest a group under ``parent_group_id`` (``None`` lifts it to the top level) and refit its old and new
+        parents."""
         group = self._groups.get(group_id)
         if group is None:
             raise ValueError(f"Group {group_id} does not exist")
@@ -175,8 +179,9 @@ class CanvasMixin(GraphMixinBase):
                 raise ValueError(f"Group {group_id} cannot nest inside itself or one of its sub-groups")
 
         def _do() -> schemas.GroupInformation:
+            old_ancestors = self._ancestor_group_ids(group_id)
             group.parent_group_id = parent_group_id
-            for ancestor_id in self._ancestor_group_ids(group_id):
+            for ancestor_id in old_ancestors + self._ancestor_group_ids(group_id):
                 self._recompute_group_bounds(ancestor_id)
             return group
 

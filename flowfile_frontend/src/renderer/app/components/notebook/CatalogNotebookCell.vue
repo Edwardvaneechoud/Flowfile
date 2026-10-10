@@ -302,6 +302,7 @@ const extensions = [
     getNodeId: () => props.nodeId ?? 0,
     // A canvas notebook cell (it carries a sync state) has no kernel to attach.
     kernelHint: props.syncState == null,
+    frameMethods: props.syncState != null,
   }),
   // Report caret moves so the store knows where "insert at cursor" should land.
   EditorView.updateListener.of((update) => {

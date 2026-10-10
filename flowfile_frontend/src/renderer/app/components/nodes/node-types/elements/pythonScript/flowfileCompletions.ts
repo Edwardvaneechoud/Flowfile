@@ -1,4 +1,5 @@
 import type { Completion, CompletionSource } from "@codemirror/autocomplete";
+import type { EditorState } from "@codemirror/state";
 import flCompletions from "../../../../notebook/flCompletions.json";
 
 import {
@@ -7,6 +8,7 @@ import {
   RE_SCHEMA_CALL,
   RE_TABLE_CALL,
 } from "@/utils/flowfileCtxCompletions";
+import { currentArgText, insideComment, openCallParen } from "./lspPositions";
 
 // The kernel-runtime `flowfile_ctx` API + catalog-ref completions live in a
 // shared, editor-agnostic module (also used by the Node Designer's process-code
@@ -209,10 +211,59 @@ const FL_ENTRIES: Completion[] = flCompletions.ff.map((e) => ({
   info: e.doc_first_line,
 }));
 
+// Canvas notebook cells are FlowFrame code: the generated FlowFrame members join the Polars list.
+const POLARS_LABELS = new Set(POLARS_METHOD_ENTRIES.map((e) => e.label));
+const FRAME_METHOD_ENTRIES: Completion[] = [
+  ...POLARS_METHOD_ENTRIES,
+  ...flCompletions.frame
+    .filter((e) => !POLARS_LABELS.has(e.name))
+    .map((e) => ({
+      label: e.name,
+      type: e.kind,
+      detail: e.signature,
+      apply: e.kind === "method" ? `${e.name}()` : undefined,
+    })),
+];
+
+const COLOR_OPTIONS: Completion[] = flCompletions.group_colors.map((c) => ({
+  label: c.name,
+  type: "enum",
+  detail: "group colour",
+}));
+const QUOTED_COLOR_OPTIONS: Completion[] = COLOR_OPTIONS.map((o) => ({
+  ...o,
+  apply: `"${o.label}"`,
+}));
+
 /** `ff.<name>` from the generated `flowfile.__all__` listing (`make fl_completions`). */
 export const flModuleCompletions: CompletionSource = (context) => {
   const match = context.matchBefore(/\bff\.\w*$/);
   return match ? { from: match.from + 3, options: FL_ENTRIES, validFor: /^\w*$/ } : null;
+};
+
+// What is typed after `color=` in the `ff.FlowGroup(...)` call at `pos`, or null elsewhere.
+function flowGroupColorArg(state: EditorState, pos: number): string | null {
+  const paren = openCallParen(state, pos);
+  if (paren < 0 || !/\bFlowGroup\s*$/.test(state.sliceDoc(Math.max(0, paren - 100), paren))) {
+    return null;
+  }
+  if (insideComment(state, pos) || insideComment(state, paren + 1)) return null;
+  const match = currentArgText(state, pos)?.match(/^\s*color\s*=\s*(["']?\w*)$/);
+  return match ? match[1] : null;
+}
+
+/** The group tints inside the quotes of an `ff.FlowGroup(..., color="...")` argument. */
+export const flowGroupColorCompletions: CompletionSource = (context) => {
+  const arg = flowGroupColorArg(context.state, context.pos);
+  if (!arg || !/^["']/.test(arg)) return null;
+  return { from: context.pos - arg.length + 1, options: COLOR_OPTIONS, validFor: /^\w*$/ };
+};
+
+/** The same tints, quoted, before a quote is typed: an identifier position, so it is curated. */
+export const flowGroupBareColorCompletions: CompletionSource = (context) => {
+  const arg = flowGroupColorArg(context.state, context.pos);
+  if (arg == null || /^["']/.test(arg)) return null;
+  return { from: context.pos - arg.length, options: QUOTED_COLOR_OPTIONS, validFor: /^\w*$/ };
 };
 
 /**
@@ -230,8 +281,11 @@ export const polarsModuleCompletions: CompletionSource = (context) => {
   };
 };
 
-/** Polars method completions, excluding names with dedicated completion sources. */
-export function createPolarsExprCompletions(getPriorCellCodes: () => string[]): CompletionSource {
+/** Polars (plus FlowFrame, with `frameMethods`) method completions, excluding names with dedicated sources. */
+export function createPolarsExprCompletions(
+  getPriorCellCodes: () => string[],
+  frameMethods = false,
+): CompletionSource {
   return (context) => {
     const match = context.matchBefore(/\.\w*/);
     if (!match) return null;
@@ -257,7 +311,7 @@ export function createPolarsExprCompletions(getPriorCellCodes: () => string[]): 
 
     return {
       from: match.from + 1,
-      options: POLARS_METHOD_ENTRIES,
+      options: frameMethods ? FRAME_METHOD_ENTRIES : POLARS_METHOD_ENTRIES,
       validFor: /^\w*$/,
     };
   };

@@ -354,6 +354,16 @@ def test_nest_group_moves_a_group_under_a_parent_and_back_to_the_top():
 
     graph.nest_group(inner.id, None)
     assert graph._groups[inner.id].parent_group_id is None
+    assert (outer.width, outer.height) == before  # and the parent it leaves refits without it
+
+
+def test_update_group_clears_the_colour_only_when_asked():
+    graph = build_two_node_graph()
+    group = graph.create_group("A", [1], color="blue")
+    graph.update_group(group.id, name="B")
+    assert graph._groups[group.id].color == "blue"
+    graph.update_group(group.id, clear_color=True)
+    assert graph._groups[group.id].color is None
 
 
 def test_nest_group_refuses_cycles_and_unknown_groups():

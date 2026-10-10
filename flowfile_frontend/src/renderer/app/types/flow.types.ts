@@ -211,7 +211,8 @@ export interface VueFlowInput {
 // Mirror flowfile_core/.../schemas.py field-for-field (no OpenAPI codegen).
 
 // mirrors schemas.GroupColor
-export type GroupColor = "slate" | "blue" | "green" | "amber" | "rose" | "violet" | "cyan";
+export const GROUP_COLORS = ["slate", "blue", "green", "amber", "rose", "violet", "cyan"] as const;
+export type GroupColor = (typeof GROUP_COLORS)[number];
 
 // mirrors schemas.FlowfileGroup
 export interface GroupInput {
@@ -258,6 +259,7 @@ export interface UpdateGroupRequest {
   width?: number | null;
   height?: number | null;
   collapsed?: boolean | null;
+  clear_color?: boolean | null;
 }
 
 // mirrors schemas.NodePositionUpdate

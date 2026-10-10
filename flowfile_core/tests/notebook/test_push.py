@@ -766,6 +766,37 @@ def test_push_creates_renames_and_regroups_from_the_cells_in_one_undo_step(runne
     assert _group_shape(graph) == before
 
 
+def test_an_edit_to_the_groups_cell_alone_recolours_the_canvas_groups(runner, grouped_flow, client_as):
+    client, graph = client_as(OWNER_ID), grouped_flow
+    filt, formula = (_node_of_type(graph, t) for t in ("filter", "formula"))
+
+    def edit(cells):
+        cells["groups"] = (
+            cells["groups"]
+            .replace('"Clean", color="blue"', '"Clean", color="violet"')
+            .replace('"Inner", parent_group=clean', '"Inner", color="amber"')
+        )
+        return cells
+
+    response = client.post("/editor/notebook/push/", json=_body(graph, edit, changed=["groups"]))
+    assert response.status_code == 200, response.text
+    assert _group_shape(graph) == {
+        "Clean": ("violet", None, [filt.node_id]),
+        "Inner": ("amber", None, [formula.node_id]),
+    }
+
+
+def test_dropping_a_colour_from_the_groups_cell_restores_the_default_tint(runner, grouped_flow, client_as):
+    client, graph = client_as(OWNER_ID), grouped_flow
+
+    def edit(cells):
+        cells["groups"] = cells["groups"].replace('"Clean", color="blue"', '"Clean"')
+        return cells
+
+    response = client.post("/editor/notebook/push/", json=_body(graph, edit, changed=["groups"]))
+    assert response.status_code == 200, response.text
+    assert _group_shape(graph)["Clean"][0] is None
+
 def test_a_new_node_in_an_edited_cell_joins_the_group_its_cell_names(runner, grouped_flow, client_as):
     client, graph = client_as(OWNER_ID), grouped_flow
     formula = _node_of_type(graph, "formula")
