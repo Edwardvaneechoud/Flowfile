@@ -469,7 +469,7 @@ NODE_TYPE_VAR_LABEL: dict[str, str] = {
 }
 
 _NATIVE_LABELS = {"gate": "gate", "run_flow": "subflow", "python_script": "scripted", "flow_input": "flow_input"}
-_NATIVE_TYPES = frozenset({"gate", "run_flow", "python_script", "flow_input", "flow_output"})
+_NATIVE_TYPES = frozenset({"gate", "run_flow", "python_script", "flow_input", "flow_output", "explore_data"})
 
 
 def node_label(node_type: str, node_id: int) -> str:
@@ -2518,10 +2518,13 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
         """Add ``.add_to_group(<group token>)`` to the statement the node's span assigns, when it is in a group.
 
         The token is renamed to the group's variable with the boundary names. A flow output is skipped:
-        ``to_flow_output`` returns its input frame, so a call on it would group the wrong node.
+        ``to_flow_output`` returns its input frame, so a call on it would group the wrong node. ``ff.explore``
+        returns nothing, so its handler passes the group as ``group=`` instead.
         """
         group_id = getattr(node.setting_input, "group_id", None)
         if group_id is None or group_id not in self.flow_graph._groups or node.node_type == "flow_output":
+            return
+        if node.node_type == "explore_data" and node.node_id not in self._placeholder_reasons:
             return
         if not self._node_spans or self._node_spans[-1][0] is not node:
             return
@@ -2563,8 +2566,8 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
         else:
             if node.node_type == "polars_lazy_frame":
                 return "a Polars LazyFrame node cannot be rebuilt; replace it on the canvas"
-            if node.node_type == "explore_data":
-                return "explore data is interactive only"
+            if node.node_type == "explore_data" and self._feeds_a_node(node):
+                return "nodes below it read its output, which ff.explore does not return"
             rest = getattr(settings, "rest_api_settings", None)
             keys = list((rest.headers or {}).keys()) + list((rest.query_params or {}).keys()) if rest else []
             if any(self._is_sensitive_key(k) for k in keys):
@@ -3135,6 +3138,28 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
             self._add_code(f"    {line}")
         self._add_code(")")
         self._add_code("")
+
+    def _handle_explore_data(
+        self, settings: input_schema.NodeExploreData, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """An Explore Data node as a bare ``ff.explore(...)``, its description and group as keywords.
+
+        The node has no output to bind, so a node below it (only code wires one) reads the same input.
+        """
+        source = input_vars.get("main", "df")
+        args = [source]
+        description = _user_description(settings)
+        if description:
+            args.append(f"description={json.dumps(description, ensure_ascii=False)}")
+        if settings.group_id is not None and settings.group_id in self.flow_graph._groups:
+            args.append(f"group={self._group_token(settings.group_id)}")
+            self._tagged_groups.add(settings.group_id)
+        self.node_var_mapping[settings.node_id] = source
+        self._add_code(f"ff.explore({', '.join(args)})")
+        self._add_code("")
+
+    def _feeds_a_node(self, node: FlowNode) -> bool:
+        return any(node.node_id in self._producer_ids(other) for other in self.flow_graph.nodes)
 
     def _handle_fuzzy_match(
         self, settings: input_schema.NodeFuzzyMatch, var_name: str, input_vars: dict[str, str]

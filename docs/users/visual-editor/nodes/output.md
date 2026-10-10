@@ -195,6 +195,8 @@ It takes one input and produces no output: a terminal preview for eyeballing a d
 !!! note "Visual editor only"
     Headless runs — the `flowfile run flow` CLI, the scheduler, and other non-UI paths — skip Explore data nodes automatically, since there is nowhere to draw the chart. It has no effect on the data flowing through the rest of the pipeline.
 
+From Python, `ff.explore(frame)` places the same node (see [Native node classes](../../python-api/reference/native-nodes.md#explore)); the canvas notebook shows an Explore data node that way too.
+
 To keep a chart as a shareable, reusable artifact rather than an ad-hoc preview, use the catalog's [visualizations](../catalog/visualizations.md).
 
 ## ![Flow Output](../../../assets/images/nodes/flow_output.svg){ width="44" height="44" } Flow Output
