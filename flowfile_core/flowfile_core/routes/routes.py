@@ -291,6 +291,24 @@ async def get_active_flow_file_sessions(
     return _with_display_names(sessions)
 
 
+class RunStartedResponse(JSONResponse):
+    """The answer to a run request whose slot ``try_claim_run`` already holds.
+
+    Starlette runs a response's background task only once the body has gone out, so a failure while
+    sending (a middleware raising, the connection torn down mid-write) would drop the queued run and
+    leave ``is_running`` set until core restarts. Here the run goes ahead whatever became of the
+    answer: the slot is the run's to release, and the feed's ``run_started`` has already announced it.
+    """
+
+    async def __call__(self, scope, receive, send) -> None:
+        background, self.background = self.background, None
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            if background is not None:
+                await background()
+
+
 @router.post("/node/trigger_fetch_data", tags=["editor"])
 async def trigger_fetch_node_data(
     flow_id: int,
@@ -321,7 +339,7 @@ async def trigger_fetch_node_data(
             reset_cache=not performance_mode,
             claimed=True,
         )
-    return JSONResponse(
+    return RunStartedResponse(
         content={"message": "Data started", "flow_id": flow_id, "node_id": node_id}, status_code=status.HTTP_200_OK
     )
 
@@ -531,7 +549,8 @@ async def _start_run(flow, flow_id: int, user_id, background_tasks: BackgroundTa
 
     The claim lands before the response (``try_claim_run`` waits on the edit lock, hence the thread), so
     a client that reads ``is_running`` or opens the log stream once this answers finds the run it asked
-    for, with the log file already rewritten for it. The queued task releases the slot on every exit.
+    for, with the log file already rewritten for it. The queued task releases the slot on every exit,
+    and the route answers with a ``RunStartedResponse`` so the task runs even when the answer is lost.
     """
     async with get_flow_run_lock(flow_id):
         if not await asyncio.to_thread(flow.try_claim_run):
@@ -564,7 +583,7 @@ async def run_flow(
         )
     user_id = current_user.id if current_user else None
     await _start_run(flow, flow_id, user_id, background_tasks)
-    return JSONResponse(content={"message": "Data started", "flow_id": flow_id}, status_code=status.HTTP_200_OK)
+    return RunStartedResponse(content={"message": "Data started", "flow_id": flow_id}, status_code=status.HTTP_200_OK)
 
 
 @router.post("/flow/cancel/", tags=["editor"])
@@ -1176,7 +1195,9 @@ async def run_notebook_lineage(
         raise HTTPException(404, f"Node {request.node_id} not found")
     node_ids = {request.node_id, *flow._get_upstream_node_ids(request.node_id)}
     await _start_run(flow, request.flow_id, current_user.id, background_tasks, node_ids)
-    return JSONResponse(content={"message": "Data started", "flow_id": request.flow_id, "node_ids": sorted(node_ids)})
+    return RunStartedResponse(
+        content={"message": "Data started", "flow_id": request.flow_id, "node_ids": sorted(node_ids)}
+    )
 
 
 @router.get("/editor/expression_doc", tags=["editor"], response_model=list[output_model.ExpressionsOverview])

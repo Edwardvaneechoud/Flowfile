@@ -14,6 +14,7 @@ from flowfile_core import main
 from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.routes import logs
 from flowfile_core.routes.routes import flow_file_handler
+from flowfile_core.schemas import input_schema
 
 LOG_LINE = "hello from the log stream"
 
@@ -228,6 +229,63 @@ def test_a_run_whose_pre_work_fails_releases_the_claim(own_flow, monkeypatch):
     with pytest.raises(RuntimeError, match="registration broke"):
         client.post("/flow/run/", params={"flow_id": own_flow}, headers=headers)
     assert flow_file_handler.get_flow(own_flow).flow_settings.is_running is False
+
+
+def _post_with_failing_send(path: str, query: str) -> None:
+    """Drive the ASGI app directly with a ``send`` that fails on the response start."""
+    import asyncio
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "root_path": "",
+        "query_string": query.encode(),
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+        "client": ("127.0.0.1", 1),
+        "server": ("127.0.0.1", 80),
+    }
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        raise ConnectionResetError("the client went away")
+
+    with pytest.raises(ConnectionResetError):
+        asyncio.run(main.app(scope, receive, send))
+
+
+def test_a_run_whose_answer_cannot_be_sent_still_runs_and_releases_the_claim(own_flow, monkeypatch):
+    """Starlette runs background tasks only after the body went out: the claimed run must not depend on that."""
+    from flowfile_core.routes import routes
+
+    seen: dict[str, object] = {}
+
+    def run_and_track(flow, user_id, node_ids=None):
+        seen["running"] = flow.flow_settings.is_running
+        flow.release_run()
+
+    monkeypatch.setattr(routes, "_run_and_track", run_and_track)
+    _post_with_failing_send("/flow/run/", f"flow_id={own_flow}")
+    assert seen == {"running": True}
+    assert flow_file_handler.get_flow(own_flow).flow_settings.is_running is False
+
+
+def test_a_fetch_whose_answer_cannot_be_sent_still_releases_the_claim(own_flow, monkeypatch):
+    flow = flow_file_handler.get_flow(own_flow)
+    flow.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=own_flow, node_id=1, raw_data_format=input_schema.RawData.from_pylist([{"a": 1}])
+        )
+    )
+    _post_with_failing_send("/node/trigger_fetch_data", f"flow_id={own_flow}&node_id=1")
+    assert flow.flow_settings.is_running is False
+    assert flow.get_node(1).node_stats.has_run_with_current_setup
 
 
 def test_a_second_run_request_is_refused_while_the_first_is_claimed(own_flow):
