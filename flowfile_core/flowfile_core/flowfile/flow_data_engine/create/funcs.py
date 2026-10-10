@@ -4,6 +4,7 @@ import polars as pl
 from polars._typing import CsvEncoding
 
 from flowfile_core.configs import logger as _module_logger
+from flowfile_core.fileExplorer.funcs import require_local_paths_allowed
 from flowfile_core.flowfile.flow_data_engine.sample_data import create_fake_data
 from flowfile_core.schemas import input_schema
 from shared.excel_reader import read_excel_table
@@ -40,11 +41,13 @@ def _resolve_scan_source(received_table: input_schema.ReceivedTable) -> str | li
     """
     if received_table.scan_mode != "directory":
         return received_table.abs_file_path
+    require_local_paths_allowed(received_table.abs_file_path)
     matches = expand_glob_pattern(received_table.abs_file_path)
     if not matches:
         raise NoFilesMatchedError(
             f"No files matched '{received_table.path}' (expanded pattern: {received_table.abs_file_path})"
         )
+    require_local_paths_allowed(*matches)
     return matches
 
 

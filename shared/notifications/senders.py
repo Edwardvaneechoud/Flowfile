@@ -52,29 +52,38 @@ def validate_webhook_url(url: str) -> str | None:
     send are separate steps, so a DNS rebind between them is an accepted v1 risk:
     redirects are not followed and the body carries only run metadata.
     """
+    return validate_public_url(url, noun="Webhook", allow_private=_allow_private_hosts())
+
+
+def validate_public_url(url: str, *, noun: str, allow_private: bool = False) -> str | None:
+    """SSRF guard for a user-supplied http(s) URL; ``noun`` names it in the message. None if allowed.
+
+    Every address the hostname resolves to must be publicly routable (not loopback, metadata,
+    RFC1918 or CGNAT). ``allow_private`` skips only the address check.
+    """
     parsed = urlparse(url or "")
     if parsed.scheme not in ("http", "https"):
-        return "Webhook URL must use http or https"
+        return f"{noun} URL must use http or https"
     if not parsed.hostname:
-        return "Webhook URL has no host"
-    if _allow_private_hosts():
+        return f"{noun} URL has no host"
+    if allow_private:
         return None
 
     try:
         infos = socket.getaddrinfo(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
     except socket.gaierror as e:
-        return f"Could not resolve webhook host {parsed.hostname!r}: {e}"
+        return f"Could not resolve {noun.lower()} host {parsed.hostname!r}: {e}"
 
     for info in infos:
         address = info[4][0]
         try:
             ip = ipaddress.ip_address(address)
         except ValueError:
-            return f"Webhook host resolved to an unusable address {address!r}"
+            return f"{noun} host resolved to an unusable address {address!r}"
         if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
-            return f"Webhook host resolves to a non-public address ({address})"
+            return f"{noun} host resolves to a non-public address ({address})"
         if ip.version == 4 and ip in CGNAT_NETWORK:
-            return f"Webhook host resolves to a non-public address ({address})"
+            return f"{noun} host resolves to a non-public address ({address})"
     return None
 
 

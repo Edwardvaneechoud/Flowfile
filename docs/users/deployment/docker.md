@@ -135,7 +135,7 @@ volumes:
 | `FLOWFILE_SCHEDULER_ENABLED` | Auto-start the flow scheduler | `true` in the bundled compose (the code default when the var is entirely unset is off) |
 | `FLOWFILE_ENABLE_PROJECTS` | Enable git project tracking (admin-only in Docker; the `/project` router 404s when off). Accepts `true`/`1`/`yes`/`on`. | `true` in the bundled compose |
 | `FLOWFILE_STORAGE_DIR` | Internal storage path | `/app/internal_storage` |
-| `FLOWFILE_USER_DATA_DIR` | User data path | `/app/user_data` |
+| `FLOWFILE_USER_DATA_DIR` | User data path. The file browser, the Read and Write nodes and the List Files node only reach files under it, so mount any data folder you want to use inside it. | `/app/user_data` |
 | `WORKER_HOST` | Worker hostname | `flowfile-worker` |
 | `CORE_HOST` | Core hostname | `flowfile-core` |
 | `FLOWFILE_KERNEL_IMAGE` | Override the base kernel image for Python-script nodes | Registry default (unset ⇒ the tag in `kernel/images.py`) |

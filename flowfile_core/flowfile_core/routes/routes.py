@@ -51,6 +51,7 @@ from flowfile_core.fileExplorer.funcs import (
     SecureFileExplorer,
     get_files_from_directory,
     resolve_managed_flow_path,
+    validate_data_file_path,
     validate_path_under_cwd,
 )
 from flowfile_core.flowfile.analytics import node_viz
@@ -2884,7 +2885,7 @@ async def get_formula_chain_instant_function_result(
 @router.get("/api/get_xlsx_sheet_names", tags=["excel_reader"], response_model=list[str])
 async def get_excel_sheet_names(path: str) -> list[str] | None:
     """Retrieves the sheet names from an Excel file."""
-    validated_path = validate_path_under_cwd(path)
+    validated_path = validate_data_file_path(path)
     sheet_names = excel_file_manager.get_sheet_names(validated_path)
     if sheet_names:
         return sheet_names

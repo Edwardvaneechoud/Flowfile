@@ -771,7 +771,7 @@ def test_catalog_tables_route_denied_for_reader(users, client_for, alice_ns, tea
         "/catalog/tables",
         json={
             "name": "bob_table",
-            "file_path": str(_TMP_FLOW_DIR / "does_not_exist.csv"),
+            "file_path": str(storage.user_data_directory / "does_not_exist.csv"),
             "namespace_id": alice_ns["schema"],
         },
     )

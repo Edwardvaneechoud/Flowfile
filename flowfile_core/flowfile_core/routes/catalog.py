@@ -64,7 +64,7 @@ from flowfile_core.catalog.validators import validate_cron_expression, validate_
 from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db
 from flowfile_core.database.models import RunType, SchedulerLock
-from flowfile_core.fileExplorer import validate_path_under_cwd
+from flowfile_core.fileExplorer.funcs import validate_data_file_path
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
 from flowfile_core.schemas.catalog_schema import (
@@ -728,7 +728,7 @@ def register_table(
     Accepts the kernel's internal token so ``flowfile_ctx.write_catalog_table``
     can register tables it produced.
     """
-    validated_path = validate_path_under_cwd(body.file_path)
+    validated_path = validate_data_file_path(body.file_path)
     return service.register_table(
         name=body.name,
         file_path=validated_path,
