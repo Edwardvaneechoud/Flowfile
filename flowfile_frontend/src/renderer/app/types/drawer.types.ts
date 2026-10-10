@@ -1,4 +1,5 @@
 import type { Component } from "vue";
+import type { PopoutKind } from "../../lib/popoutWindow";
 import type { AxisBehaviour } from "../components/common/DraggableItem/layoutGeometry";
 import type { useEditorStore } from "../stores/editor-store";
 import type { useNodeStore } from "../stores/column-store";
@@ -24,6 +25,8 @@ export interface DrawerTabDef {
   focusWhen?: (ctx: DrawerCtx) => boolean;
   props?: (ctx: DrawerCtx) => Record<string, unknown>;
   remountKey?: (ctx: DrawerCtx) => string | number; // omit ⇒ singleton (kept mounted)
+  // The tab can move to its own window: TabbedDrawer shows a pop-out button while it is active.
+  popout?: { kind: PopoutKind; enabled?: (ctx: DrawerCtx) => boolean };
 }
 
 export interface DrawerDef {

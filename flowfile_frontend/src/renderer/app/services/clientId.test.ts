@@ -35,4 +35,15 @@ describe("clientId", () => {
     const reloaded = await load();
     expect(reloaded.clientId).toBe(popout.clientId);
   });
+
+  it("treats every kind's window route as a pop-out", async () => {
+    const designer = await load();
+    for (const hash of ["#/popout/table?flow=3", "#/popout/logs?flow=3", "#/popout/ai?flow=3"]) {
+      sessionStorage.removeItem("flowfile.client_id.popout.v1");
+      window.location.hash = hash;
+      const popout = await load();
+      expect(popout.clientId).not.toBe(designer.clientId);
+      expect(sessionStorage.getItem(popout.POPOUT_STORAGE_KEY)).toBe(popout.clientId);
+    }
+  });
 });

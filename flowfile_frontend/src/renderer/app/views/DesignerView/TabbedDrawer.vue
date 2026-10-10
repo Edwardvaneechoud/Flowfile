@@ -6,6 +6,7 @@ import { useEditorStore } from "../../stores/editor-store";
 import { useNodeStore } from "../../stores/column-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { useDrawerStore } from "../../stores/drawer-store";
+import { usePopout } from "../../composables/usePopout";
 import type { DrawerDef, DrawerCtx } from "../../types/drawer.types";
 
 const props = defineProps<{
@@ -33,8 +34,21 @@ const activeTabId = computed<string>({
   set: (v) => ctx.drawer.setActiveTab(props.def.id, v),
 });
 
+const activeTabDef = computed(() => visibleTabs.value.find((t) => t.id === activeTabId.value));
+
+// The active tab's pop-out, when it declares one for this flow.
+const popoutKind = computed(() => {
+  const popout = activeTabDef.value?.popout;
+  if (!popout || popout.enabled?.(ctx) === false) return null;
+  return popout.kind;
+});
+
+const popOutActiveTab = () => {
+  if (popoutKind.value) void usePopout(popoutKind.value).popOut(ctx.flow.flowId);
+};
+
 // Auto-focus a tab the moment it appears (and front the drawer); when the active
-// tab closes, fall back to the first remaining one.
+// tab closes (or moves to its own window), fall back to the first remaining one.
 watch(
   () => visibleTabs.value.map((t) => t.id).join(","),
   (now, prev) => {
@@ -91,6 +105,18 @@ const onMinimize = () => props.def.onMinimize?.(ctx);
     :on-minimize="onMinimize"
     @update:active-tab="activeTabId = $event"
   >
+    <template v-if="popoutKind && activeTabDef" #header-actions>
+      <button
+        class="tabbed-drawer-popout"
+        type="button"
+        :title="`Open ${activeTabDef.label} in its own window`"
+        :aria-label="`Open ${activeTabDef.label} in its own window`"
+        :data-testid="`dock-popout-${activeTabDef.id}`"
+        @click="popOutActiveTab"
+      >
+        <span class="material-icons" aria-hidden="true">open_in_new</span>
+      </button>
+    </template>
     <div class="tabbed-drawer-body">
       <div
         v-for="tab in visibleTabs"
@@ -109,6 +135,26 @@ const onMinimize = () => props.def.onMinimize?.(ctx);
 </template>
 
 <style scoped>
+.tabbed-drawer-popout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 25px;
+  height: 25px;
+  margin: 0 2px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background-color: var(--color-background-tertiary);
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+.tabbed-drawer-popout:hover {
+  background-color: var(--color-background-hover);
+}
+.tabbed-drawer-popout .material-icons {
+  font-size: 16px;
+}
 .tabbed-drawer-body {
   display: flex;
   flex-direction: column;

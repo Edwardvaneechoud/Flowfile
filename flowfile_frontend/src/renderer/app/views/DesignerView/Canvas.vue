@@ -88,6 +88,7 @@ import type { CopyableNodeData, PasteIntent } from "../../composables/useFlowCli
 import { useContextMenu } from "../../composables/useContextMenu";
 import { useFlowExecution } from "../../composables/useFlowExecution";
 import { useFlowHotkeys } from "../../composables/useFlowHotkeys";
+import { broadcastSelection, usePopout } from "../../composables/usePopout";
 import { desktop, isDesktop } from "../../../lib/desktop";
 import DraggableItem from "../../components/common/DraggableItem/DraggableItem.vue";
 import layoutControls from "../../components/common/DraggableItem/layoutControls.vue";
@@ -474,6 +475,25 @@ function onEdgeUpdate({ edge, connection }: { edge: any; connection: any }) {
 // The flow the canvas last rendered: a reload of the same flow keeps viewport and selection.
 let loadedFlowId: number | null = null;
 
+/**
+ * A window's Return asked for the dock on a tab. Only the loaded flow's request applies: a flow
+ * switch hides every panel before loadFlow, which calls this at its end.
+ */
+const applyDockRequest = () => {
+  const request = drawerStore.dockRequest;
+  if (!request || request.flowId !== loadedFlowId) return;
+  drawerStore.consumeDockRequest();
+  if (request.tab === "data") {
+    // Nothing to show without a node: the dock stays as it is.
+    if (request.nodeId === undefined) return;
+    drawerStore.setPreviewNode(request.nodeId);
+  } else {
+    editorStore.showLogViewer();
+  }
+  drawerStore.setActiveTab("bottomDock", request.tab);
+  nextTick().then(() => itemStore.bringToFront("bottomDock"));
+};
+
 const loadFlow = async () => {
   const myToken = ++loadToken;
   isLoadingFlow.value = true;
@@ -529,6 +549,7 @@ const loadFlow = async () => {
     // Fire-and-forget; fetchArtifacts re-checks flowId before writing.
     flowStore.fetchArtifacts(flowIdAtStart);
     flowStore.fetchSettingsValidation(flowIdAtStart);
+    applyDockRequest();
   } finally {
     // Only clear if we're still the most recent run — otherwise the newer
     // run's spinner would be turned off prematurely.
@@ -762,19 +783,28 @@ const switchNodeSettings = async (nodeId: number): Promise<boolean> => {
 const openNodeData = (nodeId: number) => {
   if (isGroupNodeId(String(nodeId))) return;
   drawerStore.setPreviewNode(nodeId);
+  // The flow's Data window hosts the preview: the node went there, so show that window.
+  if (editorStore.isPoppedOut("table", flowStore.flowId)) {
+    void usePopout("table").focus(flowStore.flowId);
+    return;
+  }
   drawerStore.setActiveTab("bottomDock", "data");
   nextTick().then(() => itemStore.bringToFront("bottomDock"));
 };
 
+/**
+ * Single click opens Settings; if the dock is already open (data or logs), show this node's Data.
+ * With the flow's Data in its own window the node goes there instead, and the dock is left alone.
+ */
 const nodeClick = async (mouseEvent: any) => {
-  // Single click opens Settings; if the dock is already open (data or logs), show this node's Data.
   const rawId = String(mouseEvent.node.id);
   if (isCommentNodeId(rawId)) return; // comments have no settings or data
   if (!(await openNodeSettings(parseInt(rawId)))) return;
+  const tableOut = editorStore.isPoppedOut("table", flowStore.flowId);
   const dockOpen = drawerStore.previewNodeId !== null || editorStore.isShowingLogViewer;
-  if (!isGroupNodeId(rawId) && dockOpen) {
+  if (!isGroupNodeId(rawId) && (dockOpen || tableOut)) {
     drawerStore.setPreviewNode(parseInt(rawId));
-    drawerStore.setActiveTab("bottomDock", "data");
+    if (!tableOut) drawerStore.setActiveTab("bottomDock", "data");
   }
 };
 
@@ -1284,10 +1314,10 @@ const handleMoveEnd = () => {
 };
 
 let unregisterContainer: (() => void) | null = null;
-let unlistenViewZoom: (() => void) | null = null;
+let viewZoom: Promise<() => void> | null = null;
 let unregisterNudges: (() => void) | null = null;
 
-onMounted(async () => {
+onMounted(() => {
   unregisterNudges = registerPendingEdit(flushNudges);
   if (mainContainerRef.value) {
     // Single shared container measurement for every overlay panel (and the
@@ -1298,19 +1328,6 @@ onMounted(async () => {
   document.addEventListener("paste", handlePasteEvent);
   // Capture phase so panels that stopPropagation on pointerdown still register.
   document.addEventListener("pointerdown", trackPointerDown, true);
-
-  // Drive canvas zoom from the native View menu / Cmd+`+`/`-`/`0` (desktop only).
-  if (isDesktop) {
-    unlistenViewZoom = await desktop.onViewZoom((direction) => {
-      if (direction === "in") {
-        instance.zoomIn();
-      } else if (direction === "out") {
-        instance.zoomOut();
-      } else {
-        instance.zoomTo(1);
-      }
-    });
-  }
 
   nodeStore.setVueFlowInstance(instance);
 
@@ -1368,6 +1385,18 @@ onMounted(async () => {
     },
   );
 
+  // The node sent to the flow's Data window changed, or was sent again: tell the window.
+  watch(
+    () => drawerStore.popoutPreview[flowStore.flowId]?.token,
+    () => broadcastSelection(flowStore.flowId),
+  );
+
+  // A window's Return for the flow already loaded; a flow switch applies it at the end of loadFlow.
+  watch(
+    () => drawerStore.dockRequest?.token,
+    () => applyDockRequest(),
+  );
+
   // Refresh edge labels when toggle changes
   watch(
     () => editorStore.showEdgeLabels,
@@ -1398,14 +1427,27 @@ onMounted(async () => {
       }
     },
   );
+
+  // Desktop View-menu zoom, never awaited: a watch made after an await would outlive the canvas.
+  if (isDesktop) {
+    viewZoom = desktop.onViewZoom((direction) => {
+      if (direction === "in") {
+        instance.zoomIn();
+      } else if (direction === "out") {
+        instance.zoomOut();
+      } else {
+        instance.zoomTo(1);
+      }
+    });
+  }
 });
 
 onUnmounted(() => {
   document.removeEventListener("copy", handleCopyEvent);
   document.removeEventListener("paste", handlePasteEvent);
   document.removeEventListener("pointerdown", trackPointerDown, true);
-  unlistenViewZoom?.();
-  unlistenViewZoom = null;
+  void viewZoom?.then((unlisten) => unlisten());
+  viewZoom = null;
   unregisterContainer?.();
   unregisterContainer = null;
   unregisterNudges?.();

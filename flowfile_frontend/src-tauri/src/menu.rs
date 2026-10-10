@@ -1,6 +1,6 @@
-use tauri::menu::{Menu, MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder};
 #[cfg(target_os = "macos")]
 use tauri::menu::AboutMetadata;
+use tauri::menu::{Menu, MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder};
 use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_opener::OpenerExt;
 
@@ -108,7 +108,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 }
 
 /// The View menu acts on the window the user is looking at: the focused one (the main window or
-/// a pop-out notebook), else the main window.
+/// a pop-out window), else the main window.
 fn focused_label<R: Runtime>(app: &AppHandle<R>) -> String {
     // `Manager::get_focused_window` needs tauri's `unstable` feature; asking each window works.
     app.webview_windows()
@@ -150,7 +150,7 @@ pub fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
 
 /// Zoom goes to the focused window only: the renderer listens as its own window
 /// (`lib/desktop.ts`), so the canvas in the main window never zooms for a shortcut pressed in a
-/// notebook window.
+/// pop-out window.
 fn emit_zoom<R: Runtime>(app: &AppHandle<R>, direction: &str) {
     use tauri::{Emitter, EventTarget};
     let _ = app.emit_to(
