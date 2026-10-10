@@ -1,8 +1,9 @@
 """Generate the static ``ff.`` completion source for the notebook cell editors.
 
-The shared cell editor (``pythonScript/notebookEditor.ts``) completes ``ff.<name>``
-without a kernel, so the candidates are derived here at build time from
-``flowfile.__all__`` and committed as JSON. Annotations are dropped from the
+The shared cell editor (``pythonScript/notebookEditor.ts``) completes ``ff.<name>``,
+a FlowFrame's methods and the ``ff.FlowGroup`` colours without a kernel, so the
+candidates are derived here at build time from ``flowfile.__all__``, ``FlowFrame``
+and ``schemas.GroupColor`` and committed as JSON. Annotations are dropped from the
 signatures so the output does not depend on how a given Python version formats
 typing objects.
 
@@ -63,8 +64,34 @@ def fl_entries() -> list[dict]:
     return entries
 
 
+def frame_entries() -> list[dict]:
+    """One entry per public method or property of ``FlowFrame``, the receiver of a canvas notebook cell."""
+    import flowfile
+
+    entries = []
+    for name in sorted(n for n in dir(flowfile.FlowFrame) if not n.startswith("_")):
+        attr = inspect.getattr_static(flowfile.FlowFrame, name)
+        if isinstance(attr, property):
+            kind, signature = "property", ""
+        elif inspect.isfunction(attr):
+            kind, signature = "method", re.sub(r"^\(self(?:, )?", "(", _runtime_signature(attr))
+        else:
+            continue
+        doc = _first_line(attr.__doc__)
+        entries.append({"name": name, "kind": kind, "signature": signature, "doc_first_line": doc})
+    return entries
+
+
+def group_colors() -> list[dict]:
+    from typing import get_args
+
+    from flowfile_core.schemas.schemas import GroupColor
+
+    return [{"name": color} for color in sorted(get_args(GroupColor))]
+
+
 def build() -> dict:
-    return {"ff": fl_entries()}
+    return {"ff": fl_entries(), "frame": frame_entries(), "group_colors": group_colors()}
 
 
 def render() -> str:

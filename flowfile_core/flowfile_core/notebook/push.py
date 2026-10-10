@@ -22,7 +22,7 @@ from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE, output_handle
 from flowfile_core.notebook.bridge import CleanRunRequest, CleanRunResult, get_clean_runner
 from flowfile_core.notebook.reconcile import ReconcilePlan, reconcile
-from flowfile_core.notebook.render import code_fingerprint
+from flowfile_core.notebook.render import GROUPS_CELL_ID, code_fingerprint
 
 LAZY_FRAME_REFUSAL = (
     "Node {node_id} holds an in-memory Polars LazyFrame, which cannot be pushed; "
@@ -274,6 +274,7 @@ def plan_push(flow: FlowGraph, user, request: NotebookPushRequest) -> tuple[Reco
         result.flowfile_data["flowfile_settings"]["parameters"],
         live_cells=live_cells(request.provenance),
         group_id_ceiling=flow.group_id_ceiling,
+        groups_cell_changed=GROUPS_CELL_ID in request.changed_cell_ids,
     )
     plan.warnings.extend(result.warnings)
     plan.warnings.extend(kernel_warnings(result.flowfile_data, user.id))

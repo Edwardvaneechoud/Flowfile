@@ -928,6 +928,7 @@ class UpdateGroupRequest(BaseModel):
     width: float | None = None
     height: float | None = None
     collapsed: bool | None = None
+    clear_color: bool | None = None  # back to the default tint; a None color leaves it alone
 
 
 class GroupMembershipRequest(BaseModel):

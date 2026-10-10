@@ -930,6 +930,7 @@ def update_group(flow_id: int, group_id: int, request: schemas.UpdateGroupReques
                 color=request.color,
                 bounds=_bounds_from_request(request),
                 collapsed=request.collapsed,
+                clear_color=bool(request.clear_color),
             )
         except ValueError as exc:
             raise HTTPException(404, str(exc)) from exc

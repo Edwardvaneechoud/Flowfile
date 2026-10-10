@@ -552,3 +552,63 @@ def test_a_group_the_node_ops_prune_is_recreated_when_its_only_member_changes_ty
             "group": {"group_id": 8, "name": "A", "color": "cyan", "node_ids": [2], "child_group_ids": []},
         }
     ]
+
+
+def test_an_edit_to_the_groups_cell_alone_recolours_renames_and_reparents_the_canvas_groups():
+    live = _grouped(
+        _manual(),
+        _filter(2, 1, group_id=7),
+        _sort(3, 2, group_id=8),
+        groups=[_vgroup(7, "Cleaning", color="blue"), _vgroup(8, "Scoring", parent=7)],
+    )
+    session = _grouped(
+        _manual(),
+        _filter(2, 1, group_id=1),
+        _sort(3, 2, group_id=2),
+        groups=[_vgroup(1, "Cleaning", color="violet"), _vgroup(2, "Scored", color="amber")],
+    )
+    plan = reconcile(live, session, ["groups"], _cells(1, 2, 3))
+    assert _group_ops(plan) == [
+        {"op": "update_group", "group_id": 7, "group": {"name": "Cleaning", "color": "violet"}},
+        {"op": "update_group", "group_id": 8, "group": {"name": "Scored", "color": "amber"}},
+        {"op": "nest_group", "group_id": 8},
+    ]
+
+
+def test_a_groups_cell_edit_can_nest_a_canvas_group_under_a_new_parent():
+    live = _grouped(_manual(), _filter(2, 1, group_id=7), groups=[_vgroup(7, "A")])
+    session = _grouped(
+        _manual(), _filter(2, 1, group_id=2), groups=[_vgroup(1, "Outer", color="rose"), _vgroup(2, "A", parent=1)]
+    )
+    plan = reconcile(live, session, ["groups"], _cells(1, 2), group_id_ceiling=20)
+    assert _group_ops(plan) == [
+        {
+            "op": "create_group",
+            "group": {"group_id": 21, "name": "Outer", "color": "rose", "node_ids": [], "child_group_ids": []},
+        },
+        {"op": "nest_group", "group_id": 7, "parent_group_id": 21},
+    ]
+
+
+def test_a_colour_the_groups_cell_drops_clears_the_canvas_tint():
+    live = _grouped(_manual(), _filter(2, 1, group_id=7), groups=[_vgroup(7, "A", color="blue")])
+    session = _grouped(_manual(), _filter(2, 1, group_id=1), groups=[_vgroup(1, "A")])
+    plan = reconcile(live, session, ["groups"], _cells(1, 2), groups_cell_changed=True)
+    assert _group_ops(plan) == [{"op": "update_group", "group_id": 7, "group": {"name": "A", "clear_color": True}}]
+
+
+def test_a_pinned_node_stays_in_the_group_its_cell_names_when_its_group_mates_move_out():
+    live = _grouped(
+        _manual(), _filter(2, 1, group_id=7), _sort(3, 2, group_id=7), _sort(4, 3, group_id=7), groups=[_vgroup(7, "A")]
+    )
+    session = _grouped(
+        _manual(),
+        _filter(2, 1, group_id=2),
+        _sort(3, 2, group_id=2),
+        _sort(4, 3, group_id=1),
+        groups=[_vgroup(1, "A"), _vgroup(2, "B")],
+    )
+    plan = reconcile(live, session, ["groups", "node-2"], _cells(1, 4, extra={"node-2": [2, 3]}), group_id_ceiling=20)
+    assert _group_ops(plan) == [
+        {"op": "create_group", "group": {"group_id": 21, "name": "B", "node_ids": [2, 3], "child_group_ids": []}}
+    ]

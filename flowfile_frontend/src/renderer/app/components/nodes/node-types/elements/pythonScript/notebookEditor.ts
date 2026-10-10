@@ -15,6 +15,8 @@ import {
   createRefVariableCompletions,
   flModuleCompletions,
   flowfileApiCompletions,
+  flowGroupBareColorCompletions,
+  flowGroupColorCompletions,
   globalIdentifierCompletions,
   polarsModuleCompletions,
 } from "./flowfileCompletions";
@@ -52,6 +54,8 @@ export interface NotebookEditorOptions {
   getLspContext?: () => LspContext;
   // False where no kernel can be attached, so the "attach a kernel" hint never shows.
   kernelHint?: boolean;
+  // Cells of FlowFrame code (the canvas notebook): FlowFrame's methods join the static `.` list.
+  frameMethods?: boolean;
 }
 
 const MONO = "var(--font-family-mono)";
@@ -164,12 +168,14 @@ export function buildNotebookCompletionSources(opts: NotebookEditorOptions): Com
     catalogRefChainCompletions,
     createRefVariableCompletions(getPrior),
     flModuleCompletions,
+    flowGroupBareColorCompletions,
   ];
 
   return [
     na(createIdentifierCompletionSource(getLspCtx, getPrior, curated)),
     // String-literal content sources Jedi can't provide — always on.
     createNamedInputCompletions(getInputNames),
+    flowGroupColorCompletions,
     createDataframeColumnCompletions(() => ({
       ownerId: getOwnerId(),
       cellId: getCellId(),
@@ -181,7 +187,7 @@ export function buildNotebookCompletionSources(opts: NotebookEditorOptions): Com
     na(fb(flowfileApiCompletions)),
     na(fb(globalIdentifierCompletions)),
     na(fb(polarsModuleCompletions)),
-    na(fb(createPolarsExprCompletions(getPrior))),
+    na(fb(createPolarsExprCompletions(getPrior, opts.frameMethods))),
     na(fb(localCompletionSource)),
     na(fb(globalCompletion)),
   ].map(withoutInfo);

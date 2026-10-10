@@ -28,7 +28,8 @@ ids already agree (the session's were relabelled onto provenance ids). :func:`re
   new cell takes the group its cell gives it, a pinned or kept node keeps the canvas's (like its position);
   a session group becomes the live group its members overlap most, renamed, recoloured and re-parented to
   the cell's spelling, else a new group with a fresh id above ``group_id_ceiling``; a live group left
-  without members or sub-groups is deleted.
+  without members or sub-groups is deleted. A colour the cells leave out keeps the canvas's unless the push
+  edited the groups cell, which then clears it.
 """
 
 from __future__ import annotations
@@ -283,6 +284,7 @@ def reconcile(
     *,
     live_cells: dict[int, str] | None = None,
     group_id_ceiling: int | None = None,
+    groups_cell_changed: bool = False,
 ) -> ReconcilePlan:
     """The ops that turn the ``live`` payload into the ``session`` one under the pinning rules above.
 
@@ -413,6 +415,7 @@ def reconcile(
             gone=gone,
             pinned=pinned,
             group_id_ceiling=group_id_ceiling,
+            clear_colours=groups_cell_changed,
         )
     )
     return plan
@@ -566,11 +569,15 @@ def _depth(groups: Mapping[int, _Group], group_id: int) -> int:
     return len(_ancestry(groups, group_id)) - 1
 
 
-def _match_groups(session: Mapping[int, _Group], live: Mapping[int, _Group]) -> dict[int, int]:
+def _match_groups(
+    session: Mapping[int, _Group], live: Mapping[int, _Group], anchored: Set[int] = frozenset()
+) -> dict[int, int]:
     """Session group id -> live group id.
 
-    A group matches the live group its members overlap most (a tie going to the same name, then the lower
-    ids); a group with no direct members matches the live parent its matched sub-groups share.
+    A group matches the live group its ``anchored`` members (the nodes that keep their canvas group) overlap
+    most, so the group such a node keeps is the one its cell names; then the one all its members overlap most
+    (a tie going to the same name, then the lower ids). A group with no direct members matches the live
+    parent its matched sub-groups share.
     """
     matched: dict[int, int] = {}
     taken: set[int] = set()
@@ -581,7 +588,13 @@ def _match_groups(session: Mapping[int, _Group], live: Mapping[int, _Group]) -> 
         if candidate.members & existing.members
     ]
     overlapping.sort(
-        key=lambda pair: (-len(pair[0].members & pair[1].members), pair[0].name != pair[1].name, pair[0].id, pair[1].id)
+        key=lambda pair: (
+            -len(pair[0].members & pair[1].members & anchored),
+            -len(pair[0].members & pair[1].members),
+            pair[0].name != pair[1].name,
+            pair[0].id,
+            pair[1].id,
+        )
     )
     for candidate, existing in overlapping:
         if candidate.id not in matched and existing.id not in taken:
@@ -607,6 +620,7 @@ def group_operations(
     gone: Set[int],
     pinned: Callable[[int], bool],
     group_id_ceiling: int,
+    clear_colours: bool = False,
 ) -> list[schemas.EditorOperation]:
     """The group ops of a push, in order: creates (parents first), updates, re-parents and member additions,
     then deletions and the nodes that leave their group.
@@ -615,7 +629,8 @@ def group_operations(
     push keeps, ``gone`` the live nodes the push deletes (a group they empty counts as absent, since
     ``delete_node`` prunes it first) and ``pinned`` whether a node's cell is untouched. A node of a changed or
     new cell takes the group its cell gives it; a pinned or kept node keeps the canvas's. The groups those
-    nodes need come from :func:`_wanted_groups`; every other live group is deleted.
+    nodes need come from :func:`_wanted_groups`; every other live group is deleted. ``clear_colours`` (the
+    push edited the groups cell) makes a colour the cells leave out clear the canvas's.
     """
     live = live.after_deleting(gone)
     if not live.groups and not session.groups:
@@ -630,7 +645,7 @@ def group_operations(
     )
     ops: list[schemas.EditorOperation] = []
     for group in sorted(wanted.values(), key=lambda g: (_depth(wanted, g.id), g.id)):
-        ops.extend(_group_change(group, live.groups.get(group.id)))
+        ops.extend(_group_change(group, live.groups.get(group.id), clear_colours))
     ops.extend(
         schemas.DeleteGroupOperation(op="delete_group", group_id=group_id)
         for group_id in sorted(live.groups)
@@ -656,9 +671,14 @@ def _wanted_groups(
     ``from_session`` maps a node to the session group its cell gives it: that group and its ancestors are
     wanted as the cell spells them, under the live id they match (:func:`_match_groups`), else a fresh id
     above ``group_id_ceiling``. ``from_live`` maps a node to the live group it keeps: that group and its
-    ancestors are wanted as the canvas spells them.
+    ancestors are wanted too, spelled (name, colour, parent) as the groups cell spells the session group
+    matched to them, so an edit to that cell alone reaches the canvas; an unmatched one keeps the canvas's.
     """
-    final_id = _final_group_ids(live, session, set(from_session.values()), group_id_ceiling)
+    matched = _match_groups(session.groups, live.groups, anchored=from_live.keys())
+    spelling = {live_id: session_id for session_id, live_id in matched.items()}
+    kept = {group_id for start in set(from_live.values()) for group_id in _ancestry(live.groups, start)}
+    targets = set(from_session.values()) | {spelling[group_id] for group_id in kept if group_id in spelling}
+    final_id = _final_group_ids(session, matched, targets, group_id_ceiling)
     wanted: dict[int, _Group] = {}
     for group_id in sorted(final_id, key=lambda gid: _depth(session.groups, gid)):
         group = session.groups[group_id]
@@ -674,12 +694,13 @@ def _wanted_groups(
     return wanted
 
 
-def _final_group_ids(live: _Grouping, session: _Grouping, targets: Set[int], group_id_ceiling: int) -> dict[int, int]:
+def _final_group_ids(
+    session: _Grouping, matched: Mapping[int, int], targets: Set[int], group_id_ceiling: int
+) -> dict[int, int]:
     """Session group id -> final id for ``targets`` and their ancestors: the matched live id, else a fresh one.
 
     Fresh ids are handed out parents first, so a new sub-group numbers after its new parent.
     """
-    matched = _match_groups(session.groups, live.groups)
     needed = {group_id for target in targets for group_id in _ancestry(session.groups, target)}
     fresh = itertools.count(group_id_ceiling + 1)
     final_id: dict[int, int] = {}
@@ -688,12 +709,12 @@ def _final_group_ids(live: _Grouping, session: _Grouping, targets: Set[int], gro
     return final_id
 
 
-def _group_change(group: _Group, existing: _Group | None) -> list[schemas.EditorOperation]:
+def _group_change(group: _Group, existing: _Group | None, clear_colour: bool = False) -> list[schemas.EditorOperation]:
     """The ops that make ``existing``, the live group under the wanted id, into ``group``.
 
     A missing group is created with its members; an existing one is renamed or recoloured (a colour a cell
-    leaves out keeps the canvas's, as ``update_group`` leaves an unset colour alone), re-parented and given
-    the members it gains.
+    leaves out keeps the canvas's unless ``clear_colour``, as ``update_group`` leaves an unset colour alone),
+    re-parented and given the members it gains.
     """
     if existing is None:
         request = schemas.CreateGroupRequest(
@@ -705,8 +726,9 @@ def _group_change(group: _Group, existing: _Group | None) -> list[schemas.Editor
         )
         return [schemas.CreateGroupOperation(op="create_group", group=request)]
     ops: list[schemas.EditorOperation] = []
-    if group.name != existing.name or (group.color is not None and group.color != existing.color):
-        request = schemas.UpdateGroupRequest(name=group.name, color=group.color)
+    cleared = clear_colour and group.color is None and existing.color is not None
+    if group.name != existing.name or (group.color is not None and group.color != existing.color) or cleared:
+        request = schemas.UpdateGroupRequest(name=group.name, color=group.color, clear_color=cleared or None)
         ops.append(schemas.UpdateGroupOperation(op="update_group", group_id=group.id, group=request))
     if group.parent_id != existing.parent_id:
         ops.append(schemas.NestGroupOperation(op="nest_group", group_id=group.id, parent_group_id=group.parent_id))

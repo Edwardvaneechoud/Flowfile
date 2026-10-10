@@ -210,4 +210,65 @@ describe("buildNotebookCompletionSources", () => {
     expect(labels.filter((l) => l === "read_csv")).toHaveLength(1);
     expect(labels).toContain("read_database");
   });
+
+  it("offers FlowFrame methods after a dot only in FlowFrame cells", async () => {
+    const code = "orders.add_to";
+    const noKernel = { getKernelId: () => null };
+    const frameLabels = (
+      await allOptions(optsFor({ ...noKernel, frameMethods: true }), code, code.length)
+    ).map((o) => o.label);
+    expect(frameLabels.filter((l) => l === "add_to_group")).toHaveLength(1);
+    const plain = "df.sel";
+    const selects = (
+      await allOptions(optsFor({ ...noKernel, frameMethods: true }), plain, plain.length)
+    ).filter((o) => o.label === "select");
+    expect(selects).toHaveLength(1);
+    const polarsLabels = (await allOptions(optsFor(noKernel), code, code.length)).map(
+      (o) => o.label,
+    );
+    expect(polarsLabels).not.toContain("add_to_group");
+    expect(mockComplete).not.toHaveBeenCalled();
+  });
+
+  it("offers the group colours inside an ff.FlowGroup color= argument, once each", async () => {
+    const opts = optsFor({ getKernelId: () => null });
+    const colours = ["amber", "blue", "cyan", "green", "rose", "slate", "violet"];
+    for (const code of [
+      'clean = ff.FlowGroup("Cleaning (v2)", color="',
+      'clean = ff.FlowGroup(\n    "Cleaning",\n    color=\'vi',
+    ]) {
+      const options = await allOptions(opts, code, code.length);
+      expect(options.filter((o) => o.detail === "group colour").map((o) => o.label)).toEqual(
+        colours,
+      );
+      expect(options.filter((o) => o.label === "violet")).toHaveLength(1);
+    }
+  });
+
+  it("quotes the colour when none is typed yet, merged once with Jedi's rows", async () => {
+    mockComplete.mockResolvedValue({
+      items: [{ label: "violet", type: "statement", detail: "violet", documentation: "" }],
+    });
+    for (const kernel of [null, "k1"]) {
+      const opts = optsFor({ getKernelId: () => kernel, getFlowId: () => 1 });
+      const code = 'clean = ff.FlowGroup("Cleaning", color=vi';
+      const violets = (await allOptions(opts, code, code.length)).filter(
+        (o) => o.label === "violet",
+      );
+      expect(violets).toHaveLength(1);
+      expect(violets[0].apply).toBe('"violet"');
+    }
+  });
+
+  it("stays out of comments, other calls and code after an unclosed FlowGroup call", async () => {
+    const opts = optsFor({ getKernelId: () => null });
+    for (const code of [
+      'chart(color="',
+      '# ff.FlowGroup("x", color="',
+      'g = ff.FlowGroup("a",\nstyle.color = "',
+    ]) {
+      const options = await allOptions(opts, code, code.length);
+      expect(options.some((o) => o.detail === "group colour")).toBe(false);
+    }
+  });
 });
