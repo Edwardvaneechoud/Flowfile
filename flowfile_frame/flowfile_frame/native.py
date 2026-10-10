@@ -1258,3 +1258,18 @@ class Node(NativeNode):
             description=description,
             flow_graph=flow_graph,
         )
+
+
+def explore(frame: FlowFrame, *, description: str | None = None, group: FlowGroup | None = None) -> None:
+    """Place an Explore Data node reading ``frame``, the node the designer opens to chart its input.
+
+    The node has no output, so nothing chains after it and the call returns ``None``; ``group`` puts it in
+    a visual group. Its charts are built in the designer.
+    """
+    node = Node(NodeType.EXPLORE_DATA, frame, description=description)
+    if group is not None:
+        try:
+            node.add_to_group(group)
+        except NativeNodeError:
+            node.flow_graph.delete_node(node.node_id)
+            raise

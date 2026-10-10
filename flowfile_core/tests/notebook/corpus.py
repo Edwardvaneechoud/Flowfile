@@ -6,7 +6,7 @@ Three sources, all built Docker-free under the test session's scratch DB and sto
   its test functions, so each listed test runs with an ``export_func`` that raises at the first export and
   hands back the flow as built. Only tests without Docker, Kafka or catalog-wipe side effects are listed;
 * frame-built native nodes (a parameter gate with then/else, nested visual groups over a formula gate and a
-  union, a flow input and output);
+  union, a flow input and output, Explore Data nodes);
 * the showcase demo (``flowfile_frame/tests/fixtures/demo_catalog_pipeline.py``): a seeded catalog with the
   ``sales`` and ``regions`` tables, its child flow registered through ``publish_clean_orders``, the
   ``mood_emoji`` custom node installed, and ``build_sales_analytics`` built with ``register_flow`` stubbed.
@@ -133,6 +133,17 @@ def build_native_groups() -> FlowGraph:
     big = gate.then.with_columns(ff.lit("big").alias("size")).add_to_group(inner)
     small = gate.otherwise.with_columns(ff.lit("small").alias("size"))
     return ff.concat([big, small], how="diagonal_relaxed").add_to_group(outer).flow_graph
+
+
+def build_native_explore() -> FlowGraph:
+    """Explore Data nodes from ``ff.explore``: one described, one in a visual group."""
+    import flowfile as ff
+
+    charts = ff.FlowGroup("Charts")
+    big = ff.from_dict({"region": ["N", "S", "N"], "amount": [1.0, 2.0, 3.0]}).filter(ff.col("amount") > 1)
+    ff.explore(big, description="Big amounts")
+    ff.explore(big.select(["region"]), group=charts)
+    return big.flow_graph
 
 
 def build_native_flow_io() -> FlowGraph:
@@ -295,6 +306,7 @@ def build_corpus(tmp_dir_factory: Callable[[str], Path]) -> list[tuple[str, Flow
     corpus.append(("native_gate", build_native_gate()))
     corpus.append(("native_groups", build_native_groups()))
     corpus.append(("native_flow_io", build_native_flow_io()))
+    corpus.append(("native_explore", build_native_explore()))
     corpus.append(("python_script_cells", build_python_script_cells()))
     corpus.append(("drawer_script", build_drawer_script()))
     return corpus

@@ -511,6 +511,12 @@
       "doc_first_line": ""
     },
     {
+      "name": "explore",
+      "kind": "function",
+      "signature": "(frame, *, description=None, group=None)",
+      "doc_first_line": "Place an Explore Data node reading ``frame``, the node the designer opens to chart its input."
+    },
+    {
       "name": "float_",
       "kind": "function",
       "signature": "()",

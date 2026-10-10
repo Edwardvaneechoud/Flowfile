@@ -39,10 +39,11 @@ def test_placeholders_bind_downstream_and_carry_their_reason():
         ([1, 2, 3], None),
         ([4], "not configured yet"),
         ([5], "downstream of node 4, which is not editable as code"),
-        ([6], "explore data is interactive only"),
+        ([6], None),
     ]
     placeholder = converter.emissions()[1].code
     assert placeholder == "filtered = ff.canvas_node(4, selected_1)  # Filter data: not configured yet"
+    assert converter.emissions()[3].code == "ff.explore(selected_1)"
 
 
 def test_placeholders_are_opt_in():
