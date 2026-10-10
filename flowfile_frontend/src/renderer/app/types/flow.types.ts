@@ -245,6 +245,8 @@ export interface CreateGroupRequest {
   height?: number | null;
   parent_group_id?: number | null;
   child_group_ids?: number[];
+  // a batch names the group it creates; must be above every id the flow has held
+  group_id?: number | null;
 }
 
 // mirrors schemas.UpdateGroupRequest

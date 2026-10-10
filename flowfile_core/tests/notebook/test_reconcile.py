@@ -400,3 +400,155 @@ def test_a_comment_in_the_way_is_avoided():
     plan = reconcile(live, session, ["node-2"], _cells(1, 2, extra={"node-2": [2, 5]}))
     assert _added(plan) == {5: (500.0, 250.0)}
     _assert_added_nodes_cover_nothing(live, plan)
+
+
+
+# visual groups: the group routes' own ops, last
+
+
+def _vgroup(group_id, name, parent=None, color=None):
+    return {
+        "id": group_id,
+        "name": name,
+        "color": color,
+        "parent_group_id": parent,
+        "x_position": 0.0,
+        "y_position": 0.0,
+        "width": 400.0,
+        "height": 250.0,
+        "collapsed": False,
+    }
+
+
+def _grouped(*nodes, groups):
+    payload = _payload(*nodes)
+    payload["groups"] = list(groups)
+    return payload
+
+
+def _in(node, group_id):
+    return {**node, "group_id": group_id}
+
+
+def _group_ops(plan):
+    """Every group op of the plan as ``(op, ...)``, which must come after every node op."""
+    kinds = ("create_group", "update_group", "nest_group", "delete_group", "add_nodes_to_group", "remove_nodes_from_group")
+    ops = [op.model_dump(mode="json", exclude_none=True) for op in plan.operations]
+    first = next((i for i, op in enumerate(ops) if op["op"] in kinds), len(ops))
+    assert all(op["op"] in kinds for op in ops[first:])
+    return ops[first:]
+
+
+def test_same_grouping_under_other_ids_is_no_op():
+    live = _grouped(
+        _manual(), _filter(2, 1, group_id=7), _sort(3, 2, group_id=8), groups=[_vgroup(7, "Outer"), _vgroup(8, "Inner", parent=7)]
+    )
+    session = _grouped(
+        _manual(), _filter(2, 1, group_id=1), _sort(3, 2, group_id=2), groups=[_vgroup(1, "Outer"), _vgroup(2, "Inner", parent=1)]
+    )
+    assert reconcile(live, session, ["node-1", "node-2", "node-3"], _cells(1, 2, 3)).operations == []
+
+
+def test_a_changed_cell_moves_its_node_between_groups_matched_by_membership():
+    live = _grouped(
+        _in(_manual(), 8), _filter(2, 1, group_id=7), _sort(3, 2, group_id=7), groups=[_vgroup(7, "A"), _vgroup(8, "B")]
+    )
+    session = _grouped(
+        _in(_manual(), 1), _filter(2, 1, group_id=2), _sort(3, 2, group_id=1), groups=[_vgroup(1, "B"), _vgroup(2, "A")]
+    )
+    plan = reconcile(live, session, ["node-3"], _cells(1, 2, 3))
+    assert _group_ops(plan) == [{"op": "add_nodes_to_group", "group_id": 8, "node_ids": [3]}]
+
+
+def test_a_pinned_node_keeps_the_canvas_group_whatever_the_session_says():
+    live = _grouped(_manual(), _filter(2, 1, group_id=7), groups=[_vgroup(7, "A")])
+    session = _grouped(_in(_manual(), 1), _filter(2, 1, group_id=1), groups=[_vgroup(1, "A")])
+    assert reconcile(live, session, [], _cells(1, 2)).operations == []
+
+
+def test_a_new_group_is_created_above_the_ceiling_under_its_matched_parent():
+    live = _grouped(
+        _manual(), _filter(2, 1, group_id=7), _sort(3, 2, group_id=7), groups=[_vgroup(7, "Outer", color="blue")]
+    )
+    session = _grouped(
+        _manual(),
+        _filter(2, 1, group_id=1),
+        _sort(3, 2, group_id=2),
+        groups=[_vgroup(1, "Outer", color="blue"), _vgroup(2, "Inner", parent=1, color="rose")],
+    )
+    plan = reconcile(live, session, ["node-3"], _cells(1, 2, 3), group_id_ceiling=20)
+    assert _group_ops(plan) == [
+        {
+            "op": "create_group",
+            "group": {"group_id": 21, "name": "Inner", "color": "rose", "parent_group_id": 7, "node_ids": [3], "child_group_ids": []},
+        }
+    ]
+
+
+def test_a_matched_group_takes_the_cells_name_colour_and_parent():
+    live = _grouped(
+        _manual(), _filter(2, 1, group_id=7), _sort(3, 2, group_id=8), groups=[_vgroup(7, "A"), _vgroup(8, "B", parent=7)]
+    )
+    session = _grouped(
+        _manual(),
+        _filter(2, 1, group_id=1),
+        _sort(3, 2, group_id=2),
+        groups=[_vgroup(1, "Renamed", color="green"), _vgroup(2, "B")],
+    )
+    plan = reconcile(live, session, ["node-2", "node-3"], _cells(1, 2, 3))
+    assert _group_ops(plan) == [
+        {"op": "update_group", "group_id": 7, "group": {"name": "Renamed", "color": "green"}},
+        {"op": "nest_group", "group_id": 8},
+    ]
+
+
+def test_a_colour_the_cell_leaves_out_keeps_the_canvas_tint():
+    live = _grouped(_manual(), _filter(2, 1, group_id=7), groups=[_vgroup(7, "A", color="blue")])
+    session = _grouped(_manual(), _filter(2, 1, group_id=1), groups=[_vgroup(1, "A")])
+    assert reconcile(live, session, ["node-2"], _cells(1, 2)).operations == []
+
+
+def test_a_live_group_left_without_members_is_deleted_and_its_node_ungrouped():
+    live = _grouped(
+        _manual(),
+        _filter(2, 1, group_id=8),
+        _sort(3, 2, group_id=9),
+        groups=[_vgroup(7, "Outer"), _vgroup(8, "Inner", parent=7), _vgroup(9, "Gone")],
+    )
+    session = _grouped(
+        _manual(), _filter(2, 1, group_id=2), _sort(3, 2), groups=[_vgroup(1, "Outer"), _vgroup(2, "Inner", parent=1)]
+    )
+    plan = reconcile(live, session, ["node-3"], _cells(1, 2, 3))
+    assert _group_ops(plan) == [
+        {"op": "delete_group", "group_id": 9},
+        {"op": "remove_nodes_from_group", "node_ids": [3]},
+    ]
+
+
+def test_a_parent_with_no_direct_members_matches_through_its_sub_groups():
+    live = _grouped(_manual(), _filter(2, 1, group_id=8), groups=[_vgroup(7, "Outer"), _vgroup(8, "Inner", parent=7)])
+    session = _grouped(
+        _manual(), _filter(2, 1, group_id=2), groups=[_vgroup(1, "Outer renamed"), _vgroup(2, "Inner", parent=1)]
+    )
+    plan = reconcile(live, session, ["node-2"], _cells(1, 2))
+    assert _group_ops(plan) == [{"op": "update_group", "group_id": 7, "group": {"name": "Outer renamed"}}]
+
+
+def test_a_deleted_node_leaves_its_group_without_a_group_op():
+    live = _grouped(_manual(), _filter(2, 1, group_id=7), _sort(3, 2, group_id=7), groups=[_vgroup(7, "A")])
+    session = _grouped(_manual(), _filter(2, 1, group_id=1), groups=[_vgroup(1, "A")])
+    plan = reconcile(live, session, ["node-3"], _cells(1, 2))
+    assert [op.op for op in plan.operations] == ["delete_node"] and plan.deletions == [3]
+
+
+def test_a_group_the_node_ops_prune_is_recreated_when_its_only_member_changes_type():
+    live = _grouped(_manual(), _filter(2, 1, group_id=7), groups=[_vgroup(7, "A", color="cyan")])
+    session = _grouped(_manual(), _sort(2, 1, group_id=1), groups=[_vgroup(1, "A", color="cyan")])
+    plan = reconcile(live, session, ["node-2"], _cells(1, 2))
+    assert [op.op for op in plan.operations][:2] == ["delete_node", "add_node"]
+    assert _group_ops(plan) == [
+        {
+            "op": "create_group",
+            "group": {"group_id": 8, "name": "A", "color": "cyan", "node_ids": [2], "child_group_ids": []},
+        }
+    ]

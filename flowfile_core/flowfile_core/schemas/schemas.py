@@ -915,6 +915,7 @@ class CreateGroupRequest(BaseModel):
     height: float | None = None
     parent_group_id: int | None = None  # nest the new group under this group
     child_group_ids: list[int] = Field(default_factory=list)  # existing groups to nest inside the new one
+    group_id: int | None = None  # a batch names the group it creates; must be above every id the flow has held
 
 
 class UpdateGroupRequest(BaseModel):
@@ -1090,6 +1091,51 @@ class SetFlowParametersOperation(BaseModel):
     parameters: list[FlowParameter]
 
 
+class CreateGroupOperation(BaseModel):
+    """Same as ``POST /editor/create_group/``; ``group.group_id`` names the new group so later ops can refer to it."""
+
+    op: Literal["create_group"]
+    group: CreateGroupRequest
+
+
+class UpdateGroupOperation(BaseModel):
+    """Same as ``POST /editor/update_group/``."""
+
+    op: Literal["update_group"]
+    group_id: int
+    group: UpdateGroupRequest
+
+
+class NestGroupOperation(BaseModel):
+    """Nest group ``group_id`` under ``parent_group_id`` (``None`` for the top level). Batch-only."""
+
+    op: Literal["nest_group"]
+    group_id: int
+    parent_group_id: int | None = None
+
+
+class DeleteGroupOperation(BaseModel):
+    """Same as ``POST /editor/delete_group/``."""
+
+    op: Literal["delete_group"]
+    group_id: int
+
+
+class AddNodesToGroupOperation(BaseModel):
+    """Same as ``POST /editor/group/add_nodes/``."""
+
+    op: Literal["add_nodes_to_group"]
+    group_id: int
+    node_ids: list[int]
+
+
+class RemoveNodesFromGroupOperation(BaseModel):
+    """Same as ``POST /editor/group/remove_nodes/``."""
+
+    op: Literal["remove_nodes_from_group"]
+    node_ids: list[int]
+
+
 EditorOperation = Annotated[
     AddNodeOperation
     | UpdateSettingsOperation
@@ -1101,7 +1147,13 @@ EditorOperation = Annotated[
     | DeleteCommentOperation
     | InsertOnEdgeOperation
     | UpdateUserDefinedSettingsOperation
-    | SetFlowParametersOperation,
+    | SetFlowParametersOperation
+    | CreateGroupOperation
+    | UpdateGroupOperation
+    | NestGroupOperation
+    | DeleteGroupOperation
+    | AddNodesToGroupOperation
+    | RemoveNodesFromGroupOperation,
     Field(discriminator="op"),
 ]
 

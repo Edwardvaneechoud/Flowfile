@@ -173,3 +173,58 @@ def test_an_export_failure_raises_instead_of_rendering_no_node_cells(monkeypatch
     monkeypatch.setattr(FlowGraphToFlowFrameConverter, "convert", fail)
     with pytest.raises(RuntimeError, match="boom"):
         render(graph)
+
+
+def _grouped_pipeline() -> FlowGraph:
+    outer = ff.FlowGroup("Clean", color="blue")
+    inner = ff.FlowGroup("Inner", parent_group=outer)
+    orders = ff.from_dict({"id": [1, 2, 3], "amount": [10, 20, 30]})
+    kept = orders.filter(ff.col("amount") > 10).add_to_group(outer)
+    return kept.with_columns((ff.col("amount") * 2).alias("double")).add_to_group(inner).flow_graph
+
+
+def test_groups_render_as_their_own_cell_before_the_node_cells():
+    graph = _grouped_pipeline()
+    rendering = render(graph)
+    assert [cell.kind for cell in rendering.cells] == ["imports", "groups", "node"]
+    groups = rendering.cells[1]
+    assert groups.cell_id == "groups" and groups.node_ids == []
+    assert (
+        groups.code == 'clean = ff.FlowGroup("Clean", color="blue")\ninner = ff.FlowGroup("Inner", parent_group=clean)'
+    )
+    assert groups.defines == ["clean", "inner"] and groups.uses == ["ff"]
+    node_cell = rendering.cells[2]
+    assert node_cell.uses == ["clean", "ff", "inner"]
+    assert '.filter(ff.col("amount") > 10).add_to_group(clean)' in node_cell.code
+    assert node_cell.code.endswith('.alias("double")).add_to_group(inner)\n)')
+
+
+def test_the_grouped_cells_rebuild_the_groups(runner_kind):
+    graph = _grouped_pipeline()
+    rendering = render(graph)
+    provenance = {c.cell_id: [(graph.get_node(n).node_type, n) for n in c.node_ids] for c in rendering.cells}
+    cells = [(c.cell_id, c.code) for c in rendering.cells]
+    with notebook.notebook_mode(user_id=NOTEBOOK_OWNER_ID):
+        result = clean_run(
+            cells, max(n.node_id for n in graph.nodes), provenance, executor=RUNNERS[runner_kind].executor()
+        )
+    assert result["ok"], result
+    groups = {g["name"]: g for g in result["flowfile_data"]["groups"]}
+    assert groups["Inner"]["parent_group_id"] == groups["Clean"]["id"] and groups["Clean"]["color"] == "blue"
+    members = {n["id"]: n["group_id"] for n in result["flowfile_data"]["nodes"]}
+    filtered, formula = (next(n.node_id for n in graph.nodes if n.node_type == t) for t in ("filter", "formula"))
+    assert members[filtered] == groups["Clean"]["id"] and members[formula] == groups["Inner"]["id"]
+
+
+def test_fingerprint_tracks_groups_but_not_their_boxes():
+    graph = _grouped_pipeline()
+    before = code_fingerprint(graph)
+    inner = next(g for g in graph._groups.values() if g.name == "Inner")
+    graph.update_group(inner.id, bounds=(1.0, 2.0, 300.0, 200.0), collapsed=True)
+    assert code_fingerprint(graph) == before
+    graph.update_group(inner.id, name="Renamed")
+    renamed = code_fingerprint(graph)
+    assert renamed != before
+    node = next(n for n in graph.nodes if n.node_type == "formula")
+    graph.remove_nodes_from_group([node.node_id])
+    assert code_fingerprint(graph) != renamed

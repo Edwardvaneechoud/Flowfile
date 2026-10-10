@@ -268,3 +268,94 @@ def test_a_script_using_a_builtin_a_node_is_named_after_keeps_its_cells():
     set_node_reference(flow, 1, "sum")
     statement = _script_statement(flow)
     assert statement.startswith("python_script_2 = ff.PythonScript(\n    sum,") and "@ff.python_script" not in statement
+
+
+# visual groups: declared as ff.FlowGroup, every grouped node's statement ends in .add_to_group(...)
+
+
+def _grouped_graph():
+    """Nested groups over a fused chain, a described join, a gate and a tuple-assigning split."""
+    import flowfile_frame as ff
+
+    outer = ff.FlowGroup("Clean data", color="blue")
+    inner = ff.FlowGroup("Inner step", parent_group=outer)
+    source = ff.from_dict({"id": [1, 2, 3], "x": [1, 2, 3]})
+    selected = source.filter(ff.col("x") > 1).add_to_group(outer).select(["id", "x"]).add_to_group(inner)
+    names = ff.from_dict({"id": [1, 2, 3], "y": ["p", "q", "r"]}, flow_graph=source.flow_graph)
+    joined = selected.join(names, on="id", description="Add y").add_to_group(outer)
+    gate = ff.Gate(joined, formula="[x] > 1").add_to_group(outer)
+    computed = gate.then.with_columns(ff.lit(1).alias("one")).add_to_group(inner)
+    train, _test = computed.random_split({"train": 50, "test": 50}, seed=1)
+    train.add_to_group(outer)
+    return computed.flow_graph
+
+
+def _group_shape(graph):
+    by_id = {g.id: g for g in graph._groups.values()}
+    return sorted(
+        (
+            g.name,
+            g.color,
+            by_id[g.parent_group_id].name if g.parent_group_id else None,
+            len(graph._member_node_ids(g.id)),
+        )
+        for g in by_id.values()
+    )
+
+
+def test_groups_export_as_flow_groups_and_rebuild_on_exec():
+    graph = _grouped_graph()
+    converter = FlowGraphToFlowFrameConverter(graph)
+    code = converter.convert()
+
+    assert converter.group_lines() == [
+        'clean_data = ff.FlowGroup("Clean data", color="blue")',
+        'inner_step = ff.FlowGroup("Inner step", parent_group=clean_data)',
+    ]
+    assert code.index("clean_data = ff.FlowGroup") < code.index("inner_step = ff.FlowGroup") < code.index(".filter(")
+    assert '.filter(ff.col("x") > 1).add_to_group(clean_data)' in code
+    assert "]).add_to_group(inner_step)" in code  # the fused chain tags every link
+    assert 'description="Add y").add_to_group(clean_data)' in code  # description inside the call, the group after
+    assert "else_output=True).add_to_group(clean_data)" in code  # a native node joins a group too
+    assert "\n    train.add_to_group(clean_data)\n" in code  # a tuple assignment gets its own line
+    assert "_group_" not in code and converter.warnings == []
+
+    namespace: dict = {}
+    exec(code, namespace)
+    rebuilt = namespace["run_etl_pipeline"]().flow_graph
+    assert (
+        _group_shape(rebuilt)
+        == _group_shape(graph)
+        == [("Clean data", "blue", None, 4), ("Inner step", None, "Clean data", 2)]
+    )
+
+
+def test_group_names_never_shadow_node_names_or_builtins():
+    import flowfile_frame as ff
+
+    source = ff.from_dict({"a": [1, 2]})
+    # the described filter is a boundary bound to ``filtered``, which the group of that name must not shadow
+    filtered = source.filter(ff.col("a") > 1, description="keep").add_to_group(ff.FlowGroup("filtered"))
+    filtered.select(["a"]).add_to_group(ff.FlowGroup("list")).sort("a").add_to_group(ff.FlowGroup("1 / 2 %"))
+    converter = FlowGraphToFlowFrameConverter(filtered.flow_graph)
+    code = converter.convert()
+    assert converter.group_lines() == [
+        'filtered_2 = ff.FlowGroup("filtered")',
+        'list_2 = ff.FlowGroup("list")',
+        'group_1_2 = ff.FlowGroup("1 / 2 %")',
+    ]
+    assert "\n    filtered = (\n" in code and 'description="keep").add_to_group(filtered_2)' in code
+    namespace: dict = {}
+    exec(code, namespace)
+    assert sorted(g.name for g in namespace["run_etl_pipeline"]().flow_graph._groups.values()) == [
+        "1 / 2 %",
+        "filtered",
+        "list",
+    ]
+
+
+def test_the_polars_export_ignores_groups():
+    from flowfile_core.flowfile.code_generator import FlowGraphToPolarsConverter
+
+    code = FlowGraphToPolarsConverter(_grouped_graph()).convert()
+    assert "FlowGroup" not in code and "add_to_group" not in code

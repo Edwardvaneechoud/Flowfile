@@ -39,6 +39,7 @@
   "wait_for_round_trip": [],
   "window_functions_partition_aggregate": [],
   "native_gate": [],
+  "native_groups": [],
   "native_flow_io": [],
   "python_script_cells": [],
   "drawer_script": [],

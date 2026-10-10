@@ -217,7 +217,7 @@ export interface FlowNotice {
 }
 
 /** What Run does for a flow cell: imports and plain cells show nothing, the others an output. */
-export type FlowCellKind = "imports" | "parameters" | "node" | "plain";
+export type FlowCellKind = "imports" | "parameters" | "groups" | "node" | "plain";
 
 /** Push reviews every plan; Run's automatic sync asks only before deleting canvas nodes. */
 export type FlowSyncTrigger = "push" | "run";
@@ -420,10 +420,10 @@ export function flowPushBody(nb: OpenNotebook, nodeTypes: Map<number, string>): 
 export const flowNeedsSync = (nb: OpenNotebook): boolean =>
   nb.dirty || nb.cells.some((c) => isEdited(nb, c));
 
-/** Rendered imports/parameters cells keep their kind; other cells are node cells while they build nodes. */
+/** Rendered imports/parameters/groups cells keep their kind; other cells are node cells while they build nodes. */
 export function flowCellKind(nb: OpenNotebook, cellId: string): FlowCellKind {
   const rendered = nb.kinds?.[cellId];
-  if (rendered === "imports" || rendered === "parameters") return rendered;
+  if (rendered === "imports" || rendered === "parameters" || rendered === "groups") return rendered;
   return nb.nodeIds?.[cellId]?.length ? "node" : "plain";
 }
 
@@ -1473,7 +1473,7 @@ export const useNotebookStore = defineStore("notebook", {
           }
           if (needsSync && (await this._syncFlow(nb, "run", hooks)) !== "synced") return false;
           const kind = flowCellKind(nb, cellId);
-          if (kind === "imports" || kind === "plain") {
+          if (kind === "imports" || kind === "groups" || kind === "plain") {
             cell.output = null;
             return true;
           }

@@ -864,6 +864,9 @@ def create_group(flow_id: int, request: schemas.CreateGroupRequest) -> GroupOper
     """Create a visual group around a set of nodes. Returns the new server-assigned group."""
     flow = get_flow_or_404(flow_id)
     with edit_flow(flow, f"Create group '{request.name}'", HistoryActionType.CREATE_GROUP) as txn:
+        if request.group_id is not None and request.group_id <= flow.group_id_ceiling:
+            message = f"Group id {request.group_id} is not above every id this flow has held."
+            raise HTTPException(409, {"code": GROUP_ID_TAKEN, "message": message, "group_id": request.group_id})
         group = flow.create_group(
             request.name,
             request.node_ids,
@@ -871,6 +874,7 @@ def create_group(flow_id: int, request: schemas.CreateGroupRequest) -> GroupOper
             bounds=_bounds_from_request(request),
             parent_group_id=request.parent_group_id,
             child_group_ids=request.child_group_ids,
+            group_id=request.group_id,
         )
     return GroupOperationResponse(success=True, history=txn.history, group=_group_to_schema(group))
 
@@ -1089,6 +1093,22 @@ def _apply_operation(flow_id: int, operation: schemas.EditorOperation, current_u
             update_user_defined_node(settings, operation.node_type, current_user=current_user)
         case "set_flow_parameters":
             get_flow_or_404(flow_id).flow_settings.parameters = list(operation.parameters)
+        case "create_group":
+            create_group(flow_id, operation.group)
+        case "update_group":
+            update_group(flow_id, operation.group_id, operation.group)
+        case "nest_group":
+            try:
+                get_flow_or_404(flow_id).nest_group(operation.group_id, operation.parent_group_id)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+        case "delete_group":
+            delete_group(flow_id, operation.group_id)
+        case "add_nodes_to_group":
+            membership = schemas.GroupMembershipRequest(node_ids=operation.node_ids)
+            add_nodes_to_group(flow_id, operation.group_id, membership)
+        case "remove_nodes_from_group":
+            remove_nodes_from_group(flow_id, schemas.GroupMembershipRequest(node_ids=operation.node_ids))
 
 
 @router.post(
@@ -1751,6 +1771,7 @@ def keep_server_owned_layout(flow, settings) -> None:
 
 NODE_SETTINGS_CHANGED = "NODE_SETTINGS_CHANGED"
 NODE_ID_TAKEN = "NODE_ID_TAKEN"
+GROUP_ID_TAKEN = "GROUP_ID_TAKEN"
 
 
 def require_settings_unchanged(flow, node_id: int, expected_fingerprint: str | None) -> None:

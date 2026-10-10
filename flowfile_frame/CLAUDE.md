@@ -17,6 +17,7 @@ Runtime contract: each `FlowFrame`/`Expr` carries a `_repr_str` — a literal Po
 - `flowfile_frame/adding_expr.py` — `add_expr_methods` decorator injecting Polars-mirroring methods onto `Expr`.
 - `flowfile_frame/selectors.py`, `expr_name.py`, `list_name_space.py` — selectors and `.name`/`.list` namespaces.
 - `flowfile_frame/group_frame.py`, `join.py`, `series.py`, `lazy.py` — group-by, join inputs, `Series`, `fold`.
+- `flowfile_frame/flow_group.py` — `ff.FlowGroup`, the visual-group object (`name`, `color`, `parent_group`), bound lazily to the graph of the first node that joins it (`_bind` places the parents first through `FlowGraph.create_group`, `_add_node` through `add_nodes_to_group`); `rebind_groups` moves every bound group of merged graphs onto the combined graph (called by `native.merge_frames` with core's `_create_group_id_mapping`). `FlowFrame.add_to_group` and `NativeNode.add_to_group` return their receiver so they chain. A group of another graph raises `NativeNodeError`; the module imports no frame module at import time.
 - `flowfile_frame/database/` — DB connection helpers + `read_database`/`write_database` (`database/frame_helpers.py`); delegates to `flowfile_core.database` / core's connection manager.
 - `flowfile_frame/cloud_storage/` — S3/cloud connection helpers + `read_from_cloud_storage`/`write_to_cloud_storage` (`cloud_storage/frame_helpers.py`).
 - `flowfile_frame/catalog.py`, `catalog_reference.py`, `kafka.py`, `rest_api.py` — catalog I/O, Kafka, REST sources.

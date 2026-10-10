@@ -19,7 +19,7 @@ The canvas notebook shows the open flow as Python code, one cell per statement, 
 
 Open the [Code panel](tutorials/code-generator.md) (Ctrl/Cmd+G) and pick **Notebook**, or click **Modify in notebook** on a flow's page in the [Catalog](catalog/index.md#flow-detail-panel), which opens the flow with the notebook already showing. The panel stays open while you click the canvas or switch flows; a double-click on an empty spot of the canvas closes it, and closing it keeps your edits. The notebook renders the flow:
 
-- The leading cells hold the imports and the flow parameters, then one cell per statement in the order the flow runs; a cell holds every node its statement chains together.
+- The leading cells hold the imports, the flow parameters and the canvas's visual groups (`cleaning = ff.FlowGroup("Cleaning", color="blue")`, a nested group with `parent_group=`), then one cell per statement in the order the flow runs; a cell holds every node its statement chains together, and a node inside a group ends its call with `.add_to_group(cleaning)`.
 - Cells use the [Python API](../python-api/index.md) (`import flowfile as ff`): fluent `FlowFrame` calls for built-in transforms, and the [native node classes](../python-api/reference/native-nodes.md) (`ff.Gate`, `ff.RunFlow`, `ff.PythonScript`, custom nodes, parameters) for the rest.
 - A Python Script node written in its drawer is a `@ff.python_script` function [without a `return`](../python-api/reference/native-nodes.md#scripts-without-a-return): the body is the script as written, its cells separated by `# %%` markers, and the frames it reads go in the call below it (`python_script_2 = _script_2(df)`). A script that would not come back from that form unchanged, such as one holding a multi-line string, is an `ff.PythonScript(cells=[...])` call instead.
 - A Polars Code node holding a function is that function as written, followed by the call that wires it (`transformed_5 = df.polars_code(high_value)`); rename the function or its parameters and the node keeps your names. A node holding a snippet is a generated `_polars_code_<id>(input_df)` function whose body is the snippet with its result returned; edit the body and it stays a snippet, rename the function or a parameter and it becomes a function node.
@@ -57,6 +57,7 @@ This section describes the notebook with **No kernel** picked. Cell code never r
 | Cell | Example | What Run shows |
 |---|---|---|
 | Imports | `import flowfile as ff` | Nothing. |
+| Groups | `cleaning = ff.FlowGroup("Cleaning", color="blue")` | Nothing. |
 | Parameters | `min_quantity = ff.add_flow_parameter(flow, ff.Parameter("min_quantity", default=8, type="integer"))` | The flow's parameters, each with its name, type and default, read from the canvas after the sync. |
 | Node | `filtered_2 = source_1.filter(ff.col("quantity") >= min_quantity)` | Runs the cell's last node and everything it depends on, honouring [gates](nodes/combine.md), then shows up to 100 of its rows. A writer cell writes, and a [change-tracking](catalog/change-tracking.md) cursor or Kafka offsets then move with what it wrote. Any other node cell only shows rows and leaves them where they are. |
 | Plain value | `threshold = 8` | Nothing. |
@@ -102,7 +103,7 @@ These markers take the place of the catalog notebook's **Code changed — rerun*
 
 A sync runs no node and opens no connection. A source, or a node whose columns depend on its data (Polars code, pivot, custom nodes, a data cleansing that removes null columns), keeps the columns the canvas shows while its settings are unchanged; a new or edited one takes the columns its cell declares, the columns Polars works out from the call when `.tail(n)` or a similar Polars frame method, or `with_columns`, `select`, `filter` or `sort`, places a Polars Code node, the header of the local file it reads or a catalog table's registered columns, and otherwise the sync treats it as having no columns.
 
-A sync keeps the id, position, description and cached results of every node the edit does not touch, and a lowercase variable name assigned in a cell becomes that node's reference.
+A sync keeps the id, position, description and cached results of every node the edit does not touch, and a lowercase variable name assigned in a cell becomes that node's reference. Visual groups follow the cells too: a node whose cell changed lands in the group its `.add_to_group(...)` names (a new `ff.FlowGroup` in the groups cell becomes a new box, a renamed or recoloured one updates the box), a node whose cell did not change keeps its canvas group, and a box left empty is removed.
 
 ## What a sync refuses or asks about
 

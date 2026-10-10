@@ -174,6 +174,9 @@ class FlowFrame:
     # Shared implementation for option-light file writers (ipc/ndjson/avro).
     def _write_simple_file(self, path: str | os.PathLike, file_type: str, table_settings: Any, fallback_code_template: str, *, compression: str | None = None, convert_to_absolute_path: bool = True, description: str = None, **kwargs) -> 'FlowFrame': ...
 
+    # Put this frame's node in ``group``, a :class:`~flowfile_frame.flow_group.FlowGroup`.
+    def add_to_group(self, group: FlowGroup, description: Optional[str] = None) -> 'FlowFrame': ...
+
     # Score the data using a trained model.
     def apply_model(self, upstream: FlowFrame | None = None, *, model_name: str = '', output_column: str = 'prediction', version: int | None = None, schema: SchemaReference | None = None, namespace_id: int | None = None, description: str | None = None) -> 'FlowFrame': ...
 
