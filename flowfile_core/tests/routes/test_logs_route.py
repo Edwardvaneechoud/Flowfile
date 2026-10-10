@@ -198,6 +198,26 @@ def test_run_request_claims_the_run_and_rewrites_its_log_before_it_answers(own_f
     assert flow_file_handler.get_flow(own_flow).flow_settings.is_running is False
 
 
+def test_the_log_is_truncated_before_the_claim_is_visible(own_flow, monkeypatch):
+    """A stream opened on ``is_running`` must never read the previous run's file, so truncation comes first."""
+    flow = flow_file_handler.get_flow(own_flow)
+    seen: dict[str, object] = {}
+    clear = flow.flow_logger.clear_log_file
+
+    def clear_log_file():
+        seen["running_at_truncation"] = flow.flow_settings.is_running
+        clear()
+
+    monkeypatch.setattr(flow.flow_logger, "clear_log_file", clear_log_file)
+    assert LOG_LINE in _flow_log_text(own_flow)
+    assert flow.try_claim_run()
+    try:
+        assert seen == {"running_at_truncation": False}
+        assert _flow_log_text(own_flow) == ""
+    finally:
+        flow.release_run()
+
+
 def test_a_run_whose_pre_work_fails_releases_the_claim(own_flow, monkeypatch):
     from flowfile_core.routes import routes
 

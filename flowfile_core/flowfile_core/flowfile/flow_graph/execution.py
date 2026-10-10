@@ -232,18 +232,20 @@ class ExecutionMixin(GraphMixinBase):
         set under the same lock, before the claim is visible: the cancel flag is cleared, so a
         ``cancel`` that lands once ``is_running`` is seen is never wiped by the run's own start, and
         the run's ``kernel_hold`` and ``commit_sources`` are in place, so a notebook interrupt that
-        sees the run also sees the kernel it holds. The flow's log file is truncated before the claim
-        is announced (``run_started``): a log stream opened on ``is_running`` or on that event reads
-        this run's file from its first line, never the previous run's.
+        sees the run also sees the kernel it holds. The flow's log file is truncated under the same lock,
+        before ``is_running`` is set: a log stream opened on ``is_running`` or on ``run_started`` reads
+        this run's file from its first line, never the previous run's. Truncating after the flag was
+        visible left a window where a stream opened on the stale file and the truncation moved the end of
+        the file below its read offset, so the new run's first lines were skipped.
         """
         with self.edit_lock(bounded=False), self._run_claim_lock:
             if self.flow_settings.is_running:
                 return False
+            self.flow_logger.clear_log_file()
             self._kernel_hold = kernel_hold
             self._commit_sources = commit_sources
             self.flow_settings.is_canceled = False
             self.flow_settings.is_running = True
-        self.flow_logger.clear_log_file()
         self._bump_revision("run_started")
         return True
 
