@@ -145,7 +145,7 @@ docker compose up -d
 | `make check_stubs` | CI drift gate: regenerate stubs and fail if they differ from committed files |
 | `make formula_docs` | Regenerate `docs/users/formulas/functions.md` from polars-expr-transformer docstrings |
 | `make check_formula_docs` | CI drift gate: regenerate formula docs and fail if the committed page changed |
-| `make fl_completions` | Regenerate the notebook editor's static `ff.` completions (`components/notebook/flCompletions.json`; run after changing `flowfile.__all__` or the signature or docstring of an exported name) |
+| `make fl_completions` | Regenerate the notebook editor's static `ff.`, FlowFrame-method and group-colour completions (`components/notebook/flCompletions.json`; run after changing `flowfile.__all__`, a FlowFrame method or `schemas.GroupColor`, or the signature or docstring of one of them) |
 | `make check_fl_completions` | Local drift gate: regenerate and fail if the committed completions changed (CI checks only the offered names via `flowfile_core/tests/test_fl_completions_gate.py`) |
 | `make notebook_kernel_dev` | Build `flowfile-kernel-notebook:local`: this checkout's flowfile wheel on the published lite image of the pinned kernel release (`NOTEBOOK_BASE_IMAGE=flowfile-kernel-lite:local` after `make rebuild_kernel KERNEL_FLAVOUR=lite` for an unpublished kernel change); the `notebook` flavour resolves to it while the published app-version tag is absent |
 | `make kernel_manifest` | Regenerate the kernel image dependency manifest core matches node deps against (run after changing kernel_runtime's deps) |

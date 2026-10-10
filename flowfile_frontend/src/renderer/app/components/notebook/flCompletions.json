@@ -846,5 +846,792 @@
       "signature": "(df, path, *, file_format='parquet', connection_name=None, delimiter=';', encoding='utf8', compression='snappy', write_mode='overwrite', partition_by=None, merge_keys=None, track_changes=False)",
       "doc_first_line": "Write data to cloud storage."
     }
+  ],
+  "frame": [
+    {
+      "name": "add_to_group",
+      "kind": "method",
+      "signature": "(group)",
+      "doc_first_line": "Put this frame's node in ``group``, a :class:`~flowfile_frame.flow_group.FlowGroup`."
+    },
+    {
+      "name": "apply_model",
+      "kind": "method",
+      "signature": "(upstream=None, *, model_name='', output_column='prediction', version=None, schema=None, namespace_id=None, description=None)",
+      "doc_first_line": "Score the data using a trained model."
+    },
+    {
+      "name": "approx_n_unique",
+      "kind": "method",
+      "signature": "()",
+      "doc_first_line": "Approximate count of unique values."
+    },
+    {
+      "name": "bottom_k",
+      "kind": "method",
+      "signature": "(k, *, by, reverse=False)",
+      "doc_first_line": "Return the `k` smallest rows."
+    },
+    {
+      "name": "cache",
+      "kind": "method",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "cast",
+      "kind": "method",
+      "signature": "(dtypes, *, strict=True)",
+      "doc_first_line": "Cast LazyFrame column(s) to the specified dtype(s)."
+    },
+    {
+      "name": "clear",
+      "kind": "method",
+      "signature": "(n=0)",
+      "doc_first_line": "Create an empty copy of the current LazyFrame, with zero to 'n' rows."
+    },
+    {
+      "name": "clone",
+      "kind": "method",
+      "signature": "()",
+      "doc_first_line": "Create a copy of this LazyFrame."
+    },
+    {
+      "name": "collect",
+      "kind": "method",
+      "signature": "(*args, **kwargs)",
+      "doc_first_line": "Collect lazy data into memory."
+    },
+    {
+      "name": "collect_async",
+      "kind": "method",
+      "signature": "(*, gevent=False, engine='auto', optimizations=<polars.lazyframe.opt_flags.QueryOptFlags object>)",
+      "doc_first_line": "Collect DataFrame asynchronously in thread pool."
+    },
+    {
+      "name": "collect_batches",
+      "kind": "method",
+      "signature": "(*, chunk_size=None, maintain_order=True, lazy=False, engine='auto', optimizations=<polars.lazyframe.opt_flags.QueryOptFlags object>)",
+      "doc_first_line": "Evaluate the query in streaming mode and get a generator that returns chunks."
+    },
+    {
+      "name": "collect_schema",
+      "kind": "method",
+      "signature": "()",
+      "doc_first_line": "Resolve the schema of this LazyFrame."
+    },
+    {
+      "name": "columns",
+      "kind": "property",
+      "signature": "",
+      "doc_first_line": "Get the column names."
+    },
+    {
+      "name": "concat",
+      "kind": "method",
+      "signature": "(other, how='vertical', rechunk=False, parallel=True, description=None)",
+      "doc_first_line": "Combine multiple FlowFrames into a single FlowFrame."
+    },
+    {
+      "name": "count",
+      "kind": "method",
+      "signature": "()",
+      "doc_first_line": "Return the number of non-null elements for each column."
+    },
+    {
+      "name": "data_cleansing",
+      "kind": "method",
+      "signature": "(columns=None, *, remove_null_rows=False, remove_null_columns=False, replace_nulls_with_blank=True, replace_nulls_with_zero=True, trim_whitespace=True, normalize_whitespace=False, remove_all_whitespace=False, remove_letters=False, remove_numbers=False, remove_punctuation=False, case_mode='none', description=None)",
+      "doc_first_line": "Fix common data quality issues in one node."
+    },
+    {
+      "name": "describe",
+      "kind": "method",
+      "signature": "(percentiles=(0.25, 0.5, 0.75), *, interpolation='nearest')",
+      "doc_first_line": "Creates a summary of statistics for a LazyFrame, returning a DataFrame."
+    },
+    {
+      "name": "deserialize",
+      "kind": "method",
+      "signature": "(source, *, format='binary')",
+      "doc_first_line": "Read a logical plan from a file to construct a LazyFrame."
+    },
+    {
+      "name": "drop",
+      "kind": "method",
+      "signature": "(*columns, strict=True, description=None)",
+      "doc_first_line": "Remove columns from the frame."
+    },
+    {
+      "name": "drop_nans",
+      "kind": "method",
+      "signature": "(subset=None)",
+      "doc_first_line": "Drop all rows that contain one or more NaN values."
+    },
+    {
+      "name": "drop_nulls",
+      "kind": "method",
+      "signature": "(subset=None)",
+      "doc_first_line": "Drop all rows that contain one or more null values."
+    },
+    {
+      "name": "dtypes",
+      "kind": "property",
+      "signature": "",
+      "doc_first_line": "Get the column data types."
+    },
+    {
+      "name": "dynamic_rename",
+      "kind": "method",
+      "signature": "(mode='prefix', *, prefix='', suffix='', formula='', columns=None, data_type=None, description=None)",
+      "doc_first_line": "Rename many columns at once via a single rule."
+    },
+    {
+      "name": "evaluate_model",
+      "kind": "method",
+      "signature": "(actual_column, *, predicted_column='prediction', task_type='auto', upstream=None, description=None)",
+      "doc_first_line": "Compute model-quality metrics by comparing an actual column with a prediction column."
+    },
+    {
+      "name": "execute",
+      "kind": "method",
+      "signature": "(*, optimizations=<polars.lazyframe.opt_flags.QueryOptFlags object>, engine='auto', **_kwargs)",
+      "doc_first_line": "Execute the query into a `QueryResult`."
+    },
+    {
+      "name": "explain",
+      "kind": "method",
+      "signature": "(*, format='plain', optimized=True, type_coercion=True, predicate_pushdown=True, projection_pushdown=True, simplify_expression=True, slice_pushdown=True, comm_subplan_elim=True, comm_subexpr_elim=True, cluster_with_columns=True, collapse_joins=True, streaming=False, engine='auto', tree_format=None, optimizations=<polars.lazyframe.opt_flags.QueryOptFlags object>)",
+      "doc_first_line": "Create a string representation of the query plan."
+    },
+    {
+      "name": "explode",
+      "kind": "method",
+      "signature": "(columns, *more_columns, description=None)",
+      "doc_first_line": "Explode the dataframe to long format by exploding the given columns."
+    },
+    {
+      "name": "explode_hierarchy",
+      "kind": "method",
+      "signature": "(parent, child, quantity=None, *, output_detail='totals', top_level_only=False, include_self=False, max_depth=None, description=None)",
+      "doc_first_line": "Explode a parent -> child hierarchy (bill of materials, chart of accounts) into all its levels."
+    },
+    {
+      "name": "fetch",
+      "kind": "method",
+      "signature": "(n_rows=500, **kwargs)",
+      "doc_first_line": "Collect a small number of rows for debugging purposes."
+    },
+    {
+      "name": "fill_nan",
+      "kind": "method",
+      "signature": "(value)",
+      "doc_first_line": "Fill floating point NaN values."
+    },
+    {
+      "name": "fill_null",
+      "kind": "method",
+      "signature": "(value=None, strategy=None, limit=None, *, matches_supertype=True)",
+      "doc_first_line": "Fill null values using the specified value or strategy."
+    },
+    {
+      "name": "filter",
+      "kind": "method",
+      "signature": "(*predicates, flowfile_formula=None, description=None, **constraints)",
+      "doc_first_line": "Filter rows based on a predicate."
+    },
+    {
+      "name": "filter_split",
+      "kind": "method",
+      "signature": "(*predicates, flowfile_formula=None, description=None, **constraints)",
+      "doc_first_line": "Split the frame by a predicate into (pass, fail) frames."
+    },
+    {
+      "name": "first",
+      "kind": "method",
+      "signature": "()",
+      "doc_first_line": "Get the first row of the DataFrame."
+    },
+    {
+      "name": "fuzzy_join",
+      "kind": "method",
+      "signature": "(other, fuzzy_mappings, description=None)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "gather",
+      "kind": "method",
+      "signature": "(indices, *, null_on_oob=False)",
+      "doc_first_line": "Selects rows from this LazyFrame at the given indices."
+    },
+    {
+      "name": "gather_every",
+      "kind": "method",
+      "signature": "(n, offset=0)",
+      "doc_first_line": "Take every nth row in the LazyFrame and return as a new LazyFrame."
+    },
+    {
+      "name": "get_node_settings",
+      "kind": "method",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "group",
+      "kind": "method",
+      "signature": "(name, *, color=None)",
+      "doc_first_line": "Group every node created inside this block into a labeled visual container."
+    },
+    {
+      "name": "group_by",
+      "kind": "method",
+      "signature": "(*by, description=None, maintain_order=False, **named_by)",
+      "doc_first_line": "Start a group by operation."
+    },
+    {
+      "name": "group_by_dynamic",
+      "kind": "method",
+      "signature": "(index_column, *, every, period=None, offset=None, include_boundaries=False, closed='left', label='left', group_by=None, start_by='window')",
+      "doc_first_line": "Group based on a time value (or index value of type Int32, Int64)."
+    },
+    {
+      "name": "head",
+      "kind": "method",
+      "signature": "(n, description=None)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "inspect",
+      "kind": "method",
+      "signature": "(fmt='{}')",
+      "doc_first_line": "Inspect a node in the computation graph."
+    },
+    {
+      "name": "interpolate",
+      "kind": "method",
+      "signature": "()",
+      "doc_first_line": "Interpolate intermediate values. The interpolation method is linear."
+    },
+    {
+      "name": "join",
+      "kind": "method",
+      "signature": "(other, on=None, how='inner', left_on=None, right_on=None, suffix='_right', validate=None, nulls_equal=False, coalesce=None, maintain_order=None, description=None, keep_right_keys=False)",
+      "doc_first_line": "Add a join operation to the Logical Plan."
+    },
+    {
+      "name": "join_asof",
+      "kind": "method",
+      "signature": "(other, *, left_on=None, right_on=None, on=None, by_left=None, by_right=None, by=None, strategy='backward', suffix='_right', tolerance=None, allow_parallel=True, force_parallel=False, coalesce=True, allow_exact_matches=True, check_sortedness=True)",
+      "doc_first_line": "Perform an asof join."
+    },
+    {
+      "name": "join_where",
+      "kind": "method",
+      "signature": "(other, *predicates, suffix='_right')",
+      "doc_first_line": "Perform a join based on one or multiple (in)equality predicates."
+    },
+    {
+      "name": "last",
+      "kind": "method",
+      "signature": "()",
+      "doc_first_line": "Get the last row of the DataFrame."
+    },
+    {
+      "name": "lazy",
+      "kind": "method",
+      "signature": "()",
+      "doc_first_line": "Return lazy representation, i.e. itself."
+    },
+    {
+      "name": "limit",
+      "kind": "method",
+      "signature": "(n, description=None)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "map_batches",
+      "kind": "method",
+      "signature": "(function, *, predicate_pushdown=False, projection_pushdown=False, slice_pushdown=False, no_optimizations=None, schema=None, validate_output_schema=True, streamable=False)",
+      "doc_first_line": "Apply a custom function."
+    },
+    {
+      "name": "match_to_schema",
+      "kind": "method",
+      "signature": "(schema, *, missing_columns='raise', missing_struct_fields='raise', extra_columns='raise', extra_struct_fields='raise', integer_cast='forbid', float_cast='forbid')",
+      "doc_first_line": "Match or evolve the schema of a LazyFrame into a specific schema."
+    },
+    {
+      "name": "max",
+      "kind": "method",
+      "signature": "()",
+      "doc_first_line": "Aggregate the columns in the LazyFrame to their maximum value."
+    },
+    {
+      "name": "mean",
+      "kind": "method",
+      "signature": "()",
+      "doc_first_line": "Aggregate the columns in the LazyFrame to their mean value."
+    },
+    {
+      "name": "median",
+      "kind": "method",
+      "signature": "()",
+      "doc_first_line": "Aggregate the columns in the LazyFrame to their median value."
+    },
+    {
+      "name": "melt",
+      "kind": "method",
+      "signature": "(id_vars=None, value_vars=None, variable_name=None, value_name=None, *, streamable=True)",
+      "doc_first_line": "Unpivot a DataFrame from wide to long format."
+    },
+    {
+      "name": "merge_sorted",
+      "kind": "method",
+      "signature": "(other, key, *, maintain_order=False)",
+      "doc_first_line": "Take two sorted DataFrames and merge them by the sorted key."
+    },
+    {
+      "name": "min",
+      "kind": "method",
+      "signature": "()",
+      "doc_first_line": "Aggregate the columns in the LazyFrame to their minimum value."
+    },
+    {
+      "name": "multi_field_formula",
+      "kind": "method",
+      "signature": "(formula, columns=None, *, data_type=None, prefix='', suffix='', output_data_type=None, description=None)",
+      "doc_first_line": "Apply one Flowfile formula to many columns at once."
+    },
+    {
+      "name": "node_reference",
+      "kind": "property",
+      "signature": "",
+      "doc_first_line": "The reference of the node behind this frame, ``None`` for the default ``df_<node id>``."
+    },
+    {
+      "name": "null_count",
+      "kind": "method",
+      "signature": "()",
+      "doc_first_line": "Aggregate the columns in the LazyFrame as the sum of their null value count."
+    },
+    {
+      "name": "pipe",
+      "kind": "method",
+      "signature": "(function, *args, **kwargs)",
+      "doc_first_line": "Offers a structured way to apply a sequence of user-defined functions (UDFs)."
+    },
+    {
+      "name": "pipe_with_schema",
+      "kind": "method",
+      "signature": "(function)",
+      "doc_first_line": "Allows to alter the lazy frame during the plan stage with the resolved schema."
+    },
+    {
+      "name": "pivot",
+      "kind": "method",
+      "signature": "(on, *, index=None, values=None, aggregate_function='first', maintain_order=True, sort_columns=False, separator='_', description=None)",
+      "doc_first_line": "Pivot a DataFrame from long to wide format."
+    },
+    {
+      "name": "polars_code",
+      "kind": "method",
+      "signature": "(code, *others, description=None)",
+      "doc_first_line": "Place one Polars Code node over this frame, and ``others`` as its further inputs, in order."
+    },
+    {
+      "name": "profile",
+      "kind": "method",
+      "signature": "(*, type_coercion=True, predicate_pushdown=True, projection_pushdown=True, simplify_expression=True, no_optimization=False, slice_pushdown=True, comm_subplan_elim=True, comm_subexpr_elim=True, cluster_with_columns=True, collapse_joins=True, show_plot=False, truncate_nodes=0, figsize=(18, 8), engine='auto', optimizations=<polars.lazyframe.opt_flags.QueryOptFlags object>, **_kwargs)",
+      "doc_first_line": "Profile a LazyFrame."
+    },
+    {
+      "name": "quantile",
+      "kind": "method",
+      "signature": "(quantile, interpolation='nearest')",
+      "doc_first_line": "Aggregate the columns in the LazyFrame to their quantile value."
+    },
+    {
+      "name": "random_split",
+      "kind": "method",
+      "signature": "(splits, seed=None, description=None)",
+      "doc_first_line": "Randomly partition rows into N labeled FlowFrames."
+    },
+    {
+      "name": "remote",
+      "kind": "method",
+      "signature": "(context=None, *, plan_type='dot', n_retries=0, engine='auto', scaling_mode='auto')",
+      "doc_first_line": "Run a query remotely on Polars Cloud."
+    },
+    {
+      "name": "remove",
+      "kind": "method",
+      "signature": "(*predicates, **constraints)",
+      "doc_first_line": "Remove rows, dropping those that match the given predicate expression(s)."
+    },
+    {
+      "name": "rename",
+      "kind": "method",
+      "signature": "(mapping, *, strict=True, description=None)",
+      "doc_first_line": "Rename columns based on a mapping or function."
+    },
+    {
+      "name": "reverse",
+      "kind": "method",
+      "signature": "()",
+      "doc_first_line": "Reverse the DataFrame."
+    },
+    {
+      "name": "rolling",
+      "kind": "method",
+      "signature": "(index_column, *, period, offset=None, closed='right', group_by=None)",
+      "doc_first_line": "Create rolling groups based on a temporal or integer column."
+    },
+    {
+      "name": "sample",
+      "kind": "method",
+      "signature": "(n=None, *, fraction=None, seed=None, description=None)",
+      "doc_first_line": "Take a uniform random sample of rows."
+    },
+    {
+      "name": "save_graph",
+      "kind": "method",
+      "signature": "(file_path, auto_arrange=True)",
+      "doc_first_line": "Save the graph"
+    },
+    {
+      "name": "schema",
+      "kind": "property",
+      "signature": "",
+      "doc_first_line": "Get an ordered mapping of column names to their data type."
+    },
+    {
+      "name": "select",
+      "kind": "method",
+      "signature": "(*columns, description=None, _keep_missing=False)",
+      "doc_first_line": "Select columns from the frame."
+    },
+    {
+      "name": "select_seq",
+      "kind": "method",
+      "signature": "(*exprs, **named_exprs)",
+      "doc_first_line": "Select columns from this LazyFrame."
+    },
+    {
+      "name": "serialize",
+      "kind": "method",
+      "signature": "(file=None, *, format='binary')",
+      "doc_first_line": "Serialize the logical plan of this LazyFrame to a file or string in JSON format."
+    },
+    {
+      "name": "set_group",
+      "kind": "method",
+      "signature": "(name, *, color=None)",
+      "doc_first_line": "Assign this frame's current node to a (new or existing) named visual group."
+    },
+    {
+      "name": "set_sorted",
+      "kind": "method",
+      "signature": "(column, *more_columns, descending=False, nulls_last=False)",
+      "doc_first_line": "Flag a column as sorted."
+    },
+    {
+      "name": "shift",
+      "kind": "method",
+      "signature": "(n=1, *, fill_value=None)",
+      "doc_first_line": "Shift values by the given number of indices."
+    },
+    {
+      "name": "show",
+      "kind": "method",
+      "signature": "(limit=5, *, ascii_tables=None, decimal_separator=None, thousands_separator=None, float_precision=None, fmt_float=None, fmt_str_lengths=None, fmt_table_cell_list_len=None, tbl_cell_alignment=None, tbl_cell_numeric_alignment=None, tbl_cols=None, tbl_column_data_type_inline=None, tbl_dataframe_shape_below=None, tbl_formatting=None, tbl_hide_column_data_types=None, tbl_hide_column_names=None, tbl_hide_dtype_separator=None, tbl_hide_dataframe_shape=None, tbl_width_chars=None, trim_decimal_zeros=True)",
+      "doc_first_line": "Show the first `n` rows."
+    },
+    {
+      "name": "show_graph",
+      "kind": "method",
+      "signature": "(*, optimized=True, show=True, output_path=None, raw_output=False, figsize=(16.0, 12.0), type_coercion=True, _type_check=True, predicate_pushdown=True, projection_pushdown=True, simplify_expression=True, slice_pushdown=True, comm_subplan_elim=True, comm_subexpr_elim=True, cluster_with_columns=True, collapse_joins=True, engine='auto', plan_stage=None, _check_order=True, optimizations=<polars.lazyframe.opt_flags.QueryOptFlags object>)",
+      "doc_first_line": "Show a plot of the query plan."
+    },
+    {
+      "name": "sink_batches",
+      "kind": "method",
+      "signature": "(function, *, chunk_size=None, maintain_order=True, lazy=False, engine='auto', optimizations=<polars.lazyframe.opt_flags.QueryOptFlags object>)",
+      "doc_first_line": "Evaluate the query and call a user-defined function for every ready batch."
+    },
+    {
+      "name": "sink_csv",
+      "kind": "method",
+      "signature": "(file, *args, separator=',', encoding='utf-8', description=None)",
+      "doc_first_line": "Write the data to a CSV file."
+    },
+    {
+      "name": "sink_delta",
+      "kind": "method",
+      "signature": "(target, *, mode='error', storage_options=None, credential_provider='auto', delta_write_options=None, delta_merge_options=None, optimizations=<polars.lazyframe.opt_flags.QueryOptFlags object>)",
+      "doc_first_line": "Sink DataFrame as delta table."
+    },
+    {
+      "name": "sink_iceberg",
+      "kind": "method",
+      "signature": "(target, *, mode, catalog=None, storage_options=None)",
+      "doc_first_line": "Sink a LazyFrame to an Iceberg table."
+    },
+    {
+      "name": "sink_ipc",
+      "kind": "method",
+      "signature": "(path, *, compression=None, description=None, **kwargs)",
+      "doc_first_line": "Alias for :meth:`write_ipc`."
+    },
+    {
+      "name": "sink_ndjson",
+      "kind": "method",
+      "signature": "(path, *, compression=None, description=None, **kwargs)",
+      "doc_first_line": "Alias for :meth:`write_ndjson`."
+    },
+    {
+      "name": "sink_parquet",
+      "kind": "method",
+      "signature": "(path, *, compression='zstd', compression_level=None, statistics=True, row_group_size=None, data_page_size=None, maintain_order=True, storage_options=None, credential_provider='auto', retries=None, sync_on_close=None, metadata=None, arrow_schema=None, mkdir=False, lazy=False, engine='auto', optimizations=<polars.lazyframe.opt_flags.QueryOptFlags object>, _sinked_paths_callback=None)",
+      "doc_first_line": "Evaluate the query in streaming mode and write to a Parquet file."
+    },
+    {
+      "name": "slice",
+      "kind": "method",
+      "signature": "(offset, length=None)",
+      "doc_first_line": "Get a slice of this DataFrame."
+    },
+    {
+      "name": "solve_graph",
+      "kind": "method",
+      "signature": "(col_from, col_to, output_column_name='graph_group', *, description=None)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "sort",
+      "kind": "method",
+      "signature": "(by, *more_by, descending=False, nulls_last=False, multithreaded=True, maintain_order=False, description=None)",
+      "doc_first_line": "Sort the dataframe by the given columns."
+    },
+    {
+      "name": "sql",
+      "kind": "method",
+      "signature": "(query, *, table_name='self', description=None)",
+      "doc_first_line": "Run ``query`` against this frame as a SQL Query node; the frame is the table ``table_name``."
+    },
+    {
+      "name": "std",
+      "kind": "method",
+      "signature": "(ddof=1)",
+      "doc_first_line": "Aggregate the columns in the LazyFrame to their standard deviation value."
+    },
+    {
+      "name": "sum",
+      "kind": "method",
+      "signature": "()",
+      "doc_first_line": "Aggregate the columns in the LazyFrame to their sum value."
+    },
+    {
+      "name": "tail",
+      "kind": "method",
+      "signature": "(n=5)",
+      "doc_first_line": "Get the last `n` rows."
+    },
+    {
+      "name": "text_to_rows",
+      "kind": "method",
+      "signature": "(column, output_column=None, delimiter=None, split_by_column=None, description=None)",
+      "doc_first_line": "Split text in a column into multiple rows."
+    },
+    {
+      "name": "to_flow_output",
+      "kind": "method",
+      "signature": "(name, *, description=None)",
+      "doc_first_line": "Mark this frame as the flow output ``name`` (a ``flow_output`` node) and return it unchanged."
+    },
+    {
+      "name": "to_graph",
+      "kind": "method",
+      "signature": "()",
+      "doc_first_line": "Get the underlying ETL graph."
+    },
+    {
+      "name": "top_k",
+      "kind": "method",
+      "signature": "(k, *, by, reverse=False)",
+      "doc_first_line": "Return the `k` largest rows."
+    },
+    {
+      "name": "train_model",
+      "kind": "method",
+      "signature": "(target, features=None, model_type='linear_regression', params=None, publish_to_catalog=False, model_name='', namespace_id=None, catalog_description=None, catalog_tags=None, description=None, *, schema=None)",
+      "doc_first_line": "Fit an ML model (regression or classification) and optionally publish it to the catalog."
+    },
+    {
+      "name": "unique",
+      "kind": "method",
+      "signature": "(subset=None, *, keep='any', maintain_order=False, description=None)",
+      "doc_first_line": "Drop duplicate rows from this dataframe."
+    },
+    {
+      "name": "unnest",
+      "kind": "method",
+      "signature": "(columns=None, *more_columns, separator=None)",
+      "doc_first_line": "Decompose struct columns into separate columns for each of their fields."
+    },
+    {
+      "name": "unpivot",
+      "kind": "method",
+      "signature": "(on=None, *, index=None, variable_name='variable', value_name='value', description=None)",
+      "doc_first_line": "Unpivot a DataFrame from wide to long format."
+    },
+    {
+      "name": "update",
+      "kind": "method",
+      "signature": "(other, on=None, how='left', *, left_on=None, right_on=None, include_nulls=False, maintain_order='left')",
+      "doc_first_line": "Update the values in this `LazyFrame` with the values in `other`."
+    },
+    {
+      "name": "var",
+      "kind": "method",
+      "signature": "(ddof=1)",
+      "doc_first_line": "Aggregate the columns in the LazyFrame to their variance value."
+    },
+    {
+      "name": "wait_for",
+      "kind": "method",
+      "signature": "(dependency, *, description=None)",
+      "doc_first_line": "Pass this frame through unchanged, but force execution to wait until"
+    },
+    {
+      "name": "width",
+      "kind": "property",
+      "signature": "",
+      "doc_first_line": "Get the number of columns."
+    },
+    {
+      "name": "with_columns",
+      "kind": "method",
+      "signature": "(*exprs, flowfile_formulas=None, output_column_names=None, output_column_datatypes=None, description=None, **named_exprs)",
+      "doc_first_line": "Add or replace columns in the DataFrame."
+    },
+    {
+      "name": "with_columns_seq",
+      "kind": "method",
+      "signature": "(*exprs, **named_exprs)",
+      "doc_first_line": "Add columns to this LazyFrame."
+    },
+    {
+      "name": "with_context",
+      "kind": "method",
+      "signature": "(other)",
+      "doc_first_line": "Add an external context to the computation graph."
+    },
+    {
+      "name": "with_row_count",
+      "kind": "method",
+      "signature": "(name='row_nr', offset=0)",
+      "doc_first_line": "Add a column at index 0 that counts the rows."
+    },
+    {
+      "name": "with_row_index",
+      "kind": "method",
+      "signature": "(name='index', offset=0, *, group_by=None, description=None)",
+      "doc_first_line": "Add a row index as the first column in the DataFrame, as one Record ID node."
+    },
+    {
+      "name": "write_avro",
+      "kind": "method",
+      "signature": "(path, *, compression=None, description=None, convert_to_absolute_path=True, **kwargs)",
+      "doc_first_line": "Write the data to an Avro file."
+    },
+    {
+      "name": "write_catalog_table",
+      "kind": "method",
+      "signature": "(table_name, *, schema=None, namespace_id=None, namespace_full_name=None, write_mode='overwrite', merge_keys=None, partition_by=None, scd2_compare_columns=None, scd2_full_snapshot=False, scd2_surrogate_key_column='sk', scd2_valid_from_column='valid_from', scd2_valid_to_column='valid_to', scd2_is_current_column='is_current', scd2_partition_on_current=True, scd2_output_mode='input', track_changes=False, description=None)",
+      "doc_first_line": "Write the data frame to the Flowfile catalog."
+    },
+    {
+      "name": "write_csv",
+      "kind": "method",
+      "signature": "(file, *, separator=',', encoding='utf-8', description=None, convert_to_absolute_path=True, **kwargs)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "write_csv_to_cloud_storage",
+      "kind": "method",
+      "signature": "(path, connection_name=None, delimiter=';', encoding='utf8', description=None)",
+      "doc_first_line": "Write the data frame to cloud storage in CSV format."
+    },
+    {
+      "name": "write_database",
+      "kind": "method",
+      "signature": "(connection_name, table_name, *, schema_name=None, if_exists='append', description=None)",
+      "doc_first_line": "Write the data frame to a database using a stored connection."
+    },
+    {
+      "name": "write_delta",
+      "kind": "method",
+      "signature": "(path, connection_name=None, write_mode='overwrite', partition_by=None, merge_keys=None, track_changes=False, description=None)",
+      "doc_first_line": "Write the data frame to cloud storage in Delta Lake format."
+    },
+    {
+      "name": "write_excel",
+      "kind": "method",
+      "signature": "(path, *, worksheet='Sheet1', write_mode='overwrite', description=None, convert_to_absolute_path=True, **kwargs)",
+      "doc_first_line": "Write the data to an Excel file."
+    },
+    {
+      "name": "write_ipc",
+      "kind": "method",
+      "signature": "(path, *, compression=None, description=None, convert_to_absolute_path=True, **kwargs)",
+      "doc_first_line": "Write the data to an Arrow IPC/Feather file."
+    },
+    {
+      "name": "write_json_to_cloud_storage",
+      "kind": "method",
+      "signature": "(path, connection_name=None, description=None)",
+      "doc_first_line": "Write the data frame to cloud storage in JSON format."
+    },
+    {
+      "name": "write_ndjson",
+      "kind": "method",
+      "signature": "(path, *, compression=None, description=None, convert_to_absolute_path=True, **kwargs)",
+      "doc_first_line": "Write the data to a newline-delimited JSON file."
+    },
+    {
+      "name": "write_parquet",
+      "kind": "method",
+      "signature": "(path, *, compression=None, description=None, convert_to_absolute_path=True, **kwargs)",
+      "doc_first_line": "Write the data to a Parquet file. Creates a standard Output node if only"
+    },
+    {
+      "name": "write_parquet_to_cloud_storage",
+      "kind": "method",
+      "signature": "(path, connection_name=None, compression='snappy', description=None)",
+      "doc_first_line": "Write the data frame to cloud storage in Parquet format."
+    }
+  ],
+  "group_colors": [
+    {
+      "name": "amber"
+    },
+    {
+      "name": "blue"
+    },
+    {
+      "name": "cyan"
+    },
+    {
+      "name": "green"
+    },
+    {
+      "name": "rose"
+    },
+    {
+      "name": "slate"
+    },
+    {
+      "name": "violet"
+    }
   ]
 }

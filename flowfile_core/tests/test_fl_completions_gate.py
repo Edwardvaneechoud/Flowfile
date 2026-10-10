@@ -33,7 +33,7 @@ def test_regeneration_offers_the_committed_names():
 
 def test_shape_is_sorted_and_covers_the_api():
     data = json.loads(gen.OUTPUT_PATH.read_text(encoding="utf-8"))
-    assert set(data) == {"ff"}
+    assert set(data) == {"ff", "frame", "group_colors"}
     for section, entries in data.items():
         names = [e["name"] for e in entries]
         assert names == sorted(names) and len(names) == len(set(names)), section
@@ -45,3 +45,11 @@ def test_shape_is_sorted_and_covers_the_api():
     assert {e["kind"] for e in data["ff"]} <= {"function", "class", "module", "constant"}
     assert ff["read_csv"]["kind"] == "function" and ff["read_csv"]["signature"].startswith("(source")
     assert ff["FlowFrame"]["kind"] == "class"
+    frame = {e["name"]: e for e in data["frame"]}
+    assert frame["add_to_group"]["kind"] == "method" and frame["add_to_group"]["signature"].startswith("(group")
+    assert frame["schema"]["kind"] == "property"
+    from typing import get_args
+
+    from flowfile_core.schemas.schemas import GroupColor
+
+    assert [e["name"] for e in data["group_colors"]] == sorted(get_args(GroupColor))
