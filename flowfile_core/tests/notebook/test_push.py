@@ -104,6 +104,32 @@ def test_push_with_nothing_changed_applies_nothing(runner, orders_flow, client_a
     assert response.json()["code_fingerprint"] == code_fingerprint(orders_flow)
 
 
+def test_an_edited_explore_cell_keeps_the_charts_saved_on_the_canvas(runner, open_as, client_as):
+    """``ff.explore`` carries no charts, so pushing its cell keeps the ones the designer saved on the node."""
+    client = client_as(OWNER_ID)
+    charts = [{"name": "Chart 1", "visId": "gw_1"}]
+    big = ff.from_dict({"id": [1, 2, 3], "amount": [10, 20, 30]}).filter(ff.col("amount") > 10)
+    ff.Node("explore_data", big, settings={"graphic_walker_input": {"is_initial": False, "specList": charts}})
+    graph = open_as(big.flow_graph)
+    explore = _node_of_type(graph, "explore_data")
+    cell_id = _cell_of(graph, explore.node_id)
+    code = f"ff.explore(filtered_{big.node_id})"
+    assert {cell.cell_id: cell.code for cell in render(graph).cells}[cell_id] == code
+
+    unchanged = client.post("/notebook/plan", json=_body(graph, changed=[cell_id]))
+    assert unchanged.status_code == 200, unchanged.text
+    assert unchanged.json()["operations"] == []
+
+    def describe(cells):
+        return {**cells, cell_id: code[:-1] + ', description="charts")'}
+
+    response = client.post("/editor/notebook/push/", json=_body(graph, describe, changed=[cell_id]))
+    assert response.status_code == 200, response.text
+    settings = graph.get_node(explore.node_id).setting_input
+    assert settings.description == "charts"
+    assert settings.graphic_walker_input.specList == charts
+
+
 def _script_input(graph):
     return _node_of_type(graph, "python_script").setting_input.python_script_input
 

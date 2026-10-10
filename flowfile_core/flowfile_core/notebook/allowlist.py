@@ -44,7 +44,7 @@ _FL_CALLS = (
     "read_database", "read_kafka", "read_api", "read_from_cloud_storage", "read_catalog_table", "read_catalog_sql",
     "write_catalog_table", "write_database", "write_to_cloud_storage", "Gate", "FlowGroup", "RunFlow", "PythonScript",
     "polars_code", "sql", "canvas_node", "FlowInput", "flow_ref", "concat", "FuzzyMapping", "Parameter",
-    "add_flow_parameter",
+    "add_flow_parameter", "explore",
 )  # fmt: skip
 _CORE_CLASSES = (
     "FlowGraph", "FlowDataEngine", "FlowNode", "FlowSettings", "FlowInformation", "FlowfileColumn",
@@ -186,6 +186,7 @@ ARGUMENT_KINDS: dict[tuple[str, str], dict[int | str, str]] = {
     ("ff", "add_flow_parameter"): {0: "graph", "flow": "graph"},
     ("ff", "FlowInput"): {"flow_graph": "graph", "sample": "pl_frame"},
     ("ff", "FlowGroup"): {"parent_group": "FlowGroup"},
+    ("ff", "explore"): {"group": "FlowGroup"},
     ("ff", "polars_code"): {0: "polars_code_def", "code": "polars_code_def"},
     ("FlowFrame", "polars_code"): {0: "polars_code_def", "code": "polars_code_def"},
     **{(kind, "add_to_group"): {0: "FlowGroup", "group": "FlowGroup"} for kind in ("FlowFrame", "Gate", "NodeOutputs")},

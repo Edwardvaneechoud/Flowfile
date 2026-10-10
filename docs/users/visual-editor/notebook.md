@@ -42,8 +42,8 @@ A node the notebook cannot express as code becomes a **placeholder** cell that s
 |---|---|
 | not configured yet, inputs not fully connected | Configure or connect the node on the canvas. A placeholder for an unconfigured node can also be replaced with code. |
 | downstream of node N, which is not editable as code | Fix node N; everything below it follows. |
+| nodes below it read its output, which ff.explore does not return | An Explore data node feeds other nodes, which only code can wire. Connect them to the node's input instead. |
 | headers or query parameters hold a credential | A REST API reader with a key in its headers or parameters. Move the key to a [secret](catalog/secrets.md). |
-| explore data is interactive only | Explore Data has no code form. |
 | No code generator implemented for node type '...' | The node type has no code form; edit it on the canvas. |
 
 A Polars LazyFrame node (a frame passed in from Python) is **unsupported**: it cannot be rebuilt, and a flow that contains one cannot be synced until the node is replaced on the canvas.
