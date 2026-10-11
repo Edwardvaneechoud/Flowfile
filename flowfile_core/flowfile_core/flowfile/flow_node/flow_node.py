@@ -10,7 +10,7 @@ import polars as pl
 
 from flowfile_core.configs import logger, node_store
 from flowfile_core.configs.flow_logger import NodeLogger
-from flowfile_core.flowfile.execution.errors import worker_failure
+from flowfile_core.flowfile.execution.errors import ComputeError, worker_failure
 from flowfile_core.flowfile.flow_data_engine.column_stats import ColumnStatsUnavailable, compute_column_stats
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
@@ -1427,7 +1427,13 @@ class FlowNode:
             if schema:
                 return FlowDataEngine.create_from_schema(schema)
 
-        if self.needs_run(False) and self.schema_callback is not None or self.node_schema.result_schema is not None:
+        # Prediction never depends on the worker: an outage reads as "needs run".
+        try:
+            run_needed = self.needs_run(False)
+        except ComputeError as e:
+            logger.warning(f"Node {self.node_id}: worker not usable, predicting the schema without its cache: {e}")
+            run_needed = True
+        if run_needed and self.schema_callback is not None or self.node_schema.result_schema is not None:
             self.print("Getting data based on the schema")
             # Running the schema callback populates _named_schemas for multi-output
             # nodes; re-check the handle cache afterward before falling back.
