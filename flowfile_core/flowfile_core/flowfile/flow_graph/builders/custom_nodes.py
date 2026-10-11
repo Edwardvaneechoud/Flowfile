@@ -345,7 +345,7 @@ class CustomNodeBuildersMixin(GraphMixinBase):
                     "inputs": flow_data_engine,
                     "output_names": resolved_output_names,
                 },
-            )
+            ).refs
             engines = {
                 key: FlowDataEngine(backend.plan_for(ref), number_of_records=ref.row_count) for key, ref in refs.items()
             }

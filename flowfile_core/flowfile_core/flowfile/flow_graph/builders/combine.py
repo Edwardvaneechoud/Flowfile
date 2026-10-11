@@ -161,7 +161,7 @@ class CombineBuildersMixin(GraphMixinBase):
                         "settings": fuzzy_settings,
                         "node_logger": self.flow_logger.get_node_logger(fuzzy_settings.node_id),
                     },
-                )["result"]
+                ).refs["result"]
                 matched = FlowDataEngine(backend.plan_for(ref))
                 backend.release(ref)
                 return matched

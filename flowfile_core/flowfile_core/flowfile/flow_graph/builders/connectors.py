@@ -220,7 +220,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
                         "encrypted_password": encrypted_password,
                         "cancel_check": lambda: self.flow_settings.is_canceled or node._execution_state.is_canceled,
                     },
-                )["result"]
+                ).refs["result"]
                 fl = FlowDataEngine(backend.plan_for(ref), number_of_records=ref.row_count)
                 backend.release(ref)
                 node_database_reader.fields = [c.get_minimal_field_info() for c in fl.schema]
@@ -612,7 +612,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
                 backend = registry.backend(registry.LOCAL_BACKEND_ID)
                 ref = backend.run_op(
                     OperationKind.rest_api_read, {"request": worker_settings, "encrypted_secret": encrypted}
-                )["result"]
+                ).refs["result"]
                 fl = FlowDataEngine(backend.plan_for(ref))
                 backend.release(ref)
             else:

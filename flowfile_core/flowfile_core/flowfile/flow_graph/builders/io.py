@@ -449,7 +449,7 @@ class FileIoBuildersMixin(GraphMixinBase):
                 ref = backend.run_op(
                     OperationKind.file_read,
                     {"settings": input_file, "node_logger": self.flow_logger.get_node_logger(input_file.node_id)},
-                )["result"]
+                ).refs["result"]
                 input_data = FlowDataEngine(backend.plan_for(ref), number_of_records=ref.row_count)
                 backend.release(ref)
             elif input_file.received_file.file_type in ("parquet", "ipc", "ndjson"):

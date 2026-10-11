@@ -32,6 +32,7 @@ from flowfile_core.flowfile.execution.protocol import (
     JobStatus,
     OperationKind,
     OpPayload,
+    OpResult,
     ResultRef,
     Schema,
     SubmitHints,
@@ -97,8 +98,10 @@ class LocalBackend:
             sample = _ipc_stream(frame.lazy().head(hints.preview_rows).collect())
         return SubmitResult(ref=ref, sample=sample, handle=JobHandle(backend_id=self.id, job_id=result_id))
 
-    def run_op(self, op: OperationKind, payload: OpPayload) -> dict[str, ResultRef]:
+    def run_op(self, op: OperationKind, payload: OpPayload) -> OpResult:
         """Run ``op`` in this process with the payload its method documents.
+
+        The refs name the results the operation holds here; no operation of this backend reports metadata.
 
         Raises:
             OperationUnsupported: This backend does not implement ``op``.
@@ -201,7 +204,7 @@ class LocalBackend:
         known_count = engine.number_of_records if engine.number_of_records >= 0 else None
         return self._hold(engine.data_frame, row_count=known_count, schema=engine.schema)
 
-    def _read_database(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _read_database(self, payload: OpPayload) -> OpResult:
         """Read a database table or query; the rows are held materialised.
 
         Payload keys:
@@ -210,7 +213,7 @@ class LocalBackend:
             encrypted_password: The connection's password as stored, ``None`` for a file-based database.
             cancel_check: Called while reading; ``True`` stops the read.
 
-        Returns ``{"result": ref}``.
+        Returns the refs ``{"result": ref}``.
         """
         node_settings = payload["settings"]
         database_settings = node_settings.database_settings
@@ -224,9 +227,9 @@ class LocalBackend:
             cancel_check=payload["cancel_check"],
             database_type=connection.database_type,
         )
-        return {"result": self._hold(source.get_pl_df())}
+        return OpResult(refs={"result": self._hold(source.get_pl_df())})
 
-    def _write_database(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _write_database(self, payload: OpPayload) -> OpResult:
         """Write the input to a database table.
 
         Payload keys:
@@ -236,7 +239,7 @@ class LocalBackend:
             encrypted_password: The connection's password as stored, ``None`` for a file-based database.
             table_name: The table to write, qualified by its schema when the settings name one.
 
-        Returns ``{}``.
+        Returns no refs.
         """
         connection = payload["connection"]
         payload["input"].to_database_obj(
@@ -245,37 +248,37 @@ class LocalBackend:
             table_name=payload["table_name"],
             if_exists=payload["settings"].database_write_settings.if_exists or "append",
         )
-        return {}
+        return OpResult(refs={})
 
-    def _read_rest_api(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _read_rest_api(self, payload: OpPayload) -> OpResult:
         """Fetch a REST API; the response rows are held materialised.
 
         Payload keys:
             request: The ``RestApiReadSettings`` the node's settings resolve to.
             encrypted_secret: The auth secret as stored, ``None`` when the request carries none.
 
-        Returns ``{"result": ref}``.
+        Returns the refs ``{"result": ref}``.
         """
         # Function-local, so importing this backend does not load the HTTP client.
         from shared.rest_api.fetch import fetch_rest_api
 
         encrypted = payload["encrypted_secret"]
         secret = decrypt_secret(encrypted).get_secret_value() if encrypted else None
-        return {"result": self._hold(fetch_rest_api(payload["request"], secret=secret))}
+        return OpResult(refs={"result": self._hold(fetch_rest_api(payload["request"], secret=secret))})
 
-    def _read_file(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _read_file(self, payload: OpPayload) -> OpResult:
         """Read a local file through the engine's readers.
 
         Payload keys:
             settings: The node's ``NodeRead``; its ``received_file`` names the file and how to read it.
             node_logger: The node's logger, which the Excel reader reports the engine it used to.
 
-        Returns ``{"result": ref}``, with the row count when the reader knows it without reading the rows.
+        Returns the refs ``{"result": ref}``, with the row count when the reader knows it without reading the rows.
         """
         engine = FlowDataEngine.create_from_path(payload["settings"].received_file, node_logger=payload["node_logger"])
-        return {"result": self._hold_engine(engine)}
+        return OpResult(refs={"result": self._hold_engine(engine)})
 
-    def _write_file(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _write_file(self, payload: OpPayload) -> OpResult:
         """Write the input to a local file.
 
         Payload keys:
@@ -283,7 +286,7 @@ class LocalBackend:
             settings: The node's ``NodeOutput``: its ``output_settings`` and ``node_id``.
             flow_id: The id of the flow the node belongs to.
 
-        Returns ``{}``.
+        Returns no refs.
         """
         node_settings = payload["settings"]
         payload["input"].output(
@@ -292,9 +295,9 @@ class LocalBackend:
             node_id=node_settings.node_id,
             execute_remote=False,
         )
-        return {}
+        return OpResult(refs={})
 
-    def _fuzzy_join(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _fuzzy_join(self, payload: OpPayload) -> OpResult:
         """Fuzzy-match the left input against the right.
 
         Payload keys:
@@ -303,16 +306,16 @@ class LocalBackend:
             settings: The node's ``NodeFuzzyMatch``; a copy of its ``join_input`` is used.
             node_logger: The node's logger, which the matcher reports its progress to.
 
-        Returns ``{"result": ref}``.
+        Returns the refs ``{"result": ref}``.
         """
         engine = payload["left"].fuzzy_join(
             fuzzy_match_input=deepcopy(payload["settings"].join_input),
             other=payload["right"],
             node_logger=payload["node_logger"],
         )
-        return {"result": self._hold_engine(engine)}
+        return OpResult(refs={"result": self._hold_engine(engine)})
 
-    def _random_split(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _random_split(self, payload: OpPayload) -> OpResult:
         """Partition the input's rows at random into the node's labelled splits.
 
         Payload keys:
@@ -324,9 +327,9 @@ class LocalBackend:
         node_settings = payload["settings"]
         split_pairs = [(split.name, split.percentage) for split in node_settings.splits]
         outputs = payload["input"].random_split(split_pairs, node_settings.seed)
-        return {name: self._hold_engine(engine) for name, engine in outputs.outputs.items()}
+        return OpResult(refs={name: self._hold_engine(engine) for name, engine in outputs.outputs.items()})
 
-    def _run_custom_node(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _run_custom_node(self, payload: OpPayload) -> OpResult:
         """Run a custom node's ``process`` on a fresh instance of its class.
 
         Payload keys:
@@ -335,8 +338,8 @@ class LocalBackend:
             inputs: The input ``FlowDataEngine``s, in wiring order.
             output_names: The node's declared outputs, in order.
 
-        Returns ``{"result": ref}`` when ``process`` returns one frame; one ref per declared output, keyed by its
-        output handle (``output-0``, ``output-1``, ...), when it returns a dict of them; ``{}`` otherwise.
+        Returns the refs ``{"result": ref}`` when ``process`` returns one frame; one ref per declared output, keyed by
+        its output handle (``output-0``, ``output-1``, ...), when it returns a dict of them; no refs otherwise.
 
         Raises:
             ValueError: ``process`` returned a dict without one of the declared outputs.
@@ -357,12 +360,12 @@ class LocalBackend:
                 if name not in output:
                     raise ValueError(f"process() did not return declared output '{name}'")
                 engines[output_handle(i)] = FlowDataEngine(output[name])
-            return {handle: self._hold_engine(engine) for handle, engine in engines.items()}
+            return OpResult(refs={handle: self._hold_engine(engine) for handle, engine in engines.items()})
         if isinstance(output, pl.LazyFrame | pl.DataFrame):
-            return {"result": self._hold_engine(FlowDataEngine(output))}
-        return {}
+            return OpResult(refs={"result": self._hold_engine(FlowDataEngine(output))})
+        return OpResult(refs={})
 
-    def _write_cloud_storage(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _write_cloud_storage(self, payload: OpPayload) -> OpResult:
         """Write the input to object storage.
 
         Payload keys:
@@ -370,14 +373,14 @@ class LocalBackend:
             connection: The ``FullCloudStorageConnection`` the node resolves to.
             settings: The node's ``CloudStorageWriteSettings``.
 
-        Returns ``{}``.
+        Returns no refs.
         """
         payload["input"].to_cloud_storage_obj(
             CloudStorageWriteSettingsInternal(connection=payload["connection"], write_settings=payload["settings"])
         )
-        return {}
+        return OpResult(refs={})
 
-    def _write_delta(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _write_delta(self, payload: OpPayload) -> OpResult:
         """Write the input to a Delta table.
 
         Payload keys:
@@ -388,7 +391,7 @@ class LocalBackend:
             enable_cdf: Turn the table's change data feed on before writing.
             storage_options: The object-storage options, ``None`` for the local filesystem.
 
-        Returns ``{}``.
+        Returns no refs.
         """
         write_delta(
             payload["input"].data_frame,
@@ -398,9 +401,9 @@ class LocalBackend:
             storage_options=payload["storage_options"],
             enable_cdf=payload["enable_cdf"],
         )
-        return {}
+        return OpResult(refs={})
 
-    def _merge_delta(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _merge_delta(self, payload: OpPayload) -> OpResult:
         """Upsert, update or delete the input's rows in a Delta table by key; the input is collected first.
 
         Payload keys:
@@ -412,7 +415,7 @@ class LocalBackend:
             enable_cdf: Turn the table's change data feed on before writing.
             storage_options: The object-storage options, ``None`` for the local filesystem.
 
-        Returns ``{}``.
+        Returns no refs.
         """
         merge_into_delta(
             payload["input"].data_frame.collect(),
@@ -423,9 +426,9 @@ class LocalBackend:
             storage_options=payload["storage_options"],
             enable_cdf=payload["enable_cdf"],
         )
-        return {}
+        return OpResult(refs={})
 
-    _OPERATIONS: ClassVar[dict[OperationKind, Callable[[LocalBackend, OpPayload], dict[str, ResultRef]]]] = {
+    _OPERATIONS: ClassVar[dict[OperationKind, Callable[[LocalBackend, OpPayload], OpResult]]] = {
         OperationKind.database_read: _read_database,
         OperationKind.database_write: _write_database,
         OperationKind.rest_api_read: _read_rest_api,

@@ -18,6 +18,7 @@ from flowfile_core.flowfile.execution.protocol import (
     ComputeBackend,
     JobStatus,
     OperationKind,
+    OpResult,
     ResultRef,
     SubmitHints,
 )
@@ -185,7 +186,7 @@ def test_random_split_holds_one_result_per_split(backend):
     table = FlowDataEngine(pl.LazyFrame({"n": list(range(100))}))
     settings = input_schema.NodeRandomSplit(flow_id=1, node_id=1, seed=7)
 
-    refs = backend.run_op(OperationKind.random_split, {"input": table, "settings": settings})
+    refs = backend.run_op(OperationKind.random_split, {"input": table, "settings": settings}).refs
 
     assert list(refs) == ["train", "test"]
     assert [backend.count(ref) for ref in refs.values()] == [80, 20]
@@ -199,7 +200,7 @@ def test_file_read_holds_the_rows_of_a_csv(backend, tmp_path):
     received = input_schema.ReceivedTable(file_type="csv", name=path.name, path=str(path))
     settings = input_schema.NodeRead(flow_id=1, node_id=1, cache_data=False, received_file=received)
 
-    refs = backend.run_op(OperationKind.file_read, {"settings": settings, "node_logger": None})
+    refs = backend.run_op(OperationKind.file_read, {"settings": settings, "node_logger": None}).refs
 
     assert list(refs) == ["result"]
     assert backend.plan_for(refs["result"]).collect().to_dicts() == [
@@ -226,7 +227,7 @@ def test_fuzzy_join_holds_the_matches(backend):
 
     refs = backend.run_op(
         OperationKind.fuzzy_join, {"left": names, "right": names, "settings": settings, "node_logger": None}
-    )
+    ).refs
 
     matches = backend.plan_for(refs["result"]).collect().sort("name", "name_right")
     assert matches.select("name", "name_right").rows() == [
@@ -236,3 +237,25 @@ def test_fuzzy_join_holds_the_matches(backend):
         ("edward", "eduward"),
         ("edward", "edward"),
     ]
+
+
+def test_a_write_holds_no_result_and_reports_no_metadata(backend, tmp_path):
+    table = FlowDataEngine(pl.LazyFrame({"name": ["ada", "grace"]}))
+    settings = input_schema.NodeOutput(
+        flow_id=1,
+        node_id=2,
+        output_settings={
+            "name": "people.csv",
+            "directory": str(tmp_path),
+            "file_type": "csv",
+            "write_mode": "overwrite",
+            "table_settings": {"file_type": "csv", "delimiter": ",", "encoding": "utf-8"},
+        },
+    )
+
+    result = backend.run_op(OperationKind.file_write, {"input": table, "settings": settings, "flow_id": 1})
+
+    assert isinstance(result, OpResult)
+    assert result.refs == {}
+    assert result.metadata == {}
+    assert pl.read_csv(tmp_path / "people.csv")["name"].to_list() == ["ada", "grace"]

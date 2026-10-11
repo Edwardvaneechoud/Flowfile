@@ -442,7 +442,7 @@ class TransformBuildersMixin(GraphMixinBase):
             split_pairs = [(s.name, s.percentage) for s in settings.splits]
             if self.execution_location == "local":
                 backend = registry.backend(registry.LOCAL_BACKEND_ID)
-                refs = backend.run_op(OperationKind.random_split, {"input": table, "settings": settings})
+                refs = backend.run_op(OperationKind.random_split, {"input": table, "settings": settings}).refs
                 splits = NamedOutputs({name: FlowDataEngine(backend.plan_for(ref)) for name, ref in refs.items()})
                 for ref in refs.values():
                     backend.release(ref)
