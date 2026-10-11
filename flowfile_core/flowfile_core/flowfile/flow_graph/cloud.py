@@ -10,14 +10,14 @@ from flowfile_core.auth import sharing
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     get_local_cloud_connection,
 )
-from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.execution.protocol import OperationKind
+from flowfile_core.flowfile.execution.write_payloads import PAYLOAD_KEY, DeltaMergePayload, DeltaWritePayload
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
 from flowfile_core.flowfile.flow_graph._root import root
-from flowfile_core.flowfile.flow_graph.catalog_write import _delta_op
 from flowfile_core.flowfile.flow_node.flow_node import (
     FlowNode,
 )
@@ -93,13 +93,6 @@ def _cloud_write_uses_delta_ops(settings: CloudStorageWriteSettings) -> bool:
     return settings.file_format == "delta" and (settings.write_mode in MERGE_MODES or settings.track_changes)
 
 
-def _write_cloud_delta_remote(flow_id: int, node: FlowNode, df: FlowDataEngine, op_type: str, op_kwargs: dict) -> None:
-    """Run a cloud writer's Delta merge or tracked write on the worker; the table metadata it returns is unused."""
-    root()._write_catalog_delta_remote(
-        flow_id, node, df, op_type, op_kwargs, table_label=f"at '{op_kwargs['output_path']}'"
-    )
-
-
 def _write_cloud_delta(
     graph: FlowGraph,
     node: FlowNode,
@@ -110,29 +103,28 @@ def _write_cloud_delta(
 ) -> None:
     """Upsert/update/delete into, or write with change tracking to, a Delta table on a bare cloud path.
 
-    Dispatches the same ``merge_delta`` / ``write_delta`` operations the catalog writer uses, with the
-    connection shipped owner-encrypted for the worker to decrypt. Local execution merges in-process: the
-    sanctioned local-execution collect, since headless runs have no worker to offload to.
+    Runs the ``delta_merge`` or ``delta_write`` operation on the current context's backend with the connection
+    encrypted for ``user_id``; the worker decrypts it there, and a local run merges in-process (the sanctioned
+    local-execution collect, since headless runs have no worker to offload to). What the write reports is unused.
     """
     if connection.storage_type == "gcs":
         raise ValueError("Delta upsert/update/delete and change tracking are not supported on Google Cloud Storage yet")
-    path = normalize_delta_path(settings.resource_path)
-    op_type, op_kwargs = _delta_op(
-        settings.write_mode,
-        output_path=path,
-        merge_keys=settings.merge_keys,
-        partition_by=settings.partition_by,
-        enable_cdf=settings.track_changes,
-    )
-    if graph.execution_location != "local":
-        op_kwargs["storage_payload"] = {"connection": connection.get_worker_interface(user_id).model_dump()}
-        root()._write_cloud_delta_remote(graph.flow_id, node, df, op_type, op_kwargs)
-        return
-    storage_options = CloudStorageReader.get_storage_options(connection)
-    operation = OperationKind.delta_merge if op_type == "merge_delta" else OperationKind.delta_write
-    registry.backend(registry.LOCAL_BACKEND_ID).run_op(
-        operation, {"input": df, "storage_options": storage_options, **op_kwargs}
-    )
+    common = {
+        "plan": df.data_frame,
+        "path": normalize_delta_path(settings.resource_path),
+        "partition_by": settings.partition_by,
+        "enable_cdf": settings.track_changes,
+        "connection": connection.get_worker_interface(user_id),
+        "flow_id": graph.flow_id,
+        "node_id": node.node_id,
+    }
+    if settings.write_mode in MERGE_MODES:
+        operation = OperationKind.delta_merge
+        write = DeltaMergePayload(merge_mode=settings.write_mode, merge_keys=settings.merge_keys, **common)
+    else:
+        operation = OperationKind.delta_write
+        write = DeltaWritePayload(mode=settings.write_mode, **common)
+    node.run_op(current_context(graph).backend, operation, {PAYLOAD_KEY: write}, job_id=write.job_id)
 
 
 def _is_cloud_change_read(settings: CloudStorageReadSettings) -> bool:

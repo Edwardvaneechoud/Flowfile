@@ -20,6 +20,7 @@ from flowfile_core.flowfile.execution.protocol import (
     ResultRef,
     SubmitHints,
 )
+from flowfile_core.flowfile.execution.write_payloads import PAYLOAD_KEY, FileWritePayload
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.schemas import input_schema
 from shared.compute_protocol import PROTOCOL_VERSION, local_capabilities
@@ -283,20 +284,16 @@ def test_fuzzy_join_holds_the_matches(backend):
 
 
 def test_a_write_holds_no_result_and_reports_no_metadata(backend, tmp_path):
-    table = FlowDataEngine(pl.LazyFrame({"name": ["ada", "grace"]}))
-    settings = input_schema.NodeOutput(
-        flow_id=1,
-        node_id=2,
-        output_settings={
-            "name": "people.csv",
-            "directory": str(tmp_path),
-            "file_type": "csv",
-            "write_mode": "overwrite",
-            "table_settings": {"file_type": "csv", "delimiter": ",", "encoding": "utf-8"},
-        },
+    settings = input_schema.OutputSettings(
+        name="people.csv",
+        directory=str(tmp_path),
+        file_type="csv",
+        write_mode="overwrite",
+        table_settings={"file_type": "csv", "delimiter": ",", "encoding": "utf-8"},
     )
+    write = FileWritePayload(plan=pl.LazyFrame({"name": ["ada", "grace"]}), settings=settings, flow_id=1, node_id=2)
 
-    result = backend.run_op(OperationKind.file_write, {"input": table, "settings": settings, "flow_id": 1})
+    result = backend.run_op(OperationKind.file_write, {PAYLOAD_KEY: write})
 
     assert isinstance(result, OpResult)
     assert result.refs == {}

@@ -6,7 +6,6 @@ from flowfile_core.catalog import CatalogService
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-    ExternalDatabaseWriter,
     ExternalGoogleAnalyticsFetcher,
     ExternalRestApiFetcher,
     MLApplyFetcher,
@@ -31,7 +30,6 @@ from flowfile_core.flowfile.flow_graph.catalog_write import (
 )
 from flowfile_core.flowfile.flow_graph.cloud import (
     _cloud_change_read_target,
-    _write_cloud_delta_remote,
     get_cloud_connection_settings,
 )
 from flowfile_core.flowfile.flow_graph.connections import (
@@ -84,10 +82,8 @@ __all__ = [
     "_scd2_primitive_kwargs",
     "_write_catalog_delta_local",
     "_write_catalog_delta_remote",
-    "_write_cloud_delta_remote",
     "CloudStorageReader",
     "CatalogService",
-    "ExternalDatabaseWriter",
     "ExternalGoogleAnalyticsFetcher",
     "ExternalRestApiFetcher",
     "FullCloudStorageConnection",

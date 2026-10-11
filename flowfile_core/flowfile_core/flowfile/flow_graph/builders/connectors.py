@@ -17,7 +17,9 @@ from flowfile_core.flowfile.database_connection_manager.ga_connections import (
     get_ga_connection,
 )
 from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.execution.protocol import OperationKind
+from flowfile_core.flowfile.execution.write_payloads import PAYLOAD_KEY, DatabaseWritePayload
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
@@ -122,7 +124,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
         database_settings: input_schema.DatabaseWriteSettings = node_database_writer.database_write_settings
 
         def _func(df: FlowDataEngine):
-            database_connection, encrypted_password, database_reference_settings = _resolve_database_credentials(
+            database_connection, encrypted_password, _ = _resolve_database_credentials(
                 database_settings, node_database_writer.user_id
             )
             df.lazy = True
@@ -131,36 +133,18 @@ class ConnectorBuildersMixin(GraphMixinBase):
                 if database_settings.schema_name
                 else database_settings.table_name
             )
-
-            if self.execution_location == "local":
-                registry.backend(registry.LOCAL_BACKEND_ID).run_op(
-                    OperationKind.database_write,
-                    {
-                        "input": df,
-                        "settings": node_database_writer,
-                        "connection": database_connection,
-                        "encrypted_password": encrypted_password,
-                        "table_name": table_name,
-                    },
-                )
-                return df
-
-            database_external_write_settings = (
-                sql_models.DatabaseExternalWriteSettings.create_from_from_node_database_writer(
-                    node_database_writer=node_database_writer,
-                    password=encrypted_password,
-                    table_name=table_name,
-                    database_reference_settings=(
-                        database_reference_settings if database_settings.connection_mode == "reference" else None
-                    ),
-                    lf=df.data_frame,
-                )
+            write = DatabaseWritePayload(
+                plan=df.data_frame,
+                settings=node_database_writer,
+                connection=database_connection,
+                encrypted_password=encrypted_password,
+                table_name=table_name,
+                flow_id=node_database_writer.flow_id,
+                node_id=node_database_writer.node_id,
             )
-            external_database_writer = root().ExternalDatabaseWriter(
-                database_external_write_settings, wait_on_completion=False
+            node.run_op(
+                current_context(self).backend, OperationKind.database_write, {PAYLOAD_KEY: write}, job_id=write.job_id
             )
-            node._fetch_cached_df = external_database_writer
-            external_database_writer.get_result()
             return df
 
         def schema_callback():

@@ -16,6 +16,7 @@ from pydantic import SecretStr
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile import flow_graph as fg
 from flowfile_core.flowfile.database_connection_manager.db_connections import store_cloud_connection
+from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.flow_graph import add_connection
 from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.schemas import cloud_storage_schemas, input_schema
@@ -82,7 +83,7 @@ def _offload_forbidden(*args, **kwargs):
 
 @pytest.fixture
 def local_only(monkeypatch):
-    monkeypatch.setattr(fg, "_write_cloud_delta_remote", _offload_forbidden)
+    monkeypatch.setattr(WorkerBackend, "run_op", _offload_forbidden)
 
 
 def _write(path, data, write_mode, *, flow_id, connection_name=None, execution_location="local", track_changes=True):
@@ -224,7 +225,7 @@ def _ensure_connection(conn: FullCloudStorageConnection) -> None:
 @requires_minio
 def test_s3_upsert_delete_and_change_read(execution_location, monkeypatch):
     if execution_location == "local":
-        monkeypatch.setattr(fg, "_write_cloud_delta_remote", _offload_forbidden)
+        monkeypatch.setattr(WorkerBackend, "run_op", _offload_forbidden)
     try:
         get_minio_client().create_bucket(Bucket=_BUCKET)
     except Exception:

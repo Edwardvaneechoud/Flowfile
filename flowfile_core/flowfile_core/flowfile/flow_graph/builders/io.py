@@ -12,7 +12,9 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.settings import is_electron_mode
 from flowfile_core.fileExplorer.funcs import SecureFileExplorer
 from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.execution.protocol import OperationKind
+from flowfile_core.flowfile.execution.write_payloads import PAYLOAD_KEY, FileWritePayload
 from flowfile_core.flowfile.flow_data_engine.create import funcs as create_funcs
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
@@ -21,9 +23,6 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import Flowfi
 from flowfile_core.flowfile.flow_data_engine.read_excel_tables import (
     get_calamine_xlsx_data_types,
     get_open_xlsx_datatypes,
-)
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-    ExternalOutputWriter,
 )
 from flowfile_core.flowfile.flow_graph._base import GraphMixinBase
 from flowfile_core.flowfile.flow_graph.history import with_history_capture
@@ -271,27 +270,15 @@ class FileIoBuildersMixin(GraphMixinBase):
         """
 
         def _func(df: FlowDataEngine):
-            if self.execution_location == "local":
-                registry.backend(registry.LOCAL_BACKEND_ID).run_op(
-                    OperationKind.file_write, {"input": df, "settings": output_file, "flow_id": self.flow_id}
-                )
-                return df
-            output_fs = output_file.output_settings
-            node = self.get_node(output_file.node_id)
-            writer = ExternalOutputWriter(
-                lf=df.data_frame,
-                data_type=output_fs.file_type,
-                path=output_fs.abs_file_path,
-                write_mode=output_fs.write_mode,
-                sheet_name=output_fs.sheet_name,
-                delimiter=output_fs.delimiter,
-                compression=output_fs.compression,
+            write = FileWritePayload(
+                plan=df.data_frame.lazy(),
+                settings=output_file.output_settings,
                 flow_id=self.flow_id,
                 node_id=output_file.node_id,
-                wait_on_completion=False,
             )
-            node._fetch_cached_df = writer
-            writer.get_result()
+            self.get_node(output_file.node_id).run_op(
+                current_context(self).backend, OperationKind.file_write, {PAYLOAD_KEY: write}, job_id=write.job_id
+            )
             return df
 
         def schema_callback():
