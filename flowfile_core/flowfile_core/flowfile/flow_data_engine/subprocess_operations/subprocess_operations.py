@@ -19,6 +19,7 @@ from flowfile_core.configs.settings import OFFLOAD_TO_WORKER, WORKER_URL
 from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import (
     ensure_handshake,
+    fetch_worker_capabilities,
     reset_handshake,
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
@@ -45,6 +46,7 @@ from flowfile_core.schemas.catalog_schema import CatalogTablePreview, DeltaTable
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageWriteSettingsWorkerInterface
 from flowfile_core.schemas.input_schema import ReceivedTable
 from flowfile_core.utils.arrow_reader import read
+from shared.compute_protocol import Capabilities
 from shared.viz_protocol import HTTP_TIMEOUT_SECONDS
 
 
@@ -102,12 +104,12 @@ _POLL_DEADLINE_SECONDS = float(os.getenv("FLOWFILE_WORKER_POLL_TIMEOUT", "3600")
 def trigger_df_operation(
     flow_id: int,
     node_id: int | str,
-    lf: pl.LazyFrame,
+    plan_bytes: bytes,
     file_ref: str,
     operation_type: OperationType = "store",
     kwargs: dict | None = None,
 ) -> Status:
-    # Send raw bytes directly - no base64 encoding overhead
+    """Submit task ``file_ref`` running ``plan_bytes``, a ``pl.LazyFrame.serialize()`` output, sent as is."""
     headers = {
         "Content-Type": "application/octet-stream",
         "X-Task-Id": file_ref,
@@ -118,7 +120,7 @@ def trigger_df_operation(
     if kwargs:
         headers["X-Kwargs"] = json.dumps(kwargs)
     v = _worker_session.post(
-        url=f"{WORKER_URL}/submit_query/", data=lf.serialize(), headers=headers, timeout=_WORKER_TIMEOUT
+        url=f"{WORKER_URL}/submit_query/", data=plan_bytes, headers=headers, timeout=_WORKER_TIMEOUT
     )
     if not v.ok:
         raise Exception(f"trigger_df_operation: Could not cache the data, {v.text}")
@@ -806,6 +808,11 @@ def get_status(file_ref: str) -> Status:
         raise Exception(f"Could not fetch the status, {status_response.text}")
 
 
+def get_worker_capabilities() -> Capabilities:
+    """What the worker this module calls reports from ``GET /capabilities``, without the handshake's comparison."""
+    return fetch_worker_capabilities(WORKER_URL)
+
+
 def cancel_task(file_ref: str) -> bool:
     """
     Cancels a running task by making a request to the worker service.
@@ -1221,22 +1228,31 @@ class ExternalDfFetcher(BaseFetcher):
         self,
         flow_id: int,
         node_id: int | str,
-        lf: pl.LazyFrame | pl.DataFrame,
+        lf: pl.LazyFrame | pl.DataFrame | None = None,
         file_ref: str = None,
         wait_on_completion: bool = True,
         operation_type: OperationType = "store",
         offload_to_worker: bool = True,
         kwargs: dict | None = None,
+        plan_bytes: bytes | None = None,
     ):
+        """Run a plan on the worker as task ``file_ref`` (a new id when omitted).
+
+        The plan is ``lf``, serialised here, or ``plan_bytes``, the output of ``pl.LazyFrame.serialize()``
+        sent as is so the caller never has to deserialise it; pass exactly one of the two.
+        """
         super().__init__(file_ref=file_ref)
-        lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
+        if (lf is None) == (plan_bytes is None):
+            raise ValueError("ExternalDfFetcher takes exactly one of lf and plan_bytes")
+        if plan_bytes is None:
+            plan_bytes = (lf.lazy() if isinstance(lf, pl.DataFrame) else lf).serialize()
 
         try:
             self._execute_streaming(
                 operation_type=operation_type,
                 flow_id=flow_id,
                 node_id=node_id,
-                lf_bytes=lf.serialize(),
+                lf_bytes=plan_bytes,
                 kwargs=kwargs,
                 blocking=wait_on_completion,
             )
@@ -1256,7 +1272,7 @@ class ExternalDfFetcher(BaseFetcher):
 
         # REST fallback (original behavior)
         r = trigger_df_operation(
-            lf=lf,
+            plan_bytes=plan_bytes,
             file_ref=self.file_ref,
             operation_type=operation_type,
             node_id=node_id,

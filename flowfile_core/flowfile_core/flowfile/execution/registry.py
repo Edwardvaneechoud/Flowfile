@@ -3,8 +3,9 @@
 A backend is made by a factory. Core registers its own in process with ``register_backend``; an installed
 package adds one through the ``flowfile.compute_backends`` entry-point group, where the entry point's name
 is the backend id and it loads to the factory. Entry points are scanned once, on the first lookup, and an
-in-process registration wins over an entry point of the same name. ``backend`` calls a factory once per
-process and hands out that instance from then on.
+in-process registration wins over an entry point of the same name. Core's own backends are built in: ``_BUILTIN``
+names the module and class of each, imported and registered on the first lookup of an id nothing registered, before
+the entry points are scanned. ``backend`` calls a factory once per process and hands out that instance from then on.
 
 ``default_backend_id`` names the default backend, the one a ``"remote"`` flow and a call without a graph use:
 ``FLOWFILE_COMPUTE_BACKEND`` when set, else ``"worker"`` while the ``OFFLOAD_TO_WORKER`` setting is on and
@@ -15,6 +16,7 @@ reads the worker settings.
 
 from __future__ import annotations
 
+import importlib
 import importlib.metadata
 import os
 import threading
@@ -32,6 +34,8 @@ ENTRY_POINT_GROUP = "flowfile.compute_backends"
 BACKEND_ENV_VAR = "FLOWFILE_COMPUTE_BACKEND"
 LOCAL_BACKEND_ID = "local"
 WORKER_BACKEND_ID = "worker"
+
+_BUILTIN = {"worker": ("flowfile_core.flowfile.execution.backends.worker", "WorkerBackend")}
 
 _lock = threading.RLock()
 _factories: dict[str, BackendFactory] = {}
@@ -59,6 +63,9 @@ def backend(backend_id: str) -> ComputeBackend:
         instance = _instances.get(backend_id)
         if instance is not None:
             return instance
+        if backend_id not in _factories and backend_id in _BUILTIN:
+            module_name, class_name = _BUILTIN[backend_id]
+            _factories[backend_id] = getattr(importlib.import_module(module_name), class_name)
         _scan_entry_points()
         factory = _factories.get(backend_id)
         if factory is None:
