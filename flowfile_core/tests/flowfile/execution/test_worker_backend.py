@@ -22,11 +22,14 @@ from flowfile_core.flowfile.execution.protocol import (
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import fetch_worker_capabilities
-from flowfile_core.flowfile.sources.external_sources.sql_source.models import (
-    DatabaseExternalReadSettings,
-    ExtDatabaseConnection,
+from flowfile_core.flowfile.execution.payloads import DatabaseReadPayload, FileReadPayload, op_payload
+from flowfile_core.schemas.input_schema import (
+    DatabaseConnection,
+    DatabaseSettings,
+    NodeDatabaseReader,
+    NodeRead,
+    ReceivedTable,
 )
-from flowfile_core.schemas.input_schema import ReceivedTable
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 
 PEOPLE = pl.DataFrame(
@@ -215,8 +218,10 @@ def test_a_file_read_runs_through_the_create_table_route(backend, kept, tmp_path
     PEOPLE.write_csv(csv_path)
     received_table = ReceivedTable.create_from_path(str(csv_path), "csv")
     received_table.set_absolute_filepath()
+    settings = NodeRead(flow_id=1, node_id=1, received_file=received_table)
 
-    result = backend.run_op(OperationKind.file_read, {"received_table": received_table, "flow_id": 1, "node_id": 1})
+    read = FileReadPayload(flow_id=1, node_id=1, settings=settings, node_logger=None)
+    result = backend.run_op(OperationKind.file_read, op_payload(read))
 
     ref = result.refs["result"]
     kept.append(ref)
@@ -253,19 +258,24 @@ def postgres():
 
 
 def test_a_database_read_returns_a_reference_to_the_rows_it_read(backend, kept, postgres):
-    connection = ExtDatabaseConnection(
-        database_type="postgresql",
-        username="testuser",
-        password=encrypt_secret("testpass", user_id=1),
-        host="localhost",
-        port=5433,
-        database="testdb",
+    connection = DatabaseConnection(
+        database_type="postgresql", username="testuser", host="localhost", port=5433, database="testdb"
     )
-    settings = DatabaseExternalReadSettings(
-        connection=connection, node_id=1, flow_id=1, query="SELECT * FROM public.movies"
+    settings = NodeDatabaseReader(
+        flow_id=1,
+        node_id=1,
+        database_settings=DatabaseSettings(database_connection=connection, schema_name="public", table_name="movies"),
+    )
+    read = DatabaseReadPayload(
+        flow_id=1,
+        node_id=1,
+        settings=settings,
+        connection=connection,
+        encrypted_password=encrypt_secret("testpass", user_id=1),
+        cancel_check=lambda: False,
     )
 
-    ref = backend.run_op(OperationKind.database_read, {"settings": settings}).refs["result"]
+    ref = backend.run_op(OperationKind.database_read, op_payload(read)).refs["result"]
     kept.append(ref)
 
     assert ref.row_count > 0

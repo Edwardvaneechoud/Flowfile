@@ -201,8 +201,8 @@ def test_add_google_analytics_reader_stamps_fields_and_skips_worker(
     graph = _new_graph(flow_id=1)
 
     with patch(
-        "flowfile_core.flowfile.flow_graph.ExternalGoogleAnalyticsFetcher"
-    ) as mock_fetcher:
+        "flowfile_core.flowfile.execution.backends.worker.WorkerBackend.run_op"
+    ) as mock_run_op:
         graph.add_google_analytics_reader(node_settings)
 
         # 1. ``fields`` is stamped at add-time, before any execution.
@@ -215,11 +215,11 @@ def test_add_google_analytics_reader_stamps_fields_and_skips_worker(
         assert node is not None
         assert node.user_provided_schema_callback is not None
 
-        # 3. The predicted schema resolves without instantiating the worker
-        #    fetcher (which would talk to Google).
+        # 3. The predicted schema resolves without running the worker read
+        #    (which would talk to Google).
         predicted_schema = node.get_predicted_schema()
         assert [c.column_name for c in predicted_schema] == [*dimensions, *metrics]
-        mock_fetcher.assert_not_called()
+        mock_run_op.assert_not_called()
 
 
 def test_add_google_analytics_reader_refreshes_fields_on_resettle(
@@ -230,7 +230,7 @@ def test_add_google_analytics_reader_refreshes_fields_on_resettle(
 
     graph = _new_graph(flow_id=1)
 
-    with patch("flowfile_core.flowfile.flow_graph.ExternalGoogleAnalyticsFetcher"):
+    with patch("flowfile_core.flowfile.execution.backends.worker.WorkerBackend.run_op"):
         first = _build_settings(node_id=1, metrics=["sessions"], dimensions=["date"])
         graph.add_google_analytics_reader(first)
         assert [f.name for f in first.fields] == ["date", "sessions"]
@@ -282,11 +282,14 @@ def _ga_service_account_connection():
 
 
 def test_add_google_analytics_reader_service_account_emits_sa_settings(
-    _ga_service_account_connection,
+    _ga_service_account_connection, tmp_path
 ) -> None:
     """The SA path builds worker settings with ``auth_method='service_account'``
     and no OAuth fields, and does not require a Google OAuth client to be
     configured on the instance."""
+    from flowfile_core.flowfile.execution.backends import worker
+    from flowfile_core.flowfile.execution.protocol import OperationKind, OpResult, ResultRef
+
     node_settings = _build_settings(
         node_id=1,
         metrics=["sessions"],
@@ -294,20 +297,22 @@ def test_add_google_analytics_reader_service_account_emits_sa_settings(
         connection_name=_TEST_SA_CONNECTION_NAME,
     )
     graph = _new_graph(flow_id=1)
+    report = tmp_path / "report.arrow"
+    pl.DataFrame(schema={"date": pl.Date, "sessions": pl.Int64}).write_ipc(report)
+    stored = ResultRef("worker", "fake-task", [], 0, "materialised", str(report).encode())
 
-    with patch("flowfile_core.flowfile.flow_graph.ExternalGoogleAnalyticsFetcher") as mock_fetcher:
-        mock_fetcher.return_value.get_result.return_value = pl.LazyFrame(
-            schema={"date": pl.Date, "sessions": pl.Int64}
-        )
+    with patch.object(worker.WorkerBackend, "run_op", return_value=OpResult(refs={"result": stored})) as mock_run_op:
         graph.add_google_analytics_reader(node_settings)
 
         node = graph.get_node(node_settings.node_id)
         assert node is not None
-        # Invoke the lazy function so the worker fetcher is constructed with the
-        # built worker settings, then inspect what it was handed.
+        # Invoke the lazy function so the worker read runs with the built
+        # payload, then inspect the worker settings it turns into.
         node.function()
 
-    worker_settings = mock_fetcher.call_args[0][0]
+    kind, payload = mock_run_op.call_args[0]
+    assert kind is OperationKind.google_analytics_read
+    worker_settings = worker._google_analytics_read_settings(payload["payload"])
     assert worker_settings.auth_method == "service_account"
     assert worker_settings.service_account_key_encrypted is not None
     assert worker_settings.service_account_key_encrypted.startswith("$ffsec$1$")

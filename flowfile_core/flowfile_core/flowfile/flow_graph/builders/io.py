@@ -12,6 +12,9 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.settings import is_electron_mode
 from flowfile_core.fileExplorer.funcs import SecureFileExplorer
 from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.errors import TaskFailed
+from flowfile_core.flowfile.execution.payloads import FileReadPayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.create import funcs as create_funcs
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
@@ -26,10 +29,12 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     ExternalOutputWriter,
 )
 from flowfile_core.flowfile.flow_graph._base import GraphMixinBase
+from flowfile_core.flowfile.flow_graph.builders.connectors import engine_from_read
 from flowfile_core.flowfile.flow_graph.history import with_history_capture
 from flowfile_core.flowfile.flow_node.flow_node import (
     FlowNode,
 )
+from flowfile_core.flowfile.flow_node.models import RemoteExecutionError, recover_error_class
 from flowfile_core.flowfile.schema_callbacks import (
     pl_schema_to_flowfile_columns,
 )
@@ -444,24 +449,26 @@ class FileIoBuildersMixin(GraphMixinBase):
 
         def _func():
             input_file.received_file.set_absolute_filepath()
-            if self.execution_location == "local":
-                backend = registry.backend(registry.LOCAL_BACKEND_ID)
-                ref = backend.run_op(
-                    OperationKind.file_read,
-                    {"settings": input_file, "node_logger": self.flow_logger.get_node_logger(input_file.node_id)},
-                ).refs["result"]
-                input_data = FlowDataEngine(backend.plan_for(ref), number_of_records=ref.row_count)
-                backend.release(ref)
-            elif input_file.received_file.file_type in ("parquet", "ipc", "ndjson"):
-                input_data = FlowDataEngine.create_from_path(input_file.received_file)
-            elif input_file.received_file.file_type == "csv" and is_utf8_encoding(
-                input_file.received_file.table_settings.encoding
+            if input_file.received_file.file_type in ("parquet", "ipc", "ndjson") or (
+                input_file.received_file.file_type == "csv"
+                and is_utf8_encoding(input_file.received_file.table_settings.encoding)
             ):
+                # A lazy scan is a plan like any node's: the node submits it to the backend.
                 input_data = FlowDataEngine.create_from_path(input_file.received_file)
             else:
-                input_data = FlowDataEngine.create_from_path_worker(
-                    input_file.received_file, node_id=input_file.node_id, flow_id=self.flow_id
+                # Not `node`: a new read node runs this from its schema prefetch before `node` is bound.
+                backend = current_context(self).backend
+                read = FileReadPayload(
+                    flow_id=self.flow_id,
+                    node_id=input_file.node_id,
+                    settings=input_file,
+                    node_logger=self.flow_logger.get_node_logger(input_file.node_id),
                 )
+                try:
+                    ref = backend.run_op(OperationKind.file_read, op_payload(read)).refs["result"]
+                except TaskFailed as e:
+                    raise RemoteExecutionError(str(e), recover_error_class(e.__cause__, str(e))) from e
+                input_data = engine_from_read(backend, ref)
             input_data.name = input_file.received_file.name
             return input_data
 

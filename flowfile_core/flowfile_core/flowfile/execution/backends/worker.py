@@ -28,6 +28,15 @@ from flowfile_core.flowfile.execution.errors import (
     TaskFailed,
     worker_failure,
 )
+from flowfile_core.flowfile.execution.payloads import (
+    DatabaseReadPayload,
+    FileReadPayload,
+    GoogleAnalyticsReadPayload,
+    KafkaReadPayload,
+    ReadPayload,
+    RestApiReadPayload,
+    unpack,
+)
 from flowfile_core.flowfile.execution.protocol import (
     CredentialRef,
     JobHandle,
@@ -59,12 +68,20 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     MLTrainFetcher,
     cancel_task,
     clear_task_from_worker,
+    fetch_kafka_offsets,
     get_status,
     get_worker_capabilities,
     results_exists,
 )
+from flowfile_core.flowfile.sources.external_sources.rest_api_source import build_rest_api_worker_settings
+from flowfile_core.flowfile.sources.external_sources.sql_source.models import DatabaseExternalReadSettings
+from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import BaseSqlSource
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from shared.compute_protocol import PROTOCOL_VERSION, Capabilities
+from shared.google_analytics.models import GoogleAnalyticsFilter, GoogleAnalyticsOrderBy, GoogleAnalyticsReadSettings
+from shared.kafka.models import KafkaReadSettings
+from shared.path_utils import DirectoryScanUnsupportedError, refuse_cloud_path
+from shared.rest_api.models import RestApiReadSettings
 
 WORKER_BACKEND_ID = "worker"
 _OUTPUT_SEPARATOR = "#"
@@ -183,10 +200,11 @@ class WorkerBackend:
         ``payload`` holds what that fetcher takes, under these keys (``flow_id`` and ``node_id`` name the flow and
         node the worker logs the task under, ``task_id`` the worker task id, a new one when absent):
 
-        - ``database_read``: ``settings`` (``DatabaseExternalReadSettings``).
-        - ``kafka_read``, ``google_analytics_read``, ``rest_api_read``: ``settings``, the worker read settings.
-        - ``file_read``: ``received_table`` (``ReceivedTable`` with its absolute path set; its ``file_type`` picks
-          the worker's reader), ``flow_id``, ``node_id``.
+        - ``database_read``, ``kafka_read``, ``google_analytics_read``, ``rest_api_read``, ``file_read``: ``payload``,
+          the kind's dataclass from ``execution/payloads.py``, turned here into the worker read settings its fetcher
+          takes (credentials still encrypted, filed under the payload's ``flow_id`` and ``node_id``). The task runs as
+          the payload's ``job_id``, so ``cancel(JobHandle("worker", job_id))`` reaches it while it runs. A
+          ``kafka_read`` reports the offsets to commit as ``metadata["offsets"]`` when it consumed messages.
         - ``fuzzy_join``: ``left`` and ``right`` (LazyFrames), ``fuzzy_maps``, ``flow_id``, ``node_id``, ``task_id``.
         - ``custom_node``: ``request`` (``CustomNodeExecuteInput``).
         - ``ml_train``: ``lf``, ``staging_path``, ``model_type``, ``target_column``, ``feature_columns``, ``params``,
@@ -431,29 +449,57 @@ class WorkerBackend:
         fetcher = _run(start)
         return OpResult(refs={"result": self._result_ref(fetcher.file_ref, _written_file(fetcher))})
 
+    def _read_tracked(self, job_id: str, start: Callable[[], BaseFetcher]) -> tuple[BaseFetcher, ResultRef]:
+        """Run a read task as job ``job_id``, which ``cancel`` reaches while it waits; its fetcher and stored result."""
+        fetcher = self._run_tracked(job_id, start)
+        return fetcher, self._result_ref(fetcher.file_ref, _written_file(fetcher))
+
     def _database_read(self, payload: OpPayload) -> OpResult:
-        return self._read(lambda: ExternalDatabaseFetcher(payload["settings"], wait_on_completion=False))
+        read = unpack(payload, DatabaseReadPayload)
+        settings = _database_read_settings(read)
+        _, ref = self._read_tracked(read.job_id, lambda: ExternalDatabaseFetcher(settings, wait_on_completion=False))
+        return OpResult(refs={"result": ref})
 
     def _kafka_read(self, payload: OpPayload) -> OpResult:
-        return self._read(lambda: ExternalKafkaFetcher(payload["settings"], wait_on_completion=False))
+        read = unpack(payload, KafkaReadPayload)
+        settings = _kafka_read_settings(read)
+        fetcher, ref = self._read_tracked(read.job_id, lambda: ExternalKafkaFetcher(settings, wait_on_completion=False))
+        consumed = fetch_kafka_offsets(fetcher.file_ref)
+        if consumed and consumed.get("messages_consumed", 0) > 0:
+            return OpResult(refs={"result": ref}, metadata={"offsets": consumed["new_offsets"]})
+        return OpResult(refs={"result": ref})
 
     def _google_analytics_read(self, payload: OpPayload) -> OpResult:
-        return self._read(lambda: ExternalGoogleAnalyticsFetcher(payload["settings"], wait_on_completion=False))
+        read = unpack(payload, GoogleAnalyticsReadPayload)
+        settings = _google_analytics_read_settings(read)
+        _, ref = self._read_tracked(
+            read.job_id, lambda: ExternalGoogleAnalyticsFetcher(settings, wait_on_completion=False)
+        )
+        return OpResult(refs={"result": ref})
 
     def _rest_api_read(self, payload: OpPayload) -> OpResult:
-        return self._read(lambda: ExternalRestApiFetcher(payload["settings"], wait_on_completion=False))
+        read = unpack(payload, RestApiReadPayload)
+        settings = _rest_api_read_settings(read)
+        _, ref = self._read_tracked(read.job_id, lambda: ExternalRestApiFetcher(settings, wait_on_completion=False))
+        return OpResult(refs={"result": ref})
 
     def _file_read(self, payload: OpPayload) -> OpResult:
-        received_table = payload["received_table"]
-        return self._read(
+        read = unpack(payload, FileReadPayload)
+        received_table = read.settings.received_file
+        refuse_cloud_path(received_table.path, received_table.file_type)
+        if received_table.scan_mode == "directory":
+            raise DirectoryScanUnsupportedError("Directory scan mode cannot be executed by the worker file reader.")
+        _, ref = self._read_tracked(
+            read.job_id,
             lambda: ExternalCreateFetcher(
                 received_table=received_table,
-                node_id=payload["node_id"],
-                flow_id=payload["flow_id"],
+                node_id=read.node_id,
+                flow_id=read.flow_id,
                 file_type=received_table.file_type,
                 wait_on_completion=False,
-            )
+            ),
         )
+        return OpResult(refs={"result": ref})
 
     def _fuzzy_join(self, payload: OpPayload) -> OpResult:
         return self._read(
@@ -627,3 +673,68 @@ def _held(ref: ResultRef) -> Iterator[None]:
         yield
     except FileNotFoundError as e:
         raise ResultMissing(f"The worker no longer holds result {ref.result_id!r}") from e
+
+
+def _filed_under(read: ReadPayload) -> dict[str, Any]:
+    """The worker read settings' fields that name the flow and node the task is filed under."""
+    return {"flowfile_flow_id": read.flow_id, "flowfile_node_id": read.node_id}
+
+
+def _database_read_settings(read: DatabaseReadPayload) -> DatabaseExternalReadSettings:
+    """The worker's database read: the query the node's settings make, over the connection with its password as stored.
+
+    A stored connection travels without its own ``password`` field; the payload's encrypted password replaces it.
+    """
+    node_settings = read.settings
+    database_settings = node_settings.database_settings
+    query = BaseSqlSource(
+        query=None if database_settings.query_mode == "table" else database_settings.query,
+        table_name=database_settings.table_name,
+        schema_name=database_settings.schema_name,
+        fields=node_settings.fields,
+    ).query
+    settings = DatabaseExternalReadSettings.create_from_from_node_database_reader(
+        node_database_reader=node_settings,
+        password=read.encrypted_password,
+        query=query,
+        database_reference_settings=read.connection if database_settings.connection_mode == "reference" else None,
+    )
+    return settings.model_copy(update=_filed_under(read))
+
+
+def _kafka_read_settings(read: KafkaReadPayload) -> KafkaReadSettings:
+    return read.settings.model_copy(update=_filed_under(read))
+
+
+def _google_analytics_read_settings(read: GoogleAnalyticsReadPayload) -> GoogleAnalyticsReadSettings:
+    """The worker's report read, signed in with the payload's credential as stored."""
+    report = read.settings.google_analytics_settings
+    common = dict(
+        property_id=report.property_id,
+        start_date=report.start_date,
+        end_date=report.end_date,
+        metrics=report.metrics,
+        dimensions=report.dimensions,
+        limit=report.limit,
+        filters=[
+            GoogleAnalyticsFilter(field=f.field, operator=f.operator, value=f.value, case_sensitive=f.case_sensitive)
+            for f in report.filters
+        ],
+        order_bys=[GoogleAnalyticsOrderBy(field=ob.field, descending=ob.descending) for ob in report.order_bys],
+        **_filed_under(read),
+    )
+    if read.auth_method == "service_account":
+        return GoogleAnalyticsReadSettings(
+            auth_method="service_account", service_account_key_encrypted=read.encrypted_credential, **common
+        )
+    return GoogleAnalyticsReadSettings(
+        auth_method="oauth",
+        refresh_token_encrypted=read.encrypted_credential,
+        oauth_client_id=read.oauth_client_id,
+        oauth_client_secret_encrypted=read.oauth_client_secret_encrypted,
+        **common,
+    )
+
+
+def _rest_api_read_settings(read: RestApiReadPayload) -> RestApiReadSettings:
+    return build_rest_api_worker_settings(read.settings, read.encrypted_secret).model_copy(update=_filed_under(read))

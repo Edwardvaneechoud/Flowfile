@@ -1,9 +1,7 @@
 """Connection-backed sources and sinks fetched on the worker: database, Kafka, Google Analytics, REST."""
 
-import os
 import threading
 
-import polars as pl
 from fastapi.exceptions import HTTPException
 
 from flowfile_core.configs import logger
@@ -17,31 +15,34 @@ from flowfile_core.flowfile.database_connection_manager.ga_connections import (
     get_ga_connection,
 )
 from flowfile_core.flowfile.execution import registry
-from flowfile_core.flowfile.execution.protocol import OperationKind
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.errors import TaskFailed
+from flowfile_core.flowfile.execution.payloads import (
+    DatabaseReadPayload,
+    GoogleAnalyticsReadPayload,
+    KafkaReadPayload,
+    RestApiReadPayload,
+    op_payload,
+)
+from flowfile_core.flowfile.execution.protocol import ComputeBackend, JobHandle, OperationKind, ResultRef
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-    ExternalDatabaseFetcher,
-    ExternalKafkaFetcher,
-    fetch_kafka_offsets,
-)
 from flowfile_core.flowfile.flow_graph._base import GraphMixinBase
 from flowfile_core.flowfile.flow_graph._root import root
 from flowfile_core.flowfile.flow_graph.history import with_history_capture
 from flowfile_core.flowfile.flow_node.flow_node import (
     FlowNode,
 )
+from flowfile_core.flowfile.flow_node.models import RemoteExecutionError, recover_error_class
 from flowfile_core.flowfile.sources.external_sources.google_analytics_source import derive_schema
 from flowfile_core.flowfile.sources.external_sources.rest_api_source import (
-    build_rest_api_worker_settings,
     resolve_auth_secret_encrypted,
 )
 from flowfile_core.flowfile.sources.external_sources.sql_source import models as sql_models
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
-    BaseSqlSource,
     SqlSource,
 )
 from flowfile_core.kafka.connection_manager import (
@@ -59,17 +60,20 @@ from flowfile_core.secret_manager.secret_manager import (
     get_encrypted_secret,
 )
 from shared.db_dialects import get_dialect_or_generic
-from shared.google_analytics.models import (
-    GoogleAnalyticsFilter as WorkerGoogleAnalyticsFilter,
-)
-from shared.google_analytics.models import (
-    GoogleAnalyticsOrderBy as WorkerGoogleAnalyticsOrderBy,
-)
-from shared.google_analytics.models import (
-    GoogleAnalyticsReadSettings as WorkerGoogleAnalyticsReadSettings,
-)
 from shared.kafka.consumer import make_kafka_commit_callback
 from shared.kafka.models import KafkaReadSettings
+
+
+def engine_from_read(backend: ComputeBackend, ref: ResultRef) -> FlowDataEngine:
+    """The engine over a read operation's result.
+
+    A deferred result is a plan that holds what it reads, so the backend's holding is released at once; a stored
+    one stays held, because the plan scans the copy the backend stored (a worker read's Arrow file).
+    """
+    engine = FlowDataEngine(backend.plan_for(ref), number_of_records=ref.row_count)
+    if ref.state == "deferred":
+        backend.release(ref)
+    return engine
 
 
 def _resolve_database_credentials(
@@ -201,47 +205,25 @@ class ConnectorBuildersMixin(GraphMixinBase):
                 return _creds["v"]
 
         def _func():
-            database_connection, encrypted_password, database_reference_settings = _get_creds()
-            sql_source = BaseSqlSource(
-                query=None if database_settings.query_mode == "table" else database_settings.query,
-                table_name=database_settings.table_name,
-                schema_name=database_settings.schema_name,
-                fields=node_database_reader.fields,
+            database_connection, encrypted_password, _ = _get_creds()
+            backend = current_context(self).backend
+            read = DatabaseReadPayload(
+                flow_id=node_database_reader.flow_id,
+                node_id=node_database_reader.node_id,
+                settings=node_database_reader,
+                connection=database_connection,
+                encrypted_password=encrypted_password,
+                cancel_check=lambda: self.flow_settings.is_canceled or node._execution_state.is_canceled,
             )
-
-            # Local and worker reads share shared.db_reader.read_sql_with_fallback.
-            if self.execution_location == "local":
-                backend = registry.backend(registry.LOCAL_BACKEND_ID)
-                ref = backend.run_op(
-                    OperationKind.database_read,
-                    {
-                        "settings": node_database_reader,
-                        "connection": database_connection,
-                        "encrypted_password": encrypted_password,
-                        "cancel_check": lambda: self.flow_settings.is_canceled or node._execution_state.is_canceled,
-                    },
-                ).refs["result"]
-                fl = FlowDataEngine(backend.plan_for(ref), number_of_records=ref.row_count)
-                backend.release(ref)
-                node_database_reader.fields = [c.get_minimal_field_info() for c in fl.schema]
-                return fl
-
-            database_external_read_settings = (
-                sql_models.DatabaseExternalReadSettings.create_from_from_node_database_reader(
-                    node_database_reader=node_database_reader,
-                    password=encrypted_password,
-                    query=sql_source.query,
-                    database_reference_settings=(
-                        database_reference_settings if database_settings.connection_mode == "reference" else None
-                    ),
-                )
-            )
-
-            external_database_fetcher = ExternalDatabaseFetcher(
-                database_external_read_settings, wait_on_completion=False
-            )
-            node._fetch_cached_df = external_database_fetcher
-            fl = FlowDataEngine(external_database_fetcher.get_result())
+            # Every backend reads through shared.db_reader.read_sql_with_fallback.
+            node._submit_in_flight = JobHandle(backend.id, read.job_id)
+            try:
+                ref = backend.run_op(OperationKind.database_read, op_payload(read)).refs["result"]
+            except TaskFailed as e:
+                raise RemoteExecutionError(str(e), recover_error_class(e.__cause__, str(e))) from e
+            finally:
+                node._submit_in_flight = None
+            fl = engine_from_read(backend, ref)
             node_database_reader.fields = [c.get_minimal_field_info() for c in fl.schema]
             return fl
 
@@ -300,9 +282,10 @@ class ConnectorBuildersMixin(GraphMixinBase):
     def add_kafka_source(self, node_kafka_source: input_schema.NodeKafkaSource):
         """Adds a node to read data from a Kafka or Redpanda topic.
 
-        Follows the same pattern as add_database_reader: offloads consumption
-        to the worker, which writes an IPC temp file and returns a serialized
-        LazyFrame reference. Offset tracking is handled by Kafka consumer groups.
+        Follows the same pattern as add_database_reader: the execution context's
+        backend consumes without committing and spills the rows to an IPC file;
+        the offsets it reports are committed when the flow completes. Offset
+        tracking is handled by Kafka consumer groups.
 
         Args:
             node_kafka_source: The settings for the Kafka source node.
@@ -359,43 +342,32 @@ class ConnectorBuildersMixin(GraphMixinBase):
 
         def _func():
             kafka_read_settings = _get_kafka_read_settings()
-            if self.execution_location == "local":
-                # Local execution — consume directly in-process with spill-to-IPC
-                import tempfile
-
-                fd, spill_file = tempfile.mkstemp(suffix=".arrow", prefix="kafka_")
-                os.close(fd)
-                result, kafka_result = root().read_kafka_source(
+            backend = current_context(self).backend
+            read = KafkaReadPayload(
+                flow_id=node_kafka_source.flow_id,
+                node_id=node_kafka_source.node_id,
+                settings=kafka_read_settings,
+                read_kafka_source=root().read_kafka_source,
+            )
+            node._submit_in_flight = JobHandle(backend.id, read.job_id)
+            try:
+                result = backend.run_op(OperationKind.kafka_read, op_payload(read))
+            except TaskFailed as e:
+                raise RemoteExecutionError(str(e), recover_error_class(e.__cause__, str(e))) from e
+            finally:
+                node._submit_in_flight = None
+            fl = engine_from_read(backend, result.refs["result"])
+            # Committed once the flow completes, so a failed or cancelled run commits nothing.
+            offsets = result.metadata.get("offsets")
+            if offsets is not None:
+                node._on_flow_complete = make_kafka_commit_callback(
                     kafka_read_settings,
-                    commit=False,
-                    decrypt_fn=_decrypt_fn,
-                    spill_path=spill_file,
+                    offsets,
+                    node_kafka_source.node_id,
+                    self.flow_logger,
+                    _decrypt_fn,
                 )
-                lf = result if isinstance(result, pl.LazyFrame) else result.lazy()
-                fl = FlowDataEngine(lf)
-                if kafka_result.messages_consumed > 0:
-                    node._on_flow_complete = make_kafka_commit_callback(
-                        kafka_read_settings,
-                        kafka_result.new_offsets,
-                        node_kafka_source.node_id,
-                        self.flow_logger,
-                        _decrypt_fn,
-                    )
-            else:
-                # Remote execution — offload to worker (worker uses commit=False + sidecar)
-                external_kafka_fetcher = ExternalKafkaFetcher(kafka_read_settings, wait_on_completion=False)
-                node._fetch_cached_df = external_kafka_fetcher
-                fl = FlowDataEngine(external_kafka_fetcher.get_result())
-                offsets_data = fetch_kafka_offsets(external_kafka_fetcher.file_ref)
-                if offsets_data and offsets_data.get("messages_consumed", 0) > 0:
-                    node._on_flow_complete = make_kafka_commit_callback(
-                        kafka_read_settings,
-                        offsets_data["new_offsets"],
-                        node_kafka_source.node_id,
-                        self.flow_logger,
-                        _decrypt_fn,
-                    )
-            # The worker frame may have fewer columns than inferred (empty topic); align to the schema.
+            # The read frame may have fewer columns than inferred (empty topic); align to the schema.
             expected_columns = schema_callback()
             fl = fl.align_to_schema(expected_columns)
             node_kafka_source.fields = [c.get_minimal_field_info() for c in fl.schema]
@@ -452,8 +424,8 @@ class ConnectorBuildersMixin(GraphMixinBase):
         """Adds a node that reads from a Google Analytics 4 property.
 
         The actual API fetch (OAuth token refresh, ``run_report`` calls,
-        pagination) is offloaded to the worker via ``ExternalGoogleAnalyticsFetcher``,
-        so the core's event loop stays responsive. The ``schema_callback`` is
+        pagination) runs on the worker backend in every execution mode, so the
+        core's event loop stays responsive. The ``schema_callback`` is
         derived locally from the selected metrics/dimensions — no network call
         is made during schema prediction, keeping downstream nodes lazy.
         """
@@ -461,7 +433,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
         node_type = "google_analytics_reader"
         ga_settings = node_ga_reader.google_analytics_settings
 
-        def _build_worker_settings() -> WorkerGoogleAnalyticsReadSettings:
+        def _build_payload() -> GoogleAnalyticsReadPayload:
             # Deferred to run time under node_ga_reader.user_id: opening a flow never needs the connection.
             with get_db_context() as db:
                 db_conn = get_ga_connection(db, ga_settings.ga_connection_name, node_ga_reader.user_id)
@@ -487,35 +459,10 @@ class ConnectorBuildersMixin(GraphMixinBase):
                 # OAuth client config comes from the connection OWNER, not the run user (group-shared connections).
                 oauth_cfg = get_google_oauth_config(db, db_conn.user_id) if auth_method == "oauth" else None
 
-            common_kwargs = dict(
-                property_id=ga_settings.property_id,
-                start_date=ga_settings.start_date,
-                end_date=ga_settings.end_date,
-                metrics=ga_settings.metrics,
-                dimensions=ga_settings.dimensions,
-                limit=ga_settings.limit,
-                filters=[
-                    WorkerGoogleAnalyticsFilter(
-                        field=f.field,
-                        operator=f.operator,
-                        value=f.value,
-                        case_sensitive=f.case_sensitive,
-                    )
-                    for f in ga_settings.filters
-                ],
-                order_bys=[
-                    WorkerGoogleAnalyticsOrderBy(field=ob.field, descending=ob.descending)
-                    for ob in ga_settings.order_bys
-                ],
-                flowfile_flow_id=node_ga_reader.flow_id,
-                flowfile_node_id=node_ga_reader.node_id,
-            )
-
+            common = dict(flow_id=node_ga_reader.flow_id, node_id=node_ga_reader.node_id, settings=node_ga_reader)
             if auth_method == "service_account":
-                return WorkerGoogleAnalyticsReadSettings(
-                    auth_method="service_account",
-                    service_account_key_encrypted=encrypted_credential,
-                    **common_kwargs,
+                return GoogleAnalyticsReadPayload(
+                    auth_method="service_account", encrypted_credential=encrypted_credential, **common
                 )
             # oauth_cfg exists only for the oauth auth method; guard an unknown auth_method.
             if not oauth_cfg or not oauth_cfg["client_id"] or not oauth_cfg["client_secret"]:
@@ -526,12 +473,12 @@ class ConnectorBuildersMixin(GraphMixinBase):
                         "and paste your OAuth client credentials before running this flow."
                     ),
                 )
-            return WorkerGoogleAnalyticsReadSettings(
+            return GoogleAnalyticsReadPayload(
                 auth_method="oauth",
-                refresh_token_encrypted=encrypted_credential,
+                encrypted_credential=encrypted_credential,
                 oauth_client_id=oauth_cfg["client_id"],
                 oauth_client_secret_encrypted=_encrypt_with_master_key(oauth_cfg["client_secret"]),
-                **common_kwargs,
+                **common,
             )
 
         # Stamp the predicted schema so downstream never needs _func (a worker -> Google round-trip).
@@ -539,10 +486,18 @@ class ConnectorBuildersMixin(GraphMixinBase):
         node_ga_reader.fields = [c.get_minimal_field_info() for c in predicted_columns]
 
         def _func() -> FlowDataEngine:
-            fetcher = root().ExternalGoogleAnalyticsFetcher(_build_worker_settings(), wait_on_completion=False)
-            node._fetch_cached_df = fetcher
+            # On the worker in every mode: core has no Google Analytics reader of its own.
+            backend = registry.backend(registry.WORKER_BACKEND_ID)
+            read = _build_payload()
+            node._submit_in_flight = JobHandle(backend.id, read.job_id)
+            try:
+                ref = backend.run_op(OperationKind.google_analytics_read, op_payload(read)).refs["result"]
+            except TaskFailed as e:
+                raise RemoteExecutionError(str(e), recover_error_class(e.__cause__, str(e))) from e
+            finally:
+                node._submit_in_flight = None
             # A LazyFrame over the worker's Arrow IPC file; never collect in core.
-            fl = FlowDataEngine(fetcher.get_result())
+            fl = engine_from_read(backend, ref)
             # Align (lazily) to the predicted schema so an empty report still yields stable columns.
             return fl.align_to_schema(schema_callback())
 
@@ -583,11 +538,11 @@ class ConnectorBuildersMixin(GraphMixinBase):
     def add_rest_api_reader(self, node_rest_api_reader: input_schema.NodeRestApiReader) -> None:
         """Adds a node that reads from a REST API.
 
-        All network I/O (HTTP round-trips, pagination, retries) is offloaded to
-        the worker via ``ExternalRestApiFetcher`` — the core never makes the
-        external call. The credential is resolved to an encrypted token here
-        (from the user's secret store, or an inline plaintext) and the worker
-        decrypts it just-in-time. A generic API's columns are unknown until a
+        All network I/O (HTTP round-trips, pagination, retries) runs on the
+        execution context's backend — the worker unless the flow runs locally.
+        The credential is resolved to an encrypted token here (from the user's
+        secret store, or an inline plaintext) and the backend decrypts it
+        just-in-time. A generic API's columns are unknown until a
         response is fetched, so ``schema_callback`` returns the columns cached on
         the node by the "Fetch sample" action — empty until the user samples or
         runs, in which case the fetched frame defines the schema.
@@ -606,19 +561,21 @@ class ConnectorBuildersMixin(GraphMixinBase):
             return resolve_auth_secret_encrypted(auth, node_rest_api_reader.user_id)
 
         def _func() -> FlowDataEngine:
-            encrypted = _resolve_secret_encrypted()
-            worker_settings = build_rest_api_worker_settings(node_rest_api_reader, encrypted)
-            if self.execution_location == "local":
-                backend = registry.backend(registry.LOCAL_BACKEND_ID)
-                ref = backend.run_op(
-                    OperationKind.rest_api_read, {"request": worker_settings, "encrypted_secret": encrypted}
-                ).refs["result"]
-                fl = FlowDataEngine(backend.plan_for(ref))
-                backend.release(ref)
-            else:
-                fetcher = root().ExternalRestApiFetcher(worker_settings, wait_on_completion=False)
-                node._fetch_cached_df = fetcher
-                fl = FlowDataEngine(fetcher.get_result())
+            backend = current_context(self).backend
+            read = RestApiReadPayload(
+                flow_id=node_rest_api_reader.flow_id,
+                node_id=node_rest_api_reader.node_id,
+                settings=node_rest_api_reader,
+                encrypted_secret=_resolve_secret_encrypted(),
+            )
+            node._submit_in_flight = JobHandle(backend.id, read.job_id)
+            try:
+                ref = backend.run_op(OperationKind.rest_api_read, op_payload(read)).refs["result"]
+            except TaskFailed as e:
+                raise RemoteExecutionError(str(e), recover_error_class(e.__cause__, str(e))) from e
+            finally:
+                node._submit_in_flight = None
+            fl = engine_from_read(backend, ref)
             cols = schema_callback()
             # Align to the sampled schema when there is one; otherwise the fetched frame defines it.
             if cols:

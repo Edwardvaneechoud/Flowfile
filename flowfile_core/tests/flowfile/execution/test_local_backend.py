@@ -12,6 +12,7 @@ from flowfile_core.flowfile.execution.errors import (
     OperationUnsupported,
     ResultMissing,
 )
+from flowfile_core.flowfile.execution.payloads import FileReadPayload, op_payload
 from flowfile_core.flowfile.execution.protocol import (
     ComputeBackend,
     JobStatus,
@@ -25,7 +26,6 @@ from flowfile_core.schemas import input_schema
 from shared.compute_protocol import PROTOCOL_VERSION, local_capabilities
 
 UNSUPPORTED_KINDS = (
-    OperationKind.kafka_read,
     OperationKind.google_analytics_read,
     OperationKind.ml_train,
     OperationKind.ml_apply,
@@ -243,7 +243,8 @@ def test_file_read_holds_the_rows_of_a_csv(backend, tmp_path):
     received = input_schema.ReceivedTable(file_type="csv", name=path.name, path=str(path))
     settings = input_schema.NodeRead(flow_id=1, node_id=1, cache_data=False, received_file=received)
 
-    refs = backend.run_op(OperationKind.file_read, {"settings": settings, "node_logger": None}).refs
+    read = FileReadPayload(flow_id=1, node_id=1, settings=settings, node_logger=None)
+    refs = backend.run_op(OperationKind.file_read, op_payload(read)).refs
 
     assert list(refs) == ["result"]
     assert backend.plan_for(refs["result"]).collect().to_dicts() == [
