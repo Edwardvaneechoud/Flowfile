@@ -38,11 +38,23 @@ from flowfile_worker.spawner import (
     start_process,
     start_train_model_process,
 )
+from shared.compute_protocol import PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER, Capabilities, local_capabilities
 from shared.delta_utils import validate_catalog_uri
 from shared.kafka.models import KafkaReadSettings
 from shared.storage_config import storage
 
-router = APIRouter(dependencies=[Depends(verify_internal_token)])
+
+def warn_on_foreign_protocol_version(request: Request) -> None:
+    """Log a client that speaks another protocol version; these routes still answer it."""
+    sent = request.headers.get(PROTOCOL_VERSION_HEADER)
+    if sent is not None and sent != str(PROTOCOL_VERSION):
+        logger.warning(
+            f"{request.method} {request.url.path} carries {PROTOCOL_VERSION_HEADER}: {sent}; "
+            f"this worker speaks protocol version {PROTOCOL_VERSION}"
+        )
+
+
+router = APIRouter(dependencies=[Depends(verify_internal_token), Depends(warn_on_foreign_protocol_version)])
 
 # Re-use the single validation helper from funcs (backed by shared.delta_utils).
 _validate_catalog_path = funcs._validate_catalog_path
@@ -69,6 +81,12 @@ def create_and_get_default_cache_dir(flowfile_flow_id: int) -> str:
     default_cache_dir = CACHE_DIR / str(flowfile_flow_id)
     default_cache_dir.mkdir(parents=True, exist_ok=True)
     return str(default_cache_dir)
+
+
+@router.get("/capabilities", response_model=Capabilities)
+async def capabilities() -> Capabilities:
+    """What this worker can run: versions, platform, plugin versions and plugin library paths."""
+    return local_capabilities()
 
 
 @router.post("/submit_query/")
