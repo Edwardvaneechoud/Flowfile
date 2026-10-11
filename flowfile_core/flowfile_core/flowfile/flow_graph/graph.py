@@ -146,6 +146,7 @@ class FlowGraph(
             flow_settings = schemas.FlowSettings.from_flow_settings_input(flow_settings)
 
         self._flow_settings = flow_settings
+        self._rebuild_execution_context()
         self.uuid = str(uuid1())
         self.start_datetime = None
         self.end_datetime = None
@@ -235,6 +236,7 @@ class FlowGraph(
                     if node.setting_input is not None and find_unresolved_in_model(node.setting_input):
                         node.reset(deep=True)
         self._flow_settings = flow_settings
+        self._rebuild_execution_context()
 
     @property
     def node_id_ceiling(self) -> int:
