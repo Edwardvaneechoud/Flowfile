@@ -47,6 +47,7 @@ from flowfile_core.catalog.storage_backend import (
 )
 from flowfile_core.catalog.validators import format_full_name, validate_table_registration
 from flowfile_core.database.models import CatalogCdcCursor, CatalogNamespace, CatalogTable, TableFavorite
+from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_add_key_column,
     trigger_apply_table_edits,
@@ -287,7 +288,7 @@ class TableService:
                 data = trigger_read_table_metadata(_catalog_table_dir_name(table_path), storage=storage)
                 schema_list = [{"name": c["name"], "dtype": c["dtype"]} for c in data["column_schema"]]
                 return schema_list, data["row_count"], data["column_count"], data["size_bytes"]
-            except (RuntimeError, OSError, ValueError, KeyError):
+            except (RuntimeError, OSError, ValueError, KeyError, ComputeError):
                 if is_cloud:
                     raise
                 logger.warning("Worker metadata read failed, falling back to local read", exc_info=True)

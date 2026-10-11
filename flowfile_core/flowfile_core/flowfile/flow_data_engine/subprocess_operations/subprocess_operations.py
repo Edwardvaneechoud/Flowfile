@@ -15,7 +15,11 @@ from pl_fuzzy_frame_match.models import FuzzyMapping
 from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.configs import logger
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER, WORKER_URL
-from flowfile_core.flowfile.execution.errors import ComputeUnavailable
+from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import (
+    ensure_handshake,
+    reset_handshake,
+)
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
     ApplyModelInput,
     CustomNodeExecuteInput,
@@ -64,7 +68,24 @@ class _WorkerAuth(requests.auth.AuthBase):
         return r
 
 
-_worker_session = requests.Session()
+class _WorkerSession(requests.Session):
+    """The session every REST call from core to the worker goes through.
+
+    Each call first passes ``ensure_handshake``, so a worker on other versions than core is
+    refused before it is sent anything. A call that cannot reach the worker re-arms that
+    check, because the worker that comes back may be another one.
+    """
+
+    def request(self, *args, **kwargs):
+        ensure_handshake()
+        try:
+            return super().request(*args, **kwargs)
+        except requests.ConnectionError:
+            reset_handshake()
+            raise
+
+
+_worker_session = _WorkerSession()
 _worker_session.auth = _WorkerAuth()
 
 _JSON_HEADERS = {"Content-Type": "application/json"}
@@ -678,10 +699,10 @@ def trigger_apply_table_edits(
         payload["storage"] = storage
     try:
         response = _worker_session.post(f"{WORKER_URL}/catalog/apply_edits", json=payload, timeout=600)
-    except requests.RequestException as exc:
+    except (requests.RequestException, ComputeError) as exc:
         from flowfile_core.catalog.exceptions import WorkerUnavailableError
 
-        raise WorkerUnavailableError(f"worker unreachable while applying table edits: {exc}") from exc
+        raise WorkerUnavailableError(f"worker unavailable while applying table edits: {exc}") from exc
     _raise_for_edit_response(response, table_id)
     if not response.ok:
         raise RuntimeError(f"Worker apply_edits failed: {response.text}")
@@ -701,10 +722,10 @@ def trigger_add_key_column(
         payload["storage"] = storage
     try:
         response = _worker_session.post(f"{WORKER_URL}/catalog/add_key_column", json=payload, timeout=600)
-    except requests.RequestException as exc:
+    except (requests.RequestException, ComputeError) as exc:
         from flowfile_core.catalog.exceptions import WorkerUnavailableError
 
-        raise WorkerUnavailableError(f"worker unreachable while adding a key column: {exc}") from exc
+        raise WorkerUnavailableError(f"worker unavailable while adding a key column: {exc}") from exc
     _raise_for_edit_response(response, table_id)
     if not response.ok:
         raise RuntimeError(f"Worker add_key_column failed: {response.text}")
@@ -740,7 +761,8 @@ def clear_task_from_worker(file_ref: str) -> bool:
         file_ref (str): The unique identifier of the task to clear.
 
     Returns:
-        bool: True if the task was successfully cleared, False otherwise.
+        bool: True if the task was successfully cleared, False otherwise. Best-effort cleanup:
+        a worker this core cannot use (``ComputeError``) is logged and never fails the caller.
     """
     from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 
@@ -754,6 +776,9 @@ def clear_task_from_worker(file_ref: str) -> bool:
         return False
     except requests.RequestException as e:
         logger.error(f"Failed to remove results: {str(e)}")
+        return False
+    except ComputeError as e:
+        logger.warning(f"Did not remove results for {file_ref} from the worker: {e}")
         return False
 
 
@@ -788,7 +813,8 @@ def cancel_task(file_ref: str) -> bool:
         file_ref: The unique identifier of the task to cancel
 
     Returns:
-        bool: True if cancellation was successful, False otherwise
+        bool: True if cancellation was successful, False otherwise; also False, logged, when the
+        worker is one this core cannot use (``ComputeError``)
 
     Raises:
         Exception: If there's an error communicating with the worker service
@@ -800,6 +826,9 @@ def cancel_task(file_ref: str) -> bool:
         return False
     except requests.RequestException as e:
         raise Exception(f"Failed to cancel task: {str(e)}") from e
+    except ComputeError as e:
+        logger.warning(f"Did not cancel task {file_ref} on the worker: {e}")
+        return False
 
 
 class BaseFetcher:
@@ -901,7 +930,7 @@ class BaseFetcher:
                         self._handle_error(2, f"HTTP {r.status_code}: {r.text}")
                         return
 
-                except requests.RequestException as e:
+                except (requests.RequestException, ComputeError) as e:
                     self._handle_error(2, f"Request failed: {e}")
                     return
 

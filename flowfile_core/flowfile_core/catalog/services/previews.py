@@ -28,6 +28,7 @@ from flowfile_core.catalog.storage_backend import (
 )
 from flowfile_core.catalog.text_utils import parse_delta_history
 from flowfile_core.database.models import CatalogTable
+from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_delta_history,
     trigger_delta_preview,
@@ -190,7 +191,7 @@ class TablePreviewService:
                 )
             except TableVersionUnavailableError:
                 raise
-            except (RuntimeError, OSError, ValueError, KeyError):
+            except (RuntimeError, OSError, ValueError, KeyError, ComputeError):
                 logger.warning("Worker delta version preview failed, falling back to local", exc_info=True)
 
         try:
@@ -218,7 +219,7 @@ class TablePreviewService:
             try:
                 preview = trigger_delta_preview(_catalog_table_dir_name(table_path), limit, storage=storage_payload)
                 return preview.model_copy(update={"total_rows": total_rows}) if total_rows is not None else preview
-            except (RuntimeError, OSError, ValueError, KeyError):
+            except (RuntimeError, OSError, ValueError, KeyError, ComputeError):
                 logger.warning("Worker delta preview failed, falling back to local", exc_info=True)
 
         pa_table = pl.scan_delta(table_path, storage_options=storage_options).head(limit).collect().to_arrow()
@@ -244,7 +245,7 @@ class TablePreviewService:
         if _should_offload():
             try:
                 return trigger_delta_history(_catalog_table_dir_name(table_path), limit, storage=storage_payload)
-            except (RuntimeError, OSError, ValueError, KeyError):
+            except (RuntimeError, OSError, ValueError, KeyError, ComputeError):
                 logger.warning("Worker delta history read failed, falling back to local", exc_info=True)
 
         delta_table = DeltaTable(table_path, without_files=True, storage_options=storage_options)

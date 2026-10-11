@@ -5,6 +5,13 @@ class ComputeError(Exception):
 class ComputeUnavailable(ComputeError):
     """Compute cannot be reached."""
 
+    def __str__(self) -> str:
+        """The message, plus what to do about it when the connection was refused."""
+        message = super().__str__()
+        if "connection refused" in message.lower():
+            return f"{message}. Is the worker running? Start it, or switch the flow to local execution."
+        return message
+
 
 class VersionMismatch(ComputeError):
     """The compute runs other versions than this process."""

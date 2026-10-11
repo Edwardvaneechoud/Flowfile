@@ -11,6 +11,8 @@ from types import SimpleNamespace
 import polars as pl
 import pytest
 
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from flowfile_core.flowfile.node_designer.state import (
     DesignerState,
     EnvironmentState,
@@ -589,3 +591,34 @@ def test_dry_run_executes_on_kernel(monkeypatch):
     assert resp.executed_in == "kernel"
     assert resp.outputs[0].row_count == 3
     assert "added" in [c.name for c in resp.outputs[0].columns]
+
+
+# -- a worker that fails core's handshake while the run is polled ---------------
+
+
+def test_worker_failing_the_handshake_while_polled_answers_500_with_the_message(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from flowfile_core import main
+    from flowfile_core.auth.jwt import get_current_active_user
+    from flowfile_core.auth.models import User
+    from shared.compute_protocol import local_capabilities
+
+    admin = User(username="local_user", id=1, disabled=False, is_admin=True, must_change_password=False)
+    reported = local_capabilities().model_copy(update={"polars_version": "0.0.1"})
+    monkeypatch.setattr(dr, "trigger_custom_node_operation", lambda request: _Status("task-1"))
+    monkeypatch.setattr(handshake, "fetch_worker_capabilities", lambda: reported)
+    handshake.reset_handshake()
+    main.app.dependency_overrides[get_current_active_user] = lambda: admin
+    try:
+        response = TestClient(main.app).post(
+            "/user_defined_components/dry-run", json={"code": CODE_OK, "sample_inputs": [{"a": [1, 2, 3]}]}
+        )
+    finally:
+        main.app.dependency_overrides.pop(get_current_active_user, None)
+        handshake.reset_handshake()
+
+    assert response.status_code == 500, response.text
+    assert response.json()["detail"] == (
+        f"The worker at {subops.WORKER_URL} does not match core (polars_version: core {pl.__version__}, worker 0.0.1)"
+    )

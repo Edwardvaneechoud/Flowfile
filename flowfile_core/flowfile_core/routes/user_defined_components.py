@@ -13,6 +13,7 @@ from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
 from flowfile_core.flowfile.community_nodes.receipts import community_icon_override
+from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable
 from flowfile_core.flowfile.node_designer.codegen import CodegenError, generate_source
 from flowfile_core.flowfile.node_designer.parsing import extract_manifest, parse_source
 from flowfile_core.flowfile.node_designer.state import DesignerState, ParseResult
@@ -352,10 +353,17 @@ def dry_run_custom_node(request: DryRunRequest, current_user=Depends(require_adm
     """Execute a candidate node in the worker against bounded sample inputs.
 
     Never runs user code in core; a syntax error is caught before dispatch and an
-    unreachable worker surfaces as ``error_kind='load'``. Admin-only, like save: the
-    candidate is arbitrary Python and the worker holds the master key.
+    unreachable worker surfaces as ``error_kind='load'``. A worker that fails core's
+    handshake while the run is polled answers 503 when it cannot be reached and 500
+    otherwise, with the typed message. Admin-only, like save: the candidate is
+    arbitrary Python and the worker holds the master key.
     """
-    return run_dry_run(request, current_user.id)
+    try:
+        return run_dry_run(request, current_user.id)
+    except ComputeUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except ComputeError as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/list-custom-nodes", summary="List all custom nodes", response_model=list[CustomNodeInfo])

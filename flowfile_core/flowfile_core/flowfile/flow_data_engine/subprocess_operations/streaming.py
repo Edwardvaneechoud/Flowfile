@@ -23,6 +23,10 @@ from websockets.sync.client import connect
 
 from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.configs.settings import WORKER_URL
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import (
+    ensure_handshake,
+    reset_handshake,
+)
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import Status
 
 # How often the receive loop wakes up to check for cancellation/inactivity.
@@ -234,12 +238,20 @@ def streaming_start(
     :func:`streaming_receive` (which closes the connection) or close it
     manually.
 
-    Raises immediately on connection failure or send error.
+    Raises immediately on connection failure or send error. Before connecting it
+    passes ``ensure_handshake``, like every REST call, so a worker on other versions
+    than core is refused before the task is sent; a connect that fails re-arms that
+    check, because the worker that comes back may be another one.
     """
+    ensure_handshake()
     ws_url = _get_ws_url() + "/ws/submit"
     metadata = _build_metadata(task_id, operation_type, flow_id, node_id, kwargs)
 
-    ws = connect(ws_url, additional_headers={"X-Flowfile-Internal": get_internal_token()})
+    try:
+        ws = connect(ws_url, additional_headers={"X-Flowfile-Internal": get_internal_token()})
+    except OSError:
+        reset_handshake()
+        raise
     try:
         ws.send(json.dumps(metadata))
         ws.send(lf_bytes)

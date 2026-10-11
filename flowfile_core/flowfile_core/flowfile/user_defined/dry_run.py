@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from flowfile_core.configs import logger
 from flowfile_core.configs.settings import WORKER_URL
+from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import CustomNodeExecuteInput
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     _worker_session,
@@ -247,7 +248,8 @@ def _poll_worker(task_id: str, deadline: float) -> tuple[dict | None, DryRunResp
 
     On deadline the task is cancelled and a ``timeout`` error is returned. A
     connection error becomes a ``load`` error ("worker unavailable") — user code
-    is never run in core for dry runs.
+    is never run in core for dry runs. A ``ComputeError`` (the worker failed core's
+    handshake) propagates for the route to answer.
     """
     while True:
         if time.monotonic() >= deadline:
@@ -287,6 +289,8 @@ def _cancel(task_id: str) -> None:
         _worker_session.post(f"{WORKER_URL}/cancel_task/{task_id}", timeout=10)
     except requests.RequestException:
         logger.debug("Dry-run cancel for task %s failed (worker unreachable)", task_id)
+    except ComputeError as e:
+        logger.warning("Dry-run cancel for task %s not sent: %s", task_id, e)
 
 
 def _clear(task_id: str) -> None:
@@ -294,6 +298,8 @@ def _clear(task_id: str) -> None:
         _worker_session.delete(f"{WORKER_URL}/clear_task/{task_id}", timeout=10)
     except requests.RequestException:
         logger.debug("Dry-run clear for task %s failed (worker unreachable)", task_id)
+    except ComputeError as e:
+        logger.warning("Dry-run clear for task %s not sent: %s", task_id, e)
 
 
 def _map_payload(payload: dict, output_names: list[str]) -> DryRunResponse:

@@ -12,6 +12,7 @@ import threading
 import time
 from collections.abc import Iterator
 
+import polars as pl
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
@@ -19,7 +20,10 @@ from fastapi.testclient import TestClient
 from flowfile_core import main
 from flowfile_core.auth.jwt import get_current_active_user, get_current_user
 from flowfile_core.auth.models import User as PydanticUser
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from flowfile_core.routes import system_worker
+from shared.compute_protocol import local_capabilities
 
 
 @pytest.fixture
@@ -121,6 +125,48 @@ def test_worker_down_surfaces_typed_503(admin_client: TestClient, monkeypatch) -
     response = admin_client.get("/system/worker_pool")
     assert response.status_code == 503, response.text
     assert response.json()["detail"]["error_code"] == "WORKER_UNAVAILABLE"
+
+
+@pytest.fixture
+def unchecked_worker() -> Iterator[None]:
+    """The proxy's request is core's first worker contact, so it runs the handshake."""
+    handshake.reset_handshake()
+    yield
+    handshake.reset_handshake()
+
+
+def test_worker_on_other_versions_surfaces_typed_503(admin_client: TestClient, unchecked_worker, monkeypatch) -> None:
+    reported = local_capabilities().model_copy(update={"polars_version": "0.0.1"})
+    monkeypatch.setattr(handshake, "fetch_worker_capabilities", lambda: reported)
+
+    response = admin_client.get("/system/worker_pool")
+
+    assert response.status_code == 503, response.text
+    assert response.json()["detail"] == {
+        "error_code": "WORKER_UNAVAILABLE",
+        "message": (
+            f"The worker at {subops.WORKER_URL} does not match core "
+            f"(polars_version: core {pl.__version__}, worker 0.0.1)"
+        ),
+    }
+
+
+def test_worker_down_on_first_contact_surfaces_typed_503(
+    admin_client: TestClient, unchecked_worker, monkeypatch
+) -> None:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        dead_url = f"http://127.0.0.1:{probe.getsockname()[1]}"
+    monkeypatch.setattr(system_worker, "WORKER_URL", dead_url)
+    monkeypatch.setattr(subops, "WORKER_URL", dead_url)
+
+    response = admin_client.get("/system/worker_pool")
+
+    assert response.status_code == 503, response.text
+    detail = response.json()["detail"]
+    assert detail["error_code"] == "WORKER_UNAVAILABLE"
+    assert detail["message"].startswith(f"Worker not reachable: Could not reach the worker at {dead_url}: ")
+    assert detail["message"].endswith("Is the worker running? Start it, or switch the flow to local execution.")
 
 
 def test_out_of_range_size_returns_422(admin_client: TestClient, live_worker: str) -> None:

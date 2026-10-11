@@ -39,6 +39,7 @@ from flowfile_core.catalog.text_utils import (
 from flowfile_core.catalog.validators import format_full_name
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 from flowfile_core.database.models import CatalogTable
+from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_resolve_virtual_table,
@@ -533,7 +534,7 @@ class VirtualTableService:
         key = hashlib.sha256(plan_bytes).hexdigest()
         try:
             result = trigger_resolve_virtual_table(table_id, plan_bytes, key, target="kernel_shared")
-        except (RequestException, RuntimeError) as e:
+        except (RequestException, RuntimeError, ComputeError) as e:
             raise WorkerUnavailableError(_scrub_abs_paths(str(e))) from e
         ipc_path = validate_catalog_path(result["ipc_path"], storage.shared_virtual_results_directory)
         return CatalogTableMaterializeResult(
