@@ -11,6 +11,7 @@ from uuid import uuid4
 import polars as pl
 import requests
 from pl_fuzzy_frame_match.models import FuzzyMapping
+from websockets.exceptions import ConnectionClosed
 
 from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.configs import logger
@@ -856,6 +857,7 @@ class BaseFetcher:
         self._running: bool = False
         self._error_code: int = 0
         self._error_description: str | None = None
+        self._error_kind: str | None = None
 
     # Public properties for compatibility with subclasses
     @property
@@ -892,6 +894,12 @@ class BaseFetcher:
         with self._lock:
             return self._error_description
 
+    @property
+    def error_kind(self) -> str | None:
+        """The worker's failure kind ("environment", "task"), "connection" for a socket lost mid-task, or None."""
+        with self._lock:
+            return self._error_kind
+
     def _start_thread(self):
         """Internal method to start thread (must be called under lock)."""
         if not self._started:
@@ -917,7 +925,9 @@ class BaseFetcher:
                             self._handle_completion(status)
                             return
                         elif status.status == "Error":
-                            self._handle_error(error_code_for_kind(status.error_kind), status.error_message)
+                            self._handle_error(
+                                error_code_for_kind(status.error_kind), status.error_message, status.error_kind
+                            )
                             return
                         elif status.status == "Unknown Error":
                             self._handle_error(
@@ -972,11 +982,12 @@ class BaseFetcher:
                 self._running = False
                 self._condition.notify_all()
 
-    def _handle_error(self, code: int, description: str):
+    def _handle_error(self, code: int, description: str, kind: str | None = None):
         """Handle error state. Must be called from fetch thread."""
         with self._condition:
             self._error_code = code
             self._error_description = description
+            self._error_kind = kind
             self._running = False
             self._condition.notify_all()
 
@@ -1062,7 +1073,10 @@ class BaseFetcher:
 
         with self._lock:
             if self._error_description is not None:
-                raise RemoteExecutionError(self._error_description, recover_error_class(None, self._error_description))
+                description = self._error_description
+                raise RemoteExecutionError(
+                    description, recover_error_class(None, description), error_kind=self._error_kind
+                )
             return self._result
 
     @property
@@ -1120,7 +1134,7 @@ class BaseFetcher:
             try:
                 result, status = streaming_receive(ws, self.file_ref, should_abort=self._stop_event.is_set)
             except WorkerTaskError as e:
-                self._record_task_failure(str(e), e.error_code)
+                self._record_task_failure(str(e), e.error_code, e.kind)
                 return
             except Exception:
                 # Reset to pristine: the caller's REST fallback (generic errors
@@ -1156,13 +1170,14 @@ class BaseFetcher:
                 )
                 self._thread.start()
 
-    def _record_task_failure(self, description: str, error_code: int) -> None:
+    def _record_task_failure(self, description: str, error_code: int, kind: str | None) -> None:
         """Record a task the worker ran and reported failed, with the code the REST path would give it."""
         with self._lock:
             self._ws = None
             self._running = False
             self._error_code = error_code
             self._error_description = description
+            self._error_kind = kind
 
     def _raise_recorded_failure(self) -> None:
         """Raise a recorded failure the way the REST path's blocking ``get_result()`` does."""
@@ -1185,17 +1200,16 @@ class BaseFetcher:
             else:
                 logger.exception("Error in WebSocket receive thread")
             with self._condition:
-                # -1 means "worker child died" and lets the node degrade
-                # gracefully; -2 means stalled-or-canceled and makes the node
-                # fail fast (the executor's state.is_canceled check then
-                # disambiguates a user cancel from a genuine stall). The
-                # _stop_event disjunct catches cancel-time teardown exceptions
-                # that surface as types other than WorkerStreamInterrupted.
+                # -2: stalled, or canceled (a cancel can tear down with any error type); -1: error_kind says why.
                 interrupted = isinstance(e, WorkerStreamInterrupted) or self._stop_event.is_set()
                 if interrupted:
                     self._error_code = -2
+                elif isinstance(e, WorkerTaskError):
+                    self._error_code = e.error_code
+                    self._error_kind = e.kind
                 else:
-                    self._error_code = e.error_code if isinstance(e, WorkerTaskError) else -1
+                    self._error_code = -1
+                    self._error_kind = "connection" if isinstance(e, ConnectionClosed) else None
                 self._error_description = str(e)
                 self._running = False
                 self._ws = None
