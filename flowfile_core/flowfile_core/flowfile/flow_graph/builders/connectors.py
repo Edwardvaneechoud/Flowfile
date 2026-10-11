@@ -16,6 +16,8 @@ from flowfile_core.flowfile.database_connection_manager.ga_connections import (
     get_encrypted_credential,
     get_ga_connection,
 )
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
@@ -131,20 +133,15 @@ class ConnectorBuildersMixin(GraphMixinBase):
             )
 
             if self.execution_location == "local":
-                df.to_database_obj(
-                    database_type=database_connection.database_type,
-                    uri=sql_utils.construct_sql_uri(
-                        database_type=database_connection.database_type,
-                        host=database_connection.host,
-                        port=database_connection.port,
-                        database=database_connection.database,
-                        username=database_connection.username,
-                        password=decrypt_secret(encrypted_password) if encrypted_password else None,
-                        ssl_enabled=bool(getattr(database_connection, "ssl_enabled", False)),
-                        connect_timeout=10,
-                    ),
-                    table_name=table_name,
-                    if_exists=database_settings.if_exists or "append",
+                registry.backend(registry.LOCAL_BACKEND_ID).run_op(
+                    OperationKind.database_write,
+                    {
+                        "input": df,
+                        "settings": node_database_writer,
+                        "connection": database_connection,
+                        "encrypted_password": encrypted_password,
+                        "table_name": table_name,
+                    },
                 )
                 return df
 
@@ -214,26 +211,18 @@ class ConnectorBuildersMixin(GraphMixinBase):
 
             # Local and worker reads share shared.db_reader.read_sql_with_fallback.
             if self.execution_location == "local":
-                local_source = SqlSource(
-                    connection_string=sql_utils.construct_sql_uri(
-                        database_type=database_connection.database_type,
-                        host=database_connection.host,
-                        port=database_connection.port,
-                        database=database_connection.database,
-                        username=database_connection.username,
-                        password=decrypt_secret(encrypted_password) if encrypted_password else None,
-                        ssl_enabled=bool(getattr(database_connection, "ssl_enabled", False)),
-                        connect_timeout=10,
-                    ),
-                    query=None if database_settings.query_mode == "table" else database_settings.query,
-                    table_name=database_settings.table_name,
-                    schema_name=database_settings.schema_name,
-                    fields=node_database_reader.fields,
-                    cancel_check=lambda: self.flow_settings.is_canceled or node._execution_state.is_canceled,
-                    database_type=database_connection.database_type,
-                )
-                fl = FlowDataEngine(local_source.get_pl_df())
-                fl.lazy = True
+                backend = registry.backend(registry.LOCAL_BACKEND_ID)
+                ref = backend.run_op(
+                    OperationKind.database_read,
+                    {
+                        "settings": node_database_reader,
+                        "connection": database_connection,
+                        "encrypted_password": encrypted_password,
+                        "cancel_check": lambda: self.flow_settings.is_canceled or node._execution_state.is_canceled,
+                    },
+                )["result"]
+                fl = FlowDataEngine(backend.plan_for(ref), number_of_records=ref.row_count)
+                backend.release(ref)
                 node_database_reader.fields = [c.get_minimal_field_info() for c in fl.schema]
                 return fl
 
@@ -620,11 +609,12 @@ class ConnectorBuildersMixin(GraphMixinBase):
             encrypted = _resolve_secret_encrypted()
             worker_settings = build_rest_api_worker_settings(node_rest_api_reader, encrypted)
             if self.execution_location == "local":
-                # No worker service in local runs — fetch in-process (cf. add_database_reader).
-                from shared.rest_api.fetch import fetch_rest_api
-
-                secret = decrypt_secret(encrypted).get_secret_value() if encrypted else None
-                fl = FlowDataEngine(fetch_rest_api(worker_settings, secret=secret).lazy())
+                backend = registry.backend(registry.LOCAL_BACKEND_ID)
+                ref = backend.run_op(
+                    OperationKind.rest_api_read, {"request": worker_settings, "encrypted_secret": encrypted}
+                )["result"]
+                fl = FlowDataEngine(backend.plan_for(ref))
+                backend.release(ref)
             else:
                 fetcher = root().ExternalRestApiFetcher(worker_settings, wait_on_completion=False)
                 node._fetch_cached_df = fetcher

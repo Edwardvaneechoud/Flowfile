@@ -4,7 +4,8 @@ A backend is made by a factory. Core registers its own in process with ``registe
 package adds one through the ``flowfile.compute_backends`` entry-point group, where the entry point's name
 is the backend id and it loads to the factory. Entry points are scanned once, on the first lookup, and an
 in-process registration wins over an entry point of the same name. ``backend`` calls a factory once per
-process and hands out that instance from then on.
+process and hands out that instance from then on. The backends core ships (``_BUILTIN``) are imported and
+registered the first time their id is looked up without a registration, before the entry points are consulted.
 
 ``default_backend_id`` names the default backend, the one a ``"remote"`` flow and a call without a graph use:
 ``FLOWFILE_COMPUTE_BACKEND`` when set, else ``"worker"`` while the ``OFFLOAD_TO_WORKER`` setting is on and
@@ -15,6 +16,7 @@ reads the worker settings.
 
 from __future__ import annotations
 
+import importlib
 import importlib.metadata
 import os
 import threading
@@ -32,6 +34,11 @@ ENTRY_POINT_GROUP = "flowfile.compute_backends"
 BACKEND_ENV_VAR = "FLOWFILE_COMPUTE_BACKEND"
 LOCAL_BACKEND_ID = "local"
 WORKER_BACKEND_ID = "worker"
+
+_BUILTIN: dict[str, tuple[str, str]] = {
+    "local": ("flowfile_core.flowfile.execution.backends.local", "LocalBackend"),
+}
+"""Backend id -> (module, factory name) of the backends core ships, imported on their first lookup."""
 
 _lock = threading.RLock()
 _factories: dict[str, BackendFactory] = {}
@@ -59,6 +66,9 @@ def backend(backend_id: str) -> ComputeBackend:
         instance = _instances.get(backend_id)
         if instance is not None:
             return instance
+        if backend_id not in _factories and backend_id in _BUILTIN:
+            module_name, factory_name = _BUILTIN[backend_id]
+            register_backend(backend_id, getattr(importlib.import_module(module_name), factory_name))
         _scan_entry_points()
         factory = _factories.get(backend_id)
         if factory is None:

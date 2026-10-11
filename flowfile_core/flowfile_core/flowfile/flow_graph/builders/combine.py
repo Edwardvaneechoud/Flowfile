@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from flowfile_core.configs import logger
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
@@ -150,11 +152,19 @@ class CombineBuildersMixin(GraphMixinBase):
         def _func(main: FlowDataEngine, right: FlowDataEngine) -> FlowDataEngine:
             node = self.get_node(node_id=fuzzy_settings.node_id)
             if self.execution_location == "local":
-                return main.fuzzy_join(
-                    fuzzy_match_input=deepcopy(fuzzy_settings.join_input),
-                    other=right,
-                    node_logger=self.flow_logger.get_node_logger(fuzzy_settings.node_id),
-                )
+                backend = registry.backend(registry.LOCAL_BACKEND_ID)
+                ref = backend.run_op(
+                    OperationKind.fuzzy_join,
+                    {
+                        "left": main,
+                        "right": right,
+                        "settings": fuzzy_settings,
+                        "node_logger": self.flow_logger.get_node_logger(fuzzy_settings.node_id),
+                    },
+                )["result"]
+                matched = FlowDataEngine(backend.plan_for(ref))
+                backend.release(ref)
+                return matched
 
             f = main.start_fuzzy_join(
                 fuzzy_match_input=deepcopy(fuzzy_settings.join_input),

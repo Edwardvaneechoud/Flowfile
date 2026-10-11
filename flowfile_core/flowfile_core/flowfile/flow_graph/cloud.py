@@ -10,6 +10,8 @@ from flowfile_core.auth import sharing
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     get_local_cloud_connection,
 )
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
@@ -29,10 +31,6 @@ from flowfile_core.schemas.cloud_storage_schemas import (
 from flowfile_core.schemas.delta_write import MERGE_MODES
 from shared.cloud_storage.uri import storage_type_for_uri
 from shared.cloud_storage.utils import normalize_delta_path, validate_cloud_resource_path
-from shared.delta_utils import (
-    merge_into_delta,
-)
-from shared.delta_utils import write_delta as _write_delta
 
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_graph.graph import FlowGraph
@@ -131,25 +129,10 @@ def _write_cloud_delta(
         root()._write_cloud_delta_remote(graph.flow_id, node, df, op_type, op_kwargs)
         return
     storage_options = CloudStorageReader.get_storage_options(connection)
-    if op_type == "merge_delta":
-        merge_into_delta(
-            df.data_frame.collect(),
-            path,
-            merge_mode=settings.write_mode,
-            merge_keys=settings.merge_keys,
-            partition_by=settings.partition_by,
-            storage_options=storage_options,
-            enable_cdf=settings.track_changes,
-        )
-    else:
-        _write_delta(
-            df.data_frame,
-            path,
-            mode=settings.write_mode,
-            partition_by=settings.partition_by,
-            storage_options=storage_options,
-            enable_cdf=settings.track_changes,
-        )
+    operation = OperationKind.delta_merge if op_type == "merge_delta" else OperationKind.delta_write
+    registry.backend(registry.LOCAL_BACKEND_ID).run_op(
+        operation, {"input": df, "storage_options": storage_options, **op_kwargs}
+    )
 
 
 def _is_cloud_change_read(settings: CloudStorageReadSettings) -> bool:

@@ -4,6 +4,8 @@ from copy import deepcopy
 from typing import TYPE_CHECKING
 
 from flowfile_core.configs import logger
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.filter_expressions import (
     build_filter_expression,
     resolve_filter_field_type,
@@ -439,7 +441,12 @@ class TransformBuildersMixin(GraphMixinBase):
         def _func(table: FlowDataEngine) -> NamedOutputs:
             split_pairs = [(s.name, s.percentage) for s in settings.splits]
             if self.execution_location == "local":
-                return table.random_split(split_pairs, settings.seed)
+                backend = registry.backend(registry.LOCAL_BACKEND_ID)
+                refs = backend.run_op(OperationKind.random_split, {"input": table, "settings": settings})
+                splits = NamedOutputs({name: FlowDataEngine(backend.plan_for(ref)) for name, ref in refs.items()})
+                for ref in refs.values():
+                    backend.release(ref)
+                return splits
             return table.random_split_external(
                 split_pairs,
                 settings.seed,

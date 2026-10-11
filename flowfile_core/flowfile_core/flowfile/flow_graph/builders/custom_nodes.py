@@ -9,6 +9,8 @@ import polars as pl
 
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, register_missing_node_template
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
@@ -334,30 +336,28 @@ class CustomNodeBuildersMixin(GraphMixinBase):
         resolved_output_names = output_names or custom_node.output_names or ["main"]
 
         def _run_in_core(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
-            instance = type(custom_node).from_settings(user_defined_node_settings.settings or {})
-            user_id = user_defined_node_settings.user_id
-            if user_id is not None:
-                instance.set_execution_context(user_id)
-
-            output = instance.process(*(fde.data_frame.lazy() for fde in flow_data_engine))
-
-            accessed_secrets = instance.get_accessed_secrets()
-            if accessed_secrets:
-                logger.info(f"Node '{user_defined_node_settings.node_id}' accessed secrets: {accessed_secrets}")
-            if isinstance(output, dict):
-                node = self.get_node(user_defined_node_settings.node_id)
-                primary = None
-                for i, name in enumerate(resolved_output_names):
-                    if name not in output:
-                        raise ValueError(f"process() did not return declared output '{name}'")
-                    fde = FlowDataEngine(output[name])
-                    node._named_outputs[f"output-{i}"] = fde
-                    if i == 0:
-                        primary = fde
-                return primary
-            if isinstance(output, pl.LazyFrame | pl.DataFrame):
-                return FlowDataEngine(output)
-            return None
+            backend = registry.backend(registry.LOCAL_BACKEND_ID)
+            refs = backend.run_op(
+                OperationKind.custom_node,
+                {
+                    "custom_node": custom_node,
+                    "settings": user_defined_node_settings,
+                    "inputs": flow_data_engine,
+                    "output_names": resolved_output_names,
+                },
+            )
+            engines = {
+                key: FlowDataEngine(backend.plan_for(ref), number_of_records=ref.row_count) for key, ref in refs.items()
+            }
+            for ref in refs.values():
+                backend.release(ref)
+            if "result" in engines:
+                return engines["result"]
+            if not engines:
+                return None
+            # Keyed by output handle: process() returned its declared outputs by name.
+            self.get_node(user_defined_node_settings.node_id)._named_outputs.update(engines)
+            return engines[DEFAULT_OUTPUT_HANDLE]
 
         def _func(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
             if self.execution_location == "local" or registry_entry is None or registry_entry.source_text is None:

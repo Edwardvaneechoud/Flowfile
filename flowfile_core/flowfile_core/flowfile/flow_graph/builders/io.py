@@ -11,6 +11,8 @@ from fastapi.exceptions import HTTPException
 from flowfile_core.configs import logger
 from flowfile_core.configs.settings import is_electron_mode
 from flowfile_core.fileExplorer.funcs import SecureFileExplorer
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.create import funcs as create_funcs
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
@@ -270,11 +272,8 @@ class FileIoBuildersMixin(GraphMixinBase):
 
         def _func(df: FlowDataEngine):
             if self.execution_location == "local":
-                df.output(
-                    output_fs=output_file.output_settings,
-                    flow_id=self.flow_id,
-                    node_id=output_file.node_id,
-                    execute_remote=False,
+                registry.backend(registry.LOCAL_BACKEND_ID).run_op(
+                    OperationKind.file_write, {"input": df, "settings": output_file, "flow_id": self.flow_id}
                 )
                 return df
             output_fs = output_file.output_settings
@@ -446,9 +445,13 @@ class FileIoBuildersMixin(GraphMixinBase):
         def _func():
             input_file.received_file.set_absolute_filepath()
             if self.execution_location == "local":
-                input_data = FlowDataEngine.create_from_path(
-                    input_file.received_file, node_logger=self.flow_logger.get_node_logger(input_file.node_id)
-                )
+                backend = registry.backend(registry.LOCAL_BACKEND_ID)
+                ref = backend.run_op(
+                    OperationKind.file_read,
+                    {"settings": input_file, "node_logger": self.flow_logger.get_node_logger(input_file.node_id)},
+                )["result"]
+                input_data = FlowDataEngine(backend.plan_for(ref), number_of_records=ref.row_count)
+                backend.release(ref)
             elif input_file.received_file.file_type in ("parquet", "ipc", "ndjson"):
                 input_data = FlowDataEngine.create_from_path(input_file.received_file)
             elif input_file.received_file.file_type == "csv" and is_utf8_encoding(

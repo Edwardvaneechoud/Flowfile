@@ -6,6 +6,8 @@ from flowfile_core.configs import logger
 from flowfile_core.flowfile.catalog_cdc import (
     resolve_change_window,
 )
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
@@ -30,7 +32,6 @@ from flowfile_core.flowfile.schema_callbacks import (
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.cloud_storage_schemas import (
     CloudStorageReadSettingsInternal,
-    CloudStorageWriteSettingsInternal,
     get_cloud_storage_write_settings_worker_interface,
 )
 from flowfile_core.schemas.history_schema import (
@@ -84,11 +85,14 @@ class CloudStorageBuildersMixin(GraphMixinBase):
                 node._fetch_cached_df = external_database_writer
                 external_database_writer.get_result()
             else:
-                cloud_storage_write_settings_internal = CloudStorageWriteSettingsInternal(
-                    connection=full_cloud_storage_connection,
-                    write_settings=node_cloud_storage_writer.cloud_storage_settings,
+                registry.backend(registry.LOCAL_BACKEND_ID).run_op(
+                    OperationKind.cloud_write,
+                    {
+                        "input": df,
+                        "connection": full_cloud_storage_connection,
+                        "settings": node_cloud_storage_writer.cloud_storage_settings,
+                    },
                 )
-                df.to_cloud_storage_obj(cloud_storage_write_settings_internal)
             return df
 
         def schema_callback():

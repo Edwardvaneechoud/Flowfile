@@ -19,7 +19,8 @@ Schema: TypeAlias = list[FlowfileColumn]
 """The columns of a result, in order."""
 
 OpPayload: TypeAlias = dict[str, Any]
-"""The JSON-serialisable settings of one operation."""
+"""What one operation needs, by key: its settings models and ids, plus the frames it reads and the in-process hooks
+(a node logger, a cancel check) it reports to. A backend that crosses a process boundary serialises them itself."""
 
 
 @dataclass(frozen=True)
