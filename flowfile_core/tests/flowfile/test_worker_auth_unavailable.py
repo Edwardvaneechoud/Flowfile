@@ -1,11 +1,12 @@
 """A process that cannot resolve the worker's internal token must degrade like one whose
-worker is down: cache probes answer False and the flow runs locally, instead of the
+worker is down: a cache probe raises ComputeUnavailable, instead of the
 auth handler crashing every worker call with a bare ValueError (package-mode headless
 runs, such as the WASM parity harness, mint no token and have no worker)."""
 
 import pytest
 import requests
 
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 
 
@@ -28,5 +29,6 @@ def test_worker_call_raises_a_request_exception(no_internal_token):
     assert "FLOWFILE_INTERNAL_TOKEN" in str(excinfo.value)
 
 
-def test_results_exists_reports_no_cache(no_internal_token):
-    assert subops.results_exists("abc") is False
+def test_results_exists_raises_compute_unavailable(no_internal_token):
+    with pytest.raises(ComputeUnavailable):
+        subops.results_exists("abc")

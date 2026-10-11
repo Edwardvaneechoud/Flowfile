@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
     results_exists,
 )
@@ -250,7 +251,16 @@ class NodeExecutor:
         # This must come before performance_mode so cached results are preserved
         # even when upstream nodes produce no new data.
         if self.node.node_settings.cache_results:
-            if results_exists(self.node.hash):
+            try:
+                cache_exists = results_exists(self.node.hash)
+            except ComputeUnavailable as e:
+                # An unreachable worker is a node error, never a cache miss to rerun.
+                state.mark_failed(str(e))
+                self._sync_state_to_legacy(state)
+                self.node.results.errors = str(e)
+                self.node._last_exception_class = type(e).__name__
+                return ExecutionDecision(False, ExecutionStrategy.SKIP, None)
+            if cache_exists:
                 return ExecutionDecision(False, ExecutionStrategy.SKIP, None)
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.CACHE_MISSING)

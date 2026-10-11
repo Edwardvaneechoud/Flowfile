@@ -15,6 +15,7 @@ from pl_fuzzy_frame_match.models import FuzzyMapping
 from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.configs import logger
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER, WORKER_URL
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
     ApplyModelInput,
     CustomNodeExecuteInput,
@@ -729,10 +730,7 @@ def results_exists(file_ref: str):
                 return True
         return False
     except requests.RequestException as e:
-        logger.error(f"Failed to check results existence: {str(e)}")
-        if "Connection refused" in str(e):
-            logger.info("")
-        return False
+        raise ComputeUnavailable(f"Could not reach the worker at {WORKER_URL}: {e}") from e
 
 
 def clear_task_from_worker(file_ref: str) -> bool:
