@@ -9,6 +9,9 @@ the worker settings fails here. When a count drops, lower its pin to the new val
 Compares between an old and a new ``execution_location`` are not counted: they detect a settings change, not
 where to run, and stay regardless of how execution is dispatched.
 
+``configs/settings.py`` and ``flowfile/execution/registry.py`` are exempt from the reader count: settings defines
+the worker settings, and the registry is the one place that turns them into the default compute backend.
+
 The check is static: source files are parsed with ``ast`` or scanned as text, and nothing from flowfile_core is
 imported. Run with ``-s`` to print the per-file tables.
 """
@@ -23,13 +26,13 @@ import pytest
 pytestmark = pytest.mark.core
 
 PINNED_INLINE_LOCATION_BRANCHES = 19
-PINNED_ENV_VAR_READER_FILES = 14
+PINNED_ENV_VAR_READER_FILES = 13
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[3] / "flowfile_core"
 _FLOWFILE_DIR = _PACKAGE_ROOT / "flowfile"
 _LOCATION_NAMES = frozenset({"execution_location", "run_location"})
 _ENV_VAR_NAMES = ("OFFLOAD_TO_WORKER", "WORKER_URL")
-_SETTINGS_MODULE = Path("configs", "settings.py")
+_EXEMPT_READERS = (Path("configs", "settings.py"), Path("flowfile", "execution", "registry.py"))
 
 
 def _rel(path: Path) -> str:
@@ -72,7 +75,7 @@ def _inline_location_branches() -> list[tuple[str, int, str]]:
 def _env_var_reader_files() -> dict[str, int]:
     readers = {}
     for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
-        if path.relative_to(_PACKAGE_ROOT) == _SETTINGS_MODULE:
+        if path.relative_to(_PACKAGE_ROOT) in _EXEMPT_READERS:
             continue
         code_lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if not ln.lstrip().startswith("#")]
         refs = sum(ln.count(name) for ln in code_lines for name in _ENV_VAR_NAMES)

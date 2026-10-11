@@ -1,9 +1,9 @@
 """Where a run executes: the backend, how many nodes of a stage run at once, and the preview size.
 
 ``current_context`` resolves in this order: the context a ``use_context`` block set in the calling context,
-else the context of the graph passed in, else a default on ``default_backend_id()``. A ``FlowGraph`` owns one,
-built from its settings; ``run_graph`` sets it for the run, and every stage thread runs under a copy of the
-run's context, so a node sees it on whichever thread executes it.
+else the context of the graph passed in, else a default on ``default_backend_id()``. A ``FlowGraph`` derives
+its own from its settings on each access; ``run_graph`` sets it for the run, and every stage thread runs under
+a copy of the run's context, so a node sees it on whichever thread executes it.
 """
 
 from __future__ import annotations
