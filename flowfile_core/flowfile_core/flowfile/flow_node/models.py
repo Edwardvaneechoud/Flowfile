@@ -7,19 +7,6 @@ from typing import Literal
 import pyarrow as pa
 
 
-class ExecutionStrategy(Enum):
-    """
-    Determines HOW the node will be executed.
-
-    Used by NodeExecutor to dispatch to the correct execution method.
-    """
-
-    SKIP = auto()  # Already up-to-date, don't execute
-    FULL_LOCAL = auto()  # 100% in-process (WASM, simple cases)
-    LOCAL_WITH_SAMPLING = auto()  # In-process + external sampler for preview
-    REMOTE = auto()  # Full external worker execution
-
-
 class InvalidationReason(Enum):
     """
     Why does this node need to run?
@@ -83,14 +70,12 @@ def recover_error_class(cause: BaseException | None = None, description: str | N
 
 @dataclass
 class ExecutionDecision:
-    """
-    Result of deciding whether and how to execute a node.
+    """Whether a node runs, and why.
 
-    Encapsulates the execution decision logic result.
+    How it runs is the backend's choice, from the hints the node submits its plan with.
     """
 
     should_run: bool
-    strategy: ExecutionStrategy
     reason: InvalidationReason | None = None
 
 
@@ -98,6 +83,7 @@ class ExecutionDecision:
 if False:
     from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 
+from flowfile_core.flowfile.execution.protocol import JobHandle, ResultRef  # noqa: E402
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine  # noqa: E402
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn  # noqa: E402
 
@@ -331,6 +317,8 @@ class NodeResults:
     example_data: FlowDataEngine | None = None
     example_data_path: str | None = None
     example_data_generator: Callable[[], pa.Table] | None = None
+    result_ref: ResultRef | None = None
+    job_handle: JobHandle | None = None
     run_time_ms: int = -1
     errors: str | None = None
     warnings: str | None = None
@@ -343,6 +331,8 @@ class NodeResults:
         self.warnings = None
         self.example_data_generator = None
         self.example_data_path = None
+        self.result_ref = None
+        self.job_handle = None
 
     def get_example_data(self) -> pa.Table | None:
         """
@@ -355,11 +345,10 @@ class NodeResults:
     def artifact_is_missing(self) -> bool:
         """True when the worker file backing the current result has been removed.
 
-        ``example_data_path`` is the artifact the last run produced: for a REMOTE
-        node it is the very file ``resulting_data`` scans, for LOCAL_WITH_SAMPLING
-        the sibling sample in the same flow cache dir. It is set only by
-        ``store_example_data_generator`` and cleared before every run, so a path
-        that no longer exists means whatever is held here is a dangling scan.
+        ``example_data_path`` is the file the last run produced on the shared disk: for a result the worker
+        stored it is the very file ``resulting_data`` scans, for a deferred one the sample its sampler task
+        wrote in the same flow cache dir. It is set only from the backend's ``result_file`` after a submit and
+        cleared before every run, so a path that no longer exists means whatever is held here is a dangling scan.
         """
         return self.example_data_path is not None and not os.path.exists(self.example_data_path)
 

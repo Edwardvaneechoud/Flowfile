@@ -10,66 +10,29 @@ from flowfile_core.configs import settings
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.context import ExecutionContext, current_context
-from flowfile_core.flowfile.execution.errors import OperationUnsupported
 from flowfile_core.flowfile.execution.protocol import ComputeBackend
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.schemas import get_global_execution_location
-from shared.compute_protocol import PROTOCOL_VERSION, local_capabilities
 
 
-class CountingBackend:
-    """The smallest ``ComputeBackend``: it runs nothing; ``touch``, on this class only, records a node id."""
-
-    protocol_version = PROTOCOL_VERSION
+class CountingBackend(LocalBackend):
+    """Core's own backend under another id, so a run on it needs no worker; ``touch``, on this class only, records
+    a node id."""
 
     def __init__(self, backend_id: str):
+        super().__init__()
         self.id = backend_id
         self.touched: list[int] = []
-        self._lock = threading.Lock()
+        self._touched_lock = threading.Lock()
 
     def touch(self, node_id: int) -> None:
-        with self._lock:
+        with self._touched_lock:
             self.touched.append(node_id)
-
-    def capabilities(self):
-        return local_capabilities()
-
-    def submit(self, plan, inputs, hints):
-        raise OperationUnsupported("submit")
-
-    def run_op(self, op, payload):
-        raise OperationUnsupported(op.value)
-
-    def sample(self, ref, n):
-        raise OperationUnsupported("sample")
-
-    def count(self, ref):
-        raise OperationUnsupported("count")
-
-    def exists(self, ref):
-        raise OperationUnsupported("exists")
-
-    def release(self, ref):
-        raise OperationUnsupported("release")
-
-    def plan_for(self, ref):
-        raise OperationUnsupported("plan_for")
-
-    def export(self, ref, uri, credential):
-        raise OperationUnsupported("export")
-
-    def import_uri(self, uri, schema, row_count, credential):
-        raise OperationUnsupported("import_uri")
-
-    def status(self, handle):
-        raise OperationUnsupported("status")
-
-    def cancel(self, handle):
-        raise OperationUnsupported("cancel")
 
 
 class Execution(NamedTuple):
@@ -118,8 +81,7 @@ def recorder(monkeypatch) -> Recorder:
         recorder.record(node, context)
         if recorder.hook is not None:
             recorder.hook(node, context)
-        # Executed in core whatever the flow's location, so no run here needs a worker.
-        return real_execute_node(node, *args, **{**kwargs, "run_location": "local"})
+        return real_execute_node(node, *args, **kwargs)
 
     monkeypatch.setattr(FlowNode, "execute_node", recording_execute_node)
     return recorder

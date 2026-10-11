@@ -926,7 +926,7 @@ def _record_node_error(error: Exception) -> str:
     executor = NodeExecutor.__new__(NodeExecutor)
     executor.node = node
     executor.state_provider = None
-    executor._handle_error(_FakeState(), error, "remote", False, False, _QuietLogger())
+    executor._handle_error(_FakeState(), error, False, False, _QuietLogger())
     return node._last_exception_class
 
 

@@ -286,6 +286,7 @@ class ExecutionMixin(GraphMixinBase):
         ``reset_cache=False`` so exploring doesn't evict a useful cache.
         ``claimed`` says the caller already holds the run slot (``try_claim_run``),
         as the fetch route does before it answers; the slot is released here either way.
+        The node runs under ``current_context(self)``, as a node of ``run_graph`` does.
         """
         if not claimed and not self.try_claim_run():
             raise Exception("Flow is already running")
@@ -305,12 +306,10 @@ class ExecutionMixin(GraphMixinBase):
         logger.info(f"Starting to run: node {flow_node.node_id}, start time: {node_result.start_timestamp}")
         self.latest_run_info.node_step_result.append(node_result)
         try:
-            with node_parameters_resolved(flow_node):
+            with use_context(current_context(self)), node_parameters_resolved(flow_node):
                 flow_node.execute_node(
-                    run_location=self.flow_settings.execution_location,
                     performance_mode=performance_mode,
                     node_logger=node_logger,
-                    optimize_for_downstream=False,
                     reset_cache=reset_cache,
                 )
             errors = flow_node.results.errors
@@ -470,11 +469,7 @@ class ExecutionMixin(GraphMixinBase):
                 return node_result, node
 
             logger.info(f"Starting to run: node {node.node_id}, start time: {node_result.start_timestamp}")
-            node.execute_node(
-                run_location=self.flow_settings.execution_location,
-                performance_mode=performance_mode,
-                node_logger=node_logger,
-            )
+            node.execute_node(performance_mode=performance_mode, node_logger=node_logger)
         try:
             errors = node.results.errors
             if self.flow_settings.is_canceled:

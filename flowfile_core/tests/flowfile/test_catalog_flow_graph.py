@@ -2407,22 +2407,12 @@ class TestCatalogReaderFreshness:
             graph = _create_graph(execution_location="remote")
             node = self._add_reader(graph, table_id, cache_results=True)
 
-            looked_up: list[str] = []
+            graph.run_graph()
+            first_result_id = node.results.result_ref.result_id
+            write_delta(pl.DataFrame({"name": ["Zed"], "age": [99], "city": ["X"]}), delta_path, mode="overwrite")
+            graph.run_graph()
 
-            def fake_results_exists(node_hash: str) -> bool:
-                looked_up.append(node_hash)
-                return True
-
-            with patch(
-                "flowfile_core.flowfile.flow_node.executor.results_exists",
-                side_effect=fake_results_exists,
-            ):
-                graph.run_graph()
-                write_delta(pl.DataFrame({"name": ["Zed"], "age": [99], "city": ["X"]}), delta_path, mode="overwrite")
-                graph.run_graph()
-
-            assert len(looked_up) >= 2
-            assert looked_up[0] != looked_up[-1]
+            assert node.results.result_ref.result_id != first_result_id
 
     def test_pinned_delta_version_never_invalidated(self):
         from shared.delta_utils import write_delta

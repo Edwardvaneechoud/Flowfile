@@ -1,10 +1,10 @@
 """Core's own process as a compute: plans stay lazy in core and operations run in process.
 
 Results live in an in-process store that maps a result id to its ``pl.LazyFrame`` (a materialised result as its
-DataFrame turned ``.lazy()``); a ``ResultRef``'s ``location`` is that id as UTF-8 bytes. ``submit`` keeps a plan
-lazy and collects it only when ``SubmitHints.must_materialise`` asks for the rows. ``run_op`` runs the operations
-a flow's nodes run whole when they execute in core, one method per ``OperationKind``; each method's docstring
-names the payload keys it reads. Nothing runs asynchronously: every job has ended when its call returns.
+DataFrame turned ``.lazy()``); a ``ResultRef``'s ``location`` is that id as UTF-8 bytes. ``submit`` holds every plan
+lazily under the result id it is given (the class docstring has the policy). ``run_op`` runs the operations a
+flow's nodes run whole when they execute in core, one method per ``OperationKind``; each method's docstring names
+the payload keys it reads. Nothing runs asynchronously: every job has ended when its call returns.
 """
 
 from __future__ import annotations
@@ -22,9 +22,7 @@ from flowfile_core.configs import logger
 from flowfile_core.flowfile.execution.errors import (
     ForeignRef,
     OperationUnsupported,
-    PlanRejected,
     ResultMissing,
-    TaskFailed,
 )
 from flowfile_core.flowfile.execution.protocol import (
     CredentialRef,
@@ -51,7 +49,13 @@ from shared.delta_utils import merge_into_delta, write_delta
 
 
 class LocalBackend:
-    """The compute backend for core's own process."""
+    """The compute backend for core's own process.
+
+    Materialisation policy: this backend holds plans lazily. ``submit`` keeps every plan deferred, whatever the
+    hints say: ``must_materialise`` does not collect, and no sample is returned inline even when
+    ``preview_rows`` asks for one, because ``sample`` serves it when something reads it. Nothing in core computes
+    a node's rows before a consumer, a write or an opened preview needs them.
+    """
 
     id = LOCAL_BACKEND_ID
     protocol_version = PROTOCOL_VERSION
@@ -59,44 +63,37 @@ class LocalBackend:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._results: dict[str, pl.LazyFrame] = {}
-        self._failed_jobs: dict[str, str] = {}
 
     def capabilities(self) -> Capabilities:
         """The capabilities of this process."""
         return local_capabilities()
 
-    def submit(self, plan: bytes, inputs: list[ResultRef], hints: SubmitHints) -> SubmitResult:
-        """Hold a serialised plan, deferred unless ``hints.must_materialise`` asks for its rows.
+    def submit(
+        self,
+        plan: pl.LazyFrame,
+        inputs: list[ResultRef],
+        hints: SubmitHints,
+        result_id: str,
+        *,
+        flow_id: int,
+        node_id: int | str,
+    ) -> SubmitResult:
+        """Hold ``plan`` lazily under ``result_id``, replacing what that id held.
 
-        ``inputs`` are only validated: a plan over results of this backend already reads them through its own
-        leaves (``plan_for``).
+        The plan object itself is held, never serialised or copied, so a chain of deferred results composes
+        lazily over the frames the first plan read. ``inputs`` are only validated: a plan over results of this
+        backend already reads them through its own leaves (``plan_for``). ``hints`` are not read (see the class
+        docstring), nor are ``flow_id`` and ``node_id``: a job here has no log or file of its own. The returned
+        sample is always ``None``.
 
         Raises:
             ForeignRef: An input was minted by another backend.
             ResultMissing: This backend no longer holds an input.
-            PlanRejected: ``plan`` does not deserialise.
-            TaskFailed: Collecting the plan for ``must_materialise`` raised; ``status`` reports the job failed.
         """
         for ref in inputs:
             self._plan(ref)
-        try:
-            lazy_frame = pl.LazyFrame.deserialize(io.BytesIO(plan))
-        except Exception as e:
-            raise PlanRejected(f"The {self.id!r} backend could not load the plan: {e}") from e
-        result_id = _new_result_id()
-        frame: pl.LazyFrame | pl.DataFrame = lazy_frame
-        if hints.must_materialise:
-            try:
-                frame = lazy_frame.collect()
-            except Exception as e:
-                with self._lock:
-                    self._failed_jobs[result_id] = str(e)
-                raise TaskFailed(str(e)) from e
-        ref = self._hold(frame, result_id=result_id)
-        sample = None
-        if hints.preview_rows is not None:
-            sample = _ipc_stream(frame.lazy().head(hints.preview_rows).collect())
-        return SubmitResult(ref=ref, sample=sample, handle=JobHandle(backend_id=self.id, job_id=result_id))
+        ref = self._hold(plan, result_id=result_id)
+        return SubmitResult(ref=ref, sample=None, handle=JobHandle(backend_id=self.id, job_id=result_id))
 
     def run_op(self, op: OperationKind, payload: OpPayload) -> OpResult:
         """Run ``op`` in this process with the payload its method documents.
@@ -149,12 +146,8 @@ class LocalBackend:
         raise OperationUnsupported(f"The {self.id!r} backend does not import results from a URI")
 
     def status(self, handle: JobHandle) -> JobStatus:
-        """Done, or failed with its message when the job's collect raised."""
+        """Done: a job here has ended, and ``submit`` raised if it could not hold the plan."""
         self._check_backend(handle.backend_id)
-        with self._lock:
-            error = self._failed_jobs.get(handle.job_id)
-        if error is not None:
-            return JobStatus(state="failed", progress=None, error=error)
         return JobStatus(state="done", progress=100, error=None)
 
     def cancel(self, handle: JobHandle) -> None:

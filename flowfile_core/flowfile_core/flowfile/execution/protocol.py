@@ -1,7 +1,9 @@
 """The interface between core and a compute, and the values that cross it.
 
 A compute (core's own process, a worker, a cluster) holds results; core holds ``ResultRef``s to them.
-Rows reach core only through ``ComputeBackend.sample`` and the sample ``submit`` returns inline.
+Rows reach core only through ``ComputeBackend.sample`` and the sample ``submit`` returns inline. A plan crosses
+this interface as the ``pl.LazyFrame`` itself; a backend that hands it to another process serialises it there,
+so only its wire carries bytes.
 """
 
 from __future__ import annotations
@@ -50,8 +52,11 @@ class ResultRef:
 class SubmitHints:
     """What core knows about a plan that a backend may use to run it.
 
+    Each backend's materialisation policy, in its class docstring, says which hints it reads.
+
     Attributes:
-        must_materialise: The backend computes and holds the rows instead of keeping the plan deferred.
+        must_materialise: Core asks for the rows to be computed and held rather than kept as a deferred plan,
+            because the result is cached across runs.
         wide: The plan reshapes data across rows (join, group by, sort, pivot) rather than mapping each row.
         fanout: How many downstream nodes read the result.
         preview_rows: The most rows the inline sample may hold; ``None`` asks for no sample.
@@ -173,8 +178,28 @@ class ComputeBackend(Protocol):
         """What this compute runs (versions, platform, plugins), in the fields a handshake compares."""
         ...
 
-    def submit(self, plan: bytes, inputs: list[ResultRef], hints: SubmitHints) -> SubmitResult:
-        """Run a serialised Polars plan over ``inputs``, hold its result and return a reference to it."""
+    def submit(
+        self,
+        plan: pl.LazyFrame,
+        inputs: list[ResultRef],
+        hints: SubmitHints,
+        result_id: str,
+        *,
+        flow_id: int,
+        node_id: int | str,
+    ) -> SubmitResult:
+        """Run a Polars plan over ``inputs``, hold its result and return a reference to it.
+
+        Args:
+            plan: The plan. A backend that runs it in another process serialises it (``pl.LazyFrame.serialize``)
+                when it sends it; one that runs it in core holds the object as it is.
+            inputs: The results of this backend the plan reads.
+            hints: What core knows about the plan; the backend's materialisation policy reads them.
+            result_id: The id the result is minted under: the producing node's hash. Submitting under an id
+                the backend already holds replaces that result.
+            flow_id: The flow the compute files the job and its logs under.
+            node_id: The node the compute files the job and its logs under.
+        """
         ...
 
     def run_op(self, op: OperationKind, payload: OpPayload) -> OpResult:

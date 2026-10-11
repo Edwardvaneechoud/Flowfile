@@ -2,7 +2,8 @@
 
 Covers the probe itself (``results_exists``), the executor's handling of a cached node in remote and
 local mode, recovery once the worker is back, any other compute error raised by the probe, and schema
-prediction during an outage.
+prediction during an outage. A cached node asks the worker about the result it holds from its last run,
+so the remote cases run the flow once against the session worker before it goes away.
 """
 
 import socket
@@ -11,12 +12,12 @@ import polars as pl
 import pytest
 import requests
 
+from flowfile_core.flowfile.execution.backends import worker as worker_module
+from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, VersionMismatch
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
-from flowfile_core.flowfile.flow_node import executor as executor_module
 from flowfile_core.flowfile.flow_node import flow_node as flow_node_module
-from flowfile_core.flowfile.flow_node.executor import NodeExecutor
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas, transform_schema
@@ -24,16 +25,41 @@ from flowfile_core.schemas import input_schema, schemas, transform_schema
 WORKER_DOWN_MESSAGE = "Could not reach the worker at http://worker.invalid"
 
 
-@pytest.fixture
-def closed_worker_url(monkeypatch) -> str:
-    """Point the worker URL at a port nothing listens on."""
+def _closed_url() -> str:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
-    url = f"http://127.0.0.1:{port}"
+    return f"http://127.0.0.1:{port}"
+
+
+@pytest.fixture
+def closed_worker_url(monkeypatch) -> str:
+    """Point the worker URL at a port nothing listens on."""
+    url = _closed_url()
     monkeypatch.setattr(subops, "OFFLOAD_TO_WORKER", True)
     monkeypatch.setattr(subops, "WORKER_URL", url)
     return url
+
+
+@pytest.fixture
+def running_worker():
+    from tests.conftest import is_worker_running
+
+    if not is_worker_running():
+        pytest.skip("flowfile_worker is not running")
+
+
+@pytest.fixture
+def stop_worker(monkeypatch, running_worker):
+    """Call to point the worker URL at a port nothing listens on from then on; returns that URL."""
+
+    def stop() -> str:
+        url = _closed_url()
+        monkeypatch.setattr(subops, "OFFLOAD_TO_WORKER", True)
+        monkeypatch.setattr(subops, "WORKER_URL", url)
+        return url
+
+    return stop
 
 
 def _cached_input_graph(flow_id: int, execution_location: str, execution_mode: str = "Performance") -> FlowGraph:
@@ -77,12 +103,12 @@ def _add_sort(graph: FlowGraph) -> FlowNode:
 
 
 def _watch(monkeypatch, *nodes: FlowNode) -> dict[str, int]:
-    """Count, from here on, calls to the nodes' functions, strategy dispatches and LazyFrame collects.
+    """Count, from here on, calls to the nodes' functions, executions and LazyFrame collects.
 
-    A node function call is the node being computed (or planned) in core; a dispatch is the executor
-    running a node at all; a collect is core materialising data.
+    A node function call is the node being computed (or planned) in core; an execution is the executor
+    running a node at all (``FlowNode._do_execute``); a collect is core materialising data.
     """
-    counts = {"function": 0, "strategy": 0, "collect": 0}
+    counts = {"function": 0, "execution": 0, "collect": 0}
 
     for node in nodes:
 
@@ -92,13 +118,13 @@ def _watch(monkeypatch, *nodes: FlowNode) -> dict[str, int]:
 
         monkeypatch.setattr(node, "_function", counting_function)
 
-    original_strategy = NodeExecutor._execute_with_strategy
+    original_execute = FlowNode._do_execute
 
-    def counting_strategy(self, *args, **kwargs):
-        counts["strategy"] += 1
-        return original_strategy(self, *args, **kwargs)
+    def counting_execute(self, *args, **kwargs):
+        counts["execution"] += 1
+        return original_execute(self, *args, **kwargs)
 
-    monkeypatch.setattr(NodeExecutor, "_execute_with_strategy", counting_strategy)
+    monkeypatch.setattr(FlowNode, "_do_execute", counting_execute)
 
     original_collect = pl.LazyFrame.collect
 
@@ -153,9 +179,13 @@ def test_worker_answering_404_is_a_cache_miss(monkeypatch):
     assert subops.results_exists("abc") is False
 
 
-def test_cached_node_fails_instead_of_running_in_core(closed_worker_url, monkeypatch):
+def test_cached_node_fails_instead_of_running_in_core(stop_worker, monkeypatch):
     graph = _cached_input_graph(9101, "remote")
-    cached, downstream = graph.get_node(1), _add_sort(graph)
+    cached = graph.get_node(1)
+    assert graph.run_graph().success is True
+    assert cached.results.result_ref.state == "materialised"
+    downstream = _add_sort(graph)
+    closed_worker_url = stop_worker()
     counts = _watch(monkeypatch, cached, downstream)
 
     run_info = graph.run_graph()
@@ -170,18 +200,20 @@ def test_cached_node_fails_instead_of_running_in_core(closed_worker_url, monkeyp
     assert 2 not in results
     assert downstream.results.errors is None
     assert downstream.results.resulting_data is None
-    assert counts == {"function": 0, "strategy": 0, "collect": 0}
+    assert counts == {"function": 0, "execution": 0, "collect": 0}
 
 
-def test_other_compute_errors_fail_the_node_the_same_way(monkeypatch):
+def test_other_compute_errors_fail_the_node_the_same_way(running_worker, monkeypatch):
     graph = _cached_input_graph(9106, "remote")
-    cached, downstream = graph.get_node(1), _add_sort(graph)
+    cached = graph.get_node(1)
+    assert graph.run_graph().success is True
+    downstream = _add_sort(graph)
     message = "The worker runs other versions than this process"
 
     def mismatched_results_exists(file_ref: str) -> bool:
         raise VersionMismatch(message)
 
-    monkeypatch.setattr(executor_module, "results_exists", mismatched_results_exists)
+    monkeypatch.setattr(worker_module, "results_exists", mismatched_results_exists)
     counts = _watch(monkeypatch, cached, downstream)
 
     run_info = graph.run_graph()
@@ -193,7 +225,7 @@ def test_other_compute_errors_fail_the_node_the_same_way(monkeypatch):
     _assert_failed_with(cached, message, error_class="VersionMismatch")
     assert 2 not in results
     assert downstream.results.resulting_data is None
-    assert counts == {"function": 0, "strategy": 0, "collect": 0}
+    assert counts == {"function": 0, "execution": 0, "collect": 0}
 
 
 @pytest.mark.parametrize(("flow_id", "execution_mode", "reruns"), [(9102, "Development", 0), (9105, "Performance", 1)])
@@ -201,15 +233,17 @@ def test_local_cached_node_never_asks_the_worker(closed_worker_url, monkeypatch,
     graph = _cached_input_graph(flow_id, "local", execution_mode)
     node = graph.get_node(1)
     probes = []
-    monkeypatch.setattr(executor_module, "results_exists", lambda file_ref: probes.append(file_ref) or False)
+    monkeypatch.setattr(worker_module, "results_exists", lambda file_ref: probes.append(file_ref) or False)
+    monkeypatch.setattr(subops, "results_exists", lambda file_ref: probes.append(file_ref) or False)
     counts = _watch(monkeypatch, node)
 
     run_info = graph.run_graph()
 
     assert run_info.success is True
     _assert_succeeded(node)
+    assert node.results.result_ref.backend_id == "local"
     assert probes == []
-    assert counts["strategy"] == 1
+    assert counts["execution"] == 1
     assert counts["function"] == 1
 
     # Local mode follows the ordinary rules: Development skips a node that ran, Performance reruns it.
@@ -217,64 +251,69 @@ def test_local_cached_node_never_asks_the_worker(closed_worker_url, monkeypatch,
     assert graph.run_graph().success is True
     _assert_succeeded(node)
     assert probes == []
-    assert counts["strategy"] == reruns
+    assert counts["execution"] == reruns
     assert counts["function"] == reruns
 
 
-def test_cached_node_recovers_after_the_worker_returns(monkeypatch):
+def test_cached_node_recovers_after_the_worker_returns(running_worker, monkeypatch):
     graph = _cached_input_graph(9103, "remote")
     node = graph.get_node(1)
-    worker = {"state": "missing"}
-    reloads = []
+    assert graph.run_graph().success is True
+    _assert_succeeded(node)
+    stored = node.results.result_ref
+    assert stored.state == "materialised"
+
+    worker = {"state": "down"}
+    real_results_exists = worker_module.results_exists
 
     def fake_results_exists(file_ref: str) -> bool:
         if worker["state"] == "down":
             raise ComputeUnavailable(WORKER_DOWN_MESSAGE)
-        return worker["state"] == "present"
+        return real_results_exists(file_ref)
 
-    def fake_reload(file_ref: str) -> pl.LazyFrame:
-        reloads.append(file_ref)
-        return pl.LazyFrame({"a": [1]})
+    submits = []
+    real_submit = WorkerBackend.submit
 
-    monkeypatch.setattr(executor_module, "results_exists", fake_results_exists)
-    monkeypatch.setattr(flow_node_module, "results_exists", fake_results_exists)
-    monkeypatch.setattr(flow_node_module, "get_external_df_result", fake_reload)
+    def counting_submit(self, *args, **kwargs):
+        submits.append(args)
+        return real_submit(self, *args, **kwargs)
 
-    assert graph.run_graph().success is True
-    _assert_succeeded(node)
-
+    monkeypatch.setattr(worker_module, "results_exists", fake_results_exists)
+    monkeypatch.setattr(WorkerBackend, "submit", counting_submit)
     counts = _watch(monkeypatch, node)
 
-    worker["state"] = "down"
     down = graph.run_graph()
     assert down.success is False
     assert down.node_step_result[0].error == WORKER_DOWN_MESSAGE
     _assert_failed_with(node, WORKER_DOWN_MESSAGE)
-    assert counts == {"function": 0, "strategy": 0, "collect": 0}
-    assert reloads == []
+    assert counts == {"function": 0, "execution": 0, "collect": 0}
+    assert submits == []
 
-    # The failed node reruns past its cache: the run clears the error and reloads the stored result.
+    # The failed node reruns past its cache: the run clears the error and reads the stored result back.
     _reset(counts)
     worker["state"] = "present"
     back = graph.run_graph()
     assert back.success is True
     _assert_succeeded(node)
-    assert reloads == [node.hash]
-    assert counts == {"function": 0, "strategy": 1, "collect": 0}
+    assert submits == []
+    assert node.results.result_ref == stored
+    assert counts == {"function": 0, "execution": 1, "collect": 0}
     assert node.results.resulting_data.data_frame.collect().to_dicts() == [{"a": 1}]
 
     # Once healthy again, a cache hit skips the node.
     _reset(counts)
-    reloads.clear()
     assert graph.run_graph().success is True
     _assert_succeeded(node)
-    assert reloads == []
-    assert counts == {"function": 0, "strategy": 0, "collect": 0}
+    assert submits == []
+    assert counts == {"function": 0, "execution": 0, "collect": 0}
 
 
-def test_prediction_survives_the_worker_down(closed_worker_url, monkeypatch):
+def test_prediction_survives_the_worker_down(stop_worker, monkeypatch):
     graph = _cached_input_graph(9104, "remote")
-    cached, downstream = graph.get_node(1), _add_sort(graph)
+    cached = graph.get_node(1)
+    assert graph.run_graph().success is True
+    downstream = _add_sort(graph)
+    closed_worker_url = stop_worker()
     warnings = []
     monkeypatch.setattr(flow_node_module.logger, "warning", lambda message, *args, **kwargs: warnings.append(message))
     counts = _watch(monkeypatch, cached, downstream)
@@ -288,5 +327,5 @@ def test_prediction_survives_the_worker_down(closed_worker_url, monkeypatch):
         assert node.results.errors is None
         assert node._execution_state.error is None
         assert getattr(node, "_last_exception_class", None) is None
-    assert counts["strategy"] == 0
+    assert counts["execution"] == 0
     assert counts["collect"] == 0

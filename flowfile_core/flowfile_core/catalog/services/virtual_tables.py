@@ -39,6 +39,7 @@ from flowfile_core.catalog.text_utils import (
 from flowfile_core.catalog.validators import format_full_name
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 from flowfile_core.database.models import CatalogTable
+from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
 from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
@@ -432,7 +433,8 @@ class VirtualTableService:
 
         For optimized tables, deserializes the stored LazyFrame directly.
         For query-based virtual tables, delegates to resolve_query_virtual_table.
-        For non-optimized tables, triggers flow execution via the worker.
+        For non-optimized tables, runs the producer flow's writer node under the execution context of that flow
+        with ``run_location`` as its location (``"remote"`` when none is given and core offloads to the worker).
         """
         if run_location is None:
             run_location = "remote" if _should_offload() else "local"
@@ -475,21 +477,21 @@ class VirtualTableService:
         # Running the writer directly bypasses the producer flow's run loop, so its own
         # ${name} refs and those of the upstream nodes it pulls are still unresolved.
         upstream = [flow.get_node(i) for i in flow._get_upstream_node_ids(selected_node.node_id)]
+        producer_context = ExecutionContext.for_flow(
+            flow.flow_settings.model_copy(update={"execution_location": run_location})
+        )
         with ExitStack() as params:
+            params.enter_context(use_context(producer_context))
             for node in [selected_node, *upstream]:
                 params.enter_context(node_parameters_resolved(node))
-            selected_node.execute_node(
-                run_location=run_location,
-                reset_cache=True,
-                performance_mode=True,
-                optimize_for_downstream=False,
-                node_logger=node_logger,
-            )
+            selected_node.execute_node(reset_cache=True, performance_mode=True, node_logger=node_logger)
 
         if selected_node.results.errors:
             raise ValueError(f"Flow errors for table '{table.name}': {selected_node.results.errors}")
 
         flowframe = selected_node.get_resulting_data()
+        # The producer graph is dropped after this call; the returned plan keeps what it reads.
+        selected_node.release_deferred_result()
         if flowframe is None or flowframe.data_frame is None:
             raise ValueError(f"No data produced for table '{table.name}'")
 

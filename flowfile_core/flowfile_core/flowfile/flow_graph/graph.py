@@ -470,6 +470,7 @@ class FlowGraph(
                     logger.debug(f"Removing lead_to reference {node_id} from node {depend_on}")
                     depend_on.delete_lead_to_node(node_id)
 
+            node.release_result()
             self._node_db.pop(node_id)
             if isinstance(node_id, int):
                 self._node_id_seq = max(self._node_id_seq, node_id)

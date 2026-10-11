@@ -9,7 +9,7 @@ import requests
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, VersionMismatch
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake, streaming
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
-from flowfile_core.flowfile.flow_node.executor import NodeExecutor
+from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas
 from shared.compute_protocol import EXPRESSION_PLUGINS, local_capabilities
@@ -101,7 +101,7 @@ def closed_port_url() -> str:
 
 
 def _one_node_remote_graph(flow_id: int):
-    """A remote flow whose node caches its result, so the run asks the worker for it first."""
+    """A remote flow whose node caches its result, so its run stores the result on the worker."""
     handler = FlowfileHandler()
     handler.register_flow(
         schemas.FlowSettings(flow_id=flow_id, name="handshake", path=".", execution_location="remote")
@@ -159,25 +159,25 @@ def test_cached_remote_node_fails_on_a_mismatched_worker_without_running_in_core
     fetches = worker_reports(polars_version="0.0.1")
     graph = _one_node_remote_graph(9204)
     node = graph.get_node(1)
-    calls = {"function": 0, "strategy": 0, "collect": 0}
+    calls = {"function": 0, "execution": 0, "collect": 0}
     real_function = node._function
-    real_strategy = NodeExecutor._execute_with_strategy
+    real_execute = FlowNode._do_execute
     real_collect = pl.LazyFrame.collect
 
     def counting_function(*args, **kwargs):
         calls["function"] += 1
         return real_function(*args, **kwargs)
 
-    def counting_strategy(self, *args, **kwargs):
-        calls["strategy"] += 1
-        return real_strategy(self, *args, **kwargs)
+    def counting_execute(self, *args, **kwargs):
+        calls["execution"] += 1
+        return real_execute(self, *args, **kwargs)
 
     def counting_collect(self, *args, **kwargs):
         calls["collect"] += 1
         return real_collect(self, *args, **kwargs)
 
     monkeypatch.setattr(node, "_function", counting_function)
-    monkeypatch.setattr(NodeExecutor, "_execute_with_strategy", counting_strategy)
+    monkeypatch.setattr(FlowNode, "_do_execute", counting_execute)
     monkeypatch.setattr(pl.LazyFrame, "collect", counting_collect)
 
     run_info = graph.run_graph()
@@ -190,8 +190,9 @@ def test_cached_remote_node_fails_on_a_mismatched_worker_without_running_in_core
     )
     assert node.results.errors == result.error
     assert node._last_exception_class == "VersionMismatch"
-    assert calls == {"function": 0, "strategy": 0, "collect": 0}
-    assert node.results.resulting_data is None
+    # The node holds no stored result yet, so the run builds its plan and the store's handshake refuses it.
+    assert calls == {"function": 1, "execution": 1, "collect": 0}
+    assert node.results.result_ref is None
     assert fetches == [1]
     assert sent_to_worker == {"requests": 0, "probe_plans": 0}
     assert websocket_connects == []

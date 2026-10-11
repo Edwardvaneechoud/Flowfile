@@ -1,6 +1,7 @@
 """The worker backend runs plans and operations as worker tasks and reads their results from the shared disk."""
 
 import io
+import uuid
 from pathlib import Path
 
 import polars as pl
@@ -72,8 +73,13 @@ def hints(preview_rows: int | None) -> SubmitHints:
     return SubmitHints(must_materialise=True, wide=False, fanout=1, preview_rows=preview_rows)
 
 
+def new_result_id() -> str:
+    return f"t-worker-backend-{uuid.uuid4().hex}"
+
+
 def submit_people(backend: WorkerBackend, kept: list[ResultRef], preview_rows: int | None = None):
-    result = backend.submit(PEOPLE.lazy().filter(pl.col("id") >= 0).serialize(), [], hints(preview_rows))
+    plan = PEOPLE.lazy().filter(pl.col("id") >= 0)
+    result = backend.submit(plan, [], hints(preview_rows), new_result_id(), flow_id=-1, node_id=-1)
     kept.append(result.ref)
     return result
 
@@ -109,6 +115,7 @@ def test_submit_holds_the_result_in_the_file_the_worker_wrote(backend, kept, tra
 
     ref = result.ref
     assert ref.backend_id == "worker"
+    assert ref.result_id.startswith("t-worker-backend-")
     assert ref.state == "materialised"
     assert ref.row_count == 10
     assert [(column.column_name, column.data_type) for column in ref.schema] == [
@@ -129,9 +136,19 @@ def test_submit_without_preview_rows_returns_no_sample(backend, kept):
     assert submit_people(backend, kept).sample is None
 
 
-def test_a_plan_the_worker_cannot_load_is_rejected(backend, transport):
-    with pytest.raises(PlanRejected, match="DSL_VERSION"):
-        backend.submit(b"not a plan", [], hints(None))
+@pytest.fixture
+def core_only_udf_plan(tmp_path, monkeypatch) -> pl.LazyFrame:
+    """A plan whose UDF lives in a module only this (core) process can import, as with separate images."""
+    module_name = f"core_only_udf_{tmp_path.name.replace('-', '_')}"
+    (tmp_path / f"{module_name}.py").write_text("def plus_one(s):\n    return s + 1\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    module = __import__(module_name)
+    return pl.LazyFrame({"a": [1, 2]}).select(pl.col("a").map_batches(module.plus_one, return_dtype=pl.Int64))
+
+
+def test_a_plan_the_worker_cannot_load_is_rejected(backend, transport, core_only_udf_plan):
+    with pytest.raises(PlanRejected, match="core_only_udf"):
+        backend.submit(core_only_udf_plan, [], hints(None), new_result_id(), flow_id=-1, node_id=-1)
 
 
 def test_sample_never_holds_more_than_n_rows(backend, kept):
@@ -182,7 +199,7 @@ def test_the_job_is_done_once_submit_returns(backend, kept):
         lambda worker: worker.exists(FOREIGN_REF),
         lambda worker: worker.release(FOREIGN_REF),
         lambda worker: worker.plan_for(FOREIGN_REF),
-        lambda worker: worker.submit(PEOPLE.lazy().serialize(), [FOREIGN_REF], hints(None)),
+        lambda worker: worker.submit(PEOPLE.lazy(), [FOREIGN_REF], hints(None), "t-foreign", flow_id=-1, node_id=-1),
         lambda worker: worker.status(JobHandle("local", "elsewhere")),
         lambda worker: worker.cancel(JobHandle("local", "elsewhere")),
     ],

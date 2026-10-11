@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 
 from flowfile_core.flowfile import api_runner
+from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.execution.errors import (
     ComputeError,
     ComputeUnavailable,
@@ -17,7 +18,6 @@ from flowfile_core.flowfile.execution.errors import (
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from flowfile_core.flowfile.flow_graph import add_connection
 from flowfile_core.flowfile.flow_graph import execution as graph_execution
-from flowfile_core.flowfile.flow_node import flow_node as flow_node_module
 from flowfile_core.flowfile.flow_node.models import RemoteExecutionError
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.util.skip_rules import NodeRunStatus
@@ -156,11 +156,11 @@ def _manual_input_then_sort(flow_id: int):
 
 def test_node_fails_with_plan_rejected_and_downstream_is_skipped(running_worker, monkeypatch):
     graph = _manual_input_then_sort(flow_id=9301)
-    real_fetcher = flow_node_module.ExternalDfFetcher
+    real_fetcher = worker_module.ExternalDfFetcher
     shipped = []
 
-    def _ship_not_a_plan(*, lf, **kwargs):
-        fetcher = real_fetcher(lf=_NotAPlan(), **kwargs)
+    def _ship_not_a_plan(*, plan_bytes, **kwargs):
+        fetcher = real_fetcher(plan_bytes=_NotAPlan().serialize(), **kwargs)
         shipped.append(fetcher)
         return fetcher
 
@@ -172,7 +172,7 @@ def test_node_fails_with_plan_rejected_and_downstream_is_skipped(running_worker,
         decisions[node.node_id] = decision
         return decision
 
-    monkeypatch.setattr(flow_node_module, "ExternalDfFetcher", _ship_not_a_plan)
+    monkeypatch.setattr(worker_module, "ExternalDfFetcher", _ship_not_a_plan)
     monkeypatch.setattr(graph_execution, "classify_from_inputs", _recording_classify)
 
     run_info = graph.run_graph()

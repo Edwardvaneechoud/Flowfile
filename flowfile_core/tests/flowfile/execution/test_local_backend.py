@@ -10,9 +10,7 @@ from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.errors import (
     ForeignRef,
     OperationUnsupported,
-    PlanRejected,
     ResultMissing,
-    TaskFailed,
 )
 from flowfile_core.flowfile.execution.protocol import (
     ComputeBackend,
@@ -40,6 +38,23 @@ def hints(*, must_materialise: bool = False, preview_rows: int | None = None) ->
     return SubmitHints(must_materialise=must_materialise, wide=False, fanout=1, preview_rows=preview_rows)
 
 
+def submit(backend: LocalBackend, plan: pl.LazyFrame, inputs=(), submit_hints=None, result_id: str = "node-hash"):
+    return backend.submit(plan, list(inputs), submit_hints or hints(), result_id, flow_id=1, node_id=1)
+
+
+def count_collects(monkeypatch) -> list[int]:
+    """One entry per ``LazyFrame.collect`` from here on."""
+    collects = []
+    real_collect = pl.LazyFrame.collect
+
+    def counting_collect(self, *args, **kwargs):
+        collects.append(1)
+        return real_collect(self, *args, **kwargs)
+
+    monkeypatch.setattr(pl.LazyFrame, "collect", counting_collect)
+    return collects
+
+
 def ipc_rows(sample: bytes) -> pl.DataFrame:
     return pl.read_ipc_stream(io.BytesIO(sample))
 
@@ -57,8 +72,8 @@ def backend() -> LocalBackend:
 
 
 @pytest.fixture
-def ten_rows() -> bytes:
-    return pl.LazyFrame({"n": list(range(10)), "label": [f"row {i}" for i in range(10)]}).serialize()
+def ten_rows() -> pl.LazyFrame:
+    return pl.LazyFrame({"n": list(range(10)), "label": [f"row {i}" for i in range(10)]})
 
 
 @pytest.fixture
@@ -88,15 +103,16 @@ def test_a_registration_under_the_local_id_wins_over_the_built_in(fresh_registry
 
 
 def test_a_submitted_plan_is_held_deferred_and_read_back(backend, ten_rows):
-    submitted = backend.submit(ten_rows, [], hints())
+    submitted = submit(backend, ten_rows, result_id="hash-1")
     ref = submitted.ref
 
     assert ref.backend_id == "local"
+    assert ref.result_id == "hash-1"
     assert ref.state == "deferred"
     assert ref.row_count is None
-    assert ref.location == ref.result_id.encode("utf-8")
+    assert ref.location == b"hash-1"
     assert [(c.column_name, c.data_type) for c in ref.schema] == [("n", "Int64"), ("label", "String")]
-    assert submitted.handle.job_id == ref.result_id
+    assert submitted.handle.job_id == "hash-1"
     assert backend.status(submitted.handle) == JobStatus(state="done", progress=100, error=None)
 
     assert ipc_rows(backend.sample(ref, 3)).height == 3
@@ -106,8 +122,18 @@ def test_a_submitted_plan_is_held_deferred_and_read_back(backend, ten_rows):
     assert backend.plan_for(ref).collect()["n"].to_list() == list(range(10))
 
 
+def test_submitting_under_a_held_id_replaces_that_result(backend, ten_rows):
+    three_rows = pl.LazyFrame({"n": [1, 2, 3]})
+    first = submit(backend, ten_rows, result_id="same").ref
+
+    second = submit(backend, three_rows, result_id="same").ref
+
+    assert backend.exists(first) and backend.exists(second)
+    assert backend.plan_for(second).collect()["n"].to_list() == [1, 2, 3]
+
+
 def test_a_released_result_is_gone(backend, ten_rows):
-    ref = backend.submit(ten_rows, [], hints()).ref
+    ref = submit(backend, ten_rows).ref
 
     backend.release(ref)
 
@@ -119,44 +145,61 @@ def test_a_released_result_is_gone(backend, ten_rows):
     backend.release(ref)
 
 
-def test_must_materialise_collects_the_plan(backend, ten_rows):
-    ref = backend.submit(ten_rows, [], hints(must_materialise=True)).ref
+def test_must_materialise_does_not_collect(backend, ten_rows, monkeypatch):
+    collects = count_collects(monkeypatch)
 
-    assert ref.state == "materialised"
-    assert ref.row_count == 10
+    ref = submit(backend, ten_rows, submit_hints=hints(must_materialise=True)).ref
+
+    assert collects == []
+    assert ref.state == "deferred"
+    assert ref.row_count is None
     assert backend.count(ref) == 10
-    assert backend.plan_for(ref).collect().height == 10
 
 
-def test_a_plan_that_fails_to_collect_fails_the_submit(backend):
-    failing = pl.LazyFrame({"a": ["x"]}).select(pl.col("a").cast(pl.Int64, strict=True)).serialize()
+def test_a_plan_that_fails_to_collect_is_held_and_fails_where_it_is_read(backend):
+    failing = pl.LazyFrame({"a": ["x"]}).select(pl.col("a").cast(pl.Int64, strict=True))
 
-    with pytest.raises(TaskFailed):
-        backend.submit(failing, [], hints(must_materialise=True))
+    ref = submit(backend, failing, submit_hints=hints(must_materialise=True, preview_rows=5)).ref
+
+    assert ref.state == "deferred"
+    with pytest.raises(pl.exceptions.InvalidOperationError):
+        backend.plan_for(ref).collect()
+    with pytest.raises(pl.exceptions.InvalidOperationError):
+        backend.sample(ref, 5)
 
 
-def test_a_plan_that_does_not_deserialise_is_rejected(backend):
-    with pytest.raises(PlanRejected):
-        backend.submit(b"not a plan", [], hints())
+def test_the_plan_is_held_as_the_object_submitted(backend, monkeypatch):
+    """No serialise, no copy: a deferred result is the submitted plan, so plans compose over one in-memory frame."""
+    serialised = []
+    monkeypatch.setattr(pl.LazyFrame, "serialize", lambda self, *a, **k: serialised.append(1))
+    plan = pl.DataFrame({"n": [1, 2]}).lazy().filter(pl.col("n") > 1)
+
+    ref = submit(backend, plan).ref
+
+    assert backend.plan_for(ref) is plan
+    assert serialised == []
 
 
-def test_the_inline_sample_is_there_only_when_preview_rows_ask_for_it(backend, ten_rows):
-    with_sample = backend.submit(ten_rows, [], hints(preview_rows=4))
-    without_sample = backend.submit(ten_rows, [], hints())
+@pytest.mark.parametrize("preview_rows", [None, 4])
+def test_no_sample_comes_inline_and_sample_serves_it_when_read(backend, ten_rows, preview_rows, monkeypatch):
+    collects = count_collects(monkeypatch)
 
-    assert ipc_rows(with_sample.sample).height == 4
-    assert without_sample.sample is None
+    submitted = submit(backend, ten_rows, submit_hints=hints(preview_rows=preview_rows))
+
+    assert submitted.sample is None
+    assert collects == []
+    assert ipc_rows(backend.sample(submitted.ref, 4)).height == 4
 
 
 def test_inputs_are_validated_against_the_store(backend, ten_rows, foreign_ref):
-    held = backend.submit(ten_rows, [], hints()).ref
-    assert backend.submit(ten_rows, [held], hints()).ref.state == "deferred"
+    held = submit(backend, ten_rows, result_id="upstream").ref
+    assert submit(backend, ten_rows, [held], result_id="downstream").ref.state == "deferred"
 
     with pytest.raises(ForeignRef):
-        backend.submit(ten_rows, [foreign_ref], hints())
+        submit(backend, ten_rows, [foreign_ref])
     backend.release(held)
     with pytest.raises(ResultMissing):
-        backend.submit(ten_rows, [held], hints())
+        submit(backend, ten_rows, [held])
 
 
 def test_a_ref_from_another_backend_is_refused(backend, foreign_ref):
@@ -168,7 +211,7 @@ def test_a_ref_from_another_backend_is_refused(backend, foreign_ref):
 
 
 def test_export_and_import_are_unsupported(backend, ten_rows):
-    ref = backend.submit(ten_rows, [], hints()).ref
+    ref = submit(backend, ten_rows).ref
 
     with pytest.raises(OperationUnsupported, match="'local'"):
         backend.export(ref, "s3://bucket/key", None)
