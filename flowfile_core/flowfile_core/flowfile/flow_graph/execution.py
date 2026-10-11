@@ -113,8 +113,6 @@ def execution_order_message(flow_logger: FlowLogger, stages: list[ExecutionStage
 
 
 class ExecutionMixin(GraphMixinBase):
-    _execution_context: ExecutionContext
-
     @property
     def last_closed_gate_handles(self) -> Mapping[str | int, frozenset[str]]:
         """Gate id -> the output handles the last ``run_graph`` routed dead (parameter and formula gates)."""
@@ -122,14 +120,11 @@ class ExecutionMixin(GraphMixinBase):
 
     @property
     def execution_context(self) -> ExecutionContext:
-        """Where this flow's runs execute, built from its location, mode and parallelism settings.
+        """Where this flow's runs execute, derived from its current location, mode and parallelism settings.
 
-        Rebuilt whenever the settings are replaced or the location or mode is set through the graph.
+        Computed on each access, so it always matches ``flow_settings``, however a field was set.
         """
-        return self._execution_context
-
-    def _rebuild_execution_context(self) -> None:
-        self._execution_context = ExecutionContext.for_flow(self.flow_settings)
+        return ExecutionContext.for_flow(self.flow_settings)
 
     def check_flow_laziness(self) -> tuple[bool, list[str]]:
         """Check whether the flow supports lazy execution for virtual tables.
@@ -186,7 +181,6 @@ class ExecutionMixin(GraphMixinBase):
             mode: The execution mode to set.
         """
         self.flow_settings.execution_mode = mode
-        self._rebuild_execution_context()
 
     @property
     def execution_location(self) -> schemas.ExecutionLocationsLiteral:
@@ -203,7 +197,6 @@ class ExecutionMixin(GraphMixinBase):
         if self.flow_settings.execution_location != execution_location:
             self.reset()
         self.flow_settings.execution_location = execution_location
-        self._rebuild_execution_context()
 
     def validate_if_node_can_be_fetched(self, node_id: int) -> None:
         flow_node = self._node_db.get(node_id)
