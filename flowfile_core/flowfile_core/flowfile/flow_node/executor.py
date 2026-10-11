@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-from flowfile_core.flowfile.execution.errors import ComputeUnavailable
+from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
     results_exists,
 )
@@ -104,6 +104,14 @@ class NodeExecutor:
         Called by FlowNode.execute_node(). Uses _decide_execution() as the
         single source of truth for whether and how the node should run.
 
+        When the decision cannot be made because asking the worker about a cached
+        result failed (any ``ComputeError``: ``ComputeUnavailable`` for a worker that
+        cannot be reached, ``VersionMismatch`` for one running other versions), the
+        node fails through the same path as a failed run: its previous results are
+        cleared and ``_handle_error`` records the typed message. The node is not run,
+        neither on the worker nor in core, and the next run that executes it clears
+        the error again.
+
         Args:
             run_location: Where to execute ('local' or 'remote')
             reset_cache: Force cache invalidation
@@ -120,8 +128,13 @@ class NodeExecutor:
         if reset_cache:
             self._clear_cache(state)
 
-        decision = self._decide_execution(state, run_location, performance_mode, reset_cache)
-        decision = self._override_for_downstream(decision, run_location, optimize_for_downstream)
+        try:
+            decision = self._decide_execution(state, run_location, performance_mode, reset_cache)
+            decision = self._override_for_downstream(decision, run_location, optimize_for_downstream)
+        except ComputeError as e:
+            self._prepare_for_execution(state)
+            self._handle_error(state, e, run_location, performance_mode, retry, node_logger)
+            return
         if not decision.should_run:
             return
 
@@ -214,6 +227,22 @@ class NodeExecutor:
         Single source of truth for execution decisions.
 
         Determines both WHETHER to run and HOW to run in one place.
+
+        A ``cache_results`` node asks the worker for its stored result only when
+        the run is not FULL_LOCAL. A local run neither writes nor reads the
+        worker cache, so asking there could only fail on a worker the run does
+        not need; a cached node in local mode follows the ordinary rules below
+        instead (so in Development mode it is skipped after a successful run).
+
+        A cached node whose last run failed reruns even when the worker still
+        holds its result: skipping it would keep the failed run's error on the
+        node, while running it clears that error and the remote path reloads the
+        cached result rather than recomputing it.
+
+        Raises:
+            ComputeError: Asking the worker whether the cached result still exists
+                failed (``ComputeUnavailable`` when it cannot be reached). ``execute``
+                records this as a node failure; it is never read as a missing cache.
         """
         if self.node.node_template.node_group == "output":
             strategy = self._determine_strategy(run_location)
@@ -247,30 +276,20 @@ class NodeExecutor:
             strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.CACHE_MISSING)
 
+        strategy = self._determine_strategy(run_location)
+
         # Cache-enabled nodes: check if cache file is still present
         # This must come before performance_mode so cached results are preserved
         # even when upstream nodes produce no new data.
-        if self.node.node_settings.cache_results:
-            try:
-                cache_exists = results_exists(self.node.hash)
-            except ComputeUnavailable as e:
-                # An unreachable worker is a node error, never a cache miss to rerun.
-                state.mark_failed(str(e))
-                self._sync_state_to_legacy(state)
-                self.node.results.errors = str(e)
-                self.node._last_exception_class = type(e).__name__
+        if self.node.node_settings.cache_results and strategy is not ExecutionStrategy.FULL_LOCAL:
+            if state.error is None and results_exists(self.node.hash):
                 return ExecutionDecision(False, ExecutionStrategy.SKIP, None)
-            if cache_exists:
-                return ExecutionDecision(False, ExecutionStrategy.SKIP, None)
-            strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.CACHE_MISSING)
 
         if performance_mode:
-            strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.PERFORMANCE_MODE)
 
         if not state.has_run_with_current_setup:
-            strategy = self._determine_strategy(run_location)
             return ExecutionDecision(True, strategy, InvalidationReason.NEVER_RAN)
 
         # Already ran with current settings → skip
