@@ -30,6 +30,10 @@ class Made:
         self.id = backend_id
 
 
+class BuiltIn:
+    """The class a test's built-in table names; the registry imports it and calls it without arguments."""
+
+
 def counting_factory(backend_id: str) -> tuple[list[Made], Callable[[], Made]]:
     made: list[Made] = []
 
@@ -163,11 +167,38 @@ def test_an_unknown_id_names_every_known_id(installed):
     assert str(raised.value) == "Unknown compute backend 'cluster'; known backends: 'local', 'plugin', 'worker'"
 
 
-def test_an_unknown_id_with_no_backends_says_so():
-    with pytest.raises(LookupError) as raised:
-        registry.backend("worker")
+def test_an_unknown_id_with_no_backends_says_so(monkeypatch):
+    monkeypatch.setattr(registry, "_BUILTIN", {})
 
-    assert str(raised.value) == "Unknown compute backend 'worker'; known backends: none"
+    with pytest.raises(LookupError) as raised:
+        registry.backend("cluster")
+
+    assert str(raised.value) == "Unknown compute backend 'cluster'; known backends: none"
+
+
+def test_an_unknown_id_names_the_built_in_ids_too(monkeypatch):
+    monkeypatch.setattr(registry, "_BUILTIN", {"builtin": (__name__, "BuiltIn")})
+    registry.register_backend("probe", counting_factory("probe")[1])
+
+    with pytest.raises(LookupError) as raised:
+        registry.backend("cluster")
+
+    assert str(raised.value) == "Unknown compute backend 'cluster'; known backends: 'builtin', 'probe'"
+
+
+def test_an_entry_point_never_shadows_a_built_in_id(monkeypatch, installed):
+    monkeypatch.setattr(registry, "_BUILTIN", {"builtin": (__name__, "BuiltIn")})
+    plugin_made, plugin_factory = counting_factory("builtin")
+    entry_point = FakeEntryPoint("builtin", plugin_factory)
+    installed.entry_points.append(entry_point)
+    registry.register_backend("probe", counting_factory("probe")[1])
+    registry.backend("probe")
+
+    instance = registry.backend("builtin")
+
+    assert isinstance(instance, BuiltIn)
+    assert plugin_made == []
+    assert entry_point.loads == 0
 
 
 def test_reset_forgets_registrations_instances_and_the_scan(installed):

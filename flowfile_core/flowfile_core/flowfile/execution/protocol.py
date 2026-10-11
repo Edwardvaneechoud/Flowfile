@@ -7,7 +7,7 @@ Rows reach core only through ``ComputeBackend.sample`` and the sample ``submit``
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, TypeAlias, runtime_checkable
 
 import polars as pl
@@ -102,6 +102,20 @@ class SubmitResult:
 
 
 @dataclass(frozen=True)
+class OpResult:
+    """What ``ComputeBackend.run_op`` returns.
+
+    Attributes:
+        refs: The results the operation produced, by name; empty for an operation that only writes.
+        metadata: What the operation reports besides rows, such as a trained model's digest or a Delta write's
+            version and counts.
+    """
+
+    refs: dict[str, ResultRef]
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class CredentialRef:
     """Names a stored connection a plan or operation may use, by its owner and id.
 
@@ -162,8 +176,8 @@ class ComputeBackend(Protocol):
         """Run a serialised Polars plan over ``inputs``, hold its result and return a reference to it."""
         ...
 
-    def run_op(self, op: OperationKind, payload: OpPayload) -> dict[str, ResultRef]:
-        """Run one operation and return its results by output name."""
+    def run_op(self, op: OperationKind, payload: OpPayload) -> OpResult:
+        """Run one operation and return the results it produced by name, with what it reports besides them."""
         ...
 
     def sample(self, ref: ResultRef, n: int) -> bytes:

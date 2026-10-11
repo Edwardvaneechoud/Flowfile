@@ -15,6 +15,7 @@ from flowfile_core.flowfile.execution.protocol import (
     ComputeBackend,
     JobHandle,
     OperationKind,
+    OpResult,
     ResultRef,
     SubmitHints,
 )
@@ -198,14 +199,32 @@ def test_a_file_read_runs_through_the_create_table_route(backend, kept, tmp_path
     received_table = ReceivedTable.create_from_path(str(csv_path), "csv")
     received_table.set_absolute_filepath()
 
-    outputs = backend.run_op(OperationKind.file_read, {"received_table": received_table, "flow_id": 1, "node_id": 1})
+    result = backend.run_op(OperationKind.file_read, {"received_table": received_table, "flow_id": 1, "node_id": 1})
 
-    ref = outputs["result"]
+    ref = result.refs["result"]
     kept.append(ref)
-    assert list(outputs) == ["result"]
+    assert list(result.refs) == ["result"]
+    assert result.metadata == {}
     assert ref.row_count == 10
     assert [column.column_name for column in ref.schema] == ["id", "name", "score"]
     assert backend.plan_for(ref).collect().equals(PEOPLE)
+
+
+def test_a_file_write_produces_no_result_and_writes_the_file(backend, tmp_path):
+    target = tmp_path / "people.parquet"
+    payload = {
+        "lf": PEOPLE.lazy(),
+        "data_type": "parquet",
+        "path": str(target),
+        "write_mode": "overwrite",
+        "flow_id": 1,
+        "node_id": 1,
+    }
+
+    result = backend.run_op(OperationKind.file_write, payload)
+
+    assert result == OpResult(refs={})
+    assert pl.read_parquet(target).equals(PEOPLE)
 
 
 @pytest.fixture
@@ -229,7 +248,7 @@ def test_a_database_read_returns_a_reference_to_the_rows_it_read(backend, kept, 
         connection=connection, node_id=1, flow_id=1, query="SELECT * FROM public.movies"
     )
 
-    ref = backend.run_op(OperationKind.database_read, {"settings": settings})["result"]
+    ref = backend.run_op(OperationKind.database_read, {"settings": settings}).refs["result"]
     kept.append(ref)
 
     assert ref.row_count > 0

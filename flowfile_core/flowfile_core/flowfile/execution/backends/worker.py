@@ -30,6 +30,7 @@ from flowfile_core.flowfile.execution.protocol import (
     JobStatus,
     OperationKind,
     OpPayload,
+    OpResult,
     ResultRef,
     Schema,
     SubmitHints,
@@ -60,9 +61,6 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from shared.compute_protocol import PROTOCOL_VERSION, Capabilities
 
-METADATA = "metadata"
-"""The ``run_op`` output name under which ``ml_train`` and the Delta writes return the worker's metadata dict."""
-
 _OUTPUT_SEPARATOR = "#"
 _NO_FLOW = -1
 _JOB_STATES: dict[str, Literal["running", "done", "failed", "cancelled"]] = {
@@ -92,7 +90,7 @@ class WorkerBackend:
     protocol_version = PROTOCOL_VERSION
 
     def __init__(self) -> None:
-        self._operations: dict[OperationKind, Callable[[OpPayload], dict[str, Any]]] = {
+        self._operations: dict[OperationKind, Callable[[OpPayload], OpResult]] = {
             OperationKind.database_read: self._database_read,
             OperationKind.kafka_read: self._kafka_read,
             OperationKind.google_analytics_read: self._google_analytics_read,
@@ -135,7 +133,7 @@ class WorkerBackend:
         sample = None if hints.preview_rows is None else self.sample(ref, hints.preview_rows)
         return SubmitResult(ref=ref, sample=sample, handle=JobHandle(self.id, fetcher.file_ref))
 
-    def run_op(self, op: OperationKind, payload: OpPayload) -> dict[str, ResultRef]:
+    def run_op(self, op: OperationKind, payload: OpPayload) -> OpResult:
         """Run ``op`` as a worker task through the fetcher core uses for it and wait for it to end.
 
         ``payload`` holds what that fetcher takes, under these keys (``flow_id`` and ``node_id`` name the flow and
@@ -157,10 +155,10 @@ class WorkerBackend:
         - ``delta_write``, ``delta_merge``, ``delta_scd2``: ``lf``, ``kwargs`` (the keyword arguments of the
           worker's ``write_delta``, ``merge_delta`` or ``scd2_delta`` operation), ``flow_id``, ``node_id``.
 
-        A read returns ``{"result": ref}``, a custom node one reference per output it wrote, a write ``{}``.
-        ``ml_train`` and the Delta writes return the worker's result dict under ``METADATA`` instead of a
-        reference: the trained model's hash and size, or the written table's schema, counts and version, are
-        what the caller records, and a ``ResultRef`` has no field to carry them.
+        A read's refs are ``{"result": ref}``, a custom node's one reference per output it wrote, and a write has
+        none. ``ml_train`` and the Delta writes return the worker's result dict as ``metadata``: the trained
+        model's ``sha256``, ``size_bytes`` and ``model_type`` (the model itself is the file at ``staging_path``,
+        not a table, so there is no ref), or the written table's schema, counts, size and version.
 
         Raises:
             OperationUnsupported: ``random_split`` and ``viz_session``, which have no worker task.
@@ -263,23 +261,23 @@ class WorkerBackend:
             location=path.encode(),
         )
 
-    def _read(self, start: Callable[[], BaseFetcher]) -> dict[str, ResultRef]:
+    def _read(self, start: Callable[[], BaseFetcher]) -> OpResult:
         fetcher = _run(start)
-        return {"result": self._result_ref(fetcher.file_ref, _written_file(fetcher))}
+        return OpResult(refs={"result": self._result_ref(fetcher.file_ref, _written_file(fetcher))})
 
-    def _database_read(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _database_read(self, payload: OpPayload) -> OpResult:
         return self._read(lambda: ExternalDatabaseFetcher(payload["settings"], wait_on_completion=False))
 
-    def _kafka_read(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _kafka_read(self, payload: OpPayload) -> OpResult:
         return self._read(lambda: ExternalKafkaFetcher(payload["settings"], wait_on_completion=False))
 
-    def _google_analytics_read(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _google_analytics_read(self, payload: OpPayload) -> OpResult:
         return self._read(lambda: ExternalGoogleAnalyticsFetcher(payload["settings"], wait_on_completion=False))
 
-    def _rest_api_read(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _rest_api_read(self, payload: OpPayload) -> OpResult:
         return self._read(lambda: ExternalRestApiFetcher(payload["settings"], wait_on_completion=False))
 
-    def _file_read(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _file_read(self, payload: OpPayload) -> OpResult:
         received_table = payload["received_table"]
         return self._read(
             lambda: ExternalCreateFetcher(
@@ -291,7 +289,7 @@ class WorkerBackend:
             )
         )
 
-    def _fuzzy_join(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _fuzzy_join(self, payload: OpPayload) -> OpResult:
         return self._read(
             lambda: ExternalFuzzyMatchFetcher(
                 left_df=payload["left"],
@@ -304,7 +302,7 @@ class WorkerBackend:
             )
         )
 
-    def _ml_apply(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _ml_apply(self, payload: OpPayload) -> OpResult:
         return self._read(
             lambda: MLApplyFetcher(
                 lf=payload["lf"],
@@ -317,15 +315,17 @@ class WorkerBackend:
             )
         )
 
-    def _custom_node(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _custom_node(self, payload: OpPayload) -> OpResult:
         fetcher = _run(lambda: ExternalCustomNodeFetcher(payload["request"]))
         outputs = fetcher.get_payload()["outputs"]
-        return {
-            name: self._result_ref(f"{fetcher.file_ref}{_OUTPUT_SEPARATOR}{name}", output["path"])
-            for name, output in outputs.items()
-        }
+        return OpResult(
+            refs={
+                name: self._result_ref(f"{fetcher.file_ref}{_OUTPUT_SEPARATOR}{name}", output["path"])
+                for name, output in outputs.items()
+            }
+        )
 
-    def _ml_train(self, payload: OpPayload) -> dict[str, Any]:
+    def _ml_train(self, payload: OpPayload) -> OpResult:
         fetcher = _run(
             lambda: MLTrainFetcher(
                 lf=payload["lf"],
@@ -340,17 +340,17 @@ class WorkerBackend:
                 wait_on_completion=False,
             )
         )
-        return {METADATA: fetcher.result}
+        return OpResult(refs={}, metadata=_reported(fetcher))
 
-    def _database_write(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _database_write(self, payload: OpPayload) -> OpResult:
         _run(lambda: ExternalDatabaseWriter(payload["settings"], wait_on_completion=False))
-        return {}
+        return OpResult(refs={})
 
-    def _cloud_write(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _cloud_write(self, payload: OpPayload) -> OpResult:
         _run(lambda: ExternalCloudWriter(payload["settings"], wait_on_completion=False))
-        return {}
+        return OpResult(refs={})
 
-    def _file_write(self, payload: OpPayload) -> dict[str, ResultRef]:
+    def _file_write(self, payload: OpPayload) -> OpResult:
         _run(
             lambda: ExternalOutputWriter(
                 lf=payload["lf"],
@@ -365,15 +365,15 @@ class WorkerBackend:
                 wait_on_completion=False,
             )
         )
-        return {}
+        return OpResult(refs={})
 
-    def _delta_write(self, payload: OpPayload) -> dict[str, Any]:
+    def _delta_write(self, payload: OpPayload) -> OpResult:
         return _catalog_delta(payload, "write_delta")
 
-    def _delta_merge(self, payload: OpPayload) -> dict[str, Any]:
+    def _delta_merge(self, payload: OpPayload) -> OpResult:
         return _catalog_delta(payload, "merge_delta")
 
-    def _delta_scd2(self, payload: OpPayload) -> dict[str, Any]:
+    def _delta_scd2(self, payload: OpPayload) -> OpResult:
         return _catalog_delta(payload, "scd2_delta")
 
 
@@ -398,7 +398,7 @@ def _run(start: Callable[[], BaseFetcher]) -> BaseFetcher:
     return fetcher
 
 
-def _catalog_delta(payload: OpPayload, operation_type: str) -> dict[str, Any]:
+def _catalog_delta(payload: OpPayload, operation_type: str) -> OpResult:
     """The catalog writer's Delta write: a worker task running ``operation_type`` over the payload's plan."""
     fetcher = _run(
         lambda: ExternalDfFetcher(
@@ -410,7 +410,13 @@ def _catalog_delta(payload: OpPayload, operation_type: str) -> dict[str, Any]:
             wait_on_completion=False,
         )
     )
-    return {METADATA: fetcher.result}
+    return OpResult(refs={}, metadata=_reported(fetcher))
+
+
+def _reported(fetcher: BaseFetcher) -> dict[str, Any]:
+    """The dict a task that writes reports as its result; empty when the worker sent none."""
+    result = fetcher.result
+    return result if isinstance(result, dict) else {}
 
 
 def _written_file(fetcher: BaseFetcher) -> str:

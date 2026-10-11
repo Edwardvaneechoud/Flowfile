@@ -10,6 +10,7 @@ from flowfile_core.flowfile.execution.protocol import (
     JobHandle,
     JobStatus,
     OperationKind,
+    OpResult,
     ResultRef,
     SubmitHints,
     SubmitResult,
@@ -64,6 +65,7 @@ def test_value_types_are_frozen():
         SubmitResult(ref=ref, sample=None, handle=handle),
         JobStatus(state="running", progress=None, error=None),
         CredentialRef(connection_id=3, user_id=1),
+        OpResult(refs={"result": ref}, metadata={"version": 1}),
     ]
     for value in values:
         field = dataclasses.fields(value)[0].name
