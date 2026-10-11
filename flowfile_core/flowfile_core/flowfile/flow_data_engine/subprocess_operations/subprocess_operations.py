@@ -78,7 +78,7 @@ class _WorkerSession(requests.Session):
     """
 
     def request(self, *args, **kwargs):
-        ensure_handshake()
+        ensure_handshake(WORKER_URL)
         try:
             return super().request(*args, **kwargs)
         except requests.ConnectionError:
@@ -1244,6 +1244,9 @@ class ExternalDfFetcher(BaseFetcher):
             # The task already reached the worker; re-submitting via REST would
             # duplicate work against a wedged worker or a cancelled run.
             raise
+        except ComputeError:
+            # The handshake refused this worker; the REST path would refuse it again.
+            raise
         except Exception as e:
             logger.debug(f"WebSocket streaming unavailable ({e}), falling back to REST")
         else:
@@ -1288,8 +1291,8 @@ class ExternalSampler(BaseFetcher):
                 kwargs={"sample_size": sample_size},
                 blocking=wait_on_completion,
             )
-        except WorkerStreamInterrupted:
-            # See ExternalDfFetcher: never re-submit after a successful submit.
+        except (WorkerStreamInterrupted, ComputeError):
+            # See ExternalDfFetcher: never re-submit after a successful submit or a refused handshake.
             raise
         except Exception as e:
             logger.debug(f"WebSocket streaming unavailable ({e}), falling back to REST")

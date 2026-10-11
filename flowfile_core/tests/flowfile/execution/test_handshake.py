@@ -9,6 +9,7 @@ import requests
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, VersionMismatch
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake, streaming
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
+from flowfile_core.flowfile.flow_node.executor import NodeExecutor
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas
 from shared.compute_protocol import EXPRESSION_PLUGINS, local_capabilities
@@ -31,9 +32,9 @@ def capability_fetches(monkeypatch) -> list[str]:
     fetches = []
     real_fetch = handshake.fetch_worker_capabilities
 
-    def recording_fetch():
-        fetches.append(subops.WORKER_URL)
-        return real_fetch()
+    def recording_fetch(worker_url):
+        fetches.append(worker_url)
+        return real_fetch(worker_url)
 
     monkeypatch.setattr(handshake, "fetch_worker_capabilities", recording_fetch)
     return fetches
@@ -47,7 +48,7 @@ def worker_reports(monkeypatch):
         fetches = []
         reported = local_capabilities().model_copy(update=changes)
 
-        def fetch():
+        def fetch(worker_url):
             fetches.append(1)
             return reported
 
@@ -150,6 +151,50 @@ def test_remote_run_against_the_session_worker_passes_the_handshake(capability_f
     assert capability_fetches == [subops.WORKER_URL]
     assert handshake._handshake_done is True
     subops.clear_task_from_worker(node.hash)
+
+
+def test_cached_remote_node_fails_on_a_mismatched_worker_without_running_in_core(
+    worker_reports, sent_to_worker, websocket_connects, monkeypatch
+):
+    fetches = worker_reports(polars_version="0.0.1")
+    graph = _one_node_remote_graph(9204)
+    node = graph.get_node(1)
+    calls = {"function": 0, "strategy": 0, "collect": 0}
+    real_function = node._function
+    real_strategy = NodeExecutor._execute_with_strategy
+    real_collect = pl.LazyFrame.collect
+
+    def counting_function(*args, **kwargs):
+        calls["function"] += 1
+        return real_function(*args, **kwargs)
+
+    def counting_strategy(self, *args, **kwargs):
+        calls["strategy"] += 1
+        return real_strategy(self, *args, **kwargs)
+
+    def counting_collect(self, *args, **kwargs):
+        calls["collect"] += 1
+        return real_collect(self, *args, **kwargs)
+
+    monkeypatch.setattr(node, "_function", counting_function)
+    monkeypatch.setattr(NodeExecutor, "_execute_with_strategy", counting_strategy)
+    monkeypatch.setattr(pl.LazyFrame, "collect", counting_collect)
+
+    run_info = graph.run_graph()
+
+    result = next(r for r in run_info.node_step_result if r.node_id == 1)
+    assert run_info.success is False
+    assert result.success is False
+    assert result.error == (
+        f"The worker at {subops.WORKER_URL} does not match core (polars_version: core {pl.__version__}, worker 0.0.1)"
+    )
+    assert node.results.errors == result.error
+    assert node._last_exception_class == "VersionMismatch"
+    assert calls == {"function": 0, "strategy": 0, "collect": 0}
+    assert node.results.resulting_data is None
+    assert fetches == [1]
+    assert sent_to_worker == {"requests": 0, "probe_plans": 0}
+    assert websocket_connects == []
 
 
 def test_handshake_runs_once_per_process(capability_fetches, sent_to_worker):
@@ -294,8 +339,7 @@ def test_websocket_submit_to_a_mismatched_worker_is_refused(
     assert node._last_exception_class == "VersionMismatch"
     assert websocket_connects == []
     assert sent_to_worker == {"requests": 0, "probe_plans": 0}
-    # once at the websocket gate, once at the REST fallback the fetcher tries next
-    assert fetches == [1, 1]
+    assert fetches == [1]
 
     monkeypatch.setattr(handshake, "fetch_worker_capabilities", real_fetch)
     accepted = graph.run_graph()
