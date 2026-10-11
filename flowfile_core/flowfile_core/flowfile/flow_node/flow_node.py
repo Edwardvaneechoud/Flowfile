@@ -10,6 +10,7 @@ import polars as pl
 
 from flowfile_core.configs import logger, node_store
 from flowfile_core.configs.flow_logger import NodeLogger
+from flowfile_core.flowfile.execution.errors import worker_failure
 from flowfile_core.flowfile.flow_data_engine.column_stats import ColumnStatsUnavailable, compute_column_stats
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
@@ -1769,20 +1770,11 @@ class FlowNode:
                         raise RemoteExecutionError(
                             guidance, recover_error_class(e, external_df_fetcher.error_description)
                         ) from e
-                    # Never degrade-gracefully on a canceled node: the raise below
-                    # feeds the executor's clean-cancel reclassification instead.
-                    if external_df_fetcher.error_code == -1 and not self._execution_state.is_canceled:
-                        try:
-                            self.results.resulting_data = self.get_resulting_data()
-                            self.results.warnings = (
-                                "Error with external process (unknown error), "
-                                "likely the process was killed by the server because of memory constraints, "
-                                "continue with the process. "
-                                "We cannot display example data..."
-                            )
-                        except Exception as e:
-                            self.results.errors = str(e)
-                            raise e
+                    if external_df_fetcher.error_code == -1:
+                        self.results.errors = external_df_fetcher.error_description
+                        raise worker_failure(
+                            external_df_fetcher.error_kind, external_df_fetcher.error_description
+                        ) from e
                     elif external_df_fetcher.error_description is None:
                         self.results.errors = str(e)
                         raise e
@@ -1792,7 +1784,6 @@ class FlowNode:
                             external_df_fetcher.error_description,
                             recover_error_class(e, external_df_fetcher.error_description),
                         ) from e
-                    break
                 finally:
                     self._fetch_cached_df = None
 

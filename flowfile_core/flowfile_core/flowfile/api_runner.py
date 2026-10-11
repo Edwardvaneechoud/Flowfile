@@ -1,9 +1,10 @@
 """Synchronous in-process execution of a published flow for the HTTP data API.
 
 Loads a registered flow fresh per request, validates and injects typed query
-parameters, runs the graph in performance mode (offloading the single terminal
-collect to the worker when one is available, falling back to in-core otherwise), and
-serializes the data flowing into the flow's single ``api_response`` node.
+parameters, runs the graph in performance mode (with a remote execution location the
+single terminal collect runs on the worker, and a worker that cannot run it fails the
+request with a typed compute error), and serializes the data flowing into the flow's
+single ``api_response`` node.
 
 A freshly opened flow keeps the ``flow_id`` stored in its file, and that id keys
 *process-wide* scratch state: the singleton ``FlowLogger``, the kernel I/O dirs
@@ -26,7 +27,9 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from flowfile_core.configs import logger
+import requests
+
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable, worker_failure
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import ExternalDfFetcher
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.flowfile.param_types import coerce_param_value, stringify_param_value
@@ -134,17 +137,21 @@ def _first_error(run_info: RunInformation | None) -> str | None:
 
 
 def _materialize(data: Any, max_rows: int | None, flow: Any, api_node: Any):
-    """Collect the api_response input, on the worker when one is available.
+    """Collect the api_response input, on the worker when the execution location is remote.
 
     The flow runs in performance mode, so the whole pipeline is a single lazy plan and
     this is the one collect that actually executes it. When ``execution_location`` is
     remote we ship that collect to the worker (it materializes Arrow IPC; the core only
     reads it back), so the core process does no heavy compute. The row cap is pushed in
-    first so the worker materializes only what's returned. Degrades to an in-core collect
-    when no worker is reachable, or the worker reports an environment failure (error code
-    -1: child killed, plan not loadable, result not writable), so a request still succeeds
-    rather than 500-ing. A plan that fails on its data raises :class:`ApiExecutionError`
-    without re-running it in core.
+    first so the worker materializes only what's returned. On the remote path the collect
+    never runs in core.
+
+    Raises:
+        ComputeUnavailable: The worker could not be reached to submit the plan.
+        ComputeError: The worker could not run the plan (error code -1, typed by
+            :func:`~flowfile_core.flowfile.execution.errors.worker_failure`).
+        ApiExecutionError: The plan could not be submitted (core cannot serialise it, or
+            the worker refused it), or it ran on the worker and failed on its data.
     """
     if flow.flow_settings.execution_location == "local":
         return data.collect(n_records=max_rows)
@@ -160,17 +167,16 @@ def _materialize(data: Any, max_rows: int | None, flow: Any, api_node: Any):
             node_id=api_node.node_id,
             wait_on_completion=False,
         )
-    except Exception as exc:  # noqa: BLE001 - worker unreachable; degrade to in-core
-        logger.warning("API worker offload unavailable (%s); collecting response in core", exc)
-        return data.collect(n_records=max_rows)
+    except requests.RequestException as exc:
+        raise ComputeUnavailable(str(exc)) from exc
+    except Exception as exc:
+        raise ApiExecutionError(str(exc) or "could not submit the plan to the worker") from exc
 
     try:
         result = fetcher.get_result()
     except Exception as exc:
-        # -1: the worker child died or its environment failed, not the plan on its data.
         if fetcher.error_code == -1:
-            logger.warning("API worker collect failed in the worker environment; collecting response in core")
-            return data.collect(n_records=max_rows)
+            raise worker_failure(fetcher.error_kind, fetcher.error_description) from exc
         raise ApiExecutionError(fetcher.error_description or str(exc) or "flow execution failed on worker") from exc
     return result.collect()
 
@@ -228,6 +234,8 @@ def run_flow_as_api(
         ApiParamError: A parameter is missing or fails type validation.
         ApiConfigError: The flow does not have exactly one api_response node.
         ApiExecutionError: The flow failed or produced no data.
+        ComputeError: The worker could not be reached (``ComputeUnavailable``) or could
+            not run the final collect; nothing is collected in core instead.
     """
     flow = open_flow(Path(flow_path), user_id=owner_id)
     # Machine traffic, not a user pressing Run.
@@ -246,7 +254,7 @@ def run_flow_as_api(
             param.default_value = resolved[param.name]
 
     # Run in performance mode (one lazy plan; no per-node materialization or example
-    # data) and let compute go to the worker when one is available, so the core process
+    # data) and send compute to the worker when the location is remote, so the core process
     # does no heavy collect (the final collect is offloaded in _materialize). Tests pin
     # execution_location="local" to stay hermetic.
     flow.flow_settings.execution_location = execution_location or get_global_execution_location()

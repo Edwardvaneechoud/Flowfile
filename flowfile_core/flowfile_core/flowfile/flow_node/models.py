@@ -45,12 +45,14 @@ class RemoteExecutionError(Exception):
     The worker ships a message, not an exception type, so wrapping its failure in a
     bare ``Exception`` used to erase the only class signal core had. This keeps
     whatever class could be recovered on ``original_class`` (None when none could)
-    while leaving the user-facing message exactly as it was.
+    while leaving the user-facing message exactly as it was. ``error_kind`` is the
+    worker's failure kind as the fetcher received it, None when it sent none.
     """
 
-    def __init__(self, message: str, original_class: str | None = None) -> None:
+    def __init__(self, message: str, original_class: str | None = None, *, error_kind: str | None = None) -> None:
         super().__init__(message)
         self.original_class = original_class
+        self.error_kind = error_kind
 
 
 class InvalidExpressionError(Exception):

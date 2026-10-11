@@ -6,12 +6,12 @@ register a flow (manual_input -> filter on ``${region}`` -> api_response), publi
 mint an API key, then call ``GET /api/data/{slug}`` with the ``X-API-Key`` header and
 assert on the JSON — exactly how an external client would use it.
 
-In the default test session the public run actually offloads to the worker (the
-session-autouse ``flowfile_worker`` fixture starts one); with ``SKIP_WORKER_TESTS=1`` it
-falls back to an in-core collect. The asserted data is identical either way.
+The public run offloads its final collect to the worker, so these tests need the one the
+session-autouse ``flowfile_worker`` fixture starts: without a worker a run answers 503, it
+is never collected in core instead.
 
 Run it:
-    SKIP_WORKER_TESTS=1 poetry run pytest flowfile_core/tests/test_flow_api_e2e.py -v
+    poetry run pytest flowfile_core/tests/test_flow_api_e2e.py -v
 """
 
 from uuid import uuid4
