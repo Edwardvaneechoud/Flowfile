@@ -25,7 +25,7 @@ import pytest
 
 pytestmark = pytest.mark.core
 
-PINNED_INLINE_LOCATION_BRANCHES = 12
+PINNED_INLINE_LOCATION_BRANCHES = 8
 PINNED_ENV_VAR_READER_FILES = 13
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[3] / "flowfile_core"

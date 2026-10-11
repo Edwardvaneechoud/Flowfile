@@ -87,6 +87,9 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     store_database_connection,
     update_database_connection,
 )
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.payloads import FileWritePayload, op_payload
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.extensions import (
     get_formula_chain_check,
     get_formula_chain_instant_result,
@@ -95,10 +98,8 @@ from flowfile_core.flowfile.extensions import (
 from flowfile_core.flowfile.flow_data_engine.column_stats import ColumnStatsUnavailable
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-    ExternalOutputWriter,
     ExternalRestApiFetcher,
 )
-from flowfile_core.flowfile.flow_data_engine.utils import local_write_output
 from flowfile_core.flowfile.flow_graph import GraphTransaction, add_connection, delete_connection, insert_node_on_edge
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.settings_validation import FlowSettingsValidation, validate_flow_settings
@@ -2238,7 +2239,7 @@ def export_node_data(
 
     TSV is also capped at 100,000 cells. Larger exports belong in a write node.
     """
-    _, node = _get_analysis_node(flow_id, node_id, current_user)
+    flow, node = _get_analysis_node(flow_id, node_id, current_user)
     try:
         engine = node.get_cached_result(output_handle)
     except ColumnStatsUnavailable as e:
@@ -2251,15 +2252,18 @@ def export_node_data(
     if any(dtype.is_nested() for dtype in schema.dtypes()):
         raise HTTPException(422, "CSV cannot hold list or struct columns.")
     n = min(limit, 100_000 // max(len(schema), 1)) if file_format == "tsv" else limit
-    sep = "\t" if file_format == "tsv" else ","
-    path = storage.temp_directory / f"export_{uuid4().hex}.{file_format}"
+    output_settings = input_schema.OutputSettings(
+        name=f"export_{uuid4().hex}.{file_format}",
+        directory=str(storage.temp_directory),
+        file_type="csv",
+        write_mode="create",
+        table_settings=input_schema.OutputCsvTable(delimiter="\t" if file_format == "tsv" else ","),
+    )
+    path = Path(output_settings.abs_file_path)
     try:
         # head before lazy(): an in-memory DataFrame is sliced so only n rows get serialized.
-        lf = data.head(n).lazy()
-        writer = ExternalOutputWriter if OFFLOAD_TO_WORKER else local_write_output
-        writer(
-            lf, data_type="csv", path=str(path), write_mode="create", delimiter=sep, flow_id=flow_id, node_id=node_id
-        )
+        write = FileWritePayload(plan=data.head(n).lazy(), settings=output_settings, flow_id=flow_id, node_id=node_id)
+        current_context(flow).backend.run_op(OperationKind.file_write, op_payload(write))
     except Exception as e:
         path.unlink(missing_ok=True)
         logger.error(f"Failed to export data for node {node_id}: {e}")

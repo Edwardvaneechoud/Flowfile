@@ -4,9 +4,9 @@ Results live in an in-process store that maps a result id to its ``pl.LazyFrame`
 DataFrame turned ``.lazy()``); a ``ResultRef``'s ``location`` is that id as UTF-8 bytes. ``submit`` holds every plan
 lazily under the result id it is given (the class docstring has the policy). ``run_op`` runs the operations a
 flow's nodes run whole when they execute in core, one method per ``OperationKind``; each method's docstring names
-the payload keys it reads, and the read kinds take their dataclass from ``execution/payloads.py``. A read holds what
-it read as a deferred plan, so the reader keeps the frame through ``plan_for`` and can release the ref at once.
-Nothing runs asynchronously: every job has ended when its call returns.
+the payload keys it reads; a read or write kind takes its dataclass from ``execution/payloads.py`` under ``"payload"``.
+A read holds what it read as a deferred plan, so the reader keeps the frame through ``plan_for`` and can release the
+ref at once. Nothing runs asynchronously: every job has ended when its call returns, so ``cancel`` has nothing to stop.
 """
 
 from __future__ import annotations
@@ -18,9 +18,10 @@ import threading
 import uuid
 from collections.abc import Callable
 from copy import deepcopy
-from typing import Any, ClassVar
+from typing import Any, ClassVar, get_args
 
 import polars as pl
+from pydantic import SecretStr
 
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.execution.errors import (
@@ -29,8 +30,13 @@ from flowfile_core.flowfile.execution.errors import (
     ResultMissing,
 )
 from flowfile_core.flowfile.execution.payloads import (
+    CloudWritePayload,
     DatabaseReadPayload,
+    DatabaseWritePayload,
+    DeltaMergePayload,
+    DeltaWritePayload,
     FileReadPayload,
+    FileWritePayload,
     KafkaReadPayload,
     RestApiReadPayload,
     unpack,
@@ -48,16 +54,27 @@ from flowfile_core.flowfile.execution.protocol import (
     SubmitResult,
 )
 from flowfile_core.flowfile.execution.registry import LOCAL_BACKEND_ID
+from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import convert_stats_to_column_info
+from flowfile_core.flowfile.flow_data_engine.utils import local_write_output
 from flowfile_core.flowfile.flow_node.multi_output import output_handle
 from flowfile_core.flowfile.sources.external_sources.rest_api_source import build_rest_api_worker_settings
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource
-from flowfile_core.schemas.cloud_storage_schemas import CloudStorageWriteSettingsInternal
+from flowfile_core.schemas.cloud_storage_schemas import (
+    CloudStorageWriteSettingsInternal,
+    FullCloudStorageConnection,
+    FullCloudStorageConnectionWorkerInterface,
+)
 from flowfile_core.secret_manager.secret_manager import decrypt_secret
 from shared.compute_protocol import PROTOCOL_VERSION, Capabilities, local_capabilities
 from shared.delta_utils import merge_into_delta, write_delta
+
+_CLOUD_SECRET_FIELDS = tuple(
+    name for name, field in FullCloudStorageConnection.model_fields.items() if SecretStr in get_args(field.annotation)
+)
+"""The fields of a cloud connection that hold a secret; a write payload carries them encrypted."""
 
 
 class LocalBackend:
@@ -258,23 +275,17 @@ class LocalBackend:
         return OpResult(refs={"result": ref})
 
     def _write_database(self, payload: OpPayload) -> OpResult:
-        """Write the input to a database table.
+        """Write the rows of the ``DatabaseWritePayload`` under ``"payload"`` to its table.
 
-        Payload keys:
-            input: The ``FlowDataEngine`` to write.
-            settings: The node's ``NodeDatabaseWriter``; ``database_write_settings.if_exists`` defaults to append.
-            connection: The database connection the settings resolve to.
-            encrypted_password: The connection's password as stored, ``None`` for a file-based database.
-            table_name: The table to write, qualified by its schema when the settings name one.
-
-        Returns no refs.
+        The password is decrypted here; ``if_exists`` defaults to append. Returns no refs.
         """
-        connection = payload["connection"]
-        payload["input"].to_database_obj(
+        write = unpack(payload, DatabaseWritePayload)
+        connection = write.connection
+        FlowDataEngine(write.plan).to_database_obj(
             database_type=connection.database_type,
-            uri=_sql_uri(connection, payload["encrypted_password"]),
-            table_name=payload["table_name"],
-            if_exists=payload["settings"].database_write_settings.if_exists or "append",
+            uri=_sql_uri(connection, write.encrypted_password),
+            table_name=write.table_name,
+            if_exists=write.settings.database_write_settings.if_exists or "append",
         )
         return OpResult(refs={})
 
@@ -307,21 +318,19 @@ class LocalBackend:
         return OpResult(refs={"result": ref})
 
     def _write_file(self, payload: OpPayload) -> OpResult:
-        """Write the input to a local file.
-
-        Payload keys:
-            input: The ``FlowDataEngine`` to write.
-            settings: The node's ``NodeOutput``: its ``output_settings`` and ``node_id``.
-            flow_id: The id of the flow the node belongs to.
-
-        Returns no refs.
-        """
-        node_settings = payload["settings"]
-        payload["input"].output(
-            output_fs=node_settings.output_settings,
-            flow_id=payload["flow_id"],
-            node_id=node_settings.node_id,
-            execute_remote=False,
+        """Write the rows of the ``FileWritePayload`` under ``"payload"`` to its file. Returns no refs."""
+        write = unpack(payload, FileWritePayload)
+        settings = write.settings
+        local_write_output(
+            write.plan,
+            data_type=settings.file_type,
+            path=settings.abs_file_path,
+            write_mode=settings.write_mode,
+            sheet_name=settings.sheet_name,
+            delimiter=settings.delimiter,
+            compression=settings.compression,
+            flow_id=write.flow_id,
+            node_id=write.node_id,
         )
         return OpResult(refs={})
 
@@ -394,65 +403,45 @@ class LocalBackend:
         return OpResult(refs={})
 
     def _write_cloud_storage(self, payload: OpPayload) -> OpResult:
-        """Write the input to object storage.
+        """Write the rows of the ``CloudWritePayload`` under ``"payload"`` to object storage.
 
-        Payload keys:
-            input: The ``FlowDataEngine`` to write.
-            connection: The ``FullCloudStorageConnection`` the node resolves to.
-            settings: The node's ``CloudStorageWriteSettings``.
-
-        Returns no refs.
+        The connection's secrets are decrypted here. Returns no refs.
         """
-        payload["input"].to_cloud_storage_obj(
-            CloudStorageWriteSettingsInternal(connection=payload["connection"], write_settings=payload["settings"])
+        write = unpack(payload, CloudWritePayload)
+        FlowDataEngine(write.plan).to_cloud_storage_obj(
+            CloudStorageWriteSettingsInternal(
+                connection=_decrypted_connection(write.connection), write_settings=write.settings
+            )
         )
         return OpResult(refs={})
 
     def _write_delta(self, payload: OpPayload) -> OpResult:
-        """Write the input to a Delta table.
-
-        Payload keys:
-            input: The ``FlowDataEngine`` to write.
-            output_path: The table's path.
-            mode: The Delta write mode.
-            partition_by: The partition columns, or ``None``.
-            enable_cdf: Turn the table's change data feed on before writing.
-            storage_options: The object-storage options, ``None`` for the local filesystem.
-
-        Returns no refs.
-        """
+        """Write the rows of the ``DeltaWritePayload`` under ``"payload"`` to its Delta table. Returns no refs."""
+        write = unpack(payload, DeltaWritePayload)
         write_delta(
-            payload["input"].data_frame,
-            payload["output_path"],
-            mode=payload["mode"],
-            partition_by=payload["partition_by"],
-            storage_options=payload["storage_options"],
-            enable_cdf=payload["enable_cdf"],
+            write.plan,
+            write.path,
+            mode=write.mode,
+            partition_by=write.partition_by,
+            storage_options=_storage_options(write.connection),
+            enable_cdf=write.enable_cdf,
         )
         return OpResult(refs={})
 
     def _merge_delta(self, payload: OpPayload) -> OpResult:
-        """Upsert, update or delete the input's rows in a Delta table by key; the input is collected first.
+        """Merge the rows of the ``DeltaMergePayload`` under ``"payload"`` into its Delta table by key.
 
-        Payload keys:
-            input: The ``FlowDataEngine`` whose rows are merged.
-            output_path: The table's path.
-            merge_mode: ``"upsert"``, ``"update"`` or ``"delete"``.
-            merge_keys: The columns that match a row to the table's.
-            partition_by: The partition columns, or ``None``.
-            enable_cdf: Turn the table's change data feed on before writing.
-            storage_options: The object-storage options, ``None`` for the local filesystem.
-
-        Returns no refs.
+        The rows are collected first, as the merge needs them in memory. Returns no refs.
         """
+        write = unpack(payload, DeltaMergePayload)
         merge_into_delta(
-            payload["input"].data_frame.collect(),
-            payload["output_path"],
-            merge_mode=payload["merge_mode"],
-            merge_keys=payload["merge_keys"],
-            partition_by=payload["partition_by"],
-            storage_options=payload["storage_options"],
-            enable_cdf=payload["enable_cdf"],
+            write.plan.collect(),
+            write.path,
+            merge_mode=write.merge_mode,
+            merge_keys=write.merge_keys,
+            partition_by=write.partition_by,
+            storage_options=_storage_options(write.connection),
+            enable_cdf=write.enable_cdf,
         )
         return OpResult(refs={})
 
@@ -507,3 +496,19 @@ def _sql_uri(connection: Any, encrypted_password: str | None) -> str:
         ssl_enabled=bool(getattr(connection, "ssl_enabled", False)),
         connect_timeout=10,
     )
+
+
+def _decrypted_connection(connection: FullCloudStorageConnectionWorkerInterface) -> FullCloudStorageConnection:
+    """The connection with the secrets it carries as ``$ffsec$`` ciphertext decrypted in this process."""
+    values = connection.model_dump()
+    for name in _CLOUD_SECRET_FIELDS:
+        if values.get(name) is not None:
+            values[name] = decrypt_secret(values[name])
+    return FullCloudStorageConnection(**values)
+
+
+def _storage_options(connection: FullCloudStorageConnectionWorkerInterface | None) -> dict[str, Any] | None:
+    """The object-storage options of ``connection``; ``None`` for a table on the local filesystem."""
+    if connection is None:
+        return None
+    return CloudStorageReader.get_storage_options(_decrypted_connection(connection))

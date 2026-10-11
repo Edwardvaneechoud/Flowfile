@@ -3545,9 +3545,11 @@ def _run_export_flow(node_id: int = 2) -> FlowId:
     return flow_id
 
 
-def test_export_node_data_csv():
+def test_export_node_data_csv(execution_location):
     flow_id = create_flow_with_manual_input_and_select()
-    flow_file_handler.get_flow(flow_id).flow_settings.execution_mode = "Development"
+    flow_settings = flow_file_handler.get_flow(flow_id).flow_settings
+    flow_settings.execution_mode = "Development"
+    flow_settings.execution_location = execution_location
     assert _export_node_data(flow_id).status_code == 409, "Nothing to export before the node has run"
 
     client.post("/node/trigger_fetch_data", params={"flow_id": flow_id, "node_id": 2})

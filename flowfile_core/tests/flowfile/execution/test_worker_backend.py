@@ -20,6 +20,7 @@ from flowfile_core.flowfile.execution.protocol import (
     ResultRef,
     SubmitHints,
 )
+from flowfile_core.flowfile.execution.payloads import FileWritePayload
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import fetch_worker_capabilities
 from flowfile_core.flowfile.execution.payloads import DatabaseReadPayload, FileReadPayload, op_payload
@@ -28,6 +29,7 @@ from flowfile_core.schemas.input_schema import (
     DatabaseSettings,
     NodeDatabaseReader,
     NodeRead,
+    OutputSettings,
     ReceivedTable,
 )
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
@@ -234,16 +236,16 @@ def test_a_file_read_runs_through_the_create_table_route(backend, kept, tmp_path
 
 def test_a_file_write_produces_no_result_and_writes_the_file(backend, tmp_path):
     target = tmp_path / "people.parquet"
-    payload = {
-        "lf": PEOPLE.lazy(),
-        "data_type": "parquet",
-        "path": str(target),
-        "write_mode": "overwrite",
-        "flow_id": 1,
-        "node_id": 1,
-    }
+    settings = OutputSettings(
+        name=target.name,
+        directory=str(tmp_path),
+        file_type="parquet",
+        write_mode="overwrite",
+        table_settings={"file_type": "parquet"},
+    )
+    write = FileWritePayload(plan=PEOPLE.lazy(), settings=settings, flow_id=1, node_id=1)
 
-    result = backend.run_op(OperationKind.file_write, payload)
+    result = backend.run_op(OperationKind.file_write, op_payload(write))
 
     assert result == OpResult(refs={})
     assert pl.read_parquet(target).equals(PEOPLE)

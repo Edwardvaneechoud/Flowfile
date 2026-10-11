@@ -1712,12 +1712,12 @@ def test_add_database_writer_sqlite(sqlite_db, execution_location):
 
 def test_database_writer_sqlite_local_runs_without_worker(sqlite_db, monkeypatch):
     """Local execution must write in-process and never offload to the worker (scheduled/CLI path)."""
-    import flowfile_core.flowfile.flow_graph as flow_graph_module
+    from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 
     def _no_worker(*args, **kwargs):
         raise AssertionError("local database write must not call the worker")
 
-    monkeypatch.setattr(flow_graph_module, "ExternalDatabaseWriter", _no_worker)
+    monkeypatch.setattr(WorkerBackend, "run_op", _no_worker)
 
     graph = create_graph(execution_location="local")
     add_manual_input(graph, data=[{'name': 'eduward'}, {'name': 'edward'}, {'name': 'courtney'}])
@@ -1802,12 +1802,12 @@ def test_add_database_writer_duckdb(duckdb_db, execution_location):
 
 def test_database_writer_duckdb_local_runs_without_worker(duckdb_db, monkeypatch):
     """Local execution must write in-process and never offload to the worker (scheduled/CLI path)."""
-    import flowfile_core.flowfile.flow_graph as flow_graph_module
+    from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 
     def _no_worker(*args, **kwargs):
         raise AssertionError("local database write must not call the worker")
 
-    monkeypatch.setattr(flow_graph_module, "ExternalDatabaseWriter", _no_worker)
+    monkeypatch.setattr(WorkerBackend, "run_op", _no_worker)
 
     graph = create_graph(execution_location="local")
     add_manual_input(graph, data=[{'name': 'eduward'}, {'name': 'edward'}, {'name': 'courtney'}])

@@ -16,15 +16,15 @@ from flowfile_core.flowfile.database_connection_manager.ga_connections import (
 )
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.context import current_context
-from flowfile_core.flowfile.execution.errors import TaskFailed
 from flowfile_core.flowfile.execution.payloads import (
     DatabaseReadPayload,
+    DatabaseWritePayload,
     GoogleAnalyticsReadPayload,
     KafkaReadPayload,
     RestApiReadPayload,
     op_payload,
 )
-from flowfile_core.flowfile.execution.protocol import ComputeBackend, JobHandle, OperationKind, ResultRef
+from flowfile_core.flowfile.execution.protocol import ComputeBackend, OperationKind, ResultRef
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
@@ -35,12 +35,10 @@ from flowfile_core.flowfile.flow_graph.history import with_history_capture
 from flowfile_core.flowfile.flow_node.flow_node import (
     FlowNode,
 )
-from flowfile_core.flowfile.flow_node.models import RemoteExecutionError, recover_error_class
 from flowfile_core.flowfile.sources.external_sources.google_analytics_source import derive_schema
 from flowfile_core.flowfile.sources.external_sources.rest_api_source import (
     resolve_auth_secret_encrypted,
 )
-from flowfile_core.flowfile.sources.external_sources.sql_source import models as sql_models
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
     SqlSource,
@@ -126,7 +124,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
         database_settings: input_schema.DatabaseWriteSettings = node_database_writer.database_write_settings
 
         def _func(df: FlowDataEngine):
-            database_connection, encrypted_password, database_reference_settings = _resolve_database_credentials(
+            database_connection, encrypted_password, _ = _resolve_database_credentials(
                 database_settings, node_database_writer.user_id
             )
             df.lazy = True
@@ -135,36 +133,18 @@ class ConnectorBuildersMixin(GraphMixinBase):
                 if database_settings.schema_name
                 else database_settings.table_name
             )
-
-            if self.execution_location == "local":
-                registry.backend(registry.LOCAL_BACKEND_ID).run_op(
-                    OperationKind.database_write,
-                    {
-                        "input": df,
-                        "settings": node_database_writer,
-                        "connection": database_connection,
-                        "encrypted_password": encrypted_password,
-                        "table_name": table_name,
-                    },
-                )
-                return df
-
-            database_external_write_settings = (
-                sql_models.DatabaseExternalWriteSettings.create_from_from_node_database_writer(
-                    node_database_writer=node_database_writer,
-                    password=encrypted_password,
-                    table_name=table_name,
-                    database_reference_settings=(
-                        database_reference_settings if database_settings.connection_mode == "reference" else None
-                    ),
-                    lf=df.data_frame,
-                )
+            write = DatabaseWritePayload(
+                plan=df.data_frame,
+                settings=node_database_writer,
+                connection=database_connection,
+                encrypted_password=encrypted_password,
+                table_name=table_name,
+                flow_id=node_database_writer.flow_id,
+                node_id=node_database_writer.node_id,
             )
-            external_database_writer = root().ExternalDatabaseWriter(
-                database_external_write_settings, wait_on_completion=False
+            node.run_op(
+                current_context(self).backend, OperationKind.database_write, op_payload(write), job_id=write.job_id
             )
-            node._fetch_cached_df = external_database_writer
-            external_database_writer.get_result()
             return df
 
         def schema_callback():
@@ -216,13 +196,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
                 cancel_check=lambda: self.flow_settings.is_canceled or node._execution_state.is_canceled,
             )
             # Every backend reads through shared.db_reader.read_sql_with_fallback.
-            node._submit_in_flight = JobHandle(backend.id, read.job_id)
-            try:
-                ref = backend.run_op(OperationKind.database_read, op_payload(read)).refs["result"]
-            except TaskFailed as e:
-                raise RemoteExecutionError(str(e), recover_error_class(e.__cause__, str(e))) from e
-            finally:
-                node._submit_in_flight = None
+            ref = node.run_op(backend, OperationKind.database_read, op_payload(read), job_id=read.job_id).refs["result"]
             fl = engine_from_read(backend, ref)
             node_database_reader.fields = [c.get_minimal_field_info() for c in fl.schema]
             return fl
@@ -349,13 +323,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
                 settings=kafka_read_settings,
                 read_kafka_source=root().read_kafka_source,
             )
-            node._submit_in_flight = JobHandle(backend.id, read.job_id)
-            try:
-                result = backend.run_op(OperationKind.kafka_read, op_payload(read))
-            except TaskFailed as e:
-                raise RemoteExecutionError(str(e), recover_error_class(e.__cause__, str(e))) from e
-            finally:
-                node._submit_in_flight = None
+            result = node.run_op(backend, OperationKind.kafka_read, op_payload(read), job_id=read.job_id)
             fl = engine_from_read(backend, result.refs["result"])
             # Committed once the flow completes, so a failed or cancelled run commits nothing.
             offsets = result.metadata.get("offsets")
@@ -489,13 +457,8 @@ class ConnectorBuildersMixin(GraphMixinBase):
             # On the worker in every mode: core has no Google Analytics reader of its own.
             backend = registry.backend(registry.WORKER_BACKEND_ID)
             read = _build_payload()
-            node._submit_in_flight = JobHandle(backend.id, read.job_id)
-            try:
-                ref = backend.run_op(OperationKind.google_analytics_read, op_payload(read)).refs["result"]
-            except TaskFailed as e:
-                raise RemoteExecutionError(str(e), recover_error_class(e.__cause__, str(e))) from e
-            finally:
-                node._submit_in_flight = None
+            result = node.run_op(backend, OperationKind.google_analytics_read, op_payload(read), job_id=read.job_id)
+            ref = result.refs["result"]
             # A LazyFrame over the worker's Arrow IPC file; never collect in core.
             fl = engine_from_read(backend, ref)
             # Align (lazily) to the predicted schema so an empty report still yields stable columns.
@@ -568,13 +531,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
                 settings=node_rest_api_reader,
                 encrypted_secret=_resolve_secret_encrypted(),
             )
-            node._submit_in_flight = JobHandle(backend.id, read.job_id)
-            try:
-                ref = backend.run_op(OperationKind.rest_api_read, op_payload(read)).refs["result"]
-            except TaskFailed as e:
-                raise RemoteExecutionError(str(e), recover_error_class(e.__cause__, str(e))) from e
-            finally:
-                node._submit_in_flight = None
+            ref = node.run_op(backend, OperationKind.rest_api_read, op_payload(read), job_id=read.job_id).refs["result"]
             fl = engine_from_read(backend, ref)
             cols = schema_callback()
             # Align to the sampled schema when there is one; otherwise the fetched frame defines it.

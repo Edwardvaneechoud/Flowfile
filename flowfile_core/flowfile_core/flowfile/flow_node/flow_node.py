@@ -16,7 +16,16 @@ from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.context import DEFAULT_PREVIEW_ROWS, current_context
 from flowfile_core.flowfile.execution.errors import ComputeError, TaskFailed
-from flowfile_core.flowfile.execution.protocol import ComputeBackend, JobHandle, ResultRef, SubmitHints, SubmitResult
+from flowfile_core.flowfile.execution.protocol import (
+    ComputeBackend,
+    JobHandle,
+    OperationKind,
+    OpPayload,
+    OpResult,
+    ResultRef,
+    SubmitHints,
+    SubmitResult,
+)
 from flowfile_core.flowfile.flow_data_engine.column_stats import ColumnStatsUnavailable, compute_column_stats
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
@@ -70,6 +79,23 @@ def _failed_class(error: BaseException) -> str | None:
     """The exception class a failed job names: below a backend's typed error, else in the error's chain or message."""
     cause = error.__cause__ if isinstance(error, ComputeError) else error
     return recover_error_class(cause, str(error))
+
+
+def run_operation(backend: ComputeBackend, op: OperationKind, payload: OpPayload) -> OpResult:
+    """``backend.run_op(op, payload)`` under the failure rule a node's operations follow.
+
+    A ``TaskFailed`` whose job names the exception class it failed with is re-raised as ``RemoteExecutionError``
+    carrying that class, so the class reaches the node's error record; every other error, ``PlanRejected`` and
+    ``ComputeUnavailable`` among them, propagates as raised. ``FlowNode.run_op`` is this plus the node's in-flight
+    job; this is for an operation run before the node is bound (a new read node's schema prefetch).
+    """
+    try:
+        return backend.run_op(op, payload)
+    except TaskFailed as e:
+        failed_class = _failed_class(e)
+        if failed_class is None:
+            raise
+        raise RemoteExecutionError(str(e), failed_class) from e
 
 
 def _arrow_table(sample: bytes) -> pa.Table:
@@ -221,7 +247,7 @@ class FlowNode:
     _cache_epoch: int  # bumped by invalidate_cache() to bust the hash
     _fetch_cached_df: ExternalTaskHandle | None
     _cache_progress: ExternalTaskHandle | None
-    _submit_in_flight: JobHandle | None  # the backend job of a submit this node is waiting on
+    _submit_in_flight: JobHandle | None  # the backend job of a submit or run_op this node is waiting on
 
     _kernel_cancel_context: Any  # (kernel_id, manager, exec_token) of this node's in-flight cell
     _kernel_cancel_event: threading.Event | None
@@ -1751,6 +1777,20 @@ class FlowNode:
             finally:
                 self._submit_in_flight = None
 
+    def run_op(self, backend: ComputeBackend, op: OperationKind, payload: OpPayload, *, job_id: str) -> OpResult:
+        """Run ``op`` on ``backend`` for this node, so that ``cancel`` reaches it while it runs.
+
+        ``job_id`` is the id the payload gives the backend for the job (the payload's ``job_id``): while the call
+        runs, ``cancel`` hands ``JobHandle(backend.id, job_id)`` to ``backend.cancel``, as it does for a submit.
+
+        Failures follow ``run_operation``'s rule, which is ``_submit``'s.
+        """
+        self._submit_in_flight = JobHandle(backend.id, job_id)
+        try:
+            return run_operation(backend, op, payload)
+        finally:
+            self._submit_in_flight = None
+
     def _input_refs(self, backend_id: str) -> list[ResultRef]:
         """The results this node's upstream nodes hold on backend ``backend_id``; one holding none is left out."""
         refs: dict[str, ResultRef] = {}
@@ -1806,7 +1846,7 @@ class FlowNode:
     def cancel(self):
         """Cancels an ongoing external process if one is running.
 
-        While the node waits on its backend's submit, the backend's ``cancel`` gets the job's handle.
+        While the node waits on its backend's submit or ``run_op``, the backend's ``cancel`` gets the job's handle.
         """
 
         submit_in_flight = self._submit_in_flight

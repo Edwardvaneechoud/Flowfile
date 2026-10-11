@@ -9,6 +9,7 @@ plan or keeps it deferred in this process; the class docstring has the policy.
 
 from __future__ import annotations
 
+import base64
 import os
 import threading
 from collections.abc import Callable, Iterator
@@ -29,11 +30,16 @@ from flowfile_core.flowfile.execution.errors import (
     worker_failure,
 )
 from flowfile_core.flowfile.execution.payloads import (
+    CloudWritePayload,
     DatabaseReadPayload,
+    DatabaseWritePayload,
+    DeltaMergePayload,
+    DeltaWritePayload,
     FileReadPayload,
+    FileWritePayload,
     GoogleAnalyticsReadPayload,
     KafkaReadPayload,
-    ReadPayload,
+    OperationPayload,
     RestApiReadPayload,
     unpack,
 )
@@ -74,8 +80,15 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     results_exists,
 )
 from flowfile_core.flowfile.sources.external_sources.rest_api_source import build_rest_api_worker_settings
-from flowfile_core.flowfile.sources.external_sources.sql_source.models import DatabaseExternalReadSettings
+from flowfile_core.flowfile.sources.external_sources.sql_source.models import (
+    DatabaseExternalReadSettings,
+    DatabaseExternalWriteSettings,
+)
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import BaseSqlSource
+from flowfile_core.schemas.cloud_storage_schemas import (
+    CloudStorageWriteSettingsWorkerInterface,
+    FullCloudStorageConnectionWorkerInterface,
+)
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from shared.compute_protocol import PROTOCOL_VERSION, Capabilities
 from shared.google_analytics.models import GoogleAnalyticsFilter, GoogleAnalyticsOrderBy, GoogleAnalyticsReadSettings
@@ -127,7 +140,7 @@ class WorkerBackend:
       the plan, and ``release`` drops it and clears its sampler task.
 
     While ``submit`` waits on a task, ``cancel`` with the handle ``JobHandle("worker", result_id)`` reaches that
-    task's fetcher.
+    task's fetcher; while a write ``run_op`` waits, so does the handle with its payload's ``job_id``.
 
     Nothing here runs the worker handshake: every worker call goes through the transport's worker session or
     its WebSocket submit, which run it before they reach the worker, so every method that calls the worker is
@@ -210,12 +223,13 @@ class WorkerBackend:
         - ``ml_train``: ``lf``, ``staging_path``, ``model_type``, ``target_column``, ``feature_columns``, ``params``,
           ``flow_id``, ``node_id``, ``task_id``.
         - ``ml_apply``: ``lf``, ``model_path``, ``output_column``, ``flow_id``, ``node_id``, ``task_id``.
-        - ``database_write``: ``settings`` (``DatabaseExternalWriteSettings``).
-        - ``cloud_write``: ``settings`` (``CloudStorageWriteSettingsWorkerInterface``).
-        - ``file_write``: ``lf``, ``data_type``, ``path``, ``write_mode``, ``flow_id``, ``node_id``, and optionally
-          ``sheet_name``, ``delimiter``, ``compression``.
-        - ``delta_write``, ``delta_merge``, ``delta_scd2``: ``lf``, ``kwargs`` (the keyword arguments of the
-          worker's ``write_delta``, ``merge_delta`` or ``scd2_delta`` operation), ``flow_id``, ``node_id``.
+        - ``delta_scd2``: ``lf``, ``kwargs`` (the keyword arguments of the worker's ``scd2_delta`` operation),
+          ``flow_id``, ``node_id``.
+
+        The writes ``file_write``, ``database_write``, ``cloud_write``, ``delta_write`` and ``delta_merge`` take their
+        ``payloads`` dataclass under ``"payload"`` instead; its plan is serialised here, its credentials sent
+        still encrypted, and the task runs as the payload's ``job_id``, so ``cancel(JobHandle("worker", job_id))``
+        reaches it while it runs.
 
         A read's refs are ``{"result": ref}``, a custom node's one reference per output it wrote, and a write has
         none. ``ml_train`` and the Delta writes return the worker's result dict as ``metadata``: the trained
@@ -555,35 +569,89 @@ class WorkerBackend:
         return OpResult(refs={}, metadata=_reported(fetcher))
 
     def _database_write(self, payload: OpPayload) -> OpResult:
-        _run(lambda: ExternalDatabaseWriter(payload["settings"], wait_on_completion=False))
+        write = unpack(payload, DatabaseWritePayload)
+        reference = write.connection if write.settings.database_write_settings.connection_mode == "reference" else None
+        settings = DatabaseExternalWriteSettings.create_from_from_node_database_writer(
+            node_database_writer=write.settings,
+            password=write.encrypted_password,
+            table_name=write.table_name,
+            lf=write.plan,
+            database_reference_settings=reference,
+        ).model_copy(update={"flowfile_flow_id": write.flow_id, "flowfile_node_id": write.node_id})
+        self._run_tracked(write.job_id, lambda: ExternalDatabaseWriter(settings, wait_on_completion=False))
         return OpResult(refs={})
 
     def _cloud_write(self, payload: OpPayload) -> OpResult:
-        _run(lambda: ExternalCloudWriter(payload["settings"], wait_on_completion=False))
+        write = unpack(payload, CloudWritePayload)
+        settings = CloudStorageWriteSettingsWorkerInterface(
+            operation=base64.b64encode(write.plan.serialize()).decode(),
+            write_settings=write.settings.get_write_setting_worker_interface(),
+            connection=write.connection,
+            flowfile_flow_id=write.flow_id,
+            flowfile_node_id=write.node_id,
+        )
+        self._run_tracked(write.job_id, lambda: ExternalCloudWriter(settings, wait_on_completion=False))
         return OpResult(refs={})
 
     def _file_write(self, payload: OpPayload) -> OpResult:
-        _run(
+        write = unpack(payload, FileWritePayload)
+        settings = write.settings
+        self._run_tracked(
+            write.job_id,
             lambda: ExternalOutputWriter(
-                lf=payload["lf"],
-                data_type=payload["data_type"],
-                path=payload["path"],
-                write_mode=payload["write_mode"],
-                flow_id=payload["flow_id"],
-                node_id=payload["node_id"],
-                sheet_name=payload.get("sheet_name"),
-                delimiter=payload.get("delimiter"),
-                compression=payload.get("compression"),
+                lf=write.plan,
+                data_type=settings.file_type,
+                path=settings.abs_file_path,
+                write_mode=settings.write_mode,
+                flow_id=write.flow_id,
+                node_id=write.node_id,
+                sheet_name=settings.sheet_name,
+                delimiter=settings.delimiter,
+                compression=settings.compression,
                 wait_on_completion=False,
-            )
+            ),
         )
         return OpResult(refs={})
 
     def _delta_write(self, payload: OpPayload) -> OpResult:
-        return _catalog_delta(payload, "write_delta")
+        write = unpack(payload, DeltaWritePayload)
+        kwargs = {
+            "output_path": write.path,
+            "mode": write.mode,
+            "partition_by": write.partition_by,
+            "enable_cdf": write.enable_cdf,
+            "storage_payload": _storage_payload(write.connection),
+        }
+        return self._delta_task(write, "write_delta", kwargs)
 
     def _delta_merge(self, payload: OpPayload) -> OpResult:
-        return _catalog_delta(payload, "merge_delta")
+        write = unpack(payload, DeltaMergePayload)
+        kwargs = {
+            "output_path": write.path,
+            "merge_mode": write.merge_mode,
+            "merge_keys": write.merge_keys,
+            "partition_by": write.partition_by,
+            "enable_cdf": write.enable_cdf,
+            "storage_payload": _storage_payload(write.connection),
+        }
+        return self._delta_task(write, "merge_delta", kwargs)
+
+    def _delta_task(
+        self, write: DeltaWritePayload | DeltaMergePayload, operation_type: str, kwargs: dict[str, Any]
+    ) -> OpResult:
+        """Run the worker's ``operation_type`` Delta operation over the payload's plan; its report is the metadata."""
+        fetcher = self._run_tracked(
+            write.job_id,
+            lambda: ExternalDfFetcher(
+                flow_id=write.flow_id,
+                node_id=write.node_id,
+                lf=write.plan,
+                operation_type=operation_type,
+                kwargs=kwargs,
+                wait_on_completion=False,
+            ),
+        )
+        return OpResult(refs={}, metadata=_reported(fetcher))
 
     def _delta_scd2(self, payload: OpPayload) -> OpResult:
         return _catalog_delta(payload, "scd2_delta")
@@ -615,7 +683,7 @@ def _run(start: Callable[[], BaseFetcher], on_started: Callable[[BaseFetcher], N
 
 
 def _catalog_delta(payload: OpPayload, operation_type: str) -> OpResult:
-    """The catalog writer's Delta write: a worker task running ``operation_type`` over the payload's plan."""
+    """The catalog writer's SCD2 write: a worker task running ``operation_type`` over the payload's plan."""
     fetcher = _run(
         lambda: ExternalDfFetcher(
             flow_id=payload["flow_id"],
@@ -627,6 +695,14 @@ def _catalog_delta(payload: OpPayload, operation_type: str) -> OpResult:
         )
     )
     return OpResult(refs={}, metadata=_reported(fetcher))
+
+
+def _storage_payload(connection: FullCloudStorageConnectionWorkerInterface | None) -> dict[str, Any] | None:
+    """The ``storage_payload`` the worker's Delta operations take; ``None`` for a table on the worker's disk.
+
+    It carries the connection with its secrets still encrypted; the worker decrypts them.
+    """
+    return None if connection is None else {"connection": connection.model_dump()}
 
 
 def _reported(fetcher: BaseFetcher) -> dict[str, Any]:
@@ -675,7 +751,7 @@ def _held(ref: ResultRef) -> Iterator[None]:
         raise ResultMissing(f"The worker no longer holds result {ref.result_id!r}") from e
 
 
-def _filed_under(read: ReadPayload) -> dict[str, Any]:
+def _filed_under(read: OperationPayload) -> dict[str, Any]:
     """The worker read settings' fields that name the flow and node the task is filed under."""
     return {"flowfile_flow_id": read.flow_id, "flowfile_node_id": read.node_id}
 
