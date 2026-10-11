@@ -513,11 +513,4 @@ class NodeExecutor:
             )
             return
 
-        if "Connection refused" in error_str and "/submit_query/" in error_str:
-            node_logger.warning(
-                "Could not connect to remote worker. "
-                "Ensure the worker process is running, or change settings to local execution."
-            )
-            node_logger.error("Remote worker connection refused")
-        else:
-            node_logger.error(f"Error running node: {error}")
+        node_logger.error(f"Error running node: {error}")
