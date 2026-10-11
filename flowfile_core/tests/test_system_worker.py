@@ -137,7 +137,7 @@ def unchecked_worker() -> Iterator[None]:
 
 def test_worker_on_other_versions_surfaces_typed_503(admin_client: TestClient, unchecked_worker, monkeypatch) -> None:
     reported = local_capabilities().model_copy(update={"polars_version": "0.0.1"})
-    monkeypatch.setattr(handshake, "fetch_worker_capabilities", lambda: reported)
+    monkeypatch.setattr(handshake, "fetch_worker_capabilities", lambda worker_url: reported)
 
     response = admin_client.get("/system/worker_pool")
 

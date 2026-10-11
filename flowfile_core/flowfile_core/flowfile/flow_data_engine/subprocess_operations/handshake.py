@@ -1,8 +1,9 @@
 """Refuse a worker that runs other versions than core, before it is sent any work.
 
 Core ships the worker serialized Polars plans and reads back what the worker wrote, so the
-two processes must agree on everything a plan's bytes depend on. ``ensure_handshake`` runs in
-the worker session before core's first worker call and checks that once per process.
+two processes must agree on everything a plan's bytes depend on. ``ensure_handshake`` runs
+before core's first worker call, in the REST session and before a websocket submit, each
+passing the worker URL it is about to call, and checks that once per process.
 
 First, ``GET /capabilities`` returns the worker's ``Capabilities``, which are compared field
 by field with ``local_capabilities()`` of this process. Every field must match exactly:
@@ -33,7 +34,7 @@ import polars as pl
 import requests
 from polars_grouper import graph_solver
 
-from flowfile_core.flowfile.execution.errors import ComputeUnavailable, VersionMismatch
+from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable, VersionMismatch
 from shared.compute_protocol import EXPRESSION_PLUGINS, Capabilities, local_capabilities
 
 _COMPARED_FIELDS = ("app_version", "protocol_version", "polars_version", "python_version", "platform")
@@ -44,35 +45,26 @@ _ABSENT = "not installed"
 _handshake_done = False
 
 
-def _worker_url() -> str:
-    """The worker URL as core's worker calls read it, so a test that repoints them repoints this too."""
-    # imported here: subprocess_operations imports this module
-    from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations
-
-    return subprocess_operations.WORKER_URL
-
-
-def fetch_worker_capabilities() -> Capabilities:
-    """``GET /capabilities`` from the worker, signed with the internal token like every worker call.
+def fetch_worker_capabilities(worker_url: str) -> Capabilities:
+    """``GET /capabilities`` from the worker at *worker_url*, signed with the internal token like every worker call.
 
     Raises:
         ComputeUnavailable: the worker cannot be reached.
         VersionMismatch: the worker answers but has no ``/capabilities`` route, so it predates core.
     """
-    from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations
+    # imported here: subprocess_operations imports this module
+    from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+        _WORKER_TIMEOUT,
+        _WorkerAuth,
+    )
 
-    url = _worker_url()
     try:
-        response = requests.get(
-            f"{url}/capabilities",
-            auth=subprocess_operations._WorkerAuth(),
-            timeout=subprocess_operations._WORKER_TIMEOUT,
-        )
-    except requests.ConnectionError as e:
-        raise ComputeUnavailable(f"Could not reach the worker at {url}: {e}") from e
+        response = requests.get(f"{worker_url}/capabilities", auth=_WorkerAuth(), timeout=_WORKER_TIMEOUT)
+    except (requests.ConnectionError, requests.Timeout) as e:
+        raise ComputeUnavailable(f"Could not reach the worker at {worker_url}: {e}") from e
     if response.status_code == 404:
         raise VersionMismatch(
-            f"The worker at {url} does not report its capabilities (GET /capabilities answered 404), "
+            f"The worker at {worker_url} does not report its capabilities (GET /capabilities answered 404), "
             "so it is an older release than core"
         )
     response.raise_for_status()
@@ -112,7 +104,7 @@ def _probe_plans() -> dict[str, pl.LazyFrame]:
     }
 
 
-def probe_plugins(core: Capabilities, worker: Capabilities) -> None:
+def probe_plugins(worker_url: str, core: Capabilities, worker: Capabilities) -> None:
     """Run each probe plan on the worker through core's own submit path.
 
     Raises:
@@ -128,17 +120,19 @@ def probe_plugins(core: Capabilities, worker: Capabilities) -> None:
     for name in EXPRESSION_PLUGINS:
         try:
             fetcher = ExternalDfFetcher(lf=plans[name], flow_id=-1, node_id=-1, wait_on_completion=True)
+        except ComputeError:
+            raise
         except Exception as e:
             raise VersionMismatch(
-                f"The worker at {_worker_url()} could not run a {name} plan "
+                f"The worker at {worker_url} could not run a {name} plan "
                 f"(library: core {core.plugin_libs.get(name, _ABSENT)}, "
                 f"worker {worker.plugin_libs.get(name, _ABSENT)}): {e}"
             ) from e
         clear_task_from_worker(fetcher.file_ref)
 
 
-def ensure_handshake() -> None:
-    """Check the worker before core's first worker call in this process; afterwards return at once.
+def ensure_handshake(worker_url: str) -> None:
+    """Check the worker at *worker_url* before core's first worker call in this process; afterwards return at once.
 
     ``_handshake_done`` is set before the checks start, so the probe's own worker calls pass
     this gate instead of recursing into it (a REST fallback polls from another thread, which
@@ -155,11 +149,11 @@ def ensure_handshake() -> None:
         return
     _handshake_done = True
     try:
-        core, worker = local_capabilities(), fetch_worker_capabilities()
+        core, worker = local_capabilities(), fetch_worker_capabilities(worker_url)
         differences = capability_differences(core, worker)
         if differences:
-            raise VersionMismatch(f"The worker at {_worker_url()} does not match core ({'; '.join(differences)})")
-        probe_plugins(core, worker)
+            raise VersionMismatch(f"The worker at {worker_url} does not match core ({'; '.join(differences)})")
+        probe_plugins(worker_url, core, worker)
     except BaseException:
         _handshake_done = False
         raise

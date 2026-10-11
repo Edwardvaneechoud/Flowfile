@@ -819,7 +819,7 @@ class TestGetTableHistory:
         fetches = []
         reported = local_capabilities().model_copy(update={"polars_version": "0.0.1"})
 
-        def fetch():
+        def fetch(worker_url):
             fetches.append(1)
             return reported
 

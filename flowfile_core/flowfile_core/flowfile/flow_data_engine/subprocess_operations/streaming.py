@@ -243,7 +243,7 @@ def streaming_start(
     than core is refused before the task is sent; a connect that fails re-arms that
     check, because the worker that comes back may be another one.
     """
-    ensure_handshake()
+    ensure_handshake(WORKER_URL)
     ws_url = _get_ws_url() + "/ws/submit"
     metadata = _build_metadata(task_id, operation_type, flow_id, node_id, kwargs)
 

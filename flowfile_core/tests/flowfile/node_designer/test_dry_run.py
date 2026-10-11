@@ -607,7 +607,7 @@ def test_worker_failing_the_handshake_while_polled_answers_500_with_the_message(
     admin = User(username="local_user", id=1, disabled=False, is_admin=True, must_change_password=False)
     reported = local_capabilities().model_copy(update={"polars_version": "0.0.1"})
     monkeypatch.setattr(dr, "trigger_custom_node_operation", lambda request: _Status("task-1"))
-    monkeypatch.setattr(handshake, "fetch_worker_capabilities", lambda: reported)
+    monkeypatch.setattr(handshake, "fetch_worker_capabilities", lambda worker_url: reported)
     handshake.reset_handshake()
     main.app.dependency_overrides[get_current_active_user] = lambda: admin
     try:
