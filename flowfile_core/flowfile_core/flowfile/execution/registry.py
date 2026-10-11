@@ -3,9 +3,10 @@
 A backend is made by a factory. Core registers its own in process with ``register_backend``; an installed
 package adds one through the ``flowfile.compute_backends`` entry-point group, where the entry point's name
 is the backend id and it loads to the factory. Entry points are scanned once, on the first lookup, and an
-in-process registration wins over an entry point of the same name. ``backend`` calls a factory once per
-process and hands out that instance from then on. The backends core ships (``_BUILTIN``) are imported and
-registered the first time their id is looked up without a registration, before the entry points are consulted.
+in-process registration wins over an entry point of the same name. Core's own backends are built in: ``_BUILTIN``
+names the module and class of each, imported and registered on the first lookup of an id nothing registered, and an
+entry point never shadows a built-in id. ``backend`` calls a factory once per process and hands out that instance
+from then on.
 
 ``default_backend_id`` names the default backend, the one a ``"remote"`` flow and a call without a graph use:
 ``FLOWFILE_COMPUTE_BACKEND`` when set, else ``"worker"`` while the ``OFFLOAD_TO_WORKER`` setting is on and
@@ -37,8 +38,9 @@ WORKER_BACKEND_ID = "worker"
 
 _BUILTIN: dict[str, tuple[str, str]] = {
     "local": ("flowfile_core.flowfile.execution.backends.local", "LocalBackend"),
+    "worker": ("flowfile_core.flowfile.execution.backends.worker", "WorkerBackend"),
 }
-"""Backend id -> (module, factory name) of the backends core ships, imported on their first lookup."""
+"""Backend id -> (module, class) of the backends core ships, imported on their first lookup."""
 
 _lock = threading.RLock()
 _factories: dict[str, BackendFactory] = {}
@@ -60,19 +62,20 @@ def backend(backend_id: str) -> ComputeBackend:
     """The process's instance of ``backend_id``, made by its factory on first use.
 
     Raises:
-        LookupError: No factory is registered or installed under ``backend_id``; the message lists the known ids.
+        LookupError: No factory is registered, built in or installed under ``backend_id``; the message lists the
+            known ids, built-in ones included.
     """
     with _lock:
         instance = _instances.get(backend_id)
         if instance is not None:
             return instance
         if backend_id not in _factories and backend_id in _BUILTIN:
-            module_name, factory_name = _BUILTIN[backend_id]
-            register_backend(backend_id, getattr(importlib.import_module(module_name), factory_name))
+            module_name, class_name = _BUILTIN[backend_id]
+            _factories[backend_id] = getattr(importlib.import_module(module_name), class_name)
         _scan_entry_points()
         factory = _factories.get(backend_id)
         if factory is None:
-            known = ", ".join(repr(known_id) for known_id in sorted(_factories)) or "none"
+            known = ", ".join(repr(known_id) for known_id in sorted(_factories.keys() | _BUILTIN.keys())) or "none"
             raise LookupError(f"Unknown compute backend {backend_id!r}; known backends: {known}")
         instance = _instances[backend_id] = factory()
         return instance
@@ -109,7 +112,8 @@ def _scan_entry_points() -> None:
     if _entry_points_scanned:
         return
     for entry_point in importlib.metadata.entry_points(group=ENTRY_POINT_GROUP):
-        _factories.setdefault(entry_point.name, _entry_point_factory(entry_point))
+        if entry_point.name not in _BUILTIN:
+            _factories.setdefault(entry_point.name, _entry_point_factory(entry_point))
     _entry_points_scanned = True
 
 

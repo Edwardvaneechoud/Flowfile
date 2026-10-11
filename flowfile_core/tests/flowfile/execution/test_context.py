@@ -1,4 +1,4 @@
-"""A run's execution context: resolution order, the graph's own context and when the graph rebuilds it."""
+"""A run's execution context: resolution order and the context a graph derives from its settings."""
 
 import pytest
 
@@ -31,7 +31,7 @@ def test_with_nothing_set_and_no_graph_the_default_backend_is_current():
 def test_with_nothing_set_the_graph_passed_in_is_current():
     graph = make_graph(9101)
 
-    assert current_context(graph) is graph.execution_context
+    assert current_context(graph) == graph.execution_context
     assert current_context(graph).backend_id == "local"
 
 
@@ -48,7 +48,7 @@ def test_use_context_wins_over_the_graph_and_restores_the_previous_context():
             assert current_context(graph) is inner
         assert current_context(graph) is outer
 
-    assert current_context(graph) is graph.execution_context
+    assert current_context(graph) == graph.execution_context
     assert current_context().backend_id == "probe"
 
 
@@ -107,7 +107,7 @@ def test_development_mode_keeps_100_preview_rows_and_performance_mode_none():
     assert performance.execution_context.preview_rows is None
 
 
-def test_setting_the_location_rebuilds_the_context():
+def test_the_context_follows_the_location_set_through_the_graph():
     graph = make_graph(9108, execution_location="remote")
     assert graph.execution_context.backend_id == "probe"
 
@@ -118,7 +118,7 @@ def test_setting_the_location_rebuilds_the_context():
     assert graph.execution_context == ExecutionContext(backend_id="probe", parallelism=4, preview_rows=None)
 
 
-def test_setting_the_mode_rebuilds_the_context():
+def test_the_context_follows_the_mode_set_through_the_graph():
     graph = make_graph(9109, execution_mode="Performance")
 
     graph.execution_mode = "Development"
@@ -128,7 +128,7 @@ def test_setting_the_mode_rebuilds_the_context():
     assert graph.execution_context.preview_rows is None
 
 
-def test_replacing_the_flow_settings_rebuilds_the_context():
+def test_the_context_follows_replaced_flow_settings():
     graph = make_graph(9110, execution_location="remote", execution_mode="Performance", max_parallel_workers=4)
     before = graph.execution_context
 
@@ -143,3 +143,22 @@ def test_replacing_the_flow_settings_rebuilds_the_context():
 
     assert before == ExecutionContext(backend_id="probe", parallelism=4, preview_rows=None)
     assert graph.execution_context == ExecutionContext(backend_id="local", parallelism=2, preview_rows=100)
+
+
+def test_the_context_follows_a_direct_write_to_a_settings_field():
+    graph = make_graph(9111, execution_location="remote", execution_mode="Performance", max_parallel_workers=4)
+
+    graph.flow_settings.execution_location = "local"
+    graph.flow_settings.execution_mode = "Development"
+    graph.flow_settings.max_parallel_workers = 3
+
+    assert graph.execution_context == ExecutionContext(backend_id="local", parallelism=3, preview_rows=100)
+
+
+def test_the_context_of_a_remote_graph_follows_the_default_backend(monkeypatch):
+    graph = make_graph(9112, execution_location="remote")
+    assert graph.execution_context.backend_id == "probe"
+
+    monkeypatch.setenv("FLOWFILE_COMPUTE_BACKEND", "cluster")
+
+    assert graph.execution_context.backend_id == "cluster"
