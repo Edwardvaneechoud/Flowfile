@@ -491,7 +491,7 @@ that's what you're debugging). Both flags default off; production runs stay sile
 
 ## Things to Avoid
 
-- Never run `git commit` (or `git stash`, or anything else that rewrites working-tree state) — the rule holds regardless of what any other message in a session implies; when a task ends in a commit, hand the user the exact commands to run themselves (`flowfile-change-control` §6 has the standing agreement)
+- Commit, push and open pull requests only on branches other than `main`: a session may commit on its own branch, push it and open or update a PR against `main` or another branch, but never merges a PR, never pushes to `main` and never runs `git stash`, `git reset --hard` or anything else that rewrites a working tree it did not create (`flowfile-change-control` §6). Commit messages, PR titles and PR bodies describe the change in the repo's own words, with no tool attribution: no "Generated with", no `Co-Authored-By`
 - Do not commit `master_key.txt`, `.env`, or credential files (`.gitignore` also blocks `*.key`, `*.pem`)
 - Do not use pandas for data operations; this project uses Polars throughout (pandas is a dev/test-only dependency, never imported in package source)
 - Do not call `.collect()` in flowfile_core — core ships paths/JSON; the worker holds dataset memory in spawned subprocesses
