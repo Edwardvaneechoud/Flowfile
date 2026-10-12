@@ -105,7 +105,7 @@ def _probe_plans() -> dict[str, pl.LazyFrame]:
 
 
 def probe_plugins(worker_url: str, core: Capabilities, worker: Capabilities) -> None:
-    """Run each probe plan on the worker through core's own submit path.
+    """Run each probe plan on the worker at *worker_url* through core's own submit path.
 
     Raises:
         VersionMismatch: the worker could not run a plugin's plan; names the plugin and the
@@ -119,7 +119,9 @@ def probe_plugins(worker_url: str, core: Capabilities, worker: Capabilities) -> 
     plans = _probe_plans()
     for name in EXPRESSION_PLUGINS:
         try:
-            fetcher = ExternalDfFetcher(lf=plans[name], flow_id=-1, node_id=-1, wait_on_completion=True)
+            fetcher = ExternalDfFetcher(
+                lf=plans[name], flow_id=-1, node_id=-1, wait_on_completion=True, worker_url=worker_url
+            )
         except ComputeError:
             raise
         except Exception as e:
@@ -128,7 +130,7 @@ def probe_plugins(worker_url: str, core: Capabilities, worker: Capabilities) -> 
                 f"(library: core {core.plugin_libs.get(name, _ABSENT)}, "
                 f"worker {worker.plugin_libs.get(name, _ABSENT)}): {e}"
             ) from e
-        clear_task_from_worker(fetcher.file_ref)
+        clear_task_from_worker(fetcher.file_ref, worker_url=worker_url)
 
 
 def ensure_handshake(worker_url: str) -> None:

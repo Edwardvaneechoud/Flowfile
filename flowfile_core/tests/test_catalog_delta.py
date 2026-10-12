@@ -1042,7 +1042,9 @@ class TestTriggerDeltaVersionPreviewMapping:
         monkeypatch.setattr(subops._worker_session, "post", lambda *a, **kw: _FakeResponse())
 
         with pytest.raises(TableVersionUnavailableError):
-            subops.trigger_delta_version_preview("some_table", version=99, n_rows=100)
+            subops.trigger_delta_version_preview(
+                "some_table", version=99, n_rows=100, worker_url="http://worker.invalid"
+            )
 
 
 # table_exists in _table_to_out (delta-aware)

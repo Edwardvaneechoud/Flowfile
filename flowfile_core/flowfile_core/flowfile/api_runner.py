@@ -29,6 +29,7 @@ from typing import Any
 
 import requests
 
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable, worker_failure
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import ExternalDfFetcher
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
@@ -166,6 +167,7 @@ def _materialize(data: Any, max_rows: int | None, flow: Any, api_node: Any):
             flow_id=flow.flow_id,
             node_id=api_node.node_id,
             wait_on_completion=False,
+            worker_url=registry.backend(registry.WORKER_BACKEND_ID).url,
         )
     except ComputeError:
         # The handshake or the transport already typed it (unreachable, version mismatch).
@@ -209,9 +211,7 @@ def _effective_specs(flow, overrides: list[ApiParamSpec]) -> list[ApiParamSpec]:
             specs.append(override)
         else:
             # No stored override: inherit the flow parameter's own declared type.
-            specs.append(
-                ApiParamSpec(name=param.name, type=param.type, enum_values=param.enum_values, required=False)
-            )
+            specs.append(ApiParamSpec(name=param.name, type=param.type, enum_values=param.enum_values, required=False))
     return specs
 
 

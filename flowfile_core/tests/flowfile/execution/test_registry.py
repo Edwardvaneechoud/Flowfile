@@ -31,7 +31,7 @@ class Made:
 
 
 class BuiltIn:
-    """The class a test's built-in table names; the registry imports it and calls it without arguments."""
+    """The factory a test's built-in table holds; the registry calls it without arguments."""
 
 
 def counting_factory(backend_id: str) -> tuple[list[Made], Callable[[], Made]]:
@@ -70,6 +70,14 @@ def fresh_registry(monkeypatch, installed):
     registry.reset()
     yield
     registry.reset()
+
+
+@pytest.fixture
+def no_override():
+    """The test starts with no default override and whatever it sets is undone after it."""
+    previous = registry.set_default_override(None)
+    yield
+    registry.set_default_override(previous)
 
 
 def test_a_registered_backend_is_made_once_and_shared():
@@ -177,7 +185,7 @@ def test_an_unknown_id_with_no_backends_says_so(monkeypatch):
 
 
 def test_an_unknown_id_names_the_built_in_ids_too(monkeypatch):
-    monkeypatch.setattr(registry, "_BUILTIN", {"builtin": (__name__, "BuiltIn")})
+    monkeypatch.setattr(registry, "_BUILTIN", {"builtin": BuiltIn})
     registry.register_backend("probe", counting_factory("probe")[1])
 
     with pytest.raises(LookupError) as raised:
@@ -187,7 +195,7 @@ def test_an_unknown_id_names_the_built_in_ids_too(monkeypatch):
 
 
 def test_an_entry_point_never_shadows_a_built_in_id(monkeypatch, installed):
-    monkeypatch.setattr(registry, "_BUILTIN", {"builtin": (__name__, "BuiltIn")})
+    monkeypatch.setattr(registry, "_BUILTIN", {"builtin": BuiltIn})
     plugin_made, plugin_factory = counting_factory("builtin")
     entry_point = FakeEntryPoint("builtin", plugin_factory)
     installed.entry_points.append(entry_point)
@@ -251,3 +259,77 @@ def test_the_default_backend_is_the_instance_of_the_default_id(monkeypatch):
 
     assert registry.default_backend() is registry.backend("cluster")
     assert len(made) == 1
+
+
+def test_the_built_in_backends_are_core_and_the_worker_at_the_configured_url():
+    from flowfile_core.flowfile.execution.backends.local import LocalBackend
+    from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+
+    local, worker = registry.backend(registry.LOCAL_BACKEND_ID), registry.backend(registry.WORKER_BACKEND_ID)
+
+    assert isinstance(local, LocalBackend)
+    assert isinstance(worker, WorkerBackend)
+    assert worker.url == settings.WORKER_URL
+
+
+@pytest.mark.parametrize("offload", [True, False])
+def test_the_override_names_the_default_ahead_of_the_variable_and_the_flag(monkeypatch, no_override, offload):
+    monkeypatch.setattr(settings.OFFLOAD_TO_WORKER, "value", offload)
+    monkeypatch.setenv("FLOWFILE_COMPUTE_BACKEND", "cluster")
+
+    assert registry.set_default_override("local") is None
+
+    assert registry.default_override() == "local"
+    assert registry.default_backend_id() == "local"
+
+
+def test_undoing_the_override_gives_back_the_default_it_replaced(monkeypatch, no_override):
+    monkeypatch.setattr(settings.OFFLOAD_TO_WORKER, "value", True)
+    before = registry.default_backend_id()
+
+    previous = registry.set_default_override("local")
+    assert registry.default_backend_id() == "local"
+    assert registry.set_default_override(previous) == "local"
+
+    assert registry.default_override() is None
+    assert registry.default_backend_id() == before == "worker"
+
+
+def test_an_override_set_over_another_returns_it_so_undoing_restores_it(no_override):
+    registry.set_default_override("cluster")
+
+    previous = registry.set_default_override("local")
+    registry.set_default_override(previous)
+
+    assert previous == "cluster"
+    assert registry.default_backend_id() == "cluster"
+
+
+def test_the_override_outlives_a_reset(no_override):
+    registry.set_default_override("local")
+
+    registry.reset()
+
+    assert registry.default_backend_id() == "local"
+
+
+def test_the_default_backend_follows_the_override(no_override):
+    made, factory = counting_factory("cluster")
+    registry.register_backend("cluster", factory)
+
+    registry.set_default_override("cluster")
+
+    assert registry.default_backend() is registry.backend("cluster")
+    assert len(made) == 1
+
+
+def test_a_child_runs_on_core_s_own_backend_by_both_names():
+    assert registry.child_env() == {"FLOWFILE_COMPUTE_BACKEND": "local", "FLOWFILE_OFFLOAD_TO_WORKER": "0"}
+
+
+def test_the_child_env_makes_core_s_own_backend_the_default_whatever_the_flag(monkeypatch, no_override):
+    monkeypatch.setattr(settings.OFFLOAD_TO_WORKER, "value", True)
+    for name, value in registry.child_env().items():
+        monkeypatch.setenv(name, value)
+
+    assert registry.default_backend_id() == registry.LOCAL_BACKEND_ID

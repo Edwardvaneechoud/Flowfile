@@ -151,7 +151,7 @@ class TestCatalogWriter:
         Exercises flowfile.__main__.run_flow (the non-frozen subprocess path);
         flowfile_core.run_flow_cli.run_flow_cli is an identical mirror for frozen builds.
         """
-        from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+        from flowfile_core.flowfile.execution import registry
 
         ns_id = _create_namespace()
 
@@ -183,14 +183,14 @@ class TestCatalogWriter:
             resolved_path = str(flow_path.resolve())
             reg_id = _create_flow_registration(ns_id, name="producer_flow", path=resolved_path)
 
-            prev_offload = OFFLOAD_TO_WORKER.value
+            prev_override = registry.default_override()
             prev_env = {k: os.environ.get(k) for k in ("FLOWFILE_SINGLE_FILE_MODE", "FLOWFILE_WORKER_PORT")}
             try:
                 from flowfile.__main__ import run_flow
 
                 exit_code = run_flow(resolved_path, run_id=None)
             finally:
-                OFFLOAD_TO_WORKER.set(prev_offload)
+                registry.set_default_override(prev_override)
                 for key, value in prev_env.items():
                     if value is None:
                         os.environ.pop(key, None)

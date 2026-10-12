@@ -16,6 +16,7 @@ import pytest
 
 from polars.exceptions import ColumnNotFoundError
 
+from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
 from flowfile_core.flowfile.execution.protocol import ResultRef, SubmitHints
@@ -1039,7 +1040,7 @@ class TestColumnStatsWorkerOffload:
         graph = create_graph_with_read_and_select(execution_location="local")
         graph.run_graph()
         node = graph.get_node(2)
-        worker = WorkerBackend()
+        worker = WorkerBackend(url=WORKER_URL)
         collects = _count_collects(monkeypatch)
 
         with (
@@ -1064,7 +1065,7 @@ class TestColumnStatsWorkerOffload:
         graph = create_graph_with_read_and_select(execution_location="local")
         graph.run_graph()
         node = graph.get_node(2)
-        worker = WorkerBackend()
+        worker = WorkerBackend(url=WORKER_URL)
         collects = _count_collects(monkeypatch)
 
         with patch.object(

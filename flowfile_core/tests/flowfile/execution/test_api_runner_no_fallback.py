@@ -18,10 +18,10 @@ from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile import api_runner
 from flowfile_core.flowfile.api_runner import ApiExecutionError
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, PlanRejected, TaskFailed
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations import BaseFetcher, streaming
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import BaseFetcher
 from flowfile_core.flowfile.flow_graph import add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas
@@ -51,8 +51,8 @@ class _KilledChildFetcher(BaseFetcher):
 
     description = "Process ended unexpectedly"
 
-    def __init__(self, *, file_ref, **_kwargs):
-        super().__init__(file_ref=file_ref)
+    def __init__(self, *, file_ref, worker_url, **_kwargs):
+        super().__init__(file_ref=file_ref, worker_url=worker_url)
         with self._lock:
             self._started = True  # the run is over, so get_result must not start polling the worker
         self._record_task_failure(self.description, -1, None)
@@ -141,13 +141,11 @@ def run_record(monkeypatch):
 
 @pytest.fixture
 def closed_worker_port(monkeypatch) -> int:
-    """Point both worker transports at a port nothing listens on."""
+    """Point the worker backend, whose URL the published run sends its plan to, at a port nothing listens on."""
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
-    url = f"http://127.0.0.1:{port}"
-    monkeypatch.setattr(subops, "WORKER_URL", url)
-    monkeypatch.setattr(streaming, "WORKER_URL", url)
+    monkeypatch.setattr(registry.backend(registry.WORKER_BACKEND_ID), "url", f"http://127.0.0.1:{port}")
     return port
 
 

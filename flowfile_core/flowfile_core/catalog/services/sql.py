@@ -6,6 +6,7 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
+from flowfile_core.catalog.compute import worker_url
 from flowfile_core.catalog.constants import (
     DEFAULT_SQL_MAX_ROWS,
     SAVED_FLOW_NODE_X,
@@ -144,7 +145,9 @@ class SqlService:
         from flowfile_core.catalog import service as _service_module
 
         try:
-            result = _service_module.trigger_sql_query(query, delta_map, max_rows, virtual_refs=virtual_refs or None)
+            result = _service_module.trigger_sql_query(
+                query, delta_map, max_rows, virtual_refs=virtual_refs or None, worker_url=worker_url()
+            )
         except RuntimeError as e:
             return SqlQueryResult(error=friendly_relation_error(str(e), query))
         if result.get("error"):
@@ -156,7 +159,9 @@ class SqlService:
         lazy_frame = self._resolve_virtual_flow_table_via_facade(virtual_id, user_id=user_id, run_location="remote")
         # Post-resolution read: resolution may have re-stamped source_table_versions.
         versions_hash = self._require_virtual_tables().fresh_versions_hash(virtual_id)
-        result = trigger_resolve_virtual_table(virtual_id, lazy_frame.serialize(), versions_hash)
+        result = trigger_resolve_virtual_table(
+            virtual_id, lazy_frame.serialize(), versions_hash, worker_url=worker_url()
+        )
         return result["ipc_path"]
 
     def save_sql_query_as_flow(

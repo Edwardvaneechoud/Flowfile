@@ -15,6 +15,7 @@ import polars as pl
 import pytest
 import requests
 
+from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.analytics import node_viz
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import worker as worker_module
@@ -59,13 +60,15 @@ def fake_worker():
     """Capture what core ships to the worker instead of calling it."""
     captured = {}
 
-    def fake_query(worker_source, payload, max_rows):
+    def fake_query(worker_source, payload, max_rows, *, worker_url):
+        captured["worker_url"] = worker_url
         captured["source"] = worker_source
         captured["payload"] = payload
         captured["max_rows"] = max_rows
         return {"rows": [], "total_rows": 0, "truncated": False, "elapsed_ms": 0.0, "cache_hit": False}
 
-    def fake_fields(worker_source):
+    def fake_fields(worker_source, *, worker_url):
+        captured["fields_worker_url"] = worker_url
         captured["fields_source"] = worker_source
         return {"fields": [{"fid": "g"}], "cache_hit": False}
 
@@ -212,7 +215,7 @@ def _viz_payload(**overrides) -> VizSessionPayload:
 def test_a_query_on_the_worker_backend_sends_the_serialised_plan_under_its_session_key(fake_worker):
     request = _viz_payload()
 
-    result = WorkerBackend().run_op(OperationKind.viz_session, op_payload(request))
+    result = WorkerBackend(url=WORKER_URL).run_op(OperationKind.viz_session, op_payload(request))
 
     source = fake_worker["source"]
     assert source == {
@@ -223,6 +226,7 @@ def test_a_query_on_the_worker_backend_sends_the_serialised_plan_under_its_sessi
     assert b64decode(source["plan_bytes"]) == request.plan.serialize()
     assert fake_worker["payload"] is _AGG_PAYLOAD
     assert fake_worker["max_rows"] == 500
+    assert fake_worker["worker_url"] == WORKER_URL
     assert result.refs == {}
     assert result.metadata == {"rows": [], "total_rows": 0, "truncated": False, "elapsed_ms": 0.0, "cache_hit": False}
 
@@ -230,7 +234,7 @@ def test_a_query_on_the_worker_backend_sends_the_serialised_plan_under_its_sessi
 def test_a_fields_request_on_the_worker_backend_asks_for_the_field_schema(fake_worker):
     request = _viz_payload(request="fields", query=None, max_rows=None)
 
-    result = WorkerBackend().run_op(OperationKind.viz_session, op_payload(request))
+    result = WorkerBackend(url=WORKER_URL).run_op(OperationKind.viz_session, op_payload(request))
 
     assert fake_worker["fields_source"]["session_key"] == "node:abc:1.0"
     assert pl.LazyFrame.deserialize(io.BytesIO(b64decode(fake_worker["fields_source"]["plan_bytes"]))).collect()[
@@ -245,7 +249,7 @@ def test_an_unreachable_worker_fails_a_viz_session_typed():
         patch.object(worker_module, "trigger_visualize_query", side_effect=requests.ConnectionError("refused")),
         pytest.raises(ComputeUnavailable, match="refused"),
     ):
-        WorkerBackend().run_op(OperationKind.viz_session, op_payload(_viz_payload()))
+        WorkerBackend(url=WORKER_URL).run_op(OperationKind.viz_session, op_payload(_viz_payload()))
 
 
 def test_a_worker_error_answer_reaches_the_route_as_before():
@@ -255,7 +259,7 @@ def test_a_worker_error_answer_reaches_the_route_as_before():
         patch.object(worker_module, "trigger_visualize_query", side_effect=failure),
         pytest.raises(RuntimeError, match="boom"),
     ):
-        WorkerBackend().run_op(OperationKind.viz_session, op_payload(_viz_payload()))
+        WorkerBackend(url=WORKER_URL).run_op(OperationKind.viz_session, op_payload(_viz_payload()))
 
 
 def test_core_refuses_a_viz_session():

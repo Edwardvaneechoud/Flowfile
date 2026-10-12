@@ -9,7 +9,8 @@ override that beats the saved value at boot; ``env_override`` in the
 response tells the UI when that is the case.
 
 The frontend never talks to the worker directly (it only knows core), so
-core forwards to the worker's ``GET/POST /pool``. A worker that is down or
+core forwards to ``GET/POST /pool`` on the worker the backend registry's
+worker backend runs on. A worker that is down or
 unreachable surfaces as 503 ``WORKER_UNAVAILABLE`` — never 401, which the
 frontend axios interceptor would treat as JWT expiry. So does a worker that
 fails core's handshake (``VersionMismatch``): it is unavailable to this core.
@@ -23,7 +24,7 @@ from pydantic import BaseModel, Field
 
 from flowfile_core.auth.jwt import get_current_admin_user
 from flowfile_core.auth.models import User
-from flowfile_core.configs.settings import WORKER_URL
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import _worker_session
 
@@ -69,8 +70,10 @@ class WorkerPoolState(BaseModel):
 
 
 def _forward(method: str, json_body: dict | None = None) -> WorkerPoolState:
+    """Send ``method`` to ``/pool`` on the worker the worker backend runs on, through the worker session."""
+    worker_url = registry.backend(registry.WORKER_BACKEND_ID).url
     try:
-        response = _worker_session.request(method, f"{WORKER_URL}/pool", json=json_body, timeout=_TIMEOUT)
+        response = _worker_session.request(method, "/pool", worker_url=worker_url, json=json_body, timeout=_TIMEOUT)
         response.raise_for_status()
     except (requests.RequestException, ComputeUnavailable) as exc:
         raise HTTPException(

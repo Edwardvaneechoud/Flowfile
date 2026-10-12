@@ -14,10 +14,19 @@ import pytest
 import yaml
 
 from flowfile.__main__ import run_flow
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_graph import add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.schemas import input_schema, schemas, transform_schema
+
+
+@pytest.fixture(autouse=True)
+def undo_the_default_backend_override():
+    """``run_flow`` makes core's own backend the process's default backend; give each test the default it found."""
+    previous = registry.default_override()
+    yield
+    registry.set_default_override(previous)
 
 
 @pytest.fixture

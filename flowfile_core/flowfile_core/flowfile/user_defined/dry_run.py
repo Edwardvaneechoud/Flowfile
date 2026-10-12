@@ -5,10 +5,10 @@ Executes a candidate custom node against bounded sample inputs in the worker
 error kind. Core ast-parses first so syntax errors never reach the worker;
 sample inputs come from the request or the node's ``example_inputs``; secrets
 resolve for real via the author's own/shared secrets. The run is submitted with
-``trigger_custom_node_operation`` and followed through the worker backend
-(``status``, ``task_result``, ``cancel``); the task is cleared afterwards with
-``clear_task_from_worker``, the helper the backend's ``release`` uses, since the
-protocol has no call that clears a task by id.
+``trigger_custom_node_operation`` on the worker backend's ``url`` and followed
+through that backend (``status``, ``task_result``, ``cancel``); the task is
+cleared afterwards with ``clear_task_from_worker``, the helper the backend's
+``release`` uses, since the protocol has no call that clears a task by id.
 """
 
 import ast
@@ -299,7 +299,7 @@ def _cancel(task_id: str) -> None:
 
 def _clear(task_id: str) -> None:
     """Clear the task and its output files from the worker; best effort, ``clear_task_from_worker`` logs a failure."""
-    clear_task_from_worker(task_id)
+    clear_task_from_worker(task_id, worker_url=registry.backend(registry.WORKER_BACKEND_ID).url)
 
 
 def _map_payload(payload: dict, output_names: list[str]) -> DryRunResponse:
@@ -390,7 +390,9 @@ def run_dry_run(request: DryRunRequest, user_id: int | None) -> DryRunResponse:
     )
 
     try:
-        start_status = trigger_custom_node_operation(execute_input)
+        start_status = trigger_custom_node_operation(
+            execute_input, worker_url=registry.backend(registry.WORKER_BACKEND_ID).url
+        )
     except Exception as e:
         return _fail("load", f"The compute worker is unavailable: {e}")
 

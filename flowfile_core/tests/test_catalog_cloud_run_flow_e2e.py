@@ -34,8 +34,8 @@ import pytest
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.storage_backend import resolve_for_namespace
-from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.schemas import input_schema
 from tests.flowfile.conftest import (
@@ -79,16 +79,16 @@ def _clean(monkeypatch):
 
 
 def _run_saved_flow(resolved_path: str) -> int:
-    """Run a saved flow via the manual/scheduled-run CLI entry point, restoring the
-    process-global offload flag + env afterwards (run_flow mutates them)."""
-    prev_offload = OFFLOAD_TO_WORKER.value
+    """Run a saved flow via the manual/scheduled-run CLI entry point, undoing the
+    process-wide default backend override and the env afterwards (run_flow sets them)."""
+    prev_override = registry.default_override()
     prev_env = {k: os.environ.get(k) for k in ("FLOWFILE_SINGLE_FILE_MODE", "FLOWFILE_WORKER_PORT")}
     try:
         from flowfile.__main__ import run_flow
 
         return run_flow(resolved_path, run_id=None)
     finally:
-        OFFLOAD_TO_WORKER.set(prev_offload)
+        registry.set_default_override(prev_override)
         for key, value in prev_env.items():
             if value is None:
                 os.environ.pop(key, None)

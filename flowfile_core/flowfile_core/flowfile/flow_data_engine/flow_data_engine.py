@@ -25,6 +25,7 @@ from pyarrow.parquet import ParquetFile
 
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import NodeLogger
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.flow_data_engine import utils
 from flowfile_core.flowfile.flow_data_engine.bounded import count_rows, single_row, unique_values
@@ -1628,15 +1629,21 @@ class FlowDataEngine:
     def cache(self) -> FlowDataEngine:
         """Caches the current DataFrame to disk and updates the internal reference.
 
-        This triggers a background process to write the current LazyFrame's result
-        to a temporary file. Subsequent operations on this `FlowDataEngine` instance
-        will read from the cached file, which can speed up downstream computations.
+        This triggers a background process on the worker the worker backend runs on to
+        write the current LazyFrame's result to a temporary file. Subsequent operations on
+        this `FlowDataEngine` instance will read from the cached file, which can speed up
+        downstream computations.
 
         Returns:
             The same `FlowDataEngine` instance, now backed by the cached data.
         """
         edf = ExternalDfFetcher(
-            lf=self.data_frame, file_ref=str(id(self)), wait_on_completion=False, flow_id=-1, node_id=-1
+            lf=self.data_frame,
+            file_ref=str(id(self)),
+            wait_on_completion=False,
+            flow_id=-1,
+            node_id=-1,
+            worker_url=_worker_url(),
         )
         logger.info("Caching data in background")
         result = edf.get_result()
@@ -1873,6 +1880,7 @@ class FlowDataEngine:
             wait_on_completion=False,
             flow_id=flow_id,
             node_id=node_id,
+            worker_url=_worker_url(),
         )
         return FlowDataEngine(external_tracker.get_result())
 
@@ -3087,16 +3095,25 @@ class FlowDataEngine:
 
     @classmethod
     def create_from_path_worker(cls, received_table: input_schema.ReceivedTable, flow_id: int, node_id: int | str):
-        """Creates a FlowDataEngine from a path in a worker process."""
+        """Creates a FlowDataEngine from a path, read by the worker the worker backend runs on."""
         refuse_cloud_path(received_table.path, received_table.file_type)
         received_table.set_absolute_filepath()
         if received_table.scan_mode == "directory":
             raise DirectoryScanUnsupportedError("Directory scan mode cannot be executed by the worker file reader.")
 
         external_fetcher = ExternalCreateFetcher(
-            received_table=received_table, file_type=received_table.file_type, flow_id=flow_id, node_id=node_id
+            received_table=received_table,
+            file_type=received_table.file_type,
+            flow_id=flow_id,
+            node_id=node_id,
+            worker_url=_worker_url(),
         )
         return cls(external_fetcher.get_result())
+
+
+def _worker_url() -> str:
+    """The base URL of the worker the registry's worker backend runs on, for the engine's own worker calls."""
+    return registry.backend(registry.WORKER_BACKEND_ID).url
 
 
 def execute_sql_query(*flowfile_tables: FlowDataEngine, sql_code: str) -> FlowDataEngine:

@@ -6,6 +6,7 @@ import polars as pl
 import pytest
 import requests
 
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, VersionMismatch
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake, streaming
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
@@ -17,10 +18,13 @@ from shared.compute_protocol import EXPRESSION_PLUGINS, local_capabilities
 HINT = ". Is the worker running? Start it, or switch the flow to local execution."
 
 
+WORKER_URL = registry.backend(registry.WORKER_BACKEND_ID).url
+"""The session worker's URL: the one the registry's worker backend, and so a remote flow, calls."""
+
+
 @pytest.fixture(autouse=True)
-def unchecked_worker(monkeypatch):
-    """Every test starts in a process that has not checked the worker yet, with offload on."""
-    monkeypatch.setattr(subops, "OFFLOAD_TO_WORKER", True)
+def unchecked_worker():
+    """Every test starts in a process that has not checked the worker yet."""
     handshake.reset_handshake()
     yield
     handshake.reset_handshake()
@@ -140,7 +144,7 @@ def _development_remote_graph(flow_id: int):
 def test_remote_run_against_the_session_worker_passes_the_handshake(capability_fetches):
     graph = _one_node_remote_graph(9201)
     node = graph.get_node(1)
-    subops.clear_task_from_worker(node.hash)
+    subops.clear_task_from_worker(node.hash, worker_url=WORKER_URL)
     handshake.reset_handshake()
     capability_fetches.clear()
 
@@ -148,9 +152,9 @@ def test_remote_run_against_the_session_worker_passes_the_handshake(capability_f
 
     assert run_info.success is True
     assert node.results.resulting_data.to_pylist() == [{"a": 1}]
-    assert capability_fetches == [subops.WORKER_URL]
+    assert capability_fetches == [WORKER_URL]
     assert handshake._handshake_done is True
-    subops.clear_task_from_worker(node.hash)
+    subops.clear_task_from_worker(node.hash, worker_url=WORKER_URL)
 
 
 def test_cached_remote_node_fails_on_a_mismatched_worker_without_running_in_core(
@@ -186,7 +190,7 @@ def test_cached_remote_node_fails_on_a_mismatched_worker_without_running_in_core
     assert run_info.success is False
     assert result.success is False
     assert result.error == (
-        f"The worker at {subops.WORKER_URL} does not match core (polars_version: core {pl.__version__}, worker 0.0.1)"
+        f"The worker at {WORKER_URL} does not match core (polars_version: core {pl.__version__}, worker 0.0.1)"
     )
     assert node.results.errors == result.error
     assert node._last_exception_class == "VersionMismatch"
@@ -199,10 +203,10 @@ def test_cached_remote_node_fails_on_a_mismatched_worker_without_running_in_core
 
 
 def test_handshake_runs_once_per_process(capability_fetches, sent_to_worker):
-    assert subops.results_exists("no-such-task") is False
-    assert subops.results_exists("no-such-task") is False
+    assert subops.results_exists("no-such-task", worker_url=WORKER_URL) is False
+    assert subops.results_exists("no-such-task", worker_url=WORKER_URL) is False
 
-    assert capability_fetches == [subops.WORKER_URL]
+    assert capability_fetches == [WORKER_URL]
     assert sent_to_worker["probe_plans"] == len(EXPRESSION_PLUGINS)
     assert handshake._handshake_done is True
 
@@ -211,10 +215,10 @@ def test_other_polars_version_is_refused_before_anything_is_sent(worker_reports,
     fetches = worker_reports(polars_version="0.0.1")
 
     with pytest.raises(VersionMismatch) as excinfo:
-        subops.results_exists("no-such-task")
+        subops.results_exists("no-such-task", worker_url=WORKER_URL)
 
     assert str(excinfo.value) == (
-        f"The worker at {subops.WORKER_URL} does not match core (polars_version: core {pl.__version__}, worker 0.0.1)"
+        f"The worker at {WORKER_URL} does not match core (polars_version: core {pl.__version__}, worker 0.0.1)"
     )
     assert fetches == [1]
     assert sent_to_worker == {"requests": 0, "probe_plans": 0}
@@ -226,7 +230,7 @@ def test_refused_worker_is_checked_again_on_the_next_call(worker_reports):
 
     for _ in range(2):
         with pytest.raises(VersionMismatch):
-            subops.get_status("no-such-task")
+            subops.get_status("no-such-task", worker_url=WORKER_URL)
 
     assert fetches == [1, 1]
 
@@ -236,10 +240,10 @@ def test_every_difference_is_named(worker_reports):
     worker_reports(app_version="0.0.0", protocol_version=core.protocol_version + 1, platform="plan9-mips")
 
     with pytest.raises(VersionMismatch) as excinfo:
-        subops.results_exists("no-such-task")
+        subops.results_exists("no-such-task", worker_url=WORKER_URL)
 
     assert str(excinfo.value) == (
-        f"The worker at {subops.WORKER_URL} does not match core ("
+        f"The worker at {WORKER_URL} does not match core ("
         f"app_version: core {core.app_version}, worker 0.0.0; "
         f"protocol_version: core {core.protocol_version}, worker {core.protocol_version + 1}; "
         f"platform: core {core.platform}, worker plan9-mips)"
@@ -252,10 +256,10 @@ def test_other_plugin_library_path_is_refused_with_the_plugin_and_both_paths(wor
     fetches = worker_reports(plugin_libs={**core_libs, "polars_ds": moved})
 
     with pytest.raises(VersionMismatch) as excinfo:
-        subops.results_exists("no-such-task")
+        subops.results_exists("no-such-task", worker_url=WORKER_URL)
 
     assert str(excinfo.value) == (
-        f"The worker at {subops.WORKER_URL} does not match core "
+        f"The worker at {WORKER_URL} does not match core "
         f"(plugin_libs[polars_ds]: core {core_libs['polars_ds']}, worker {moved})"
     )
     assert fetches == [1]
@@ -267,10 +271,10 @@ def test_other_plugin_version_is_refused_with_the_plugin_and_both_versions(worke
     worker_reports(plugins={**core_plugins, "polars_grouper": "0.0.1"})
 
     with pytest.raises(VersionMismatch) as excinfo:
-        subops.results_exists("no-such-task")
+        subops.results_exists("no-such-task", worker_url=WORKER_URL)
 
     assert str(excinfo.value) == (
-        f"The worker at {subops.WORKER_URL} does not match core "
+        f"The worker at {WORKER_URL} does not match core "
         f"(plugins[polars_grouper]: core {core_plugins['polars_grouper']}, worker 0.0.1)"
     )
 
@@ -280,10 +284,10 @@ def test_plugin_on_one_side_only_is_a_mismatch(worker_reports):
     worker_reports(plugin_libs={"polars_grouper": core_libs["polars_grouper"]})
 
     with pytest.raises(VersionMismatch) as excinfo:
-        subops.results_exists("no-such-task")
+        subops.results_exists("no-such-task", worker_url=WORKER_URL)
 
     assert str(excinfo.value) == (
-        f"The worker at {subops.WORKER_URL} does not match core "
+        f"The worker at {WORKER_URL} does not match core "
         f"(plugin_libs[polars_ds]: core {core_libs['polars_ds']}, worker not installed)"
     )
 
@@ -295,25 +299,24 @@ def test_plugin_plan_the_worker_cannot_run_is_refused_naming_the_plugin(capabili
     libs = local_capabilities().plugin_libs
 
     with pytest.raises(VersionMismatch) as excinfo:
-        subops.results_exists("no-such-task")
+        subops.results_exists("no-such-task", worker_url=WORKER_URL)
 
     message = str(excinfo.value)
     assert message.startswith(
-        f"The worker at {subops.WORKER_URL} could not run a polars_ds plan "
+        f"The worker at {WORKER_URL} could not run a polars_ds plan "
         f"(library: core {libs['polars_ds']}, worker {libs['polars_ds']}): "
     )
     assert "not_a_column" in message
     assert "polars_grouper" not in message
-    assert capability_fetches == [subops.WORKER_URL]
+    assert capability_fetches == [WORKER_URL]
     assert handshake._handshake_done is False
 
 
-def test_worker_without_a_capabilities_route_is_an_older_release(monkeypatch):
-    older_worker = f"{subops.WORKER_URL}/no-such-prefix"
-    monkeypatch.setattr(subops, "WORKER_URL", older_worker)
+def test_worker_without_a_capabilities_route_is_an_older_release():
+    older_worker = f"{WORKER_URL}/no-such-prefix"
 
     with pytest.raises(VersionMismatch) as excinfo:
-        subops.get_status("no-such-task")
+        subops.get_status("no-such-task", worker_url=older_worker)
 
     assert str(excinfo.value) == (
         f"The worker at {older_worker} does not report its capabilities (GET /capabilities answered 404), "
@@ -335,7 +338,7 @@ def test_websocket_submit_to_a_mismatched_worker_is_refused(
     result = next(r for r in refused.node_step_result if r.node_id == 1)
     assert refused.success is False
     assert result.error == (
-        f"The worker at {subops.WORKER_URL} does not match core (polars_version: core {pl.__version__}, worker 0.0.1)"
+        f"The worker at {WORKER_URL} does not match core (polars_version: core {pl.__version__}, worker 0.0.1)"
     )
     assert node._last_exception_class == "VersionMismatch"
     assert websocket_connects == []
@@ -352,51 +355,49 @@ def test_websocket_submit_to_a_mismatched_worker_is_refused(
     assert handshake._handshake_done is True
 
 
-def test_failed_websocket_connect_rearms_the_handshake(capability_fetches, closed_port_url, monkeypatch):
-    assert subops.results_exists("no-such-task") is False
+def test_failed_websocket_connect_rearms_the_handshake(capability_fetches, closed_port_url, websocket_connects):
+    assert subops.results_exists("no-such-task", worker_url=WORKER_URL) is False
     assert handshake._handshake_done is True
-    monkeypatch.setattr(streaming, "_get_ws_url", lambda: closed_port_url.replace("http://", "ws://"))
+    websocket_connects.clear()
 
     with pytest.raises(OSError):
-        streaming.streaming_start(task_id="t", operation_type="store", flow_id=-1, node_id=-1, lf_bytes=b"")
+        streaming.streaming_start(
+            task_id="t", operation_type="store", flow_id=-1, node_id=-1, lf_bytes=b"", worker_url=closed_port_url
+        )
 
+    assert websocket_connects == [closed_port_url.replace("http://", "ws://") + "/ws/submit"]
     assert handshake._handshake_done is False
-    assert capability_fetches == [subops.WORKER_URL]
+    assert capability_fetches == [WORKER_URL]
 
 
 def test_cleanup_calls_to_a_mismatched_worker_return_false(worker_reports, sent_to_worker):
     fetches = worker_reports(polars_version="0.0.1")
 
-    assert subops.clear_task_from_worker("no-such-task") is False
-    assert subops.cancel_task("no-such-task") is False
+    assert subops.clear_task_from_worker("no-such-task", worker_url=WORKER_URL) is False
+    assert subops.cancel_task("no-such-task", worker_url=WORKER_URL) is False
 
     assert fetches == [1, 1]
     assert sent_to_worker == {"requests": 0, "probe_plans": 0}
 
 
-def test_unreachable_worker_rearms_the_handshake(capability_fetches, closed_port_url, monkeypatch):
-    live_url = subops.WORKER_URL
-    assert subops.results_exists("no-such-task") is False
-    assert capability_fetches == [live_url]
+def test_unreachable_worker_rearms_the_handshake(capability_fetches, closed_port_url):
+    assert subops.results_exists("no-such-task", worker_url=WORKER_URL) is False
+    assert capability_fetches == [WORKER_URL]
 
-    monkeypatch.setattr(subops, "WORKER_URL", closed_port_url)
     with pytest.raises(ComputeUnavailable) as excinfo:
-        subops.results_exists("no-such-task")
+        subops.results_exists("no-such-task", worker_url=closed_port_url)
     assert str(excinfo.value).startswith(f"Could not reach the worker at {closed_port_url}: ")
-    assert capability_fetches == [live_url]
+    assert capability_fetches == [WORKER_URL]
     assert handshake._handshake_done is False
 
-    monkeypatch.setattr(subops, "WORKER_URL", live_url)
-    assert subops.results_exists("no-such-task") is False
-    assert capability_fetches == [live_url, live_url]
+    assert subops.results_exists("no-such-task", worker_url=WORKER_URL) is False
+    assert capability_fetches == [WORKER_URL, WORKER_URL]
     assert handshake._handshake_done is True
 
 
-def test_unreachable_worker_on_the_first_call_is_compute_unavailable(closed_port_url, monkeypatch):
-    monkeypatch.setattr(subops, "WORKER_URL", closed_port_url)
-
+def test_unreachable_worker_on_the_first_call_is_compute_unavailable(closed_port_url):
     with pytest.raises(ComputeUnavailable) as excinfo:
-        subops.get_status("no-such-task")
+        subops.get_status("no-such-task", worker_url=closed_port_url)
 
     message = str(excinfo.value)
     assert message.startswith(f"Could not reach the worker at {closed_port_url}: ")

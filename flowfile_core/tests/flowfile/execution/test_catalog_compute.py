@@ -168,8 +168,8 @@ def delta_table(tmp_path) -> str:
 def test_a_metadata_read_runs_where_the_context_says(delta_table, monkeypatch):
     asked = []
 
-    def worker_read(table_name, storage=None):
-        asked.append((table_name, storage))
+    def worker_read(table_name, storage=None, *, worker_url):
+        asked.append((table_name, storage, worker_url))
         return {
             "column_schema": [{"name": "id", "dtype": "Int64"}],
             "row_count": 99,
@@ -186,14 +186,14 @@ def test_a_metadata_read_runs_where_the_context_says(delta_table, monkeypatch):
 
     assert in_core[1:3] == (3, 2)
     assert on_worker == ([{"name": "id", "dtype": "Int64"}], 99, 1, 7)
-    assert asked == [("people", None)]
+    assert asked == [("people", None, registry.backend(registry.WORKER_BACKEND_ID).url)]
 
 
 def test_a_preview_runs_where_the_context_says(delta_table, monkeypatch):
     asked = []
 
-    def worker_preview(table_name, n_rows, storage=None):
-        asked.append((table_name, n_rows))
+    def worker_preview(table_name, n_rows, storage=None, *, worker_url):
+        asked.append((table_name, n_rows, worker_url))
         return CatalogTablePreview(columns=["id"], dtypes=["Int64"], rows=[[42]], total_rows=1)
 
     monkeypatch.setattr(previews_module, "trigger_delta_preview", worker_preview)
@@ -206,7 +206,7 @@ def test_a_preview_runs_where_the_context_says(delta_table, monkeypatch):
 
     assert in_core.rows == [[1, "ada"], [2, "grace"]]
     assert on_worker.rows == [[42]]
-    assert asked == [("people", 2)]
+    assert asked == [("people", 2, registry.backend(registry.WORKER_BACKEND_ID).url)]
 
 
 # The catalog writer's operation and payload

@@ -11,7 +11,7 @@ from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
-from flowfile_core.flowfile.execution.context import ExecutionContext, current_context
+from flowfile_core.flowfile.execution.context import ExecutionContext, current_context, use_context
 from flowfile_core.flowfile.execution.protocol import ComputeBackend
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
@@ -145,7 +145,23 @@ def test_a_sequential_stage_runs_on_the_run_thread_under_the_graph_context(count
 
     assert run_info.success is True
     assert graph.execution_context.backend_id == "local"
+    assert graph.execution_context.parallelism == 1
     assert [call.context for call in recorder.calls] == [graph.execution_context] * 2
+    assert {call.thread for call in recorder.calls} == {threading.current_thread().name}
+
+
+def test_a_stage_runs_as_many_nodes_at_once_as_the_run_context_allows(counting, recorder):
+    graph = make_graph(9206, execution_location="remote", max_parallel_workers=4)
+    for node_id in (1, 2, 3, 4):
+        add_manual_input(graph, node_id)
+    one_at_a_time = ExecutionContext(backend_id="counting", parallelism=1, preview_rows=None)
+
+    with use_context(one_at_a_time):
+        run_info = graph.run_graph()
+
+    assert run_info.success is True
+    assert graph.execution_context.parallelism == 4
+    assert [call.context for call in recorder.calls] == [one_at_a_time] * 4
     assert {call.thread for call in recorder.calls} == {threading.current_thread().name}
 
 

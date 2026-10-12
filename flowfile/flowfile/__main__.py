@@ -18,9 +18,9 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
     Returns:
         Exit code (0 for success, 1 for failure)
     """
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+    from flowfile_core.flowfile.execution import registry
 
-    OFFLOAD_TO_WORKER.set(False)
+    registry.set_default_override(registry.LOCAL_BACKEND_ID)
 
     from flowfile_core.flowfile.manage.io_flowfile import open_flow
 

@@ -78,13 +78,13 @@ def test_a_context_resolves_its_backend_on_access_so_it_may_exist_before_registr
     assert len(made) == 1
 
 
-def test_a_local_graph_runs_on_the_local_backend():
+def test_a_local_graph_runs_on_the_local_backend_one_node_at_a_time():
     graph = make_graph(9103, execution_location="local", max_parallel_workers=3)
 
-    assert graph.execution_context == ExecutionContext(backend_id="local", parallelism=3, preview_rows=None)
+    assert graph.execution_context == ExecutionContext(backend_id="local", parallelism=1, preview_rows=None)
 
 
-def test_a_remote_graph_runs_on_the_default_backend():
+def test_a_remote_graph_runs_on_the_default_backend_up_to_its_parallel_workers_at_once():
     graph = make_graph(9104, execution_location="remote", max_parallel_workers=6)
 
     assert graph.execution_context == ExecutionContext(backend_id="probe", parallelism=6, preview_rows=None)
@@ -112,7 +112,7 @@ def test_the_context_follows_the_location_set_through_the_graph():
     assert graph.execution_context.backend_id == "probe"
 
     graph.execution_location = "local"
-    assert graph.execution_context == ExecutionContext(backend_id="local", parallelism=4, preview_rows=None)
+    assert graph.execution_context == ExecutionContext(backend_id="local", parallelism=1, preview_rows=None)
 
     graph.execution_location = "remote"
     assert graph.execution_context == ExecutionContext(backend_id="probe", parallelism=4, preview_rows=None)
@@ -142,17 +142,19 @@ def test_the_context_follows_replaced_flow_settings():
     )
 
     assert before == ExecutionContext(backend_id="probe", parallelism=4, preview_rows=None)
-    assert graph.execution_context == ExecutionContext(backend_id="local", parallelism=2, preview_rows=100)
+    assert graph.execution_context == ExecutionContext(backend_id="local", parallelism=1, preview_rows=100)
 
 
 def test_the_context_follows_a_direct_write_to_a_settings_field():
     graph = make_graph(9111, execution_location="remote", execution_mode="Performance", max_parallel_workers=4)
 
+    graph.flow_settings.max_parallel_workers = 3
+    assert graph.execution_context == ExecutionContext(backend_id="probe", parallelism=3, preview_rows=None)
+
     graph.flow_settings.execution_location = "local"
     graph.flow_settings.execution_mode = "Development"
-    graph.flow_settings.max_parallel_workers = 3
 
-    assert graph.execution_context == ExecutionContext(backend_id="local", parallelism=3, preview_rows=100)
+    assert graph.execution_context == ExecutionContext(backend_id="local", parallelism=1, preview_rows=100)
 
 
 def test_the_context_of_a_remote_graph_follows_the_default_backend(monkeypatch):

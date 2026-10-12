@@ -113,7 +113,7 @@ def run_and_check(graph: FlowGraph):
 def worker_executed_custom_node(node) -> bool:
     """The custom-node worker task is keyed by the node hash (suffixed to stay distinct
     from the result-store task); a Completed status proves offload."""
-    response = _worker_session.get(f"{WORKER_URL}/status/{custom_node_task_id(node.hash)}", timeout=10)
+    response = _worker_session.get(f"/status/{custom_node_task_id(node.hash)}", worker_url=WORKER_URL, timeout=10)
     if not response.ok:
         return False
     payload = response.json()
@@ -182,14 +182,14 @@ def test_source_edit_changes_node_hash(registered_node, tmp_path):
 
 
 def test_worker_down_gives_clean_node_error(registered_node, monkeypatch):
-    from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations
+    from flowfile_core.flowfile.execution import registry
 
     entry = registered_node(WORKER_NODE_SOURCE, "worker_down_node.py")
     graph = create_graph("remote")
     add_manual_input(graph, [{"name": "a"}])
     add_registered_custom_node(graph, entry, node_id=2, settings={"main": {"suffix": "_d"}})
 
-    monkeypatch.setattr(subprocess_operations, "WORKER_URL", "http://127.0.0.1:1")
+    monkeypatch.setattr(registry.backend(registry.WORKER_BACKEND_ID), "url", "http://127.0.0.1:1")
     run_info = graph.run_graph()
     assert not run_info.success
     failed = [r for r in run_info.node_step_result if not r.success]

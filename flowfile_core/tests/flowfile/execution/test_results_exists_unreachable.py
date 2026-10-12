@@ -12,6 +12,7 @@ import polars as pl
 import pytest
 import requests
 
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, VersionMismatch
@@ -34,10 +35,9 @@ def _closed_url() -> str:
 
 @pytest.fixture
 def closed_worker_url(monkeypatch) -> str:
-    """Point the worker URL at a port nothing listens on."""
+    """Point the registry's worker backend at a port nothing listens on."""
     url = _closed_url()
-    monkeypatch.setattr(subops, "OFFLOAD_TO_WORKER", True)
-    monkeypatch.setattr(subops, "WORKER_URL", url)
+    monkeypatch.setattr(registry.backend(registry.WORKER_BACKEND_ID), "url", url)
     return url
 
 
@@ -51,12 +51,11 @@ def running_worker():
 
 @pytest.fixture
 def stop_worker(monkeypatch, running_worker):
-    """Call to point the worker URL at a port nothing listens on from then on; returns that URL."""
+    """Call to point the registry's worker backend at a port nothing listens on from then on; returns that URL."""
 
     def stop() -> str:
         url = _closed_url()
-        monkeypatch.setattr(subops, "OFFLOAD_TO_WORKER", True)
-        monkeypatch.setattr(subops, "WORKER_URL", url)
+        monkeypatch.setattr(registry.backend(registry.WORKER_BACKEND_ID), "url", url)
         return url
 
     return stop
@@ -166,7 +165,7 @@ def _assert_succeeded(node: FlowNode) -> None:
 
 def test_unreachable_worker_raises_compute_unavailable(closed_worker_url):
     with pytest.raises(ComputeUnavailable) as excinfo:
-        subops.results_exists("abc")
+        subops.results_exists("abc", worker_url=closed_worker_url)
     assert closed_worker_url in str(excinfo.value)
     assert isinstance(excinfo.value.__cause__, requests.ConnectionError)
 
@@ -174,9 +173,8 @@ def test_unreachable_worker_raises_compute_unavailable(closed_worker_url):
 def test_worker_answering_404_is_a_cache_miss(monkeypatch):
     not_found = requests.Response()
     not_found.status_code = 404
-    monkeypatch.setattr(subops, "OFFLOAD_TO_WORKER", True)
     monkeypatch.setattr(subops._worker_session, "get", lambda *args, **kwargs: not_found)
-    assert subops.results_exists("abc") is False
+    assert subops.results_exists("abc", worker_url="http://worker.invalid") is False
 
 
 def test_cached_node_fails_instead_of_running_in_core(stop_worker, monkeypatch):
@@ -210,7 +208,7 @@ def test_other_compute_errors_fail_the_node_the_same_way(running_worker, monkeyp
     downstream = _add_sort(graph)
     message = "The worker runs other versions than this process"
 
-    def mismatched_results_exists(file_ref: str) -> bool:
+    def mismatched_results_exists(file_ref: str, *, worker_url: str) -> bool:
         raise VersionMismatch(message)
 
     monkeypatch.setattr(worker_module, "results_exists", mismatched_results_exists)
@@ -233,8 +231,8 @@ def test_local_cached_node_never_asks_the_worker(closed_worker_url, monkeypatch,
     graph = _cached_input_graph(flow_id, "local", execution_mode)
     node = graph.get_node(1)
     probes = []
-    monkeypatch.setattr(worker_module, "results_exists", lambda file_ref: probes.append(file_ref) or False)
-    monkeypatch.setattr(subops, "results_exists", lambda file_ref: probes.append(file_ref) or False)
+    monkeypatch.setattr(worker_module, "results_exists", lambda file_ref, **_: probes.append(file_ref) or False)
+    monkeypatch.setattr(subops, "results_exists", lambda file_ref, **_: probes.append(file_ref) or False)
     counts = _watch(monkeypatch, node)
 
     run_info = graph.run_graph()
@@ -266,10 +264,10 @@ def test_cached_node_recovers_after_the_worker_returns(running_worker, monkeypat
     worker = {"state": "down"}
     real_results_exists = worker_module.results_exists
 
-    def fake_results_exists(file_ref: str) -> bool:
+    def fake_results_exists(file_ref: str, *, worker_url: str) -> bool:
         if worker["state"] == "down":
             raise ComputeUnavailable(WORKER_DOWN_MESSAGE)
-        return real_results_exists(file_ref)
+        return real_results_exists(file_ref, worker_url=worker_url)
 
     submits = []
     real_submit = WorkerBackend.submit

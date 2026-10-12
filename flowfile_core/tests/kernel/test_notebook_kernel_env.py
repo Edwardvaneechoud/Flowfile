@@ -1,6 +1,7 @@
 """A notebook kernel's container: the two binds every kernel gets and nothing else, and the env that keeps its
 flowfile from migrating, seeding or offloading (no Docker)."""
 
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.kernel.models import ImageFlavour, KernelConfig, KernelInfo
 
 
@@ -33,7 +34,8 @@ def test_env_of_a_notebook_kernel_and_of_a_plain_one(tmp_path, monkeypatch):
     plain = KernelInfo(id="k", name="k", port=19001)
     mgr._kernels = {"k": plain}
     env = mgr._build_kernel_env("k", plain)
-    assert "FLOWFILE_SKIP_INIT_DB" not in env and "FLOWFILE_OFFLOAD_TO_WORKER" not in env
+    assert "FLOWFILE_SKIP_INIT_DB" not in env
+    assert not env.keys() & registry.child_env().keys(), "a plain kernel runs no flowfile, so it gets no backend"
 
     # A custom image is never a notebook kernel, whatever it is called; only the flavour is.
     custom = KernelInfo(
@@ -45,7 +47,8 @@ def test_env_of_a_notebook_kernel_and_of_a_plain_one(tmp_path, monkeypatch):
     env = mgr._build_kernel_env("k", notebook)
     assert env["FLOWFILE_SKIP_STARTUP_MIGRATION"] == "1" and env["FLOWFILE_SKIP_INIT_DB"] == "1"
     assert env["FLOWFILE_KERNEL_GC"] == "0" and env["FLOWFILE_TELEMETRY"] == "0"
-    assert env["FLOWFILE_OFFLOAD_TO_WORKER"] == "0"
+    assert registry.child_env().items() <= env.items(), "its flowfile computes on its own process"
+    assert env[registry.BACKEND_ENV_VAR] == registry.LOCAL_BACKEND_ID
     for name in ("FLOWFILE_STORAGE_DIR", "FLOWFILE_NOTEBOOK_MOUNTS", "FLOWFILE_DB_PATH"):
         assert name not in env, f"a notebook kernel mounts no host folder and holds no database: {name}"
 

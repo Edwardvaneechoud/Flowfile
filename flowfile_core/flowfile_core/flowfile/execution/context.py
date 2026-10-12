@@ -47,13 +47,14 @@ class ExecutionContext:
     def for_flow(cls, settings: FlowSettings) -> ExecutionContext:
         """The context of a flow with these settings.
 
-        A ``"local"`` flow runs in core (``registry.LOCAL_BACKEND_ID``), a ``"remote"`` one on the default
-        backend. Development mode keeps previews of ``DEFAULT_PREVIEW_ROWS`` rows, Performance mode none.
+        A ``"local"`` flow runs in core (``registry.LOCAL_BACKEND_ID``) one node at a time, a ``"remote"`` one on
+        the default backend with up to ``max_parallel_workers`` nodes of a stage at once. Development mode keeps
+        previews of ``DEFAULT_PREVIEW_ROWS`` rows, Performance mode none.
         """
         local = settings.execution_location == "local"
         return cls(
             backend_id=registry.LOCAL_BACKEND_ID if local else registry.default_backend_id(),
-            parallelism=settings.max_parallel_workers,
+            parallelism=1 if local else settings.max_parallel_workers,
             preview_rows=DEFAULT_PREVIEW_ROWS if settings.execution_mode == "Development" else None,
         )
 

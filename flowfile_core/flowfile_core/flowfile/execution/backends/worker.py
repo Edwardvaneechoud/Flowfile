@@ -1,10 +1,10 @@
 """The worker backend: core's client of ``flowfile_worker`` over the worker's task routes.
 
-It runs everything through the transport in ``flow_data_engine/subprocess_operations``: a plan or an operation
-becomes a worker task started by the fetcher core uses for it, the status, clear and cancel routes follow a task,
-and a stored result stays in the Arrow IPC file the task wrote. Core and the worker share a disk, so schemas, row
-counts and samples of a stored result are read from that file here, not sent over the wire. ``submit`` stores a
-plan or keeps it deferred in this process; the class docstring has the policy.
+It runs everything through the transport in ``flow_data_engine/subprocess_operations``, against the worker at its
+``url``: a plan or an operation becomes a worker task started by the fetcher core uses for it, the status, clear and
+cancel routes follow a task, and a stored result stays in the Arrow IPC file the task wrote. Core and the worker
+share a disk, so schemas, row counts and samples of a stored result are read from that file here, not sent over the
+wire. ``submit`` stores a plan or keeps it deferred in this process; the class docstring has the policy.
 """
 
 from __future__ import annotations
@@ -140,6 +140,10 @@ class _DeferredPlan:
 class WorkerBackend:
     """``ComputeBackend`` for ``flowfile_worker``, built on the worker's existing routes.
 
+    ``url`` is the base URL of the worker this backend runs on; every transport call it makes goes there. The
+    registry's built-in worker backend is made with the URL core's worker settings configure, and a backend made on
+    another URL reaches that worker instead.
+
     Materialisation policy: ``submit`` stores a plan on the worker when ``hints.must_materialise`` is set, or when
     the plan is ``wide`` and a preview is asked for (``preview_rows`` is not ``None``); every other plan stays
     deferred. A wide plan is stored so its preview and its consumers read rows computed once; with no preview
@@ -169,7 +173,8 @@ class WorkerBackend:
     id = WORKER_BACKEND_ID
     protocol_version = PROTOCOL_VERSION
 
-    def __init__(self) -> None:
+    def __init__(self, url: str) -> None:
+        self.url = url
         self._lock = threading.Lock()
         self._deferred: dict[str, _DeferredPlan] = {}
         self._in_flight: dict[str, BaseFetcher] = {}
@@ -194,8 +199,8 @@ class WorkerBackend:
         }
 
     def capabilities(self) -> Capabilities:
-        """The worker's answer to ``GET /capabilities``."""
-        return get_worker_capabilities()
+        """The answer of the worker at ``url`` to ``GET /capabilities``."""
+        return get_worker_capabilities(worker_url=self.url)
 
     def submit(
         self,
@@ -299,6 +304,7 @@ class WorkerBackend:
                     lf=held.plan,
                     operation_type="calculate_number_of_records",
                     wait_on_completion=False,
+                    worker_url=self.url,
                 )
             )
             return fetcher.result
@@ -313,7 +319,7 @@ class WorkerBackend:
             with self._lock:
                 return ref.result_id in self._deferred
         self._file(ref)
-        return results_exists(_task_id(ref))
+        return results_exists(_task_id(ref), worker_url=self.url)
 
     def release(self, ref: ResultRef) -> None:
         """Drop a deferred ``ref`` and clear its sampler task, or clear the task that stored ``ref``.
@@ -325,10 +331,10 @@ class WorkerBackend:
             with self._lock:
                 held = self._deferred.pop(ref.result_id, None)
             if held is not None and held.sample_file is not None:
-                clear_task_from_worker(ref.result_id)
+                clear_task_from_worker(ref.result_id, worker_url=self.url)
             return
         self._file(ref)
-        clear_task_from_worker(_task_id(ref))
+        clear_task_from_worker(_task_id(ref), worker_url=self.url)
 
     def plan_for(self, ref: ResultRef) -> pl.LazyFrame:
         """The plan of a deferred ``ref``, or a scan of a stored ``ref``'s file; valid only in plans this backend runs.
@@ -375,7 +381,7 @@ class WorkerBackend:
         """The worker's ``GET /status`` answer for the task ``handle`` names."""
         self._own(handle)
         try:
-            status = get_status(handle.job_id)
+            status = get_status(handle.job_id, worker_url=self.url)
         except requests.RequestException as e:
             raise ComputeUnavailable(f"Could not reach the worker: {e}") from e
         state = _JOB_STATES[status.status]
@@ -393,7 +399,7 @@ class WorkerBackend:
         """
         self._own(handle)
         try:
-            return get_status(handle.job_id).results
+            return get_status(handle.job_id, worker_url=self.url).results
         except requests.RequestException as e:
             raise ComputeUnavailable(f"Could not reach the worker: {e}") from e
 
@@ -408,7 +414,7 @@ class WorkerBackend:
         if fetcher is not None:
             fetcher.cancel()
         else:
-            cancel_task(handle.job_id)
+            cancel_task(handle.job_id, worker_url=self.url)
 
     def _check(self, ref: ResultRef) -> None:
         if ref.backend_id != self.id:
@@ -438,7 +444,12 @@ class WorkerBackend:
         fetcher = self._run_tracked(
             result_id,
             lambda: ExternalDfFetcher(
-                flow_id=flow_id, node_id=node_id, plan_bytes=plan_bytes, file_ref=result_id, wait_on_completion=False
+                flow_id=flow_id,
+                node_id=node_id,
+                plan_bytes=plan_bytes,
+                file_ref=result_id,
+                wait_on_completion=False,
+                worker_url=self.url,
             ),
         )
         status = fetcher.status
@@ -488,6 +499,7 @@ class WorkerBackend:
                 file_ref=task_id,
                 wait_on_completion=False,
                 sample_size=n,
+                worker_url=self.url,
             ),
         )
         return _written_file(fetcher)
@@ -529,14 +541,18 @@ class WorkerBackend:
     def _database_read(self, payload: OpPayload) -> OpResult:
         read = unpack(payload, DatabaseReadPayload)
         settings = _database_read_settings(read)
-        _, ref = self._read_tracked(read.job_id, lambda: ExternalDatabaseFetcher(settings, wait_on_completion=False))
+        _, ref = self._read_tracked(
+            read.job_id, lambda: ExternalDatabaseFetcher(settings, wait_on_completion=False, worker_url=self.url)
+        )
         return OpResult(refs={"result": ref})
 
     def _kafka_read(self, payload: OpPayload) -> OpResult:
         read = unpack(payload, KafkaReadPayload)
         settings = _kafka_read_settings(read)
-        fetcher, ref = self._read_tracked(read.job_id, lambda: ExternalKafkaFetcher(settings, wait_on_completion=False))
-        consumed = fetch_kafka_offsets(fetcher.file_ref)
+        fetcher, ref = self._read_tracked(
+            read.job_id, lambda: ExternalKafkaFetcher(settings, wait_on_completion=False, worker_url=self.url)
+        )
+        consumed = fetch_kafka_offsets(fetcher.file_ref, worker_url=self.url)
         if consumed and consumed.get("messages_consumed", 0) > 0:
             return OpResult(refs={"result": ref}, metadata={"offsets": consumed["new_offsets"]})
         return OpResult(refs={"result": ref})
@@ -545,14 +561,16 @@ class WorkerBackend:
         read = unpack(payload, GoogleAnalyticsReadPayload)
         settings = _google_analytics_read_settings(read)
         _, ref = self._read_tracked(
-            read.job_id, lambda: ExternalGoogleAnalyticsFetcher(settings, wait_on_completion=False)
+            read.job_id, lambda: ExternalGoogleAnalyticsFetcher(settings, wait_on_completion=False, worker_url=self.url)
         )
         return OpResult(refs={"result": ref})
 
     def _rest_api_read(self, payload: OpPayload) -> OpResult:
         read = unpack(payload, RestApiReadPayload)
         settings = _rest_api_read_settings(read)
-        _, ref = self._read_tracked(read.job_id, lambda: ExternalRestApiFetcher(settings, wait_on_completion=False))
+        _, ref = self._read_tracked(
+            read.job_id, lambda: ExternalRestApiFetcher(settings, wait_on_completion=False, worker_url=self.url)
+        )
         return OpResult(refs={"result": ref})
 
     def _file_read(self, payload: OpPayload) -> OpResult:
@@ -569,6 +587,7 @@ class WorkerBackend:
                 flow_id=read.flow_id,
                 file_type=received_table.file_type,
                 wait_on_completion=False,
+                worker_url=self.url,
             ),
         )
         return OpResult(refs={"result": ref})
@@ -588,6 +607,7 @@ class WorkerBackend:
                 node_id=join.node_id,
                 file_ref=join.job_id,
                 wait_on_completion=False,
+                worker_url=self.url,
             ),
             job_id=join.job_id,
         )
@@ -632,6 +652,7 @@ class WorkerBackend:
                 node_id=apply.node_id,
                 file_ref=apply.job_id,
                 wait_on_completion=False,
+                worker_url=self.url,
             ),
             job_id=apply.job_id,
         )
@@ -654,7 +675,7 @@ class WorkerBackend:
             flowfile_flow_id=job.flow_id,
             flowfile_node_id=job.node_id,
         )
-        fetcher = self._run_tracked(job.job_id, lambda: ExternalCustomNodeFetcher(request))
+        fetcher = self._run_tracked(job.job_id, lambda: ExternalCustomNodeFetcher(request, worker_url=self.url))
         outputs = fetcher.get_payload()["outputs"]
         refs: dict[str, ResultRef] = {}
         for i, name in enumerate(job.output_names):
@@ -680,6 +701,7 @@ class WorkerBackend:
                 node_id=train.node_id,
                 file_ref=train.job_id,
                 wait_on_completion=False,
+                worker_url=self.url,
             ),
         )
         return OpResult(refs={}, metadata=_reported(fetcher))
@@ -694,7 +716,9 @@ class WorkerBackend:
             lf=write.plan,
             database_reference_settings=reference,
         ).model_copy(update={"flowfile_flow_id": write.flow_id, "flowfile_node_id": write.node_id})
-        self._run_tracked(write.job_id, lambda: ExternalDatabaseWriter(settings, wait_on_completion=False))
+        self._run_tracked(
+            write.job_id, lambda: ExternalDatabaseWriter(settings, wait_on_completion=False, worker_url=self.url)
+        )
         return OpResult(refs={})
 
     def _cloud_write(self, payload: OpPayload) -> OpResult:
@@ -706,7 +730,9 @@ class WorkerBackend:
             flowfile_flow_id=write.flow_id,
             flowfile_node_id=write.node_id,
         )
-        self._run_tracked(write.job_id, lambda: ExternalCloudWriter(settings, wait_on_completion=False))
+        self._run_tracked(
+            write.job_id, lambda: ExternalCloudWriter(settings, wait_on_completion=False, worker_url=self.url)
+        )
         return OpResult(refs={})
 
     def _file_write(self, payload: OpPayload) -> OpResult:
@@ -725,6 +751,7 @@ class WorkerBackend:
                 delimiter=settings.delimiter,
                 compression=settings.compression,
                 wait_on_completion=False,
+                worker_url=self.url,
             ),
         )
         return OpResult(refs={})
@@ -780,9 +807,9 @@ class WorkerBackend:
         }
         try:
             if request.request == "fields":
-                answer = trigger_visualize_fields(source)
+                answer = trigger_visualize_fields(source, worker_url=self.url)
             else:
-                answer = trigger_visualize_query(source, request.query, request.max_rows)
+                answer = trigger_visualize_query(source, request.query, request.max_rows, worker_url=self.url)
         except requests.RequestException as e:
             raise ComputeUnavailable(f"Could not reach the worker: {e}") from e
         return OpResult(refs={}, metadata=answer)
@@ -803,6 +830,7 @@ class WorkerBackend:
                 operation_type=operation_type,
                 kwargs=kwargs,
                 wait_on_completion=False,
+                worker_url=self.url,
             ),
         )
         return OpResult(refs={}, metadata=_reported(fetcher))

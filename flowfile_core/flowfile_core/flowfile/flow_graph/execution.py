@@ -547,9 +547,9 @@ class ExecutionMixin(GraphMixinBase):
     ) -> set[str | int]:
         """Execute all stages in the plan, running independent nodes in parallel.
 
-        Iterates through stages sequentially. Within each stage, independent
-        nodes are executed in parallel (or sequentially if parallelism is
-        disabled). Because stages are topological, each node is decided from its
+        Iterates through stages sequentially. Within each stage, up to the run
+        context's ``parallelism`` independent nodes execute at once (one at a
+        time in a local flow). Because stages are topological, each node is decided from its
         immediate inputs' statuses via the trigger rules (skip_rules) right
         before its stage runs — a failure skips its dependents stage by stage
         instead of via a blind transitive closure.
@@ -620,8 +620,7 @@ class ExecutionMixin(GraphMixinBase):
                 if not nodes_to_run:
                     continue
 
-                is_local = self.flow_settings.execution_location == "local"
-                max_workers = 1 if is_local else self.flow_settings.max_parallel_workers
+                max_workers = current_context(self).parallelism
                 if len(nodes_to_run) == 1 or max_workers == 1:
                     stage_results = [
                         self._execute_single_node(node, performance_mode, run_info_lock) for node in nodes_to_run

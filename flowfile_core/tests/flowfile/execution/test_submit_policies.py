@@ -14,6 +14,7 @@ import polars as pl
 import pyarrow as pa
 import pytest
 
+from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
@@ -56,7 +57,7 @@ def running_worker():
 
 @pytest.fixture
 def worker(running_worker):
-    return WorkerBackend()
+    return WorkerBackend(url=WORKER_URL)
 
 
 @pytest.fixture
@@ -204,12 +205,12 @@ def test_a_deferred_result_is_counted_by_the_worker(worker, kept):
 def test_a_released_deferred_result_is_gone_and_its_sampler_task_cleared(worker):
     ref = worker.submit(plan(), [], hints(False, False, 4), new_result_id(), flow_id=-1, node_id=-1).ref
     assert worker.exists(ref)
-    assert subops.results_exists(ref.result_id)
+    assert subops.results_exists(ref.result_id, worker_url=WORKER_URL)
 
     worker.release(ref)
 
     assert not worker.exists(ref)
-    assert not subops.results_exists(ref.result_id)
+    assert not subops.results_exists(ref.result_id, worker_url=WORKER_URL)
     with pytest.raises(ResultMissing):
         worker.plan_for(ref)
     with pytest.raises(ResultMissing):
@@ -245,7 +246,7 @@ def test_cancel_reaches_the_task_a_submit_waits_on(monkeypatch):
         return started[-1]
 
     monkeypatch.setattr(worker_module, "ExternalDfFetcher", waiting_fetcher)
-    worker = WorkerBackend()
+    worker = WorkerBackend(url=WORKER_URL)
     outcome = {}
 
     def submit():

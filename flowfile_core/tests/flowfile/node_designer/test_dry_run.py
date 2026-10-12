@@ -14,9 +14,9 @@ import polars as pl
 import pytest
 import requests
 
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from flowfile_core.flowfile.node_designer.state import (
     DesignerState,
     EnvironmentState,
@@ -128,7 +128,7 @@ def test_no_sample_data_runs_with_empty_inputs(monkeypatch):
     # No sample data no longer blocks: the node runs against one empty frame per input.
     captured = {}
 
-    def _capture(request):
+    def _capture(request, *, worker_url):
         captured["inputs"] = request.inputs
         raise ConnectionError("stop here")
 
@@ -141,7 +141,7 @@ def test_no_sample_data_runs_with_empty_inputs(monkeypatch):
 def test_zero_input_node_runs_without_sample_data(monkeypatch):
     captured = {}
 
-    def _capture(request):
+    def _capture(request, *, worker_url):
         captured["inputs"] = request.inputs
         raise ConnectionError("stop here")
 
@@ -164,7 +164,7 @@ def _capture_first_input_frame(monkeypatch, request: DryRunRequest) -> pl.DataFr
     """Run up to the worker seam and return the first serialized sample as a DataFrame."""
     captured = {}
 
-    def _capture(req):
+    def _capture(req, *, worker_url):
         captured["inputs"] = req.inputs
         raise ConnectionError("stop here")
 
@@ -213,7 +213,7 @@ def test_nested_example_inputs_with_null_reach_worker_typed(monkeypatch):
 def test_example_inputs_lifted_from_code(monkeypatch):
     captured = {}
 
-    def _capture(request):
+    def _capture(request, *, worker_url):
         captured["inputs"] = request.inputs
         raise ConnectionError("stop here")  # short-circuit after capturing
 
@@ -225,7 +225,7 @@ def test_example_inputs_lifted_from_code(monkeypatch):
 
 
 def test_worker_unavailable_is_load_error(monkeypatch):
-    def _refuse(request):
+    def _refuse(request, *, worker_url):
         raise ConnectionError("connection refused")
 
     monkeypatch.setattr(dr, "trigger_custom_node_operation", _refuse)
@@ -255,24 +255,32 @@ def _status(payload: dict) -> SimpleNamespace:
 
 def _stub_worker(monkeypatch, status_payloads):
     """status_payloads: successive answers of the worker for the task's status: a dict, or an exception to raise."""
-    monkeypatch.setattr(dr, "trigger_custom_node_operation", lambda request: _Status("task-1"))
-    calls = {"get": 0, "clear": 0, "cancel": 0, "task_ids": set()}
+    calls = {"get": 0, "clear": 0, "cancel": 0, "task_ids": set(), "worker_urls": set()}
 
-    def _get_status(task_id):
+    def _start(request, *, worker_url):
+        calls["worker_urls"].add(worker_url)
+        return _Status("task-1")
+
+    monkeypatch.setattr(dr, "trigger_custom_node_operation", _start)
+
+    def _get_status(task_id, *, worker_url):
         calls["task_ids"].add(task_id)
+        calls["worker_urls"].add(worker_url)
         answer = status_payloads[min(calls["get"], len(status_payloads) - 1)]
         calls["get"] += 1
         if isinstance(answer, Exception):
             raise answer
         return _status(answer)
 
-    def _clear(task_id):
+    def _clear(task_id, *, worker_url):
         calls["task_ids"].add(task_id)
+        calls["worker_urls"].add(worker_url)
         calls["clear"] += 1
         return True
 
-    def _cancel(task_id):
+    def _cancel(task_id, *, worker_url):
         calls["task_ids"].add(task_id)
+        calls["worker_urls"].add(worker_url)
         calls["cancel"] += 1
         return True
 
@@ -315,6 +323,7 @@ def test_happy_path_maps_preview(monkeypatch):
     assert resp.logs == ["INFO: ran"]
     assert resp.duration_ms == 12.5
     assert calls["clear"] == 1  # best-effort cleanup ran
+    assert calls["worker_urls"] == {registry.backend(registry.WORKER_BACKEND_ID).url}
 
 
 def test_execution_error_carries_traceback(monkeypatch):
@@ -395,7 +404,7 @@ def test_a_cancel_the_worker_cannot_receive_still_answers_timeout(monkeypatch):
     calls = _stub_worker(monkeypatch, [{"status": "Processing"}])
     monkeypatch.setattr(dr, "_POLL_INTERVAL", 0.05)
 
-    def _unreachable(task_id):
+    def _unreachable(task_id, *, worker_url):
         calls["cancel"] += 1
         raise Exception("Failed to cancel task: connection refused")
 
@@ -695,7 +704,7 @@ def test_worker_failing_the_handshake_while_polled_answers_500_with_the_message(
 
     admin = User(username="local_user", id=1, disabled=False, is_admin=True, must_change_password=False)
     reported = local_capabilities().model_copy(update={"polars_version": "0.0.1"})
-    monkeypatch.setattr(dr, "trigger_custom_node_operation", lambda request: _Status("task-1"))
+    monkeypatch.setattr(dr, "trigger_custom_node_operation", lambda request, *, worker_url: _Status("task-1"))
     monkeypatch.setattr(handshake, "fetch_worker_capabilities", lambda worker_url: reported)
     handshake.reset_handshake()
     main.app.dependency_overrides[get_current_active_user] = lambda: admin
@@ -709,5 +718,6 @@ def test_worker_failing_the_handshake_while_polled_answers_500_with_the_message(
 
     assert response.status_code == 500, response.text
     assert response.json()["detail"] == (
-        f"The worker at {subops.WORKER_URL} does not match core (polars_version: core {pl.__version__}, worker 0.0.1)"
+        f"The worker at {registry.backend(registry.WORKER_BACKEND_ID).url} does not match core "
+        f"(polars_version: core {pl.__version__}, worker 0.0.1)"
     )
