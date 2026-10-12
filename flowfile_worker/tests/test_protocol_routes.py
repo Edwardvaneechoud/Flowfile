@@ -2,15 +2,18 @@
 
 import json
 import os
+import time
 import uuid
 from datetime import datetime, timezone
 
 import polars as pl
 import pytest
+from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 from polars.testing import assert_frame_equal
+from starlette.testclient import WebSocketDenialResponse
 
-from flowfile_worker import main, status_dict, status_dict_lock
+from flowfile_worker import main, protocol_routes, status_dict, status_dict_lock, streaming
 from flowfile_worker.results import result_path
 from shared.compute_protocol import (
     PROTOCOL_VERSION,
@@ -401,3 +404,167 @@ def test_a_finished_job_cannot_be_cancelled(held):
     _submit(result_id, _plan())
 
     assert client.post(f"/v1/jobs/{result_id}/cancel").status_code == 404
+
+
+def _ws_submit(plan: bytes, meta: str) -> tuple[list[dict], dict, int]:
+    """Send *meta* and *plan* over ``/v1/ws/submit``; answer the progress frames, the final frame and the close code."""
+    progress = []
+    with client.websocket_connect("/v1/ws/submit") as websocket:
+        websocket.send_text(meta)
+        websocket.send_bytes(plan)
+        while (frame := websocket.receive_json())["type"] == "progress":
+            progress.append(frame)
+        with pytest.raises(WebSocketDisconnect) as closed:
+            websocket.receive_text()
+    return progress, frame, closed.value.code
+
+
+@pytest.mark.parametrize("must_materialise", [True, False], ids=["materialised", "deferred"])
+def test_a_websocket_submit_streams_progress_then_the_result_with_its_sample(held, must_materialise):
+    result_id = held()
+    plan = _plan()
+    plan_bytes = plan.serialize()
+
+    progress, final, close_code = _ws_submit(
+        plan_bytes, _meta(result_id, must_materialise=must_materialise, preview_rows=3)
+    )
+
+    assert progress
+    assert all(0 <= frame["progress"] <= 100 for frame in progress)
+    assert final["type"] == "complete"
+    result = SubmitResult.model_validate_json(json.dumps(final["result"]))
+    assert result.job_id == result_id
+    assert result.ref.result_id == result_id
+    assert result.ref.state == ("materialised" if must_materialise else "deferred")
+    assert result.ref.row_count == (5 if must_materialise else None)
+    assert result.ref.columns == schema_to_wire(plan.collect_schema())
+    location = _location(result)
+    if must_materialise:
+        assert location.kind == "file"
+        assert location.path == str(result_path(FLOW_ID, result_id))
+        assert os.path.isfile(location.path)
+    else:
+        assert location.kind == "plan"
+        assert location.plan == plan_bytes
+        assert not result_path(FLOW_ID, result_id).exists()
+    assert_frame_equal(pl.read_ipc_stream(result.sample), plan.head(3).collect())
+    assert close_code == 1000
+    assert client.head(f"/v1/results/{result_id}").status_code == 200
+
+
+@pytest.mark.parametrize("sent", ["2", None], ids=["foreign", "missing"])
+def test_the_websocket_submit_is_denied_426_before_accepting(sent):
+    headers = {PROTOCOL_VERSION_HEADER: sent} if sent is not None else {}
+
+    with pytest.raises(WebSocketDenialResponse) as denied:
+        with token_only.websocket_connect("/v1/ws/submit", headers=headers):
+            pass
+
+    assert denied.value.status_code == 426
+    detail = denied.value.json()["detail"]
+    assert f"protocol version {PROTOCOL_VERSION}" in detail
+    assert f"carries {sent if sent is not None else 'none'}" in detail
+
+
+@pytest.mark.parametrize("token", [None, "not-the-token"], ids=["missing", "wrong"])
+def test_the_websocket_submit_closes_1008_on_a_bad_token_before_the_version_is_checked(token):
+    headers = {PROTOCOL_VERSION_HEADER: "2"}
+    if token is not None:
+        headers["X-Flowfile-Internal"] = token
+
+    with pytest.raises(WebSocketDisconnect) as closed:
+        with TestClient(main.app).websocket_connect("/v1/ws/submit", headers=headers):
+            pass
+
+    assert not isinstance(closed.value, WebSocketDenialResponse)
+    assert closed.value.code == 1008
+
+
+def test_a_bad_meta_frame_is_an_error_frame_422():
+    progress, final, close_code = _ws_submit(_plan().serialize(), "{}")
+
+    assert progress == []
+    assert final["type"] == "error"
+    assert final["status_code"] == 422
+    assert close_code == 1000
+
+
+def test_an_input_that_is_not_held_is_an_error_frame_404(held):
+    result_id = held()
+
+    _, final, close_code = _ws_submit(
+        _plan().serialize(), _meta(result_id, must_materialise=True, inputs=("never-submitted",))
+    )
+
+    assert final["type"] == "error"
+    assert final["status_code"] == 404
+    assert "never-submitted" in final["detail"]
+    assert result_id not in status_dict
+    assert close_code == 1000
+
+
+def test_a_plan_that_fails_on_its_data_is_an_error_frame_500_and_holds_nothing(held):
+    result_id = held()
+
+    _, final, close_code = _ws_submit(
+        pl.LazyFrame({"a": [1]}).select("missing").serialize(), _meta(result_id, must_materialise=True)
+    )
+
+    assert final["type"] == "error"
+    assert final["status_code"] == 500
+    assert final["detail"]["status"] == "Error"
+    assert final["detail"]["error_kind"] == "task"
+    assert final["detail"]["error_message"].startswith("ColumnNotFoundError")
+    assert close_code == 1000
+    assert client.head(f"/v1/results/{result_id}").status_code == 404
+    assert not result_path(FLOW_ID, result_id).exists()
+
+
+def test_an_unchanged_progress_is_sent_again_as_a_heartbeat(held, monkeypatch):
+    monkeypatch.setattr(streaming, "_HEARTBEAT_INTERVAL", 0)
+
+    progress, final, _ = _ws_submit(_plan().serialize(), _meta(held(), must_materialise=True))
+
+    assert final["type"] == "complete"
+    values = [frame["progress"] for frame in progress]
+    assert len(values) > len(set(values))
+
+
+def test_a_client_that_leaves_does_not_stop_the_submit(held):
+    result_id = held()
+
+    with client.websocket_connect("/v1/ws/submit") as websocket:
+        websocket.send_text(_meta(result_id, must_materialise=True))
+        websocket.send_bytes(_plan().serialize())
+
+    deadline = time.monotonic() + 30
+    while True:
+        job = client.get(f"/v1/jobs/{result_id}")
+        if job.status_code == 200 and job.json()["status"] == "Completed":
+            if client.head(f"/v1/results/{result_id}").status_code == 200:
+                break
+        assert time.monotonic() < deadline, "the submit did not complete after its client left"
+        time.sleep(0.05)
+    assert os.path.isfile(result_path(FLOW_ID, result_id))
+
+
+def test_a_submit_sweeps_results_and_jobs_whose_submit_ended_too_long_ago(held, monkeypatch):
+    kept, failed, later, last = held(), held(), held(), held()
+    kept_path = _location(_submit(kept, _plan(), must_materialise=True)).path
+    assert _post(pl.LazyFrame({"a": [1]}).select("missing").serialize(), _meta(failed)).status_code == 500
+
+    _submit(later, _plan(), must_materialise=True)
+
+    assert client.head(f"/v1/results/{kept}").status_code == 200
+    assert client.get(f"/v1/jobs/{failed}").status_code == 200
+
+    monkeypatch.setattr(protocol_routes, "CACHE_EXPIRATION_TIME", 0)
+    _submit(last, _plan(), must_materialise=True)
+
+    assert client.head(f"/v1/results/{kept}").status_code == 404
+    assert not os.path.exists(kept_path)
+    assert client.get(f"/v1/jobs/{kept}").status_code == 404
+    assert client.get(f"/v1/jobs/{failed}").status_code == 404
+    assert client.head(f"/v1/results/{later}").status_code == 404
+    assert client.head(f"/v1/results/{last}").status_code == 200
+    assert client.get(f"/v1/jobs/{last}").json()["status"] == "Completed"

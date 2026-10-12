@@ -4,8 +4,10 @@ Every route needs the internal token, then an ``X-Protocol-Version`` equal to th
 ``PROTOCOL_VERSION``: a request without one, or with another, is answered 426. ``POST /v1/submit``
 runs the plan in a spawned ``funcs.submit_result`` child and keeps the result in ``results.results``,
 written to a file or deferred as ``_materialise`` decides; the other routes read, count, probe and
-release what it holds. A submit's job id is its result id. The legacy routes in ``routes.py`` stay
-as they are; the two share only ``status_dict``.
+release what it holds. A submit's job id is its result id, and every submit first drops what has
+been held for ``CACHE_EXPIRATION_TIME``. ``run_submit`` is the submit itself, which ``streaming.py``'s
+``/v1/ws/submit`` runs too. The legacy routes in ``routes.py`` stay as they are; the two share only
+``status_dict``.
 """
 
 import io
@@ -15,10 +17,11 @@ from pathlib import Path
 from typing import Any
 
 import polars as pl
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response
+from fastapi.requests import HTTPConnection
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from flowfile_worker import PROCESS_MEMORY_USAGE, models, status_dict, status_dict_lock
+from flowfile_worker import CACHE_EXPIRATION_TIME, PROCESS_MEMORY_USAGE, models, status_dict, status_dict_lock
 from flowfile_worker.auth import verify_internal_token
 from flowfile_worker.configs import logger
 from flowfile_worker.results import ResultRecord, result_path, results
@@ -36,9 +39,12 @@ from shared.compute_protocol import (
 ARROW_STREAM = "application/vnd.apache.arrow.stream"
 
 
-def require_protocol_version(request: Request) -> None:
-    """Answer 426 when the request's ``X-Protocol-Version`` is missing or is not this worker's."""
-    sent = request.headers.get(PROTOCOL_VERSION_HEADER)
+def require_protocol_version(connection: HTTPConnection) -> None:
+    """Answer 426 when the request's ``X-Protocol-Version`` is missing or is not this worker's.
+
+    It takes an ``HTTPConnection`` so the WebSocket submit can call it before accepting.
+    """
+    sent = connection.headers.get(PROTOCOL_VERSION_HEADER)
     if sent != str(PROTOCOL_VERSION):
         raise HTTPException(
             status_code=426,
@@ -104,6 +110,19 @@ def _release(result_id: str) -> bool:
     return True
 
 
+def sweep_expired() -> None:
+    """Forget every result and job whose submit ended ``CACHE_EXPIRATION_TIME`` seconds ago or more, failed ones too.
+
+    ``status_dict_lock`` is held across the registry's expiry and the job entries' removal: a resubmit
+    under an expired id registers its job only after the old entry is gone, so no running job loses
+    its entry. The lock is always taken before the registry's, never after.
+    """
+    with status_dict_lock:
+        for result_id in results.expire(CACHE_EXPIRATION_TIME):
+            status_dict.pop(result_id, None)
+            PROCESS_MEMORY_USAGE.pop(result_id, None)
+
+
 def _failure(status: models.Status) -> HTTPException:
     """A 500 saying why a child did not complete, in the fields of the legacy WebSocket error frame."""
     return HTTPException(
@@ -158,18 +177,23 @@ async def capabilities() -> Capabilities:
     return local_capabilities()
 
 
-@router.post("/submit", response_model=SubmitResult)
-def submit(plan: bytes = File(), meta: str = Form()) -> SubmitResult:
-    """Run *plan* and hold its result under the meta's ``result_id``, written to a file or deferred.
-
-    ``plan`` is a file part, so a plan of any size is spooled rather than refused; ``meta`` is the
-    JSON of ``SubmitMeta``. A result already held under the id is released first. The answer
-    carries the inline sample when ``preview_rows`` was set.
-    """
+def parse_submit_meta(meta: str) -> SubmitMeta:
+    """The ``meta`` JSON of a submit as a ``SubmitMeta``; 422 with the validation errors when it is not one."""
     try:
-        submit_meta = SubmitMeta.model_validate_json(meta)
+        return SubmitMeta.model_validate_json(meta)
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=e.errors(include_url=False, include_context=False)) from e
+
+
+def run_submit(submit_meta: SubmitMeta, plan: bytes) -> SubmitResult:
+    """Run *plan* in a child and hold its result under ``result_id``, written to a file or deferred.
+
+    Both ``POST /v1/submit`` and ``/v1/ws/submit`` call this and answer what it returns or raises:
+    404 for an input that is not held, 500 when the child did not complete. Expired results are
+    swept first; a result already held under the id is released. The end of the submit is stamped
+    whether or not it completed, so its job entry ages out like a held result.
+    """
+    sweep_expired()
     for input_id in submit_meta.inputs:
         if _held(input_id) is None:
             raise HTTPException(status_code=404, detail=f"Input result {input_id} is not held by this worker")
@@ -183,15 +207,18 @@ def submit(plan: bytes = File(), meta: str = Form()) -> SubmitResult:
         target.parent.mkdir(parents=True, exist_ok=True)
         path = str(target)
     logger.info(f"Submitting result {result_id} ({'materialised' if materialise else 'deferred'})")
-    status = _run(
-        result_id,
-        plan,
-        "submit_result",
-        path or "",
-        submit_meta.flow_id,
-        submit_meta.node_id,
-        {"materialise": materialise, "preview_rows": submit_meta.hints.preview_rows},
-    )
+    try:
+        status = _run(
+            result_id,
+            plan,
+            "submit_result",
+            path or "",
+            submit_meta.flow_id,
+            submit_meta.node_id,
+            {"materialise": materialise, "preview_rows": submit_meta.hints.preview_rows},
+        )
+    finally:
+        results.mark_ended(result_id)
     if status.status != "Completed":
         if path:
             Path(path).unlink(missing_ok=True)
@@ -212,6 +239,17 @@ def submit(plan: bytes = File(), meta: str = Form()) -> SubmitResult:
     )
     results.put(record)
     return SubmitResult(ref=record.ref(), sample=payload["sample"], job_id=result_id)
+
+
+@router.post("/submit", response_model=SubmitResult)
+def submit(plan: bytes = File(), meta: str = Form()) -> SubmitResult:
+    """Run *plan* and hold its result under the meta's ``result_id``, written to a file or deferred.
+
+    ``plan`` is a file part, so a plan of any size is spooled rather than refused; ``meta`` is the
+    JSON of ``SubmitMeta``. A result already held under the id is released first. The answer
+    carries the inline sample when ``preview_rows`` was set.
+    """
+    return run_submit(parse_submit_meta(meta), plan)
 
 
 @router.get("/results/{result_id}/sample")
