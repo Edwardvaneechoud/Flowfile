@@ -707,15 +707,9 @@ def _collect_filter(client, flow, sim) -> tuple[dict, float]:
     return result, time.monotonic() - started
 
 
-@pytest.mark.parametrize(
-    "setup",
-    [{"mode": "Performance"}, {"cache_results": True}],
-    ids=["performance-mode", "cache-results"],
-)
-def test_a_rerun_on_the_sessions_own_kernel_is_refused_at_once(
-    scripted_flow, locking_client, locking_kernel_sim, setup
-):
-    flow = scripted_flow(locking_kernel_sim.kernel.id, **setup)
+def test_a_rerun_on_the_sessions_own_kernel_is_refused_at_once(scripted_flow, locking_client, locking_kernel_sim):
+    """Performance mode runs every node again, so the canvas would need the kernel the session holds."""
+    flow = scripted_flow(locking_kernel_sim.kernel.id, mode="Performance")
     result, took = _collect_filter(locking_client, flow, locking_kernel_sim)
     assert took < locking_kernel_sim.LOCK_WAIT, result
     assert not result["success"], result
@@ -728,6 +722,16 @@ def test_a_rerun_on_the_sessions_own_kernel_is_refused_at_once(
     assert all(step.success for step in flow.run_graph(node_ids=lineage).node_step_result)
     result, _ = _collect_filter(locking_client, flow, locking_kernel_sim)
     assert result["success"] and result["stdout"].strip() == "2", "the advice works"
+
+
+def test_a_cached_node_on_the_sessions_own_kernel_answers_from_the_canvas(
+    scripted_flow, locking_client, locking_kernel_sim
+):
+    """A ``cache_results`` node keeps the result of its last run, so the session reads it without a rerun."""
+    flow = scripted_flow(locking_kernel_sim.kernel.id, cache_results=True)
+    result, took = _collect_filter(locking_client, flow, locking_kernel_sim)
+    assert result["success"], result
+    assert result["stdout"].strip() == "2" and took < locking_kernel_sim.LOCK_WAIT, result
 
 
 def test_a_never_run_node_on_the_sessions_own_kernel_is_refused_before_the_canvas_runs(

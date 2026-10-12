@@ -222,7 +222,7 @@ def would_re_execute(graph: FlowGraph, node_id: int) -> bool:
     """Whether the executor would run this node again as the graph now stands."""
     node = graph.get_node(node_id)
     state = node.executor.state_provider.get_state(node.node_id, node.parent_uuid)
-    return node.executor._decide_execution(state, "local", False, False).should_run
+    return node.executor._decide_execution(state, False, False).should_run
 
 
 def results_by_id(run_info) -> dict:
