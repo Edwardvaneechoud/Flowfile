@@ -407,4 +407,6 @@ def test_unreachable_worker_on_the_first_call_is_compute_unavailable(closed_port
 
 def test_compute_unavailable_adds_the_hint_only_for_a_refused_connection():
     assert str(ComputeUnavailable("[Errno 61] Connection refused")) == f"[Errno 61] Connection refused{HINT}"
+    windows = "[WinError 10061] No connection could be made because the target machine actively refused it"
+    assert str(ComputeUnavailable(windows)) == f"{windows}{HINT}"
     assert str(ComputeUnavailable("Read timed out")) == "Read timed out"

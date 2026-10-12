@@ -6,9 +6,13 @@ class ComputeUnavailable(ComputeError):
     """Compute cannot be reached."""
 
     def __str__(self) -> str:
-        """The message, plus what to do about it when the connection was refused."""
+        """The message, plus what to do about it when the connection was refused.
+
+        A refused connection reads ``Connection refused`` on POSIX and ``the target machine actively refused it``
+        on Windows (``WinError 10061``); both get the hint.
+        """
         message = super().__str__()
-        if "connection refused" in message.lower():
+        if "refused" in message.lower():
             return f"{message}. Is the worker running? Start it, or switch the flow to local execution."
         return message
 

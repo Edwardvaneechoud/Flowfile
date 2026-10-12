@@ -633,7 +633,8 @@ def pytest_runtest_teardown(item, nextitem):
     if _default_backend_at_start is None:
         return
     state = _default_backend_state()
-    if state[:3] == _default_backend_at_start[:3] and state[4] == _default_backend_at_start[4]:
+    rebound = state[3] is not _default_backend_at_start[3]
+    if state[:3] == _default_backend_at_start[:3] and state[4] == _default_backend_at_start[4] and not rebound:
         return
     from flowfile_core.configs import settings
     from flowfile_core.flowfile.execution import context, registry
@@ -646,8 +647,9 @@ def pytest_runtest_teardown(item, nextitem):
     else:
         os.environ[registry.BACKEND_ENV_VAR] = env_value
     context._current.set(None)
+    what = "rebound the offload setting object" if rebound else "left the default compute backend changed"
     pytest.fail(
-        f"{item.nodeid} left the default compute backend changed: {state[:3] + (state[4],)} "
+        f"{item.nodeid} {what}: {state[:3] + (state[4],)} "
         f"instead of {_default_backend_at_start[:3] + (_default_backend_at_start[4],)}; restored.",
         pytrace=False,
     )
