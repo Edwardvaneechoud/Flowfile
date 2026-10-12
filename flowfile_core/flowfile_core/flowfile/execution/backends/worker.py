@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import base64
 import os
+import random
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -31,6 +33,7 @@ from flowfile_core.flowfile.execution.errors import (
 )
 from flowfile_core.flowfile.execution.payloads import (
     CloudWritePayload,
+    CustomNodePayload,
     DatabaseReadPayload,
     DatabaseWritePayload,
     DeltaMergePayload,
@@ -38,9 +41,13 @@ from flowfile_core.flowfile.execution.payloads import (
     DeltaWritePayload,
     FileReadPayload,
     FileWritePayload,
+    FuzzyJoinPayload,
     GoogleAnalyticsReadPayload,
     KafkaReadPayload,
+    MlApplyPayload,
+    MlTrainPayload,
     OperationPayload,
+    RandomSplitPayload,
     RestApiReadPayload,
     unpack,
 )
@@ -56,7 +63,10 @@ from flowfile_core.flowfile.execution.protocol import (
     SubmitHints,
     SubmitResult,
 )
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import convert_stats_to_column_info
+from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import CustomNodeExecuteInput
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     BaseFetcher,
     ExternalCloudWriter,
@@ -80,16 +90,19 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     get_worker_capabilities,
     results_exists,
 )
+from flowfile_core.flowfile.flow_node.multi_output import output_handle
 from flowfile_core.flowfile.sources.external_sources.rest_api_source import build_rest_api_worker_settings
 from flowfile_core.flowfile.sources.external_sources.sql_source.models import (
     DatabaseExternalReadSettings,
     DatabaseExternalWriteSettings,
 )
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import BaseSqlSource
+from flowfile_core.flowfile.user_defined.dispatch import resolve_secret_payload
 from flowfile_core.schemas.cloud_storage_schemas import (
     CloudStorageWriteSettingsWorkerInterface,
     FullCloudStorageConnectionWorkerInterface,
 )
+from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from shared.compute_protocol import PROTOCOL_VERSION, Capabilities
 from shared.google_analytics.models import GoogleAnalyticsFilter, GoogleAnalyticsOrderBy, GoogleAnalyticsReadSettings
@@ -99,6 +112,7 @@ from shared.rest_api.models import RestApiReadSettings
 
 WORKER_BACKEND_ID = "worker"
 _OUTPUT_SEPARATOR = "#"
+_SPLIT_RANK = "__split_rank__"
 _NO_FLOW = -1
 _JOB_STATES: dict[str, Literal["running", "done", "failed", "cancelled"]] = {
     "Starting": "running",
@@ -141,7 +155,8 @@ class WorkerBackend:
       the plan, and ``release`` drops it and clears its sampler task.
 
     While ``submit`` waits on a task, ``cancel`` with the handle ``JobHandle("worker", result_id)`` reaches that
-    task's fetcher; while a write ``run_op`` waits, so does the handle with its payload's ``job_id``.
+    task's fetcher; while a ``run_op`` that takes a payload dataclass waits, so does the handle with its payload's
+    ``job_id``.
 
     Nothing here runs the worker handshake: every worker call goes through the transport's worker session or
     its WebSocket submit, which run it before they reach the worker, so every method that calls the worker is
@@ -162,6 +177,7 @@ class WorkerBackend:
             OperationKind.rest_api_read: self._rest_api_read,
             OperationKind.file_read: self._file_read,
             OperationKind.fuzzy_join: self._fuzzy_join,
+            OperationKind.random_split: self._random_split,
             OperationKind.custom_node: self._custom_node,
             OperationKind.ml_train: self._ml_train,
             OperationKind.ml_apply: self._ml_apply,
@@ -211,34 +227,38 @@ class WorkerBackend:
     def run_op(self, op: OperationKind, payload: OpPayload) -> OpResult:
         """Run ``op`` as a worker task through the fetcher core uses for it and wait for it to end.
 
-        ``payload`` holds what that fetcher takes, under these keys (``flow_id`` and ``node_id`` name the flow and
-        node the worker logs the task under, ``task_id`` the worker task id, a new one when absent):
+        Reads and the catalog writer's SCD2 write take what their fetcher takes, under these keys (``flow_id`` and
+        ``node_id`` name the flow and node the worker logs the task under):
 
         - ``database_read``, ``kafka_read``, ``google_analytics_read``, ``rest_api_read``, ``file_read``: ``payload``,
           the kind's dataclass from ``execution/payloads.py``, turned here into the worker read settings its fetcher
           takes (credentials still encrypted, filed under the payload's ``flow_id`` and ``node_id``). The task runs as
           the payload's ``job_id``, so ``cancel(JobHandle("worker", job_id))`` reaches it while it runs. A
           ``kafka_read`` reports the offsets to commit as ``metadata["offsets"]`` when it consumed messages.
-        - ``fuzzy_join``: ``left`` and ``right`` (LazyFrames), ``fuzzy_maps``, ``flow_id``, ``node_id``, ``task_id``.
-        - ``custom_node``: ``request`` (``CustomNodeExecuteInput``).
-        - ``ml_train``: ``lf``, ``staging_path``, ``model_type``, ``target_column``, ``feature_columns``, ``params``,
-          ``flow_id``, ``node_id``, ``task_id``.
-        - ``ml_apply``: ``lf``, ``model_path``, ``output_column``, ``flow_id``, ``node_id``, ``task_id``.
 
-        The writes ``file_write``, ``database_write``, ``cloud_write``, ``delta_write``, ``delta_merge`` and
-        ``delta_scd2`` take their ``payloads`` dataclass under ``"payload"`` instead; its plan is serialised here,
-        its credentials sent still encrypted, and the task runs as the payload's ``job_id``, so
-        ``cancel(JobHandle("worker", job_id))`` reaches it while it runs.
+        Every other operation takes one dataclass under ``"payload"`` too: the writes ``file_write``,
+        ``database_write``, ``cloud_write``, ``delta_write``, ``delta_merge`` and ``delta_scd2``, and ``fuzzy_join``,
+        ``random_split``, ``custom_node``, ``ml_train`` and ``ml_apply``. Its frames are serialised here, its
+        credentials sent still encrypted, and the worker task is filed under the payload's ``job_id`` (a write's under
+        the id the worker gives it), whose fetcher ``cancel(JobHandle("worker", job_id))`` reaches while the call
+        waits. ``fuzzy_join`` checks the join and selects and renames each side here, as the in-process join does,
+        before it sends the sides; ``custom_node`` resolves the ``$ffsec$`` ciphertext of the secrets the node's
+        ``SecretSelector`` fields select here and sends only that.
 
-        A read's refs are ``{"result": ref}``, a custom node's one reference per output it wrote, and a write has
-        none. ``ml_train`` and the Delta writes return the worker's result dict as ``metadata``: the trained
-        model's ``sha256``, ``size_bytes`` and ``model_type`` (the model itself is the file at ``staging_path``,
-        not a table, so there is no ref), or the written table's schema, counts, size and version.
+        A read's and ``fuzzy_join``'s and ``ml_apply``'s refs are ``{"result": ref}``, a stored result. A custom
+        node's refs are one stored result per declared output, keyed by its output handle (``output-0``,
+        ``output-1``, ...). ``random_split`` stores the shuffled rows once, as the payload's ``job_id`` task, and
+        returns one deferred ref per split, keyed by the split's name in the settings' order, whose plan slices that
+        task's file and which carries the split's row count; releasing a split leaves the shuffled rows in place. A
+        write has no refs. ``ml_train`` and the Delta writes return the worker's result dict as ``metadata``: the
+        trained model's ``sha256``, ``size_bytes`` and ``model_type`` (the model itself is the file at
+        ``staging_path``, not a table, so there is no ref), or the written table's schema, counts, size and version.
 
         Raises:
-            OperationUnsupported: ``random_split`` and ``viz_session``, which have no worker task.
+            OperationUnsupported: ``viz_session``, which has no worker task, and a custom node without a node file.
             PlanRejected: The worker could not load the operation's plan.
             TaskFailed: The operation failed on the worker.
+            ValueError: The worker did not return one of a custom node's declared outputs.
         """
         operation = self._operations.get(op)
         if operation is None:
@@ -351,6 +371,21 @@ class WorkerBackend:
         error = (status.error_message or status.status) if state == "failed" else None
         return JobStatus(state=state, progress=status.progress, error=error)
 
+    def task_result(self, handle: JobHandle) -> Any:
+        """What the worker task ``handle`` names reported as its result (the status's ``results``); ``None`` until done.
+
+        Not part of the protocol: a caller that starts a worker task outside ``run_op`` and follows it with ``status``
+        (the custom-node dry run) reads the task's result here once ``status`` says it is done.
+
+        Raises:
+            ComputeUnavailable: The worker could not be reached.
+        """
+        self._own(handle)
+        try:
+            return get_status(handle.job_id).results
+        except requests.RequestException as e:
+            raise ComputeUnavailable(f"Could not reach the worker: {e}") from e
+
     def cancel(self, handle: JobHandle) -> None:
         """Cancel the task ``handle`` names: through its fetcher while ``submit`` waits on it, else on the worker.
 
@@ -399,15 +434,27 @@ class WorkerBackend:
         return self._result_ref(result_id, _written_file(fetcher), status.number_of_records)
 
     def _defer(
-        self, plan: pl.LazyFrame, result_id: str, flow_id: int, node_id: int | str, preview_rows: int | None
+        self,
+        plan: pl.LazyFrame,
+        result_id: str,
+        flow_id: int,
+        node_id: int | str,
+        preview_rows: int | None,
+        *,
+        schema: Schema | None = None,
+        row_count: int | None = None,
     ) -> tuple[ResultRef, bytes | None]:
-        """Hold ``plan`` deferred as ``result_id``, with a sample of ``preview_rows`` rows when that is not ``None``."""
+        """Hold ``plan`` deferred as ``result_id``, with a sample of ``preview_rows`` rows when that is not ``None``.
+
+        ``schema`` spares resolving the plan's schema and ``row_count`` is carried on the ref, when the caller knows
+        them.
+        """
         held = _DeferredPlan(plan=plan, flow_id=flow_id, node_id=node_id)
         ref = ResultRef(
             backend_id=self.id,
             result_id=result_id,
-            schema=_flowfile_schema(plan.collect_schema()),
-            row_count=None,
+            schema=schema if schema is not None else _flowfile_schema(plan.collect_schema()),
+            row_count=row_count,
             state="deferred",
             location=result_id.encode(),
         )
@@ -458,8 +505,9 @@ class WorkerBackend:
             location=path.encode(),
         )
 
-    def _read(self, start: Callable[[], BaseFetcher]) -> OpResult:
-        fetcher = _run(start)
+    def _read(self, start: Callable[[], BaseFetcher], job_id: str | None = None) -> OpResult:
+        """Run a task that writes one result and return it as ``{"result": ref}``; tracked under ``job_id`` if given."""
+        fetcher = _run(start) if job_id is None else self._run_tracked(job_id, start)
         return OpResult(refs={"result": self._result_ref(fetcher.file_ref, _written_file(fetcher))})
 
     def _read_tracked(self, job_id: str, start: Callable[[], BaseFetcher]) -> tuple[BaseFetcher, ResultRef]:
@@ -515,55 +563,113 @@ class WorkerBackend:
         return OpResult(refs={"result": ref})
 
     def _fuzzy_join(self, payload: OpPayload) -> OpResult:
+        join = unpack(payload, FuzzyJoinPayload)
+        manager = FuzzyMatchInputManager(deepcopy(join.settings.join_input))
+        left, right = prepare_for_fuzzy_match(
+            left=FlowDataEngine(join.left), right=FlowDataEngine(join.right), fuzzy_match_input_manager=manager
+        )
         return self._read(
             lambda: ExternalFuzzyMatchFetcher(
-                left_df=payload["left"],
-                right_df=payload["right"],
-                fuzzy_maps=payload["fuzzy_maps"],
-                flow_id=payload["flow_id"],
-                node_id=payload["node_id"],
-                file_ref=payload.get("task_id"),
+                left_df=left,
+                right_df=right,
+                fuzzy_maps=manager.fuzzy_maps,
+                flow_id=join.flow_id,
+                node_id=join.node_id,
+                file_ref=join.job_id,
                 wait_on_completion=False,
-            )
+            ),
+            job_id=join.job_id,
         )
 
+    def _random_split(self, payload: OpPayload) -> OpResult:
+        split = unpack(payload, RandomSplitPayload)
+        seed = split.settings.seed if split.settings.seed is not None else random.randint(0, 2**31 - 1)
+        shuffled = (
+            split.plan.with_columns(pl.int_range(0, pl.len()).shuffle(seed=seed).alias(_SPLIT_RANK))
+            .sort(_SPLIT_RANK)
+            .drop(_SPLIT_RANK)
+        )
+        stored = self._store(shuffled, split.job_id, split.flow_id, split.node_id)
+        total = stored.row_count
+        rows = self.plan_for(stored)
+        groups = split.settings.splits
+        refs: dict[str, ResultRef] = {}
+        offset = 0
+        for i, group in enumerate(groups):
+            length = total - offset if i == len(groups) - 1 else int(round(total * group.percentage / 100.0))
+            length = max(0, length)
+            refs[group.name], _ = self._defer(
+                rows.slice(offset, length),
+                f"{split.job_id}{_OUTPUT_SEPARATOR}{group.name}",
+                split.flow_id,
+                split.node_id,
+                None,
+                schema=stored.schema,
+                row_count=length,
+            )
+            offset += length
+        return OpResult(refs=refs)
+
     def _ml_apply(self, payload: OpPayload) -> OpResult:
+        apply = unpack(payload, MlApplyPayload)
         return self._read(
             lambda: MLApplyFetcher(
-                lf=payload["lf"],
-                model_path=payload["model_path"],
-                output_column=payload["output_column"],
-                flow_id=payload["flow_id"],
-                node_id=payload["node_id"],
-                file_ref=payload.get("task_id"),
+                lf=apply.plan,
+                model_path=apply.model_path,
+                output_column=apply.output_column,
+                flow_id=apply.flow_id,
+                node_id=apply.node_id,
+                file_ref=apply.job_id,
                 wait_on_completion=False,
-            )
+            ),
+            job_id=apply.job_id,
         )
 
     def _custom_node(self, payload: OpPayload) -> OpResult:
-        fetcher = _run(lambda: ExternalCustomNodeFetcher(payload["request"]))
-        outputs = fetcher.get_payload()["outputs"]
-        return OpResult(
-            refs={
-                name: self._result_ref(f"{fetcher.file_ref}{_OUTPUT_SEPARATOR}{name}", output["path"])
-                for name, output in outputs.items()
-            }
+        job = unpack(payload, CustomNodePayload)
+        if job.node_source is None:
+            raise OperationUnsupported(
+                f"The {self.id} backend runs a custom node from its node file; node {job.node_id} has none"
+            )
+        request = CustomNodeExecuteInput(
+            task_id=job.job_id,
+            node_source=job.node_source,
+            class_name=job.class_name,
+            settings_values=job.settings_values,
+            secrets=resolve_secret_payload(job.custom_node, job.user_id),
+            inputs=[plan.serialize() for plan in job.inputs],
+            output_names=job.output_names,
+            user_id=job.user_id,
+            flowfile_flow_id=job.flow_id,
+            flowfile_node_id=job.node_id,
         )
+        fetcher = self._run_tracked(job.job_id, lambda: ExternalCustomNodeFetcher(request))
+        outputs = fetcher.get_payload()["outputs"]
+        refs: dict[str, ResultRef] = {}
+        for i, name in enumerate(job.output_names):
+            output = outputs.get(name)
+            if output is None:
+                raise ValueError(f"Worker did not return declared output '{name}'")
+            result_id = f"{fetcher.file_ref}{_OUTPUT_SEPARATOR}{name}"
+            refs[output_handle(i)] = self._result_ref(result_id, output["path"], output["row_count"])
+        return OpResult(refs=refs)
 
     def _ml_train(self, payload: OpPayload) -> OpResult:
-        fetcher = _run(
+        train = unpack(payload, MlTrainPayload)
+        fetcher = self._run_tracked(
+            train.job_id,
             lambda: MLTrainFetcher(
-                lf=payload["lf"],
-                staging_path=payload["staging_path"],
-                model_type=payload["model_type"],
-                target_column=payload["target_column"],
-                feature_columns=payload["feature_columns"],
-                params=payload["params"],
-                flow_id=payload["flow_id"],
-                node_id=payload["node_id"],
-                file_ref=payload.get("task_id"),
+                lf=train.plan,
+                staging_path=train.staging_path,
+                model_type=train.model_type,
+                target_column=train.target_column,
+                feature_columns=train.feature_columns,
+                params=train.params,
+                flow_id=train.flow_id,
+                node_id=train.node_id,
+                file_ref=train.job_id,
                 wait_on_completion=False,
-            )
+            ),
         )
         return OpResult(refs={}, metadata=_reported(fetcher))
 

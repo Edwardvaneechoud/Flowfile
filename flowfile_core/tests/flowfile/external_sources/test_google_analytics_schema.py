@@ -181,9 +181,7 @@ def _new_graph(flow_id: int = 1):
     from flowfile_core.schemas.schemas import FlowSettings
 
     handler = FlowfileHandler()
-    handler.register_flow(
-        FlowSettings(flow_id=flow_id, name="ga-test", path=".", execution_location="remote")
-    )
+    handler.register_flow(FlowSettings(flow_id=flow_id, name="ga-test", path=".", execution_location="remote"))
     return handler.get_flow(flow_id)
 
 
@@ -200,9 +198,7 @@ def test_add_google_analytics_reader_stamps_fields_and_skips_worker(
 
     graph = _new_graph(flow_id=1)
 
-    with patch(
-        "flowfile_core.flowfile.execution.backends.worker.WorkerBackend.run_op"
-    ) as mock_run_op:
+    with patch("flowfile_core.flowfile.execution.backends.worker.WorkerBackend.run_op") as mock_run_op:
         graph.add_google_analytics_reader(node_settings)
 
         # 1. ``fields`` is stamped at add-time, before any execution.
@@ -236,9 +232,7 @@ def test_add_google_analytics_reader_refreshes_fields_on_resettle(
         assert [f.name for f in first.fields] == ["date", "sessions"]
 
         # Same node_id, different selection — re-add must refresh fields.
-        second = _build_settings(
-            node_id=1, metrics=["totalUsers", "bounceRate"], dimensions=["country"]
-        )
+        second = _build_settings(node_id=1, metrics=["totalUsers", "bounceRate"], dimensions=["country"])
         graph.add_google_analytics_reader(second)
         assert [f.name for f in second.fields] == ["country", "totalUsers", "bounceRate"]
 
@@ -327,9 +321,7 @@ def test_add_google_analytics_reader_service_account_emits_sa_settings(
 def test_service_account_input_keeps_key_secret() -> None:
     from flowfile_core.schemas.google_analytics_schemas import GoogleAnalyticsServiceAccountInput
 
-    inp = GoogleAnalyticsServiceAccountInput(
-        connection_name="x", service_account_key="super-secret-json"
-    )
+    inp = GoogleAnalyticsServiceAccountInput(connection_name="x", service_account_key="super-secret-json")
     # The plaintext key must not leak through repr / str.
     assert "super-secret-json" not in repr(inp)
     assert "super-secret-json" not in str(inp.model_dump())

@@ -493,13 +493,12 @@ def _run_outcome(flow, node, lineage, kernel_id: str, hold, run_info) -> None:
 
 
 def _write_result(flow, node_id: int, data, path: str) -> None:
-    """Write a canvas result as parquet: through the worker when offloading, so core never collects it."""
+    """Write a canvas result as parquet on the flow's compute backend, so core never collects a remote flow's rows."""
     from flowfile_core.kernel.execution import write_parquet_for_kernel
 
-    local = flow.flow_settings.execution_location == "local"
     try:
         write_parquet_for_kernel(
-            data.data_frame, path, flow_id=flow.flow_id, node_id=node_id, local=local, what=f"node {node_id}'s rows"
+            data.data_frame, path, flow_id=flow.flow_id, node_id=node_id, what=f"node {node_id}'s rows", graph=flow
         )
     except RuntimeError as exc:
         raise HTTPException(422, f"Could not hand node {node_id}'s rows to the kernel: {exc}") from exc

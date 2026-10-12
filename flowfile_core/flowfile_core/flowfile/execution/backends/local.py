@@ -4,7 +4,7 @@ Results live in an in-process store that maps a result id to its ``pl.LazyFrame`
 DataFrame turned ``.lazy()``); a ``ResultRef``'s ``location`` is that id as UTF-8 bytes. ``submit`` holds every plan
 lazily under the result id it is given (the class docstring has the policy). ``run_op`` runs the operations a
 flow's nodes run whole when they execute in core, one method per ``OperationKind``; each method's docstring names
-the payload keys it reads; a read or write kind takes its dataclass from ``execution/payloads.py`` under ``"payload"``.
+the payload keys it reads; every other kind takes its dataclass from ``execution/payloads.py`` under ``"payload"``.
 A read holds what it read as a deferred plan, so the reader keeps the frame through ``plan_for`` and can release the
 ref at once. Nothing runs asynchronously: every job has ended when its call returns, so ``cancel`` has nothing to stop.
 """
@@ -31,6 +31,7 @@ from flowfile_core.flowfile.execution.errors import (
 )
 from flowfile_core.flowfile.execution.payloads import (
     CloudWritePayload,
+    CustomNodePayload,
     DatabaseReadPayload,
     DatabaseWritePayload,
     DeltaMergePayload,
@@ -38,7 +39,9 @@ from flowfile_core.flowfile.execution.payloads import (
     DeltaWritePayload,
     FileReadPayload,
     FileWritePayload,
+    FuzzyJoinPayload,
     KafkaReadPayload,
+    RandomSplitPayload,
     RestApiReadPayload,
     unpack,
 )
@@ -228,6 +231,15 @@ class LocalBackend:
         known_count = engine.number_of_records if engine.number_of_records >= 0 else None
         return self._hold(engine.data_frame, row_count=known_count, schema=engine.schema)
 
+    def _hold_plan(self, engine: FlowDataEngine) -> ResultRef:
+        """Store an engine's frame deferred, as a plan, with the schema and the row count the engine already has.
+
+        A computed frame is held as its ``.lazy()``, so its count still comes along. A caller releases a deferred ref
+        as soon as it holds the plan, which keeps the store empty between operations.
+        """
+        known_count = engine.number_of_records if engine.number_of_records >= 0 else None
+        return self._hold(engine.data_frame.lazy(), row_count=known_count, schema=engine.schema)
+
     def _hold_read(
         self, frame: pl.LazyFrame | pl.DataFrame, row_count: int | None = None, schema: Schema | None = None
     ) -> ResultRef:
@@ -319,7 +331,11 @@ class LocalBackend:
         return OpResult(refs={"result": ref})
 
     def _write_file(self, payload: OpPayload) -> OpResult:
-        """Write the rows of the ``FileWritePayload`` under ``"payload"`` to its file. Returns no refs."""
+        """Write the rows of the ``FileWritePayload`` under ``"payload"`` to its file. Returns no refs.
+
+        A parquet file is flushed to disk (``os.fsync``) before this returns, so a reader in another process, such as
+        a kernel container reading its inputs, finds it complete.
+        """
         write = unpack(payload, FileWritePayload)
         settings = write.settings
         local_write_output(
@@ -333,74 +349,69 @@ class LocalBackend:
             flow_id=write.flow_id,
             node_id=write.node_id,
         )
+        if settings.file_type == "parquet":
+            _fsync(settings.abs_file_path)
         return OpResult(refs={})
 
     def _fuzzy_join(self, payload: OpPayload) -> OpResult:
-        """Fuzzy-match the left input against the right.
+        """Fuzzy-match the left rows of the ``FuzzyJoinPayload`` under ``"payload"`` against its right rows.
 
-        Payload keys:
-            left: The left ``FlowDataEngine``.
-            right: The right ``FlowDataEngine``.
-            settings: The node's ``NodeFuzzyMatch``; a copy of its ``join_input`` is used.
-            node_logger: The node's logger, which the matcher reports its progress to.
-
-        Returns the refs ``{"result": ref}``.
+        A copy of the settings' ``join_input`` is used, and the matcher reports its progress to the payload's node
+        logger. Returns the refs ``{"result": ref}``, a deferred result.
         """
-        engine = payload["left"].fuzzy_join(
-            fuzzy_match_input=deepcopy(payload["settings"].join_input),
-            other=payload["right"],
-            node_logger=payload["node_logger"],
+        join = unpack(payload, FuzzyJoinPayload)
+        engine = FlowDataEngine(join.left).fuzzy_join(
+            fuzzy_match_input=deepcopy(join.settings.join_input),
+            other=FlowDataEngine(join.right),
+            node_logger=join.node_logger,
         )
         return OpResult(refs={"result": self._hold_engine(engine)})
 
     def _random_split(self, payload: OpPayload) -> OpResult:
-        """Partition the input's rows at random into the node's labelled splits.
+        """Partition the rows of the ``RandomSplitPayload`` under ``"payload"`` at random into its labelled splits.
 
-        Payload keys:
-            input: The ``FlowDataEngine`` to split.
-            settings: The node's ``NodeRandomSplit``: its ``splits`` (name and percentage each) and ``seed``.
-
-        Returns one ref per split, keyed by the split's name, in the order the settings list them.
+        The shuffled rows are computed once, so every split slices the same shuffle. Returns one deferred ref per split,
+        keyed by the split's name, in the order the settings list them.
         """
-        node_settings = payload["settings"]
-        split_pairs = [(split.name, split.percentage) for split in node_settings.splits]
-        outputs = payload["input"].random_split(split_pairs, node_settings.seed)
+        split = unpack(payload, RandomSplitPayload)
+        split_pairs = [(group.name, group.percentage) for group in split.settings.splits]
+        outputs = FlowDataEngine(split.plan).random_split(split_pairs, split.settings.seed)
         return OpResult(refs={name: self._hold_engine(engine) for name, engine in outputs.outputs.items()})
 
     def _run_custom_node(self, payload: OpPayload) -> OpResult:
-        """Run a custom node's ``process`` on a fresh instance of its class.
+        """Run ``process`` of the ``CustomNodePayload`` under ``"payload"`` on a fresh instance of its node's class.
 
-        Payload keys:
-            custom_node: The ``CustomNodeBase`` the node was placed with.
-            settings: The node's ``UserDefinedNode``: the ``settings`` values, ``user_id`` and ``node_id``.
-            inputs: The input ``FlowDataEngine``s, in wiring order.
-            output_names: The node's declared outputs, in order.
+        The instance is built from the payload's ``settings_values`` and, when the payload names a user, reads that
+        user's secrets through core's secret store as it accesses them. The source and secret fields a backend in
+        another process needs are not read.
 
         Returns the refs ``{"result": ref}`` when ``process`` returns one frame; one ref per declared output, keyed by
-        its output handle (``output-0``, ``output-1``, ...), when it returns a dict of them; no refs otherwise.
+        its output handle (``output-0``, ``output-1``, ...), when it returns a dict of them; no refs otherwise. Every
+        ref is deferred, holding the frame ``process`` returned as a plan, with its row count when the frame was
+        computed already.
 
         Raises:
             ValueError: ``process`` returned a dict without one of the declared outputs.
         """
-        node_settings = payload["settings"]
-        instance = type(payload["custom_node"]).from_settings(node_settings.settings or {})
-        if node_settings.user_id is not None:
-            instance.set_execution_context(node_settings.user_id)
+        job = unpack(payload, CustomNodePayload)
+        instance = type(job.custom_node).from_settings(job.settings_values)
+        if job.user_id is not None:
+            instance.set_execution_context(job.user_id)
 
-        output = instance.process(*(engine.data_frame.lazy() for engine in payload["inputs"]))
+        output = instance.process(*job.inputs)
 
         accessed_secrets = instance.get_accessed_secrets()
         if accessed_secrets:
-            logger.info(f"Node '{node_settings.node_id}' accessed secrets: {accessed_secrets}")
+            logger.info(f"Node '{job.node_id}' accessed secrets: {accessed_secrets}")
         if isinstance(output, dict):
             engines: dict[str, FlowDataEngine] = {}
-            for i, name in enumerate(payload["output_names"]):
+            for i, name in enumerate(job.output_names):
                 if name not in output:
                     raise ValueError(f"process() did not return declared output '{name}'")
                 engines[output_handle(i)] = FlowDataEngine(output[name])
-            return OpResult(refs={handle: self._hold_engine(engine) for handle, engine in engines.items()})
+            return OpResult(refs={handle: self._hold_plan(engine) for handle, engine in engines.items()})
         if isinstance(output, pl.LazyFrame | pl.DataFrame):
-            return OpResult(refs={"result": self._hold_engine(FlowDataEngine(output))})
+            return OpResult(refs={"result": self._hold_plan(FlowDataEngine(output))})
         return OpResult(refs={})
 
     def _write_cloud_storage(self, payload: OpPayload) -> OpResult:
@@ -537,6 +548,12 @@ def _store_key(ref: ResultRef) -> str:
 def _flowfile_schema(schema: pl.Schema) -> Schema:
     """A Polars schema as the ``FlowfileColumn`` list a ``FlowDataEngine`` builds from it."""
     return convert_stats_to_column_info(FlowDataEngine._create_schema_stats_from_pl_schema(schema))
+
+
+def _fsync(path: str) -> None:
+    """Flush the file at ``path`` to disk; ``"rb+"`` because ``os.fsync`` needs a writable descriptor on Windows."""
+    with open(path, "rb+") as file:
+        os.fsync(file.fileno())
 
 
 def _ipc_stream(frame: pl.DataFrame) -> bytes:

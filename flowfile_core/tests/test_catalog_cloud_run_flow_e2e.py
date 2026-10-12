@@ -217,7 +217,9 @@ class TestCloudCatalogCliRunE2E:
         # Seed a physical source table in S3 and register it in the catalog.
         source_dest = f"{uri}/source_physical"
         assert (
-            write_delta(pl.DataFrame(SAMPLE_DATA), source_dest, mode="overwrite", storage_options=target.storage_options)
+            write_delta(
+                pl.DataFrame(SAMPLE_DATA), source_dest, mode="overwrite", storage_options=target.storage_options
+            )
             is True
         )
         with get_db_context() as db:
@@ -240,9 +242,7 @@ class TestCloudCatalogCliRunE2E:
             phys_id = phys.id
 
         graph = _create_graph(execution_location="local")
-        graph.add_node_promise(
-            input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
-        )
+        graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader"))
         graph.add_catalog_reader(
             input_schema.NodeCatalogReader(flow_id=graph.flow_id, node_id=1, catalog_table_id=phys_id)
         )

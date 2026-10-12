@@ -160,9 +160,7 @@ class TestCatalogWriter:
         # run loads from disk before executing.
         graph = _create_graph(execution_location="local")
         _add_manual_input(graph, SAMPLE_DATA, node_id=1)
-        graph.add_node_promise(
-            input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="catalog_writer")
-        )
+        graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="catalog_writer"))
         graph.add_catalog_writer(
             input_schema.NodeCatalogWriter(
                 flow_id=graph.flow_id,
@@ -871,9 +869,7 @@ class TestSyncCatalogReadLinks:
         table_id = table_out.id
 
         graph = _create_graph()
-        graph.add_node_promise(
-            input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
-        )
+        graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader"))
         reader = input_schema.NodeCatalogReader(
             flow_id=graph.flow_id,
             node_id=1,
@@ -902,15 +898,11 @@ class TestSyncCatalogReadLinks:
 
         with get_db_context() as db:
             svc = CatalogService(SQLAlchemyCatalogRepository(db))
-            table_out = svc.register_table(
-                name="demo_named_table", file_path=tmp.name, owner_id=1, namespace_id=ns_id
-            )
+            table_out = svc.register_table(name="demo_named_table", file_path=tmp.name, owner_id=1, namespace_id=ns_id)
         table_id = table_out.id
 
         graph = _create_graph()
-        graph.add_node_promise(
-            input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
-        )
+        graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader"))
         graph.add_catalog_reader(
             input_schema.NodeCatalogReader(
                 flow_id=graph.flow_id,
@@ -1694,9 +1686,7 @@ class TestScd2WriterOutput:
         _add_manual_input(first, SCD2_V1, node_id=1)
         _add_scd2_writer(first, 2, 1, "out_mixed", ns_id)
         _run_graph(first)
-        unchanged_sk_before = (
-            _node_output(first).filter(pl.col("id") == 2)["sk"].item()
-        )
+        unchanged_sk_before = _node_output(first).filter(pl.col("id") == 2)["sk"].item()
 
         # Fed in an order that is neither sorted nor the table's, so "input order" is falsifiable.
         scrambled = [SCD2_V2[2], SCD2_V2[0], SCD2_V2[1]]
@@ -1911,9 +1901,7 @@ class TestScd2WriterOutput:
         assert out["id"].to_list() == [1, 2, 3]
         assert out["sk"].null_count() == 0
         current_sks = set(
-            pl.read_delta(_table_row(ns_id, "out_narrow_key").file_path)
-            .filter(pl.col("is_current"))["sk"]
-            .to_list()
+            pl.read_delta(_table_row(ns_id, "out_narrow_key").file_path).filter(pl.col("is_current"))["sk"].to_list()
         )
         assert set(out["sk"].to_list()) == current_sks
 
@@ -2014,9 +2002,7 @@ class TestScd2WriterDownstream:
 
         graph = _create_graph(flow_id=1, execution_location=execution_location)
         _add_manual_input(graph, SCD2_V1, node_id=1)
-        _add_catalog_writer(
-            graph, node_id=2, depending_on_id=1, table_name="downstream_plain", namespace_id=ns_id
-        )
+        _add_catalog_writer(graph, node_id=2, depending_on_id=1, table_name="downstream_plain", namespace_id=ns_id)
         _add_code_node(graph, 3, 2, "output_df = input_df")
         _run_graph(graph)
 
@@ -2075,8 +2061,9 @@ class TestScd2WriterPreview:
 class TestScd2SettingsValidation:
     """Server-side name allowlist: these four names are generated, and they reach Delta merge SQL."""
 
-    @pytest.mark.parametrize("field", ["surrogate_key_column", "valid_from_column", "valid_to_column",
-                                       "is_current_column"])
+    @pytest.mark.parametrize(
+        "field", ["surrogate_key_column", "valid_from_column", "valid_to_column", "is_current_column"]
+    )
     @pytest.mark.parametrize("bad", ['valid"x', "a b", "a;b", "col)"])
     def test_illegal_characters_are_rejected(self, field, bad):
         with pytest.raises(ValueError, match="may only contain letters"):

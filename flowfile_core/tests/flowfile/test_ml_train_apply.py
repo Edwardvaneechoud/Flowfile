@@ -3,16 +3,21 @@
 These tests focus on the orchestration logic (settings validation, schema
 callbacks, artifact lifecycle) rather than the worker compute path — the
 actual training runs in :mod:`flowfile_worker.tests.test_train_apply_model`.
+Both nodes reach the worker only through ``WorkerBackend.run_op``, which the
+tests replace with a stand-in that sees the payload each node sends.
 """
 
 from typing import Literal
-from unittest.mock import patch
 
+import polars as pl
 import pytest
 
 from flowfile_core.auth.models import User
+from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+from flowfile_core.flowfile.execution.payloads import PAYLOAD_KEY, MlApplyPayload, MlTrainPayload
+from flowfile_core.flowfile.execution.protocol import OperationKind, OpResult, ResultRef
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
-from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
+from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection, ml_flow_model_path
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas
 
@@ -39,9 +44,7 @@ def _make_graph(
 
 
 def _seed_manual_input(graph: FlowGraph, node_id: int = 1):
-    promise = input_schema.NodePromise(
-        flow_id=graph.flow_id, node_id=node_id, node_type="manual_input"
-    )
+    promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="manual_input")
     graph.add_node_promise(promise)
     payload = input_schema.NodeManualInput(
         flow_id=graph.flow_id,
@@ -53,14 +56,45 @@ def _seed_manual_input(graph: FlowGraph, node_id: int = 1):
     graph.add_manual_input(payload)
 
 
+def _route_worker_ops(monkeypatch, handle) -> list[tuple[OperationKind, object]]:
+    """Answer the worker backend's ``run_op`` with ``handle(op, payload dataclass)``; returns the calls it got."""
+    calls: list[tuple[OperationKind, object]] = []
+
+    def run_op(self, op, payload):
+        calls.append((op, payload[PAYLOAD_KEY]))
+        return handle(op, payload[PAYLOAD_KEY])
+
+    monkeypatch.setattr(WorkerBackend, "run_op", run_op)
+    return calls
+
+
+def _refuse_worker_ops(monkeypatch, error: Exception) -> None:
+    """Have the worker backend's ``run_op`` raise ``error``."""
+
+    def run_op(self, op, payload):
+        raise error
+
+    monkeypatch.setattr(WorkerBackend, "run_op", run_op)
+
+
+def _trained(model: str = '{"stub": true}', sha256: str = "deadbeef" * 8):
+    """A stand-in training run: writes ``model`` to the payload's staging path and reports it."""
+    from pathlib import Path
+
+    def handle(op, train: MlTrainPayload) -> OpResult:
+        Path(train.staging_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(train.staging_path).write_text(model)
+        return OpResult(refs={}, metadata={"sha256": sha256, "size_bytes": len(model), "model_type": train.model_type})
+
+    return handle
+
+
 def _wire_ml_node(graph: FlowGraph, node_type: str, node_id: int, upstream_id: int):
     """Register a node promise + connection so its inputs are populated.
 
     Mirrors how the runtime wires nodes when a flow loads from disk.
     """
-    promise = input_schema.NodePromise(
-        flow_id=graph.flow_id, node_id=node_id, node_type=node_type
-    )
+    promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type=node_type)
     graph.add_node_promise(promise)
     connection = input_schema.NodeConnection.create_from_simple_input(upstream_id, node_id)
     add_connection(graph, connection)
@@ -180,9 +214,7 @@ def test_apply_model_schema_refreshes_when_output_column_changes():
         flow_id=graph.flow_id,
         node_id=3,
         depending_on_id=1,
-        apply_input=input_schema.ApplyModelSettings(
-            source="catalog", model_name="m", output_column="pred"
-        ),
+        apply_input=input_schema.ApplyModelSettings(source="catalog", model_name="m", output_column="pred"),
     )
     graph.add_apply_model(apply_settings)
     first = {c.column_name for c in graph.get_node(3).schema}
@@ -192,9 +224,7 @@ def test_apply_model_schema_refreshes_when_output_column_changes():
         flow_id=graph.flow_id,
         node_id=3,
         depending_on_id=1,
-        apply_input=input_schema.ApplyModelSettings(
-            source="catalog", model_name="m", output_column="renamed"
-        ),
+        apply_input=input_schema.ApplyModelSettings(source="catalog", model_name="m", output_column="renamed"),
     )
     graph.add_apply_model(new_settings)
     second = {c.column_name for c in graph.get_node(3).schema}
@@ -288,13 +318,9 @@ def test_train_model_forwards_namespace_id_to_prepare_upload(monkeypatch):
     def _fake_prepare_upload(self, request, owner_id, _max_retries=3):
         captured["namespace_id"] = request.namespace_id
         captured["name"] = request.name
-        return PrepareUploadResponse(
-            artifact_id=1, version=1, method="file", path="/tmp/x", storage_key="1/x"
-        )
+        return PrepareUploadResponse(artifact_id=1, version=1, method="file", path="/tmp/x", storage_key="1/x")
 
-    monkeypatch.setattr(
-        artifact_service_mod.ArtifactService, "prepare_upload", _fake_prepare_upload
-    )
+    monkeypatch.setattr(artifact_service_mod.ArtifactService, "prepare_upload", _fake_prepare_upload)
 
     settings = input_schema.NodeTrainModel(
         flow_id=graph.flow_id,
@@ -311,13 +337,10 @@ def test_train_model_forwards_namespace_id_to_prepare_upload(monkeypatch):
         ),
     )
     graph.add_train_model(settings)
+    _refuse_worker_ops(monkeypatch, RuntimeError("expected"))
 
-    with patch(
-        "flowfile_core.flowfile.flow_graph.MLTrainFetcher",
-        side_effect=RuntimeError("expected"),
-    ):
-        with pytest.raises(RuntimeError, match="expected"):
-            graph.get_node(2).get_resulting_data()
+    with pytest.raises(RuntimeError, match="expected"):
+        graph.get_node(2).get_resulting_data()
 
     assert captured["namespace_id"] == 42
     assert captured["name"] == "m"
@@ -338,14 +361,15 @@ def test_apply_model_forwards_namespace_id_to_lookup(monkeypatch):
         captured["namespace_id"] = namespace_id
         captured["version"] = version
         from types import SimpleNamespace
+
         return SimpleNamespace(
-            id=1, name=name, version=1,
+            id=1,
+            name=name,
+            version=1,
             download_source=SimpleNamespace(method="not-file", path=""),
         )
 
-    monkeypatch.setattr(
-        artifact_service_mod.ArtifactService, "get_artifact_by_name", _fake_get_by_name
-    )
+    monkeypatch.setattr(artifact_service_mod.ArtifactService, "get_artifact_by_name", _fake_get_by_name)
 
     settings = input_schema.NodeApplyModel(
         flow_id=graph.flow_id,
@@ -353,7 +377,10 @@ def test_apply_model_forwards_namespace_id_to_lookup(monkeypatch):
         depending_on_id=1,
         apply_input=input_schema.ApplyModelSettings(
             source="catalog",
-            model_name="m", model_version=3, namespace_id=42, output_column="pred",
+            model_name="m",
+            model_version=3,
+            namespace_id=42,
+            output_column="pred",
         ),
     )
     graph.add_apply_model(settings)
@@ -374,7 +401,9 @@ def test_apply_model_upstream_mode_requires_existing_train_node():
         node_id=2,
         depending_on_id=1,
         apply_input=input_schema.ApplyModelSettings(
-            source="upstream", upstream_node_id=99, output_column="pred",
+            source="upstream",
+            upstream_node_id=99,
+            output_column="pred",
         ),
     )
     graph.add_apply_model(settings)
@@ -420,23 +449,19 @@ def test_apply_model_upstream_mode_reads_train_node_flow_path(tmp_path, monkeypa
         )
     )
 
-    captured: dict = {}
+    scored = pl.DataFrame({"x1": [1.0, 3.0], "x2": [2.0, 4.0], "y": [5.0, 13.0], "pred": [3.0, 7.0]})
+    scored_file = tmp_path / "scored.arrow"
+    scored.write_ipc(scored_file)
 
-    class _FakeFetcher:
-        # Mirror MLApplyFetcher's real positional signature so a refactor that
-        # switches the call site from kwargs to positional doesn't silently
-        # bypass this mock.
-        def __init__(
-            self, lf, model_path, output_column, flow_id, node_id, file_ref,
-            wait_on_completion=True,
-        ):
-            captured["model_path"] = model_path
-            captured["output_column"] = output_column
+    def train_then_score(op, payload) -> OpResult:
+        if op is OperationKind.ml_train:
+            # The model file is already where the train node writes it.
+            report = {"sha256": "0" * 64, "size_bytes": model_path.stat().st_size, "model_type": "linear_regression"}
+            return OpResult(refs={}, metadata=report)
+        ref = ResultRef("worker", payload.job_id, [], scored.height, "materialised", str(scored_file).encode())
+        return OpResult(refs={"result": ref})
 
-        def get_result(self):
-            return None
-
-    monkeypatch.setattr("flowfile_core.flowfile.flow_graph.MLApplyFetcher", _FakeFetcher)
+    calls = _route_worker_ops(monkeypatch, train_then_score)
 
     _wire_ml_node(graph, "apply_model", node_id=20, upstream_id=10)
     apply_settings = input_schema.NodeApplyModel(
@@ -444,14 +469,23 @@ def test_apply_model_upstream_mode_reads_train_node_flow_path(tmp_path, monkeypa
         node_id=20,
         depending_on_id=10,
         apply_input=input_schema.ApplyModelSettings(
-            source="upstream", upstream_node_id=10, output_column="pred",
+            source="upstream",
+            upstream_node_id=10,
+            output_column="pred",
         ),
     )
     graph.add_apply_model(apply_settings)
 
-    graph.get_node(20).get_resulting_data()
-    assert captured["model_path"] == str(model_path)
-    assert captured["output_column"] == "pred"
+    result = graph.get_node(20).get_resulting_data()
+
+    assert [op for op, _ in calls] == [OperationKind.ml_train, OperationKind.ml_apply]
+    apply = calls[-1][1]
+    assert isinstance(apply, MlApplyPayload)
+    assert (apply.model_path, apply.output_column) == (str(model_path), "pred")
+    assert (apply.flow_id, apply.node_id, apply.job_id) == (graph.flow_id, 20, graph.get_node(20).hash)
+    assert apply.plan.collect().columns == ["x1", "x2", "y"]
+    assert result.collect()["pred"].to_list() == [3.0, 7.0]
+    assert result.number_of_records == 2
 
 
 def test_train_model_rejects_unknown_model_type():
@@ -507,26 +541,23 @@ def test_train_model_rolls_back_pending_artifact_on_worker_failure(monkeypatch):
         _fake_delete_artifact,
     )
 
-    with patch(
-        "flowfile_core.flowfile.flow_graph.MLTrainFetcher",
-        side_effect=RuntimeError("worker exploded"),
-    ):
-        settings = input_schema.NodeTrainModel(
-            flow_id=graph.flow_id,
-            node_id=2,
-            depending_on_id=1,
-            train_input=input_schema.TrainModelSettings(
-                target_column="y",
-                feature_columns=["x1"],
-                model_type="linear_regression",
-                params={"add_bias": True},
-                publish_to_catalog=True,
-                model_name="m",
-            ),
-        )
-        graph.add_train_model(settings)
-        with pytest.raises(RuntimeError, match="worker exploded"):
-            graph.get_node(2).get_resulting_data()
+    _refuse_worker_ops(monkeypatch, RuntimeError("worker exploded"))
+    settings = input_schema.NodeTrainModel(
+        flow_id=graph.flow_id,
+        node_id=2,
+        depending_on_id=1,
+        train_input=input_schema.TrainModelSettings(
+            target_column="y",
+            feature_columns=["x1"],
+            model_type="linear_regression",
+            params={"add_bias": True},
+            publish_to_catalog=True,
+            model_name="m",
+        ),
+    )
+    graph.add_train_model(settings)
+    with pytest.raises(RuntimeError, match="worker exploded"):
+        graph.get_node(2).get_resulting_data()
 
     assert delete_calls == [999], "pending artifact must be deleted on failure"
 
@@ -539,9 +570,7 @@ def test_apply_model_catalog_mode_requires_model_name():
         flow_id=graph.flow_id,
         node_id=2,
         depending_on_id=1,
-        apply_input=input_schema.ApplyModelSettings(
-            source="catalog", model_name="", output_column="pred"
-        ),
+        apply_input=input_schema.ApplyModelSettings(source="catalog", model_name="", output_column="pred"),
     )
     graph.add_apply_model(settings)
     with pytest.raises(ValueError, match="model_name"):
@@ -556,9 +585,7 @@ def test_apply_model_upstream_mode_requires_upstream_node_id():
         flow_id=graph.flow_id,
         node_id=2,
         depending_on_id=1,
-        apply_input=input_schema.ApplyModelSettings(
-            source="upstream", upstream_node_id=None, output_column="pred"
-        ),
+        apply_input=input_schema.ApplyModelSettings(source="upstream", upstream_node_id=None, output_column="pred"),
     )
     graph.add_apply_model(settings)
     with pytest.raises(ValueError, match="upstream_node_id"):
@@ -585,23 +612,7 @@ def test_train_model_records_artifact_in_node_summary(monkeypatch):
     _seed_manual_input(graph, node_id=1)
     _wire_ml_node(graph, "train_model", node_id=2, upstream_id=1)
 
-    captured: dict = {}
-
-    class _FakeFetcher:
-        # Mirror MLTrainFetcher's real positional signature.
-        def __init__(
-            self, lf, staging_path, model_type, target_column, feature_columns,
-            params, flow_id, node_id, file_ref, wait_on_completion=True,
-        ):
-            captured["staging_path"] = staging_path
-
-        def get_result(self):
-            from pathlib import Path
-            Path(captured["staging_path"]).parent.mkdir(parents=True, exist_ok=True)
-            Path(captured["staging_path"]).write_text('{"stub": true}')
-            return {"sha256": "deadbeef" * 8, "size_bytes": 14, "model_type": "linear_regression"}
-
-    monkeypatch.setattr("flowfile_core.flowfile.flow_graph.MLTrainFetcher", _FakeFetcher)
+    calls = _route_worker_ops(monkeypatch, _trained())
 
     settings = input_schema.NodeTrainModel(
         flow_id=graph.flow_id,
@@ -617,6 +628,18 @@ def test_train_model_records_artifact_in_node_summary(monkeypatch):
     graph.add_train_model(settings)
     graph.get_node(2).get_resulting_data()
 
+    ((op, train),) = calls
+    assert op is OperationKind.ml_train
+    assert isinstance(train, MlTrainPayload)
+    assert (train.model_type, train.target_column, train.feature_columns, train.params) == (
+        "linear_regression",
+        "y",
+        ["x1"],
+        {"add_bias": True},
+    )
+    assert (train.flow_id, train.node_id, train.job_id) == (graph.flow_id, 2, graph.get_node(2).hash)
+    assert train.staging_path == str(ml_flow_model_path(graph.flow_id, 2))
+    assert train.plan.collect().columns == ["x1", "x2", "y"]
     summaries = graph.artifact_context.get_node_summaries()
     assert "2" in summaries
     s = summaries["2"]
@@ -634,20 +657,7 @@ def test_train_model_artifact_replaces_on_rerun(monkeypatch):
     _seed_manual_input(graph, node_id=1)
     _wire_ml_node(graph, "train_model", node_id=2, upstream_id=1)
 
-    class _FakeFetcher:
-        # Mirror MLTrainFetcher's real positional signature.
-        def __init__(
-            self, lf, staging_path, model_type, target_column, feature_columns,
-            params, flow_id, node_id, file_ref, wait_on_completion=True,
-        ):
-            from pathlib import Path
-            Path(staging_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(staging_path).write_text('{"stub": true}')
-
-        def get_result(self):
-            return {"sha256": "x" * 64, "size_bytes": 14, "model_type": "linear_regression"}
-
-    monkeypatch.setattr("flowfile_core.flowfile.flow_graph.MLTrainFetcher", _FakeFetcher)
+    _route_worker_ops(monkeypatch, _trained(sha256="x" * 64))
 
     settings = input_schema.NodeTrainModel(
         flow_id=graph.flow_id,
@@ -669,25 +679,59 @@ def test_train_model_artifact_replaces_on_rerun(monkeypatch):
     assert summaries["2"]["published_count"] == 1
 
 
+def _flow_only_train_settings(graph: FlowGraph) -> input_schema.NodeTrainModel:
+    return input_schema.NodeTrainModel(
+        flow_id=graph.flow_id,
+        node_id=2,
+        depending_on_id=1,
+        train_input=input_schema.TrainModelSettings(
+            target_column="y",
+            feature_columns=["x1"],
+            model_type="linear_regression",
+            params={"add_bias": True},
+        ),
+    )
+
+
+def test_a_local_flow_still_trains_on_the_worker_backend(monkeypatch):
+    """Core's own backend fits no models, so the fit goes to the worker backend whatever the flow's location."""
+    graph = _make_graph()
+    graph._flow_settings.path = ""
+    graph.flow_settings.execution_location = "local"
+    _seed_manual_input(graph, node_id=1)
+    _wire_ml_node(graph, "train_model", node_id=2, upstream_id=1)
+    calls = _route_worker_ops(monkeypatch, _trained())
+
+    graph.add_train_model(_flow_only_train_settings(graph))
+    result = graph.get_node(2).get_resulting_data()
+
+    assert [op for op, _ in calls] == [OperationKind.ml_train]
+    assert result.collect().columns == ["x1", "x2", "y"], "the node passes its input through"
+
+
+def test_a_train_result_without_the_model_digest_fails_the_node(monkeypatch):
+    graph = _make_graph()
+    graph._flow_settings.path = ""
+    _seed_manual_input(graph, node_id=1)
+    _wire_ml_node(graph, "train_model", node_id=2, upstream_id=1)
+    _route_worker_ops(monkeypatch, lambda op, train: OpResult(refs={}, metadata={"model_type": "linear_regression"}))
+
+    graph.add_train_model(_flow_only_train_settings(graph))
+    with pytest.raises(RuntimeError, match="sha256/size_bytes"):
+        graph.get_node(2).get_resulting_data()
+
+
 # Wait For node
 
 
 def _wire_wait_for(graph: FlowGraph, *, node_id: int, left: int, right: int) -> None:
-    promise_w = input_schema.NodePromise(
-        flow_id=graph.flow_id, node_id=node_id, node_type="wait_for"
-    )
+    promise_w = input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="wait_for")
     graph.add_node_promise(promise_w)
     left_conn = input_schema.NodeConnection.create_from_simple_input(left, node_id)
     add_connection(graph, left_conn)
-    right_conn = input_schema.NodeConnection.create_from_simple_input(
-        right, node_id, input_type="right"
-    )
+    right_conn = input_schema.NodeConnection.create_from_simple_input(right, node_id, input_type="right")
     add_connection(graph, right_conn)
-    graph.add_wait_for(
-        input_schema.NodeWaitFor(
-            flow_id=graph.flow_id, node_id=node_id, depending_on_ids=[left, right]
-        )
-    )
+    graph.add_wait_for(input_schema.NodeWaitFor(flow_id=graph.flow_id, node_id=node_id, depending_on_ids=[left, right]))
 
 
 def test_wait_for_passes_through_left_input_schema():
@@ -695,9 +739,7 @@ def test_wait_for_passes_through_left_input_schema():
     graph = _make_graph()
     _seed_manual_input(graph, node_id=1)
 
-    promise = input_schema.NodePromise(
-        flow_id=graph.flow_id, node_id=2, node_type="manual_input"
-    )
+    promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="manual_input")
     graph.add_node_promise(promise)
     graph.add_manual_input(
         input_schema.NodeManualInput(
@@ -719,9 +761,7 @@ def test_wait_for_runs_after_dependency_and_passes_data_through():
     graph.execution_location = "local"
     _seed_manual_input(graph, node_id=1)
 
-    promise = input_schema.NodePromise(
-        flow_id=graph.flow_id, node_id=2, node_type="manual_input"
-    )
+    promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="manual_input")
     graph.add_node_promise(promise)
     graph.add_manual_input(
         input_schema.NodeManualInput(
@@ -755,9 +795,7 @@ def _patch_upstream_handler(monkeypatch, graph: FlowGraph) -> None:
 
 
 def _seed_extra_source(graph: FlowGraph, node_id: int) -> None:
-    promise = input_schema.NodePromise(
-        flow_id=graph.flow_id, node_id=node_id, node_type="manual_input"
-    )
+    promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="manual_input")
     graph.add_node_promise(promise)
     graph.add_manual_input(
         input_schema.NodeManualInput(

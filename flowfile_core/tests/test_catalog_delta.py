@@ -136,7 +136,12 @@ class TestFormatDeltaTimestamp:
 class TestParseDeltaHistory:
     def test_parses_history_list(self):
         raw = [
-            {"version": 0, "timestamp": "2024-01-01T00:00:00", "operation": "WRITE", "operationParameters": {"mode": "Overwrite"}},
+            {
+                "version": 0,
+                "timestamp": "2024-01-01T00:00:00",
+                "operation": "WRITE",
+                "operationParameters": {"mode": "Overwrite"},
+            },
             {"version": 1, "timestamp": 1700000000000, "operation": "WRITE", "operationParameters": None},
         ]
         result = _parse_delta_history(raw)
@@ -261,7 +266,11 @@ class TestRegisterTableFromData:
                 owner_id=1,
                 namespace_id=schema_id,
                 storage_format="delta",
-                schema=[{"name": "a", "dtype": "Int64"}, {"name": "b", "dtype": "Float64"}, {"name": "c", "dtype": "String"}],
+                schema=[
+                    {"name": "a", "dtype": "Int64"},
+                    {"name": "b", "dtype": "Float64"},
+                    {"name": "c", "dtype": "String"},
+                ],
                 row_count=50,
                 column_count=None,
                 size_bytes=2000,
@@ -281,10 +290,17 @@ class TestRegisterTableFromParquetAlias:
 
         def fake_register_from_data(self_, **kwargs):
             calls.append(kwargs)
-            return type("FakeOut", (), {
-                "name": kwargs["name"], "row_count": 0, "column_count": 0,
-                "size_bytes": 0, "schema_columns": [],
-            })()
+            return type(
+                "FakeOut",
+                (),
+                {
+                    "name": kwargs["name"],
+                    "row_count": 0,
+                    "column_count": 0,
+                    "size_bytes": 0,
+                    "schema_columns": [],
+                },
+            )()
 
         monkeypatch.setattr(CatalogService, "register_table_from_data", fake_register_from_data)
 
@@ -785,6 +801,7 @@ class TestGetTableHistory:
             # Disable worker offload so it reads locally
             import flowfile_core.configs.settings
             from flowfile_core.configs.utils import MutableBool
+
             orig = getattr(flowfile_core.configs.settings, "OFFLOAD_TO_WORKER", False)
             flowfile_core.configs.settings.OFFLOAD_TO_WORKER = MutableBool(False)
 

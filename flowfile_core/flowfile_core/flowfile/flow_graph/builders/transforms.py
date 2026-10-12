@@ -4,7 +4,8 @@ from copy import deepcopy
 from typing import TYPE_CHECKING
 
 from flowfile_core.configs import logger
-from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.payloads import RandomSplitPayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.filter_expressions import (
     build_filter_expression,
@@ -429,6 +430,9 @@ class TransformBuildersMixin(GraphMixinBase):
 
         Returns a ``NamedOutputs``; the framework unpacks it into
         ``_named_outputs`` so each split is reachable via its own output handle.
+        The split runs as the ``random_split`` operation on the execution
+        context's backend, which shuffles the rows once and returns one result
+        per split, keyed by the split's name.
 
         Args:
             settings: The settings object specifying the splits and optional seed.
@@ -439,20 +443,20 @@ class TransformBuildersMixin(GraphMixinBase):
         from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
 
         def _func(table: FlowDataEngine) -> NamedOutputs:
-            split_pairs = [(s.name, s.percentage) for s in settings.splits]
-            if self.execution_location == "local":
-                backend = registry.backend(registry.LOCAL_BACKEND_ID)
-                refs = backend.run_op(OperationKind.random_split, {"input": table, "settings": settings}).refs
-                splits = NamedOutputs({name: FlowDataEngine(backend.plan_for(ref)) for name, ref in refs.items()})
-                for ref in refs.values():
-                    backend.release(ref)
-                return splits
-            return table.random_split_external(
-                split_pairs,
-                settings.seed,
-                flow_id=self.flow_id,
-                node_id=settings.node_id,
+            node = self.get_node(settings.node_id)
+            split = RandomSplitPayload(
+                plan=table.data_frame.lazy(), settings=settings, flow_id=self.flow_id, node_id=settings.node_id
             )
+            backend = current_context(self).backend
+            refs = node.run_op(backend, OperationKind.random_split, op_payload(split), job_id=split.job_id).refs
+            engines = {
+                name: FlowDataEngine(backend.plan_for(ref), number_of_records=ref.row_count)
+                for name, ref in refs.items()
+            }
+            for ref in refs.values():
+                if ref.state == "deferred":
+                    backend.release(ref)
+            return NamedOutputs(engines)
 
         self.add_node_step(
             node_id=settings.node_id,
