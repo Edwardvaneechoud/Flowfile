@@ -182,6 +182,8 @@ def test_source_edit_changes_node_hash(registered_node, tmp_path):
 
 
 def test_worker_down_gives_clean_node_error(registered_node, monkeypatch):
+    """With the worker out of reach, the first node that needs it fails with the typed message
+    and nothing downstream runs."""
     from flowfile_core.flowfile.execution import registry
 
     entry = registered_node(WORKER_NODE_SOURCE, "worker_down_node.py")
@@ -193,4 +195,6 @@ def test_worker_down_gives_clean_node_error(registered_node, monkeypatch):
     run_info = graph.run_graph()
     assert not run_info.success
     failed = [r for r in run_info.node_step_result if not r.success]
-    assert any(r.node_id == 2 for r in failed)
+    assert [r.node_id for r in failed] == [1]
+    assert "Is the worker running?" in failed[0].error
+    assert not any(r.node_id == 2 and r.success for r in run_info.node_step_result)
