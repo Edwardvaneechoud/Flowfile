@@ -350,6 +350,57 @@ def store(
         progress.value = 100
 
 
+def submit_result(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,
+    flowfile_flow_id: int,
+    flowfile_node_id: int | str,
+    materialise: bool,
+    preview_rows: int | None,
+):
+    """Run a submitted plan for the ``/v1`` routes and queue what its result reference needs.
+
+    Materialised, the plan is collected once and written as IPC to *file_path*, and the row count
+    is that frame's height. Deferred, nothing is written and the row count stays ``None``. With
+    *preview_rows* set, the first rows also come back as an Arrow IPC stream: from the collected
+    frame, or from ``head(preview_rows)`` of the plan. The queued dict carries the plan's
+    ``pl.Schema``, never one read back from the file, because an extension dtype Polars has not
+    registered comes back from an IPC file as its storage type.
+    """
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(f"Starting submit ({'materialised' if materialise else 'deferred'})")
+    try:
+        lf = _load_plan(polars_serializable_object)
+        schema = lf.collect_schema()
+        if materialise:
+            df = collect_lazy_frame(lf)
+            with environment_failures():
+                df.write_ipc(file_path)
+            row_count = df.height
+            head = df.head(preview_rows) if preview_rows is not None else None
+        else:
+            row_count = None
+            head = collect_lazy_frame(lf.head(preview_rows)) if preview_rows is not None else None
+        sample = None
+        if head is not None:
+            buffer = io.BytesIO()
+            head.write_ipc_stream(buffer)
+            sample = buffer.getvalue()
+    except BaseException as e:
+        flowfile_logger.error(f"Error during submit: {str(e)}")
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
+        return
+    # A dict, not a tuple: spawner.unpack_result reads a 2-tuple as (payload, row_count).
+    queue.put({"columns": schema, "row_count": row_count, "sample": sample})
+    with progress.get_lock():
+        progress.value = 100
+
+
 def calculate_schema_logic(
     df: pl.LazyFrame, optimize_memory: bool = True, flowfile_logger: Logger = None
 ) -> list[dict]:
