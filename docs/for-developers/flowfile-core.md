@@ -412,16 +412,18 @@ output group node, run_flow, gate routing on a formula  → RUN
 forced refresh (reset_cache)                           → RUN
 source file changed (read nodes)                       → RUN
 worker file the last run left (result or sample) gone  → RUN
-cache_results, stored result still held                → SKIP
-cache_results, no stored result held                   → RUN
+cache_results, nothing held under the current hash     → RUN
+cache_results, holds a stored result, last run failed  → RUN
+cache_results, stored result still on the backend      → SKIP
+cache_results, stored result gone from the backend     → RUN
 Performance mode                                       → RUN
 never ran with the current settings                    → RUN
 already ran                                            → SKIP
 ```
 
-A `cache_results` node takes the result it holds under its current hash on the run's backend (`FlowNode.held_result`) and asks that backend whether it still has it (`exists`). A result held as a deferred plan is no cache, so a cached node holding one follows the rules below the cache rules; on `LocalBackend`, which holds every plan deferred, a cached node that has run there always does. A cached node whose last run failed runs again even when its result is still stored, and `FlowNode._do_execute` then reads the stored result back instead of recomputing it. When asking the backend fails (a worker that cannot be reached, or one on other versions), the node fails with that error; it is never read as a missing cache.
+A `cache_results` node takes the result it holds under its current hash on the run's backend (`FlowNode.held_result`) and, when that is a stored result and its last run did not fail, asks that backend whether it still has it (`exists`). A result held as a deferred plan is no cache and matches none of the four cache rules, so a cached node holding one follows the rules below them; on `LocalBackend`, which holds every plan deferred, a cached node that has run there always does. A cached node whose last run failed runs again even when its result is still stored, and `FlowNode._do_execute` then reads the stored result back instead of recomputing it. When asking the backend fails (a worker that cannot be reached, or one on other versions), the node fails with that error; it is never read as a missing cache.
 
-In Performance mode every node runs on every run unless it is a cached node whose stored result is still held. An ordinary transform's run only builds its plan and submits it again: with no preview asked for, no backend computes it until a writer or a cached node downstream reads it.
+In Performance mode every node runs on every run unless it is a cached node whose stored result is still held and whose last run did not fail. An ordinary transform's run only builds its plan and submits it again: with no preview asked for, no backend computes it until a writer or a cached node downstream reads it.
 
 ### Submit Hints
 
