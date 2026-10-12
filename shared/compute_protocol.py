@@ -27,7 +27,11 @@ EXPRESSION_PLUGINS = ("polars_grouper", "polars_ds")
 
 
 class Capabilities(BaseModel):
-    """What one compute process can run, in the fields a handshake compares."""
+    """What one compute process can run.
+
+    A handshake compares every field but ``operations``: the values of the ``OperationKind``s a backend's
+    ``run_op`` runs, which core's backend fills in from its own table. A compute answers it empty.
+    """
 
     app_version: str
     polars_version: str
@@ -36,6 +40,7 @@ class Capabilities(BaseModel):
     platform: str
     plugins: dict[str, str]
     plugin_libs: dict[str, str]
+    operations: frozenset[str] = frozenset()
 
 
 def plugin_versions() -> dict[str, str]:

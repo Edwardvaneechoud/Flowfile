@@ -105,7 +105,7 @@ def test_the_local_backend_satisfies_the_backend_interface(backend):
     assert isinstance(backend, ComputeBackend)
     assert backend.id == "local"
     assert backend.protocol_version == PROTOCOL_VERSION
-    assert backend.capabilities() == local_capabilities()
+    assert backend.capabilities().model_copy(update={"operations": frozenset()}) == local_capabilities()
 
 
 def test_the_registry_makes_the_local_backend_without_a_registration(fresh_registry):
