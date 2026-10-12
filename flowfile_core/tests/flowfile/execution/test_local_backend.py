@@ -13,6 +13,7 @@ from flowfile_core.flowfile.execution.errors import (
     OperationUnsupported,
     ResultMissing,
 )
+from flowfile_core.flowfile.execution.payloads import FileReadPayload, op_payload
 from flowfile_core.flowfile.execution.protocol import (
     ComputeBackend,
     JobStatus,
@@ -21,12 +22,12 @@ from flowfile_core.flowfile.execution.protocol import (
     ResultRef,
     SubmitHints,
 )
-from flowfile_core.flowfile.execution.write_payloads import (
-    PAYLOAD_KEY,
+from flowfile_core.flowfile.execution.payloads import (
     DeltaMergePayload,
     DeltaScd2Payload,
     DeltaWritePayload,
     FileWritePayload,
+    op_payload,
 )
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.schemas import input_schema
@@ -34,7 +35,6 @@ from shared.compute_protocol import PROTOCOL_VERSION, local_capabilities
 from shared.delta_utils import get_delta_size_bytes
 
 UNSUPPORTED_KINDS = (
-    OperationKind.kafka_read,
     OperationKind.google_analytics_read,
     OperationKind.ml_train,
     OperationKind.ml_apply,
@@ -261,7 +261,8 @@ def test_file_read_holds_the_rows_of_a_csv(backend, tmp_path):
     received = input_schema.ReceivedTable(file_type="csv", name=path.name, path=str(path))
     settings = input_schema.NodeRead(flow_id=1, node_id=1, cache_data=False, received_file=received)
 
-    refs = backend.run_op(OperationKind.file_read, {"settings": settings, "node_logger": None}).refs
+    read = FileReadPayload(flow_id=1, node_id=1, settings=settings, node_logger=None)
+    refs = backend.run_op(OperationKind.file_read, op_payload(read)).refs
 
     assert list(refs) == ["result"]
     assert backend.plan_for(refs["result"]).collect().to_dicts() == [
@@ -310,7 +311,7 @@ def test_a_write_holds_no_result_and_reports_no_metadata(backend, tmp_path):
     )
     write = FileWritePayload(plan=pl.LazyFrame({"name": ["ada", "grace"]}), settings=settings, flow_id=1, node_id=2)
 
-    result = backend.run_op(OperationKind.file_write, {PAYLOAD_KEY: write})
+    result = backend.run_op(OperationKind.file_write, op_payload(write))
 
     assert isinstance(result, OpResult)
     assert result.refs == {}
@@ -344,11 +345,11 @@ def test_an_scd2_write_loads_a_table_then_versions_the_rows_that_changed(backend
     second_batch = pl.LazyFrame({"id": [1, 2, 4], "val": ["A", "b", "d"], "qty": [11, 20, 40]})
 
     first = backend.run_op(
-        OperationKind.delta_scd2, {PAYLOAD_KEY: scd2_write(path, first_batch, "2024-01-01T00:00:00+00:00")}
+        OperationKind.delta_scd2, op_payload(scd2_write(path, first_batch, "2024-01-01T00:00:00+00:00"))
     )
     first_size = get_delta_size_bytes(path)
     second = backend.run_op(
-        OperationKind.delta_scd2, {PAYLOAD_KEY: scd2_write(path, second_batch, "2024-02-01T00:00:00+00:00")}
+        OperationKind.delta_scd2, op_payload(scd2_write(path, second_batch, "2024-02-01T00:00:00+00:00"))
     )
     second_size = get_delta_size_bytes(path)
 
@@ -395,11 +396,9 @@ def test_an_scd2_write_loads_a_table_then_versions_the_rows_that_changed(backend
 def test_an_scd2_write_that_changes_nothing_commits_nothing_and_names_its_version(backend, tmp_path):
     path = str(tmp_path / "dimension")
     batch = pl.LazyFrame({"id": [1, 2], "val": ["a", "b"], "qty": [10, 20]})
-    backend.run_op(OperationKind.delta_scd2, {PAYLOAD_KEY: scd2_write(path, batch, "2024-01-01T00:00:00+00:00")})
+    backend.run_op(OperationKind.delta_scd2, op_payload(scd2_write(path, batch, "2024-01-01T00:00:00+00:00")))
 
-    again = backend.run_op(
-        OperationKind.delta_scd2, {PAYLOAD_KEY: scd2_write(path, batch, "2024-02-01T00:00:00+00:00")}
-    )
+    again = backend.run_op(OperationKind.delta_scd2, op_payload(scd2_write(path, batch, "2024-02-01T00:00:00+00:00")))
 
     assert again == OpResult(refs={}, metadata={"skipped": True, "version": 0})
     assert pl.read_delta(path).height == 2
@@ -431,9 +430,9 @@ def test_a_delta_write_and_merge_report_the_rows_they_wrote(backend, tmp_path):
     changes = pl.LazyFrame({"id": [3, 4], "name": ["dijkstra", "barbara"]})
     schema = [{"name": "id", "dtype": "Int64"}, {"name": "name", "dtype": "String"}]
 
-    written = backend.run_op(OperationKind.delta_write, {PAYLOAD_KEY: delta_write(path, people, "overwrite")})
+    written = backend.run_op(OperationKind.delta_write, op_payload(delta_write(path, people, "overwrite")))
     written_size = get_delta_size_bytes(path)
-    merged = backend.run_op(OperationKind.delta_merge, {PAYLOAD_KEY: delta_merge(path, changes)})
+    merged = backend.run_op(OperationKind.delta_merge, op_payload(delta_merge(path, changes)))
 
     assert written == OpResult(
         refs={},
@@ -453,11 +452,11 @@ def test_a_delta_write_and_merge_report_the_rows_they_wrote(backend, tmp_path):
 
 def test_an_append_of_no_rows_reports_a_skip(backend, tmp_path):
     path = str(tmp_path / "people")
-    backend.run_op(OperationKind.delta_write, {PAYLOAD_KEY: delta_write(path, pl.LazyFrame({"id": [1]}), "overwrite")})
+    backend.run_op(OperationKind.delta_write, op_payload(delta_write(path, pl.LazyFrame({"id": [1]}), "overwrite")))
 
     appended = backend.run_op(
         OperationKind.delta_write,
-        {PAYLOAD_KEY: delta_write(path, pl.LazyFrame({"id": []}, schema={"id": pl.Int64}), "append")},
+        op_payload(delta_write(path, pl.LazyFrame({"id": []}, schema={"id": pl.Int64}), "append")),
     )
 
     assert appended == OpResult(refs={}, metadata={"skipped": True})

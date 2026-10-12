@@ -6,8 +6,6 @@ from flowfile_core.catalog import CatalogService
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-    ExternalGoogleAnalyticsFetcher,
-    ExternalRestApiFetcher,
     MLApplyFetcher,
     MLTrainFetcher,
 )
@@ -78,8 +76,6 @@ __all__ = [
     "_resolve_virtual_table",
     "CloudStorageReader",
     "CatalogService",
-    "ExternalGoogleAnalyticsFetcher",
-    "ExternalRestApiFetcher",
     "FullCloudStorageConnection",
     "MLApplyFetcher",
     "MLTrainFetcher",

@@ -22,7 +22,11 @@ Schema: TypeAlias = list[FlowfileColumn]
 
 OpPayload: TypeAlias = dict[str, Any]
 """What one operation needs, by key: its settings models and ids, plus the frames it reads and the in-process hooks
-(a node logger, a cancel check) it reports to. A backend that crosses a process boundary serialises them itself."""
+(a node logger, a cancel check) it reports to. A backend that crosses a process boundary serialises them itself.
+
+The read kinds (``database_read``, ``kafka_read``, ``google_analytics_read``, ``rest_api_read``, ``file_read``) take
+one key, ``"payload"``, holding the kind's frozen dataclass from ``execution/payloads.py``, the same for every
+backend; ``payloads.unpack`` takes it out and raises ``TypeError``/``ValueError`` naming the key when it is wrong."""
 
 
 @dataclass(frozen=True)

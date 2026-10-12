@@ -4,13 +4,16 @@ Results live in an in-process store that maps a result id to its ``pl.LazyFrame`
 DataFrame turned ``.lazy()``); a ``ResultRef``'s ``location`` is that id as UTF-8 bytes. ``submit`` holds every plan
 lazily under the result id it is given (the class docstring has the policy). ``run_op`` runs the operations a
 flow's nodes run whole when they execute in core, one method per ``OperationKind``; each method's docstring names
-the payload keys it reads, or for a write the ``write_payloads`` dataclass it takes under ``"payload"``. Nothing runs
-asynchronously: every job has ended when its call returns, so ``cancel`` has nothing to stop.
+the payload keys it reads; a read or write kind takes its dataclass from ``execution/payloads.py`` under ``"payload"``.
+A read holds what it read as a deferred plan, so the reader keeps the frame through ``plan_for`` and can release the
+ref at once. Nothing runs asynchronously: every job has ended when its call returns, so ``cancel`` has nothing to stop.
 """
 
 from __future__ import annotations
 
 import io
+import os
+import tempfile
 import threading
 import uuid
 from collections.abc import Callable
@@ -26,6 +29,19 @@ from flowfile_core.flowfile.execution.errors import (
     OperationUnsupported,
     ResultMissing,
 )
+from flowfile_core.flowfile.execution.payloads import (
+    CloudWritePayload,
+    DatabaseReadPayload,
+    DatabaseWritePayload,
+    DeltaMergePayload,
+    DeltaScd2Payload,
+    DeltaWritePayload,
+    FileReadPayload,
+    FileWritePayload,
+    KafkaReadPayload,
+    RestApiReadPayload,
+    unpack,
+)
 from flowfile_core.flowfile.execution.protocol import (
     CredentialRef,
     JobHandle,
@@ -39,20 +55,12 @@ from flowfile_core.flowfile.execution.protocol import (
     SubmitResult,
 )
 from flowfile_core.flowfile.execution.registry import LOCAL_BACKEND_ID
-from flowfile_core.flowfile.execution.write_payloads import (
-    CloudWritePayload,
-    DatabaseWritePayload,
-    DeltaMergePayload,
-    DeltaScd2Payload,
-    DeltaWritePayload,
-    FileWritePayload,
-    unpack,
-)
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import convert_stats_to_column_info
 from flowfile_core.flowfile.flow_data_engine.utils import local_write_output
 from flowfile_core.flowfile.flow_node.multi_output import output_handle
+from flowfile_core.flowfile.sources.external_sources.rest_api_source import build_rest_api_worker_settings
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource
 from flowfile_core.schemas.cloud_storage_schemas import (
@@ -120,8 +128,8 @@ class LocalBackend:
     def run_op(self, op: OperationKind, payload: OpPayload) -> OpResult:
         """Run ``op`` in this process with the payload its method documents.
 
-        The refs name the results the operation holds here. Only the Delta writes report metadata: what they wrote,
-        in the keys the ``write_payloads`` module docstring lists.
+        The refs name the results the operation holds here. Only the Kafka read (the offsets to commit) and the
+        Delta writes (what they wrote, in the keys the ``payloads`` module docstring lists) report metadata.
 
         Raises:
             OperationUnsupported: This backend does not implement ``op``.
@@ -220,30 +228,52 @@ class LocalBackend:
         known_count = engine.number_of_records if engine.number_of_records >= 0 else None
         return self._hold(engine.data_frame, row_count=known_count, schema=engine.schema)
 
-    def _read_database(self, payload: OpPayload) -> OpResult:
-        """Read a database table or query; the rows are held materialised.
+    def _hold_read(
+        self, frame: pl.LazyFrame | pl.DataFrame, row_count: int | None = None, schema: Schema | None = None
+    ) -> ResultRef:
+        """Hold what a read produced as a deferred plan: a collected frame turned lazy, its height the row count."""
+        if isinstance(frame, pl.DataFrame):
+            return self._hold(frame.lazy(), row_count=frame.height, schema=schema)
+        return self._hold(frame, row_count=row_count, schema=schema)
 
-        Payload keys:
-            settings: The node's ``NodeDatabaseReader``: its ``database_settings`` and the ``fields`` it reads.
-            connection: The database connection the settings resolve to.
-            encrypted_password: The connection's password as stored, ``None`` for a file-based database.
-            cancel_check: Called while reading; ``True`` stops the read.
+    def _read_database(self, payload: OpPayload) -> OpResult:
+        """Read a database table or query, its password decrypted here.
+
+        Payload: a ``DatabaseReadPayload``; its ``cancel_check`` is called while reading, ``True`` stops the read.
 
         Returns the refs ``{"result": ref}``.
         """
-        node_settings = payload["settings"]
-        database_settings = node_settings.database_settings
-        connection = payload["connection"]
+        read = unpack(payload, DatabaseReadPayload)
+        database_settings = read.settings.database_settings
         source = SqlSource(
-            connection_string=_sql_uri(connection, payload["encrypted_password"]),
+            connection_string=_sql_uri(read.connection, read.encrypted_password),
             query=None if database_settings.query_mode == "table" else database_settings.query,
             table_name=database_settings.table_name,
             schema_name=database_settings.schema_name,
-            fields=node_settings.fields,
-            cancel_check=payload["cancel_check"],
-            database_type=connection.database_type,
+            fields=read.settings.fields,
+            cancel_check=read.cancel_check,
+            database_type=read.connection.database_type,
         )
-        return OpResult(refs={"result": self._hold(source.get_pl_df())})
+        return OpResult(refs={"result": self._hold_read(source.get_pl_df())})
+
+    def _read_kafka(self, payload: OpPayload) -> OpResult:
+        """Consume a Kafka topic without committing, spilling the rows to an Arrow file as they arrive.
+
+        Payload: a ``KafkaReadPayload``; its ``read_kafka_source`` consumes, its secrets decrypted here.
+
+        Returns the refs ``{"result": ref}``, and ``metadata["offsets"]``, the offsets to commit, when the read
+        consumed messages.
+        """
+        read = unpack(payload, KafkaReadPayload)
+        fd, spill_file = tempfile.mkstemp(suffix=".arrow", prefix="kafka_")
+        os.close(fd)
+        rows, consumed = read.read_kafka_source(
+            read.settings, commit=False, decrypt_fn=_decrypted, spill_path=spill_file
+        )
+        ref = self._hold_read(rows)
+        if consumed.messages_consumed > 0:
+            return OpResult(refs={"result": ref}, metadata={"offsets": consumed.new_offsets})
+        return OpResult(refs={"result": ref})
 
     def _write_database(self, payload: OpPayload) -> OpResult:
         """Write the rows of the ``DatabaseWritePayload`` under ``"payload"`` to its table.
@@ -261,32 +291,32 @@ class LocalBackend:
         return OpResult(refs={})
 
     def _read_rest_api(self, payload: OpPayload) -> OpResult:
-        """Fetch a REST API; the response rows are held materialised.
+        """Fetch a REST API, its auth secret decrypted here.
 
-        Payload keys:
-            request: The ``RestApiReadSettings`` the node's settings resolve to.
-            encrypted_secret: The auth secret as stored, ``None`` when the request carries none.
+        Payload: a ``RestApiReadPayload``.
 
         Returns the refs ``{"result": ref}``.
         """
         # Function-local, so importing this backend does not load the HTTP client.
         from shared.rest_api.fetch import fetch_rest_api
 
-        encrypted = payload["encrypted_secret"]
-        secret = decrypt_secret(encrypted).get_secret_value() if encrypted else None
-        return OpResult(refs={"result": self._hold(fetch_rest_api(payload["request"], secret=secret))})
+        read = unpack(payload, RestApiReadPayload)
+        request = build_rest_api_worker_settings(read.settings, read.encrypted_secret)
+        secret = _decrypted(read.encrypted_secret) if read.encrypted_secret else None
+        return OpResult(refs={"result": self._hold_read(fetch_rest_api(request, secret=secret))})
 
     def _read_file(self, payload: OpPayload) -> OpResult:
         """Read a local file through the engine's readers.
 
-        Payload keys:
-            settings: The node's ``NodeRead``; its ``received_file`` names the file and how to read it.
-            node_logger: The node's logger, which the Excel reader reports the engine it used to.
+        Payload: a ``FileReadPayload``; the Excel reader reports the engine it used to its ``node_logger``.
 
         Returns the refs ``{"result": ref}``, with the row count when the reader knows it without reading the rows.
         """
-        engine = FlowDataEngine.create_from_path(payload["settings"].received_file, node_logger=payload["node_logger"])
-        return OpResult(refs={"result": self._hold_engine(engine)})
+        read = unpack(payload, FileReadPayload)
+        engine = FlowDataEngine.create_from_path(read.settings.received_file, node_logger=read.node_logger)
+        known_count = engine.number_of_records if engine.number_of_records >= 0 else None
+        ref = self._hold_read(engine.data_frame, row_count=known_count, schema=engine.schema)
+        return OpResult(refs={"result": ref})
 
     def _write_file(self, payload: OpPayload) -> OpResult:
         """Write the rows of the ``FileWritePayload`` under ``"payload"`` to its file. Returns no refs."""
@@ -481,6 +511,7 @@ class LocalBackend:
 
     _OPERATIONS: ClassVar[dict[OperationKind, Callable[[LocalBackend, OpPayload], OpResult]]] = {
         OperationKind.database_read: _read_database,
+        OperationKind.kafka_read: _read_kafka,
         OperationKind.database_write: _write_database,
         OperationKind.rest_api_read: _read_rest_api,
         OperationKind.file_read: _read_file,
@@ -512,6 +543,10 @@ def _ipc_stream(frame: pl.DataFrame) -> bytes:
     buffer = io.BytesIO()
     frame.write_ipc_stream(buffer)
     return buffer.getvalue()
+
+
+def _decrypted(encrypted: str) -> str:
+    return decrypt_secret(encrypted).get_secret_value()
 
 
 def _sql_uri(connection: Any, encrypted_password: str | None) -> str:

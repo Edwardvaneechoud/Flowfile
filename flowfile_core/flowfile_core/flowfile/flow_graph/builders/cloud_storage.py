@@ -7,8 +7,8 @@ from flowfile_core.flowfile.catalog_cdc import (
     resolve_change_window,
 )
 from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.payloads import CloudWritePayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
-from flowfile_core.flowfile.execution.write_payloads import PAYLOAD_KEY, CloudWritePayload
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
@@ -66,7 +66,7 @@ class CloudStorageBuildersMixin(GraphMixinBase):
                 node_id=node_cloud_storage_writer.node_id,
             )
             node.run_op(
-                current_context(self).backend, OperationKind.cloud_write, {PAYLOAD_KEY: write}, job_id=write.job_id
+                current_context(self).backend, OperationKind.cloud_write, op_payload(write), job_id=write.job_id
             )
             return df
 

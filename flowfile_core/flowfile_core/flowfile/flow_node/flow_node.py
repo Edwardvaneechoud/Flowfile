@@ -81,6 +81,23 @@ def _failed_class(error: BaseException) -> str | None:
     return recover_error_class(cause, str(error))
 
 
+def run_operation(backend: ComputeBackend, op: OperationKind, payload: OpPayload) -> OpResult:
+    """``backend.run_op(op, payload)`` under the failure rule a node's operations follow.
+
+    A ``TaskFailed`` whose job names the exception class it failed with is re-raised as ``RemoteExecutionError``
+    carrying that class, so the class reaches the node's error record; every other error, ``PlanRejected`` and
+    ``ComputeUnavailable`` among them, propagates as raised. ``FlowNode.run_op`` is this plus the node's in-flight
+    job; this is for an operation run before the node is bound (a new read node's schema prefetch).
+    """
+    try:
+        return backend.run_op(op, payload)
+    except TaskFailed as e:
+        failed_class = _failed_class(e)
+        if failed_class is None:
+            raise
+        raise RemoteExecutionError(str(e), failed_class) from e
+
+
 def _arrow_table(sample: bytes) -> pa.Table:
     """A backend's sample, an Arrow IPC stream, as the table a node's preview serves."""
     with pa.ipc.open_stream(io.BytesIO(sample)) as reader:
@@ -1763,21 +1780,14 @@ class FlowNode:
     def run_op(self, backend: ComputeBackend, op: OperationKind, payload: OpPayload, *, job_id: str) -> OpResult:
         """Run ``op`` on ``backend`` for this node, so that ``cancel`` reaches it while it runs.
 
-        ``job_id`` is the id the payload gives the backend for the job (a write payload's ``job_id``): while the call
+        ``job_id`` is the id the payload gives the backend for the job (the payload's ``job_id``): while the call
         runs, ``cancel`` hands ``JobHandle(backend.id, job_id)`` to ``backend.cancel``, as it does for a submit.
 
-        Failures follow ``_submit``'s rule: a ``TaskFailed`` whose job names the exception class it failed with is
-        re-raised as ``RemoteExecutionError`` carrying that class, so the class reaches the node's error record;
-        every other error, ``PlanRejected`` and ``ComputeUnavailable`` among them, propagates as raised.
+        Failures follow ``run_operation``'s rule, which is ``_submit``'s.
         """
         self._submit_in_flight = JobHandle(backend.id, job_id)
         try:
-            return backend.run_op(op, payload)
-        except TaskFailed as e:
-            failed_class = _failed_class(e)
-            if failed_class is None:
-                raise
-            raise RemoteExecutionError(str(e), failed_class) from e
+            return run_operation(backend, op, payload)
         finally:
             self._submit_in_flight = None
 

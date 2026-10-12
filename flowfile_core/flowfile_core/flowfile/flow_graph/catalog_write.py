@@ -19,13 +19,13 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import NodeLogger
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.execution.context import current_context
-from flowfile_core.flowfile.execution.protocol import OperationKind
-from flowfile_core.flowfile.execution.write_payloads import (
-    PAYLOAD_KEY,
+from flowfile_core.flowfile.execution.payloads import (
     DeltaMergePayload,
     DeltaScd2Payload,
     DeltaWritePayload,
+    op_payload,
 )
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
@@ -704,7 +704,7 @@ def _handle_physical_table_write(
         flow_id=graph.flow_id,
         node_id=writer_node.node_id,
     )
-    report = writer_node.run_op(current_context(graph).backend, operation, {PAYLOAD_KEY: write}, job_id=write.job_id)
+    report = writer_node.run_op(current_context(graph).backend, operation, op_payload(write), job_id=write.job_id)
     written = _catalog_delta_written(report.metadata)
     meta_kwargs = written.meta
 

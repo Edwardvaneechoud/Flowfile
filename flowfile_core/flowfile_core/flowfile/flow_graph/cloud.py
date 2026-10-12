@@ -11,8 +11,8 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     get_local_cloud_connection,
 )
 from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.payloads import DeltaMergePayload, DeltaWritePayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
-from flowfile_core.flowfile.execution.write_payloads import PAYLOAD_KEY, DeltaMergePayload, DeltaWritePayload
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
@@ -124,7 +124,7 @@ def _write_cloud_delta(
     else:
         operation = OperationKind.delta_write
         write = DeltaWritePayload(mode=settings.write_mode, **common)
-    node.run_op(current_context(graph).backend, operation, {PAYLOAD_KEY: write}, job_id=write.job_id)
+    node.run_op(current_context(graph).backend, operation, op_payload(write), job_id=write.job_id)
 
 
 def _is_cloud_change_read(settings: CloudStorageReadSettings) -> bool:

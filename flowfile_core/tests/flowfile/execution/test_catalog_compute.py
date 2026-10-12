@@ -27,7 +27,8 @@ from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
 from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind
-from flowfile_core.flowfile.execution.write_payloads import (
+from flowfile_core.flowfile.execution.payloads import (
+    op_payload,
     PAYLOAD_KEY,
     DeltaMergePayload,
     DeltaScd2Payload,
@@ -346,7 +347,7 @@ def test_the_core_backend_opens_a_cloud_table_with_the_options_the_catalog_resol
         node_id=2,
     )
 
-    LocalBackend().run_op(OperationKind.delta_write, {PAYLOAD_KEY: write})
+    LocalBackend().run_op(OperationKind.delta_write, op_payload(write))
 
     assert received == [CloudStorageReader.get_storage_options(connection)]
 
@@ -429,7 +430,7 @@ def run_locally(delta_mode, settings_, plan, path, scd2_config=None, run_timesta
         flow_id=1,
         node_id=2,
     )
-    return _catalog_delta_written(LocalBackend().run_op(operation, {PAYLOAD_KEY: write}).metadata)
+    return _catalog_delta_written(LocalBackend().run_op(operation, op_payload(write)).metadata)
 
 
 def test_an_scd2_write_in_core_reads_as_before(tmp_path):
