@@ -5,8 +5,9 @@ Every route needs the internal token, then an ``X-Protocol-Version`` equal to th
 runs the plan in a spawned ``funcs.submit_result`` child and keeps the result in ``results.results``,
 written to a file or deferred as ``_materialise`` decides; the other routes read, count, probe and
 release what it holds. A submit's job id is its result id, and every submit first drops what has
-been held for ``CACHE_EXPIRATION_TIME``. The legacy routes in ``routes.py`` stay as they are; the two
-share only ``status_dict``.
+been held for ``CACHE_EXPIRATION_TIME``. ``run_submit`` is the submit itself, which ``streaming.py``'s
+``/v1/ws/submit`` runs too. The legacy routes in ``routes.py`` stay as they are; the two share only
+``status_dict``.
 """
 
 import io
@@ -16,7 +17,8 @@ from pathlib import Path
 from typing import Any
 
 import polars as pl
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response
+from fastapi.requests import HTTPConnection
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from flowfile_worker import CACHE_EXPIRATION_TIME, PROCESS_MEMORY_USAGE, models, status_dict, status_dict_lock
@@ -37,9 +39,12 @@ from shared.compute_protocol import (
 ARROW_STREAM = "application/vnd.apache.arrow.stream"
 
 
-def require_protocol_version(request: Request) -> None:
-    """Answer 426 when the request's ``X-Protocol-Version`` is missing or is not this worker's."""
-    sent = request.headers.get(PROTOCOL_VERSION_HEADER)
+def require_protocol_version(connection: HTTPConnection) -> None:
+    """Answer 426 when the request's ``X-Protocol-Version`` is missing or is not this worker's.
+
+    It takes an ``HTTPConnection`` so the WebSocket submit can call it before accepting.
+    """
+    sent = connection.headers.get(PROTOCOL_VERSION_HEADER)
     if sent != str(PROTOCOL_VERSION):
         raise HTTPException(
             status_code=426,
@@ -183,9 +188,10 @@ def parse_submit_meta(meta: str) -> SubmitMeta:
 def run_submit(submit_meta: SubmitMeta, plan: bytes) -> SubmitResult:
     """Run *plan* in a child and hold its result under ``result_id``, written to a file or deferred.
 
-    Raises 404 for an input that is not held and 500 when the child did not complete. Expired
-    results are swept first; a result already held under the id is released. The end of the submit
-    is stamped whether or not it completed, so its job entry ages out like a held result.
+    Both ``POST /v1/submit`` and ``/v1/ws/submit`` call this and answer what it returns or raises:
+    404 for an input that is not held, 500 when the child did not complete. Expired results are
+    swept first; a result already held under the id is released. The end of the submit is stamped
+    whether or not it completed, so its job entry ages out like a held result.
     """
     sweep_expired()
     for input_id in submit_meta.inputs:

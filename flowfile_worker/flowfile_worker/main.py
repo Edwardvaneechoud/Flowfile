@@ -11,7 +11,7 @@ from flowfile_worker.configs import FLOWFILE_CORE_URI, SERVICE_HOST, SERVICE_POR
 from flowfile_worker.pool import task_pool
 from flowfile_worker.protocol_routes import router as protocol_router
 from flowfile_worker.routes import router
-from flowfile_worker.streaming import streaming_router
+from flowfile_worker.streaming import streaming_router, v1_streaming_router
 from shared.parent_watcher import start_parent_death_watcher
 from shared.storage_config import storage
 
@@ -58,6 +58,7 @@ app = FastAPI(lifespan=shutdown_handler)
 app.include_router(router)
 app.include_router(streaming_router)
 app.include_router(protocol_router)
+app.include_router(v1_streaming_router)
 
 
 @app.post("/shutdown")
