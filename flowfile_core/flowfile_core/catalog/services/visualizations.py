@@ -10,7 +10,6 @@ from pathlib import Path
 
 from sqlalchemy.exc import IntegrityError
 
-from flowfile_core.catalog.compute import worker_url
 from flowfile_core.catalog.constants import (
     DEFAULT_VISUALIZATION_ROWS,
     MAX_PREVIEW_LIMIT,
@@ -44,6 +43,7 @@ from flowfile_core.catalog.validators import (
     validate_viz_source,
 )
 from flowfile_core.database.models import CatalogDashboard, CatalogTable, CatalogVisualization
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.schemas.catalog_schema import (
     ColumnStatsResponse,
     DashboardCreate,
@@ -504,7 +504,7 @@ class VisualizationService:
             # Post-resolution read: resolution may have re-stamped source_table_versions.
             versions_hash = self._virtual_tables.fresh_versions_hash(table.id)
             result = _service_module.trigger_resolve_virtual_table(
-                table.id, lazy_frame.serialize(), versions_hash, worker_url=worker_url()
+                table.id, lazy_frame.serialize(), versions_hash, worker_url=registry.worker_url()
             )
             return {
                 "kind": "ipc_path",
@@ -582,7 +582,7 @@ class VisualizationService:
         # Post-resolution read: resolution may have re-stamped source_table_versions.
         versions_hash = self._virtual_tables.fresh_versions_hash(vid)
         result = _service_module.trigger_resolve_virtual_table(
-            vid, lazy_frame.serialize(), versions_hash, worker_url=worker_url()
+            vid, lazy_frame.serialize(), versions_hash, worker_url=registry.worker_url()
         )
         return result["ipc_path"]
 
@@ -592,7 +592,9 @@ class VisualizationService:
         from flowfile_core.catalog import service as _service_module
 
         try:
-            data = _service_module.trigger_visualize_query(worker_source, payload, max_rows, worker_url=worker_url())
+            data = _service_module.trigger_visualize_query(
+                worker_source, payload, max_rows, worker_url=registry.worker_url()
+            )
         except RuntimeError as exc:
             raise VisualizationComputeError(str(exc)) from exc
         return VisualizationComputeResponse(**data)
@@ -665,7 +667,7 @@ class VisualizationService:
             worker_source["session_key"],
         )
         try:
-            data = _service_module.trigger_visualize_fields(worker_source, worker_url=worker_url())
+            data = _service_module.trigger_visualize_fields(worker_source, worker_url=registry.worker_url())
         except RuntimeError as exc:
             raise VisualizationComputeError(str(exc)) from exc
         return VisualizationFieldsResponse(**data)
@@ -694,7 +696,7 @@ class VisualizationService:
         )
         try:
             data = _service_module.trigger_visualize_column_stats(
-                worker_source, column, clamped_limit, worker_url=worker_url()
+                worker_source, column, clamped_limit, worker_url=registry.worker_url()
             )
         except RuntimeError as exc:
             raise VisualizationComputeError(str(exc)) from exc

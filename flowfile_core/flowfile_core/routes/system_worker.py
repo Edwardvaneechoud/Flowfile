@@ -71,9 +71,10 @@ class WorkerPoolState(BaseModel):
 
 def _forward(method: str, json_body: dict | None = None) -> WorkerPoolState:
     """Send ``method`` to ``/pool`` on the worker the worker backend runs on, through the worker session."""
-    worker_url = registry.backend(registry.WORKER_BACKEND_ID).url
     try:
-        response = _worker_session.request(method, "/pool", worker_url=worker_url, json=json_body, timeout=_TIMEOUT)
+        response = _worker_session.request(
+            method, "/pool", worker_url=registry.worker_url(), json=json_body, timeout=_TIMEOUT
+        )
         response.raise_for_status()
     except (requests.RequestException, ComputeUnavailable) as exc:
         raise HTTPException(

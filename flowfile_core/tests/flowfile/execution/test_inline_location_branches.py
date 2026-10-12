@@ -112,6 +112,6 @@ def test_no_module_reads_the_worker_settings_outside_the_registry():
     print("\n" + table)
     message = (
         "A module outside configs/settings.py and execution/registry.py reads a worker setting; ask the backend "
-        f"registry (default_backend_id, backend(WORKER_BACKEND_ID).url, child_env) instead.\n{table}"
+        f"registry (default_backend_id, worker_url, child_env) instead.\n{table}"
     )
     assert len(readers) == 0, message

@@ -9,7 +9,7 @@ import polars as pl
 from deltalake import DeltaTable
 from deltalake.exceptions import DeltaError
 
-from flowfile_core.catalog.compute import uses_worker, worker_url
+from flowfile_core.catalog.compute import uses_worker
 from flowfile_core.catalog.delta_utils import (
     is_delta_table,
     read_delta_preview,
@@ -29,6 +29,7 @@ from flowfile_core.catalog.storage_backend import (
 )
 from flowfile_core.catalog.text_utils import parse_delta_history
 from flowfile_core.database.models import CatalogTable
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_delta_history,
@@ -93,7 +94,9 @@ class TablePreviewService:
         # Post-resolution read: resolution may have re-stamped source_table_versions,
         # and *table* was fetched before it ran.
         versions_hash = self._virtual_tables.fresh_versions_hash(table.id)
-        result = trigger_resolve_virtual_table(table.id, lazy_frame.serialize(), versions_hash, worker_url=worker_url())
+        result = trigger_resolve_virtual_table(
+            table.id, lazy_frame.serialize(), versions_hash, worker_url=registry.worker_url()
+        )
         ipc_path = validate_catalog_path(result["ipc_path"], storage.catalog_virtual_results_directory)
         pa_table = read_top_n(str(ipc_path), n=limit)
         return format_pyarrow_preview(pa_table, total_rows=result.get("row_count"))
@@ -185,7 +188,7 @@ class TablePreviewService:
                     version,
                     limit,
                     storage=storage_payload,
-                    worker_url=worker_url(),
+                    worker_url=registry.worker_url(),
                 )
             except TableVersionUnavailableError:
                 raise
@@ -216,7 +219,10 @@ class TablePreviewService:
         if uses_worker():
             try:
                 preview = trigger_delta_preview(
-                    _catalog_table_dir_name(table_path), limit, storage=storage_payload, worker_url=worker_url()
+                    _catalog_table_dir_name(table_path),
+                    limit,
+                    storage=storage_payload,
+                    worker_url=registry.worker_url(),
                 )
                 return preview.model_copy(update={"total_rows": total_rows}) if total_rows is not None else preview
             except (RuntimeError, OSError, ValueError, KeyError, ComputeError):
@@ -245,7 +251,10 @@ class TablePreviewService:
         if uses_worker():
             try:
                 return trigger_delta_history(
-                    _catalog_table_dir_name(table_path), limit, storage=storage_payload, worker_url=worker_url()
+                    _catalog_table_dir_name(table_path),
+                    limit,
+                    storage=storage_payload,
+                    worker_url=registry.worker_url(),
                 )
             except (RuntimeError, OSError, ValueError, KeyError, ComputeError):
                 logger.warning("Worker delta history read failed, falling back to local", exc_info=True)

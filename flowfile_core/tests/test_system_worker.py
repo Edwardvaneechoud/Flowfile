@@ -149,7 +149,7 @@ def test_worker_on_other_versions_surfaces_typed_503(admin_client: TestClient, u
     assert response.json()["detail"] == {
         "error_code": "WORKER_UNAVAILABLE",
         "message": (
-            f"The worker at {registry.backend(registry.WORKER_BACKEND_ID).url} does not match core "
+            f"The worker at {registry.worker_url()} does not match core "
             f"(polars_version: core {pl.__version__}, worker 0.0.1)"
         ),
     }

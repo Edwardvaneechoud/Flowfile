@@ -240,9 +240,10 @@ def streaming_start(
     manually.
 
     Raises immediately on connection failure or send error. Before connecting it
-    passes ``ensure_handshake`` for ``worker_url``, like every REST call, so a worker on
-    other versions than core is refused before the task is sent; a connect that fails
-    re-arms that check, because the worker that comes back may be another one.
+    passes ``ensure_handshake`` like every REST call, so the first worker this process
+    calls is refused before the task is sent when its versions differ from core's (the
+    check is once per process, not per worker); a connect that fails re-arms that check,
+    because the worker that comes back may be another one.
     """
     ensure_handshake(worker_url)
     ws_url = _get_ws_url(worker_url) + "/ws/submit"

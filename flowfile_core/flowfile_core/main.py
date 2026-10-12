@@ -326,8 +326,10 @@ def run(host: str = None, port: int = None):
     if port is None:
         port = SERVER_PORT
     print(f"Starting server on {host}:{port}")
-    worker_url = compute_registry.backend(compute_registry.WORKER_BACKEND_ID).url
-    print(f"Compute backend {compute_registry.default_backend_id()!r}; worker configured at {worker_url}")
+    print(
+        f"Compute backend {compute_registry.default_backend_id()!r}; "
+        f"worker configured at {compute_registry.worker_url()}"
+    )
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)

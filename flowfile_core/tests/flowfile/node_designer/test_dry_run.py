@@ -323,7 +323,7 @@ def test_happy_path_maps_preview(monkeypatch):
     assert resp.logs == ["INFO: ran"]
     assert resp.duration_ms == 12.5
     assert calls["clear"] == 1  # best-effort cleanup ran
-    assert calls["worker_urls"] == {registry.backend(registry.WORKER_BACKEND_ID).url}
+    assert calls["worker_urls"] == {registry.worker_url()}
 
 
 def test_execution_error_carries_traceback(monkeypatch):
@@ -718,6 +718,6 @@ def test_worker_failing_the_handshake_while_polled_answers_500_with_the_message(
 
     assert response.status_code == 500, response.text
     assert response.json()["detail"] == (
-        f"The worker at {registry.backend(registry.WORKER_BACKEND_ID).url} does not match core "
+        f"The worker at {registry.worker_url()} does not match core "
         f"(polars_version: core {pl.__version__}, worker 0.0.1)"
     )

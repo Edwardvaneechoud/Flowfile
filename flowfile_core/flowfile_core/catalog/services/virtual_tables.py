@@ -15,7 +15,7 @@ import polars as pl
 from requests.exceptions import RequestException
 
 from flowfile_core.auth import sharing
-from flowfile_core.catalog.compute import uses_worker, worker_url
+from flowfile_core.catalog.compute import uses_worker
 from flowfile_core.catalog.constants import QUERY_VIRTUAL_TABLE_RECURSION_LIMIT
 from flowfile_core.catalog.delta_utils import check_source_versions_current, is_delta_table
 from flowfile_core.catalog.exceptions import (
@@ -40,6 +40,7 @@ from flowfile_core.catalog.text_utils import (
 from flowfile_core.catalog.validators import format_full_name
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 from flowfile_core.database.models import CatalogTable
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
 from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
@@ -531,7 +532,7 @@ class VirtualTableService:
         key = hashlib.sha256(plan_bytes).hexdigest()
         try:
             result = trigger_resolve_virtual_table(
-                table_id, plan_bytes, key, target="kernel_shared", worker_url=worker_url()
+                table_id, plan_bytes, key, target="kernel_shared", worker_url=registry.worker_url()
             )
         except (RequestException, RuntimeError, ComputeError) as e:
             raise WorkerUnavailableError(_scrub_abs_paths(str(e))) from e

@@ -142,7 +142,8 @@ class WorkerBackend:
 
     ``url`` is the base URL of the worker this backend runs on; every transport call it makes goes there. The
     registry's built-in worker backend is made with the URL core's worker settings configure, and a backend made on
-    another URL reaches that worker instead.
+    another URL reaches that worker instead. The version handshake is once per process, not per backend: the first
+    worker called is checked, and a later call to another one is not.
 
     Materialisation policy: ``submit`` stores a plan on the worker when ``hints.must_materialise`` is set, or when
     the plan is ``wide`` and a preview is asked for (``preview_rows`` is not ``None``); every other plan stays

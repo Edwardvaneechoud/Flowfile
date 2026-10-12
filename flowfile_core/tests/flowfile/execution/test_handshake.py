@@ -18,7 +18,7 @@ from shared.compute_protocol import EXPRESSION_PLUGINS, local_capabilities
 HINT = ". Is the worker running? Start it, or switch the flow to local execution."
 
 
-WORKER_URL = registry.backend(registry.WORKER_BACKEND_ID).url
+WORKER_URL = registry.worker_url()
 """The session worker's URL: the one the registry's worker backend, and so a remote flow, calls."""
 
 

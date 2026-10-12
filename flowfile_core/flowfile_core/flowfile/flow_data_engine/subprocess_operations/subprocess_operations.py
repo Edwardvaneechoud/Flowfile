@@ -2,8 +2,8 @@
 
 Nothing here knows which worker to call. Every function and fetcher takes ``worker_url``, the worker's base URL,
 from its caller: ``WorkerBackend`` passes its own ``url``, and a caller outside it that sends work to the worker
-asks the backend registry for the worker backend's (``registry.backend(WORKER_BACKEND_ID).url``). Whether to call
-the worker at all is the caller's decision too.
+asks the backend registry for it (``registry.worker_url()``). Whether to call the worker at all is the caller's
+decision too.
 """
 
 import io
@@ -81,9 +81,10 @@ class _WorkerSession(requests.Session):
 
     A call names the worker it is for with the keyword ``worker_url``, the worker's base URL, and the route on it
     as its path (``_worker_session.get("/status/abc", worker_url=...)``); the module never holds a worker URL of
-    its own, its callers pass the one of the backend they serve. Each call first passes ``ensure_handshake`` for
-    that worker, so a worker on other versions than core is refused before it is sent anything. A call that cannot
-    reach the worker re-arms that check, because the worker that comes back may be another one.
+    its own, its callers pass the one of the backend they serve. Each call first passes ``ensure_handshake``, which
+    is once per process, not per worker: the first call's worker is refused before it is sent anything when its
+    versions differ from core's, and later calls pass whichever worker they name. A call that cannot reach the
+    worker re-arms that check, because the worker that comes back may be another one.
     """
 
     def request(self, method, path, *args, worker_url: str, **kwargs):

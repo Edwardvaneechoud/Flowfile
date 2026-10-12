@@ -270,6 +270,7 @@ def test_the_built_in_backends_are_core_and_the_worker_at_the_configured_url():
     assert isinstance(local, LocalBackend)
     assert isinstance(worker, WorkerBackend)
     assert worker.url == settings.WORKER_URL
+    assert registry.worker_url() == worker.url
 
 
 @pytest.mark.parametrize("offload", [True, False])

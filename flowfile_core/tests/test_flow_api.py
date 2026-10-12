@@ -189,7 +189,7 @@ def test_serialize_offloads_final_collect_to_worker_when_remote(monkeypatch):
 
     out = api_runner._serialize(data, settings, flow, api_node)
     assert used.get("called") is True  # offloaded to the worker
-    assert used["worker_url"] == registry.backend(registry.WORKER_BACKEND_ID).url
+    assert used["worker_url"] == registry.worker_url()
     assert used.get("local") is None  # core did not run the heavy collect
     assert out == {"data": [{"region": "US", "v": 2}], "row_count": 1, "orientation": "records"}
 

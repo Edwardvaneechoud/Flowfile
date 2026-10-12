@@ -6,7 +6,6 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from flowfile_core.catalog.compute import worker_url
 from flowfile_core.catalog.constants import (
     DEFAULT_SQL_MAX_ROWS,
     SAVED_FLOW_NODE_X,
@@ -23,6 +22,7 @@ from flowfile_core.catalog.text_utils import (
     is_table_reference,
     rewrite_qualified_references,
 )
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_resolve_virtual_table,
 )
@@ -146,7 +146,7 @@ class SqlService:
 
         try:
             result = _service_module.trigger_sql_query(
-                query, delta_map, max_rows, virtual_refs=virtual_refs or None, worker_url=worker_url()
+                query, delta_map, max_rows, virtual_refs=virtual_refs or None, worker_url=registry.worker_url()
             )
         except RuntimeError as e:
             return SqlQueryResult(error=friendly_relation_error(str(e), query))
@@ -160,7 +160,7 @@ class SqlService:
         # Post-resolution read: resolution may have re-stamped source_table_versions.
         versions_hash = self._require_virtual_tables().fresh_versions_hash(virtual_id)
         result = trigger_resolve_virtual_table(
-            virtual_id, lazy_frame.serialize(), versions_hash, worker_url=worker_url()
+            virtual_id, lazy_frame.serialize(), versions_hash, worker_url=registry.worker_url()
         )
         return result["ipc_path"]
 

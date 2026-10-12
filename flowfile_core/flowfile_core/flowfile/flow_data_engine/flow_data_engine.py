@@ -1643,7 +1643,7 @@ class FlowDataEngine:
             wait_on_completion=False,
             flow_id=-1,
             node_id=-1,
-            worker_url=_worker_url(),
+            worker_url=registry.worker_url(),
         )
         logger.info("Caching data in background")
         result = edf.get_result()
@@ -1880,7 +1880,7 @@ class FlowDataEngine:
             wait_on_completion=False,
             flow_id=flow_id,
             node_id=node_id,
-            worker_url=_worker_url(),
+            worker_url=registry.worker_url(),
         )
         return FlowDataEngine(external_tracker.get_result())
 
@@ -3106,14 +3106,9 @@ class FlowDataEngine:
             file_type=received_table.file_type,
             flow_id=flow_id,
             node_id=node_id,
-            worker_url=_worker_url(),
+            worker_url=registry.worker_url(),
         )
         return cls(external_fetcher.get_result())
-
-
-def _worker_url() -> str:
-    """The base URL of the worker the registry's worker backend runs on, for the engine's own worker calls."""
-    return registry.backend(registry.WORKER_BACKEND_ID).url
 
 
 def execute_sql_query(*flowfile_tables: FlowDataEngine, sql_code: str) -> FlowDataEngine:

@@ -15,8 +15,8 @@ the process-wide override a headless runner sets (``set_default_override``) when
 
 This module is the one place outside ``configs/settings.py`` that reads the worker settings: the offload setting
 above, and ``WORKER_URL``, the URL the built-in worker backend is made with. Every other module asks this registry,
-or the backend it holds, where compute goes and which worker it reaches; ``child_env`` names the variables a child
-process needs to run on core's own backend.
+or the backend it holds, where compute goes and which worker it reaches (``worker_url``); ``child_env`` names the
+variables a child process needs to run on core's own backend.
 """
 
 from __future__ import annotations
@@ -25,11 +25,12 @@ import importlib.metadata
 import os
 import threading
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from flowfile_core.configs import settings
 
 if TYPE_CHECKING:
+    from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
     from flowfile_core.flowfile.execution.protocol import ComputeBackend
 
 BackendFactory = Callable[[], "ComputeBackend"]
@@ -145,6 +146,11 @@ def child_env() -> dict[str, str]:
     that only knows that flag.
     """
     return {BACKEND_ENV_VAR: LOCAL_BACKEND_ID, LEGACY_OFFLOAD_ENV_VAR: "0"}
+
+
+def worker_url() -> str:
+    """The base URL of the worker the registry's worker backend runs on, for a caller that sends work there itself."""
+    return cast("WorkerBackend", backend(WORKER_BACKEND_ID)).url
 
 
 def reset() -> None:

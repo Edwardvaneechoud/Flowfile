@@ -186,7 +186,7 @@ def test_a_metadata_read_runs_where_the_context_says(delta_table, monkeypatch):
 
     assert in_core[1:3] == (3, 2)
     assert on_worker == ([{"name": "id", "dtype": "Int64"}], 99, 1, 7)
-    assert asked == [("people", None, registry.backend(registry.WORKER_BACKEND_ID).url)]
+    assert asked == [("people", None, registry.worker_url())]
 
 
 def test_a_preview_runs_where_the_context_says(delta_table, monkeypatch):
@@ -206,7 +206,7 @@ def test_a_preview_runs_where_the_context_says(delta_table, monkeypatch):
 
     assert in_core.rows == [[1, "ada"], [2, "grace"]]
     assert on_worker.rows == [[42]]
-    assert asked == [("people", 2, registry.backend(registry.WORKER_BACKEND_ID).url)]
+    assert asked == [("people", 2, registry.worker_url())]
 
 
 # The catalog writer's operation and payload

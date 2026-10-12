@@ -1916,9 +1916,10 @@ def fetch_rest_api_sample(
 
     sample_size = max(1, sample_size)
     worker_settings = build_rest_api_worker_settings(node, secret_encrypted, sample_size=sample_size)
-    worker_url = compute_registry.backend(compute_registry.WORKER_BACKEND_ID).url
     try:
-        fetcher = ExternalRestApiFetcher(worker_settings, wait_on_completion=True, worker_url=worker_url)
+        fetcher = ExternalRestApiFetcher(
+            worker_settings, wait_on_completion=True, worker_url=compute_registry.worker_url()
+        )
         sample_df = fetcher.get_result().head(sample_size).collect()
     except Exception as e:
         raise HTTPException(422, f"Failed to fetch sample from REST API: {e}") from e
