@@ -106,10 +106,16 @@ def include_worker_routes(app: FastAPI):
     """
     Include worker routes from flowfile_worker for simplified deployments.
     This creates a unified API that serves both the web UI and processes the worker operations.
+
+    Under ``/worker`` it mounts the legacy REST routes, the versioned ``/v1`` routes and their
+    ``/v1/ws/submit`` WebSocket, each behind its own token and version checks. The legacy
+    ``/ws/submit`` WebSocket is not mounted here.
     """
     try:
         from flowfile_worker import CACHE_DIR, mp_context
+        from flowfile_worker.protocol_routes import router as protocol_router
         from flowfile_worker.routes import router as worker_router
+        from flowfile_worker.streaming import v1_streaming_router
 
         @app.on_event("shutdown")
         async def shutdown_worker():
@@ -130,6 +136,8 @@ def include_worker_routes(app: FastAPI):
             await asyncio.sleep(0.1)
 
         app.include_router(worker_router, prefix="/worker")
+        app.include_router(protocol_router, prefix="/worker")
+        app.include_router(v1_streaming_router, prefix="/worker")
 
         print("Worker functionality included in unified API")
 
