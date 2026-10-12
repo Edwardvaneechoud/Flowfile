@@ -2,19 +2,24 @@
 and FlowSettings.show_edge_labels."""
 
 import os
+import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import polars as pl
 import pytest
 
-from flowfile_core.configs.utils import MutableBool
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable, TaskFailed
+from flowfile_core.flowfile.execution.protocol import OperationKind, OpResult
+from flowfile_core.flowfile.execution.write_payloads import FileWritePayload, unpack
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.kernel.execution import (
-    _write_parquet_locally,
     clear_stale_parquets,
     read_kernel_outputs,
     write_inputs_to_parquet,
+    write_parquet_for_kernel,
 )
 from flowfile_core.kernel.manager import KernelManager
 from flowfile_core.kernel.models import ExecuteRequest, ExecuteResult
@@ -392,50 +397,82 @@ class TestFlowSettingsShowEdgeLabels:
         assert settings.show_edge_labels is False
 
 
-# write_inputs_to_parquet
+# write_inputs_to_parquet: the kernel parquet hand-off
 
 
-def _mock_fetcher(has_error=False, error_description=None):
-    """Return a mock ExternalDfFetcher that succeeds or fails."""
-    fetcher = MagicMock()
-    fetcher.has_error = has_error
-    fetcher.error_description = error_description
-    return fetcher
+class _HandoffRecorder:
+    """Stands in for the execution context's compute backend: keeps every operation, failing it when told to."""
+
+    id = "handoff-recorder"
+
+    def __init__(self) -> None:
+        self.operations: list[tuple[OperationKind, FileWritePayload]] = []
+        self.error: Exception | None = None
+
+    def run_op(self, op, payload):
+        self.operations.append((op, unpack(payload, FileWritePayload)))
+        if self.error is not None:
+            raise self.error
+        return OpResult(refs={})
+
+
+class _PathManager:
+    def to_kernel_path(self, path: str) -> str:
+        return path
+
+
+@pytest.fixture
+def recorder(monkeypatch) -> _HandoffRecorder:
+    """The default compute backend for the test: a recorder, so a call without a run's context or a graph reaches it."""
+    backend = _HandoffRecorder()
+    registry.reset()
+    registry.register_backend(backend.id, lambda: backend)
+    monkeypatch.setenv(registry.BACKEND_ENV_VAR, backend.id)
+    yield backend
+    registry.reset()
+
+
+@pytest.fixture
+def in_core():
+    """A run on core's own backend."""
+    with use_context(ExecutionContext(registry.LOCAL_BACKEND_ID, parallelism=1, preview_rows=None)) as context:
+        yield context
+
+
+def _tables() -> tuple[FlowDataEngine, FlowDataEngine]:
+    return FlowDataEngine(pl.LazyFrame({"a": [1, 2]})), FlowDataEngine(pl.LazyFrame({"b": ["x"]}))
 
 
 class TestWriteInputsToParquet:
     """Unit tests for kernel.execution.write_inputs_to_parquet."""
 
-    def test_unnamed_inputs_all_under_main(self, tmp_path: Path):
-        """Without input_names, all files are grouped under 'main'."""
+    def test_unnamed_inputs_all_under_main(self, tmp_path: Path, recorder):
+        """Without input_names, all files are grouped under 'main', each written by a file_write."""
         mgr = _make_manager(str(tmp_path))
         input_dir = str(tmp_path / "inputs")
         os.makedirs(input_dir, exist_ok=True)
+        ft1, ft2 = _tables()
 
-        ft1, ft2 = MagicMock(), MagicMock()
-        with patch(
-            "flowfile_core.kernel.execution.ExternalDfFetcher",
-            side_effect=lambda **kw: _mock_fetcher(),
-        ):
-            result = write_inputs_to_parquet((ft1, ft2), mgr, input_dir, 1, 2)
+        result = write_inputs_to_parquet((ft1, ft2), mgr, input_dir, 1, 2)
 
         assert list(result.keys()) == ["main"]
         assert len(result["main"]) == 2
         for p in result["main"]:
             assert p.startswith("/shared/")
+        assert [op for op, _ in recorder.operations] == [OperationKind.file_write] * 2
+        assert [write.settings.abs_file_path for _, write in recorder.operations] == [
+            os.path.join(input_dir, "main_0.parquet"),
+            os.path.join(input_dir, "main_1.parquet"),
+        ]
+        assert [write.plan for _, write in recorder.operations] == [ft1.data_frame, ft2.data_frame]
 
-    def test_named_inputs_grouped_by_name(self, tmp_path: Path):
+    def test_named_inputs_grouped_by_name(self, tmp_path: Path, recorder):
         """With input_names, each table gets its own key plus a 'main' alias."""
         mgr = _make_manager(str(tmp_path))
         input_dir = str(tmp_path / "inputs")
         os.makedirs(input_dir, exist_ok=True)
 
-        ft1, ft2 = MagicMock(), MagicMock()
-        with patch(
-            "flowfile_core.kernel.execution.ExternalDfFetcher",
-            side_effect=lambda **kw: _mock_fetcher(),
-        ):
-            result = write_inputs_to_parquet((ft1, ft2), mgr, input_dir, 1, 2, input_names=["orders", "clients"])
+        result = write_inputs_to_parquet(_tables(), mgr, input_dir, 1, 2, input_names=["orders", "clients"])
 
         assert "orders" in result
         assert "clients" in result
@@ -443,50 +480,64 @@ class TestWriteInputsToParquet:
         assert len(result["orders"]) == 1
         assert len(result["clients"]) == 1
         assert len(result["main"]) == 2
+        assert [os.path.basename(write.settings.abs_file_path) for _, write in recorder.operations] == [
+            "orders_0.parquet",
+            "clients_1.parquet",
+        ]
 
-    def test_named_input_main_refused(self, tmp_path: Path):
+    def test_named_input_main_refused(self, tmp_path: Path, recorder):
         """An input named 'main' is refused: that key is the positional list of every input."""
         mgr = _make_manager(str(tmp_path))
         input_dir = str(tmp_path / "inputs")
         os.makedirs(input_dir, exist_ok=True)
 
-        ft1 = MagicMock()
-        with patch(
-            "flowfile_core.kernel.execution.ExternalDfFetcher",
-            side_effect=lambda **kw: _mock_fetcher(),
-        ):
-            with pytest.raises(ValueError, match="'main' is reserved"):
-                write_inputs_to_parquet((ft1,), mgr, input_dir, 1, 2, input_names=["main"])
+        with pytest.raises(ValueError, match="'main' is reserved"):
+            write_inputs_to_parquet(_tables()[:1], mgr, input_dir, 1, 2, input_names=["main"])
+        assert recorder.operations == []
 
-    def test_unnamed_fetcher_error_raises(self, tmp_path: Path):
-        """An error in ExternalDfFetcher raises RuntimeError (unnamed path)."""
+    def test_a_write_is_a_parquet_file_write_at_the_exact_path(self, tmp_path: Path, recorder):
+        """What the backend gets: the rows as a plan, a parquet file at the path as given, and the flow and node."""
+        input_dir = tmp_path / "flow" / "7" / "inputs"
+        frame = pl.DataFrame({"a": [1, 2]})
+
+        write_inputs_to_parquet((FlowDataEngine(frame),), _PathManager(), str(input_dir), 7, 9, input_names=["orders"])
+
+        ((op, write),) = recorder.operations
+        assert op is OperationKind.file_write
+        assert write.settings.abs_file_path == str(input_dir / "orders_0.parquet")
+        assert (write.settings.file_type, write.settings.write_mode, write.settings.compression) == (
+            "parquet",
+            "overwrite",
+            "zstd",
+        )
+        assert (write.flow_id, write.node_id) == (7, 9)
+        assert isinstance(write.plan, pl.LazyFrame)
+        assert write.plan.collect().equals(frame)
+        assert input_dir.is_dir(), "the folder exists before the backend writes into it"
+
+    @pytest.mark.parametrize("input_names", [None, ["orders"]], ids=["unnamed", "named"])
+    def test_a_compute_error_raises_a_runtime_error_naming_the_input(self, tmp_path: Path, recorder, input_names):
         mgr = _make_manager(str(tmp_path))
         input_dir = str(tmp_path / "inputs")
-        os.makedirs(input_dir, exist_ok=True)
+        recorder.error = TaskFailed("disk full")
+        expected = "input 0 (orders)" if input_names else "input 0"
 
-        ft1 = MagicMock()
-        with patch(
-            "flowfile_core.kernel.execution.ExternalDfFetcher",
-            side_effect=lambda **kw: _mock_fetcher(has_error=True, error_description="disk full"),
-        ):
-            with pytest.raises(RuntimeError, match="Failed to write parquet"):
-                write_inputs_to_parquet((ft1,), mgr, input_dir, 1, 2)
+        with pytest.raises(RuntimeError, match=rf"Failed to write parquet for {re.escape(expected)}: disk full"):
+            write_inputs_to_parquet(_tables()[:1], mgr, input_dir, 1, 2, input_names=input_names)
 
-    def test_named_fetcher_error_raises(self, tmp_path: Path):
-        """An error in ExternalDfFetcher raises RuntimeError (named path)."""
-        mgr = _make_manager(str(tmp_path))
-        input_dir = str(tmp_path / "inputs")
-        os.makedirs(input_dir, exist_ok=True)
+    def test_an_unreachable_compute_raises_a_runtime_error_too(self, tmp_path: Path, recorder):
+        recorder.error = ComputeUnavailable("Could not reach the worker")
 
-        ft1 = MagicMock()
-        with patch(
-            "flowfile_core.kernel.execution.ExternalDfFetcher",
-            side_effect=lambda **kw: _mock_fetcher(has_error=True, error_description="disk full"),
-        ):
-            with pytest.raises(RuntimeError, match="orders"):
-                write_inputs_to_parquet((ft1,), mgr, input_dir, 1, 2, input_names=["orders"])
+        with pytest.raises(RuntimeError, match="Failed to write parquet for input 0: Could not reach the worker"):
+            write_inputs_to_parquet(_tables()[:1], _PathManager(), str(tmp_path / "inputs"), 1, 2)
 
-    def test_empty_tuple_returns_empty_main(self, tmp_path: Path):
+    def test_another_error_propagates_as_raised(self, tmp_path: Path, recorder):
+        recorder.error = OSError("disk full")
+
+        with pytest.raises(OSError, match="disk full"):
+            write_inputs_to_parquet(_tables()[:1], _PathManager(), str(tmp_path / "inputs"), 1, 2)
+
+    def test_empty_tuple_returns_empty_main(self, tmp_path: Path, recorder):
         """An empty tuple of tables returns {"main": []}."""
         mgr = _make_manager(str(tmp_path))
         input_dir = str(tmp_path / "inputs")
@@ -494,119 +545,103 @@ class TestWriteInputsToParquet:
 
         result = write_inputs_to_parquet((), mgr, input_dir, 1, 2)
         assert result == {"main": []}
+        assert recorder.operations == []
 
-    def test_unnamed_inputs_local_write(self, tmp_path: Path):
-        """When OFFLOAD_TO_WORKER is False, writes parquet locally without ExternalDfFetcher."""
-        mgr = _make_manager(str(tmp_path))
+    def test_a_run_in_core_writes_the_files_in_process(self, tmp_path: Path, recorder, in_core):
+        """In a run on core's own backend the files are written here, whatever the default backend is."""
         input_dir = str(tmp_path / "inputs")
-        os.makedirs(input_dir, exist_ok=True)
+        ft1, ft2 = _tables()
 
-        ft1, ft2 = MagicMock(), MagicMock()
-        with (
-            patch("flowfile_core.kernel.execution.OFFLOAD_TO_WORKER", MutableBool(False)),
-            patch("flowfile_core.kernel.execution._write_parquet_locally") as mock_write,
-        ):
-            result = write_inputs_to_parquet((ft1, ft2), mgr, input_dir, 1, 2)
+        result = write_inputs_to_parquet((ft1, ft2), _PathManager(), input_dir, 1, 2, input_names=["orders", "clients"])
 
-        assert mock_write.call_count == 2
-        assert list(result.keys()) == ["main"]
-        assert len(result["main"]) == 2
-        for p in result["main"]:
-            assert p.startswith("/shared/")
-
-    def test_named_inputs_local_write(self, tmp_path: Path):
-        """When OFFLOAD_TO_WORKER is False, named inputs write locally."""
-        mgr = _make_manager(str(tmp_path))
-        input_dir = str(tmp_path / "inputs")
-        os.makedirs(input_dir, exist_ok=True)
-
-        ft1, ft2 = MagicMock(), MagicMock()
-        with (
-            patch("flowfile_core.kernel.execution.OFFLOAD_TO_WORKER", MutableBool(False)),
-            patch("flowfile_core.kernel.execution._write_parquet_locally") as mock_write,
-        ):
-            result = write_inputs_to_parquet(
-                (ft1, ft2), mgr, input_dir, 1, 2, input_names=["orders", "clients"]
-            )
-
-        assert mock_write.call_count == 2
-        assert "orders" in result
-        assert "clients" in result
-        assert "main" in result
-
-    def test_local_write_error_propagates(self, tmp_path: Path):
-        """When local write fails, the error propagates naturally."""
-        mgr = _make_manager(str(tmp_path))
-        input_dir = str(tmp_path / "inputs")
-        os.makedirs(input_dir, exist_ok=True)
-
-        ft1 = MagicMock()
-        with (
-            patch("flowfile_core.kernel.execution.OFFLOAD_TO_WORKER", MutableBool(False)),
-            patch(
-                "flowfile_core.kernel.execution._write_parquet_locally",
-                side_effect=OSError("disk full"),
-            ),
-        ):
-            with pytest.raises(OSError, match="disk full"):
-                write_inputs_to_parquet((ft1,), mgr, input_dir, 1, 2)
-
-    def test_local_flag_writes_in_process_with_offload_on(self, tmp_path: Path):
-        """local=True writes the parquet files in-process even when worker offload is on."""
-
-        class _PathManager:
-            def to_kernel_path(self, path: str) -> str:
-                return path
-
-        def _no_worker(**kwargs):
-            raise AssertionError("worker must not be used for a local graph")
-
-        input_dir = str(tmp_path / "inputs")
-        ft1 = FlowDataEngine(pl.LazyFrame({"a": [1, 2]}))
-        ft2 = FlowDataEngine(pl.LazyFrame({"b": ["x"]}))
-        with (
-            patch("flowfile_core.kernel.execution.OFFLOAD_TO_WORKER", MutableBool(True)),
-            patch("flowfile_core.kernel.execution.ExternalDfFetcher", side_effect=_no_worker),
-        ):
-            result = write_inputs_to_parquet(
-                (ft1, ft2), _PathManager(), input_dir, 1, 2, input_names=["orders", "clients"], local=True
-            )
-
+        assert recorder.operations == []
         assert pl.read_parquet(result["orders"][0]).to_dict(as_series=False) == {"a": [1, 2]}
         assert pl.read_parquet(result["clients"][0]).to_dict(as_series=False) == {"b": ["x"]}
         assert result["main"] == result["orders"] + result["clients"]
 
+    @pytest.mark.parametrize(
+        ("execution_location", "expected_writes"), [("local", 0), ("remote", 2)], ids=["local", "remote"]
+    )
+    def test_outside_a_run_the_graph_names_the_backend(
+        self, tmp_path: Path, recorder, execution_location, expected_writes
+    ):
+        """A local graph writes in core; a remote one on the default backend, here the recorder."""
+        from tests.flowfile.conftest import create_test_graph
 
-class TestWriteParquetLocally:
-    """Unit tests for _write_parquet_locally."""
+        graph = create_test_graph(flow_id=8801, execution_location=execution_location)
+        input_dir = str(tmp_path / "inputs")
 
-    def test_writes_valid_parquet(self, tmp_path: Path):
+        result = write_inputs_to_parquet(_tables(), _PathManager(), input_dir, 1, 2, graph=graph)
+
+        assert len(recorder.operations) == expected_writes
+        assert all(os.path.isfile(path) for path in result["main"]) == (execution_location == "local")
+
+    def test_a_run_context_wins_over_the_graph(self, tmp_path: Path, recorder, in_core):
+        from tests.flowfile.conftest import create_test_graph
+
+        graph = create_test_graph(flow_id=8802, execution_location="remote")
+
+        write_inputs_to_parquet(_tables(), _PathManager(), str(tmp_path / "inputs"), 1, 2, graph=graph)
+
+        assert recorder.operations == []
+
+
+class TestWriteParquetForKernel:
+    """write_parquet_for_kernel on core's own backend: a complete parquet file when it returns."""
+
+    def test_writes_valid_parquet(self, tmp_path: Path, in_core):
         """Creates a valid parquet file from a LazyFrame."""
         lf = pl.LazyFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
         output_path = str(tmp_path / "sub" / "test.parquet")
-        _write_parquet_locally(lf, output_path)
+        write_parquet_for_kernel(lf, output_path, flow_id=1, node_id=2, what="input 0")
 
         df = pl.read_parquet(output_path)
         assert df.shape == (3, 2)
         assert df.columns == ["a", "b"]
 
-    def test_accepts_dataframe(self, tmp_path: Path):
-        """Accepts a DataFrame directly without collecting."""
+    def test_accepts_dataframe(self, tmp_path: Path, in_core):
+        """Accepts a DataFrame directly."""
         df_in = pl.DataFrame({"x": [10, 20]})
         output_path = str(tmp_path / "test.parquet")
-        _write_parquet_locally(df_in, output_path)
+        write_parquet_for_kernel(df_in, output_path, flow_id=1, node_id=2, what="input 0")
 
         df_out = pl.read_parquet(output_path)
         assert df_out.shape == (2, 1)
         assert df_out["x"].to_list() == [10, 20]
 
-    def test_creates_parent_dirs(self, tmp_path: Path):
+    def test_creates_parent_dirs(self, tmp_path: Path, in_core):
         """Creates parent directories if they don't exist."""
         lf = pl.LazyFrame({"a": [1]})
         output_path = str(tmp_path / "deep" / "nested" / "dir" / "test.parquet")
-        _write_parquet_locally(lf, output_path)
+        write_parquet_for_kernel(lf, output_path, flow_id=1, node_id=2, what="input 0")
 
         assert os.path.exists(output_path)
+
+    def test_the_file_is_synced_to_disk_before_it_returns(self, tmp_path: Path, in_core, monkeypatch):
+        """Another process (a kernel container) reads the file next, so it is fsync'd, not only closed."""
+        synced = []
+        real_fsync = os.fsync
+
+        def recording_fsync(descriptor):
+            synced.append(os.fstat(descriptor).st_ino)
+            real_fsync(descriptor)
+
+        monkeypatch.setattr(os, "fsync", recording_fsync)
+        output_path = tmp_path / "test.parquet"
+
+        rows = pl.LazyFrame({"a": list(range(1000))})
+        write_parquet_for_kernel(rows, str(output_path), flow_id=1, node_id=2, what="x")
+
+        assert synced == [output_path.stat().st_ino]
+        assert pl.read_parquet(output_path)["a"].to_list() == list(range(1000))
+
+    def test_overwrites_the_previous_file(self, tmp_path: Path, in_core):
+        output_path = str(tmp_path / "test.parquet")
+        write_parquet_for_kernel(pl.LazyFrame({"a": [1, 2, 3]}), output_path, flow_id=1, node_id=2, what="x")
+
+        write_parquet_for_kernel(pl.LazyFrame({"a": [9]}), output_path, flow_id=1, node_id=2, what="x")
+
+        assert pl.read_parquet(output_path)["a"].to_list() == [9]
 
 
 # NodePythonScript / UserDefinedNode output_names

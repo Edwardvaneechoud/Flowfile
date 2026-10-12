@@ -12,6 +12,7 @@ from flowfile_core.flowfile.execution.errors import (
     OperationUnsupported,
     ResultMissing,
 )
+from flowfile_core.flowfile.execution.op_payloads import FuzzyJoinPayload, RandomSplitPayload
 from flowfile_core.flowfile.execution.protocol import (
     ComputeBackend,
     JobStatus,
@@ -21,7 +22,6 @@ from flowfile_core.flowfile.execution.protocol import (
     SubmitHints,
 )
 from flowfile_core.flowfile.execution.write_payloads import PAYLOAD_KEY, FileWritePayload
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.schemas import input_schema
 from shared.compute_protocol import PROTOCOL_VERSION, local_capabilities
 
@@ -227,10 +227,10 @@ def test_an_operation_without_a_local_path_is_unsupported(backend, kind):
 
 
 def test_random_split_holds_one_result_per_split(backend):
-    table = FlowDataEngine(pl.LazyFrame({"n": list(range(100))}))
     settings = input_schema.NodeRandomSplit(flow_id=1, node_id=1, seed=7)
+    split = RandomSplitPayload(plan=pl.LazyFrame({"n": list(range(100))}), settings=settings, flow_id=1, node_id=1)
 
-    refs = backend.run_op(OperationKind.random_split, {"input": table, "settings": settings}).refs
+    refs = backend.run_op(OperationKind.random_split, {PAYLOAD_KEY: split}).refs
 
     assert list(refs) == ["train", "test"]
     assert [backend.count(ref) for ref in refs.values()] == [80, 20]
@@ -255,7 +255,7 @@ def test_file_read_holds_the_rows_of_a_csv(backend, tmp_path):
 
 
 def test_fuzzy_join_holds_the_matches(backend):
-    names = FlowDataEngine([{"name": "eduward"}, {"name": "edward"}, {"name": "courtney"}])
+    names = pl.LazyFrame({"name": ["eduward", "edward", "courtney"]})
     settings = input_schema.NodeFuzzyMatch(
         flow_id=1,
         node_id=2,
@@ -269,9 +269,9 @@ def test_fuzzy_join_holds_the_matches(backend):
         },
     )
 
-    refs = backend.run_op(
-        OperationKind.fuzzy_join, {"left": names, "right": names, "settings": settings, "node_logger": None}
-    ).refs
+    join = FuzzyJoinPayload(left=names, right=names, settings=settings, flow_id=1, node_id=2)
+
+    refs = backend.run_op(OperationKind.fuzzy_join, {PAYLOAD_KEY: join}).refs
 
     matches = backend.plan_for(refs["result"]).collect().sort("name", "name_right")
     assert matches.select("name", "name_right").rows() == [

@@ -1,7 +1,9 @@
 """Tests for the custom-node dry-run backend.
 
 Error paths (syntax / no-sample-data / worker-down) run without a worker; the
-happy path and timeout stub the worker seam so no live worker is required.
+happy path and timeout stub the worker backend's transport (the status, cancel
+and clear helpers it calls) so no live worker is required while the run is
+followed through the backend itself.
 """
 
 import io
@@ -10,7 +12,9 @@ from types import SimpleNamespace
 
 import polars as pl
 import pytest
+import requests
 
+from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from flowfile_core.flowfile.node_designer.state import (
@@ -239,35 +243,42 @@ class _Status:
         self.background_task_id = task_id
 
 
-class _Resp:
-    def __init__(self, payload, status_code=200):
-        self._payload = payload
-        self.status_code = status_code
-        self.text = json.dumps(payload) if isinstance(payload, dict) else str(payload)
-
-    def json(self):
-        return self._payload
+def _status(payload: dict) -> SimpleNamespace:
+    """The worker's ``Status`` for a task, as the transport's ``get_status`` returns it."""
+    return SimpleNamespace(
+        status=payload["status"],
+        progress=payload.get("progress", 0),
+        error_message=payload.get("error_message"),
+        results=payload.get("results"),
+    )
 
 
 def _stub_worker(monkeypatch, status_payloads):
-    """status_payloads: list of dicts returned by successive /status GETs."""
+    """status_payloads: successive answers of the worker for the task's status: a dict, or an exception to raise."""
     monkeypatch.setattr(dr, "trigger_custom_node_operation", lambda request: _Status("task-1"))
-    calls = {"get": 0, "clear": 0, "cancel": 0}
+    calls = {"get": 0, "clear": 0, "cancel": 0, "task_ids": set()}
 
-    def _get(url, timeout=10):
-        idx = min(calls["get"], len(status_payloads) - 1)
+    def _get_status(task_id):
+        calls["task_ids"].add(task_id)
+        answer = status_payloads[min(calls["get"], len(status_payloads) - 1)]
         calls["get"] += 1
-        return _Resp(status_payloads[idx])
+        if isinstance(answer, Exception):
+            raise answer
+        return _status(answer)
 
-    def _delete(url, timeout=10):
+    def _clear(task_id):
+        calls["task_ids"].add(task_id)
         calls["clear"] += 1
-        return _Resp({"ok": True})
+        return True
 
-    def _post(url, timeout=10):
+    def _cancel(task_id):
+        calls["task_ids"].add(task_id)
         calls["cancel"] += 1
-        return _Resp({"ok": True})
+        return True
 
-    monkeypatch.setattr(dr, "_worker_session", SimpleNamespace(get=_get, delete=_delete, post=_post))
+    monkeypatch.setattr(worker_module, "get_status", _get_status)
+    monkeypatch.setattr(worker_module, "cancel_task", _cancel)
+    monkeypatch.setattr(dr, "clear_task_from_worker", _clear)
     return calls
 
 
@@ -353,6 +364,84 @@ def test_multi_output_designer_state_maps_all_outputs(monkeypatch):
     assert [o.name for o in resp.outputs] == ["pass", "fail"]
     assert resp.outputs[0].row_count == 2
     assert resp.outputs[1].row_count == 1
+
+
+def test_the_run_is_followed_until_it_completes_and_cleared_once(monkeypatch):
+    completed = {"status": "Completed", "results": {"outputs": {"main": {"row_count": 1}}, "preview": {}}}
+    calls = _stub_worker(monkeypatch, [{"status": "Starting"}, {"status": "Processing", "progress": 50}, completed])
+    monkeypatch.setattr(dr, "_POLL_INTERVAL", 0)
+
+    resp = run_dry_run(DryRunRequest(code=CODE_OK, sample_inputs=[{"a": [1]}]), user_id=1)
+
+    assert resp.success is True, resp.error
+    assert resp.outputs[0].row_count == 1
+    assert calls["get"] == 4, "three status polls, then the result of the finished task"
+    assert (calls["clear"], calls["cancel"]) == (1, 0)
+    assert calls["task_ids"] == {"task-1"}
+
+
+def test_a_run_past_its_time_limit_is_cancelled_through_the_backend(monkeypatch):
+    calls = _stub_worker(monkeypatch, [{"status": "Processing"}])
+    monkeypatch.setattr(dr, "_POLL_INTERVAL", 0.05)
+
+    resp = run_dry_run(DryRunRequest(code=CODE_OK, sample_inputs=[{"a": [1]}], timeout_seconds=1), user_id=1)
+
+    assert (resp.success, resp.error_kind) == (False, "timeout")
+    assert resp.error == "Dry run exceeded the time limit and was cancelled."
+    assert (calls["cancel"], calls["clear"]) == (1, 1)
+
+
+def test_a_cancel_the_worker_cannot_receive_still_answers_timeout(monkeypatch):
+    calls = _stub_worker(monkeypatch, [{"status": "Processing"}])
+    monkeypatch.setattr(dr, "_POLL_INTERVAL", 0.05)
+
+    def _unreachable(task_id):
+        calls["cancel"] += 1
+        raise Exception("Failed to cancel task: connection refused")
+
+    monkeypatch.setattr(worker_module, "cancel_task", _unreachable)
+
+    resp = run_dry_run(DryRunRequest(code=CODE_OK, sample_inputs=[{"a": [1]}], timeout_seconds=1), user_id=1)
+
+    assert resp.error_kind == "timeout"
+    assert calls["cancel"] == 1
+
+
+def test_a_run_the_worker_cancelled_answers_timeout(monkeypatch):
+    calls = _stub_worker(monkeypatch, [{"status": "Cancelled"}])
+
+    resp = run_dry_run(DryRunRequest(code=CODE_OK, sample_inputs=[{"a": [1]}]), user_id=1)
+
+    assert (resp.error_kind, resp.error) == ("timeout", "Dry run was cancelled.")
+    assert calls["clear"] == 1
+
+
+def test_a_worker_lost_while_polled_is_a_load_error(monkeypatch):
+    calls = _stub_worker(monkeypatch, [requests.ConnectionError("connection refused")])
+
+    resp = run_dry_run(DryRunRequest(code=CODE_OK, sample_inputs=[{"a": [1]}]), user_id=1)
+
+    assert (resp.success, resp.error_kind) == (False, "load")
+    assert resp.error.startswith("The compute worker is unavailable:")
+    assert "connection refused" in resp.error
+    assert calls["clear"] == 1
+
+
+def test_a_task_the_worker_no_longer_knows_is_an_execution_error(monkeypatch):
+    _stub_worker(monkeypatch, [Exception('Could not fetch the status, {"detail":"Task not found"}')])
+
+    resp = run_dry_run(DryRunRequest(code=CODE_OK, sample_inputs=[{"a": [1]}]), user_id=1)
+
+    assert (resp.success, resp.error_kind) == (False, "execution")
+    assert "Task not found" in resp.error
+
+
+def test_a_failure_without_a_message_still_names_the_failure(monkeypatch):
+    _stub_worker(monkeypatch, [{"status": "Unknown Error"}])
+
+    resp = run_dry_run(DryRunRequest(code=CODE_OK, sample_inputs=[{"a": [1]}]), user_id=1)
+
+    assert (resp.error_kind, resp.error) == ("execution", "Unknown Error")
 
 
 # -- kernel-environment routing ------------------------------------------------

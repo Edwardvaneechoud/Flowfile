@@ -353,10 +353,10 @@ def dry_run_custom_node(request: DryRunRequest, current_user=Depends(require_adm
     """Execute a candidate node in the worker against bounded sample inputs.
 
     Never runs user code in core; a syntax error is caught before dispatch and an
-    unreachable worker surfaces as ``error_kind='load'``. A worker that fails core's
-    handshake while the run is polled answers 503 when it cannot be reached and 500
-    otherwise, with the typed message. Admin-only, like save: the candidate is
-    arbitrary Python and the worker holds the master key.
+    unreachable worker, at submit or while the run is polled, surfaces as
+    ``error_kind='load'``. A worker that fails core's handshake on versions while the
+    run is polled answers 500 with the typed message. Admin-only, like save: the
+    candidate is arbitrary Python and the worker holds the master key.
     """
     try:
         return run_dry_run(request, current_user.id)

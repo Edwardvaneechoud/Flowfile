@@ -10,8 +10,16 @@ import pytest
 
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ForeignRef, OperationUnsupported, PlanRejected, ResultMissing
+from flowfile_core.flowfile.execution.op_payloads import (
+    CustomNodePayload,
+    FuzzyJoinPayload,
+    MlApplyPayload,
+    MlTrainPayload,
+    RandomSplitPayload,
+)
 from flowfile_core.flowfile.execution.protocol import (
     ComputeBackend,
     JobHandle,
@@ -23,10 +31,12 @@ from flowfile_core.flowfile.execution.protocol import (
 from flowfile_core.flowfile.execution.write_payloads import PAYLOAD_KEY, FileWritePayload
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import fetch_worker_capabilities
+from flowfile_core.flowfile.node_designer import CustomNodeBase
 from flowfile_core.flowfile.sources.external_sources.sql_source.models import (
     DatabaseExternalReadSettings,
     ExtDatabaseConnection,
 )
+from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.input_schema import OutputSettings, ReceivedTable
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 
@@ -273,10 +283,9 @@ def test_a_database_read_returns_a_reference_to_the_rows_it_read(backend, kept, 
     assert backend.plan_for(ref).head(5).collect().height == 5
 
 
-@pytest.mark.parametrize("op", [OperationKind.random_split, OperationKind.viz_session])
-def test_an_operation_without_a_worker_task_is_unsupported(op):
-    with pytest.raises(OperationUnsupported, match=op.value):
-        WorkerBackend().run_op(op, {})
+def test_an_operation_without_a_worker_task_is_unsupported():
+    with pytest.raises(OperationUnsupported, match="viz_session"):
+        WorkerBackend().run_op(OperationKind.viz_session, {})
 
 
 def test_export_and_import_are_unsupported():
@@ -287,3 +296,141 @@ def test_export_and_import_are_unsupported():
         worker.export(ref, "s3://bucket/out.parquet", None)
     with pytest.raises(OperationUnsupported):
         worker.import_uri("s3://bucket/in.parquet", [], None, None)
+
+
+SPLIT_NODE_SOURCE = """
+import polars as pl
+from flowfile_core.flowfile.node_designer import CustomNodeBase
+
+
+class WorkerBackendSplit(CustomNodeBase):
+    node_name: str = "Worker Backend Split"
+    number_of_outputs: int = 2
+    output_names: list[str] = ["big", "small"]
+
+    def process(self, *inputs):
+        rows = inputs[0]
+        return {"big": rows.filter(pl.col("id") > 6), "small": rows.filter(pl.col("id") <= 6)}
+"""
+
+
+class PlacedSplit(CustomNodeBase):
+    """The class the node was placed with in core; it selects no secret."""
+
+    node_name: str = "Worker Backend Split"
+    number_of_outputs: int = 2
+    output_names: list[str] = ["big", "small"]
+
+
+def fuzzy_settings() -> input_schema.NodeFuzzyMatch:
+    return input_schema.NodeFuzzyMatch(
+        flow_id=1,
+        node_id=2,
+        join_input={
+            "join_mapping": [
+                {"left_col": "name", "right_col": "name", "threshold_score": 75, "fuzzy_type": "levenshtein"}
+            ],
+            "left_select": {"renames": [{"old_name": "name", "new_name": "name", "join_key": True}]},
+            "right_select": {"renames": [{"old_name": "name", "new_name": "name", "join_key": True}]},
+            "how": "inner",
+        },
+    )
+
+
+def test_a_fuzzy_join_matches_on_the_worker_as_it_does_in_core(backend, kept):
+    names = pl.LazyFrame({"name": ["eduward", "edward", "courtney"]})
+    join = FuzzyJoinPayload(
+        left=names, right=names, settings=fuzzy_settings(), flow_id=1, node_id=2, job_id=f"{new_result_id()}_fm"
+    )
+
+    ref = backend.run_op(OperationKind.fuzzy_join, {PAYLOAD_KEY: join}).refs["result"]
+    kept.append(ref)
+
+    assert (ref.result_id, ref.state, ref.row_count) == (join.job_id, "materialised", 5)
+    in_core = LocalBackend()
+    local_ref = in_core.run_op(OperationKind.fuzzy_join, {PAYLOAD_KEY: join}).refs["result"]
+    columns = ["name", "name_right", "name_vs_name_right_levenshtein"]
+    on_worker = backend.plan_for(ref).collect().sort(columns)
+    assert on_worker.equals(in_core.plan_for(local_ref).collect().sort(columns))
+
+
+def test_a_random_split_on_the_worker_partitions_like_core(backend, kept):
+    settings = input_schema.NodeRandomSplit(flow_id=1, node_id=3, seed=11)
+    rows = pl.LazyFrame({"n": list(range(50))})
+    split = RandomSplitPayload(plan=rows, settings=settings, flow_id=1, node_id=3, job_id=new_result_id())
+    try:
+        refs = backend.run_op(OperationKind.random_split, {PAYLOAD_KEY: split}).refs
+        kept.extend(refs.values())
+
+        assert [(ref.state, ref.row_count) for ref in refs.values()] == [("deferred", 40), ("deferred", 10)]
+        on_worker = {name: backend.plan_for(ref).collect()["n"].to_list() for name, ref in refs.items()}
+        in_core = LocalBackend()
+        local_refs = in_core.run_op(OperationKind.random_split, {PAYLOAD_KEY: split}).refs
+        assert on_worker == {name: in_core.plan_for(ref).collect()["n"].to_list() for name, ref in local_refs.items()}
+        assert backend.status(JobHandle("worker", split.job_id)).state == "done"
+    finally:
+        subops.clear_task_from_worker(split.job_id)
+
+
+def test_a_custom_node_runs_on_the_worker_from_its_node_source(backend, kept):
+    rows = pl.LazyFrame({"id": list(range(10))})
+    job = CustomNodePayload(
+        inputs=(rows,),
+        custom_node=PlacedSplit(),
+        node_source=SPLIT_NODE_SOURCE,
+        class_name="WorkerBackendSplit",
+        settings_values={},
+        output_names=["big", "small"],
+        user_id=None,
+        flow_id=1,
+        node_id=4,
+        job_id=f"{new_result_id()}-custom-node",
+    )
+
+    refs = backend.run_op(OperationKind.custom_node, {PAYLOAD_KEY: job}).refs
+    kept.extend(refs.values())
+
+    assert list(refs) == ["output-0", "output-1"]
+    assert [(ref.state, ref.row_count) for ref in refs.values()] == [("materialised", 3), ("materialised", 7)]
+    assert backend.plan_for(refs["output-0"]).collect()["id"].to_list() == [7, 8, 9]
+    assert backend.plan_for(refs["output-1"]).collect()["id"].to_list() == list(range(7))
+
+
+def test_a_model_trained_on_the_worker_scores_on_the_worker(backend, kept, tmp_path):
+    model_path = tmp_path / "model.json"
+    training = pl.LazyFrame({"x": [1.0, 2.0, 3.0, 4.0], "y": [3.0, 5.0, 7.0, 9.0]})
+    train = MlTrainPayload(
+        plan=training,
+        staging_path=str(model_path),
+        model_type="linear_regression",
+        target_column="y",
+        feature_columns=["x"],
+        params={"add_bias": True},
+        flow_id=1,
+        node_id=5,
+        job_id=new_result_id(),
+    )
+    apply = MlApplyPayload(
+        plan=pl.LazyFrame({"x": [10.0]}),
+        model_path=str(model_path),
+        output_column="pred",
+        flow_id=1,
+        node_id=6,
+        job_id=new_result_id(),
+    )
+    try:
+        report = backend.run_op(OperationKind.ml_train, {PAYLOAD_KEY: train})
+
+        assert report.refs == {}
+        assert report.metadata["model_type"] == "linear_regression"
+        assert report.metadata["size_bytes"] == model_path.stat().st_size
+        assert len(report.metadata["sha256"]) == 64
+
+        ref = backend.run_op(OperationKind.ml_apply, {PAYLOAD_KEY: apply}).refs["result"]
+        kept.append(ref)
+
+        assert (ref.result_id, ref.state, ref.row_count) == (apply.job_id, "materialised", 1)
+        assert backend.plan_for(ref).collect()["pred"].round(6).to_list() == [21.0]
+    finally:
+        # Clearing the training task deletes the file it names, the model.
+        subops.clear_task_from_worker(train.job_id)

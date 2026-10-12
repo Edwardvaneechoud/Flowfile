@@ -31,11 +31,11 @@ from flowfile_core.schemas.input_schema import (
 )
 
 PAYLOAD_KEY = "payload"
-"""The ``OpPayload`` key a write operation's payload dataclass travels under."""
+"""The ``OpPayload`` key an operation's payload dataclass travels under (a write's, or one from ``op_payloads``)."""
 
 
 def new_job_id() -> str:
-    """A fresh id for a write job."""
+    """A fresh id for a job."""
     return uuid.uuid4().hex
 
 
@@ -165,7 +165,8 @@ class DeltaMergePayload:
 
 
 WritePayload = FileWritePayload | DatabaseWritePayload | CloudWritePayload | DeltaWritePayload | DeltaMergePayload
-PayloadT = TypeVar("PayloadT", bound=WritePayload)
+PayloadT = TypeVar("PayloadT")
+"""Any payload dataclass: a write's from this module, or a transform's or model's from ``op_payloads``."""
 
 
 def unpack(payload: OpPayload, expected: type[PayloadT]) -> PayloadT:

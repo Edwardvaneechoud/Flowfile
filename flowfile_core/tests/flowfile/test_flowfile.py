@@ -3209,10 +3209,7 @@ def test_random_split_returns_named_outputs():
 
 
 def test_random_split_remote_offloads_to_worker():
-    """remote dispatch must hit random_split_external (worker), not random_split (in-core).
-
-    Both paths must produce identical partition counts for the same seed.
-    """
+    """A remote flow splits on the worker backend, a local one in core; both give the same counts for a seed."""
     rows = [{"id": i} for i in range(500)]
     seed = 7
 
