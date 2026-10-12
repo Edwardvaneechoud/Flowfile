@@ -200,8 +200,9 @@ class WorkerBackend:
         }
 
     def capabilities(self) -> Capabilities:
-        """The answer of the worker at ``url`` to ``GET /capabilities``."""
-        return get_worker_capabilities(worker_url=self.url)
+        """The answer of the worker at ``url`` to ``GET /capabilities``, with the operations ``run_op`` runs there."""
+        answer = get_worker_capabilities(worker_url=self.url)
+        return answer.model_copy(update={"operations": frozenset(op.value for op in self._operations)})
 
     def submit(
         self,

@@ -55,6 +55,7 @@ from flowfile_core.schemas.input_schema import (
     ReceivedTable,
 )
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
+from shared.compute_protocol import Capabilities
 
 PEOPLE = pl.DataFrame(
     {"id": list(range(10)), "name": [f"n{i}" for i in range(10)], "score": [i * 1.5 for i in range(10)]}
@@ -115,6 +116,11 @@ def read_stream(data: bytes) -> pa.Table:
     return pa.ipc.open_stream(io.BytesIO(data)).read_all()
 
 
+def handshake_fields(capabilities: Capabilities) -> dict:
+    """What the worker reports about itself; ``operations`` is what the backend adds."""
+    return capabilities.model_dump(exclude={"operations"})
+
+
 def test_the_worker_backend_is_a_compute_backend():
     worker = WorkerBackend(url=WORKER_URL)
 
@@ -135,7 +141,9 @@ def test_the_registry_builds_the_worker_backend_from_its_built_in_table():
 
 
 def test_capabilities_are_the_workers_answer(running_worker):
-    assert WorkerBackend(url=WORKER_URL).capabilities() == fetch_worker_capabilities(WORKER_URL)
+    assert handshake_fields(WorkerBackend(url=WORKER_URL).capabilities()) == handshake_fields(
+        fetch_worker_capabilities(WORKER_URL)
+    )
 
 
 @pytest.fixture
@@ -178,7 +186,7 @@ def test_a_backend_made_on_another_url_sends_every_call_there(running_worker, mo
         result = worker.submit(PEOPLE.lazy(), [], hints(4), new_result_id(), flow_id=-1, node_id=-1)
         assert read_stream(result.sample).num_rows == 4
         assert worker.exists(result.ref) is True
-        assert worker.capabilities() == configured_answer
+        assert handshake_fields(worker.capabilities()) == handshake_fields(configured_answer)
         worker.release(result.ref)
         assert worker.exists(result.ref) is False
     finally:
@@ -199,7 +207,7 @@ def test_a_backend_made_on_a_url_nothing_answers_fails_naming_it(running_worker,
 
     configured = registry.backend(registry.WORKER_BACKEND_ID)
     assert configured.url == WORKER_URL
-    assert configured.capabilities() == fetch_worker_capabilities(WORKER_URL)
+    assert handshake_fields(configured.capabilities()) == handshake_fields(fetch_worker_capabilities(WORKER_URL))
 
 
 def test_submit_holds_the_result_in_the_file_the_worker_wrote(backend, kept, transport):
