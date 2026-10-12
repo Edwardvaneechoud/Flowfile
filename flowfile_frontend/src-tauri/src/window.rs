@@ -1,9 +1,12 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, EventTarget, Manager, WebviewWindow, WindowEvent};
 
 use crate::popout::{self, PopoutRef, Registration};
 use crate::state::AppState;
+
+const POPOUT_DESTROY_DELAY: Duration = Duration::from_millis(500);
 
 /// Hide the loading window and reveal the main window. Idempotent.
 pub fn show_main(app: &AppHandle) {
@@ -83,25 +86,44 @@ pub fn open_popout_window(
     };
     state.popouts.lock().mark_built(&label);
 
-    // The designer's stub needs the close, reported under the flow id the window carries by then.
+    // Every close lands here: the window's close button, Return, Bring back and `main` closing.
     let handle = app.clone();
-    window.on_window_event(move |event| {
-        if let WindowEvent::Destroyed = event {
-            let removed = handle
-                .state::<Arc<AppState>>()
-                .popouts
-                .lock()
-                .remove(&label);
-            if let Some(closed) = removed {
-                let _ = handle.emit_to(
-                    EventTarget::webview_window("main"),
-                    "popout-window-closed",
-                    closed,
-                );
+    window.on_window_event(move |event| match event {
+        WindowEvent::CloseRequested { api, .. } => {
+            if let Some(window) = handle.get_webview_window(&label) {
+                api.prevent_close();
+                retire_popout_window(&handle, window);
             }
         }
+        WindowEvent::Destroyed => report_popout_closed(&handle, &label),
+        _ => {}
     });
     Ok(())
+}
+
+/// Hide a closing pop-out at once and destroy it a moment later. Destroying a WKWebView that still
+/// had a display refresh queued crashed the app (macOS 26: `ScrollingTree::takePendingScrollUpdates`
+/// on the page just closed); hidden, it stops drawing first. The close is reported now, so the
+/// designer and a new pop-out of the same flow never meet the window on its way out.
+fn retire_popout_window(app: &AppHandle, window: WebviewWindow) {
+    let _ = window.hide();
+    report_popout_closed(app, window.label());
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(POPOUT_DESTROY_DELAY).await;
+        let _ = window.destroy();
+    });
+}
+
+/// The designer's stub needs the close, reported once, under the flow id the window carries by then.
+fn report_popout_closed(app: &AppHandle, label: &str) {
+    let removed = app.state::<Arc<AppState>>().popouts.lock().remove(label);
+    if let Some(closed) = removed {
+        let _ = app.emit_to(
+            EventTarget::webview_window("main"),
+            "popout-window-closed",
+            closed,
+        );
+    }
 }
 
 fn popout_window(app: &AppHandle, kind: &str, flow_id: i64) -> Option<WebviewWindow> {
@@ -128,7 +150,7 @@ pub fn close_popout_window(app: &AppHandle, kind: &str, flow_id: i64) {
 
 /// The calling pop-out's "Return to designer", by its label: `main` reopens its panel on the flow
 /// the registry says that window hosts (`popout-window-returned`) and comes to the front, then the
-/// window closes (its `Destroyed` still reports the close). An unregistered window is refused.
+/// window closes (its close request still reports the close). An unregistered window is refused.
 pub fn return_popout_window(app: &AppHandle, label: &str) -> Result<(), String> {
     let returned = app
         .state::<Arc<AppState>>()
