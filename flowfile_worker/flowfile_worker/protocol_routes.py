@@ -16,7 +16,7 @@ from typing import Any
 
 import polars as pl
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from flowfile_worker import PROCESS_MEMORY_USAGE, models, status_dict, status_dict_lock
 from flowfile_worker.auth import verify_internal_token
@@ -54,7 +54,8 @@ class SubmitMeta(BaseModel):
     """The ``meta`` part of a submit: the hints, the held results the plan reads, and the id to keep its result under.
 
     An unknown field is refused rather than dropped, so a field core sends that this worker does not
-    know fails the submit. ``result_id`` names the result's file, so it holds no path separator.
+    know fails the submit. ``result_id`` names the result's file, so it holds no path separator. A
+    negative ``preview_rows`` is refused, because ``head(-k)`` keeps all but the last k rows.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -64,6 +65,13 @@ class SubmitMeta(BaseModel):
     result_id: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
     flow_id: int
     node_id: int | str = -1
+
+    @field_validator("hints")
+    @classmethod
+    def _preview_rows_not_negative(cls, hints: SubmitHints) -> SubmitHints:
+        if hints.preview_rows is not None and hints.preview_rows < 0:
+            raise ValueError(f"preview_rows must be 0 or more, not {hints.preview_rows}")
+        return hints
 
 
 def _materialise(hints: SubmitHints) -> bool:

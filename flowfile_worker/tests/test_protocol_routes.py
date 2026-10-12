@@ -352,6 +352,24 @@ def test_a_bad_meta_part_is_422(meta):
     assert response.status_code == 422
 
 
+@pytest.mark.parametrize(
+    ("must_materialise", "wide"),
+    [(True, False), (False, True), (False, False)],
+    ids=["must-materialise", "wide", "deferred"],
+)
+def test_a_negative_preview_rows_is_refused_before_anything_runs(held, must_materialise, wide):
+    result_id = held()
+
+    response = _post(
+        _plan().serialize(), _meta(result_id, must_materialise=must_materialise, wide=wide, preview_rows=-2)
+    )
+
+    assert response.status_code == 422
+    assert "preview_rows" in response.text
+    assert result_id not in status_dict
+    assert not result_path(FLOW_ID, result_id).exists()
+
+
 def test_a_submits_job_is_its_result_id(held):
     result_id = held()
     _submit(result_id, _plan(), must_materialise=True)
