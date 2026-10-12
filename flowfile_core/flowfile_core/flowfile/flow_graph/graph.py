@@ -16,6 +16,7 @@ from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, register_missing_node_template
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.artifacts import ArtifactContext
+from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
@@ -609,6 +610,7 @@ class FlowGraph(
             return typed_parameter_values(_graph.flow_settings.parameters)
 
         node._params_getter = _get_params
+        node._execution_context_getter = lambda: current_context(_graph)
         self._notify_node_observers(node, is_new=existing_node is None)
         return node
 

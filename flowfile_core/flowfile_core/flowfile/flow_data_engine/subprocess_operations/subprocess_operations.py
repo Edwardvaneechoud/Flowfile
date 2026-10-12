@@ -45,7 +45,6 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.models import (
 from flowfile_core.schemas.catalog_schema import CatalogTablePreview, DeltaTableHistory
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageWriteSettingsWorkerInterface
 from flowfile_core.schemas.input_schema import ReceivedTable
-from flowfile_core.utils.arrow_reader import read
 from shared.compute_protocol import Capabilities
 from shared.viz_protocol import HTTP_TIMEOUT_SECONDS
 
@@ -673,9 +672,7 @@ def _raise_for_edit_response(response, table_id: int) -> None:
             detail = response.json().get("detail", {}) or {}
         except ValueError:
             pass
-        raise StaleWriteError(
-            "catalog_table", table_id, expected=detail.get("expected"), current=detail.get("current")
-        )
+        raise StaleWriteError("catalog_table", table_id, expected=detail.get("expected"), current=detail.get("current"))
     if response.status_code == 422:
         try:
             detail = response.json().get("detail", {}) or {}
@@ -1559,50 +1556,3 @@ class ExternalOutputWriter(BaseFetcher):
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
-
-
-def fetch_unique_values(lf: pl.LazyFrame) -> list[str]:
-    """
-    Fetches unique values from a specified column in a LazyFrame, attempting first via an external fetcher
-    and falling back to direct LazyFrame computation if that fails.
-
-    Args:
-        lf: A Polars LazyFrame containing the data
-        column: Name of the column to extract unique values from
-
-    Returns:
-        List[str]: List of unique values from the specified column cast to strings
-
-    Raises:
-        ValueError: If no unique values are found or if the fetch operation fails
-
-    Example:
-        >>> lf = pl.LazyFrame({'category': ['A', 'B', 'A', 'C']})
-        >>> unique_vals = fetch_unique_values(lf)
-        >>> print(unique_vals)
-        ['A', 'B', 'C']
-    """
-    try:
-        try:
-            external_df_fetcher = ExternalDfFetcher(lf=lf, flow_id=1, node_id=-1)
-            if external_df_fetcher.status.status == "Completed":
-                unique_values = read(external_df_fetcher.status.file_ref).column(0).to_pylist()
-                if logger:
-                    logger.info(f"Got {len(unique_values)} unique values from external source")
-                return unique_values
-        except Exception as e:
-            if logger:
-                logger.debug(f"Failed reading external file: {str(e)}")
-
-        unique_values = lf.unique().collect(engine="streaming")[:, 0].to_list()
-
-        if not unique_values:
-            raise ValueError("No unique values found in lazyframe")
-
-        return unique_values
-
-    except Exception as e:
-        error_msg = f"Failed to fetch unique values: {str(e)}"
-        if logger:
-            logger.error(error_msg)
-        raise ValueError(error_msg) from e

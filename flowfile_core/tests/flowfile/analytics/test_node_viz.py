@@ -1,16 +1,29 @@
 """The Explore Data node's worker-backed compute path.
 
-Mirrors `test_catalog_visualizations.py`'s dispatch tests: the worker is patched
-out, and what is asserted is the source descriptor core emits.
+Mirrors `test_catalog_visualizations.py`'s dispatch tests: the worker's
+visualisation routes are patched out where the worker backend calls them, and
+what is asserted is the source descriptor core emits through the backend's
+``viz_session`` operation.
 """
+import dataclasses
+import hashlib
 import io
 from base64 import b64decode
 from unittest.mock import patch
 
 import polars as pl
 import pytest
+import requests
 
 from flowfile_core.flowfile.analytics import node_viz
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.backends import worker as worker_module
+from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable, OperationUnsupported
+from flowfile_core.flowfile.execution.payloads import VizSessionPayload, op_payload
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
     subprocess_operations as subprocess_operations_module,
 )
@@ -57,8 +70,8 @@ def fake_worker():
         return {"fields": [{"fid": "g"}], "cache_hit": False}
 
     with (
-        patch.object(node_viz, "trigger_visualize_query", side_effect=fake_query),
-        patch.object(node_viz, "trigger_visualize_fields", side_effect=fake_fields),
+        patch.object(worker_module, "trigger_visualize_query", side_effect=fake_query),
+        patch.object(worker_module, "trigger_visualize_fields", side_effect=fake_fields),
         patch.object(subprocess_operations_module, "trigger_resolve_virtual_table") as resolve_mock,
     ):
         captured["_resolve_mock"] = resolve_mock
@@ -155,3 +168,122 @@ def test_compute_refuses_a_node_that_has_not_run(fake_worker):
 )
 def test_max_rows_is_clamped_to_the_catalog_limits(requested, expected):
     assert node_viz.clamp_max_rows(requested) == expected
+
+
+def test_the_session_key_names_the_plan_the_worker_receives(fake_worker):
+    graph, node = _run_explore_flow()
+
+    node_viz.compute_node_rows(graph, node, _AGG_PAYLOAD, max_rows=None)
+
+    source = fake_worker["source"]
+    plan_key = hashlib.sha256(b64decode(source["plan_bytes"])).hexdigest()[:16]
+    assert source["session_key"].startswith(f"node:{plan_key}:")
+
+
+def test_a_local_flow_still_charts_on_the_worker(fake_worker):
+    """The visualisation child exists only on the worker, so a flow running in core charts there too."""
+    graph, node = _run_explore_flow()
+
+    with use_context(ExecutionContext(registry.LOCAL_BACKEND_ID, parallelism=1, preview_rows=None)):
+        fields = node_viz.get_node_fields(graph, node)
+
+    assert fields.fields == [{"fid": "g"}]
+    assert fake_worker["fields_source"]["kind"] == "plan"
+
+
+# The viz_session operation
+
+
+def _viz_payload(**overrides) -> VizSessionPayload:
+    return VizSessionPayload(
+        **{
+            "flow_id": 7,
+            "node_id": 3,
+            "plan": pl.LazyFrame({"g": ["a", "b"], "v": [1, 2]}),
+            "session_key": "node:abc:1.0",
+            "request": "query",
+            "query": _AGG_PAYLOAD,
+            "max_rows": 500,
+            **overrides,
+        }
+    )
+
+
+def test_a_query_on_the_worker_backend_sends_the_serialised_plan_under_its_session_key(fake_worker):
+    request = _viz_payload()
+
+    result = WorkerBackend().run_op(OperationKind.viz_session, op_payload(request))
+
+    source = fake_worker["source"]
+    assert source == {
+        "kind": "plan",
+        "session_key": "node:abc:1.0",
+        "plan_bytes": source["plan_bytes"],
+    }
+    assert b64decode(source["plan_bytes"]) == request.plan.serialize()
+    assert fake_worker["payload"] is _AGG_PAYLOAD
+    assert fake_worker["max_rows"] == 500
+    assert result.refs == {}
+    assert result.metadata == {"rows": [], "total_rows": 0, "truncated": False, "elapsed_ms": 0.0, "cache_hit": False}
+
+
+def test_a_fields_request_on_the_worker_backend_asks_for_the_field_schema(fake_worker):
+    request = _viz_payload(request="fields", query=None, max_rows=None)
+
+    result = WorkerBackend().run_op(OperationKind.viz_session, op_payload(request))
+
+    assert fake_worker["fields_source"]["session_key"] == "node:abc:1.0"
+    assert pl.LazyFrame.deserialize(io.BytesIO(b64decode(fake_worker["fields_source"]["plan_bytes"]))).collect()[
+        "v"
+    ].to_list() == [1, 2]
+    assert "source" not in fake_worker, "no chart query is sent"
+    assert result.metadata == {"fields": [{"fid": "g"}], "cache_hit": False}
+
+
+def test_an_unreachable_worker_fails_a_viz_session_typed():
+    with (
+        patch.object(worker_module, "trigger_visualize_query", side_effect=requests.ConnectionError("refused")),
+        pytest.raises(ComputeUnavailable, match="refused"),
+    ):
+        WorkerBackend().run_op(OperationKind.viz_session, op_payload(_viz_payload()))
+
+
+def test_a_worker_error_answer_reaches_the_route_as_before():
+    """The analysis routes answer the transport's RuntimeError with a 502."""
+    failure = RuntimeError("Worker visualize_query failed: boom")
+    with (
+        patch.object(worker_module, "trigger_visualize_query", side_effect=failure),
+        pytest.raises(RuntimeError, match="boom"),
+    ):
+        WorkerBackend().run_op(OperationKind.viz_session, op_payload(_viz_payload()))
+
+
+def test_core_refuses_a_viz_session():
+    with pytest.raises(OperationUnsupported, match="viz_session"):
+        LocalBackend().run_op(OperationKind.viz_session, op_payload(_viz_payload()))
+
+
+def test_a_viz_session_payload_is_frozen_and_keyword_only():
+    request = _viz_payload()
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        request.session_key = "another"
+    with pytest.raises(TypeError):
+        VizSessionPayload(7, 3)
+    assert len(request.job_id) == 32
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"query": None},
+        {"max_rows": None},
+        {"request": "fields"},
+        {"request": "fields", "query": None},
+        {"request": "chart"},
+    ],
+    ids=["query_without_query", "query_without_max_rows", "fields_with_both", "fields_with_max_rows", "unknown"],
+)
+def test_a_viz_session_payload_carries_exactly_what_its_request_needs(overrides):
+    with pytest.raises(ValueError, match="Graphic Walker"):
+        _viz_payload(**overrides)

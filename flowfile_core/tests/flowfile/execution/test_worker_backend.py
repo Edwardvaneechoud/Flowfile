@@ -295,9 +295,11 @@ def test_a_database_read_returns_a_reference_to_the_rows_it_read(backend, kept, 
     assert backend.plan_for(ref).head(5).collect().height == 5
 
 
-def test_an_operation_without_a_worker_task_is_unsupported():
-    with pytest.raises(OperationUnsupported, match="viz_session"):
-        WorkerBackend().run_op(OperationKind.viz_session, {})
+@pytest.mark.parametrize("kind", list(OperationKind), ids=lambda kind: kind.value)
+def test_the_worker_backend_runs_every_operation_kind(kind):
+    """Each kind reaches its method, which asks for its payload before it calls the worker."""
+    with pytest.raises(ValueError, match="has no 'payload' key"):
+        WorkerBackend().run_op(kind, {})
 
 
 def test_export_and_import_are_unsupported():

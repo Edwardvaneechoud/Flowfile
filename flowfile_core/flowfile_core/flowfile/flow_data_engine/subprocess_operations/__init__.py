@@ -38,9 +38,6 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     fetch_kafka_offsets as fetch_kafka_offsets,
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-    fetch_unique_values as fetch_unique_values,
-)
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     get_df_result as get_df_result,
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (

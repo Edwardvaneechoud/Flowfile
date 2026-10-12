@@ -13,7 +13,8 @@ a backend running in core calls (a cancel check, the node logger, the Kafka cons
 The Delta writes (``DeltaWritePayload``, ``DeltaMergePayload``, ``DeltaScd2Payload``) report what they wrote as the
 ``OpResult.metadata``: ``{"skipped": True}`` when the write changed nothing, else the ``table_path``, the ``schema``
 (``name``/``dtype`` per column), ``row_count``, ``column_count`` and ``size_bytes``. An SCD2 write adds the Delta
-``version`` it settled on, a skip included, and its ``scd2_metrics``.
+``version`` it settled on, a skip included, and its ``scd2_metrics``. A visualisation session request
+(``VizSessionPayload``) reports the session's answer as the metadata too.
 """
 
 from __future__ import annotations
@@ -375,6 +376,42 @@ class MlApplyPayload(OperationPayload):
     plan: pl.LazyFrame
     model_path: str
     output_column: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class VizSessionPayload(OperationPayload):
+    """Answer one Graphic Walker request over a plan a visualisation session holds.
+
+    The session holds the plan lazily under its key, so requests with the same key reuse it; each chart runs
+    against the plan, which nothing materialises first. The session's answer is the operation's ``OpResult.metadata``:
+    for ``"fields"`` the ``fields`` with ``cache_hit``, for ``"query"`` the chart's ``rows`` with ``total_rows``,
+    ``truncated``, ``elapsed_ms`` and ``cache_hit``, either with an ``error`` when it could not be computed.
+
+    Attributes:
+        plan: The rows the charts read.
+        session_key: Names the session that holds ``plan``; a request with another key opens another session.
+        request: ``"fields"`` asks for the field schema, ``"query"`` for one chart's rows.
+        query: The Graphic Walker ``IDataQueryPayload`` of a ``"query"`` request, passed through as it is; ``None``
+            for ``"fields"``.
+        max_rows: The most rows a ``"query"`` request returns; ``None`` for ``"fields"``.
+
+    Raises:
+        ValueError: A ``"query"`` request without its query or ``max_rows``, or a ``"fields"`` request with either.
+    """
+
+    plan: pl.LazyFrame
+    session_key: str
+    request: Literal["fields", "query"]
+    query: dict[str, Any] | None = None
+    max_rows: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.request not in ("fields", "query"):
+            raise ValueError(f"A Graphic Walker request is 'fields' or 'query', not {self.request!r}")
+        if self.request == "query" and (self.query is None or self.max_rows is None):
+            raise ValueError("A Graphic Walker query request carries its query and max_rows")
+        if self.request == "fields" and (self.query is not None or self.max_rows is not None):
+            raise ValueError("A Graphic Walker fields request carries no query and no max_rows")
 
 
 P = TypeVar("P", bound=OperationPayload)

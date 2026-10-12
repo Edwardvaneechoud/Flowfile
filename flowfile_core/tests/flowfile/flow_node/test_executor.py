@@ -1008,77 +1008,107 @@ class TestNodeColumnStats:
 
 
 class TestColumnStatsWorkerOffload:
-    """Local-mode results are full upstream plans: their stats collect must run
-    in the worker, never in the core process."""
+    """Local-mode results are full upstream plans: with the worker as the backend their stats aggregate runs
+    in the worker, never in the core process, and a failure there never falls back to core."""
 
-    def test_local_stats_offloaded_never_collect_in_process(self):
-        import requests
+    def test_local_stats_offloaded_never_collect_in_process(self, monkeypatch):
+        from flowfile_core.flowfile.execution import registry
+        from tests.conftest import is_worker_running
 
-        from flowfile_core.flowfile.flow_data_engine import column_stats as column_stats_module
-
-        try:
-            worker_up = requests.get("http://127.0.0.1:63579/docs", timeout=5).ok
-        except requests.exceptions.RequestException:
-            worker_up = False
-        if not worker_up:
+        if not is_worker_running():
             pytest.skip("Worker not running")
 
         graph = create_graph_with_read_and_select(execution_location="local")
         run_info = graph.run_graph()
         assert run_info.success, f"Graph should run: {run_info}"
         node = graph.get_node(2)
+        collects = _count_collects(monkeypatch)
 
-        with patch.object(column_stats_module, "run_stats_query") as mock_in_process:
-            stats = node.get_column_stats("Name", offload_to_worker=True)
+        stats = node.get_column_stats("Name", backend=registry.backend(registry.WORKER_BACKEND_ID))
 
-        mock_in_process.assert_not_called()
+        assert collects == [], "the worker computed the aggregate; core read back one row"
         assert stats.number_of_empty_values + stats.number_of_filled_values == 1000
         assert stats.number_of_unique_values is not None
 
-    def test_offload_failure_raises_instead_of_collecting_in_core(self):
+    def test_offload_failure_raises_instead_of_collecting_in_core(self, monkeypatch):
         """A dead worker must surface as unavailable (409), never as a silent
         in-process collect of the full upstream plan."""
+        from flowfile_core.flowfile.execution.errors import ComputeUnavailable
         from flowfile_core.flowfile.flow_data_engine import column_stats as column_stats_module
 
         graph = create_graph_with_read_and_select(execution_location="local")
         graph.run_graph()
         node = graph.get_node(2)
+        worker = WorkerBackend()
+        collects = _count_collects(monkeypatch)
 
         with (
             patch.object(
-                column_stats_module, "run_stats_query_in_worker", side_effect=Exception("worker down")
-            ) as mock_worker,
-            patch.object(column_stats_module, "run_stats_query") as mock_in_process,
-            pytest.raises(ColumnStatsUnavailable),
+                column_stats_module, "single_row", side_effect=ComputeUnavailable("connection refused")
+            ) as mock_read,
+            pytest.raises(ColumnStatsUnavailable, match="connection refused"),
         ):
-            node.get_column_stats("Name", offload_to_worker=True)
+            node.get_column_stats("Name", backend=worker)
 
-        assert mock_worker.call_count == 2, "full query, then the count-only retry"
-        mock_in_process.assert_not_called()
+        assert [call.args[0] for call in mock_read.call_args_list] == [worker, worker], (
+            "full query, then the count-only retry, both on the worker"
+        )
+        assert collects == []
 
-    def test_offload_query_failure_retries_counts_only_in_worker(self):
+    def test_offload_query_failure_retries_counts_only_in_worker(self, monkeypatch):
         """A worker-side query error degrades to the count-only exprs — still
         executed in the worker, never in core."""
+        from flowfile_core.flowfile.execution.errors import TaskFailed
         from flowfile_core.flowfile.flow_data_engine import column_stats as column_stats_module
 
         graph = create_graph_with_read_and_select(execution_location="local")
         graph.run_graph()
         node = graph.get_node(2)
+        worker = WorkerBackend()
+        collects = _count_collects(monkeypatch)
 
-        with (
-            patch.object(
-                column_stats_module,
-                "run_stats_query_in_worker",
-                side_effect=[Exception("dtype error in worker"), {"total_rows": 1000, "null_count": 0}],
-            ) as mock_worker,
-            patch.object(column_stats_module, "run_stats_query") as mock_in_process,
-        ):
-            stats = node.get_column_stats("Name", offload_to_worker=True)
+        with patch.object(
+            column_stats_module,
+            "single_row",
+            side_effect=[TaskFailed("dtype error in worker"), {"total_rows": 1000, "null_count": 0}],
+        ) as mock_read:
+            stats = node.get_column_stats("Name", backend=worker)
 
-        assert mock_worker.call_count == 2
-        mock_in_process.assert_not_called()
+        assert [call.args[0] for call in mock_read.call_args_list] == [worker, worker]
+        assert collects == []
         assert stats.number_of_filled_values == 1000
         assert stats.number_of_unique_values is None, "degraded result carries counts only"
+
+    @pytest.mark.parametrize("backend_id", ["local", "worker"])
+    def test_stats_of_either_flow_run_on_either_backend(self, execution_location, backend_id):
+        """Whichever backend aggregates, it reads the result the node holds: its plan or the worker's file."""
+        from flowfile_core.flowfile.execution import registry
+        from tests.conftest import is_worker_running
+
+        if backend_id == "worker" and not is_worker_running():
+            pytest.skip("Worker not running")
+        graph = create_graph_with_read_and_select(execution_location=execution_location)
+        assert graph.run_graph().success
+
+        stats = graph.get_node(2).get_column_stats("Name", backend=registry.backend(backend_id))
+
+        assert stats.number_of_empty_values + stats.number_of_filled_values == 1000
+        assert stats.number_of_unique_values is not None
+
+
+def _count_collects(monkeypatch) -> list[int]:
+    """One entry per ``LazyFrame.collect`` in this process from here on."""
+    import polars as pl
+
+    collects: list[int] = []
+    real_collect = pl.LazyFrame.collect
+
+    def counting_collect(self, *args, **kwargs):
+        collects.append(1)
+        return real_collect(self, *args, **kwargs)
+
+    monkeypatch.setattr(pl.LazyFrame, "collect", counting_collect)
+    return collects
 
 
 class TestPreviewAfterUpstreamChange:

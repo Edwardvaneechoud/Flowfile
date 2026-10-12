@@ -14,7 +14,12 @@ from flowfile_core.configs import logger, node_store
 from flowfile_core.configs.flow_logger import NodeLogger
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
-from flowfile_core.flowfile.execution.context import DEFAULT_PREVIEW_ROWS, current_context
+from flowfile_core.flowfile.execution.context import (
+    DEFAULT_PREVIEW_ROWS,
+    ExecutionContext,
+    current_context,
+    use_context,
+)
 from flowfile_core.flowfile.execution.errors import ComputeError, TaskFailed
 from flowfile_core.flowfile.execution.protocol import (
     ComputeBackend,
@@ -255,6 +260,8 @@ class FlowNode:
 
     # a live getter (not a snapshot) so ${...} refs resolve against current parameter edits
     _params_getter: Callable[[], dict[str, ParamValue]] | None
+    # the graph's execution context (the run's during a run), read each time the node's function runs
+    _execution_context_getter: Callable[[], ExecutionContext] | None
     # warning text when prediction would require executing an un-run kernel node
     _schema_prediction_blocked: str | None
     _prediction_requires_data: bool  # stamped at placement: prediction needs a collect
@@ -350,6 +357,7 @@ class FlowNode:
         self._subflow_cancel_context = None
 
         self._params_getter = None
+        self._execution_context_getter = None
         self._schema_prediction_blocked = None
         self._prediction_requires_data = False
         self._executes_on_kernel = False
@@ -1304,6 +1312,21 @@ class FlowNode:
         finally:
             self._execution_lock.release()
 
+    @contextmanager
+    def _in_execution_context(self) -> Generator[None, None, None]:
+        """Run the block in the execution context of the node's graph, when the graph gave the node one.
+
+        During a run that is the run's context, unchanged; outside one (a build-time read of a FlowFrame, a schema
+        prediction that calls the node's function) it is the graph's own, so the bounded reads the function makes
+        through ``current_context()`` (a pivot's distinct values, a first row, a null profile) run where the graph
+        runs: in core for a local graph, on the default backend for a remote one.
+        """
+        if self._execution_context_getter is None:
+            yield
+            return
+        with use_context(self._execution_context_getter()):
+            yield
+
     def get_resulting_data(self) -> FlowDataEngine | None:
         """Executes the node's function to produce the actual output data.
 
@@ -1335,7 +1358,8 @@ class FlowNode:
                         if isinstance(self.function, FlowDataEngine):
                             fl: FlowDataEngine = self.function
                         elif self.node_type == "external_source":
-                            fl: FlowDataEngine = self.function()
+                            with self._in_execution_context():
+                                fl: FlowDataEngine = self.function()
                             fl.collect_external()
                             self.node_settings.streamable = False
                         else:
@@ -1375,7 +1399,8 @@ class FlowNode:
                                 self.print(f"Input {i} data type: {type(input_result)}, " f"dataframe type: {_df_type}")
                                 input_data.append(input_result)
                             self.print(f"All {len(input_data)} inputs collected, calling node function")
-                            fl = self._function(*input_data)
+                            with self._in_execution_context():
+                                fl = self._function(*input_data)
                         if isinstance(fl, NamedOutputs):
                             self._named_outputs = fl.by_handle()
                             self._named_schemas = {h: e.schema for h, e in self._named_outputs.items()}
@@ -1432,12 +1457,12 @@ class FlowNode:
                 # Unresolved parameters during lazy eval are non-fatal; just run without substitution
                 restorations = []
         try:
-            fl = self._function(
-                *[
-                    (v.get_predicted_resulting_data(src_handle) if v is not None else None)
-                    for v, src_handle in self._slot_input_pairs()
-                ]
-            )
+            predicted_inputs = [
+                (v.get_predicted_resulting_data(src_handle) if v is not None else None)
+                for v, src_handle in self._slot_input_pairs()
+            ]
+            with self._in_execution_context():
+                fl = self._function(*predicted_inputs)
             fl = self._as_default_output(fl)
 
             # Apply output field configuration if enabled (mirrors get_resulting_data behavior)
@@ -2221,23 +2246,28 @@ class FlowNode:
         self,
         column_name: str,
         output_handle: str = DEFAULT_OUTPUT_HANDLE,
-        offload_to_worker: bool = False,
+        backend: ComputeBackend | None = None,
     ) -> FileColumn:
         """Computes on-demand stats for one column of this node's cached result.
 
         The stats land on the result engine's ``FlowfileColumn`` (the single
         source of truth), so this run's later previews carry them too; the
         return value is that column's ordinary ``FileColumn`` representation.
-        ``offload_to_worker`` ships the aggregate to the worker — used for
-        locally-run flows, whose cached engine is the full upstream plan.
-        Raises ``ColumnStatsUnavailable`` when there is no cached result to
-        aggregate over without executing or re-pulling data, and
+        The aggregate runs on ``backend``, by default the current execution
+        context's: outside a run that is the default backend, not the flow's,
+        so with the worker configured a locally-run node's result (its full
+        upstream plan) is aggregated on the worker, and in core only when the
+        default backend is core's own. Raises ``ColumnStatsUnavailable`` when
+        there is no cached result to aggregate over without executing or
+        re-pulling data, or the backend cannot compute even the counts, and
         ``pl.exceptions.ColumnNotFoundError`` for an unknown column.
         """
         if sink := self._sink_source():
-            return sink[0].get_column_stats(column_name, output_handle=sink[1], offload_to_worker=offload_to_worker)
+            return sink[0].get_column_stats(column_name, output_handle=sink[1], backend=backend)
         engine = self.get_cached_result(output_handle)
-        stats = compute_column_stats(engine, column_name, offload_to_worker=offload_to_worker)
+        if backend is None:
+            backend = current_context().backend
+        stats = compute_column_stats(engine, column_name, backend=backend)
         # compute rebinds the engine's schema list (copy-on-write); follow it on
         # this node so previews via self.schema carry the stats too.
         if engine is self.results.resulting_data:

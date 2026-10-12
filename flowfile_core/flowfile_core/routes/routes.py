@@ -42,7 +42,7 @@ from flowfile_core.catalog.exceptions import (
 )
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import check_if_has_default_setting, nodes_list
-from flowfile_core.configs.settings import OFFLOAD_TO_WORKER, is_electron_mode
+from flowfile_core.configs.settings import is_electron_mode
 from flowfile_core.database.connection import get_db, get_db_context
 
 # File handling
@@ -2202,6 +2202,10 @@ def get_node_column_stats(
     Runs a single bounded aggregate (counts, uniques, min/max) over the result
     the last run left behind — it never re-executes the node — and returns the
     column's updated ``FileColumn``, the same shape ``table_schema`` ships.
+    The aggregate runs on the default compute backend, whatever the flow's
+    location (``FlowNode.get_column_stats``): on the worker whenever one is
+    configured, so core reads back only the one-row result, and a failure
+    there is a 409, never an in-process collect.
     Query parameters (not path segments): column names contain ``/`` and ``.``.
     """
     flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
@@ -2210,13 +2214,8 @@ def get_node_column_stats(
         raise HTTPException(404, "Could not find the node")
     if flow.flow_settings.execution_mode == "Performance":
         raise HTTPException(409, "Column statistics are not computed in Performance mode.")
-    # Core must not run pipeline compute: whenever offloading is on, the stats
-    # aggregate runs in the worker and core reads back only the 1-row result
-    # (a failed offload raises → 409, never an in-process collect). In-process
-    # is reserved for worker-less deployments (single-file mode).
-    offload = bool(OFFLOAD_TO_WORKER)
     try:
-        return node.get_column_stats(column_name, output_handle=output_handle, offload_to_worker=offload)
+        return node.get_column_stats(column_name, output_handle=output_handle)
     except ColumnStatsUnavailable as e:
         raise HTTPException(409, str(e)) from None
     except ColumnNotFoundError:

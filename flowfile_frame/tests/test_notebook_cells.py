@@ -473,7 +473,9 @@ def test_seeding_never_predicts_a_pivot_and_writes_nothing_under_storage(monkeyp
     source.unpivot(["v"], index="g").group_by("g").agg(ff.col("value").std())
     data = graph.get_flowfile_data().model_dump(mode="json")
     predicted = []
-    monkeypatch.setattr(schema_callbacks, "fetch_unique_values", lambda lf: predicted.append(lf) or ["x", "y"])
+    monkeypatch.setattr(
+        schema_callbacks, "unique_values", lambda backend, lf, limit: predicted.append(lf) or pl.Series(["x", "y"])
+    )
     before = _storage_files()
     for schemas in ({}, {pivoted.node_id: {"output-0": [{"name": "g", "data_type": "String"}]}}):
         try:

@@ -135,7 +135,8 @@ class LocalBackend:
         Delta writes (what they wrote, in the keys the ``payloads`` module docstring lists) report metadata.
 
         Raises:
-            OperationUnsupported: This backend does not implement ``op``.
+            OperationUnsupported: This backend does not implement ``op``: ``google_analytics_read``, the model kinds
+                ``ml_train`` and ``ml_apply``, and ``viz_session``, whose visualisation sessions live on the worker.
         """
         method = self._OPERATIONS.get(op)
         if method is None:

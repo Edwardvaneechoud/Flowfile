@@ -49,6 +49,7 @@ from flowfile_core.flowfile.execution.payloads import (
     OperationPayload,
     RandomSplitPayload,
     RestApiReadPayload,
+    VizSessionPayload,
     unpack,
 )
 from flowfile_core.flowfile.execution.protocol import (
@@ -89,6 +90,8 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     get_status,
     get_worker_capabilities,
     results_exists,
+    trigger_visualize_fields,
+    trigger_visualize_query,
 )
 from flowfile_core.flowfile.flow_node.multi_output import output_handle
 from flowfile_core.flowfile.sources.external_sources.rest_api_source import build_rest_api_worker_settings
@@ -155,7 +158,7 @@ class WorkerBackend:
       the plan, and ``release`` drops it and clears its sampler task.
 
     While ``submit`` waits on a task, ``cancel`` with the handle ``JobHandle("worker", result_id)`` reaches that
-    task's fetcher; while a ``run_op`` that takes a payload dataclass waits, so does the handle with its payload's
+    task's fetcher; while a ``run_op`` that runs a worker task waits, so does the handle with its payload's
     ``job_id``.
 
     Nothing here runs the worker handshake: every worker call goes through the transport's worker session or
@@ -187,6 +190,7 @@ class WorkerBackend:
             OperationKind.delta_write: self._delta_write,
             OperationKind.delta_merge: self._delta_merge,
             OperationKind.delta_scd2: self._delta_scd2,
+            OperationKind.viz_session: self._viz_session,
         }
 
     def capabilities(self) -> Capabilities:
@@ -254,9 +258,16 @@ class WorkerBackend:
         trained model's ``sha256``, ``size_bytes`` and ``model_type`` (the model itself is the file at
         ``staging_path``, not a table, so there is no ref), or the written table's schema, counts, size and version.
 
+        ``viz_session`` takes a ``VizSessionPayload`` and runs no task: it sends the payload's plan, serialised, as a
+        ``kind="plan"`` source to the worker's visualisation session named by the payload's ``session_key``, which
+        holds the plan lazily in a child and answers each Graphic Walker request over it (``trigger_visualize_fields``
+        or ``trigger_visualize_query``), and returns the session's answer as ``metadata`` with no refs.
+
         Raises:
-            OperationUnsupported: ``viz_session``, which has no worker task, and a custom node without a node file.
+            ComputeUnavailable: The worker could not be reached for a ``viz_session`` request.
+            OperationUnsupported: A custom node without a node file.
             PlanRejected: The worker could not load the operation's plan.
+            RuntimeError: The worker answered a ``viz_session`` request with an error status.
             TaskFailed: The operation failed on the worker.
             ValueError: The worker did not return one of a custom node's declared outputs.
         """
@@ -758,6 +769,23 @@ class WorkerBackend:
             "storage_payload": _storage_payload(write.connection),
         }
         return self._delta_task(write, "scd2_delta", kwargs)
+
+    def _viz_session(self, payload: OpPayload) -> OpResult:
+        """Answer one Graphic Walker request in the worker's visualisation session over the payload's plan."""
+        request = unpack(payload, VizSessionPayload)
+        source = {
+            "kind": "plan",
+            "session_key": request.session_key,
+            "plan_bytes": base64.b64encode(request.plan.serialize()).decode("ascii"),
+        }
+        try:
+            if request.request == "fields":
+                answer = trigger_visualize_fields(source)
+            else:
+                answer = trigger_visualize_query(source, request.query, request.max_rows)
+        except requests.RequestException as e:
+            raise ComputeUnavailable(f"Could not reach the worker: {e}") from e
+        return OpResult(refs={}, metadata=answer)
 
     def _delta_task(
         self,
