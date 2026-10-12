@@ -436,7 +436,7 @@ In Performance mode every node runs on every run unless it is a cached node whos
 | `fanout` | how many distinct downstream nodes read the result; no backend's policy reads it yet |
 | `preview_rows` | the context's `preview_rows`: 100 in Development mode, `None` in Performance mode, except for a `cache_results` node, which keeps a 100-row preview in every mode; always `None` for the `IN_CORE_NODE_TYPES` |
 
-Each node template's `transform_type` (`narrow`, `wide` or `other`) is set in `configs/node_store/nodes.py`, and a custom node declares its own in its manifest. Only `narrow` counts as narrow (select, filter, formula, sample, union and the like); `wide` and `other` nodes (join, group by, sort, record count, the readers, manual input) are submitted `wide`.
+`is_narrow_transform` reads the node's entry in `node_defaults`, which `configs/node_store/nodes.py` builds from the standard node templates and their `transform_type` (`narrow`, `wide` or `other`). Only `narrow` counts as narrow (select, filter, formula, sample, union and the like); `wide` and `other` nodes (join, group by, sort, record count, the readers, manual input) are submitted `wide`. A custom node has no entry there, so it is submitted `wide` whatever `transform_type` its manifest declares.
 
 `FlowNode._do_execute` builds the plan and submits it to `current_context().backend` under `result_id = self.hash`, with the results the upstream nodes hold on that backend as its inputs. The node keeps the returned `ResultRef` on `results.result_ref`, makes `resulting_data` from `plan_for(ref)`, and takes its preview from the sample `submit` returned inline, else, outside Performance mode, from `sample(ref, n)` the first time the preview is opened.
 
