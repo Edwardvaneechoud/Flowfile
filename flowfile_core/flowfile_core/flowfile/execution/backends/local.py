@@ -4,15 +4,16 @@ Results live in an in-process store that maps a result id to its ``pl.LazyFrame`
 DataFrame turned ``.lazy()``); a ``ResultRef``'s ``location`` is that id as UTF-8 bytes. ``submit`` holds every plan
 lazily under the result id it is given (the class docstring has the policy). ``run_op`` runs the operations a
 flow's nodes run whole when they execute in core, one method per ``OperationKind``; each method's docstring names
-the payload keys it reads, or the dataclass it takes under ``"payload"`` (a write's from ``write_payloads``, a
-transform's or model's from ``op_payloads``). Nothing runs asynchronously: every job has ended when its call returns,
-so ``cancel`` has nothing to stop.
+the payload keys it reads; every other kind takes its dataclass from ``execution/payloads.py`` under ``"payload"``.
+A read holds what it read as a deferred plan, so the reader keeps the frame through ``plan_for`` and can release the
+ref at once. Nothing runs asynchronously: every job has ended when its call returns, so ``cancel`` has nothing to stop.
 """
 
 from __future__ import annotations
 
 import io
 import os
+import tempfile
 import threading
 import uuid
 from collections.abc import Callable
@@ -28,7 +29,22 @@ from flowfile_core.flowfile.execution.errors import (
     OperationUnsupported,
     ResultMissing,
 )
-from flowfile_core.flowfile.execution.op_payloads import CustomNodePayload, FuzzyJoinPayload, RandomSplitPayload
+from flowfile_core.flowfile.execution.payloads import (
+    CloudWritePayload,
+    CustomNodePayload,
+    DatabaseReadPayload,
+    DatabaseWritePayload,
+    DeltaMergePayload,
+    DeltaScd2Payload,
+    DeltaWritePayload,
+    FileReadPayload,
+    FileWritePayload,
+    FuzzyJoinPayload,
+    KafkaReadPayload,
+    RandomSplitPayload,
+    RestApiReadPayload,
+    unpack,
+)
 from flowfile_core.flowfile.execution.protocol import (
     CredentialRef,
     JobHandle,
@@ -42,19 +58,12 @@ from flowfile_core.flowfile.execution.protocol import (
     SubmitResult,
 )
 from flowfile_core.flowfile.execution.registry import LOCAL_BACKEND_ID
-from flowfile_core.flowfile.execution.write_payloads import (
-    CloudWritePayload,
-    DatabaseWritePayload,
-    DeltaMergePayload,
-    DeltaWritePayload,
-    FileWritePayload,
-    unpack,
-)
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import convert_stats_to_column_info
 from flowfile_core.flowfile.flow_data_engine.utils import local_write_output
 from flowfile_core.flowfile.flow_node.multi_output import output_handle
+from flowfile_core.flowfile.sources.external_sources.rest_api_source import build_rest_api_worker_settings
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource
 from flowfile_core.schemas.cloud_storage_schemas import (
@@ -64,7 +73,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
 )
 from flowfile_core.secret_manager.secret_manager import decrypt_secret
 from shared.compute_protocol import PROTOCOL_VERSION, Capabilities, local_capabilities
-from shared.delta_utils import merge_into_delta, write_delta
+from shared.delta_utils import get_delta_size_bytes, merge_into_delta, scd2_into_delta, write_delta
 
 _CLOUD_SECRET_FIELDS = tuple(
     name for name, field in FullCloudStorageConnection.model_fields.items() if SecretStr in get_args(field.annotation)
@@ -122,7 +131,8 @@ class LocalBackend:
     def run_op(self, op: OperationKind, payload: OpPayload) -> OpResult:
         """Run ``op`` in this process with the payload its method documents.
 
-        The refs name the results the operation holds here; no operation of this backend reports metadata.
+        The refs name the results the operation holds here. Only the Kafka read (the offsets to commit) and the
+        Delta writes (what they wrote, in the keys the ``payloads`` module docstring lists) report metadata.
 
         Raises:
             OperationUnsupported: This backend does not implement ``op``.
@@ -230,30 +240,52 @@ class LocalBackend:
         known_count = engine.number_of_records if engine.number_of_records >= 0 else None
         return self._hold(engine.data_frame.lazy(), row_count=known_count, schema=engine.schema)
 
-    def _read_database(self, payload: OpPayload) -> OpResult:
-        """Read a database table or query; the rows are held materialised.
+    def _hold_read(
+        self, frame: pl.LazyFrame | pl.DataFrame, row_count: int | None = None, schema: Schema | None = None
+    ) -> ResultRef:
+        """Hold what a read produced as a deferred plan: a collected frame turned lazy, its height the row count."""
+        if isinstance(frame, pl.DataFrame):
+            return self._hold(frame.lazy(), row_count=frame.height, schema=schema)
+        return self._hold(frame, row_count=row_count, schema=schema)
 
-        Payload keys:
-            settings: The node's ``NodeDatabaseReader``: its ``database_settings`` and the ``fields`` it reads.
-            connection: The database connection the settings resolve to.
-            encrypted_password: The connection's password as stored, ``None`` for a file-based database.
-            cancel_check: Called while reading; ``True`` stops the read.
+    def _read_database(self, payload: OpPayload) -> OpResult:
+        """Read a database table or query, its password decrypted here.
+
+        Payload: a ``DatabaseReadPayload``; its ``cancel_check`` is called while reading, ``True`` stops the read.
 
         Returns the refs ``{"result": ref}``.
         """
-        node_settings = payload["settings"]
-        database_settings = node_settings.database_settings
-        connection = payload["connection"]
+        read = unpack(payload, DatabaseReadPayload)
+        database_settings = read.settings.database_settings
         source = SqlSource(
-            connection_string=_sql_uri(connection, payload["encrypted_password"]),
+            connection_string=_sql_uri(read.connection, read.encrypted_password),
             query=None if database_settings.query_mode == "table" else database_settings.query,
             table_name=database_settings.table_name,
             schema_name=database_settings.schema_name,
-            fields=node_settings.fields,
-            cancel_check=payload["cancel_check"],
-            database_type=connection.database_type,
+            fields=read.settings.fields,
+            cancel_check=read.cancel_check,
+            database_type=read.connection.database_type,
         )
-        return OpResult(refs={"result": self._hold(source.get_pl_df())})
+        return OpResult(refs={"result": self._hold_read(source.get_pl_df())})
+
+    def _read_kafka(self, payload: OpPayload) -> OpResult:
+        """Consume a Kafka topic without committing, spilling the rows to an Arrow file as they arrive.
+
+        Payload: a ``KafkaReadPayload``; its ``read_kafka_source`` consumes, its secrets decrypted here.
+
+        Returns the refs ``{"result": ref}``, and ``metadata["offsets"]``, the offsets to commit, when the read
+        consumed messages.
+        """
+        read = unpack(payload, KafkaReadPayload)
+        fd, spill_file = tempfile.mkstemp(suffix=".arrow", prefix="kafka_")
+        os.close(fd)
+        rows, consumed = read.read_kafka_source(
+            read.settings, commit=False, decrypt_fn=_decrypted, spill_path=spill_file
+        )
+        ref = self._hold_read(rows)
+        if consumed.messages_consumed > 0:
+            return OpResult(refs={"result": ref}, metadata={"offsets": consumed.new_offsets})
+        return OpResult(refs={"result": ref})
 
     def _write_database(self, payload: OpPayload) -> OpResult:
         """Write the rows of the ``DatabaseWritePayload`` under ``"payload"`` to its table.
@@ -271,32 +303,32 @@ class LocalBackend:
         return OpResult(refs={})
 
     def _read_rest_api(self, payload: OpPayload) -> OpResult:
-        """Fetch a REST API; the response rows are held materialised.
+        """Fetch a REST API, its auth secret decrypted here.
 
-        Payload keys:
-            request: The ``RestApiReadSettings`` the node's settings resolve to.
-            encrypted_secret: The auth secret as stored, ``None`` when the request carries none.
+        Payload: a ``RestApiReadPayload``.
 
         Returns the refs ``{"result": ref}``.
         """
         # Function-local, so importing this backend does not load the HTTP client.
         from shared.rest_api.fetch import fetch_rest_api
 
-        encrypted = payload["encrypted_secret"]
-        secret = decrypt_secret(encrypted).get_secret_value() if encrypted else None
-        return OpResult(refs={"result": self._hold(fetch_rest_api(payload["request"], secret=secret))})
+        read = unpack(payload, RestApiReadPayload)
+        request = build_rest_api_worker_settings(read.settings, read.encrypted_secret)
+        secret = _decrypted(read.encrypted_secret) if read.encrypted_secret else None
+        return OpResult(refs={"result": self._hold_read(fetch_rest_api(request, secret=secret))})
 
     def _read_file(self, payload: OpPayload) -> OpResult:
         """Read a local file through the engine's readers.
 
-        Payload keys:
-            settings: The node's ``NodeRead``; its ``received_file`` names the file and how to read it.
-            node_logger: The node's logger, which the Excel reader reports the engine it used to.
+        Payload: a ``FileReadPayload``; the Excel reader reports the engine it used to its ``node_logger``.
 
         Returns the refs ``{"result": ref}``, with the row count when the reader knows it without reading the rows.
         """
-        engine = FlowDataEngine.create_from_path(payload["settings"].received_file, node_logger=payload["node_logger"])
-        return OpResult(refs={"result": self._hold_engine(engine)})
+        read = unpack(payload, FileReadPayload)
+        engine = FlowDataEngine.create_from_path(read.settings.received_file, node_logger=read.node_logger)
+        known_count = engine.number_of_records if engine.number_of_records >= 0 else None
+        ref = self._hold_read(engine.data_frame, row_count=known_count, schema=engine.schema)
+        return OpResult(refs={"result": ref})
 
     def _write_file(self, payload: OpPayload) -> OpResult:
         """Write the rows of the ``FileWritePayload`` under ``"payload"`` to its file. Returns no refs.
@@ -396,37 +428,101 @@ class LocalBackend:
         return OpResult(refs={})
 
     def _write_delta(self, payload: OpPayload) -> OpResult:
-        """Write the rows of the ``DeltaWritePayload`` under ``"payload"`` to its Delta table. Returns no refs."""
+        """Write the rows of the ``DeltaWritePayload`` under ``"payload"`` to its Delta table.
+
+        The plan streams into the table. Returns no refs; the metadata is the written rows' report
+        (``_written_report``), or ``{"skipped": True}`` for an append of no rows to a table with the same columns.
+        """
         write = unpack(payload, DeltaWritePayload)
-        write_delta(
+        storage_options = _storage_options(write.connection)
+        wrote = write_delta(
             write.plan,
             write.path,
             mode=write.mode,
             partition_by=write.partition_by,
-            storage_options=_storage_options(write.connection),
+            storage_options=storage_options,
             enable_cdf=write.enable_cdf,
         )
-        return OpResult(refs={})
+        if not wrote:
+            return OpResult(refs={}, metadata={"skipped": True})
+        return OpResult(refs={}, metadata=_written_report(FlowDataEngine(write.plan), write.path, storage_options))
 
     def _merge_delta(self, payload: OpPayload) -> OpResult:
         """Merge the rows of the ``DeltaMergePayload`` under ``"payload"`` into its Delta table by key.
 
-        The rows are collected first, as the merge needs them in memory. Returns no refs.
+        The rows are collected first, as the merge needs them in memory. Returns no refs; the metadata is the merged
+        rows' report (``_written_report``), or ``{"skipped": True}`` for an update of no rows on a table with the same
+        columns.
         """
         write = unpack(payload, DeltaMergePayload)
-        merge_into_delta(
-            write.plan.collect(),
+        storage_options = _storage_options(write.connection)
+        rows = write.plan.collect()
+        wrote = merge_into_delta(
+            rows,
             write.path,
             merge_mode=write.merge_mode,
             merge_keys=write.merge_keys,
             partition_by=write.partition_by,
-            storage_options=_storage_options(write.connection),
+            storage_options=storage_options,
             enable_cdf=write.enable_cdf,
         )
-        return OpResult(refs={})
+        if not wrote:
+            return OpResult(refs={}, metadata={"skipped": True})
+        return OpResult(refs={}, metadata=_written_report(FlowDataEngine(rows), write.path, storage_options))
+
+    def _scd2_delta(self, payload: OpPayload) -> OpResult:
+        """Apply the rows of the ``DeltaScd2Payload`` under ``"payload"`` to its Delta table as an SCD2 write.
+
+        The rows are collected first, as classifying them against the table needs them in memory. Returns no refs.
+        The metadata is the table's own shape after the write (an SCD2 table's rows are its whole history): its
+        ``schema``, ``row_count`` and ``column_count`` with the ``table_path``, ``size_bytes``, the Delta ``version``
+        committed and the ``scd2_metrics``; a batch that changes nothing commits nothing and reports
+        ``{"skipped": True, "version": ...}``, the version it was classified against.
+        """
+        write = unpack(payload, DeltaScd2Payload)
+        storage_options = _storage_options(write.connection)
+        result = scd2_into_delta(
+            write.plan.collect(),
+            write.path,
+            business_keys=write.business_keys,
+            valid_from_iso=write.run_timestamp,
+            compare_columns=write.compare_columns,
+            full_snapshot=write.full_snapshot,
+            surrogate_key_column=write.surrogate_key_column,
+            valid_from_column=write.valid_from_column,
+            valid_to_column=write.valid_to_column,
+            is_current_column=write.is_current_column,
+            partition_by=write.partition_by,
+            partition_on_current=write.partition_on_current,
+            storage_options=storage_options,
+        )
+        if result.skipped:
+            return OpResult(refs={}, metadata={"skipped": True, "version": result.version})
+        table_schema = pl.scan_delta(
+            write.path, **({} if storage_options is None else {"storage_options": storage_options})
+        ).collect_schema()
+        return OpResult(
+            refs={},
+            metadata={
+                "table_path": write.path,
+                "schema": [{"name": name, "dtype": str(dtype)} for name, dtype in table_schema.items()],
+                "row_count": result.rows_total,
+                "column_count": len(table_schema),
+                "size_bytes": get_delta_size_bytes(write.path, storage_options=storage_options),
+                "version": result.version,
+                "scd2_metrics": {
+                    "rows_inserted": result.rows_inserted,
+                    "rows_closed": result.rows_closed,
+                    "rows_total": result.rows_total,
+                    "rows_current": result.rows_current,
+                    "created": result.created,
+                },
+            },
+        )
 
     _OPERATIONS: ClassVar[dict[OperationKind, Callable[[LocalBackend, OpPayload], OpResult]]] = {
         OperationKind.database_read: _read_database,
+        OperationKind.kafka_read: _read_kafka,
         OperationKind.database_write: _write_database,
         OperationKind.rest_api_read: _read_rest_api,
         OperationKind.file_read: _read_file,
@@ -437,6 +533,7 @@ class LocalBackend:
         OperationKind.cloud_write: _write_cloud_storage,
         OperationKind.delta_write: _write_delta,
         OperationKind.delta_merge: _merge_delta,
+        OperationKind.delta_scd2: _scd2_delta,
     }
 
 
@@ -463,6 +560,10 @@ def _ipc_stream(frame: pl.DataFrame) -> bytes:
     buffer = io.BytesIO()
     frame.write_ipc_stream(buffer)
     return buffer.getvalue()
+
+
+def _decrypted(encrypted: str) -> str:
+    return decrypt_secret(encrypted).get_secret_value()
 
 
 def _sql_uri(connection: Any, encrypted_password: str | None) -> str:
@@ -493,3 +594,17 @@ def _storage_options(connection: FullCloudStorageConnectionWorkerInterface | Non
     if connection is None:
         return None
     return CloudStorageReader.get_storage_options(_decrypted_connection(connection))
+
+
+def _written_report(rows: FlowDataEngine, path: str, storage_options: dict[str, Any] | None) -> dict[str, Any]:
+    """What a Delta write or merge of ``rows`` into the table at ``path`` reports.
+
+    The schema and the counts are those of the rows written, the size that of the whole table afterwards.
+    """
+    return {
+        "table_path": path,
+        "schema": [{"name": column.column_name, "dtype": column.data_type} for column in rows.schema],
+        "row_count": rows.count(),
+        "column_count": rows.number_of_fields,
+        "size_bytes": get_delta_size_bytes(path, storage_options=storage_options),
+    }

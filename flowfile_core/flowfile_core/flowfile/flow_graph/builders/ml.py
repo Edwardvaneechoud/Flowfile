@@ -9,7 +9,7 @@ from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.execution import registry
-from flowfile_core.flowfile.execution.op_payloads import PAYLOAD_KEY, MlApplyPayload, MlTrainPayload
+from flowfile_core.flowfile.execution.payloads import MlApplyPayload, MlTrainPayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
@@ -163,7 +163,7 @@ class MlBuildersMixin(GraphMixinBase):
                     job_id=node.hash,
                 )
                 worker = registry.backend(registry.WORKER_BACKEND_ID)
-                result = node.run_op(worker, OperationKind.ml_train, {PAYLOAD_KEY: train}, job_id=train.job_id).metadata
+                result = node.run_op(worker, OperationKind.ml_train, op_payload(train), job_id=train.job_id).metadata
                 if "sha256" not in result or "size_bytes" not in result:
                     raise RuntimeError(f"Worker did not return expected sha256/size_bytes payload, got: {result!r}")
 
@@ -325,7 +325,7 @@ class MlBuildersMixin(GraphMixinBase):
                 job_id=node.hash,
             )
             worker = registry.backend(registry.WORKER_BACKEND_ID)
-            ref = node.run_op(worker, OperationKind.ml_apply, {PAYLOAD_KEY: apply}, job_id=apply.job_id).refs["result"]
+            ref = node.run_op(worker, OperationKind.ml_apply, op_payload(apply), job_id=apply.job_id).refs["result"]
             self.flow_logger.info(f"Apply Model: scored using {origin_label} -> column '{settings.output_column}'")
             return FlowDataEngine(worker.plan_for(ref), number_of_records=ref.row_count)
 

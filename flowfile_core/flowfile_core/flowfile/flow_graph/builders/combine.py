@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from flowfile_core.flowfile.execution.context import current_context
-from flowfile_core.flowfile.execution.op_payloads import PAYLOAD_KEY, FuzzyJoinPayload
+from flowfile_core.flowfile.execution.payloads import FuzzyJoinPayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
@@ -161,7 +161,7 @@ class CombineBuildersMixin(GraphMixinBase):
                 job_id=f"{node.hash}_fm",
             )
             backend = current_context(self).backend
-            ref = node.run_op(backend, OperationKind.fuzzy_join, {PAYLOAD_KEY: join}, job_id=join.job_id).refs["result"]
+            ref = node.run_op(backend, OperationKind.fuzzy_join, op_payload(join), job_id=join.job_id).refs["result"]
             matched = FlowDataEngine(backend.plan_for(ref), number_of_records=ref.row_count)
             if ref.state == "deferred":
                 backend.release(ref)

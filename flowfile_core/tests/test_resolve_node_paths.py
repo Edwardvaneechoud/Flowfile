@@ -13,7 +13,7 @@ from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, TaskFailed
 from flowfile_core.flowfile.execution.protocol import OperationKind, OpResult
-from flowfile_core.flowfile.execution.write_payloads import FileWritePayload, unpack
+from flowfile_core.flowfile.execution.payloads import FileWritePayload, unpack
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.kernel.execution import (
     clear_stale_parquets,

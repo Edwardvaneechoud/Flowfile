@@ -9,6 +9,7 @@ import polars as pl
 from deltalake import DeltaTable
 from deltalake.exceptions import DeltaError
 
+from flowfile_core.catalog.compute import uses_worker
 from flowfile_core.catalog.delta_utils import (
     is_delta_table,
     read_delta_preview,
@@ -44,13 +45,6 @@ from shared.delta_utils import validate_catalog_path
 from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
-
-
-def _should_offload() -> bool:
-    """Return True when heavy I/O should be delegated to the worker process."""
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-
-    return OFFLOAD_TO_WORKER.value
 
 
 class TablePreviewService:
@@ -184,7 +178,7 @@ class TablePreviewService:
         """Read a Delta table preview at a specific version via the worker (or locally)."""
         storage_payload = target.to_worker_payload() if target else None
         storage_options = (target.storage_options or None) if target else None
-        if _should_offload():
+        if uses_worker():
             try:
                 return trigger_delta_version_preview(
                     _catalog_table_dir_name(table_path), version, limit, storage=storage_payload
@@ -215,7 +209,7 @@ class TablePreviewService:
         """
         storage_payload = target.to_worker_payload() if target else None
         storage_options = (target.storage_options or None) if target else None
-        if _should_offload():
+        if uses_worker():
             try:
                 preview = trigger_delta_preview(_catalog_table_dir_name(table_path), limit, storage=storage_payload)
                 return preview.model_copy(update={"total_rows": total_rows}) if total_rows is not None else preview
@@ -242,7 +236,7 @@ class TablePreviewService:
         table_path = table.file_path
         storage_payload = target.to_worker_payload() if target else None
         storage_options = (target.storage_options or None) if target else None
-        if _should_offload():
+        if uses_worker():
             try:
                 return trigger_delta_history(_catalog_table_dir_name(table_path), limit, storage=storage_payload)
             except (RuntimeError, OSError, ValueError, KeyError, ComputeError):

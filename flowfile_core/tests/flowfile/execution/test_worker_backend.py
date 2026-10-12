@@ -13,7 +13,8 @@ from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ForeignRef, OperationUnsupported, PlanRejected, ResultMissing
-from flowfile_core.flowfile.execution.op_payloads import (
+from flowfile_core.flowfile.execution.payloads import (
+    op_payload,
     CustomNodePayload,
     FuzzyJoinPayload,
     MlApplyPayload,
@@ -28,16 +29,20 @@ from flowfile_core.flowfile.execution.protocol import (
     ResultRef,
     SubmitHints,
 )
-from flowfile_core.flowfile.execution.write_payloads import PAYLOAD_KEY, FileWritePayload
+from flowfile_core.flowfile.execution.payloads import FileWritePayload
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import fetch_worker_capabilities
+from flowfile_core.flowfile.execution.payloads import DatabaseReadPayload, FileReadPayload, op_payload
 from flowfile_core.flowfile.node_designer import CustomNodeBase
-from flowfile_core.flowfile.sources.external_sources.sql_source.models import (
-    DatabaseExternalReadSettings,
-    ExtDatabaseConnection,
-)
 from flowfile_core.schemas import input_schema
-from flowfile_core.schemas.input_schema import OutputSettings, ReceivedTable
+from flowfile_core.schemas.input_schema import (
+    DatabaseConnection,
+    DatabaseSettings,
+    NodeDatabaseReader,
+    NodeRead,
+    OutputSettings,
+    ReceivedTable,
+)
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 
 PEOPLE = pl.DataFrame(
@@ -226,8 +231,10 @@ def test_a_file_read_runs_through_the_create_table_route(backend, kept, tmp_path
     PEOPLE.write_csv(csv_path)
     received_table = ReceivedTable.create_from_path(str(csv_path), "csv")
     received_table.set_absolute_filepath()
+    settings = NodeRead(flow_id=1, node_id=1, received_file=received_table)
 
-    result = backend.run_op(OperationKind.file_read, {"received_table": received_table, "flow_id": 1, "node_id": 1})
+    read = FileReadPayload(flow_id=1, node_id=1, settings=settings, node_logger=None)
+    result = backend.run_op(OperationKind.file_read, op_payload(read))
 
     ref = result.refs["result"]
     kept.append(ref)
@@ -249,7 +256,7 @@ def test_a_file_write_produces_no_result_and_writes_the_file(backend, tmp_path):
     )
     write = FileWritePayload(plan=PEOPLE.lazy(), settings=settings, flow_id=1, node_id=1)
 
-    result = backend.run_op(OperationKind.file_write, {PAYLOAD_KEY: write})
+    result = backend.run_op(OperationKind.file_write, op_payload(write))
 
     assert result == OpResult(refs={})
     assert pl.read_parquet(target).equals(PEOPLE)
@@ -264,19 +271,24 @@ def postgres():
 
 
 def test_a_database_read_returns_a_reference_to_the_rows_it_read(backend, kept, postgres):
-    connection = ExtDatabaseConnection(
-        database_type="postgresql",
-        username="testuser",
-        password=encrypt_secret("testpass", user_id=1),
-        host="localhost",
-        port=5433,
-        database="testdb",
+    connection = DatabaseConnection(
+        database_type="postgresql", username="testuser", host="localhost", port=5433, database="testdb"
     )
-    settings = DatabaseExternalReadSettings(
-        connection=connection, node_id=1, flow_id=1, query="SELECT * FROM public.movies"
+    settings = NodeDatabaseReader(
+        flow_id=1,
+        node_id=1,
+        database_settings=DatabaseSettings(database_connection=connection, schema_name="public", table_name="movies"),
+    )
+    read = DatabaseReadPayload(
+        flow_id=1,
+        node_id=1,
+        settings=settings,
+        connection=connection,
+        encrypted_password=encrypt_secret("testpass", user_id=1),
+        cancel_check=lambda: False,
     )
 
-    ref = backend.run_op(OperationKind.database_read, {"settings": settings}).refs["result"]
+    ref = backend.run_op(OperationKind.database_read, op_payload(read)).refs["result"]
     kept.append(ref)
 
     assert ref.row_count > 0
@@ -343,12 +355,12 @@ def test_a_fuzzy_join_matches_on_the_worker_as_it_does_in_core(backend, kept):
         left=names, right=names, settings=fuzzy_settings(), flow_id=1, node_id=2, job_id=f"{new_result_id()}_fm"
     )
 
-    ref = backend.run_op(OperationKind.fuzzy_join, {PAYLOAD_KEY: join}).refs["result"]
+    ref = backend.run_op(OperationKind.fuzzy_join, op_payload(join)).refs["result"]
     kept.append(ref)
 
     assert (ref.result_id, ref.state, ref.row_count) == (join.job_id, "materialised", 5)
     in_core = LocalBackend()
-    local_ref = in_core.run_op(OperationKind.fuzzy_join, {PAYLOAD_KEY: join}).refs["result"]
+    local_ref = in_core.run_op(OperationKind.fuzzy_join, op_payload(join)).refs["result"]
     columns = ["name", "name_right", "name_vs_name_right_levenshtein"]
     on_worker = backend.plan_for(ref).collect().sort(columns)
     assert on_worker.equals(in_core.plan_for(local_ref).collect().sort(columns))
@@ -359,13 +371,13 @@ def test_a_random_split_on_the_worker_partitions_like_core(backend, kept):
     rows = pl.LazyFrame({"n": list(range(50))})
     split = RandomSplitPayload(plan=rows, settings=settings, flow_id=1, node_id=3, job_id=new_result_id())
     try:
-        refs = backend.run_op(OperationKind.random_split, {PAYLOAD_KEY: split}).refs
+        refs = backend.run_op(OperationKind.random_split, op_payload(split)).refs
         kept.extend(refs.values())
 
         assert [(ref.state, ref.row_count) for ref in refs.values()] == [("deferred", 40), ("deferred", 10)]
         on_worker = {name: backend.plan_for(ref).collect()["n"].to_list() for name, ref in refs.items()}
         in_core = LocalBackend()
-        local_refs = in_core.run_op(OperationKind.random_split, {PAYLOAD_KEY: split}).refs
+        local_refs = in_core.run_op(OperationKind.random_split, op_payload(split)).refs
         assert on_worker == {name: in_core.plan_for(ref).collect()["n"].to_list() for name, ref in local_refs.items()}
         assert backend.status(JobHandle("worker", split.job_id)).state == "done"
     finally:
@@ -387,7 +399,7 @@ def test_a_custom_node_runs_on_the_worker_from_its_node_source(backend, kept):
         job_id=f"{new_result_id()}-custom-node",
     )
 
-    refs = backend.run_op(OperationKind.custom_node, {PAYLOAD_KEY: job}).refs
+    refs = backend.run_op(OperationKind.custom_node, op_payload(job)).refs
     kept.extend(refs.values())
 
     assert list(refs) == ["output-0", "output-1"]
@@ -419,14 +431,14 @@ def test_a_model_trained_on_the_worker_scores_on_the_worker(backend, kept, tmp_p
         job_id=new_result_id(),
     )
     try:
-        report = backend.run_op(OperationKind.ml_train, {PAYLOAD_KEY: train})
+        report = backend.run_op(OperationKind.ml_train, op_payload(train))
 
         assert report.refs == {}
         assert report.metadata["model_type"] == "linear_regression"
         assert report.metadata["size_bytes"] == model_path.stat().st_size
         assert len(report.metadata["sha256"]) == 64
 
-        ref = backend.run_op(OperationKind.ml_apply, {PAYLOAD_KEY: apply}).refs["result"]
+        ref = backend.run_op(OperationKind.ml_apply, op_payload(apply)).refs["result"]
         kept.append(ref)
 
         assert (ref.result_id, ref.state, ref.row_count) == (apply.job_id, "materialised", 1)

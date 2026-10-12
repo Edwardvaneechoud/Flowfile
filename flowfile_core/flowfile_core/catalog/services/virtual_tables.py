@@ -15,6 +15,7 @@ import polars as pl
 from requests.exceptions import RequestException
 
 from flowfile_core.auth import sharing
+from flowfile_core.catalog.compute import uses_worker
 from flowfile_core.catalog.constants import QUERY_VIRTUAL_TABLE_RECURSION_LIMIT
 from flowfile_core.catalog.delta_utils import check_source_versions_current, is_delta_table
 from flowfile_core.catalog.exceptions import (
@@ -65,13 +66,6 @@ _ABS_PATH_RE = re.compile(r"(?:/[\w.\-]+){2,}")
 def _scrub_abs_paths(text: str) -> str:
     """Replace absolute filesystem paths in error text with their basename so callers don't learn server layout."""
     return _ABS_PATH_RE.sub(lambda m: m.group(0).rsplit("/", 1)[-1], text)
-
-
-def _should_offload() -> bool:
-    """Return True when heavy I/O should be delegated to the worker process."""
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-
-    return OFFLOAD_TO_WORKER.value
 
 
 def _project_sync_tables(owner_id: int) -> None:
@@ -434,10 +428,11 @@ class VirtualTableService:
         For optimized tables, deserializes the stored LazyFrame directly.
         For query-based virtual tables, delegates to resolve_query_virtual_table.
         For non-optimized tables, runs the producer flow's writer node under the execution context of that flow
-        with ``run_location`` as its location (``"remote"`` when none is given and core offloads to the worker).
+        with ``run_location`` as its location; with none given it is ``"remote"`` when catalog I/O goes to the worker
+        (``catalog.compute.uses_worker``), else ``"local"``.
         """
         if run_location is None:
-            run_location = "remote" if _should_offload() else "local"
+            run_location = "remote" if uses_worker() else "local"
         if node_logger is None:
             node_logger = FlowLogger(-1).get_node_logger(-1)
         from flowfile_core.flowfile.manage.io_flowfile import open_flow

@@ -17,8 +17,8 @@ import polars as pl
 
 from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.execution.errors import ComputeError
+from flowfile_core.flowfile.execution.payloads import FileWritePayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
-from flowfile_core.flowfile.execution.write_payloads import PAYLOAD_KEY, FileWritePayload
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.kernel.manager import KernelManager
 from flowfile_core.kernel.models import ExecuteRequest, ExecuteResult
@@ -82,7 +82,7 @@ def write_parquet_for_kernel(
     ).model_copy(update={"abs_file_path": path})
     write = FileWritePayload(plan=lf.lazy(), settings=settings, flow_id=flow_id, node_id=node_id)
     try:
-        current_context(graph).backend.run_op(OperationKind.file_write, {PAYLOAD_KEY: write})
+        current_context(graph).backend.run_op(OperationKind.file_write, op_payload(write))
     except ComputeError as e:
         raise RuntimeError(f"Failed to write parquet for {what}: {e}") from e
 

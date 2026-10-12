@@ -14,7 +14,7 @@ import pytest
 
 from flowfile_core.auth.models import User
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
-from flowfile_core.flowfile.execution.op_payloads import PAYLOAD_KEY, MlApplyPayload, MlTrainPayload
+from flowfile_core.flowfile.execution.payloads import PAYLOAD_KEY, MlApplyPayload, MlTrainPayload
 from flowfile_core.flowfile.execution.protocol import OperationKind, OpResult, ResultRef
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection, ml_flow_model_path
@@ -44,9 +44,7 @@ def _make_graph(
 
 
 def _seed_manual_input(graph: FlowGraph, node_id: int = 1):
-    promise = input_schema.NodePromise(
-        flow_id=graph.flow_id, node_id=node_id, node_type="manual_input"
-    )
+    promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="manual_input")
     graph.add_node_promise(promise)
     payload = input_schema.NodeManualInput(
         flow_id=graph.flow_id,
@@ -96,9 +94,7 @@ def _wire_ml_node(graph: FlowGraph, node_type: str, node_id: int, upstream_id: i
 
     Mirrors how the runtime wires nodes when a flow loads from disk.
     """
-    promise = input_schema.NodePromise(
-        flow_id=graph.flow_id, node_id=node_id, node_type=node_type
-    )
+    promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type=node_type)
     graph.add_node_promise(promise)
     connection = input_schema.NodeConnection.create_from_simple_input(upstream_id, node_id)
     add_connection(graph, connection)
@@ -218,9 +214,7 @@ def test_apply_model_schema_refreshes_when_output_column_changes():
         flow_id=graph.flow_id,
         node_id=3,
         depending_on_id=1,
-        apply_input=input_schema.ApplyModelSettings(
-            source="catalog", model_name="m", output_column="pred"
-        ),
+        apply_input=input_schema.ApplyModelSettings(source="catalog", model_name="m", output_column="pred"),
     )
     graph.add_apply_model(apply_settings)
     first = {c.column_name for c in graph.get_node(3).schema}
@@ -230,9 +224,7 @@ def test_apply_model_schema_refreshes_when_output_column_changes():
         flow_id=graph.flow_id,
         node_id=3,
         depending_on_id=1,
-        apply_input=input_schema.ApplyModelSettings(
-            source="catalog", model_name="m", output_column="renamed"
-        ),
+        apply_input=input_schema.ApplyModelSettings(source="catalog", model_name="m", output_column="renamed"),
     )
     graph.add_apply_model(new_settings)
     second = {c.column_name for c in graph.get_node(3).schema}
@@ -326,13 +318,9 @@ def test_train_model_forwards_namespace_id_to_prepare_upload(monkeypatch):
     def _fake_prepare_upload(self, request, owner_id, _max_retries=3):
         captured["namespace_id"] = request.namespace_id
         captured["name"] = request.name
-        return PrepareUploadResponse(
-            artifact_id=1, version=1, method="file", path="/tmp/x", storage_key="1/x"
-        )
+        return PrepareUploadResponse(artifact_id=1, version=1, method="file", path="/tmp/x", storage_key="1/x")
 
-    monkeypatch.setattr(
-        artifact_service_mod.ArtifactService, "prepare_upload", _fake_prepare_upload
-    )
+    monkeypatch.setattr(artifact_service_mod.ArtifactService, "prepare_upload", _fake_prepare_upload)
 
     settings = input_schema.NodeTrainModel(
         flow_id=graph.flow_id,
@@ -373,14 +361,15 @@ def test_apply_model_forwards_namespace_id_to_lookup(monkeypatch):
         captured["namespace_id"] = namespace_id
         captured["version"] = version
         from types import SimpleNamespace
+
         return SimpleNamespace(
-            id=1, name=name, version=1,
+            id=1,
+            name=name,
+            version=1,
             download_source=SimpleNamespace(method="not-file", path=""),
         )
 
-    monkeypatch.setattr(
-        artifact_service_mod.ArtifactService, "get_artifact_by_name", _fake_get_by_name
-    )
+    monkeypatch.setattr(artifact_service_mod.ArtifactService, "get_artifact_by_name", _fake_get_by_name)
 
     settings = input_schema.NodeApplyModel(
         flow_id=graph.flow_id,
@@ -388,7 +377,10 @@ def test_apply_model_forwards_namespace_id_to_lookup(monkeypatch):
         depending_on_id=1,
         apply_input=input_schema.ApplyModelSettings(
             source="catalog",
-            model_name="m", model_version=3, namespace_id=42, output_column="pred",
+            model_name="m",
+            model_version=3,
+            namespace_id=42,
+            output_column="pred",
         ),
     )
     graph.add_apply_model(settings)
@@ -409,7 +401,9 @@ def test_apply_model_upstream_mode_requires_existing_train_node():
         node_id=2,
         depending_on_id=1,
         apply_input=input_schema.ApplyModelSettings(
-            source="upstream", upstream_node_id=99, output_column="pred",
+            source="upstream",
+            upstream_node_id=99,
+            output_column="pred",
         ),
     )
     graph.add_apply_model(settings)
@@ -475,7 +469,9 @@ def test_apply_model_upstream_mode_reads_train_node_flow_path(tmp_path, monkeypa
         node_id=20,
         depending_on_id=10,
         apply_input=input_schema.ApplyModelSettings(
-            source="upstream", upstream_node_id=10, output_column="pred",
+            source="upstream",
+            upstream_node_id=10,
+            output_column="pred",
         ),
     )
     graph.add_apply_model(apply_settings)
@@ -574,9 +570,7 @@ def test_apply_model_catalog_mode_requires_model_name():
         flow_id=graph.flow_id,
         node_id=2,
         depending_on_id=1,
-        apply_input=input_schema.ApplyModelSettings(
-            source="catalog", model_name="", output_column="pred"
-        ),
+        apply_input=input_schema.ApplyModelSettings(source="catalog", model_name="", output_column="pred"),
     )
     graph.add_apply_model(settings)
     with pytest.raises(ValueError, match="model_name"):
@@ -591,9 +585,7 @@ def test_apply_model_upstream_mode_requires_upstream_node_id():
         flow_id=graph.flow_id,
         node_id=2,
         depending_on_id=1,
-        apply_input=input_schema.ApplyModelSettings(
-            source="upstream", upstream_node_id=None, output_column="pred"
-        ),
+        apply_input=input_schema.ApplyModelSettings(source="upstream", upstream_node_id=None, output_column="pred"),
     )
     graph.add_apply_model(settings)
     with pytest.raises(ValueError, match="upstream_node_id"):
@@ -733,21 +725,13 @@ def test_a_train_result_without_the_model_digest_fails_the_node(monkeypatch):
 
 
 def _wire_wait_for(graph: FlowGraph, *, node_id: int, left: int, right: int) -> None:
-    promise_w = input_schema.NodePromise(
-        flow_id=graph.flow_id, node_id=node_id, node_type="wait_for"
-    )
+    promise_w = input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="wait_for")
     graph.add_node_promise(promise_w)
     left_conn = input_schema.NodeConnection.create_from_simple_input(left, node_id)
     add_connection(graph, left_conn)
-    right_conn = input_schema.NodeConnection.create_from_simple_input(
-        right, node_id, input_type="right"
-    )
+    right_conn = input_schema.NodeConnection.create_from_simple_input(right, node_id, input_type="right")
     add_connection(graph, right_conn)
-    graph.add_wait_for(
-        input_schema.NodeWaitFor(
-            flow_id=graph.flow_id, node_id=node_id, depending_on_ids=[left, right]
-        )
-    )
+    graph.add_wait_for(input_schema.NodeWaitFor(flow_id=graph.flow_id, node_id=node_id, depending_on_ids=[left, right]))
 
 
 def test_wait_for_passes_through_left_input_schema():
@@ -755,9 +739,7 @@ def test_wait_for_passes_through_left_input_schema():
     graph = _make_graph()
     _seed_manual_input(graph, node_id=1)
 
-    promise = input_schema.NodePromise(
-        flow_id=graph.flow_id, node_id=2, node_type="manual_input"
-    )
+    promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="manual_input")
     graph.add_node_promise(promise)
     graph.add_manual_input(
         input_schema.NodeManualInput(
@@ -779,9 +761,7 @@ def test_wait_for_runs_after_dependency_and_passes_data_through():
     graph.execution_location = "local"
     _seed_manual_input(graph, node_id=1)
 
-    promise = input_schema.NodePromise(
-        flow_id=graph.flow_id, node_id=2, node_type="manual_input"
-    )
+    promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="manual_input")
     graph.add_node_promise(promise)
     graph.add_manual_input(
         input_schema.NodeManualInput(
@@ -815,9 +795,7 @@ def _patch_upstream_handler(monkeypatch, graph: FlowGraph) -> None:
 
 
 def _seed_extra_source(graph: FlowGraph, node_id: int) -> None:
-    promise = input_schema.NodePromise(
-        flow_id=graph.flow_id, node_id=node_id, node_type="manual_input"
-    )
+    promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="manual_input")
     graph.add_node_promise(promise)
     graph.add_manual_input(
         input_schema.NodeManualInput(

@@ -11,7 +11,7 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, register_missing_node_template
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.context import current_context
-from flowfile_core.flowfile.execution.op_payloads import PAYLOAD_KEY, CustomNodePayload
+from flowfile_core.flowfile.execution.payloads import CustomNodePayload, op_payload
 from flowfile_core.flowfile.execution.protocol import ComputeBackend, OperationKind
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
@@ -356,7 +356,7 @@ class CustomNodeBuildersMixin(GraphMixinBase):
                 node_id=user_defined_node_settings.node_id,
                 job_id=custom_node_task_id(node.hash),
             )
-            refs = node.run_op(backend, OperationKind.custom_node, {PAYLOAD_KEY: job}, job_id=job.job_id).refs
+            refs = node.run_op(backend, OperationKind.custom_node, op_payload(job), job_id=job.job_id).refs
             engines = {
                 key: FlowDataEngine(backend.plan_for(ref), number_of_records=ref.row_count) for key, ref in refs.items()
             }

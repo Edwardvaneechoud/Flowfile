@@ -29,7 +29,8 @@ from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import OperationUnsupported
-from flowfile_core.flowfile.execution.op_payloads import (
+from flowfile_core.flowfile.execution.payloads import (
+    op_payload,
     PAYLOAD_KEY,
     CustomNodePayload,
     FuzzyJoinPayload,
@@ -39,7 +40,7 @@ from flowfile_core.flowfile.execution.op_payloads import (
     unpack,
 )
 from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, OpResult
-from flowfile_core.flowfile.execution.write_payloads import FileWritePayload
+from flowfile_core.flowfile.execution.payloads import FileWritePayload
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
     CustomNodeExecuteInput,
@@ -315,7 +316,7 @@ def stored_secret(user_id) -> str:
 def test_each_payload_comes_back_from_unpack(kind):
     payload = PAYLOADS[kind]()
 
-    assert unpack({PAYLOAD_KEY: payload}, type(payload)) is payload
+    assert unpack(op_payload(payload), type(payload)) is payload
 
 
 @pytest.mark.parametrize("kind", list(PAYLOADS), ids=kind_id)
@@ -336,9 +337,9 @@ def test_a_payload_is_frozen_keyword_only_and_gets_a_fresh_job_id(kind):
 def test_an_operation_without_its_payload_key_names_the_key(backend_type, kind, tasks):
     tasks.replace_all()
     expected = type(PAYLOADS[kind]()).__name__
-    message = rf"Expected a {expected} under the payload key 'payload', found no such key \(keys: \['left', 'right'\]\)"
+    message = rf"has no 'payload' key; it carries a {expected}"
 
-    with pytest.raises(TypeError, match=message):
+    with pytest.raises(ValueError, match=message):
         backend_type().run_op(kind, {"left": NAMES, "right": NAMES})
     assert tasks.built == []
 
@@ -352,8 +353,8 @@ def test_an_operation_given_another_payload_names_the_one_it_expects(backend_typ
     )
     wrong = FileWritePayload(plan=NUMBERS.lazy(), settings=settings, flow_id=1, node_id=1)
 
-    with pytest.raises(TypeError, match=f"Expected a {expected} under the payload key 'payload', found a FileWrite"):
-        backend_type().run_op(kind, {PAYLOAD_KEY: wrong})
+    with pytest.raises(TypeError, match=rf"payload\['payload'\] must be a {expected}, not FileWritePayload"):
+        backend_type().run_op(kind, op_payload(wrong))
     assert tasks.built == []
 
 
@@ -369,7 +370,7 @@ def test_the_local_backend_fuzzy_joins_the_two_plans_and_reports_to_the_node_log
     settings_before = join.settings.join_input.model_dump()
     backend = LocalBackend()
 
-    ref = backend.run_op(OperationKind.fuzzy_join, {PAYLOAD_KEY: join}).refs["result"]
+    ref = backend.run_op(OperationKind.fuzzy_join, op_payload(join)).refs["result"]
 
     assert ref.state == "deferred"
     matches = backend.plan_for(ref).collect().sort("name", "name_right")
@@ -381,7 +382,7 @@ def test_the_local_backend_fuzzy_joins_the_two_plans_and_reports_to_the_node_log
 def test_the_local_backend_splits_one_shuffle_into_a_deferred_ref_per_split():
     backend = LocalBackend()
 
-    refs = backend.run_op(OperationKind.random_split, {PAYLOAD_KEY: random_split(seed=7)}).refs
+    refs = backend.run_op(OperationKind.random_split, op_payload(random_split(seed=7))).refs
 
     assert list(refs) == ["train", "test"]
     assert {ref.state for ref in refs.values()} == {"deferred"}
@@ -395,7 +396,7 @@ def test_the_local_backend_splits_one_shuffle_into_a_deferred_ref_per_split():
 def test_the_local_backend_runs_a_custom_node_from_its_settings_values():
     backend = LocalBackend()
 
-    refs = backend.run_op(OperationKind.custom_node, {PAYLOAD_KEY: custom_node()}).refs
+    refs = backend.run_op(OperationKind.custom_node, op_payload(custom_node())).refs
 
     assert list(refs) == ["output-0", "output-1"]
     big, small = refs.values()
@@ -414,7 +415,7 @@ def test_the_local_backend_keys_a_custom_node_result_by_what_process_returned(no
     backend = LocalBackend()
     job = custom_node(node_class, settings_values={})
 
-    refs = backend.run_op(OperationKind.custom_node, {PAYLOAD_KEY: job}).refs
+    refs = backend.run_op(OperationKind.custom_node, op_payload(job)).refs
 
     assert list(refs) == expected
     if refs:
@@ -425,7 +426,7 @@ def test_the_local_backend_refuses_a_dict_without_a_declared_output():
     job = custom_node(output_names=["big", "small", "medium"])
 
     with pytest.raises(ValueError, match="did not return declared output 'medium'"):
-        LocalBackend().run_op(OperationKind.custom_node, {PAYLOAD_KEY: job})
+        LocalBackend().run_op(OperationKind.custom_node, op_payload(job))
 
 
 @pytest.mark.parametrize("user", [None, "local"], ids=["no-user", "user"])
@@ -436,7 +437,7 @@ def test_the_local_backend_reads_no_secret_the_node_does_not_access(user, user_i
         user_id=None if user is None else user_id,
     )
 
-    refs = LocalBackend().run_op(OperationKind.custom_node, {PAYLOAD_KEY: job}).refs
+    refs = LocalBackend().run_op(OperationKind.custom_node, op_payload(job)).refs
 
     assert list(refs) == ["output-0", "output-1"]
 
@@ -457,7 +458,7 @@ def test_the_local_backend_writes_a_parquet_file_that_is_complete_on_return(tmp_
     )
     write = FileWritePayload(plan=NUMBERS.lazy().filter(pl.col("n") % 2 == 0), settings=settings, flow_id=1, node_id=1)
 
-    LocalBackend().run_op(OperationKind.file_write, {PAYLOAD_KEY: write})
+    LocalBackend().run_op(OperationKind.file_write, op_payload(write))
 
     assert synced == [target.stat().st_ino]
     assert pl.read_parquet(target)["n"].to_list() == list(range(0, 100, 2))
@@ -471,7 +472,7 @@ def test_the_local_backend_syncs_only_a_parquet_write(tmp_path, monkeypatch):
     )
     write = FileWritePayload(plan=NUMBERS.lazy(), settings=settings, flow_id=1, node_id=1)
 
-    LocalBackend().run_op(OperationKind.file_write, {PAYLOAD_KEY: write})
+    LocalBackend().run_op(OperationKind.file_write, op_payload(write))
 
     assert synced == []
     assert pl.read_csv(tmp_path / "rows.csv").height == 100
@@ -486,7 +487,7 @@ def test_the_worker_backend_prepares_both_sides_and_files_the_match_under_the_jo
     join = fuzzy_join(job_id="node-hash_fm")
     settings_before = join.settings.join_input.model_dump()
 
-    result = WorkerBackend().run_op(OperationKind.fuzzy_join, {PAYLOAD_KEY: join})
+    result = WorkerBackend().run_op(OperationKind.fuzzy_join, op_payload(join))
 
     (task,) = tasks.built
     sent = task.kwargs
@@ -518,7 +519,7 @@ def test_the_worker_backend_refuses_an_invalid_join_before_it_starts_a_task(task
     settings.join_input.join_mapping[0].left_col = "missing"
 
     with pytest.raises(Exception, match="missing"):
-        WorkerBackend().run_op(OperationKind.fuzzy_join, {PAYLOAD_KEY: fuzzy_join(settings=settings)})
+        WorkerBackend().run_op(OperationKind.fuzzy_join, op_payload(fuzzy_join(settings=settings)))
     assert tasks.built == []
 
 
@@ -527,7 +528,7 @@ def test_the_worker_backend_stores_one_shuffle_and_splits_it_like_core(tasks):
     split = random_split(seed=7, job_id="split-job")
     backend = WorkerBackend()
 
-    refs = backend.run_op(OperationKind.random_split, {PAYLOAD_KEY: split}).refs
+    refs = backend.run_op(OperationKind.random_split, op_payload(split)).refs
 
     (store,) = tasks.built
     assert (store.kwargs["file_ref"], store.kwargs["flow_id"], store.kwargs["node_id"]) == ("split-job", 7, 3)
@@ -538,7 +539,7 @@ def test_the_worker_backend_stores_one_shuffle_and_splits_it_like_core(tasks):
     assert [column.column_name for column in refs["train"].schema] == ["n"]
     on_worker = {name: backend.plan_for(ref).collect()["n"].to_list() for name, ref in refs.items()}
     local = LocalBackend()
-    local_refs = local.run_op(OperationKind.random_split, {PAYLOAD_KEY: random_split(seed=7)}).refs
+    local_refs = local.run_op(OperationKind.random_split, op_payload(random_split(seed=7))).refs
     assert on_worker == {name: local.plan_for(ref).collect()["n"].to_list() for name, ref in local_refs.items()}
 
     for ref in refs.values():
@@ -550,7 +551,7 @@ def test_the_worker_backend_stores_one_shuffle_and_splits_it_like_core(tasks):
 def test_the_worker_backend_draws_a_seed_when_the_settings_have_none(tasks):
     tasks.replace("ExternalDfFetcher", rows=stored_rows)
 
-    refs = WorkerBackend().run_op(OperationKind.random_split, {PAYLOAD_KEY: random_split(seed=None)}).refs
+    refs = WorkerBackend().run_op(OperationKind.random_split, op_payload(random_split(seed=None))).refs
 
     assert [ref.row_count for ref in refs.values()] == [80, 20]
 
@@ -567,7 +568,7 @@ def test_the_worker_backend_sends_a_custom_node_with_its_inputs_serialised_and_i
     settings_values = {"main": {"threshold": "89", "api_key": stored_secret}}
     job = custom_node(settings_values=settings_values, user_id=user_id, job_id=custom_node_task_id("node-hash"))
 
-    refs = WorkerBackend().run_op(OperationKind.custom_node, {PAYLOAD_KEY: job}).refs
+    refs = WorkerBackend().run_op(OperationKind.custom_node, op_payload(job)).refs
 
     (task,) = tasks.built
     (request,) = task.args
@@ -598,14 +599,14 @@ def test_the_worker_backend_refuses_a_custom_node_whose_task_left_out_a_declared
     )
 
     with pytest.raises(ValueError, match="Worker did not return declared output 'small'"):
-        WorkerBackend().run_op(OperationKind.custom_node, {PAYLOAD_KEY: custom_node()})
+        WorkerBackend().run_op(OperationKind.custom_node, op_payload(custom_node()))
 
 
 def test_the_worker_backend_runs_no_custom_node_without_a_node_file(tasks):
     tasks.replace_all()
 
     with pytest.raises(OperationUnsupported, match="node file"):
-        WorkerBackend().run_op(OperationKind.custom_node, {PAYLOAD_KEY: custom_node(node_source=None)})
+        WorkerBackend().run_op(OperationKind.custom_node, op_payload(custom_node(node_source=None)))
     assert tasks.built == []
 
 
@@ -614,7 +615,7 @@ def test_the_worker_backend_refuses_a_selected_secret_it_cannot_find_before_it_s
     job = custom_node(settings_values={"main": {"api_key": "no_such_secret"}}, user_id=user_id)
 
     with pytest.raises(ValueError, match="no_such_secret"):
-        WorkerBackend().run_op(OperationKind.custom_node, {PAYLOAD_KEY: job})
+        WorkerBackend().run_op(OperationKind.custom_node, op_payload(job))
     assert tasks.built == []
 
 
@@ -623,7 +624,7 @@ def test_the_worker_backend_trains_under_the_job_id_and_reports_the_model_as_met
     tasks.replace("MLTrainFetcher", result=report)
     train = ml_train(job_id="train-hash")
 
-    result = WorkerBackend().run_op(OperationKind.ml_train, {PAYLOAD_KEY: train})
+    result = WorkerBackend().run_op(OperationKind.ml_train, op_payload(train))
 
     (task,) = tasks.built
     assert task.kwargs == {
@@ -647,7 +648,7 @@ def test_the_worker_backend_scores_under_the_job_id_into_a_stored_result(tasks):
     apply = ml_apply(job_id="apply-hash")
     backend = WorkerBackend()
 
-    ref = backend.run_op(OperationKind.ml_apply, {PAYLOAD_KEY: apply}).refs["result"]
+    ref = backend.run_op(OperationKind.ml_apply, op_payload(apply)).refs["result"]
 
     (task,) = tasks.built
     assert task.kwargs == {
@@ -698,7 +699,7 @@ def test_cancelling_a_node_reaches_the_operation_it_is_waiting_on(kind, remote_n
 
     monkeypatch.setattr(StandInTask, "on_wait", staticmethod(cancel_while_waiting))
 
-    remote_node.run_op(backend, kind, {PAYLOAD_KEY: payload}, job_id=payload.job_id)
+    remote_node.run_op(backend, kind, op_payload(payload), job_id=payload.job_id)
 
     (task,) = tasks.built
     assert seen == [JobHandle(backend.id, payload.job_id)]

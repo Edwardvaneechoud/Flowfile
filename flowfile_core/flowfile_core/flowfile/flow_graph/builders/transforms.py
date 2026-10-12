@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.execution.context import current_context
-from flowfile_core.flowfile.execution.op_payloads import PAYLOAD_KEY, RandomSplitPayload
+from flowfile_core.flowfile.execution.payloads import RandomSplitPayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.filter_expressions import (
     build_filter_expression,
@@ -448,7 +448,7 @@ class TransformBuildersMixin(GraphMixinBase):
                 plan=table.data_frame.lazy(), settings=settings, flow_id=self.flow_id, node_id=settings.node_id
             )
             backend = current_context(self).backend
-            refs = node.run_op(backend, OperationKind.random_split, {PAYLOAD_KEY: split}, job_id=split.job_id).refs
+            refs = node.run_op(backend, OperationKind.random_split, op_payload(split), job_id=split.job_id).refs
             engines = {
                 name: FlowDataEngine(backend.plan_for(ref), number_of_records=ref.row_count)
                 for name, ref in refs.items()

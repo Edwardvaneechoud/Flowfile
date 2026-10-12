@@ -6,6 +6,7 @@ target is the local disk, and records the call where it would need object storag
 """
 
 import base64
+import dataclasses
 import io
 import sqlite3
 
@@ -20,13 +21,16 @@ from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import PlanRejected, TaskFailed
 from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, OpResult
-from flowfile_core.flowfile.execution.write_payloads import (
+from flowfile_core.flowfile.execution.payloads import (
+    op_payload,
     PAYLOAD_KEY,
     CloudWritePayload,
     DatabaseWritePayload,
     DeltaMergePayload,
+    DeltaScd2Payload,
     DeltaWritePayload,
     FileWritePayload,
+    unpack,
 )
 from flowfile_core.flowfile.flow_node.models import RemoteExecutionError
 from flowfile_core.flowfile.sources.external_sources.sql_source.models import DatabaseExternalWriteSettings
@@ -37,6 +41,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
     FullCloudStorageConnection,
 )
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
+from shared.delta_utils import Scd2Result
 from tests.flowfile.conftest import add_test_manual_input, create_test_graph
 
 pytestmark = pytest.mark.core
@@ -50,6 +55,7 @@ WRITE_KINDS = {
     OperationKind.cloud_write: CloudWritePayload,
     OperationKind.delta_write: DeltaWritePayload,
     OperationKind.delta_merge: DeltaMergePayload,
+    OperationKind.delta_scd2: DeltaScd2Payload,
 }
 
 
@@ -102,6 +108,26 @@ def delta_merge(path: str, plan: pl.LazyFrame, connection=None) -> DeltaMergePay
     )
 
 
+def delta_scd2(path: str, connection=None) -> DeltaScd2Payload:
+    return DeltaScd2Payload(
+        plan=ROWS.lazy(),
+        path=path,
+        business_keys=["id"],
+        compare_columns=["name"],
+        full_snapshot=True,
+        surrogate_key_column="row_key",
+        valid_from_column="from_ts",
+        valid_to_column="to_ts",
+        is_current_column="live",
+        run_timestamp="2024-05-01T00:00:00+00:00",
+        partition_by=["name"],
+        partition_on_current=False,
+        connection=connection,
+        flow_id=7,
+        node_id=3,
+    )
+
+
 class RecordingFetcher:
     """Stands in for a worker fetcher: keeps what it was built with and reports a finished task."""
 
@@ -140,7 +166,7 @@ def test_the_worker_backend_sends_a_file_write_to_the_output_writer(built, tmp_p
     settings = csv_settings(tmp_path, delimiter=";")
     write = FileWritePayload(plan=ROWS.lazy(), settings=settings, flow_id=7, node_id=3)
 
-    result = WorkerBackend().run_op(OperationKind.file_write, {PAYLOAD_KEY: write})
+    result = WorkerBackend().run_op(OperationKind.file_write, op_payload(write))
 
     (fetcher,) = built
     assert fetcher.kwargs == {
@@ -187,7 +213,7 @@ def test_the_worker_backend_sends_a_referenced_database_write_with_the_stored_ci
         node_id=3,
     )
 
-    WorkerBackend().run_op(OperationKind.database_write, {PAYLOAD_KEY: write})
+    WorkerBackend().run_op(OperationKind.database_write, op_payload(write))
 
     (fetcher,) = built
     (sent,) = fetcher.args
@@ -212,7 +238,7 @@ def test_the_worker_backend_sends_a_cloud_write_with_its_secrets_still_encrypted
         node_id=3,
     )
 
-    WorkerBackend().run_op(OperationKind.cloud_write, {PAYLOAD_KEY: write})
+    WorkerBackend().run_op(OperationKind.cloud_write, op_payload(write))
 
     (fetcher,) = built
     (sent,) = fetcher.args
@@ -230,9 +256,9 @@ def test_the_worker_backend_runs_the_delta_operations_with_the_encrypted_storage
     storage_payload = {"connection": connection.model_dump()} if with_connection else None
     backend = WorkerBackend()
 
-    written = backend.run_op(OperationKind.delta_write, {PAYLOAD_KEY: delta_write("s3://bucket/t", connection)})
+    written = backend.run_op(OperationKind.delta_write, op_payload(delta_write("s3://bucket/t", connection)))
     merged = backend.run_op(
-        OperationKind.delta_merge, {PAYLOAD_KEY: delta_merge("s3://bucket/t", ROWS.lazy(), connection)}
+        OperationKind.delta_merge, op_payload(delta_merge("s3://bucket/t", ROWS.lazy(), connection))
     )
 
     write_task, merge_task = built
@@ -258,10 +284,94 @@ def test_the_worker_backend_runs_the_delta_operations_with_the_encrypted_storage
     assert written == merged == OpResult(refs={}, metadata={"row_count": 3})
 
 
+@pytest.mark.parametrize("with_connection", [True, False], ids=["object-storage", "local-table"])
+def test_the_worker_backend_runs_an_scd2_write_with_the_encrypted_storage_payload(built, with_connection):
+    connection = s3_connection().get_worker_interface(USER_ID) if with_connection else None
+    write = delta_scd2("s3://bucket/dim", connection)
+
+    result = WorkerBackend().run_op(OperationKind.delta_scd2, op_payload(write))
+
+    (task,) = built
+    assert task.kwargs["operation_type"] == "scd2_delta"
+    assert task.kwargs["lf"] is write.plan
+    assert (task.kwargs["flow_id"], task.kwargs["node_id"]) == (7, 3)
+    assert task.kwargs["wait_on_completion"] is False
+    assert task.kwargs["kwargs"] == {
+        "output_path": "s3://bucket/dim",
+        "run_timestamp": "2024-05-01T00:00:00+00:00",
+        "business_keys": ["id"],
+        "compare_columns": ["name"],
+        "full_snapshot": True,
+        "surrogate_key_column": "row_key",
+        "valid_from_column": "from_ts",
+        "valid_to_column": "to_ts",
+        "is_current_column": "live",
+        "partition_by": ["name"],
+        "partition_on_current": False,
+        "storage_payload": {"connection": connection.model_dump()} if with_connection else None,
+    }
+    if with_connection:
+        sent = task.kwargs["kwargs"]["storage_payload"]["connection"]
+        assert sent["aws_secret_access_key"].startswith("$ffsec$")
+    assert SECRET not in repr(task.kwargs)
+    assert result == OpResult(refs={}, metadata={"row_count": 3})
+
+
+def test_the_worker_scd2_report_is_the_metadata_unchanged(built, monkeypatch):
+    report = {"skipped": True, "version": 4}
+
+    def finish_with_the_report(fetcher):
+        fetcher.result = report
+
+    monkeypatch.setattr(RecordingFetcher, "on_wait", staticmethod(finish_with_the_report))
+
+    result = WorkerBackend().run_op(OperationKind.delta_scd2, op_payload(delta_scd2("/tables/dim")))
+
+    assert result == OpResult(refs={}, metadata={"skipped": True, "version": 4})
+
+
+def test_cancel_reaches_the_scd2_write_while_it_runs(built, monkeypatch):
+    backend = WorkerBackend()
+    write = delta_scd2("/tables/dim")
+
+    def cancel_while_waiting(fetcher):
+        backend.cancel(JobHandle(backend.id, write.job_id))
+
+    monkeypatch.setattr(RecordingFetcher, "on_wait", staticmethod(cancel_while_waiting))
+
+    backend.run_op(OperationKind.delta_scd2, op_payload(write))
+
+    (fetcher,) = built
+    assert fetcher.cancelled
+
+
+def test_an_scd2_payload_round_trips_through_unpack():
+    write = delta_scd2("/tables/dim")
+
+    assert unpack(op_payload(write), DeltaScd2Payload) is write
+
+
+def test_an_scd2_payload_takes_its_fields_by_keyword_only():
+    with pytest.raises(TypeError, match="positional"):
+        DeltaScd2Payload(ROWS.lazy(), "/tables/dim")
+
+
+def test_an_scd2_payload_is_frozen():
+    write = delta_scd2("/tables/dim")
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        write.path = "/tables/other"
+
+
+def test_unpack_names_the_scd2_payload_it_expected():
+    with pytest.raises(TypeError, match=r"payload\['payload'\] must be a DeltaScd2Payload, not DeltaWritePayload"):
+        unpack(op_payload(delta_write("/tables/dim")), DeltaScd2Payload)
+
+
 def test_the_local_backend_writes_a_file_with_the_payload_settings(tmp_path):
     write = FileWritePayload(plan=ROWS.lazy(), settings=csv_settings(tmp_path, delimiter=";"), flow_id=7, node_id=3)
 
-    result = LocalBackend().run_op(OperationKind.file_write, {PAYLOAD_KEY: write})
+    result = LocalBackend().run_op(OperationKind.file_write, op_payload(write))
 
     assert result == OpResult(refs={})
     assert pl.read_csv(tmp_path / "people.csv", separator=";").equals(ROWS)
@@ -288,7 +398,7 @@ def test_the_local_backend_writes_a_database_table(tmp_path):
         node_id=2,
     )
 
-    LocalBackend().run_op(OperationKind.database_write, {PAYLOAD_KEY: write})
+    LocalBackend().run_op(OperationKind.database_write, op_payload(write))
 
     with sqlite3.connect(database) as db:
         assert db.execute("SELECT id, name FROM people ORDER BY id").fetchall() == list(ROWS.iter_rows())
@@ -309,7 +419,7 @@ def test_the_local_backend_decrypts_a_cloud_write_connection_in_process(monkeypa
         node_id=3,
     )
 
-    LocalBackend().run_op(OperationKind.cloud_write, {PAYLOAD_KEY: write})
+    LocalBackend().run_op(OperationKind.cloud_write, op_payload(write))
 
     ((engine, settings),) = received
     assert engine.data_frame is write.plan
@@ -322,9 +432,9 @@ def test_the_local_backend_writes_and_merges_a_local_delta_table(tmp_path):
     path = str(tmp_path / "people")
     backend = LocalBackend()
 
-    backend.run_op(OperationKind.delta_write, {PAYLOAD_KEY: delta_write(path)})
+    backend.run_op(OperationKind.delta_write, op_payload(delta_write(path)))
     changes = pl.LazyFrame({"id": [3, 4], "name": ["dijkstra", "barbara"]})
-    backend.run_op(OperationKind.delta_merge, {PAYLOAD_KEY: delta_merge(path, changes)})
+    backend.run_op(OperationKind.delta_merge, op_payload(delta_merge(path, changes)))
 
     assert pl.read_delta(path).sort("id").rows() == [(1, "ada"), (2, "grace"), (3, "dijkstra"), (4, "barbara")]
 
@@ -334,10 +444,47 @@ def test_the_local_backend_hands_decrypted_storage_options_to_the_delta_write(mo
     monkeypatch.setattr(local_module, "write_delta", lambda *args, **kwargs: received.append(kwargs))
     connection = s3_connection().get_worker_interface(USER_ID)
 
-    LocalBackend().run_op(OperationKind.delta_write, {PAYLOAD_KEY: delta_write("s3://bucket/t", connection)})
+    LocalBackend().run_op(OperationKind.delta_write, op_payload(delta_write("s3://bucket/t", connection)))
 
     (kwargs,) = received
     assert kwargs["storage_options"]["aws_secret_access_key"] == SECRET
+
+
+def test_the_local_backend_hands_decrypted_storage_options_to_the_scd2_write(monkeypatch):
+    received = []
+
+    def record(rows, path, **kwargs):
+        received.append((rows, path, kwargs))
+        return Scd2Result(skipped=True, version=2)
+
+    monkeypatch.setattr(local_module, "scd2_into_delta", record)
+    write = delta_scd2("s3://bucket/dim", s3_connection().get_worker_interface(USER_ID))
+
+    result = LocalBackend().run_op(OperationKind.delta_scd2, op_payload(write))
+
+    ((rows, path, kwargs),) = received
+    assert rows.equals(ROWS)
+    assert path == "s3://bucket/dim"
+    assert kwargs["storage_options"]["aws_secret_access_key"] == SECRET
+    assert {name: value for name, value in kwargs.items() if name != "storage_options"} == {
+        "business_keys": ["id"],
+        "valid_from_iso": "2024-05-01T00:00:00+00:00",
+        "compare_columns": ["name"],
+        "full_snapshot": True,
+        "surrogate_key_column": "row_key",
+        "valid_from_column": "from_ts",
+        "valid_to_column": "to_ts",
+        "is_current_column": "live",
+        "partition_by": ["name"],
+        "partition_on_current": False,
+    }
+    assert result == OpResult(refs={}, metadata={"skipped": True, "version": 2})
+
+
+def test_an_scd2_payload_carries_no_decrypted_secret():
+    write = delta_scd2("s3://bucket/dim", s3_connection().get_worker_interface(USER_ID))
+
+    assert SECRET not in write.connection.model_dump_json()
 
 
 def test_a_cloud_payload_carries_no_decrypted_secret():
@@ -355,7 +502,7 @@ def test_a_cloud_payload_carries_no_decrypted_secret():
 @pytest.mark.parametrize("backend_type", [LocalBackend, WorkerBackend])
 @pytest.mark.parametrize("kind", list(WRITE_KINDS), ids=lambda kind: kind.value)
 def test_a_write_without_its_payload_key_names_the_key(backend_type, kind, built):
-    with pytest.raises(TypeError, match=r"under the payload key 'payload', found no such key \(keys: \['input'\]\)"):
+    with pytest.raises(ValueError, match=r"has no 'payload' key; it carries a \w+Payload"):
         backend_type().run_op(kind, {"input": ROWS.lazy()})
     assert built == []
 
@@ -364,8 +511,8 @@ def test_a_write_without_its_payload_key_names_the_key(backend_type, kind, built
 def test_a_write_given_another_kind_of_payload_names_the_one_it_expects(backend_type, built, tmp_path):
     wrong = FileWritePayload(plan=ROWS.lazy(), settings=csv_settings(tmp_path), flow_id=1, node_id=1)
 
-    with pytest.raises(TypeError, match="Expected a DeltaWritePayload under the payload key 'payload', found a File"):
-        backend_type().run_op(OperationKind.delta_write, {PAYLOAD_KEY: wrong})
+    with pytest.raises(TypeError, match=r"payload\['payload'\] must be a DeltaWritePayload, not FileWritePayload"):
+        backend_type().run_op(OperationKind.delta_write, op_payload(wrong))
     assert built == []
 
 
@@ -387,7 +534,7 @@ def test_cancelling_a_node_reaches_the_write_it_is_waiting_on(node, built, tmp_p
 
     monkeypatch.setattr(RecordingFetcher, "on_wait", staticmethod(cancel_while_waiting))
 
-    node.run_op(backend, OperationKind.file_write, {PAYLOAD_KEY: write}, job_id=write.job_id)
+    node.run_op(backend, OperationKind.file_write, op_payload(write), job_id=write.job_id)
 
     (fetcher,) = built
     assert seen == [JobHandle(backend.id, write.job_id)]

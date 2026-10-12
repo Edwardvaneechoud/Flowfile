@@ -31,12 +31,25 @@ from flowfile_core.flowfile.execution.errors import (
     TaskFailed,
     worker_failure,
 )
-from flowfile_core.flowfile.execution.op_payloads import (
+from flowfile_core.flowfile.execution.payloads import (
+    CloudWritePayload,
     CustomNodePayload,
+    DatabaseReadPayload,
+    DatabaseWritePayload,
+    DeltaMergePayload,
+    DeltaScd2Payload,
+    DeltaWritePayload,
+    FileReadPayload,
+    FileWritePayload,
     FuzzyJoinPayload,
+    GoogleAnalyticsReadPayload,
+    KafkaReadPayload,
     MlApplyPayload,
     MlTrainPayload,
+    OperationPayload,
     RandomSplitPayload,
+    RestApiReadPayload,
+    unpack,
 )
 from flowfile_core.flowfile.execution.protocol import (
     CredentialRef,
@@ -49,14 +62,6 @@ from flowfile_core.flowfile.execution.protocol import (
     Schema,
     SubmitHints,
     SubmitResult,
-)
-from flowfile_core.flowfile.execution.write_payloads import (
-    CloudWritePayload,
-    DatabaseWritePayload,
-    DeltaMergePayload,
-    DeltaWritePayload,
-    FileWritePayload,
-    unpack,
 )
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import convert_stats_to_column_info
@@ -80,12 +85,18 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     MLTrainFetcher,
     cancel_task,
     clear_task_from_worker,
+    fetch_kafka_offsets,
     get_status,
     get_worker_capabilities,
     results_exists,
 )
 from flowfile_core.flowfile.flow_node.multi_output import output_handle
-from flowfile_core.flowfile.sources.external_sources.sql_source.models import DatabaseExternalWriteSettings
+from flowfile_core.flowfile.sources.external_sources.rest_api_source import build_rest_api_worker_settings
+from flowfile_core.flowfile.sources.external_sources.sql_source.models import (
+    DatabaseExternalReadSettings,
+    DatabaseExternalWriteSettings,
+)
+from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import BaseSqlSource
 from flowfile_core.flowfile.user_defined.dispatch import resolve_secret_payload
 from flowfile_core.schemas.cloud_storage_schemas import (
     CloudStorageWriteSettingsWorkerInterface,
@@ -94,6 +105,10 @@ from flowfile_core.schemas.cloud_storage_schemas import (
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from shared.compute_protocol import PROTOCOL_VERSION, Capabilities
+from shared.google_analytics.models import GoogleAnalyticsFilter, GoogleAnalyticsOrderBy, GoogleAnalyticsReadSettings
+from shared.kafka.models import KafkaReadSettings
+from shared.path_utils import DirectoryScanUnsupportedError, refuse_cloud_path
+from shared.rest_api.models import RestApiReadSettings
 
 WORKER_BACKEND_ID = "worker"
 _OUTPUT_SEPARATOR = "#"
@@ -215,21 +230,20 @@ class WorkerBackend:
         Reads and the catalog writer's SCD2 write take what their fetcher takes, under these keys (``flow_id`` and
         ``node_id`` name the flow and node the worker logs the task under):
 
-        - ``database_read``: ``settings`` (``DatabaseExternalReadSettings``).
-        - ``kafka_read``, ``google_analytics_read``, ``rest_api_read``: ``settings``, the worker read settings.
-        - ``file_read``: ``received_table`` (``ReceivedTable`` with its absolute path set; its ``file_type`` picks
-          the worker's reader), ``flow_id``, ``node_id``.
-        - ``delta_scd2``: ``lf``, ``kwargs`` (the keyword arguments of the worker's ``scd2_delta`` operation),
-          ``flow_id``, ``node_id``.
+        - ``database_read``, ``kafka_read``, ``google_analytics_read``, ``rest_api_read``, ``file_read``: ``payload``,
+          the kind's dataclass from ``execution/payloads.py``, turned here into the worker read settings its fetcher
+          takes (credentials still encrypted, filed under the payload's ``flow_id`` and ``node_id``). The task runs as
+          the payload's ``job_id``, so ``cancel(JobHandle("worker", job_id))`` reaches it while it runs. A
+          ``kafka_read`` reports the offsets to commit as ``metadata["offsets"]`` when it consumed messages.
 
-        Every other operation takes one dataclass under ``"payload"``: the writes ``file_write``, ``database_write``,
-        ``cloud_write``, ``delta_write`` and ``delta_merge`` their ``write_payloads`` one, and ``fuzzy_join``,
-        ``random_split``, ``custom_node``, ``ml_train`` and ``ml_apply`` their ``op_payloads`` one. Its frames are
-        serialised here, its credentials sent still encrypted, and the worker task is filed under the payload's
-        ``job_id`` (a write's under the id the worker gives it), whose fetcher ``cancel(JobHandle("worker", job_id))``
-        reaches while the call waits. ``fuzzy_join`` checks the join and selects and renames each side here, as the
-        in-process join does, before it sends the sides; ``custom_node`` resolves the ``$ffsec$`` ciphertext of the
-        secrets the node's ``SecretSelector`` fields select here and sends only that.
+        Every other operation takes one dataclass under ``"payload"`` too: the writes ``file_write``,
+        ``database_write``, ``cloud_write``, ``delta_write``, ``delta_merge`` and ``delta_scd2``, and ``fuzzy_join``,
+        ``random_split``, ``custom_node``, ``ml_train`` and ``ml_apply``. Its frames are serialised here, its
+        credentials sent still encrypted, and the worker task is filed under the payload's ``job_id`` (a write's under
+        the id the worker gives it), whose fetcher ``cancel(JobHandle("worker", job_id))`` reaches while the call
+        waits. ``fuzzy_join`` checks the join and selects and renames each side here, as the in-process join does,
+        before it sends the sides; ``custom_node`` resolves the ``$ffsec$`` ciphertext of the secrets the node's
+        ``SecretSelector`` fields select here and sends only that.
 
         A read's and ``fuzzy_join``'s and ``ml_apply``'s refs are ``{"result": ref}``, a stored result. A custom
         node's refs are one stored result per declared output, keyed by its output handle (``output-0``,
@@ -496,29 +510,57 @@ class WorkerBackend:
         fetcher = _run(start) if job_id is None else self._run_tracked(job_id, start)
         return OpResult(refs={"result": self._result_ref(fetcher.file_ref, _written_file(fetcher))})
 
+    def _read_tracked(self, job_id: str, start: Callable[[], BaseFetcher]) -> tuple[BaseFetcher, ResultRef]:
+        """Run a read task as job ``job_id``, which ``cancel`` reaches while it waits; its fetcher and stored result."""
+        fetcher = self._run_tracked(job_id, start)
+        return fetcher, self._result_ref(fetcher.file_ref, _written_file(fetcher))
+
     def _database_read(self, payload: OpPayload) -> OpResult:
-        return self._read(lambda: ExternalDatabaseFetcher(payload["settings"], wait_on_completion=False))
+        read = unpack(payload, DatabaseReadPayload)
+        settings = _database_read_settings(read)
+        _, ref = self._read_tracked(read.job_id, lambda: ExternalDatabaseFetcher(settings, wait_on_completion=False))
+        return OpResult(refs={"result": ref})
 
     def _kafka_read(self, payload: OpPayload) -> OpResult:
-        return self._read(lambda: ExternalKafkaFetcher(payload["settings"], wait_on_completion=False))
+        read = unpack(payload, KafkaReadPayload)
+        settings = _kafka_read_settings(read)
+        fetcher, ref = self._read_tracked(read.job_id, lambda: ExternalKafkaFetcher(settings, wait_on_completion=False))
+        consumed = fetch_kafka_offsets(fetcher.file_ref)
+        if consumed and consumed.get("messages_consumed", 0) > 0:
+            return OpResult(refs={"result": ref}, metadata={"offsets": consumed["new_offsets"]})
+        return OpResult(refs={"result": ref})
 
     def _google_analytics_read(self, payload: OpPayload) -> OpResult:
-        return self._read(lambda: ExternalGoogleAnalyticsFetcher(payload["settings"], wait_on_completion=False))
+        read = unpack(payload, GoogleAnalyticsReadPayload)
+        settings = _google_analytics_read_settings(read)
+        _, ref = self._read_tracked(
+            read.job_id, lambda: ExternalGoogleAnalyticsFetcher(settings, wait_on_completion=False)
+        )
+        return OpResult(refs={"result": ref})
 
     def _rest_api_read(self, payload: OpPayload) -> OpResult:
-        return self._read(lambda: ExternalRestApiFetcher(payload["settings"], wait_on_completion=False))
+        read = unpack(payload, RestApiReadPayload)
+        settings = _rest_api_read_settings(read)
+        _, ref = self._read_tracked(read.job_id, lambda: ExternalRestApiFetcher(settings, wait_on_completion=False))
+        return OpResult(refs={"result": ref})
 
     def _file_read(self, payload: OpPayload) -> OpResult:
-        received_table = payload["received_table"]
-        return self._read(
+        read = unpack(payload, FileReadPayload)
+        received_table = read.settings.received_file
+        refuse_cloud_path(received_table.path, received_table.file_type)
+        if received_table.scan_mode == "directory":
+            raise DirectoryScanUnsupportedError("Directory scan mode cannot be executed by the worker file reader.")
+        _, ref = self._read_tracked(
+            read.job_id,
             lambda: ExternalCreateFetcher(
                 received_table=received_table,
-                node_id=payload["node_id"],
-                flow_id=payload["flow_id"],
+                node_id=read.node_id,
+                flow_id=read.flow_id,
                 file_type=received_table.file_type,
                 wait_on_completion=False,
-            )
+            ),
         )
+        return OpResult(refs={"result": ref})
 
     def _fuzzy_join(self, payload: OpPayload) -> OpResult:
         join = unpack(payload, FuzzyJoinPayload)
@@ -699,8 +741,29 @@ class WorkerBackend:
         }
         return self._delta_task(write, "merge_delta", kwargs)
 
+    def _delta_scd2(self, payload: OpPayload) -> OpResult:
+        write = unpack(payload, DeltaScd2Payload)
+        kwargs = {
+            "output_path": write.path,
+            "run_timestamp": write.run_timestamp,
+            "business_keys": write.business_keys,
+            "compare_columns": write.compare_columns,
+            "full_snapshot": write.full_snapshot,
+            "surrogate_key_column": write.surrogate_key_column,
+            "valid_from_column": write.valid_from_column,
+            "valid_to_column": write.valid_to_column,
+            "is_current_column": write.is_current_column,
+            "partition_by": write.partition_by,
+            "partition_on_current": write.partition_on_current,
+            "storage_payload": _storage_payload(write.connection),
+        }
+        return self._delta_task(write, "scd2_delta", kwargs)
+
     def _delta_task(
-        self, write: DeltaWritePayload | DeltaMergePayload, operation_type: str, kwargs: dict[str, Any]
+        self,
+        write: DeltaWritePayload | DeltaMergePayload | DeltaScd2Payload,
+        operation_type: str,
+        kwargs: dict[str, Any],
     ) -> OpResult:
         """Run the worker's ``operation_type`` Delta operation over the payload's plan; its report is the metadata."""
         fetcher = self._run_tracked(
@@ -715,9 +778,6 @@ class WorkerBackend:
             ),
         )
         return OpResult(refs={}, metadata=_reported(fetcher))
-
-    def _delta_scd2(self, payload: OpPayload) -> OpResult:
-        return _catalog_delta(payload, "scd2_delta")
 
 
 def _run(start: Callable[[], BaseFetcher], on_started: Callable[[BaseFetcher], None] | None = None) -> BaseFetcher:
@@ -743,21 +803,6 @@ def _run(start: Callable[[], BaseFetcher], on_started: Callable[[BaseFetcher], N
             raise worker_failure(fetcher.error_kind, description) from e
         raise TaskFailed(description) from e
     return fetcher
-
-
-def _catalog_delta(payload: OpPayload, operation_type: str) -> OpResult:
-    """The catalog writer's SCD2 write: a worker task running ``operation_type`` over the payload's plan."""
-    fetcher = _run(
-        lambda: ExternalDfFetcher(
-            flow_id=payload["flow_id"],
-            node_id=payload["node_id"],
-            lf=payload["lf"],
-            operation_type=operation_type,
-            kwargs=payload["kwargs"],
-            wait_on_completion=False,
-        )
-    )
-    return OpResult(refs={}, metadata=_reported(fetcher))
 
 
 def _storage_payload(connection: FullCloudStorageConnectionWorkerInterface | None) -> dict[str, Any] | None:
@@ -812,3 +857,68 @@ def _held(ref: ResultRef) -> Iterator[None]:
         yield
     except FileNotFoundError as e:
         raise ResultMissing(f"The worker no longer holds result {ref.result_id!r}") from e
+
+
+def _filed_under(read: OperationPayload) -> dict[str, Any]:
+    """The worker read settings' fields that name the flow and node the task is filed under."""
+    return {"flowfile_flow_id": read.flow_id, "flowfile_node_id": read.node_id}
+
+
+def _database_read_settings(read: DatabaseReadPayload) -> DatabaseExternalReadSettings:
+    """The worker's database read: the query the node's settings make, over the connection with its password as stored.
+
+    A stored connection travels without its own ``password`` field; the payload's encrypted password replaces it.
+    """
+    node_settings = read.settings
+    database_settings = node_settings.database_settings
+    query = BaseSqlSource(
+        query=None if database_settings.query_mode == "table" else database_settings.query,
+        table_name=database_settings.table_name,
+        schema_name=database_settings.schema_name,
+        fields=node_settings.fields,
+    ).query
+    settings = DatabaseExternalReadSettings.create_from_from_node_database_reader(
+        node_database_reader=node_settings,
+        password=read.encrypted_password,
+        query=query,
+        database_reference_settings=read.connection if database_settings.connection_mode == "reference" else None,
+    )
+    return settings.model_copy(update=_filed_under(read))
+
+
+def _kafka_read_settings(read: KafkaReadPayload) -> KafkaReadSettings:
+    return read.settings.model_copy(update=_filed_under(read))
+
+
+def _google_analytics_read_settings(read: GoogleAnalyticsReadPayload) -> GoogleAnalyticsReadSettings:
+    """The worker's report read, signed in with the payload's credential as stored."""
+    report = read.settings.google_analytics_settings
+    common = dict(
+        property_id=report.property_id,
+        start_date=report.start_date,
+        end_date=report.end_date,
+        metrics=report.metrics,
+        dimensions=report.dimensions,
+        limit=report.limit,
+        filters=[
+            GoogleAnalyticsFilter(field=f.field, operator=f.operator, value=f.value, case_sensitive=f.case_sensitive)
+            for f in report.filters
+        ],
+        order_bys=[GoogleAnalyticsOrderBy(field=ob.field, descending=ob.descending) for ob in report.order_bys],
+        **_filed_under(read),
+    )
+    if read.auth_method == "service_account":
+        return GoogleAnalyticsReadSettings(
+            auth_method="service_account", service_account_key_encrypted=read.encrypted_credential, **common
+        )
+    return GoogleAnalyticsReadSettings(
+        auth_method="oauth",
+        refresh_token_encrypted=read.encrypted_credential,
+        oauth_client_id=read.oauth_client_id,
+        oauth_client_secret_encrypted=read.oauth_client_secret_encrypted,
+        **common,
+    )
+
+
+def _rest_api_read_settings(read: RestApiReadPayload) -> RestApiReadSettings:
+    return build_rest_api_worker_settings(read.settings, read.encrypted_secret).model_copy(update=_filed_under(read))

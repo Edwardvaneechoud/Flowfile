@@ -14,6 +14,7 @@ from deltalake import DeltaTable
 from pyarrow import dataset as ds
 from sqlalchemy.orm.attributes import flag_modified
 
+from flowfile_core.catalog.compute import uses_worker
 from flowfile_core.catalog.delta_utils import (
     delete_table_storage,
     get_delta_table_size_bytes,
@@ -116,13 +117,6 @@ def _is_managed_table_path(file_path: str) -> bool:
         return True
     except (ValueError, OSError):
         return False
-
-
-def _should_offload() -> bool:
-    """Return True when heavy I/O should be delegated to the worker process."""
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-
-    return OFFLOAD_TO_WORKER.value
 
 
 def _project_sync_tables(owner_id: int) -> None:
@@ -283,7 +277,7 @@ class TableService:
         worker with no local fallback.
         """
         is_cloud = storage is not None
-        if is_cloud or _should_offload():
+        if is_cloud or uses_worker():
             try:
                 data = trigger_read_table_metadata(_catalog_table_dir_name(table_path), storage=storage)
                 schema_list = [{"name": c["name"], "dtype": c["dtype"]} for c in data["column_schema"]]
@@ -917,7 +911,7 @@ class TableService:
         target = resolve_for_namespace(table.namespace_id) if is_cloud else None
         storage_options = target.storage_options if target else None
 
-        if _should_offload():
+        if uses_worker():
             result = trigger_optimize_catalog_table(
                 _catalog_table_dir_name(data_path),
                 z_order_columns,
@@ -960,7 +954,7 @@ class TableService:
         target = resolve_for_namespace(table.namespace_id) if is_cloud else None
         storage_options = target.storage_options if target else None
 
-        if _should_offload():
+        if uses_worker():
             result = trigger_vacuum_catalog_table(
                 _catalog_table_dir_name(data_path),
                 retention_hours,
@@ -1182,7 +1176,7 @@ class TableService:
         # registered path's basename could collide with a managed table and the edit
         # would land on the wrong table. External local tables run in-process — their
         # payloads are UI-sized and this mirrors how local previews read in core.
-        offload = _should_offload() and (is_cloud or _is_managed_table_path(data_path))
+        offload = uses_worker() and (is_cloud or _is_managed_table_path(data_path))
 
         try:
             if offload:
@@ -1268,7 +1262,7 @@ class TableService:
 
         # Same offload gate as apply_table_edits: bare-name resolution is only
         # unambiguous for managed catalog directories.
-        offload = _should_offload() and (is_cloud or _is_managed_table_path(data_path))
+        offload = uses_worker() and (is_cloud or _is_managed_table_path(data_path))
 
         try:
             if offload:

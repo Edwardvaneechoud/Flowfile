@@ -88,8 +88,8 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     update_database_connection,
 )
 from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.payloads import FileWritePayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
-from flowfile_core.flowfile.execution.write_payloads import PAYLOAD_KEY, FileWritePayload
 from flowfile_core.flowfile.extensions import (
     get_formula_chain_check,
     get_formula_chain_instant_result,
@@ -2263,7 +2263,7 @@ def export_node_data(
     try:
         # head before lazy(): an in-memory DataFrame is sliced so only n rows get serialized.
         write = FileWritePayload(plan=data.head(n).lazy(), settings=output_settings, flow_id=flow_id, node_id=node_id)
-        current_context(flow).backend.run_op(OperationKind.file_write, {PAYLOAD_KEY: write})
+        current_context(flow).backend.run_op(OperationKind.file_write, op_payload(write))
     except Exception as e:
         path.unlink(missing_ok=True)
         logger.error(f"Failed to export data for node {node_id}: {e}")
