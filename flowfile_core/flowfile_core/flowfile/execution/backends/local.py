@@ -43,6 +43,7 @@ from flowfile_core.flowfile.execution.write_payloads import (
     CloudWritePayload,
     DatabaseWritePayload,
     DeltaMergePayload,
+    DeltaScd2Payload,
     DeltaWritePayload,
     FileWritePayload,
     unpack,
@@ -61,7 +62,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
 )
 from flowfile_core.secret_manager.secret_manager import decrypt_secret
 from shared.compute_protocol import PROTOCOL_VERSION, Capabilities, local_capabilities
-from shared.delta_utils import merge_into_delta, write_delta
+from shared.delta_utils import get_delta_size_bytes, merge_into_delta, scd2_into_delta, write_delta
 
 _CLOUD_SECRET_FIELDS = tuple(
     name for name, field in FullCloudStorageConnection.model_fields.items() if SecretStr in get_args(field.annotation)
@@ -119,7 +120,8 @@ class LocalBackend:
     def run_op(self, op: OperationKind, payload: OpPayload) -> OpResult:
         """Run ``op`` in this process with the payload its method documents.
 
-        The refs name the results the operation holds here; no operation of this backend reports metadata.
+        The refs name the results the operation holds here. Only the Delta writes report metadata: what they wrote,
+        in the keys the ``write_payloads`` module docstring lists.
 
         Raises:
             OperationUnsupported: This backend does not implement ``op``.
@@ -385,34 +387,97 @@ class LocalBackend:
         return OpResult(refs={})
 
     def _write_delta(self, payload: OpPayload) -> OpResult:
-        """Write the rows of the ``DeltaWritePayload`` under ``"payload"`` to its Delta table. Returns no refs."""
+        """Write the rows of the ``DeltaWritePayload`` under ``"payload"`` to its Delta table.
+
+        The plan streams into the table. Returns no refs; the metadata is the written rows' report
+        (``_written_report``), or ``{"skipped": True}`` for an append of no rows to a table with the same columns.
+        """
         write = unpack(payload, DeltaWritePayload)
-        write_delta(
+        storage_options = _storage_options(write.connection)
+        wrote = write_delta(
             write.plan,
             write.path,
             mode=write.mode,
             partition_by=write.partition_by,
-            storage_options=_storage_options(write.connection),
+            storage_options=storage_options,
             enable_cdf=write.enable_cdf,
         )
-        return OpResult(refs={})
+        if not wrote:
+            return OpResult(refs={}, metadata={"skipped": True})
+        return OpResult(refs={}, metadata=_written_report(FlowDataEngine(write.plan), write.path, storage_options))
 
     def _merge_delta(self, payload: OpPayload) -> OpResult:
         """Merge the rows of the ``DeltaMergePayload`` under ``"payload"`` into its Delta table by key.
 
-        The rows are collected first, as the merge needs them in memory. Returns no refs.
+        The rows are collected first, as the merge needs them in memory. Returns no refs; the metadata is the merged
+        rows' report (``_written_report``), or ``{"skipped": True}`` for an update of no rows on a table with the same
+        columns.
         """
         write = unpack(payload, DeltaMergePayload)
-        merge_into_delta(
-            write.plan.collect(),
+        storage_options = _storage_options(write.connection)
+        rows = write.plan.collect()
+        wrote = merge_into_delta(
+            rows,
             write.path,
             merge_mode=write.merge_mode,
             merge_keys=write.merge_keys,
             partition_by=write.partition_by,
-            storage_options=_storage_options(write.connection),
+            storage_options=storage_options,
             enable_cdf=write.enable_cdf,
         )
-        return OpResult(refs={})
+        if not wrote:
+            return OpResult(refs={}, metadata={"skipped": True})
+        return OpResult(refs={}, metadata=_written_report(FlowDataEngine(rows), write.path, storage_options))
+
+    def _scd2_delta(self, payload: OpPayload) -> OpResult:
+        """Apply the rows of the ``DeltaScd2Payload`` under ``"payload"`` to its Delta table as an SCD2 write.
+
+        The rows are collected first, as classifying them against the table needs them in memory. Returns no refs.
+        The metadata is the table's own shape after the write (an SCD2 table's rows are its whole history): its
+        ``schema``, ``row_count`` and ``column_count`` with the ``table_path``, ``size_bytes``, the Delta ``version``
+        committed and the ``scd2_metrics``; a batch that changes nothing commits nothing and reports
+        ``{"skipped": True, "version": ...}``, the version it was classified against.
+        """
+        write = unpack(payload, DeltaScd2Payload)
+        storage_options = _storage_options(write.connection)
+        result = scd2_into_delta(
+            write.plan.collect(),
+            write.path,
+            business_keys=write.business_keys,
+            valid_from_iso=write.run_timestamp,
+            compare_columns=write.compare_columns,
+            full_snapshot=write.full_snapshot,
+            surrogate_key_column=write.surrogate_key_column,
+            valid_from_column=write.valid_from_column,
+            valid_to_column=write.valid_to_column,
+            is_current_column=write.is_current_column,
+            partition_by=write.partition_by,
+            partition_on_current=write.partition_on_current,
+            storage_options=storage_options,
+        )
+        if result.skipped:
+            return OpResult(refs={}, metadata={"skipped": True, "version": result.version})
+        table_schema = pl.scan_delta(
+            write.path, **({} if storage_options is None else {"storage_options": storage_options})
+        ).collect_schema()
+        return OpResult(
+            refs={},
+            metadata={
+                "table_path": write.path,
+                "schema": [{"name": name, "dtype": str(dtype)} for name, dtype in table_schema.items()],
+                "row_count": result.rows_total,
+                "column_count": len(table_schema),
+                "size_bytes": get_delta_size_bytes(write.path, storage_options=storage_options),
+                "version": result.version,
+                "scd2_metrics": {
+                    "rows_inserted": result.rows_inserted,
+                    "rows_closed": result.rows_closed,
+                    "rows_total": result.rows_total,
+                    "rows_current": result.rows_current,
+                    "created": result.created,
+                },
+            },
+        )
 
     _OPERATIONS: ClassVar[dict[OperationKind, Callable[[LocalBackend, OpPayload], OpResult]]] = {
         OperationKind.database_read: _read_database,
@@ -426,6 +491,7 @@ class LocalBackend:
         OperationKind.cloud_write: _write_cloud_storage,
         OperationKind.delta_write: _write_delta,
         OperationKind.delta_merge: _merge_delta,
+        OperationKind.delta_scd2: _scd2_delta,
     }
 
 
@@ -476,3 +542,17 @@ def _storage_options(connection: FullCloudStorageConnectionWorkerInterface | Non
     if connection is None:
         return None
     return CloudStorageReader.get_storage_options(_decrypted_connection(connection))
+
+
+def _written_report(rows: FlowDataEngine, path: str, storage_options: dict[str, Any] | None) -> dict[str, Any]:
+    """What a Delta write or merge of ``rows`` into the table at ``path`` reports.
+
+    The schema and the counts are those of the rows written, the size that of the whole table afterwards.
+    """
+    return {
+        "table_path": path,
+        "schema": [{"name": column.column_name, "dtype": column.data_type} for column in rows.schema],
+        "row_count": rows.count(),
+        "column_count": rows.number_of_fields,
+        "size_bytes": get_delta_size_bytes(path, storage_options=storage_options),
+    }

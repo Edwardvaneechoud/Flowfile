@@ -508,7 +508,7 @@ def test_cloud_physical_read_path_existence_preview_version_history(monkeypatch)
 
     Forces the in-process reader so the test deterministically exercises core's storage_options
     threading against real MinIO, independent of the worker."""
-    monkeypatch.setattr("flowfile_core.catalog.services.previews._should_offload", lambda: False)
+    monkeypatch.setattr("flowfile_core.catalog.services.previews.uses_worker", lambda: False)
     _ensure_connection()
     try:
         get_minio_client().create_bucket(Bucket=_BUCKET)
@@ -568,7 +568,7 @@ def test_cloud_non_versioned_preview_offloads_to_worker(monkeypatch):
         captured.update(table_name=table_name, n_rows=n_rows, storage=storage)
         return CatalogTablePreview(columns=["a"], dtypes=["Int64"], rows=[[1], [2]], total_rows=2)
 
-    monkeypatch.setattr("flowfile_core.catalog.services.previews._should_offload", lambda: True)
+    monkeypatch.setattr("flowfile_core.catalog.services.previews.uses_worker", lambda: True)
     monkeypatch.setattr("flowfile_core.catalog.services.previews.trigger_delta_preview", _fake_trigger)
 
     with get_db_context() as db:

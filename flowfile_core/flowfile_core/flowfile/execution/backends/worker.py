@@ -45,6 +45,7 @@ from flowfile_core.flowfile.execution.write_payloads import (
     CloudWritePayload,
     DatabaseWritePayload,
     DeltaMergePayload,
+    DeltaScd2Payload,
     DeltaWritePayload,
     FileWritePayload,
     unpack,
@@ -206,13 +207,11 @@ class WorkerBackend:
         - ``ml_train``: ``lf``, ``staging_path``, ``model_type``, ``target_column``, ``feature_columns``, ``params``,
           ``flow_id``, ``node_id``, ``task_id``.
         - ``ml_apply``: ``lf``, ``model_path``, ``output_column``, ``flow_id``, ``node_id``, ``task_id``.
-        - ``delta_scd2``: ``lf``, ``kwargs`` (the keyword arguments of the worker's ``scd2_delta`` operation),
-          ``flow_id``, ``node_id``.
 
-        The writes ``file_write``, ``database_write``, ``cloud_write``, ``delta_write`` and ``delta_merge`` take their
-        ``write_payloads`` dataclass under ``"payload"`` instead; its plan is serialised here, its credentials sent
-        still encrypted, and the task runs as the payload's ``job_id``, so ``cancel(JobHandle("worker", job_id))``
-        reaches it while it runs.
+        The writes ``file_write``, ``database_write``, ``cloud_write``, ``delta_write``, ``delta_merge`` and
+        ``delta_scd2`` take their ``write_payloads`` dataclass under ``"payload"`` instead; its plan is serialised
+        here, its credentials sent still encrypted, and the task runs as the payload's ``job_id``, so
+        ``cancel(JobHandle("worker", job_id))`` reaches it while it runs.
 
         A read's refs are ``{"result": ref}``, a custom node's one reference per output it wrote, and a write has
         none. ``ml_train`` and the Delta writes return the worker's result dict as ``metadata``: the trained
@@ -591,8 +590,29 @@ class WorkerBackend:
         }
         return self._delta_task(write, "merge_delta", kwargs)
 
+    def _delta_scd2(self, payload: OpPayload) -> OpResult:
+        write = unpack(payload, DeltaScd2Payload)
+        kwargs = {
+            "output_path": write.path,
+            "run_timestamp": write.run_timestamp,
+            "business_keys": write.business_keys,
+            "compare_columns": write.compare_columns,
+            "full_snapshot": write.full_snapshot,
+            "surrogate_key_column": write.surrogate_key_column,
+            "valid_from_column": write.valid_from_column,
+            "valid_to_column": write.valid_to_column,
+            "is_current_column": write.is_current_column,
+            "partition_by": write.partition_by,
+            "partition_on_current": write.partition_on_current,
+            "storage_payload": _storage_payload(write.connection),
+        }
+        return self._delta_task(write, "scd2_delta", kwargs)
+
     def _delta_task(
-        self, write: DeltaWritePayload | DeltaMergePayload, operation_type: str, kwargs: dict[str, Any]
+        self,
+        write: DeltaWritePayload | DeltaMergePayload | DeltaScd2Payload,
+        operation_type: str,
+        kwargs: dict[str, Any],
     ) -> OpResult:
         """Run the worker's ``operation_type`` Delta operation over the payload's plan; its report is the metadata."""
         fetcher = self._run_tracked(
@@ -607,9 +627,6 @@ class WorkerBackend:
             ),
         )
         return OpResult(refs={}, metadata=_reported(fetcher))
-
-    def _delta_scd2(self, payload: OpPayload) -> OpResult:
-        return _catalog_delta(payload, "scd2_delta")
 
 
 def _run(start: Callable[[], BaseFetcher], on_started: Callable[[BaseFetcher], None] | None = None) -> BaseFetcher:
@@ -635,21 +652,6 @@ def _run(start: Callable[[], BaseFetcher], on_started: Callable[[BaseFetcher], N
             raise worker_failure(fetcher.error_kind, description) from e
         raise TaskFailed(description) from e
     return fetcher
-
-
-def _catalog_delta(payload: OpPayload, operation_type: str) -> OpResult:
-    """The catalog writer's SCD2 write: a worker task running ``operation_type`` over the payload's plan."""
-    fetcher = _run(
-        lambda: ExternalDfFetcher(
-            flow_id=payload["flow_id"],
-            node_id=payload["node_id"],
-            lf=payload["lf"],
-            operation_type=operation_type,
-            kwargs=payload["kwargs"],
-            wait_on_completion=False,
-        )
-    )
-    return OpResult(refs={}, metadata=_reported(fetcher))
 
 
 def _storage_payload(connection: FullCloudStorageConnectionWorkerInterface | None) -> dict[str, Any] | None:

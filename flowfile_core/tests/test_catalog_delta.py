@@ -1533,7 +1533,7 @@ class TestOptimizeVacuumService:
     def test_optimize_local(self, tmp_path, monkeypatch):
         import flowfile_core.catalog.services.tables as tables_mod
 
-        monkeypatch.setattr(tables_mod, "_should_offload", lambda: False)
+        monkeypatch.setattr(tables_mod, "uses_worker", lambda: False)
         _, schema_id = _make_namespace()
         with get_db_context() as db:
             svc = CatalogService(SQLAlchemyCatalogRepository(db))
@@ -1545,7 +1545,7 @@ class TestOptimizeVacuumService:
     def test_vacuum_local_dry_run(self, tmp_path, monkeypatch):
         import flowfile_core.catalog.services.tables as tables_mod
 
-        monkeypatch.setattr(tables_mod, "_should_offload", lambda: False)
+        monkeypatch.setattr(tables_mod, "uses_worker", lambda: False)
         _, schema_id = _make_namespace()
         with get_db_context() as db:
             svc = CatalogService(SQLAlchemyCatalogRepository(db))
@@ -1598,7 +1598,7 @@ class TestOptimizeVacuumService:
         """Maintenance must not bump updated_at: table-trigger schedules fire on it."""
         import flowfile_core.catalog.services.tables as tables_mod
 
-        monkeypatch.setattr(tables_mod, "_should_offload", lambda: False)
+        monkeypatch.setattr(tables_mod, "uses_worker", lambda: False)
         _, schema_id = _make_namespace()
         past = datetime(2020, 1, 1, 12, 0, 0)
         with get_db_context() as db:

@@ -8,6 +8,11 @@ the compute decrypts where the write runs, so no field holds a decrypted secret.
 
 Every payload names the flow and node the compute files the job and its logs under, and a ``job_id``:
 ``cancel(JobHandle(backend.id, job_id))`` stops the write while it runs.
+
+The Delta writes (``DeltaWritePayload``, ``DeltaMergePayload``, ``DeltaScd2Payload``) report what they wrote as the
+``OpResult.metadata``: ``{"skipped": True}`` when the write changed nothing, else the ``table_path``, the ``schema``
+(``name``/``dtype`` per column), ``row_count``, ``column_count`` and ``size_bytes``. An SCD2 write adds the Delta
+``version`` it settled on, a skip included, and its ``scd2_metrics``.
 """
 
 from __future__ import annotations
@@ -164,7 +169,62 @@ class DeltaMergePayload:
     job_id: str = field(default_factory=new_job_id)
 
 
-WritePayload = FileWritePayload | DatabaseWritePayload | CloudWritePayload | DeltaWritePayload | DeltaMergePayload
+@dataclass(frozen=True, kw_only=True)
+class DeltaScd2Payload:
+    """Apply a plan's rows to a Delta table as a slowly changing dimension of type 2.
+
+    A missing table is an initial load; on an existing one a changed row is end-dated and inserted again as a new
+    version, in one commit, and a batch that changes nothing commits nothing. The fields are the resolved SCD2
+    configuration of the write, the one the catalog records for the table. Every field is keyword-only.
+
+    Attributes:
+        plan: The rows to apply.
+        path: The table's path or URI.
+        business_keys: The columns that identify a row across versions.
+        compare_columns: The columns whose change opens a new version.
+        full_snapshot: Also end-date the current rows whose key the batch does not carry.
+        surrogate_key_column: The generated column holding each version's key.
+        valid_from_column: The generated column holding the instant a version became current.
+        valid_to_column: The generated column holding the instant a version stopped being current, null while it is.
+        is_current_column: The generated column flagging the current version of each key.
+        run_timestamp: The write's one processing instant as an ISO 8601 string: the ``valid_from`` of every version
+            it inserts and the ``valid_to`` of every version it closes, from which the surrogate keys derive.
+        partition_by: The partition columns a new table is created with, nested above the is-current column, or
+            ``None``.
+        partition_on_current: Partition a new table by the is-current column.
+        connection: The object-storage connection, its secrets encrypted for the user it resolves as (a catalog
+            table's owner); ``None`` for a table on the filesystem the compute writes to.
+        flow_id: The flow the compute files the job and its logs under.
+        node_id: The node the compute files the job and its logs under.
+        job_id: The id ``cancel`` reaches the running write by.
+    """
+
+    plan: pl.LazyFrame
+    path: str
+    business_keys: list[str]
+    compare_columns: list[str]
+    full_snapshot: bool
+    surrogate_key_column: str
+    valid_from_column: str
+    valid_to_column: str
+    is_current_column: str
+    run_timestamp: str
+    partition_by: list[str] | None
+    partition_on_current: bool
+    connection: FullCloudStorageConnectionWorkerInterface | None
+    flow_id: int
+    node_id: int | str
+    job_id: str = field(default_factory=new_job_id)
+
+
+WritePayload = (
+    FileWritePayload
+    | DatabaseWritePayload
+    | CloudWritePayload
+    | DeltaWritePayload
+    | DeltaMergePayload
+    | DeltaScd2Payload
+)
 PayloadT = TypeVar("PayloadT", bound=WritePayload)
 
 

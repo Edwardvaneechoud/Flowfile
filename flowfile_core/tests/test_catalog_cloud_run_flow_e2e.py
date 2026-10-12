@@ -36,7 +36,7 @@ from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.storage_backend import resolve_for_namespace
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.flowfile import flow_graph as fg
+from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.schemas import input_schema
 from tests.flowfile.conftest import (
     CATALOG_SAMPLE_DATA as SAMPLE_DATA,
@@ -107,7 +107,7 @@ def _assert_delta_objects_in_s3(file_path: str) -> None:
 
 
 def _offload_forbidden(*args, **kwargs):
-    """Sentinel for ``_write_catalog_delta_remote``: a local-execution run must write a cloud
+    """Sentinel for ``WorkerBackend.run_op``: a local-execution run must write a cloud
     catalog in-core, never offloading to a worker (which a standalone CLI/scheduler run lacks)."""
     raise AssertionError("cloud catalog write offloaded to the worker during local execution")
 
@@ -292,7 +292,7 @@ class TestCloudCatalogCliRunE2E:
         schema_id = _create_cloud_schema(uri)
         assert resolve_for_namespace(schema_id).is_cloud is True
 
-        monkeypatch.setattr(fg, "_write_catalog_delta_remote", _offload_forbidden)
+        monkeypatch.setattr(WorkerBackend, "run_op", _offload_forbidden)
 
         graph = _create_graph(execution_location="local")
         _add_manual_input(graph, SAMPLE_DATA, node_id=1)
@@ -336,7 +336,7 @@ class TestCloudCatalogCliRunE2E:
         target = resolve_for_namespace(schema_id)
         assert target.is_cloud is True
 
-        monkeypatch.setattr(fg, "_write_catalog_delta_remote", _offload_forbidden)
+        monkeypatch.setattr(WorkerBackend, "run_op", _offload_forbidden)
 
         seed = _create_graph(execution_location="local")
         _add_manual_input(seed, SAMPLE_DATA, node_id=1)
@@ -393,7 +393,7 @@ class TestCloudCatalogCliRunE2E:
         target = resolve_for_namespace(schema_id)
         assert target.is_cloud is True
 
-        monkeypatch.setattr(fg, "_write_catalog_delta_remote", _offload_forbidden)
+        monkeypatch.setattr(WorkerBackend, "run_op", _offload_forbidden)
 
         seed = _create_graph(execution_location="local")
         _add_manual_input(seed, SAMPLE_DATA, node_id=1)

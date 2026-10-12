@@ -24,9 +24,6 @@ from flowfile_core.flowfile.flow_graph.catalog_resolution import (
 from flowfile_core.flowfile.flow_graph.catalog_write import (
     _collect_source_table_versions,
     _register_catalog_table,
-    _scd2_primitive_kwargs,
-    _write_catalog_delta_local,
-    _write_catalog_delta_remote,
 )
 from flowfile_core.flowfile.flow_graph.cloud import (
     _cloud_change_read_target,
@@ -79,9 +76,6 @@ __all__ = [
     "_resolve_catalog_sql_tables",
     "_resolve_catalog_table_info",
     "_resolve_virtual_table",
-    "_scd2_primitive_kwargs",
-    "_write_catalog_delta_local",
-    "_write_catalog_delta_remote",
     "CloudStorageReader",
     "CatalogService",
     "ExternalGoogleAnalyticsFetcher",

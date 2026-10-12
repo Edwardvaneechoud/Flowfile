@@ -28,12 +28,9 @@ from flowfile_core.database.models import (
     CatalogTableReadLink,
     FlowSchedule,
 )
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import (
     _register_catalog_table,
     _resolve_virtual_table,
-    _scd2_primitive_kwargs,
-    _write_catalog_delta_local,
     add_connection,
 )
 from flowfile_core.schemas import input_schema, transform_schema
@@ -68,18 +65,6 @@ def clean_state():
     _cleanup()
     yield
     _cleanup()
-
-
-# A resolved SCD2 catalog config, the shape _resolve_scd2_config produces.
-_SCD2_CFG = {
-    "business_keys": ["id"],
-    "surrogate_key_column": "sk",
-    "valid_from_column": "valid_from",
-    "valid_to_column": "valid_to",
-    "is_current_column": "is_current",
-    "compare_columns": ["val"],
-    "full_snapshot": False,
-}
 
 
 # Catalog writer tests
@@ -1279,113 +1264,6 @@ class TestResolveVirtualTable:
         mock_svc_instance.resolve_virtual_flow_table.assert_called_once_with(
             99, user_id=None, run_location=None, node_logger=None
         )
-
-
-class TestWriteCatalogDeltaLocal:
-    """Test _write_catalog_delta_local helper."""
-
-    def test_write_delta_creates_table_and_returns_metadata(self, tmp_path):
-        """Writing a new Delta table should return metadata with schema, row_count, etc."""
-        df = FlowDataEngine(pl.LazyFrame({"name": ["Alice", "Bob"], "age": [30, 25]}))
-        dest_path = tmp_path / "test_table"
-
-        result, scd2_version = _write_catalog_delta_local(df, dest_path, delta_mode="overwrite", merge_keys=None)
-
-        assert result is not None
-        assert scd2_version is None  # only an scd2 write names a version
-        assert result["row_count"] == 2
-        assert result["column_count"] == 2
-        assert isinstance(result["schema"], list)
-        assert len(result["schema"]) == 2
-        assert result["size_bytes"] > 0
-
-    def test_write_delta_append_mode(self, tmp_path):
-        """Appending to an existing Delta table should return updated metadata."""
-        dest_path = tmp_path / "append_table"
-        df1 = FlowDataEngine(pl.LazyFrame({"x": [1, 2]}))
-        _write_catalog_delta_local(df1, dest_path, delta_mode="overwrite", merge_keys=None)
-
-        df2 = FlowDataEngine(pl.LazyFrame({"x": [3, 4]}))
-        result, _ = _write_catalog_delta_local(df2, dest_path, delta_mode="append", merge_keys=None)
-
-        assert result is not None
-        assert result["row_count"] == 2  # metadata reflects the appended batch
-
-    def test_scd2_initial_load_reports_post_write_shape(self, tmp_path):
-        """The scd2 branch reports the table's own shape, not the input frame's."""
-        df = FlowDataEngine(pl.LazyFrame({"id": [1, 2], "val": ["a", "b"]}))
-        dest_path = tmp_path / "scd2_local"
-
-        result, scd2_version = _write_catalog_delta_local(
-            df,
-            dest_path,
-            delta_mode="scd2",
-            merge_keys=["id"],
-            scd2_kwargs=_scd2_primitive_kwargs(_SCD2_CFG, "2024-01-01T00:00:00+00:00"),
-        )
-
-        assert result is not None
-        assert scd2_version == 0
-        assert result["row_count"] == 2
-        # 2 data columns + the 4 generated ones.
-        assert result["column_count"] == 6
-        assert {c["name"] for c in result["schema"]} == {"id", "val", "sk", "valid_from", "valid_to", "is_current"}
-        assert result["size_bytes"] > 0
-        assert result["scd2_metrics"]["rows_inserted"] == 2
-        assert result["scd2_metrics"]["created"] is True
-
-    def test_scd2_change_closes_and_inserts(self, tmp_path):
-        dest_path = tmp_path / "scd2_local_change"
-        _write_catalog_delta_local(
-            FlowDataEngine(pl.LazyFrame({"id": [1, 2], "val": ["a", "b"]})),
-            dest_path,
-            delta_mode="scd2",
-            merge_keys=["id"],
-            scd2_kwargs=_scd2_primitive_kwargs(_SCD2_CFG, "2024-01-01T00:00:00+00:00"),
-        )
-
-        result, scd2_version = _write_catalog_delta_local(
-            FlowDataEngine(pl.LazyFrame({"id": [1, 2], "val": ["A", "b"]})),
-            dest_path,
-            delta_mode="scd2",
-            merge_keys=["id"],
-            scd2_kwargs=_scd2_primitive_kwargs(_SCD2_CFG, "2024-02-01T00:00:00+00:00"),
-        )
-
-        assert result is not None
-        assert scd2_version == 1
-        assert result["row_count"] == 3
-        assert result["scd2_metrics"] == {
-            "rows_inserted": 1,
-            "rows_closed": 1,
-            "rows_total": 3,
-            "rows_current": 2,
-            "created": False,
-        }
-
-    def test_scd2_unchanged_returns_none(self, tmp_path):
-        """The skip protocol: an unchanged batch returns no metadata, so nothing is re-registered."""
-        dest_path = tmp_path / "scd2_local_skip"
-        frame = pl.LazyFrame({"id": [1], "val": ["a"]})
-        _write_catalog_delta_local(
-            FlowDataEngine(frame),
-            dest_path,
-            delta_mode="scd2",
-            merge_keys=["id"],
-            scd2_kwargs=_scd2_primitive_kwargs(_SCD2_CFG, "2024-01-01T00:00:00+00:00"),
-        )
-
-        result, scd2_version = _write_catalog_delta_local(
-            FlowDataEngine(frame),
-            dest_path,
-            delta_mode="scd2",
-            merge_keys=["id"],
-            scd2_kwargs=_scd2_primitive_kwargs(_SCD2_CFG, "2024-02-01T00:00:00+00:00"),
-        )
-
-        assert result is None
-        # The skip still names the version the writer node reads its output back at.
-        assert scd2_version == 0
 
 
 class TestRegisterCatalogTable:
