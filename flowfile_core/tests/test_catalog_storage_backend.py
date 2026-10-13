@@ -22,10 +22,16 @@ from flowfile_core.catalog.storage_backend import (
     resolve_catalog_storage,
     resolve_for_namespace,
 )
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.flowfile.database_connection_manager.db_connections import store_cloud_connection
+from flowfile_core.flowfile.database_connection_manager.db_connections import (
+    get_cloud_connection,
+    store_cloud_connection,
+)
+from flowfile_core.flowfile.execution.protocol import CredentialRef
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
+from shared.cloud_credential_provider import CredentialRefProvider, EncryptedCredentialProvider
 from shared.storage_config import storage
 
 _CONNECTION_NAME = "catalog-sb-minio"
@@ -171,6 +177,47 @@ def test_worker_payload_owner_encrypted():
     # Owner-keyed for the worker (owner_id=1 embedded), never plaintext.
     assert secret.startswith("$ffsec$1$1$")
     assert "minioadmin" not in secret
+
+
+def test_with_the_protocol_flag_a_cloud_target_names_its_connection(monkeypatch):
+    monkeypatch.setattr(FLOWFILE_COMPUTE_PROTOCOL, "value", True)
+    _ensure_connection()
+    with get_db_context() as db:
+        connection_id = get_cloud_connection(db, _CONNECTION_NAME, 1).id
+    cat_id = _make_namespace(storage_uri=_CATALOG_URI, storage_connection_name=_CONNECTION_NAME)
+
+    target = resolve_for_namespace(cat_id)
+
+    # Resolved as the catalog owner, whoever scans.
+    assert target.credential_ref == CredentialRef(connection_id=connection_id, user_id=1)
+    assert target.plan_storage_options["endpoint_url"] == "http://localhost:9000"
+    assert "aws_access_key_id" not in target.plan_storage_options
+    assert "aws_secret_access_key" not in target.plan_storage_options
+    # Core's own reads still get the decrypted options.
+    assert target.storage_options["aws_secret_access_key"] == "minioadmin"
+    first, second = target.scan_kwargs(5), target.scan_kwargs(5)
+    for kwargs in (first, second):
+        provider = kwargs["credential_provider"]
+        assert isinstance(provider, CredentialRefProvider)
+        assert (provider.connection_id, provider.user_id) == (connection_id, 1)
+        assert "aws_access_key_id" not in kwargs["storage_options"]
+        assert "aws_secret_access_key" not in kwargs["storage_options"]
+    assert first["credential_provider"].nonce != second["credential_provider"].nonce
+
+
+def test_without_the_protocol_flag_a_cloud_target_scans_with_encrypted_credentials(monkeypatch):
+    monkeypatch.setattr(FLOWFILE_COMPUTE_PROTOCOL, "value", False)
+    _ensure_connection()
+    cat_id = _make_namespace(storage_uri=_CATALOG_URI, storage_connection_name=_CONNECTION_NAME)
+
+    target = resolve_for_namespace(cat_id)
+
+    assert target.credential_ref is None
+    provider = target.scan_kwargs(5)["credential_provider"]
+    assert isinstance(provider, EncryptedCredentialProvider)
+    # Encrypted for the scanning user, as before.
+    assert provider.encrypted_credentials.startswith("$ffsec$1$5$")
+    assert resolve_for_namespace(_make_namespace()).scan_kwargs(1) == {}
 
 
 def test_shim_resolves_by_namespace_ignoring_user():

@@ -44,7 +44,6 @@ from flowfile_core.database.models import CatalogTable
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
 from flowfile_core.flowfile.execution.errors import ComputeError
-from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_resolve_virtual_table,
 )
@@ -410,11 +409,8 @@ class VirtualTableService:
                 )
             return None
         if t.file_path and _is_cloud_uri(t.file_path):
-            target = resolve_for_namespace(t.namespace_id)
             # The resolved frame is shipped to the worker, so the credentials must not sit in the plan.
-            return pl.scan_delta(
-                t.file_path, **CloudStorageReader.get_secure_scan_kwargs(target.storage_options, user_id)
-            )
+            return pl.scan_delta(t.file_path, **resolve_for_namespace(t.namespace_id).scan_kwargs(user_id))
         if t.file_path and is_delta_table(Path(t.file_path)):
             return pl.scan_delta(t.file_path)
         return None

@@ -24,7 +24,7 @@ from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.storage_backend import resolve_for_namespace
 from flowfile_core.configs import settings as core_settings
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.database.models import Base
+from flowfile_core.database.models import Base, CatalogTable
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     delete_cloud_connection,
     store_cloud_connection,
@@ -41,7 +41,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
 )
 from shared import cloud_credential_provider as cp
 from shared.delta_utils import write_delta
-from tests.flowfile.conftest import add_test_manual_input, catalog_cleanup, create_test_graph
+from tests.flowfile.conftest import add_test_catalog_writer, add_test_manual_input, catalog_cleanup, create_test_graph
 from tests.test_catalog_cloud_virtual import _create_cloud_schema, _ensure_connection, requires_minio
 
 try:
@@ -258,6 +258,12 @@ def _assert_no_secret(plans: list[bytes], *secrets: bytes) -> None:
     assert leaked == [], f"{len(leaked)} of {len(plans)} serialized plans carry a plaintext secret"
 
 
+def _no_encrypted_provider(plans: list[bytes]) -> None:
+    """No plan carries credentials core resolved: no encrypted provider, whatever its ciphertext, and no ``$ffsec$``."""
+    carrying = [i for i, plan in enumerate(plans) if b"EncryptedCredentialProvider" in plan or b"$ffsec$" in plan]
+    assert carrying == [], f"{len(carrying)} of {len(plans)} serialized plans carry core-resolved credentials"
+
+
 class TestSecureScanKwargs:
     """The helper every serialized cloud scan goes through; no I/O."""
 
@@ -389,10 +395,8 @@ def test_cloud_reader_plans_carry_no_secret(
         assert len(serialized_plans) > len(reader_plans), "the run shipped no plan to the worker"
     _assert_no_secret(serialized_plans, SECRET)
     if protocol:
-        # The change-feed read (node 11) carries the $ffsec$ provider.
-        named = [plan for plan in serialized_plans if b"CredentialRefProvider" in plan]
-        assert named
-        assert not any(b"$ffsec$" in plan for plan in named)
+        _no_encrypted_provider(serialized_plans)
+        assert any(b"CredentialRefProvider" in plan for plan in serialized_plans)
 
 
 @requires_minio
@@ -529,7 +533,9 @@ class TestCatalogReadersOnObjectStorage:
         yield
         catalog_cleanup()
 
-    def test_table_sql_and_change_reads_carry_no_secret(self, execution_location, minio_prefix, serialized_plans):
+    def test_table_sql_virtual_and_change_reads_carry_no_secret(
+        self, execution_location, protocol, minio_prefix, serialized_plans
+    ):
         _ensure_connection()
         schema_id = _create_cloud_schema(f"s3://{_BUCKET}/{minio_prefix}/catalog")
         target = resolve_for_namespace(schema_id)
@@ -550,6 +556,20 @@ class TestCatalogReadersOnObjectStorage:
                 size_bytes=100,
             ).id
             svc.enable_table_cdc(table_id)
+            # The SQL editor refuses cloud tables, so the query virtual table is put in the catalog directly.
+            virtual_id = (
+                SQLAlchemyCatalogRepository(db)
+                .create_table(
+                    CatalogTable(
+                        name=f"{table_name}_query",
+                        namespace_id=schema_id,
+                        owner_id=1,
+                        table_type="virtual",
+                        sql_query=f"SELECT * FROM {table_name} WHERE id > 1",
+                    )
+                )
+                .id
+            )
         write_delta(pl.DataFrame(_ROWS[:1]), dest, mode="append", storage_options=target.storage_options)
 
         graph = create_test_graph(flow_id=7404, execution_location=execution_location)
@@ -565,6 +585,7 @@ class TestCatalogReadersOnObjectStorage:
                 cdc_mode="since_version",
                 cdc_from_version=0,
             ),
+            7: input_schema.NodeCatalogReader(flow_id=graph.flow_id, node_id=7, catalog_table_id=virtual_id),
         }
         for node_id, settings in readers.items():
             graph.add_node_promise(
@@ -576,10 +597,39 @@ class TestCatalogReadersOnObjectStorage:
         run_info = graph.run_graph()
 
         _assert_run_succeeded(run_info)
-        assert {node_id + 1: _count(graph, node_id + 1) for node_id in readers} == {2: 4, 4: 2, 6: 1}
+        assert {node_id + 1: _count(graph, node_id + 1) for node_id in readers} == {2: 4, 4: 2, 6: 1, 8: 2}
         for node_id in readers:
             graph.get_node(node_id).get_resulting_data().data_frame.serialize()
         _assert_no_secret(serialized_plans, SECRET)
+        if protocol:
+            _no_encrypted_provider(serialized_plans)
+            assert any(b"CredentialRefProvider" in plan for plan in serialized_plans)
+
+    def test_scd2_writer_output_carries_no_secret(self, execution_location, protocol, minio_prefix, serialized_plans):
+        _ensure_connection()
+        schema_id = _create_cloud_schema(f"s3://{_BUCKET}/{minio_prefix}/catalog")
+        graph = create_test_graph(flow_id=7408, execution_location=execution_location)
+        add_test_manual_input(graph, _ROWS, node_id=1)
+        add_test_catalog_writer(
+            graph,
+            node_id=2,
+            depending_on_id=1,
+            table_name=f"scd2_probe_{uuid.uuid4().hex[:6]}",
+            namespace_id=schema_id,
+            write_mode="scd2",
+            merge_keys=["id"],
+            scd2=input_schema.Scd2Settings(),
+        )
+        _add_record_count(graph, 3, 2)
+
+        _assert_run_succeeded(graph.run_graph())
+
+        assert _count(graph, 3) == 3
+        graph.get_node(2).get_resulting_data().data_frame.serialize()
+        _assert_no_secret(serialized_plans, SECRET)
+        if protocol:
+            _no_encrypted_provider(serialized_plans)
+            assert any(b"CredentialRefProvider" in plan for plan in serialized_plans)
 
 
 @requires_minio
