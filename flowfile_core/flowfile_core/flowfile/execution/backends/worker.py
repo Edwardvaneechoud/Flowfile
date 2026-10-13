@@ -276,10 +276,11 @@ class WorkerBackend:
         }
 
     def capabilities(self) -> Capabilities:
-        """The answer of the worker at ``url`` to ``GET /capabilities``, with the operations ``run_op`` runs there.
+        """The answer of the worker at ``url`` to ``GET /capabilities``, as the worker declares it.
 
         With the protocol flag on, the answer to ``GET /v1/capabilities``. Either is one request outside the handshake
-        gate, signed with this backend's token and carrying its ``X-Protocol-Version``.
+        gate, signed with this backend's token and carrying its ``X-Protocol-Version``. Its ``operations`` are the
+        kinds the worker runs, the ones ``run_op`` sends it.
 
         Raises:
             ComputeUnavailable: The worker could not be reached.
@@ -305,8 +306,7 @@ class WorkerBackend:
             )
         if not response.ok:
             raise _v1_failure(response.status_code, response.content, response.reason)
-        answer = Capabilities.model_validate(response.json())
-        return answer.model_copy(update={"operations": frozenset(op.value for op in self._operations)})
+        return Capabilities.model_validate(response.json())
 
     def submit(
         self,

@@ -14,6 +14,7 @@ import requests
 
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import (
@@ -55,7 +56,7 @@ from flowfile_core.schemas.input_schema import (
     ReceivedTable,
 )
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
-from shared.compute_protocol import Capabilities
+from shared.compute_protocol import local_capabilities
 
 PEOPLE = pl.DataFrame(
     {"id": list(range(10)), "name": [f"n{i}" for i in range(10)], "score": [i * 1.5 for i in range(10)]}
@@ -116,11 +117,6 @@ def read_stream(data: bytes) -> pa.Table:
     return pa.ipc.open_stream(io.BytesIO(data)).read_all()
 
 
-def handshake_fields(capabilities: Capabilities) -> dict:
-    """What the worker reports about itself; ``operations`` is what the backend adds."""
-    return capabilities.model_dump(exclude={"operations"})
-
-
 def test_the_worker_backend_is_a_compute_backend():
     worker = WorkerBackend(url=WORKER_URL)
 
@@ -141,9 +137,24 @@ def test_the_registry_builds_the_worker_backend_from_its_built_in_table():
 
 
 def test_capabilities_are_the_workers_answer(running_worker):
-    assert handshake_fields(WorkerBackend(url=WORKER_URL).capabilities()) == handshake_fields(
-        fetch_worker_capabilities(WORKER_URL)
+    assert WorkerBackend(url=WORKER_URL).capabilities() == fetch_worker_capabilities(WORKER_URL)
+
+
+def test_capabilities_pass_the_workers_declaration_through(monkeypatch):
+    declared = local_capabilities().model_copy(
+        update={
+            "operations": frozenset({"fuzzy_join"}),
+            "read_schemes": frozenset({"s3"}),
+            "write_schemes": frozenset({"s3"}),
+            "credential_resolution": "vended",
+        }
     )
+    answer = requests.Response()
+    answer.status_code = 200
+    answer._content = declared.model_dump_json().encode()
+    monkeypatch.setattr(worker_module.requests, "get", lambda url, **kwargs: answer)
+
+    assert WorkerBackend(url=WORKER_URL).capabilities() == declared
 
 
 @pytest.fixture
@@ -186,7 +197,7 @@ def test_a_backend_made_on_another_url_sends_every_call_there(running_worker, mo
         result = worker.submit(PEOPLE.lazy(), [], hints(4), new_result_id(), flow_id=-1, node_id=-1)
         assert read_stream(result.sample).num_rows == 4
         assert worker.exists(result.ref) is True
-        assert handshake_fields(worker.capabilities()) == handshake_fields(configured_answer)
+        assert worker.capabilities() == configured_answer
         worker.release(result.ref)
         assert worker.exists(result.ref) is False
     finally:
@@ -207,7 +218,7 @@ def test_a_backend_made_on_a_url_nothing_answers_fails_naming_it(running_worker,
 
     configured = registry.backend(registry.WORKER_BACKEND_ID)
     assert configured.url == WORKER_URL
-    assert handshake_fields(configured.capabilities()) == handshake_fields(fetch_worker_capabilities(WORKER_URL))
+    assert configured.capabilities() == fetch_worker_capabilities(WORKER_URL)
 
 
 def test_submit_holds_the_result_in_the_file_the_worker_wrote(backend, kept, transport):

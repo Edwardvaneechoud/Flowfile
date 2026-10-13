@@ -72,7 +72,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
     FullCloudStorageConnectionWorkerInterface,
 )
 from flowfile_core.secret_manager.secret_manager import decrypt_secret
-from shared.compute_protocol import PROTOCOL_VERSION, Capabilities, local_capabilities
+from shared.compute_protocol import CLOUD_SCHEMES, PROTOCOL_VERSION, Capabilities, local_capabilities
 from shared.delta_utils import (
     get_delta_size_bytes,
     merge_into_delta,
@@ -106,8 +106,18 @@ class LocalBackend:
         self._results: dict[str, pl.LazyFrame] = {}
 
     def capabilities(self) -> Capabilities:
-        """The capabilities of this process, with the operations ``run_op`` runs here."""
-        return local_capabilities().model_copy(update={"operations": frozenset(op.value for op in self._OPERATIONS)})
+        """The capabilities of this process, with the operations ``run_op`` runs here and the schemes it uses.
+
+        Core's process is on core's host, so it reads and writes local files as well as object storage.
+        """
+        schemes = CLOUD_SCHEMES | {"file"}
+        return local_capabilities().model_copy(
+            update={
+                "operations": frozenset(op.value for op in self._OPERATIONS),
+                "read_schemes": schemes,
+                "write_schemes": schemes,
+            }
+        )
 
     def submit(
         self,

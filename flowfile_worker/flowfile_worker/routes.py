@@ -29,6 +29,7 @@ from flowfile_worker.external_sources.rest_api_source.main import read_rest_api
 from flowfile_worker.external_sources.rest_api_source.models import RestApiReadSettings
 from flowfile_worker.external_sources.sql_source.main import read_sql_source
 from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings
+from flowfile_worker.protocol_routes import worker_capabilities
 from flowfile_worker.spawner import (
     process_manager,
     start_apply_model_process,
@@ -38,7 +39,7 @@ from flowfile_worker.spawner import (
     start_process,
     start_train_model_process,
 )
-from shared.compute_protocol import PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER, Capabilities, local_capabilities
+from shared.compute_protocol import PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER, Capabilities
 from shared.delta_utils import validate_catalog_uri
 from shared.kafka.models import KafkaReadSettings
 from shared.storage_config import storage
@@ -85,8 +86,8 @@ def create_and_get_default_cache_dir(flowfile_flow_id: int) -> str:
 
 @router.get("/capabilities", response_model=Capabilities)
 async def capabilities() -> Capabilities:
-    """What this worker can run: versions, platform, plugin versions and plugin library paths."""
-    return local_capabilities()
+    """What this worker can run: versions, platform, plugins, and the operations and schemes it declares."""
+    return worker_capabilities()
 
 
 @router.post("/submit_query/")

@@ -75,6 +75,8 @@ services:
       - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:-}
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data
+      # Shares core's data volumes, so it declares local files among the schemes it reads and writes
+      - FLOWFILE_WORKER_LOCAL_FILES=1
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
     volumes:
