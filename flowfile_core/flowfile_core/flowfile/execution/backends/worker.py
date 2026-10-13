@@ -15,6 +15,9 @@ worker holds as it holds a stored submit; the writes, the ML kinds and ``viz_ses
 ``import_uri`` asks the worker to hold a scan of the URI (``POST /v1/results/{id}/import``). A result is read and
 exported over the routes that minted it, whatever the flag says when it is read: a ``/v1`` result is exported by a
 child on the worker (``POST /v1/results/{id}/export``), a task-route result by a worker task running the same child.
+A blob, a file of bytes the worker holds that is not rows, is held over ``/v1`` only: ``import_uri(kind="blob")`` has
+the worker copy or fetch it and ``export`` has it copy or ``PUT`` it, and ``plan_for``, ``sample`` and ``count`` refuse
+it before any call.
 """
 
 from __future__ import annotations
@@ -248,7 +251,8 @@ class WorkerBackend:
     ``exists`` and ``release`` go to ``/v1/results/{id}`` and ``export`` to ``POST /v1/results/{id}/export``,
     ``plan_for`` decodes the location without a call (a ``pl.scan_ipc`` of the worker's path, or the deferred plan)
     and ``result_file`` names no file. ``import_uri`` posts to ``POST /v1/results/{id}/import``, so the worker holds
-    the scan of the URI as a deferred ``/v1`` result. A reference is read over the routes that minted it, whatever the
+    the scan of the URI as a deferred ``/v1`` result, and with ``kind="blob"`` copies a ``file://`` URI or fetches a
+    presigned ``https://`` URL into a blob it holds. A reference is read over the routes that minted it, whatever the
     flag says when it is read, and only ``/v1`` references go as a submit's ``inputs``. ``run_op`` runs the reads,
     ``fuzzy_join``, ``random_split`` and ``custom_node`` over ``POST /v1/ops/{kind}`` (``run_op`` has the details),
     whose refs are ``/v1`` references like a stored submit's; every other operation and its results stay on the task
@@ -256,6 +260,11 @@ class WorkerBackend:
     socket's upgrade carry ``X-Protocol-Version``. A REST answer, a refused upgrade and an ``error`` frame map alike
     (``_v1_error``): 426 is ``VersionMismatch``, a 404 ``ResultMissing``, and a failed child's 500 goes through
     ``worker_failure``.
+
+    A blob (``ResultRef.kind == "blob"``) has no rows: ``plan_for``, ``sample`` and ``count`` raise
+    ``OperationUnsupported`` for one, as ``submit`` does for one among its inputs, before the worker is called, while
+    ``exists``, ``release`` and ``export`` take it like any ``/v1`` result. With the flag off ``import_uri`` of a blob
+    is ``OperationUnsupported`` too, as the task routes hold no blob.
     """
 
     id = WORKER_BACKEND_ID
@@ -349,6 +358,7 @@ class WorkerBackend:
             ComputeUnavailable: Over ``/v1``, the worker could not be reached, or its socket closed after the plan was
                 sent.
             ForeignRef: An input another backend minted.
+            OperationUnsupported: An input is a blob, which a plan cannot read; nothing was sent.
             PlanRejected: The worker could not load the plan.
             ResultMissing: Over ``/v1``, the worker no longer holds an input.
             TaskFailed: The plan failed on the worker, or over ``/v1`` the socket went silent past
@@ -357,7 +367,7 @@ class WorkerBackend:
                 or on the REST route.
         """
         for ref in inputs:
-            self._check(ref)
+            self._table(ref)
         if settings.FLOWFILE_COMPUTE_PROTOCOL:
             with self._lock:
                 self._deferred.pop(result_id, None)
@@ -455,8 +465,9 @@ class WorkerBackend:
 
         A stored result's rows are read from its file; a deferred one's come from a worker sampler task over its
         plan, filed under ``ref.result_id`` like the sample ``submit`` took. A ``/v1`` result's are the worker's
-        answer to ``GET /v1/results/{id}/sample``.
+        answer to ``GET /v1/results/{id}/sample``. A blob is refused with ``OperationUnsupported`` before any call.
         """
+        self._table(ref)
         if self._v1_location(ref) is not None:
             return self._v1("GET", f"/results/{ref.result_id}/sample", waits=True, params={"n": n}).content
         if ref.state == "deferred":
@@ -468,8 +479,10 @@ class WorkerBackend:
     def count(self, ref: ResultRef) -> int:
         """The number of rows in ``ref``'s file, or for a deferred result what the worker's count task returns.
 
-        A ``/v1`` result's count is the worker's answer, asked even when the reference carries one.
+        A ``/v1`` result's count is the worker's answer, asked even when the reference carries one. A blob is refused
+        with ``OperationUnsupported`` before any call.
         """
+        self._table(ref)
         if self._v1_location(ref) is not None:
             return self._v1("GET", f"/results/{ref.result_id}/count", waits=True).json()["row_count"]
         if ref.state == "deferred":
@@ -534,8 +547,10 @@ class WorkerBackend:
 
         Raises:
             ForeignRef: Another backend minted ``ref``.
+            OperationUnsupported: ``ref`` is a blob, which has no rows to plan over.
             ResultMissing: This backend no longer holds the deferred plan, or the stored result's file is gone.
         """
+        self._table(ref)
         location = self._v1_location(ref)
         if location is not None:
             if location.kind == "file":
@@ -575,13 +590,20 @@ class WorkerBackend:
         crosses as the connection's id and its user's, resolved in the child. A result is exported over the routes
         that minted it, whatever the flag says.
 
+        A blob goes to the same ``/v1`` route, where the worker copies its file to a ``file://`` URI or ``PUT``s it to
+        a presigned ``https://`` URL; such a URL carries its own authorisation, so a blob takes no credential.
+
         Raises:
             ComputeUnavailable: The worker could not be reached.
             ForeignRef: Another backend minted ``ref``.
             ResultMissing: The worker, or this backend, no longer holds ``ref``.
-            TaskFailed: The worker's sink failed.
+            TaskFailed: The worker's sink or copy failed, or it refused the URI's scheme for a blob (422).
+            ValueError: ``ref`` is a blob and ``credential`` is set; nothing was sent.
         """
-        if self._v1_location(ref) is not None:
+        location = self._v1_location(ref)
+        if ref.kind == "blob" and credential is not None:
+            raise ValueError("A blob is copied to a URI that carries its own authorisation; it takes no credential")
+        if location is not None:
             body = {"uri": uri, "credential": _wire_credential(credential)}
             return self._v1("POST", f"/results/{ref.result_id}/export", waits=True, json=body).json()["uri"]
         plan = self.plan_for(ref)
@@ -599,7 +621,12 @@ class WorkerBackend:
         return uri
 
     def import_uri(
-        self, uri: str, schema: Schema, row_count: int | None, credential: CredentialRef | None
+        self,
+        uri: str,
+        schema: Schema | None,
+        row_count: int | None,
+        credential: CredentialRef | None,
+        kind: Literal["table", "blob"] = "table",
     ) -> ResultRef:
         """Hold a scan of the parquet at ``uri`` as a deferred result with the ``schema`` and ``row_count`` given.
 
@@ -609,10 +636,30 @@ class WorkerBackend:
         without a call. With it off the scan is held in this process like every deferred plan. ``release`` forgets
         the scan and leaves the file.
 
+        With ``kind="blob"`` and the flag on, the same route has the worker copy the bytes at a ``file://`` URI or
+        fetch a presigned ``https://`` URL into a blob it holds, before it answers; the reference is a materialised
+        blob with no columns and no row count, and ``release`` removes the worker's copy.
+
         Raises:
             ComputeUnavailable: Over ``/v1``, the worker could not be reached.
+            OperationUnsupported: A blob with the protocol flag off; nothing was sent.
+            TaskFailed: The worker refused the URI's scheme for a blob (422), or its copy or fetch failed.
+            ValueError: A table without ``schema``, or a blob with a ``schema``, a ``row_count`` or a ``credential``;
+                nothing was sent.
         """
         result_id = uuid.uuid4().hex
+        if kind == "blob":
+            if schema is not None or row_count is not None or credential is not None:
+                raise ValueError("A blob import takes no schema, no row count and no credential")
+            if not settings.FLOWFILE_COMPUTE_PROTOCOL:
+                raise OperationUnsupported(
+                    "The worker backend holds a blob over its /v1 routes, with the protocol flag on"
+                )
+            body = {"uri": uri, "credential": None, "columns": [], "row_count": None, "kind": "blob"}
+            response = self._v1("POST", f"/results/{result_id}/import", waits=True, json=body)
+            return self._ref_from_wire(wire.ResultRef.model_validate_json(response.content))
+        if schema is None:
+            raise ValueError("A table import needs its schema: it is the caller's, never read from the file")
         if settings.FLOWFILE_COMPUTE_PROTOCOL:
             body = {
                 "uri": uri,
@@ -686,6 +733,14 @@ class WorkerBackend:
     def _check(self, ref: ResultRef) -> None:
         if ref.backend_id != self.id:
             raise ForeignRef(f"Result {ref.result_id!r} belongs to backend {ref.backend_id!r}, not {self.id!r}")
+
+    def _table(self, ref: ResultRef) -> None:
+        """``_check``, then ``OperationUnsupported`` for a blob, which has no rows to plan over, sample or count."""
+        self._check(ref)
+        if ref.kind == "blob":
+            raise OperationUnsupported(
+                f"Result {ref.result_id} is a blob: it has no rows to plan over, sample or count"
+            )
 
     def _file(self, ref: ResultRef) -> str:
         self._check(ref)
@@ -826,6 +881,7 @@ class WorkerBackend:
             row_count=ref.row_count,
             state=ref.state,
             location=ref.location,
+            kind=ref.kind,
         )
 
     def _v1_op(self, op: OperationKind, payload: OpPayload) -> OpResult:

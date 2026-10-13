@@ -2,7 +2,7 @@
 
 With the protocol flag on, a plan that must be materialised is streamed to a file under core's storage directory
 instead, and held as a scan of that file. A result is exported to a URI by a streaming sink of its plan, and a URI is
-imported as a scan held deferred.
+imported as a scan held deferred. A blob is copied into core's storage directory and out again, and never read as rows.
 """
 
 import datetime
@@ -31,6 +31,7 @@ from flowfile_core.flowfile.execution.payloads import (
 )
 from flowfile_core.flowfile.execution.protocol import (
     ComputeBackend,
+    CredentialRef,
     JobStatus,
     OperationKind,
     OpResult,
@@ -59,6 +60,7 @@ SCD2_TABLE_SCHEMA = [
     {"name": "valid_to", "dtype": "Datetime(time_unit='us', time_zone='UTC')"},
     {"name": "is_current", "dtype": "Boolean"},
 ]
+BLOB = bytes(range(256)) * 64
 
 
 def hints(*, must_materialise: bool = False, preview_rows: int | None = None) -> SubmitHints:
@@ -116,7 +118,7 @@ def test_the_local_backend_satisfies_the_backend_interface(backend):
     capabilities = backend.capabilities()
     undeclared = {"operations": frozenset(), "read_schemes": frozenset(), "write_schemes": frozenset()}
     assert capabilities.model_copy(update=undeclared) == local_capabilities()
-    assert capabilities.read_schemes == capabilities.write_schemes == {"file", "s3", "az", "gs"}
+    assert capabilities.read_schemes == capabilities.write_schemes == {"file", "s3", "az", "gs", "https"}
     assert capabilities.credential_resolution == "master_key"
 
 
@@ -330,6 +332,82 @@ def test_import_uri_holds_a_scan_with_the_given_schema_and_count_and_reads_nothi
     backend.release(ref)
     assert not backend.exists(ref)
     assert path.is_file()
+
+
+@pytest.fixture
+def blob_source(monkeypatch, tmp_path):
+    """A file of ``BLOB`` to import, with core's storage directory in ``tmp_path / "storage"``."""
+    monkeypatch.setattr(storage, "_base_dir", tmp_path / "storage")
+    source = tmp_path / "model.bin"
+    source.write_bytes(BLOB)
+    return source
+
+
+def test_a_blob_is_copied_into_cores_storage_and_out_again(backend, blob_source, tmp_path):
+    ref = backend.import_uri(f"file://{blob_source}", None, None, None, kind="blob")
+
+    (held,) = storage.cache_directory.rglob("*.blob")
+    assert held.read_bytes() == BLOB
+    assert (ref.kind, ref.state, ref.schema, ref.row_count) == ("blob", "materialised", [], None)
+    assert backend.exists(ref)
+    target = f"file://{tmp_path}/copy.bin"
+    assert backend.export(ref, target, None) == target
+    assert (tmp_path / "copy.bin").read_bytes() == BLOB
+    backend.release(ref)
+    assert not backend.exists(ref)
+    assert not held.exists()
+    assert blob_source.read_bytes() == (tmp_path / "copy.bin").read_bytes() == BLOB
+    with pytest.raises(ResultMissing):
+        backend.export(ref, f"file://{tmp_path}/released.bin", None)
+
+
+def test_a_plan_cannot_read_a_blob(backend, blob_source, ten_rows):
+    blob = backend.import_uri(f"file://{blob_source}", None, None, None, kind="blob")
+
+    with pytest.raises(OperationUnsupported, match="is a blob"):
+        submit(backend, ten_rows, [blob])
+    for read in (backend.plan_for, backend.count, lambda ref: backend.sample(ref, 1)):
+        with pytest.raises(OperationUnsupported, match="is a blob"):
+            read(blob)
+    assert backend._results == {}
+    backend.release(blob)
+
+
+@pytest.mark.parametrize(
+    "given",
+    [{"schema": []}, {"row_count": 0}, {"credential": CredentialRef(connection_id=7, user_id=3)}],
+    ids=["schema", "row_count", "credential"],
+)
+def test_a_blob_takes_no_credential_schema_or_row_count(backend, blob_source, tmp_path, given):
+    arguments = {"schema": None, "row_count": None, "credential": None, **given}
+
+    with pytest.raises(ValueError, match="A blob import takes no"):
+        backend.import_uri(f"file://{blob_source}", **arguments, kind="blob")
+
+    assert backend._blobs == {}
+    assert list(storage.cache_directory.rglob("*.blob")) == []
+    blob = backend.import_uri(f"file://{blob_source}", None, None, None, kind="blob")
+    with pytest.raises(ValueError, match="takes no credential"):
+        backend.export(blob, f"file://{tmp_path}/out.bin", CredentialRef(connection_id=7, user_id=3))
+    assert not (tmp_path / "out.bin").exists()
+    backend.release(blob)
+
+
+def test_a_table_import_needs_its_schema(backend, tmp_path):
+    with pytest.raises(ValueError, match="needs its schema"):
+        backend.import_uri(f"file://{tmp_path}/in.parquet", None, 10, None)
+
+    assert backend._results == {}
+
+
+def test_a_blob_uri_of_another_scheme_is_refused(backend, blob_source, tmp_path):
+    with pytest.raises(ValueError, match="not s3://"):
+        backend.import_uri("s3://bucket/model.bin", None, None, None, kind="blob")
+    assert backend._blobs == {}
+    blob = backend.import_uri(f"file://{blob_source}", None, None, None, kind="blob")
+    with pytest.raises(ValueError, match="not s3://"):
+        backend.export(blob, "s3://bucket/model.bin", None)
+    backend.release(blob)
 
 
 @pytest.mark.parametrize("kind", UNSUPPORTED_KINDS, ids=lambda kind: kind.value)

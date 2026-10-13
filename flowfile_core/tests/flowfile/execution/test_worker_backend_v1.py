@@ -6,7 +6,8 @@ so each submit falls back to ``POST /v1/submit``. The socket-only tests at the e
 socket. The dispatch tests turn the flag off again mid-test to show that a result is read over the routes that minted
 it. The operation tests run the reads, the fuzzy join, the random split and a custom node over
 ``POST /v1/ops/{kind}`` (socket only: the transport is a submit's concern) and read every output over the wire. The
-export and import tests write a result to a URI on the worker and hold a URI there as a result.
+export and import tests write a result to a URI on the worker and hold a URI there as a result, and hold a blob there,
+which no call reads as rows.
 """
 
 import io
@@ -38,6 +39,7 @@ from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import TOKEN_RULE, WorkerBackend, _flowfile_schema
 from flowfile_core.flowfile.execution.errors import (
     ComputeUnavailable,
+    OperationUnsupported,
     PlanRejected,
     ResultMissing,
     TaskFailed,
@@ -82,6 +84,7 @@ PEOPLE = pl.DataFrame(
     {"id": list(range(10)), "name": [f"n{i}" for i in range(10)], "score": [i * 1.5 for i in range(10)]}
 )
 GEOARROW_WKB = pl.Extension("geoarrow.wkb", pl.Binary, "{}")
+BLOB = bytes(range(256)) * 64
 STATES = pytest.mark.parametrize("must_materialise", [True, False], ids=["materialised", "deferred"])
 SOCKET_ONLY = pytest.mark.parametrize("transport", ["socket"], indirect=True)
 
@@ -513,6 +516,94 @@ def test_a_v1_result_is_exported_over_v1_after_the_flag_goes_off(backend, kept, 
 
     assert [(method, path) for method, path, _ in sent] == [("POST", f"/v1/results/{ref.result_id}/export")]
     assert pl.read_parquet(target).equals(PEOPLE)
+
+
+def test_a_blob_import_posts_kind_blob_and_answers_a_blob_reference(backend, sent, monkeypatch, tmp_path):
+    """The source is removed once imported, so what the worker exports is the copy it holds."""
+    source = tmp_path / "model.bin"
+    source.write_bytes(BLOB)
+    bodies = []
+    recording_send = requests.Session.send
+
+    def body_recording_send(self, request, **kwargs):
+        if request.url.endswith("/import"):
+            bodies.append(json.loads(request.body))
+        return recording_send(self, request, **kwargs)
+
+    monkeypatch.setattr(requests.Session, "send", body_recording_send)
+    sent.clear()
+
+    ref = backend.import_uri(f"file://{source}", None, None, None, kind="blob")
+
+    try:
+        assert sent == [("POST", f"/v1/results/{ref.result_id}/import", "1")]
+        assert bodies == [
+            {"uri": f"file://{source}", "credential": None, "columns": [], "row_count": None, "kind": "blob"}
+        ]
+        assert (ref.backend_id, ref.kind, ref.state, ref.schema, ref.row_count) == (
+            "worker",
+            "blob",
+            "materialised",
+            [],
+            None,
+        )
+        assert location(ref).kind == "blob"
+        source.unlink()
+        sent.clear()
+        for read in (backend.plan_for, backend.count, lambda blob: backend.sample(blob, 1)):
+            with pytest.raises(OperationUnsupported, match="is a blob"):
+                read(ref)
+        assert sent == []
+        target = tmp_path / "copy.bin"
+        assert backend.export(ref, f"file://{target}", None) == f"file://{target}"
+        assert sent == [("POST", f"/v1/results/{ref.result_id}/export", "1")]
+        assert target.read_bytes() == BLOB
+    finally:
+        backend.release(ref)
+    assert ("DELETE", f"/v1/results/{ref.result_id}", "1") in sent
+    assert backend.exists(ref) is False
+    assert target.read_bytes() == BLOB
+
+
+def blob_ref(result_id: str) -> ResultRef:
+    """A blob reference as ``/v1`` mints one, for a blob the worker never held."""
+    nowhere = WorkerLocation(kind="blob", path="/nowhere.blob").model_dump_json().encode()
+    return ResultRef("worker", result_id, [], None, "materialised", nowhere, kind="blob")
+
+
+@pytest.mark.parametrize(
+    "given",
+    [{"schema": []}, {"row_count": 0}, {"credential": CredentialRef(connection_id=7, user_id=3)}],
+    ids=["schema", "row_count", "credential"],
+)
+def test_a_blob_takes_no_credential(backend, sent, tmp_path, given):
+    arguments = {"schema": None, "row_count": None, "credential": None, **given}
+    sent.clear()
+
+    with pytest.raises(ValueError, match="A blob import takes no"):
+        backend.import_uri(f"file://{tmp_path}/model.bin", **arguments, kind="blob")
+    with pytest.raises(ValueError, match="takes no credential"):
+        backend.export(blob_ref(new_result_id()), f"file://{tmp_path}/out.bin", CredentialRef(7, 3))
+
+    assert sent == []
+
+
+def test_a_table_import_needs_its_schema(backend, sent, tmp_path):
+    sent.clear()
+
+    with pytest.raises(ValueError, match="needs its schema"):
+        backend.import_uri(f"file://{tmp_path}/in.parquet", None, 10, None)
+
+    assert sent == []
+
+
+def test_a_blob_among_a_submits_inputs_is_refused(backend, sent):
+    sent.clear()
+
+    with pytest.raises(OperationUnsupported, match="is a blob"):
+        backend.submit(people(), [blob_ref(new_result_id())], hints(True), new_result_id(), flow_id=-1, node_id=-1)
+
+    assert sent == []
 
 
 def test_a_plan_that_fails_on_the_worker_names_the_error(backend):
