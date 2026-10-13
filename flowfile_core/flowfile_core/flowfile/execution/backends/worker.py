@@ -8,8 +8,9 @@ wire. ``submit`` stores a plan or keeps it deferred in this process; the class d
 
 With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on, ``submit``, ``status``, ``cancel`` and ``capabilities`` speak the
 worker's versioned ``/v1`` routes instead, and the worker holds what ``submit`` returns, whether stored or deferred:
-its schema, row count and samples come over the wire, never from a file core opens. A result is read over the routes
-that minted it, whatever the flag says when it is read; ``run_op`` stays on the task routes.
+its schema, row count and samples come over the wire, never from a file core opens. ``submit`` goes over
+``WS /v1/ws/submit``, and to ``POST /v1/submit`` only when that socket cannot be opened or the plan not sent. A result
+is read over the routes that minted it, whatever the flag says when it is read; ``run_op`` stays on the task routes.
 """
 
 from __future__ import annotations
@@ -24,13 +25,17 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict, dataclass
+from time import monotonic
 from typing import Any, Literal
 
 import polars as pl
 import pyarrow as pa
 import requests
+from websockets.exceptions import ConnectionClosed, InvalidStatus
+from websockets.sync.client import ClientConnection, connect
 
-from flowfile_core.configs import settings
+from flowfile_core.auth.jwt import get_internal_token
+from flowfile_core.configs import logger, settings
 from flowfile_core.flowfile.execution.errors import (
     ComputeError,
     ComputeUnavailable,
@@ -78,7 +83,13 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import convert_stats_to_column_info
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import safe_eval_pl_type
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import ensure_handshake, reset_handshake
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import CustomNodeExecuteInput, Status
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.streaming import (
+    _WS_INACTIVITY_TIMEOUT,
+    _WS_RECV_POLL_SECONDS,
+    _get_ws_url,
+)
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     _POLL_DEADLINE_SECONDS,
     _WORKER_TIMEOUT,
@@ -181,20 +192,25 @@ class WorkerBackend:
     task's fetcher; while a ``run_op`` that runs a worker task waits, so does the handle with its payload's
     ``job_id``.
 
-    Nothing here runs the worker handshake: every worker call goes through the transport's worker session or
-    its WebSocket submit, which run it before they reach the worker, so every method that calls the worker is
-    gated by it already and can raise its ``VersionMismatch`` or ``ComputeUnavailable``.
+    The worker handshake runs before any call reaches the worker: every worker call goes through the transport's
+    worker session or its WebSocket submit, which run it, and the ``/v1`` submit's socket calls ``ensure_handshake``
+    before it dials, as the transport's WebSocket submit does. So every method that calls the worker is gated by it
+    and can raise its ``VersionMismatch`` or ``ComputeUnavailable``.
 
-    With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on (read on each call), ``submit`` posts the plan and a meta JSON
-    (hints, inputs, ids) to the worker's ``POST /v1/submit``; the worker applies the same policy and holds the result
+    With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on (read on each call), ``submit`` sends a meta JSON (hints, inputs,
+    ids) and the plan over the worker's ``WS /v1/ws/submit``, and posts them to ``POST /v1/submit`` only when the socket
+    cannot be opened or the plan not sent. A 426 on the socket's upgrade is ``VersionMismatch`` and nothing is posted;
+    once the plan is sent nothing is resent: silence past ``FLOWFILE_WORKER_WS_TIMEOUT`` (each frame resets it) is
+    ``TaskFailed`` and a closed socket ``ComputeUnavailable``. The worker applies the same policy and holds the result
     itself, in its own file or as the plan it was sent. The reference carries the worker's columns, read here with
     ``safe_eval_pl_type``, and a ``WorkerLocation`` JSON as ``location``. For such a reference ``sample``, ``count``,
     ``exists`` and ``release`` go to ``/v1/results/{id}``, ``plan_for`` decodes the location without a call (a
     ``pl.scan_ipc`` of the worker's path, or the deferred plan) and ``result_file`` names no file. A reference is read
-    over the routes that minted it, whatever the flag says when it is read, and only ``/v1`` references go as a
-    submit's ``inputs``; ``run_op`` and its results stay on the task routes. ``status`` and ``cancel`` of a job no
-    fetcher waits on use ``/v1/jobs/{id}``. Every ``/v1`` request carries ``X-Protocol-Version``: the worker's 426 is
-    ``VersionMismatch``, a 404 ``ResultMissing``, and a failed child's 500 goes through ``worker_failure``.
+    over the routes that minted it, whatever the flag says when it is read, and only ``/v1`` references go as a submit's
+    ``inputs``; ``run_op`` and its results stay on the task routes. ``status`` and ``cancel`` of a job no fetcher waits
+    on use ``/v1/jobs/{id}``. Every ``/v1`` request and the socket's upgrade carry ``X-Protocol-Version``. A REST
+    answer, a refused upgrade and an ``error`` frame map alike (``_v1_error``): 426 is ``VersionMismatch``, a 404
+    ``ResultMissing``, and a failed child's 500 goes through ``worker_failure``.
     """
 
     id = WORKER_BACKEND_ID
@@ -253,35 +269,48 @@ class WorkerBackend:
         checked. The worker files the store or sampler task as ``result_id`` under flow ``flow_id`` and node
         ``node_id``, which is where its log lines go.
 
-        With the protocol flag on, the plan goes to ``POST /v1/submit`` with the ids of the ``/v1`` results among
-        ``inputs``, which the worker checks it still holds, and the worker's answer is the result.
+        With the protocol flag on, the plan goes with the ids of the ``/v1`` results among ``inputs``, which the worker
+        checks it still holds, over ``WS /v1/ws/submit``, or to ``POST /v1/submit`` when the socket cannot be opened or
+        the plan not sent, and the worker's answer is the result. Once the plan is sent over the socket nothing is
+        resent.
 
         Raises:
+            ComputeUnavailable: Over ``/v1``, the worker could not be reached, or its socket closed after the plan was
+                sent.
             ForeignRef: An input another backend minted.
             PlanRejected: The worker could not load the plan.
             ResultMissing: Over ``/v1``, the worker no longer holds an input.
-            TaskFailed: The plan failed on the worker.
+            TaskFailed: The plan failed on the worker, or over ``/v1`` the socket went silent past
+                ``FLOWFILE_WORKER_WS_TIMEOUT``.
+            VersionMismatch: Over ``/v1``, the worker refused this backend's protocol version, on the socket's upgrade
+                or on the REST route.
         """
         for ref in inputs:
             self._check(ref)
         if settings.FLOWFILE_COMPUTE_PROTOCOL:
             with self._lock:
                 self._deferred.pop(result_id, None)
-            meta = {
-                "hints": wire.SubmitHints.model_validate(asdict(hints)).model_dump(),
-                "inputs": [ref.result_id for ref in inputs if self._v1_location(ref) is not None],
-                "result_id": result_id,
-                "flow_id": flow_id,
-                "node_id": node_id,
-            }
-            response = self._v1(
-                "POST",
-                "/submit",
-                waits=True,
-                files={"plan": ("plan", plan.serialize(), "application/octet-stream")},
-                data={"meta": json.dumps(meta)},
+            meta = json.dumps(
+                {
+                    "hints": wire.SubmitHints.model_validate(asdict(hints)).model_dump(),
+                    "inputs": [ref.result_id for ref in inputs if self._v1_location(ref) is not None],
+                    "result_id": result_id,
+                    "flow_id": flow_id,
+                    "node_id": node_id,
+                }
             )
-            return self._from_wire(wire.SubmitResult.model_validate_json(response.content))
+            plan_bytes = plan.serialize()
+            answer = self._v1_socket_submit(meta, plan_bytes, result_id)
+            if answer is None:
+                response = self._v1(
+                    "POST",
+                    "/submit",
+                    waits=True,
+                    files={"plan": ("plan", plan_bytes, "application/octet-stream")},
+                    data={"meta": meta},
+                )
+                answer = wire.SubmitResult.model_validate_json(response.content)
+            return self._from_wire(answer)
         if hints.must_materialise or (hints.wide and hints.preview_rows is not None):
             ref = self._store(plan, result_id, flow_id, node_id)
             sample = None if hints.preview_rows is None else self.sample(ref, hints.preview_rows)
@@ -565,7 +594,57 @@ class WorkerBackend:
             raise ComputeUnavailable(f"Could not reach the worker at {self.url}: {e}") from e
         if response.ok or (missing_ok and response.status_code == 404):
             return response
-        raise _v1_failure(response)
+        raise _v1_failure(response.status_code, response.content, response.reason)
+
+    def _v1_socket_submit(self, meta: str, plan: bytes, result_id: str) -> wire.SubmitResult | None:
+        """The worker's answer to a submit over ``WS /v1/ws/submit``, or ``None`` for ``submit`` to post it instead.
+
+        ``None`` means the socket could not be opened or the plan not sent. The worker reads both frames before it runs
+        anything and drops a socket that closed before the plan, so the post never runs a plan twice. The socket is
+        dialled after ``ensure_handshake``, with the internal token, this backend's ``X-Protocol-Version`` and no
+        frame-size cap (a deferred result's ``complete`` frame carries its plan); a connect that fails at the network
+        re-arms the handshake, as the transport's WebSocket submit does. Once the plan is sent the answer is the final
+        frame's, and nothing is resent.
+
+        Raises:
+            ComputeUnavailable: The socket closed after the plan was sent.
+            TaskFailed: The worker sent nothing for longer than ``FLOWFILE_WORKER_WS_TIMEOUT``.
+            VersionMismatch: The worker refused the upgrade with 426.
+            ComputeError: The handshake failed, or the worker's ``error`` frame (``_v1_error``).
+        """
+        ensure_handshake(self.url)
+        try:
+            ws = connect(
+                _get_ws_url(self.url) + "/v1/ws/submit",
+                additional_headers={
+                    "X-Flowfile-Internal": get_internal_token(),
+                    wire.PROTOCOL_VERSION_HEADER: str(self.protocol_version),
+                },
+                max_size=None,
+            )
+        except OSError as e:
+            reset_handshake()
+            logger.debug(f"The /v1 submit socket to {self.url} could not be opened ({e}); posting the plan instead")
+            return None
+        except Exception as e:
+            if isinstance(e, InvalidStatus) and e.response.status_code == 426:
+                raise _v1_failure(426, bytes(e.response.body), e.response.reason_phrase) from e
+            logger.debug(f"The /v1 submit socket to {self.url} was refused ({e}); posting the plan instead")
+            return None
+        try:
+            ws.send(meta)
+            ws.send(plan)
+        except Exception as e:
+            ws.close()
+            logger.debug(f"The plan could not be sent over the /v1 submit socket ({e}); posting it instead")
+            return None
+        try:
+            frame = _final_frame(ws, self.url, result_id)
+        finally:
+            ws.close()
+        if frame["type"] == "error":
+            raise _v1_error(frame["status_code"], frame["detail"])
+        return wire.SubmitResult.model_validate(frame["result"])
 
     def _v1_location(self, ref: ResultRef) -> wire.WorkerLocation | None:
         """The ``WorkerLocation`` of a result ``/v1`` minted; ``None`` for a task-route result.
@@ -1022,27 +1101,68 @@ def _run(start: Callable[[], BaseFetcher], on_started: Callable[[BaseFetcher], N
     return fetcher
 
 
-def _v1_failure(response: requests.Response) -> ComputeError:
-    """The typed error for a ``/v1`` answer that is no success, from the worker's ``detail``.
+def _final_frame(ws: ClientConnection, worker_url: str, result_id: str) -> dict[str, Any]:
+    """The first ``complete`` or ``error`` frame the worker sends on the ``/v1`` submit socket ``ws``.
 
-    426 is a protocol version the worker refuses, 404 a result or input it does not hold, and a 500 carrying a
-    child's ``status``, ``error_message`` and ``error_kind`` goes through ``worker_failure`` as a failed task does.
-    Any other answer (a token the worker refuses, a request it cannot read) is a ``TaskFailed`` naming the code.
+    Progress frames are read past. Every frame resets the silence clock that the task routes' socket keeps too:
+    nothing received for longer than ``FLOWFILE_WORKER_WS_TIMEOUT`` (0 disables) means the worker is presumed wedged.
+
+    Raises:
+        ComputeUnavailable: The socket closed before a final frame.
+        TaskFailed: The worker went silent past the timeout.
+    """
+    last_frame_at = monotonic()
+    while True:
+        try:
+            message = ws.recv(timeout=_WS_RECV_POLL_SECONDS)
+        except TimeoutError:
+            silence = monotonic() - last_frame_at
+            if _WS_INACTIVITY_TIMEOUT and silence > _WS_INACTIVITY_TIMEOUT:
+                raise TaskFailed(
+                    f"No data from the worker at {worker_url} for {silence:.0f}s (submit {result_id}); worker presumed "
+                    "unresponsive. Tune or disable via FLOWFILE_WORKER_WS_TIMEOUT."
+                ) from None
+            continue
+        except ConnectionClosed as e:
+            raise ComputeUnavailable(
+                f"The worker at {worker_url} closed the connection before it answered submit {result_id}: {e}"
+            ) from e
+        last_frame_at = monotonic()
+        frame = json.loads(message)
+        if frame.get("type") in ("complete", "error"):
+            return frame
+
+
+def _v1_error(status_code: int, detail: Any) -> ComputeError:
+    """The typed error for a ``/v1`` failure the worker answered with ``status_code`` and ``detail``.
+
+    A REST answer, a refused socket upgrade and an ``error`` frame on the socket all come here. 426 is a protocol
+    version the worker refuses, 404 a result or input it does not hold, and a 500 carrying a child's ``status``,
+    ``error_message`` and ``error_kind`` goes through ``worker_failure`` as a failed task does. Any other code (a token
+    the worker refuses, a meta it cannot read) is a ``TaskFailed`` naming the code.
+    """
+    if status_code == 426:
+        return VersionMismatch(str(detail))
+    if status_code == 404:
+        return ResultMissing(str(detail))
+    if status_code == 500 and isinstance(detail, dict) and "status" in detail:
+        return worker_failure(detail.get("error_kind"), detail.get("error_message") or detail["status"])
+    return TaskFailed(f"The worker answered {status_code}: {detail}")
+
+
+def _v1_failure(status_code: int, body: bytes, reason: str) -> ComputeError:
+    """The typed error for an HTTP ``/v1`` answer that is no success, through ``_v1_error``.
+
+    The detail is the ``detail`` of the JSON ``body``, else the body as text, else the code and its ``reason``.
     """
     try:
-        body = response.json()
+        answer = json.loads(body)
     except ValueError:
-        body = None
-    detail = body.get("detail") if isinstance(body, dict) else None
+        answer = None
+    detail = answer.get("detail") if isinstance(answer, dict) else None
     if detail is None:
-        detail = response.text or f"{response.status_code} {response.reason}"
-    if response.status_code == 426:
-        return VersionMismatch(str(detail))
-    if response.status_code == 404:
-        return ResultMissing(str(detail))
-    if response.status_code == 500 and isinstance(detail, dict) and "status" in detail:
-        return worker_failure(detail.get("error_kind"), detail.get("error_message") or detail["status"])
-    return TaskFailed(f"The worker answered {response.status_code}: {detail}")
+        detail = body.decode(errors="replace") or f"{status_code} {reason}"
+    return _v1_error(status_code, detail)
 
 
 def _storage_payload(connection: FullCloudStorageConnectionWorkerInterface | None) -> dict[str, Any] | None:
