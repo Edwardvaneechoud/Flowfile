@@ -16,6 +16,7 @@ import pytest
 
 from polars.exceptions import ColumnNotFoundError
 
+from flowfile_core.configs import settings
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
@@ -39,6 +40,7 @@ from flowfile_core.flowfile.flow_node.executor import (
     is_narrow_transform,
 )
 from flowfile_core.schemas import input_schema, schemas, transform_schema
+from shared.compute_protocol import WorkerLocation
 from shared.storage_config import storage
 from typing import Literal
 
@@ -68,6 +70,13 @@ def find_parent_directory(target_dir_name, start_path=None):
 
 ExecutionModeLit = Literal["Development", "Performance"]
 ExecutionLocationLit = Literal["remote", "local"]
+
+
+@pytest.fixture(params=[False, True], ids=["flag_off", "flag_on"])
+def protocol(request, monkeypatch) -> bool:
+    """The protocol flag in each state, back to what it was when the test ends."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", request.param)
+    return request.param
 
 
 @pytest.fixture
@@ -625,7 +634,7 @@ class TestDecideExecutionByNodeType:
         assert decision.should_run is True
         assert decision.reason == InvalidationReason.CACHE_MISSING
 
-    def test_a_cached_node_skips_while_its_stored_result_is_held(self):
+    def test_a_cached_node_skips_while_its_stored_result_is_held(self, protocol):
         """The decision asks the run's backend whether it still holds the stored result."""
         graph = create_graph_with_select()
         select_node = graph.get_node(2)
@@ -642,20 +651,17 @@ class TestDecideExecutionByNodeType:
                     state=select_node._execution_state, performance_mode=True, force_refresh=False
                 )
 
-        assert exists.call_count == 1
+        assert exists.called
         assert hit.should_run is False
         assert miss.should_run is True and miss.reason == InvalidationReason.CACHE_MISSING
 
-    def test_a_cached_node_holding_a_deferred_plan_follows_the_ordinary_rules(self):
+    def test_a_cached_node_holding_a_deferred_plan_follows_the_ordinary_rules(self, protocol):
         """A held plan is no cache: Development skips a node that ran, Performance reruns it."""
         graph = create_graph_with_select(execution_location="local")
+        assert graph.run_graph().success
         select_node = graph.get_node(2)
+        assert select_node.results.result_ref.state == "deferred"
         select_node.node_settings.cache_results = True
-        select_node._execution_state.has_run_with_current_setup = True
-        select_node.results.result_ref = ResultRef(
-            backend_id="local", result_id=select_node.hash, schema=[], row_count=None, state="deferred",
-            location=select_node.hash.encode(),
-        )
         executor = NodeExecutor(select_node)
 
         with use_context(graph.execution_context):
@@ -702,7 +708,7 @@ def _worker_holds_the_cache():
 class TestBackendPathByLocation:
     """Which backend path ran, read from the reference each node holds after a run."""
 
-    def test_remote_mode_stores_wide_and_cached_nodes_and_defers_the_rest(self, tmp_path, remote_worker):
+    def test_remote_mode_stores_wide_and_cached_nodes_and_defers_the_rest(self, tmp_path, remote_worker, protocol):
         graph = create_graph_with_sort_and_select(flow_id=44, execution_location="remote")
         add_node_promise(graph, "sample", node_id=4)
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(3, 4))
@@ -716,7 +722,10 @@ class TestBackendPathByLocation:
         assert _held_ref_state(graph, 3) == "deferred"  # select: narrow, one consumer
         assert _held_ref_state(graph, 4) == "materialised"  # cached sample
         select_node = graph.get_node(3)
-        assert select_node.results.example_data_path is not None, "the sampler's file backs the preview"
+        if protocol:
+            assert select_node.results.example_data_path is None, "the inline sample backs the preview"
+        else:
+            assert select_node.results.example_data_path is not None, "the sampler's file backs the preview"
         assert select_node.get_table_example(True).data == [{"Name": "Alice"}, {"Name": "Charlie"}]
 
     def test_remote_mode_defers_a_wide_node_with_no_preview(self, remote_worker):
@@ -1770,6 +1779,13 @@ def _graph_with_two_sorts_and_output(out_dir: Path, flow_id: int) -> FlowGraph:
     return graph
 
 
+def _stored_file(node, protocol: bool) -> Path:
+    """The worker's file of a node's stored result: its ``/v1`` location with the flag on, else the preview's path."""
+    if protocol:
+        return Path(WorkerLocation.model_validate_json(node.results.result_ref.location).path)
+    return Path(node.results.example_data_path)
+
+
 class TestMissingWorkerArtifact:
     """A removed worker result must make the node re-resolve, never fail the run.
 
@@ -1796,13 +1812,13 @@ class TestMissingWorkerArtifact:
         assert list(cache_dir.glob("*.arrow")), "nodes did not re-materialise their results"
         assert (tmp_path / "out.csv").exists(), "the output node never resolved its input"
 
-    def test_only_the_node_with_a_missing_artifact_reruns(self, tmp_path):
+    def test_only_the_node_with_a_missing_artifact_reruns(self, tmp_path, protocol):
         """The gate must not degrade into an unconditional re-run of the graph."""
         graph = _graph_with_two_sorts_and_output(tmp_path, flow_id=31)
         assert graph.run_graph().success
 
-        removed = Path(graph.get_node(2).results.example_data_path)
-        untouched = Path(graph.get_node(3).results.example_data_path)
+        removed = _stored_file(graph.get_node(2), protocol)
+        untouched = _stored_file(graph.get_node(3), protocol)
         untouched_mtime = untouched.stat().st_mtime_ns
 
         removed.unlink()
@@ -1811,7 +1827,7 @@ class TestMissingWorkerArtifact:
         assert removed.exists(), "node 2 should have re-run and rewritten its artifact"
         assert untouched.stat().st_mtime_ns == untouched_mtime, "node 3 should still have skipped"
 
-    def test_decide_execution_flags_a_missing_artifact(self, tmp_path):
+    def test_decide_execution_flags_a_missing_artifact(self, tmp_path, protocol):
         """The decision itself: present artifact -> SKIP, removed artifact -> CACHE_MISSING."""
         graph = _graph_with_two_sorts_and_output(tmp_path, flow_id=32)
         assert graph.run_graph().success
@@ -1825,7 +1841,7 @@ class TestMissingWorkerArtifact:
         )
         assert decision.should_run is False
 
-        Path(node.results.example_data_path).unlink()
+        _stored_file(node, protocol).unlink()
         decision = executor._decide_execution(
             state=node._execution_state,
             performance_mode=False,
