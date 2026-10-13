@@ -1,18 +1,22 @@
-"""With the protocol flag on, the worker backend submits plans and reads results over the worker's ``/v1`` routes.
+"""With the protocol flag on, the worker backend submits plans, runs operations and reads results over ``/v1``.
 
 Every test here turns ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on and runs over both submit transports (``transport``):
 ``socket`` submits over ``WS /v1/ws/submit``, ``rest`` has every dial refused, as a proxy that passes no upgrade would,
 so each submit falls back to ``POST /v1/submit``. The socket-only tests at the end play the worker's frames from a fake
 socket. The dispatch tests turn the flag off again mid-test to show that a result is read over the routes that minted
-it.
+it. The operation tests run the reads, the fuzzy join, the random split and a custom node over
+``POST /v1/ops/{kind}`` (socket only: the transport is a submit's concern) and read every output over the wire.
 """
 
 import io
 import json
 import re
 import socket
+import threading
+import time
 import uuid
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import polars as pl
@@ -27,6 +31,7 @@ from websockets.http11 import Response
 from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution.backends import worker as worker_module
+from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend, _flowfile_schema
 from flowfile_core.flowfile.execution.errors import (
     ComputeUnavailable,
@@ -35,13 +40,30 @@ from flowfile_core.flowfile.execution.errors import (
     TaskFailed,
     VersionMismatch,
 )
-from flowfile_core.flowfile.execution.payloads import FileReadPayload, op_payload
+from flowfile_core.flowfile.execution.payloads import (
+    CustomNodePayload,
+    DatabaseReadPayload,
+    FileReadPayload,
+    FuzzyJoinPayload,
+    GoogleAnalyticsReadPayload,
+    RandomSplitPayload,
+    RestApiReadPayload,
+    op_payload,
+)
 from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, ResultRef, SubmitHints, SubmitResult
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import fetch_worker_capabilities
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
+from flowfile_core.flowfile.node_designer import CustomNodeBase
 from flowfile_core.schemas import input_schema, schemas, transform_schema
-from flowfile_core.schemas.input_schema import NodeRead, ReceivedTable
+from flowfile_core.schemas.input_schema import (
+    DatabaseConnection,
+    DatabaseSettings,
+    NodeDatabaseReader,
+    NodeRead,
+    ReceivedTable,
+)
+from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared import compute_protocol as wire
 from shared.compute_protocol import PROTOCOL_VERSION_HEADER, Capabilities, WorkerLocation
 from shared.storage_config import storage
@@ -168,6 +190,17 @@ def hints(must_materialise: bool, preview_rows: int | None = None) -> SubmitHint
 
 def new_result_id() -> str:
     return f"t-v1-backend-{uuid.uuid4().hex}"
+
+
+def file_read_payload(tmp_path: Path) -> FileReadPayload:
+    """A read of ``PEOPLE`` written as a CSV under ``tmp_path``, which the worker reads with its file reader."""
+    csv_path = tmp_path / "people.csv"
+    PEOPLE.write_csv(csv_path)
+    received_table = ReceivedTable.create_from_path(str(csv_path), "csv")
+    received_table.set_absolute_filepath()
+    return FileReadPayload(
+        flow_id=1, node_id=1, settings=NodeRead(flow_id=1, node_id=1, received_file=received_table), node_logger=None
+    )
 
 
 def submit(
@@ -339,15 +372,11 @@ def test_a_task_route_result_in_a_plan_is_read_from_its_file_and_stays_on_the_ta
     backend, kept, sent, tmp_path
 ):
     """The file read's result is not in the worker's ``/v1`` registry; had it gone as an input, the submit would 404."""
-    csv_path = tmp_path / "people.csv"
-    PEOPLE.write_csv(csv_path)
-    received_table = ReceivedTable.create_from_path(str(csv_path), "csv")
-    received_table.set_absolute_filepath()
-    read = FileReadPayload(
-        flow_id=1, node_id=1, settings=NodeRead(flow_id=1, node_id=1, received_file=received_table), node_logger=None
-    )
-    read_ref = backend.run_op(OperationKind.file_read, op_payload(read)).refs["result"]
+    settings.FLOWFILE_COMPUTE_PROTOCOL.value = False
+    read_ref = backend.run_op(OperationKind.file_read, op_payload(file_read_payload(tmp_path))).refs["result"]
     kept.append(read_ref)
+    settings.FLOWFILE_COMPUTE_PROTOCOL.value = True
+    assert [path.partition("?")[0] for _, path, _ in sent if not path.startswith("/status/")] == ["/create_table/csv"]
 
     result = submit(
         backend,
@@ -507,6 +536,303 @@ def test_a_remote_node_previews_the_inline_sample_without_reading_a_worker_file(
         assert [row["rank"] for row in sort.get_table_example(True).data] == [1, 2, 3]
     finally:
         graph.close_flow()
+
+
+SPLIT_NODE_SOURCE = """
+import polars as pl
+from flowfile_core.flowfile.node_designer import CustomNodeBase
+
+
+class WorkerBackendSplit(CustomNodeBase):
+    node_name: str = "Worker Backend Split"
+    number_of_outputs: int = 2
+    output_names: list[str] = ["big", "small"]
+
+    def process(self, *inputs):
+        rows = inputs[0]
+        return {"big": rows.filter(pl.col("id") > 6), "small": rows.filter(pl.col("id") <= 6)}
+"""
+
+SLEEPING_NODE_SOURCE = """
+import time
+
+from flowfile_core.flowfile.node_designer import CustomNodeBase
+
+
+class WorkerBackendSleep(CustomNodeBase):
+    node_name: str = "Worker Backend Sleep"
+
+    def process(self, *inputs):
+        time.sleep(30)
+        return inputs[0]
+"""
+
+
+class PlacedSplit(CustomNodeBase):
+    """The class the split node was placed with in core; it selects no secret."""
+
+    node_name: str = "Worker Backend Split"
+    number_of_outputs: int = 2
+    output_names: list[str] = ["big", "small"]
+
+
+class PlacedSleep(CustomNodeBase):
+    """The class the sleeping node was placed with in core."""
+
+    node_name: str = "Worker Backend Sleep"
+
+
+@pytest.fixture
+def no_file_read_in_core(monkeypatch):
+    """Fails the test when core reads a schema, a count or rows from a worker file, as the task routes do."""
+
+    def no_file_read(*args, **kwargs):
+        pytest.fail("core read a worker file for an operation's output")
+
+    for name in ("_row_count", "_read_sample", "get_read_top_n"):
+        monkeypatch.setattr(worker_module, name, no_file_read)
+    monkeypatch.setattr(WorkerBackend, "_result_ref", no_file_read)
+
+
+@pytest.fixture
+def postgres():
+    from test_utils.postgres.fixtures import can_connect_to_db
+
+    if not can_connect_to_db():
+        pytest.skip("the test PostgreSQL database is not running")
+
+
+@pytest.fixture
+def json_api():
+    """A JSON API on a free loopback port, answering every GET with the rows of ``PEOPLE``."""
+    body = json.dumps(PEOPLE.to_dicts()).encode()
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):  # noqa: N802
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def sampled(backend: WorkerBackend, ref: ResultRef) -> pl.DataFrame:
+    return pl.from_arrow(read_stream(backend.sample(ref, 1000)))
+
+
+def fuzzy_settings() -> input_schema.NodeFuzzyMatch:
+    return input_schema.NodeFuzzyMatch(
+        flow_id=1,
+        node_id=2,
+        join_input={
+            "join_mapping": [
+                {"left_col": "name", "right_col": "name", "threshold_score": 75, "fuzzy_type": "levenshtein"}
+            ],
+            "left_select": {"renames": [{"old_name": "name", "new_name": "name", "join_key": True}]},
+            "right_select": {"renames": [{"old_name": "name", "new_name": "name", "join_key": True}]},
+            "how": "inner",
+        },
+    )
+
+
+def custom_node_payload(source: str, class_name: str, placed: CustomNodeBase, output_names: list[str]):
+    return CustomNodePayload(
+        inputs=(pl.LazyFrame({"id": list(range(10))}),),
+        custom_node=placed,
+        node_source=source,
+        class_name=class_name,
+        settings_values={},
+        output_names=output_names,
+        user_id=None,
+        flow_id=1,
+        node_id=4,
+        job_id=f"{new_result_id()}-custom-node",
+    )
+
+
+@SOCKET_ONLY
+def test_a_file_read_runs_over_v1_and_its_result_is_read_over_the_wire(
+    backend, kept, sent, tmp_path, no_file_read_in_core
+):
+    read = file_read_payload(tmp_path)
+
+    result = backend.run_op(OperationKind.file_read, op_payload(read))
+
+    ref = result.refs["result"]
+    kept.append(ref)
+    assert (list(result.refs), result.metadata) == (["result"], {})
+    assert (ref.result_id, ref.state, ref.row_count) == (f"{read.job_id}_0", "materialised", 10)
+    assert location(ref).kind == "file"
+    assert backend.result_file(ref) is None
+    assert [column.column_name for column in ref.schema] == ["id", "name", "score"]
+    assert pl.from_arrow(read_stream(backend.sample(ref, 3))).equals(PEOPLE.head(3))
+    assert backend.count(ref) == 10
+    assert backend.exists(ref) is True
+    backend.release(ref)
+    assert backend.exists(ref) is False
+    paths = [path for _, path, _ in sent]
+    assert paths[0] == f"/v1/ops/file_read?job_id={read.job_id}&flowfile_flow_id=1&flowfile_node_id=1"
+    assert all(path.startswith(f"/v1/results/{ref.result_id}") for path in paths[1:]), paths
+
+
+@SOCKET_ONLY
+def test_a_database_read_runs_over_v1(backend, kept, postgres, no_file_read_in_core):
+    connection = DatabaseConnection(
+        database_type="postgresql", username="testuser", host="localhost", port=5433, database="testdb"
+    )
+    settings_ = NodeDatabaseReader(
+        flow_id=1,
+        node_id=1,
+        database_settings=DatabaseSettings(database_connection=connection, schema_name="public", table_name="movies"),
+    )
+    read = DatabaseReadPayload(
+        flow_id=1,
+        node_id=1,
+        settings=settings_,
+        connection=connection,
+        encrypted_password=encrypt_secret("testpass", user_id=1),
+        cancel_check=lambda: False,
+    )
+
+    ref = backend.run_op(OperationKind.database_read, op_payload(read)).refs["result"]
+    kept.append(ref)
+
+    assert (location(ref).kind, ref.result_id) == ("file", f"{read.job_id}_0")
+    assert ref.row_count > 0
+    assert read_stream(backend.sample(ref, 5)).num_rows == 5
+
+
+@SOCKET_ONLY
+def test_a_rest_api_read_runs_over_v1(backend, kept, json_api, no_file_read_in_core):
+    node = input_schema.NodeRestApiReader(
+        flow_id=1, node_id=1, user_id=1, rest_api_settings=input_schema.RestApiSettings(url=f"{json_api}/people")
+    )
+    read = RestApiReadPayload(flow_id=1, node_id=1, settings=node, encrypted_secret=None)
+
+    ref = backend.run_op(OperationKind.rest_api_read, op_payload(read)).refs["result"]
+    kept.append(ref)
+
+    assert (location(ref).kind, ref.row_count) == ("file", 10)
+    assert sampled(backend, ref)["name"].to_list() == PEOPLE["name"].to_list()
+
+
+@SOCKET_ONLY
+def test_a_read_that_fails_on_the_worker_names_the_error_and_fails_its_job(backend):
+    node = input_schema.NodeGoogleAnalyticsReader(
+        flow_id=1,
+        node_id=1,
+        google_analytics_settings=input_schema.GoogleAnalyticsSettings(
+            ga_connection_name="none", property_id="123", metrics=["sessions"], dimensions=["date"]
+        ),
+    )
+    read = GoogleAnalyticsReadPayload(
+        flow_id=1, node_id=1, settings=node, auth_method="oauth", encrypted_credential="unused"
+    )
+
+    with pytest.raises(TaskFailed, match="OAuth client credentials missing"):
+        backend.run_op(OperationKind.google_analytics_read, op_payload(read))
+
+    assert backend.status(JobHandle("worker", read.job_id)).state == "failed"
+
+
+@SOCKET_ONLY
+def test_a_fuzzy_join_runs_over_v1_and_matches_as_it_does_in_core(backend, kept, no_file_read_in_core):
+    names = pl.LazyFrame({"name": ["eduward", "edward", "courtney"]})
+    join = FuzzyJoinPayload(
+        left=names, right=names, settings=fuzzy_settings(), flow_id=1, node_id=2, job_id=f"{new_result_id()}_fm"
+    )
+
+    ref = backend.run_op(OperationKind.fuzzy_join, op_payload(join)).refs["result"]
+    kept.append(ref)
+
+    assert (ref.result_id, ref.state, ref.row_count) == (f"{join.job_id}_0", "materialised", 5)
+    in_core = LocalBackend()
+    local_ref = in_core.run_op(OperationKind.fuzzy_join, op_payload(join)).refs["result"]
+    columns = ["name", "name_right", "name_vs_name_right_levenshtein"]
+    assert sampled(backend, ref).sort(columns).equals(in_core.plan_for(local_ref).collect().sort(columns))
+    assert backend.status(JobHandle("worker", join.job_id)).state == "done"
+
+
+@SOCKET_ONLY
+def test_a_random_split_runs_over_v1_and_partitions_like_core(backend, kept, no_file_read_in_core):
+    settings_ = input_schema.NodeRandomSplit(flow_id=1, node_id=3, seed=11)
+    split = RandomSplitPayload(
+        plan=pl.LazyFrame({"n": list(range(50))}), settings=settings_, flow_id=1, node_id=3, job_id=new_result_id()
+    )
+
+    refs = backend.run_op(OperationKind.random_split, op_payload(split)).refs
+    kept.extend(refs.values())
+
+    assert list(refs) == ["train", "test"]
+    assert [(ref.result_id, ref.state, ref.row_count) for ref in refs.values()] == [
+        (f"{split.job_id}_0", "materialised", 40),
+        (f"{split.job_id}_1", "materialised", 10),
+    ]
+    on_worker = {name: sampled(backend, ref)["n"].to_list() for name, ref in refs.items()}
+    in_core = LocalBackend()
+    local_refs = in_core.run_op(OperationKind.random_split, op_payload(split)).refs
+    assert on_worker == {name: in_core.plan_for(ref).collect()["n"].to_list() for name, ref in local_refs.items()}
+    assert backend.status(JobHandle("worker", split.job_id)).state == "done"
+
+
+@SOCKET_ONLY
+def test_a_custom_node_runs_over_v1_and_holds_each_output(backend, kept, no_file_read_in_core):
+    job = custom_node_payload(SPLIT_NODE_SOURCE, "WorkerBackendSplit", PlacedSplit(), ["big", "small"])
+
+    refs = backend.run_op(OperationKind.custom_node, op_payload(job)).refs
+    kept.extend(refs.values())
+
+    assert list(refs) == ["output-0", "output-1"]
+    assert [(ref.result_id, ref.state, ref.row_count) for ref in refs.values()] == [
+        (f"{job.job_id}_0", "materialised", 3),
+        (f"{job.job_id}_1", "materialised", 7),
+    ]
+    assert sampled(backend, refs["output-0"])["id"].to_list() == [7, 8, 9]
+    assert sampled(backend, refs["output-1"])["id"].to_list() == list(range(7))
+    assert backend.status(JobHandle("worker", job.job_id)).state == "done"
+
+    backend.release(refs["output-0"])
+
+    assert backend.exists(refs["output-0"]) is False
+    assert backend.exists(refs["output-1"]) is True
+
+
+@SOCKET_ONLY
+def test_a_cancelled_operation_fails_and_its_job_is_cancelled(backend):
+    job = custom_node_payload(SLEEPING_NODE_SOURCE, "WorkerBackendSleep", PlacedSleep(), ["main"])
+    handle = JobHandle("worker", job.job_id)
+
+    def cancel_while_running():
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            try:
+                state = backend.status(handle).state
+            except LookupError:
+                state = None
+            if state == "running":
+                backend.cancel(handle)
+            elif state is not None:
+                return
+            time.sleep(0.1)
+
+    canceller = threading.Thread(target=cancel_while_running)
+    canceller.start()
+    with pytest.raises(TaskFailed):
+        backend.run_op(OperationKind.custom_node, op_payload(job))
+    canceller.join(timeout=30)
+
+    assert backend.status(handle).state == "cancelled"
 
 
 class FakeClock:
