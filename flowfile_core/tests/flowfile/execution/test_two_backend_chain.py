@@ -4,7 +4,7 @@ Node A runs on one backend and node B on the other: A's result is exported to a 
 other backend imports that URI, and B's plan, composed on the imported result, runs there. Both directions run, with A
 held deferred and as a required result. The protocol flag comes from the environment, as for the conformance package:
 with it on the worker exports in a child of its own and holds an import as a result of its own; with it off the worker
-backend sinks and holds them in core over the shared disk.
+exports in a task running that child and the worker backend holds an import in core, its rows read by worker tasks.
 """
 
 import uuid

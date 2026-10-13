@@ -14,7 +14,7 @@ runs the reads, ``fuzzy_join``, ``random_split`` and ``custom_node`` over ``POST
 worker holds as it holds a stored submit; the writes, the ML kinds and ``viz_session`` stay on the task routes.
 ``import_uri`` asks the worker to hold a scan of the URI (``POST /v1/results/{id}/import``). A result is read and
 exported over the routes that minted it, whatever the flag says when it is read: a ``/v1`` result is exported by a
-child on the worker (``POST /v1/results/{id}/export``), a task-route result by a streaming sink in core.
+child on the worker (``POST /v1/results/{id}/export``), a task-route result by a worker task running the same child.
 """
 
 from __future__ import annotations
@@ -569,10 +569,11 @@ class WorkerBackend:
         """Write ``ref``'s rows to ``uri`` as parquet where they are held, and return ``uri``.
 
         A ``/v1`` result is exported by the worker: ``POST /v1/results/{id}/export`` runs a child that sinks the
-        result's plan to ``uri``, and ``credential`` crosses as the connection's id and its user's, resolved in that
-        child. A task-route result is written here by a streaming sink of ``plan_for(ref)``, the scan of its file on
-        the shared disk or the plan this backend holds, nothing collected, ``credential`` resolved in this process. A
-        result is exported over the routes that minted it, whatever the flag says.
+        result's plan to ``uri``. A task-route result is exported by a worker task running that child,
+        ``export_result``, over ``plan_for(ref)``, the scan of its file or the plan this backend holds, as ``sample``
+        and ``count`` send a deferred plan to a task; nothing of it runs in this process. Either way ``credential``
+        crosses as the connection's id and its user's, resolved in the child. A result is exported over the routes
+        that minted it, whatever the flag says.
 
         Raises:
             ComputeUnavailable: The worker could not be reached.
@@ -583,7 +584,18 @@ class WorkerBackend:
         if self._v1_location(ref) is not None:
             body = {"uri": uri, "credential": _wire_credential(credential)}
             return self._v1("POST", f"/results/{ref.result_id}/export", waits=True, json=body).json()["uri"]
-        self.plan_for(ref).sink_parquet(uri, **_credential_kwargs(credential))
+        plan = self.plan_for(ref)
+        _run(
+            lambda: ExternalDfFetcher(
+                flow_id=_NO_FLOW,
+                node_id=_NO_FLOW,
+                lf=plan,
+                operation_type="export_result",
+                kwargs={"uri": uri, "credential": _wire_credential(credential)},
+                wait_on_completion=False,
+                worker_url=self.url,
+            )
+        )
         return uri
 
     def import_uri(
@@ -1396,7 +1408,7 @@ def _delta_destination(write: DeltaWritePayload | DeltaMergePayload | DeltaScd2P
 
 
 def _credential_kwargs(credential: CredentialRef | None) -> dict[str, Any]:
-    """The ``credential_provider`` a sink or scan of a URI takes for ``credential``; nothing without one.
+    """The ``credential_provider`` a scan of a URI takes for ``credential``; nothing without one.
 
     The provider carries the stored connection's id and user only, and resolves it where the plan runs. Without a
     credential Polars resolves the target as it does for any scan.
@@ -1407,7 +1419,7 @@ def _credential_kwargs(credential: CredentialRef | None) -> dict[str, Any]:
 
 
 def _wire_credential(credential: CredentialRef | None) -> dict[str, int] | None:
-    """A credential as the ``/v1`` export and import bodies carry it: the connection's id and its user's, no more."""
+    """A credential as the export and import bodies and the export task carry it: the connection's id and its user's."""
     return None if credential is None else asdict(credential)
 
 

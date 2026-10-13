@@ -1,6 +1,7 @@
 """The worker backend runs plans and operations as worker tasks and reads their results from the shared disk.
 
-It exports such a result by a streaming sink in core and holds an imported URI as a deferred plan in process.
+It exports such a result in a worker task that sinks it, never in core, and holds an imported URI as a deferred plan
+in process.
 """
 
 import io
@@ -37,6 +38,7 @@ from flowfile_core.flowfile.execution.payloads import (
 )
 from flowfile_core.flowfile.execution.protocol import (
     ComputeBackend,
+    CredentialRef,
     JobHandle,
     OperationKind,
     OpResult,
@@ -407,30 +409,57 @@ def task_routes(monkeypatch):
     monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
 
 
-def test_export_of_a_task_route_result_sinks_in_core_from_the_shared_disk(
-    backend, kept, task_routes, monkeypatch, tmp_path
+DEFERRED = SubmitHints(must_materialise=False, wide=False, fanout=1, preview_rows=None)
+
+
+def test_export_of_a_task_route_result_is_a_worker_task_that_sinks_it(
+    backend, kept, task_routes, transport, monkeypatch, tmp_path
 ):
     stored = submit_people(backend, kept).ref
-    deferred_hints = SubmitHints(must_materialise=False, wide=False, fanout=1, preview_rows=None)
-    deferred = backend.submit(PEOPLE.lazy(), [], deferred_hints, new_result_id(), flow_id=-1, node_id=-1).ref
+    deferred = backend.submit(PEOPLE.lazy(), [], DEFERRED, new_result_id(), flow_id=-1, node_id=-1).ref
     kept.append(deferred)
-    sunk = []
-    real_sink = pl.LazyFrame.sink_parquet
+    sunk, tasks = [], []
+    real_sink, real_fetcher = pl.LazyFrame.sink_parquet, worker_module.ExternalDfFetcher
 
     def recording_sink(self, path, *args, **kwargs):
         sunk.append(path)
         return real_sink(self, path, *args, **kwargs)
 
+    def recording_fetcher(*args, **kwargs):
+        tasks.append((kwargs["operation_type"], kwargs["kwargs"]))
+        return real_fetcher(*args, **kwargs)
+
     monkeypatch.setattr(pl.LazyFrame, "sink_parquet", recording_sink)
+    monkeypatch.setattr(worker_module, "ExternalDfFetcher", recording_fetcher)
     from_file, from_plan = f"file://{tmp_path}/stored.parquet", f"file://{tmp_path}/deferred.parquet"
 
-    assert backend.export(stored, from_file, None) == from_file
+    assert backend.export(stored, from_file, CredentialRef(connection_id=7, user_id=3)) == from_file
     assert backend.export(deferred, from_plan, None) == from_plan
 
     assert (stored.state, deferred.state) == ("materialised", "deferred")
-    assert sunk == [from_file, from_plan]
+    assert sunk == []
+    assert tasks == [
+        ("export_result", {"uri": from_file, "credential": {"connection_id": 7, "user_id": 3}}),
+        ("export_result", {"uri": from_plan, "credential": None}),
+    ]
     assert pl.read_parquet(from_file).equals(PEOPLE)
     assert pl.read_parquet(from_plan).equals(PEOPLE)
+
+
+def test_an_export_of_a_task_route_result_writes_nothing_when_the_worker_is_unreachable(
+    task_routes, closed_port_url, tmp_path
+):
+    dead = WorkerBackend(url=closed_port_url)
+    deferred = dead.submit(PEOPLE.lazy(), [], DEFERRED, new_result_id(), flow_id=-1, node_id=-1).ref
+    target = tmp_path / "out.parquet"
+
+    try:
+        with pytest.raises(ComputeUnavailable):
+            dead.export(deferred, f"file://{target}", None)
+    finally:
+        dead.release(deferred)
+
+    assert not target.exists()
 
 
 def test_import_uri_holds_a_deferred_plan_in_process(backend, task_routes, tmp_path):

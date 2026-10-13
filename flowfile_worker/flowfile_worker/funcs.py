@@ -430,9 +430,11 @@ def export_result(
 ):
     """Write a held result's plan to *uri* as parquet by a streaming sink, for ``POST /v1/results/{id}/export``.
 
-    Nothing is collected: the rows stream from the plan's source to the target. *credential*, a stored connection's
-    ``connection_id`` and ``user_id``, becomes a ``CredentialRefProvider`` that this child resolves against its catalog
-    with its master key when the sink opens the target. The URI written is queued. *file_path* is not read.
+    The task routes run it too, as the operation ``export_result`` with *uri* and *credential* as kwargs, when core
+    exports a result it minted over them. Nothing is collected: the rows stream from the plan's source to the target.
+    *credential*, a stored connection's ``connection_id`` and ``user_id``, becomes a ``CredentialRefProvider`` that
+    this child resolves against its catalog with its master key when the sink opens the target. The URI written is
+    queued. *file_path* is not read.
     """
     from shared.cloud_credential_provider import CredentialRefProvider
 
