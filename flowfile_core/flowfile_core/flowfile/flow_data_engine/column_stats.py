@@ -5,9 +5,12 @@ max / mean) over a node's cached result engine on the compute backend it is
 given, and reads back the one row it yields (``bounded.single_row``): through
 ``LocalBackend`` the aggregate runs in core, through ``WorkerBackend`` in a
 worker child, over the scan of a stored result or the full upstream plan of a
-deferred one. The results are written into the engine's ``FlowfileColumn``,
-which stays the single source of truth for column statistics; the endpoint
-just returns that column's existing ``FileColumn`` representation.
+deferred one. The column's dtype comes from resolving the engine's plan, or
+with ``FLOWFILE_COMPUTE_PROTOCOL`` on from the engine's cached schema, so core
+never opens a result a backend stored. The results are written into the
+engine's ``FlowfileColumn``, which stays the single source of truth for column
+statistics; the endpoint just returns that column's existing ``FileColumn``
+representation.
 """
 
 from __future__ import annotations
@@ -18,10 +21,11 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from flowfile_core.configs import logger
+from flowfile_core.configs import logger, settings
 from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine.bounded import single_row
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.schemas.output_model import FileColumn
 
 if TYPE_CHECKING:
@@ -164,12 +168,20 @@ def compute_column_stats(engine: FlowDataEngine, column_name: str, backend: Comp
     ``FileColumn`` representation. Raises
     ``pl.exceptions.ColumnNotFoundError`` for an unknown column and
     ``ColumnStatsUnavailable`` when the backend cannot compute even the
-    counts. Also memoizes the exact row count onto the engine.
+    counts. Also memoizes the exact row count onto the engine. The column's
+    dtype is resolved from the engine's plan, or with
+    ``FLOWFILE_COMPUTE_PROTOCOL`` on read from the engine's cached schema.
     """
-    schema = engine.data_frame.lazy().collect_schema()
-    if column_name not in schema:
-        raise pl.exceptions.ColumnNotFoundError(column_name)
-    dtype = schema[column_name]
+    if settings.FLOWFILE_COMPUTE_PROTOCOL:
+        column = engine.get_schema_column(column_name)
+        if column is None:
+            raise pl.exceptions.ColumnNotFoundError(column_name)
+        dtype = cast_str_to_polars_type(column.data_type)
+    else:
+        schema = engine.data_frame.lazy().collect_schema()
+        if column_name not in schema:
+            raise pl.exceptions.ColumnNotFoundError(column_name)
+        dtype = schema[column_name]
 
     memoized = _memoized_stats(engine, column_name, dtype)
     if memoized is not None:
