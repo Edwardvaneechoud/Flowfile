@@ -1,4 +1,7 @@
-"""The worker backend runs plans and operations as worker tasks and reads their results from the shared disk."""
+"""The worker backend runs plans and operations as worker tasks and reads their results from the shared disk.
+
+It exports such a result by a streaming sink in core and holds an imported URI as a deferred plan in process.
+"""
 
 import io
 import re
@@ -12,6 +15,7 @@ import pyarrow as pa
 import pytest
 import requests
 
+from flowfile_core.configs import settings
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import worker as worker_module
@@ -20,7 +24,6 @@ from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import (
     ComputeUnavailable,
     ForeignRef,
-    OperationUnsupported,
     PlanRejected,
     ResultMissing,
 )
@@ -310,11 +313,12 @@ def test_the_job_is_done_once_submit_returns(backend, kept):
         lambda worker: worker.exists(FOREIGN_REF),
         lambda worker: worker.release(FOREIGN_REF),
         lambda worker: worker.plan_for(FOREIGN_REF),
+        lambda worker: worker.export(FOREIGN_REF, "file:///nowhere/out.parquet", None),
         lambda worker: worker.submit(PEOPLE.lazy(), [FOREIGN_REF], hints(None), "t-foreign", flow_id=-1, node_id=-1),
         lambda worker: worker.status(JobHandle("local", "elsewhere")),
         lambda worker: worker.cancel(JobHandle("local", "elsewhere")),
     ],
-    ids=["sample", "count", "exists", "release", "plan_for", "submit_input", "status", "cancel"],
+    ids=["sample", "count", "exists", "release", "plan_for", "export", "submit_input", "status", "cancel"],
 )
 def test_a_reference_another_backend_minted_is_refused_before_the_worker_is_called(call):
     with pytest.raises(ForeignRef, match="'local'"):
@@ -397,14 +401,59 @@ def test_the_worker_backend_runs_every_operation_kind(kind):
         WorkerBackend(url=WORKER_URL).run_op(kind, {})
 
 
-def test_export_and_import_are_unsupported():
-    worker = WorkerBackend(url=WORKER_URL)
-    ref = ResultRef("worker", "task", [], 0, "materialised", b"/nowhere.arrow")
+@pytest.fixture
+def task_routes(monkeypatch):
+    """The protocol flag off for the test, so its results are minted over the task routes."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
 
-    with pytest.raises(OperationUnsupported):
-        worker.export(ref, "s3://bucket/out.parquet", None)
-    with pytest.raises(OperationUnsupported):
-        worker.import_uri("s3://bucket/in.parquet", [], None, None)
+
+def test_export_of_a_task_route_result_sinks_in_core_from_the_shared_disk(
+    backend, kept, task_routes, monkeypatch, tmp_path
+):
+    stored = submit_people(backend, kept).ref
+    deferred_hints = SubmitHints(must_materialise=False, wide=False, fanout=1, preview_rows=None)
+    deferred = backend.submit(PEOPLE.lazy(), [], deferred_hints, new_result_id(), flow_id=-1, node_id=-1).ref
+    kept.append(deferred)
+    sunk = []
+    real_sink = pl.LazyFrame.sink_parquet
+
+    def recording_sink(self, path, *args, **kwargs):
+        sunk.append(path)
+        return real_sink(self, path, *args, **kwargs)
+
+    monkeypatch.setattr(pl.LazyFrame, "sink_parquet", recording_sink)
+    from_file, from_plan = f"file://{tmp_path}/stored.parquet", f"file://{tmp_path}/deferred.parquet"
+
+    assert backend.export(stored, from_file, None) == from_file
+    assert backend.export(deferred, from_plan, None) == from_plan
+
+    assert (stored.state, deferred.state) == ("materialised", "deferred")
+    assert sunk == [from_file, from_plan]
+    assert pl.read_parquet(from_file).equals(PEOPLE)
+    assert pl.read_parquet(from_plan).equals(PEOPLE)
+
+
+def test_import_uri_holds_a_deferred_plan_in_process(backend, task_routes, tmp_path):
+    path = tmp_path / "in.parquet"
+
+    ref = backend.import_uri(f"file://{path}", worker_module._flowfile_schema(PEOPLE.schema), PEOPLE.height, None)
+
+    try:
+        assert (ref.backend_id, ref.state, ref.row_count) == ("worker", "deferred", PEOPLE.height)
+        assert ref.location == ref.result_id.encode()
+        assert backend.exists(ref)
+        assert isinstance(backend.plan_for(ref), pl.LazyFrame)
+        assert backend.result_file(ref) is None
+
+        PEOPLE.write_parquet(path)
+
+        assert pl.from_arrow(read_stream(backend.sample(ref, 3))).equals(PEOPLE.head(3))
+        assert backend.result_file(ref) is not None
+        assert backend.count(ref) == PEOPLE.height
+    finally:
+        backend.release(ref)
+    assert not backend.exists(ref)
+    assert path.is_file()
 
 
 SPLIT_NODE_SOURCE = """

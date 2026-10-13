@@ -5,7 +5,8 @@ Every test here turns ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on and runs over bo
 so each submit falls back to ``POST /v1/submit``. The socket-only tests at the end play the worker's frames from a fake
 socket. The dispatch tests turn the flag off again mid-test to show that a result is read over the routes that minted
 it. The operation tests run the reads, the fuzzy join, the random split and a custom node over
-``POST /v1/ops/{kind}`` (socket only: the transport is a submit's concern) and read every output over the wire.
+``POST /v1/ops/{kind}`` (socket only: the transport is a submit's concern) and read every output over the wire. The
+export and import tests write a result to a URI on the worker and hold a URI there as a result.
 """
 
 import io
@@ -52,7 +53,14 @@ from flowfile_core.flowfile.execution.payloads import (
     RestApiReadPayload,
     op_payload,
 )
-from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, ResultRef, SubmitHints, SubmitResult
+from flowfile_core.flowfile.execution.protocol import (
+    CredentialRef,
+    JobHandle,
+    OperationKind,
+    ResultRef,
+    SubmitHints,
+    SubmitResult,
+)
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import fetch_worker_capabilities
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
@@ -421,6 +429,90 @@ def test_a_task_route_result_stays_on_the_task_routes_after_the_flag_goes_on(bac
 
     assert not ref.location.startswith(b"{")
     assert not any(path.startswith("/v1/") for _, path, _ in sent), sent
+
+
+@STATES
+def test_export_goes_to_the_v1_export_route_and_the_worker_writes_the_uri(
+    backend, kept, sent, must_materialise, tmp_path
+):
+    ref = submit(backend, kept, must_materialise=must_materialise).ref
+    target = f"file://{tmp_path}/out.parquet"
+    sent.clear()
+
+    assert backend.export(ref, target, None) == target
+
+    assert sent == [("POST", f"/v1/results/{ref.result_id}/export", "1")]
+    assert pl.read_parquet(target).equals(PEOPLE)
+    assert backend.exists(ref) is True
+
+
+def test_an_export_carries_only_the_credential_reference(backend, kept, monkeypatch, tmp_path):
+    """Polars never calls the provider for a local file, so the export of a ``file://`` target still succeeds."""
+    ref = submit(backend, kept, must_materialise=True).ref
+    bodies = []
+    real_send = requests.Session.send
+
+    def recording_send(self, request, **kwargs):
+        if request.url.endswith("/export"):
+            bodies.append(json.loads(request.body))
+        return real_send(self, request, **kwargs)
+
+    monkeypatch.setattr(requests.Session, "send", recording_send)
+    target = f"file://{tmp_path}/out.parquet"
+
+    assert backend.export(ref, target, CredentialRef(connection_id=7, user_id=3)) == target
+
+    assert bodies == [{"uri": target, "credential": {"connection_id": 7, "user_id": 3}}]
+    assert pl.read_parquet(target).equals(PEOPLE)
+
+
+def test_import_uri_posts_to_the_v1_import_route_and_answers_a_deferred_v1_reference(backend, sent, tmp_path):
+    """The file is written only after the import: the worker reads nothing until the rows are asked for."""
+    path = tmp_path / "in.parquet"
+    schema = _flowfile_schema(PEOPLE.schema)
+    sent.clear()
+
+    ref = backend.import_uri(f"file://{path}", schema, PEOPLE.height, None)
+
+    try:
+        assert sent == [("POST", f"/v1/results/{ref.result_id}/import", "1")]
+        assert (ref.backend_id, ref.state, ref.row_count) == ("worker", "deferred", PEOPLE.height)
+        assert [(c.column_name, c.data_type) for c in ref.schema] == [(c.column_name, c.data_type) for c in schema]
+        assert location(ref).kind == "plan"
+        sent.clear()
+        assert isinstance(backend.plan_for(ref), pl.LazyFrame)
+        assert sent == []
+        assert backend.count(ref) == PEOPLE.height
+
+        PEOPLE.write_parquet(path)
+
+        assert pl.from_arrow(read_stream(backend.sample(ref, 3))).equals(PEOPLE.head(3))
+    finally:
+        backend.release(ref)
+    assert ("DELETE", f"/v1/results/{ref.result_id}", "1") in sent
+    assert backend.exists(ref) is False
+    assert path.is_file()
+
+
+def test_an_export_of_a_result_the_worker_no_longer_holds_is_missing(backend, tmp_path):
+    gone = v1_ref(new_result_id())
+
+    with pytest.raises(ResultMissing, match=gone.result_id):
+        backend.export(gone, f"file://{tmp_path}/out.parquet", None)
+    assert not (tmp_path / "out.parquet").exists()
+
+
+@STATES
+def test_a_v1_result_is_exported_over_v1_after_the_flag_goes_off(backend, kept, sent, must_materialise, tmp_path):
+    ref = submit(backend, kept, must_materialise=must_materialise).ref
+    settings.FLOWFILE_COMPUTE_PROTOCOL.value = False
+    target = f"file://{tmp_path}/out.parquet"
+    sent.clear()
+
+    assert backend.export(ref, target, None) == target
+
+    assert [(method, path) for method, path, _ in sent] == [("POST", f"/v1/results/{ref.result_id}/export")]
+    assert pl.read_parquet(target).equals(PEOPLE)
 
 
 def test_a_plan_that_fails_on_the_worker_names_the_error(backend):

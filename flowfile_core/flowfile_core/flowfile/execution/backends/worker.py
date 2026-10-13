@@ -11,8 +11,10 @@ worker's versioned ``/v1`` routes instead, and the worker holds what ``submit`` 
 its schema, row count and samples come over the wire, never from a file core opens. ``submit`` goes over
 ``WS /v1/ws/submit``, and to ``POST /v1/submit`` only when that socket cannot be opened or the plan not sent. ``run_op``
 runs the reads, ``fuzzy_join``, ``random_split`` and ``custom_node`` over ``POST /v1/ops/{kind}``, whose outputs the
-worker holds as it holds a stored submit; the writes, the ML kinds and ``viz_session`` stay on the task routes. A result
-is read over the routes that minted it, whatever the flag says when it is read.
+worker holds as it holds a stored submit; the writes, the ML kinds and ``viz_session`` stay on the task routes.
+``import_uri`` asks the worker to hold a scan of the URI (``POST /v1/results/{id}/import``). A result is read and
+exported over the routes that minted it, whatever the flag says when it is read: a ``/v1`` result is exported by a
+child on the worker (``POST /v1/results/{id}/export``), a task-route result by a streaming sink in core.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ import os
 import random
 import re
 import threading
+import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from copy import deepcopy
@@ -143,6 +146,7 @@ from flowfile_core.schemas.input_schema import ReceivedTable
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from shared import compute_protocol as wire
+from shared.cloud_credential_provider import CredentialRefProvider
 from shared.compute_protocol import PROTOCOL_VERSION, Capabilities
 from shared.google_analytics.models import GoogleAnalyticsFilter, GoogleAnalyticsOrderBy, GoogleAnalyticsReadSettings
 from shared.kafka.models import KafkaReadSettings
@@ -241,15 +245,17 @@ class WorkerBackend:
     ``TaskFailed`` and a closed socket ``ComputeUnavailable``. The worker applies the same policy and holds the result
     itself, in its own file or as the plan it was sent. The reference carries the worker's columns, read here with
     ``safe_eval_pl_type``, and a ``WorkerLocation`` JSON as ``location``. For such a reference ``sample``, ``count``,
-    ``exists`` and ``release`` go to ``/v1/results/{id}``, ``plan_for`` decodes the location without a call (a
-    ``pl.scan_ipc`` of the worker's path, or the deferred plan) and ``result_file`` names no file. A reference is read
-    over the routes that minted it, whatever the flag says when it is read, and only ``/v1`` references go as a submit's
-    ``inputs``. ``run_op`` runs the reads, ``fuzzy_join``, ``random_split`` and ``custom_node`` over
-    ``POST /v1/ops/{kind}`` (``run_op`` has the details), whose refs are ``/v1`` references like a stored
-    submit's; every other operation and its results stay on the task routes. ``status`` and ``cancel`` of a job no
-    fetcher waits on use ``/v1/jobs/{id}``. Every ``/v1`` request and the socket's upgrade carry
-    ``X-Protocol-Version``. A REST answer, a refused upgrade and an ``error`` frame map alike (``_v1_error``): 426 is
-    ``VersionMismatch``, a 404 ``ResultMissing``, and a failed child's 500 goes through ``worker_failure``.
+    ``exists`` and ``release`` go to ``/v1/results/{id}`` and ``export`` to ``POST /v1/results/{id}/export``,
+    ``plan_for`` decodes the location without a call (a ``pl.scan_ipc`` of the worker's path, or the deferred plan)
+    and ``result_file`` names no file. ``import_uri`` posts to ``POST /v1/results/{id}/import``, so the worker holds
+    the scan of the URI as a deferred ``/v1`` result. A reference is read over the routes that minted it, whatever the
+    flag says when it is read, and only ``/v1`` references go as a submit's ``inputs``. ``run_op`` runs the reads,
+    ``fuzzy_join``, ``random_split`` and ``custom_node`` over ``POST /v1/ops/{kind}`` (``run_op`` has the details),
+    whose refs are ``/v1`` references like a stored submit's; every other operation and its results stay on the task
+    routes. ``status`` and ``cancel`` of a job no fetcher waits on use ``/v1/jobs/{id}``. Every ``/v1`` request and the
+    socket's upgrade carry ``X-Protocol-Version``. A REST answer, a refused upgrade and an ``error`` frame map alike
+    (``_v1_error``): 426 is ``VersionMismatch``, a 404 ``ResultMissing``, and a failed child's 500 goes through
+    ``worker_failure``.
     """
 
     id = WORKER_BACKEND_ID
@@ -560,14 +566,53 @@ class WorkerBackend:
         return self._file(ref)
 
     def export(self, ref: ResultRef, uri: str, credential: CredentialRef | None) -> str:
-        """Not supported: the worker backend has no export."""
-        raise OperationUnsupported(f"The {self.id} backend does not export results")
+        """Write ``ref``'s rows to ``uri`` as parquet where they are held, and return ``uri``.
+
+        A ``/v1`` result is exported by the worker: ``POST /v1/results/{id}/export`` runs a child that sinks the
+        result's plan to ``uri``, and ``credential`` crosses as the connection's id and its user's, resolved in that
+        child. A task-route result is written here by a streaming sink of ``plan_for(ref)``, the scan of its file on
+        the shared disk or the plan this backend holds, nothing collected, ``credential`` resolved in this process. A
+        result is exported over the routes that minted it, whatever the flag says.
+
+        Raises:
+            ComputeUnavailable: The worker could not be reached.
+            ForeignRef: Another backend minted ``ref``.
+            ResultMissing: The worker, or this backend, no longer holds ``ref``.
+            TaskFailed: The worker's sink failed.
+        """
+        if self._v1_location(ref) is not None:
+            body = {"uri": uri, "credential": _wire_credential(credential)}
+            return self._v1("POST", f"/results/{ref.result_id}/export", waits=True, json=body).json()["uri"]
+        self.plan_for(ref).sink_parquet(uri, **_credential_kwargs(credential))
+        return uri
 
     def import_uri(
         self, uri: str, schema: Schema, row_count: int | None, credential: CredentialRef | None
     ) -> ResultRef:
-        """Not supported: the worker backend has no import."""
-        raise OperationUnsupported(f"The {self.id} backend does not import data from a URI")
+        """Hold a scan of the parquet at ``uri`` as a deferred result with the ``schema`` and ``row_count`` given.
+
+        Nothing is read: the schema and the count are the caller's. With the protocol flag on the worker builds and
+        holds the scan under a fresh id (``POST /v1/results/{id}/import``), ``credential`` crossing as the
+        connection's id and its user's, and the answer is a ``/v1`` reference whose ``plan_for`` decodes the scan
+        without a call. With it off the scan is held in this process like every deferred plan. ``release`` forgets
+        the scan and leaves the file.
+
+        Raises:
+            ComputeUnavailable: Over ``/v1``, the worker could not be reached.
+        """
+        result_id = uuid.uuid4().hex
+        if settings.FLOWFILE_COMPUTE_PROTOCOL:
+            body = {
+                "uri": uri,
+                "credential": _wire_credential(credential),
+                "columns": _wire_columns(schema),
+                "row_count": row_count,
+            }
+            response = self._v1("POST", f"/results/{result_id}/import", json=body)
+            return self._ref_from_wire(wire.ResultRef.model_validate_json(response.content))
+        scan = pl.scan_parquet(uri, **_credential_kwargs(credential))
+        ref, _ = self._defer(scan, result_id, _NO_FLOW, _NO_FLOW, None, schema=schema, row_count=row_count)
+        return ref
 
     def status(self, handle: JobHandle) -> JobStatus:
         """The worker's ``GET /status`` answer for the task ``handle`` names.
@@ -1348,6 +1393,27 @@ def _delta_destination(write: DeltaWritePayload | DeltaMergePayload | DeltaScd2P
     if write.table.base_uri is not None:
         storage_payload = {"base_uri": write.table.base_uri, **(storage_payload or {})}
     return {"table_id": write.table.table_id, "table_name": write.table.table_name, "storage_payload": storage_payload}
+
+
+def _credential_kwargs(credential: CredentialRef | None) -> dict[str, Any]:
+    """The ``credential_provider`` a sink or scan of a URI takes for ``credential``; nothing without one.
+
+    The provider carries the stored connection's id and user only, and resolves it where the plan runs. Without a
+    credential Polars resolves the target as it does for any scan.
+    """
+    if credential is None:
+        return {}
+    return {"credential_provider": CredentialRefProvider(credential.connection_id, credential.user_id)}
+
+
+def _wire_credential(credential: CredentialRef | None) -> dict[str, int] | None:
+    """A credential as the ``/v1`` export and import bodies carry it: the connection's id and its user's, no more."""
+    return None if credential is None else asdict(credential)
+
+
+def _wire_columns(schema: Schema) -> list[dict[str, str]]:
+    """A schema in the ``WireColumn`` spelling the worker answers and ``_ref_from_wire`` reads back."""
+    return [{"name": column.column_name, "data_type": column.data_type} for column in schema]
 
 
 def _reported(fetcher: BaseFetcher) -> dict[str, Any]:
