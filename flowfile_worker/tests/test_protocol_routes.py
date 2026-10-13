@@ -1,4 +1,7 @@
-"""The worker's ``/v1`` routes: submit into a held result reference, then sample, count, probe and release it."""
+"""The worker's ``/v1`` routes: submit into a held result reference, then sample, count, probe and release it.
+
+A held result is also exported to a URI as parquet, and a URI imported as a held result.
+"""
 
 import json
 import os
@@ -19,6 +22,7 @@ from shared.compute_protocol import (
     PROTOCOL_VERSION,
     PROTOCOL_VERSION_HEADER,
     Capabilities,
+    ResultRef,
     SubmitResult,
     WorkerLocation,
     schema_to_wire,
@@ -41,6 +45,8 @@ ROUTES = [
     ("GET", "/v1/results/some-id/count"),
     ("HEAD", "/v1/results/some-id"),
     ("DELETE", "/v1/results/some-id"),
+    ("POST", "/v1/results/some-id/export"),
+    ("POST", "/v1/results/some-id/import"),
     ("GET", "/v1/jobs/some-id"),
     ("POST", "/v1/jobs/some-id/cancel"),
     *[
@@ -161,6 +167,8 @@ def test_the_v1_paths_are_in_the_openapi_document():
         "/v1/results/{result_id}/sample",
         "/v1/results/{result_id}/count",
         "/v1/results/{result_id}",
+        "/v1/results/{result_id}/export",
+        "/v1/results/{result_id}/import",
         "/v1/jobs/{job_id}",
         "/v1/jobs/{job_id}/cancel",
         "/v1/ops/database_read",
@@ -375,6 +383,109 @@ def test_a_result_whose_file_is_gone_is_not_held(held):
 
     assert client.head(f"/v1/results/{result_id}").status_code == 404
     assert client.get(f"/v1/results/{result_id}/count").status_code == 404
+
+
+@pytest.mark.parametrize("must_materialise", [True, False], ids=["materialised", "deferred"])
+def test_export_writes_the_result_as_parquet_at_the_uri_in_a_child(held, monkeypatch, tmp_path, must_materialise):
+    result_id = held()
+    plan = _plan()
+    _submit(result_id, plan, must_materialise=must_materialise)
+    jobs_before = set(status_dict)
+    children = _record_children(monkeypatch)
+    uri = f"file://{tmp_path}/out.parquet"
+
+    response = client.post(f"/v1/results/{result_id}/export", json={"uri": uri})
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"uri": uri}
+    assert children == ["export_result"]
+    assert_frame_equal(pl.read_parquet(uri), plan.collect())
+    assert set(status_dict) == jobs_before
+    assert client.head(f"/v1/results/{result_id}").status_code == 200
+
+
+def test_export_of_an_unknown_result_is_404(monkeypatch, tmp_path):
+    children = _record_children(monkeypatch)
+
+    response = client.post("/v1/results/unknown/export", json={"uri": f"file://{tmp_path}/out.parquet"})
+
+    assert response.status_code == 404
+    assert children == []
+    assert not (tmp_path / "out.parquet").exists()
+
+
+def test_an_export_whose_sink_fails_is_500_with_the_childs_error(held):
+    result_id = held()
+    _submit(result_id, _plan(), must_materialise=True)
+
+    response = client.post(f"/v1/results/{result_id}/export", json={"uri": "nosuch://bucket/out.parquet"})
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert detail["status"] == "Error"
+    assert detail["error_kind"] == "task"
+    assert "nosuch://bucket/out.parquet" in detail["error_message"]
+    assert client.head(f"/v1/results/{result_id}").status_code == 200
+
+
+def test_import_holds_a_deferred_result_over_the_uri_with_the_given_columns_and_count(held, monkeypatch, tmp_path):
+    result_id = held()
+    plan = _plan()
+    path = tmp_path / "in.parquet"
+    columns = schema_to_wire(plan.collect_schema())
+    children = _record_children(monkeypatch)
+    body = {"uri": f"file://{path}", "columns": [column.model_dump() for column in columns], "row_count": 5}
+
+    response = client.post(f"/v1/results/{result_id}/import", json=body)
+
+    assert response.status_code == 200, response.text
+    ref = ResultRef.model_validate_json(response.text)
+    assert (ref.result_id, ref.state, ref.row_count, ref.columns) == (result_id, "deferred", 5, columns)
+    location = WorkerLocation.model_validate_json(ref.location)
+    assert (location.kind, location.path) == ("plan", None)
+    assert client.head(f"/v1/results/{result_id}").status_code == 200
+    assert client.get(f"/v1/results/{result_id}/count").json() == {"row_count": 5}
+    assert children == []
+
+    plan.collect().write_parquet(path)
+    sample = client.get(f"/v1/results/{result_id}/sample", params={"n": 2})
+
+    assert children == ["submit_result"]
+    assert_frame_equal(pl.read_ipc_stream(sample.content), plan.head(2).collect())
+    assert client.delete(f"/v1/results/{result_id}").status_code == 204
+    assert client.head(f"/v1/results/{result_id}").status_code == 404
+    assert path.is_file()
+
+
+def test_import_under_a_held_id_replaces_it(held, tmp_path):
+    result_id = held()
+    stored_file = _location(_submit(result_id, _plan(), must_materialise=True)).path
+    body = {"uri": f"file://{tmp_path}/in.parquet", "columns": [], "row_count": 0}
+
+    response = client.post(f"/v1/results/{result_id}/import", json=body)
+
+    assert response.status_code == 200, response.text
+    assert ResultRef.model_validate_json(response.text).state == "deferred"
+    assert not os.path.exists(stored_file)
+
+
+@pytest.mark.parametrize(
+    ("route", "body"),
+    [
+        ("export", {"uri": "file:///out.parquet", "format": "csv"}),
+        ("export", {"uri": "file:///out.parquet", "credential": {"connection_id": 1, "user_id": 1, "secret": "s"}}),
+        ("import", {"uri": "file:///in.parquet", "columns": [], "mode": "copy"}),
+        ("import", {"uri": "file:///in.parquet"}),
+    ],
+    ids=["export-unknown-field", "export-credential-field", "import-unknown-field", "import-no-columns"],
+)
+def test_a_bad_export_or_import_body_is_422(held, route, body):
+    result_id = held()
+
+    response = client.post(f"/v1/results/{result_id}/{route}", json=body)
+
+    assert response.status_code == 422
+    assert client.head(f"/v1/results/{result_id}").status_code == 404
 
 
 def test_a_plan_that_fails_on_its_data_is_a_task_failure_and_holds_nothing(held):
