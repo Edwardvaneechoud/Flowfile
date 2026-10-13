@@ -65,7 +65,7 @@ from flowfile_core.schemas.input_schema import (
 )
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared import compute_protocol as wire
-from shared.compute_protocol import PROTOCOL_VERSION_HEADER, Capabilities, WorkerLocation
+from shared.compute_protocol import PROTOCOL_VERSION_HEADER, WorkerLocation
 from shared.storage_config import storage
 
 PEOPLE = pl.DataFrame(
@@ -236,10 +236,6 @@ def v1_ref(result_id: str) -> ResultRef:
     """A reference as ``/v1`` mints one, for a result the worker never held."""
     nowhere = WorkerLocation(kind="file", path="/nowhere.arrow").model_dump_json().encode()
     return ResultRef("worker", result_id, [], None, "materialised", nowhere)
-
-
-def handshake_fields(capabilities: Capabilities) -> dict:
-    return capabilities.model_dump(exclude={"operations"})
 
 
 def test_a_materialised_submit_is_held_in_the_workers_own_file(backend, kept):
@@ -487,7 +483,7 @@ def test_a_job_the_worker_does_not_know_is_a_lookup_error(backend):
 def test_capabilities_are_the_workers_answer_with_the_operations_run_op_runs(backend):
     capabilities = backend.capabilities()
 
-    assert handshake_fields(capabilities) == handshake_fields(fetch_worker_capabilities(settings.WORKER_URL))
+    assert capabilities == fetch_worker_capabilities(settings.WORKER_URL)
     assert capabilities.operations == {kind.value for kind in OperationKind}
 
 
