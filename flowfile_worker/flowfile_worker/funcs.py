@@ -417,6 +417,52 @@ def submit_result(
         progress.value = 100
 
 
+def split_result(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,
+    flowfile_flow_id: int,
+    flowfile_node_id: int | str,
+    paths: list[str],
+    percentages: list[float],
+):
+    """Collect a plan of shuffled rows once and write consecutive slices of it, one Arrow IPC file per split.
+
+    Split *i* is written to ``paths[i]`` and takes ``round(total * percentages[i] / 100)`` rows, the last split the
+    rest, so the splits partition the rows. The queued dict carries the plan's ``pl.Schema``, never one read back from
+    a file (see ``submit_result``), and each split's row count. *file_path* is not read.
+    """
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(f"Starting random split into {len(paths)} parts")
+    try:
+        lf = _load_plan(polars_serializable_object)
+        schema = lf.collect_schema()
+        df = collect_lazy_frame(lf)
+        total = df.height
+        row_counts = []
+        offset = 0
+        for i, (path, percentage) in enumerate(zip(paths, percentages, strict=True)):
+            length = total - offset if i == len(paths) - 1 else int(round(total * percentage / 100.0))
+            length = max(0, length)
+            part = df.slice(offset, length)
+            with environment_failures():
+                part.write_ipc(path)
+            row_counts.append(part.height)
+            offset += length
+    except BaseException as e:
+        flowfile_logger.error(f"Error during random split: {str(e)}")
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
+        return
+    # A dict, not a tuple: spawner.unpack_result reads a 2-tuple as (payload, row_count).
+    queue.put({"columns": schema, "row_counts": row_counts})
+    with progress.get_lock():
+        progress.value = 100
+
+
 def calculate_schema_logic(
     df: pl.LazyFrame, optimize_memory: bool = True, flowfile_logger: Logger = None
 ) -> list[dict]:
