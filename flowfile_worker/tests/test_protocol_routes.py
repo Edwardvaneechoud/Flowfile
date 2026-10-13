@@ -69,6 +69,8 @@ ROUTES = [
             "fuzzy_join",
             "custom_node",
             "random_split",
+            "ml_train",
+            "ml_apply",
         )
     ],
 ]
@@ -188,6 +190,8 @@ def test_the_v1_paths_are_in_the_openapi_document():
         "/v1/ops/fuzzy_join",
         "/v1/ops/custom_node",
         "/v1/ops/random_split",
+        "/v1/ops/ml_train",
+        "/v1/ops/ml_apply",
     }
     assert set(paths["/v1/results/{result_id}"]) == {"head", "delete"}
 
