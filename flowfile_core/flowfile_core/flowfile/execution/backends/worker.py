@@ -117,11 +117,11 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     MLApplyFetcher,
     MLTrainFetcher,
     _worker_session,
+    _WorkerAuth,
     cancel_task,
     clear_task_from_worker,
     fetch_kafka_offsets,
     get_status,
-    get_worker_capabilities,
     results_exists,
     trigger_visualize_fields,
     trigger_visualize_query,
@@ -192,6 +192,13 @@ class WorkerBackend:
     another URL reaches that worker instead. The version handshake is once per process, not per backend: the first
     worker called is checked, and a later call to another one is not.
 
+    ``backend_id`` is the id the backend answers to, ``"worker"`` for the built-in one and ``worker:<name>`` for a
+    configured one: the references and job handles it makes carry it, and it refuses those of any other id.
+    ``token`` is the worker's own bearer token, which every ``/v1`` request and the ``/v1`` submit socket's upgrade
+    carry as ``X-Flowfile-Internal``, and ``capabilities`` too in both flag states; ``None`` (the built-in backend)
+    signs them with the process's internal token. The task routes, and the handshake gate in front of them, always
+    sign with the process's token.
+
     Materialisation policy: ``submit`` stores a plan on the worker when ``hints.must_materialise`` is set, or when
     the plan is ``wide`` and a preview is asked for (``preview_rows`` is not ``None``); every other plan stays
     deferred. A wide plan is stored so its preview and its consumers read rows computed once; with no preview
@@ -216,7 +223,8 @@ class WorkerBackend:
     The worker handshake runs before any call reaches the worker: every worker call goes through the transport's
     worker session or its WebSocket submit, which run it, and the ``/v1`` submit's socket calls ``ensure_handshake``
     before it dials, as the transport's WebSocket submit does. So every method that calls the worker is gated by it
-    and can raise its ``VersionMismatch`` or ``ComputeUnavailable``.
+    and can raise its ``VersionMismatch`` or ``ComputeUnavailable``, except ``capabilities``: it is the one read that
+    goes around the gate, so a caller can read a worker's versions and compare them with core's itself.
 
     With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on (read on each call), ``submit`` sends a meta JSON (hints, inputs,
     ids) and the plan over the worker's ``WS /v1/ws/submit``, and posts them to ``POST /v1/submit`` only when the socket
@@ -239,8 +247,11 @@ class WorkerBackend:
     id = WORKER_BACKEND_ID
     protocol_version = PROTOCOL_VERSION
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, *, backend_id: str = WORKER_BACKEND_ID, token: str | None = None) -> None:
         self.url = url
+        self.id = backend_id
+        self.token = token
+        self._auth = _TokenAuth(token) if token is not None else None
         self._lock = threading.Lock()
         self._deferred: dict[str, _DeferredPlan] = {}
         self._in_flight: dict[str, BaseFetcher] = {}
@@ -267,12 +278,34 @@ class WorkerBackend:
     def capabilities(self) -> Capabilities:
         """The answer of the worker at ``url`` to ``GET /capabilities``, with the operations ``run_op`` runs there.
 
-        With the protocol flag on, the answer to ``GET /v1/capabilities``.
+        With the protocol flag on, the answer to ``GET /v1/capabilities``. Either is one request outside the handshake
+        gate, signed with this backend's token and carrying its ``X-Protocol-Version``.
+
+        Raises:
+            ComputeUnavailable: The worker could not be reached.
+            VersionMismatch: With the flag off, the worker has no ``/capabilities`` route, so it predates core; with
+                it on, the worker refused this protocol version (426).
+            ComputeError: Any other answer that is no success (``_v1_failure``): a refused token is a ``TaskFailed``
+                naming 401.
         """
-        if settings.FLOWFILE_COMPUTE_PROTOCOL:
-            answer = Capabilities.model_validate(self._v1("GET", "/capabilities").json())
-            return answer.model_copy(update={"operations": frozenset(op.value for op in self._operations)})
-        answer = get_worker_capabilities(worker_url=self.url)
+        protocol = bool(settings.FLOWFILE_COMPUTE_PROTOCOL)
+        try:
+            response = requests.get(
+                f"{self.url}{'/v1' if protocol else ''}/capabilities",
+                auth=self._auth or _WorkerAuth(),
+                headers={wire.PROTOCOL_VERSION_HEADER: str(self.protocol_version)},
+                timeout=_WORKER_TIMEOUT,
+            )
+        except requests.RequestException as e:
+            raise ComputeUnavailable(f"Could not reach the worker at {self.url}: {e}") from e
+        if response.status_code == 404 and not protocol:
+            raise VersionMismatch(
+                f"The worker at {self.url} does not report its capabilities (GET /capabilities answered 404), "
+                "so it is an older release than core"
+            )
+        if not response.ok:
+            raise _v1_failure(response.status_code, response.content, response.reason)
+        answer = Capabilities.model_validate(response.json())
         return answer.model_copy(update={"operations": frozenset(op.value for op in self._operations)})
 
     def submit(
@@ -607,10 +640,12 @@ class WorkerBackend:
     def _v1(
         self, method: str, path: str, *, missing_ok: bool = False, waits: bool = False, **kwargs: Any
     ) -> requests.Response:
-        """Send one request to the worker's ``/v1`` route ``path`` with this backend's protocol version.
+        """Send one request to the worker's ``/v1`` route ``path`` with this backend's protocol version and token.
 
         ``waits`` is for a call that waits on a worker child (a submit, a sample, a count): its read timeout is the
-        deadline the task routes' poll honours. A 2xx answer is returned, a 404 too with ``missing_ok``.
+        deadline the task routes' poll honours. A 2xx answer is returned, a 404 too with ``missing_ok``. The request
+        goes through the worker session, so the handshake gates it; this backend's token, when it has one, signs it
+        in place of the session's process token.
 
         Raises:
             ComputeUnavailable: The worker could not be reached.
@@ -624,6 +659,7 @@ class WorkerBackend:
                 worker_url=self.url,
                 headers={wire.PROTOCOL_VERSION_HEADER: str(self.protocol_version)},
                 timeout=timeout,
+                auth=self._auth,
                 **kwargs,
             )
         except requests.RequestException as e:
@@ -637,10 +673,10 @@ class WorkerBackend:
 
         ``None`` means the socket could not be opened or the plan not sent. The worker reads both frames before it runs
         anything and drops a socket that closed before the plan, so the post never runs a plan twice. The socket is
-        dialled after ``ensure_handshake``, with the internal token, this backend's ``X-Protocol-Version`` and no
-        frame-size cap (a deferred result's ``complete`` frame carries its plan); a connect that fails at the network
-        re-arms the handshake, as the transport's WebSocket submit does. Once the plan is sent the answer is the final
-        frame's, and nothing is resent.
+        dialled after ``ensure_handshake``, with this backend's token (``_internal_token``), its ``X-Protocol-Version``
+        and no frame-size cap (a deferred result's ``complete`` frame carries its plan); a connect that fails at the
+        network re-arms the handshake, as the transport's WebSocket submit does. Once the plan is sent the answer is the
+        final frame's, and nothing is resent.
 
         Raises:
             ComputeUnavailable: The socket closed after the plan was sent.
@@ -653,7 +689,7 @@ class WorkerBackend:
             ws = connect(
                 _get_ws_url(self.url) + "/v1/ws/submit",
                 additional_headers={
-                    "X-Flowfile-Internal": get_internal_token(),
+                    "X-Flowfile-Internal": self._internal_token(),
                     wire.PROTOCOL_VERSION_HEADER: str(self.protocol_version),
                 },
                 max_size=None,
@@ -681,6 +717,10 @@ class WorkerBackend:
         if frame["type"] == "error":
             raise _v1_error(frame["status_code"], frame["detail"])
         return wire.SubmitResult.model_validate(frame["result"])
+
+    def _internal_token(self) -> str:
+        """The token this backend signs the worker's ``/v1`` calls with: its own, else the process's internal token."""
+        return self.token if self.token is not None else get_internal_token()
 
     def _v1_location(self, ref: ResultRef) -> wire.WorkerLocation | None:
         """The ``WorkerLocation`` of a result ``/v1`` minted; ``None`` for a task-route result.
@@ -1200,6 +1240,17 @@ def _final_frame(ws: ClientConnection, worker_url: str, result_id: str) -> dict[
         frame = json.loads(message)
         if frame.get("type") in ("complete", "error"):
             return frame
+
+
+class _TokenAuth(requests.auth.AuthBase):
+    """Signs a worker request with one configured backend's own token in place of the process's internal token."""
+
+    def __init__(self, token: str) -> None:
+        self._token = token
+
+    def __call__(self, request: requests.PreparedRequest) -> requests.PreparedRequest:
+        request.headers["X-Flowfile-Internal"] = self._token
+        return request
 
 
 def _v1_error(status_code: int, detail: Any) -> ComputeError:

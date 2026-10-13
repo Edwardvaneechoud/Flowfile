@@ -491,6 +491,39 @@ def test_capabilities_are_the_workers_answer_with_the_operations_run_op_runs(bac
     assert capabilities.operations == {kind.value for kind in OperationKind}
 
 
+def test_a_backend_with_its_own_token_signs_every_v1_call_and_the_socket_with_it(
+    running_worker, transport, monkeypatch
+):
+    """The session worker knows only the process's token, so it answers 401 to every call this backend signs."""
+    handshake.ensure_handshake(settings.WORKER_URL)
+    tokens: list[str | None] = []
+    real_send = requests.Session.send
+
+    def recording_send(self, request, **kwargs):
+        tokens.append(request.headers.get("X-Flowfile-Internal"))
+        return real_send(self, request, **kwargs)
+
+    def recording_refusal(uri, **kwargs):
+        tokens.append(kwargs["additional_headers"].get("X-Flowfile-Internal"))
+        raise InvalidStatus(Response(400, "Bad Request", Headers()))
+
+    monkeypatch.setattr(requests.Session, "send", recording_send)
+    monkeypatch.setattr(worker_module, "connect", recording_refusal)
+    team = WorkerBackend(url=settings.WORKER_URL, backend_id="worker:team", token="row-token")
+
+    with pytest.raises(TaskFailed, match="The worker answered 401"):
+        team.capabilities()
+    with pytest.raises(TaskFailed, match="The worker answered 401"):
+        team.submit(people(), [], hints(True), new_result_id(), flow_id=-1, node_id=-1)
+
+    assert tokens == ["row-token"] * 3, "capabilities, the socket's upgrade, then the post"
+
+    tokens.clear()
+    WorkerBackend(url=settings.WORKER_URL).capabilities()
+
+    assert tokens == [get_internal_token()]
+
+
 @pytest.fixture
 def remote_worker():
     from flowfile_core.schemas.schemas import is_valid_execution_location_in_current_global_settings
