@@ -289,6 +289,9 @@ def _load_flow_storage(flow_path: Path) -> schemas.FlowInformation:
     - .yaml / .yml - new YAML format
     - .json - JSON format
 
+    Every format opens with the execution location ``schemas.loaded_execution_location`` gives the saved one: with
+    the compute protocol on, a flow saved ``local`` or ``remote`` opens as ``auto``.
+
     Args:
         flow_path: Path to the flowfile
 
@@ -302,19 +305,21 @@ def _load_flow_storage(flow_path: Path) -> schemas.FlowInformation:
         try:
             flow_storage_obj = load_flowfile_pickle(str(flow_path))
             ensure_compatibility(flow_storage_obj, str(flow_path))
-            return flow_storage_obj
         except Exception as e:
             raise ValueError(
                 f"Failed to open legacy .flowfile: {e}\n\n" f"Try migrating: migrate_flowfile('{flow_path}')"
             ) from e
 
     elif suffix in (".yaml", ".yml"):
-        return _load_flowfile_yaml(flow_path)
+        flow_storage_obj = _load_flowfile_yaml(flow_path)
 
     elif suffix == ".json":
-        return _load_flowfile_json(flow_path)
+        flow_storage_obj = _load_flowfile_json(flow_path)
     else:
         raise ValueError(f"Unsupported file format: {suffix}")
+    flow_settings = flow_storage_obj.flow_settings
+    flow_settings.execution_location = schemas.loaded_execution_location(flow_settings.execution_location)
+    return flow_storage_obj
 
 
 def _resolve_flow_name(flow_path: Path, stored_name: str | None) -> str:
