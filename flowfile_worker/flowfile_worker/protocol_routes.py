@@ -221,7 +221,7 @@ def _run(
 
 
 def _run_child(record: ResultRecord, plan: bytes, operation: str, kwargs: dict | None = None) -> Any:
-    """Run *operation* over *plan*, read from *record*, as a task of its own and return its result; no entry is left."""
+    """Run *operation* over *plan* as a task of its own under *record*'s flow and node; its result, no entry left."""
     task_id = uuid.uuid4().hex
     try:
         status = _run(task_id, plan, operation, "", record.flow_id, record.node_id, kwargs)
