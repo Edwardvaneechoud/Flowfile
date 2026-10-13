@@ -4,7 +4,7 @@ The catalog services send a table's metadata read, its previews and Delta histor
 edits to the worker or run them in this process, and run a virtual table's producer flow remote or local when the
 caller names no location. Each decides through ``uses_worker`` alone, so the choice follows the execution context
 like every other piece of compute: a block under ``use_context`` with core's own backend keeps catalog I/O in core,
-and so does a deployment whose default backend is core's own.
+and so does a deployment whose default backend is core's own. What goes to the worker goes to ``registry.worker_url()``.
 """
 
 from __future__ import annotations

@@ -13,6 +13,7 @@ import polars as pl
 import pytest
 from pydantic import SecretStr
 
+from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
@@ -36,6 +37,12 @@ from shared.google_analytics.models import GoogleAnalyticsReadSettings
 from shared.kafka.models import KafkaReadResult, KafkaReadSettings
 from shared.path_utils import CloudPathNotSupportedError, DirectoryScanUnsupportedError
 from shared.rest_api.models import RestApiReadSettings
+
+
+def make(backend_type: type):
+    """An instance of ``backend_type``: the worker backend on the session worker, core's own backend as it is."""
+    return backend_type(url=WORKER_URL) if backend_type is WorkerBackend else backend_type()
+
 
 ROWS = pl.DataFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]})
 FLOW_ID, NODE_ID = 7, 3
@@ -176,7 +183,7 @@ def fetchers(monkeypatch, tmp_path):
         "ExternalCreateFetcher",
     ):
         monkeypatch.setattr(worker_module, name, Fetcher)
-    monkeypatch.setattr(worker_module, "fetch_kafka_offsets", lambda task_id: None)
+    monkeypatch.setattr(worker_module, "fetch_kafka_offsets", lambda task_id, *, worker_url: None)
     return SimpleNamespace(cls=Fetcher, made=made)
 
 
@@ -194,7 +201,7 @@ def test_every_payload_gets_its_own_job_id():
 def test_the_worker_reads_a_database_with_the_password_still_encrypted(fetchers):
     read = database_payload()
 
-    result = WorkerBackend().run_op(OperationKind.database_read, op_payload(read))
+    result = WorkerBackend(url=WORKER_URL).run_op(OperationKind.database_read, op_payload(read))
 
     [fetcher] = fetchers.made
     sent = fetcher.args[0]
@@ -225,28 +232,28 @@ def test_the_worker_reads_kafka_with_its_secrets_encrypted_and_reports_the_offse
     read = kafka_payload()
     offsets_asked = []
 
-    def offsets(task_id):
-        offsets_asked.append(task_id)
+    def offsets(task_id, *, worker_url):
+        offsets_asked.append((task_id, worker_url))
         return {"new_offsets": {"0": 12}, "messages_consumed": 4}
 
     monkeypatch.setattr(worker_module, "fetch_kafka_offsets", offsets)
 
-    result = WorkerBackend().run_op(OperationKind.kafka_read, op_payload(read))
+    result = WorkerBackend(url=WORKER_URL).run_op(OperationKind.kafka_read, op_payload(read))
 
     [fetcher] = fetchers.made
     sent = fetcher.args[0]
     assert sent.sasl_password == read.settings.sasl_password
     assert sent.topic == "orders"
     assert (sent.flowfile_flow_id, sent.flowfile_node_id) == (FLOW_ID, NODE_ID)
-    assert offsets_asked == [fetcher.file_ref]
+    assert offsets_asked == [(fetcher.file_ref, WORKER_URL)]
     assert result.metadata == {"offsets": {"0": 12}}
 
 
 @pytest.mark.parametrize("answer", [None, {"new_offsets": {}, "messages_consumed": 0}], ids=["none", "empty"])
 def test_a_worker_kafka_read_that_consumed_nothing_reports_no_offsets(fetchers, monkeypatch, answer):
-    monkeypatch.setattr(worker_module, "fetch_kafka_offsets", lambda task_id: answer)
+    monkeypatch.setattr(worker_module, "fetch_kafka_offsets", lambda task_id, *, worker_url: answer)
 
-    result = WorkerBackend().run_op(OperationKind.kafka_read, op_payload(kafka_payload()))
+    result = WorkerBackend(url=WORKER_URL).run_op(OperationKind.kafka_read, op_payload(kafka_payload()))
 
     assert result.metadata == {}
 
@@ -276,7 +283,7 @@ def test_the_worker_signs_in_to_google_analytics_with_a_service_account():
 def test_the_worker_signs_in_to_google_analytics_with_oauth(fetchers):
     read = google_analytics_payload("oauth")
 
-    WorkerBackend().run_op(OperationKind.google_analytics_read, op_payload(read))
+    WorkerBackend(url=WORKER_URL).run_op(OperationKind.google_analytics_read, op_payload(read))
 
     [fetcher] = fetchers.made
     sent = fetcher.args[0]
@@ -289,7 +296,7 @@ def test_the_worker_signs_in_to_google_analytics_with_oauth(fetchers):
 def test_the_worker_routes_the_rest_secret_by_auth_type(fetchers):
     read = rest_payload()
 
-    WorkerBackend().run_op(OperationKind.rest_api_read, op_payload(read))
+    WorkerBackend(url=WORKER_URL).run_op(OperationKind.rest_api_read, op_payload(read))
 
     [fetcher] = fetchers.made
     sent = fetcher.args[0]
@@ -302,7 +309,7 @@ def test_the_worker_routes_the_rest_secret_by_auth_type(fetchers):
 def test_the_worker_reads_a_file_through_the_create_table_task(fetchers, tmp_path):
     read = file_payload(tmp_path / "people.csv")
 
-    result = WorkerBackend().run_op(OperationKind.file_read, op_payload(read))
+    result = WorkerBackend(url=WORKER_URL).run_op(OperationKind.file_read, op_payload(read))
 
     [fetcher] = fetchers.made
     assert fetcher.kwargs["received_table"] is read.settings.received_file
@@ -316,9 +323,11 @@ def test_the_worker_reads_a_file_through_the_create_table_task(fetchers, tmp_pat
 
 def test_the_worker_refuses_a_cloud_path_and_a_directory_before_a_task_starts(fetchers, tmp_path):
     with pytest.raises(CloudPathNotSupportedError):
-        WorkerBackend().run_op(OperationKind.file_read, op_payload(file_payload("s3://bucket/people.xlsx", "excel")))
+        WorkerBackend(url=WORKER_URL).run_op(
+            OperationKind.file_read, op_payload(file_payload("s3://bucket/people.xlsx", "excel"))
+        )
     with pytest.raises(DirectoryScanUnsupportedError):
-        WorkerBackend().run_op(
+        WorkerBackend(url=WORKER_URL).run_op(
             OperationKind.file_read, op_payload(file_payload(tmp_path, "excel", scan_mode="directory"))
         )
     assert fetchers.made == []
@@ -342,7 +351,7 @@ def test_a_cancel_reaches_a_worker_read_by_its_job_id(fetchers, monkeypatch):
             self.stopped.set()
 
     monkeypatch.setattr(worker_module, "ExternalRestApiFetcher", BlockingFetcher)
-    backend, read = WorkerBackend(), rest_payload()
+    backend, read = WorkerBackend(url=WORKER_URL), rest_payload()
     raised = []
 
     def run():
@@ -457,7 +466,7 @@ BACKEND_KINDS = [
     ("backend_class", "kind"), BACKEND_KINDS, ids=lambda value: getattr(value, "value", getattr(value, "__name__", ""))
 )
 def test_a_malformed_payload_is_refused_naming_the_key(fetchers, backend_class, kind):
-    backend = backend_class()
+    backend = make(backend_class)
     right = READ_PAYLOADS[kind]()
     wrong_kind = rest_payload() if kind is not OperationKind.rest_api_read else database_payload()
 

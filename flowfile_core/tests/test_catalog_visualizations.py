@@ -417,7 +417,7 @@ class TestVisualizationCompute:
 
         captured: dict = {}
 
-        def fake_trigger(worker_source, payload, max_rows):
+        def fake_trigger(worker_source, payload, max_rows, *, worker_url):
             captured["source"] = worker_source
             captured["payload"] = payload
             captured["max_rows"] = max_rows
@@ -461,7 +461,7 @@ class TestVisualizationCompute:
 
         captured: dict = {}
 
-        def fake_trigger(worker_source, payload, max_rows):
+        def fake_trigger(worker_source, payload, max_rows, *, worker_url):
             captured["source"] = worker_source
             return {
                 "rows": [],
@@ -484,7 +484,7 @@ class TestVisualizationCompute:
         table_id = _make_table()
         captured: dict = {}
 
-        def fake_trigger(worker_source, payload, max_rows):
+        def fake_trigger(worker_source, payload, max_rows, *, worker_url):
             captured["source"] = worker_source
             return {
                 "rows": [],
@@ -548,7 +548,7 @@ class TestVisualizationCompute:
 
         captured: dict = {}
 
-        def fake_trigger(worker_source, payload, max_rows):
+        def fake_trigger(worker_source, payload, max_rows, *, worker_url):
             captured["source"] = worker_source
             return {
                 "rows": [],
@@ -561,7 +561,7 @@ class TestVisualizationCompute:
         def fake_resolve(self, table_id, **kwargs):
             return pl.LazyFrame({"x": [1, 2, 3]})
 
-        def fake_resolve_virtual(table_id, plan_bytes, source_versions_hash):
+        def fake_resolve_virtual(table_id, plan_bytes, source_versions_hash, *, worker_url):
             captured["resolve"] = {
                 "table_id": table_id,
                 "hash": source_versions_hash,
@@ -635,7 +635,7 @@ class TestVersionAddressedSessionKeys:
 
         captured: dict = {}
 
-        def fake_trigger(worker_source, payload, max_rows):
+        def fake_trigger(worker_source, payload, max_rows, *, worker_url):
             captured["source"] = worker_source
             return {"rows": [], "total_rows": 0, "truncated": False, "elapsed_ms": 0.0, "cache_hit": False}
 

@@ -1,18 +1,28 @@
 """The worker backend runs plans and operations as worker tasks and reads their results from the shared disk."""
 
 import io
+import re
+import socket
 import uuid
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import polars as pl
 import pyarrow as pa
 import pytest
+import requests
 
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
-from flowfile_core.flowfile.execution.errors import ForeignRef, OperationUnsupported, PlanRejected, ResultMissing
+from flowfile_core.flowfile.execution.errors import (
+    ComputeUnavailable,
+    ForeignRef,
+    OperationUnsupported,
+    PlanRejected,
+    ResultMissing,
+)
 from flowfile_core.flowfile.execution.payloads import (
     op_payload,
     CustomNodePayload,
@@ -30,6 +40,7 @@ from flowfile_core.flowfile.execution.protocol import (
     SubmitHints,
 )
 from flowfile_core.flowfile.execution.payloads import FileWritePayload
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake, streaming
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import fetch_worker_capabilities
 from flowfile_core.flowfile.execution.payloads import DatabaseReadPayload, FileReadPayload, op_payload
@@ -61,7 +72,7 @@ def running_worker():
 
 @pytest.fixture
 def backend(running_worker):
-    return WorkerBackend()
+    return WorkerBackend(url=WORKER_URL)
 
 
 @pytest.fixture
@@ -105,7 +116,7 @@ def read_stream(data: bytes) -> pa.Table:
 
 
 def test_the_worker_backend_is_a_compute_backend():
-    worker = WorkerBackend()
+    worker = WorkerBackend(url=WORKER_URL)
 
     assert isinstance(worker, ComputeBackend)
     assert worker.id == "worker"
@@ -117,13 +128,78 @@ def test_the_registry_builds_the_worker_backend_from_its_built_in_table():
         made = registry.backend("worker")
 
         assert isinstance(made, WorkerBackend)
+        assert made.url == WORKER_URL
         assert registry.backend("worker") is made
     finally:
         registry.reset()
 
 
 def test_capabilities_are_the_workers_answer(running_worker):
-    assert WorkerBackend().capabilities() == fetch_worker_capabilities(WORKER_URL)
+    assert WorkerBackend(url=WORKER_URL).capabilities() == fetch_worker_capabilities(WORKER_URL)
+
+
+@pytest.fixture
+def closed_port_url() -> str:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    return f"http://127.0.0.1:{port}"
+
+
+def same_worker_by_another_name() -> str:
+    """The session worker's URL with its host spelled another way: a call that arrives by this name was sent by a
+    backend made on it, never by the URL the worker settings configure."""
+    parts = urlsplit(WORKER_URL)
+    host = "localhost" if parts.hostname == "127.0.0.1" else "127.0.0.1"
+    return f"{parts.scheme}://{host}:{parts.port}{parts.path}"
+
+
+def test_a_backend_made_on_another_url_sends_every_call_there(running_worker, monkeypatch):
+    url = same_worker_by_another_name()
+    assert url != WORKER_URL
+    configured_answer = fetch_worker_capabilities(WORKER_URL)
+    sent, connects = [], []
+    real_send, real_connect = requests.Session.send, streaming.connect
+
+    def recording_send(self, request, **kwargs):
+        sent.append(request.url)
+        return real_send(self, request, **kwargs)
+
+    def recording_connect(ws_url, *args, **kwargs):
+        connects.append(ws_url)
+        return real_connect(ws_url, *args, **kwargs)
+
+    monkeypatch.setattr(requests.Session, "send", recording_send)
+    monkeypatch.setattr(streaming, "connect", recording_connect)
+    worker = WorkerBackend(url=url)
+    # This backend makes the process's first worker contact, so the handshake's own calls are recorded too.
+    handshake.reset_handshake()
+    try:
+        result = worker.submit(PEOPLE.lazy(), [], hints(4), new_result_id(), flow_id=-1, node_id=-1)
+        assert read_stream(result.sample).num_rows == 4
+        assert worker.exists(result.ref) is True
+        assert worker.capabilities() == configured_answer
+        worker.release(result.ref)
+        assert worker.exists(result.ref) is False
+    finally:
+        handshake.reset_handshake()
+
+    assert sent and all(sent_to.startswith(f"{url}/") for sent_to in sent), sent
+    websocket_url = url.replace("http://", "ws://", 1)
+    assert connects and all(connected.startswith(f"{websocket_url}/") for connected in connects), connects
+
+
+def test_a_backend_made_on_a_url_nothing_answers_fails_naming_it(running_worker, closed_port_url):
+    dead = WorkerBackend(url=closed_port_url)
+
+    with pytest.raises(ComputeUnavailable, match=re.escape(f"Could not reach the worker at {closed_port_url}")):
+        dead.capabilities()
+    with pytest.raises(ComputeUnavailable, match=re.escape(f"Could not reach the worker at {closed_port_url}")):
+        dead.submit(PEOPLE.lazy(), [], hints(None), new_result_id(), flow_id=-1, node_id=-1)
+
+    configured = registry.backend(registry.WORKER_BACKEND_ID)
+    assert configured.url == WORKER_URL
+    assert configured.capabilities() == fetch_worker_capabilities(WORKER_URL)
 
 
 def test_submit_holds_the_result_in_the_file_the_worker_wrote(backend, kept, transport):
@@ -223,7 +299,7 @@ def test_the_job_is_done_once_submit_returns(backend, kept):
 )
 def test_a_reference_another_backend_minted_is_refused_before_the_worker_is_called(call):
     with pytest.raises(ForeignRef, match="'local'"):
-        call(WorkerBackend())
+        call(WorkerBackend(url=WORKER_URL))
 
 
 def test_a_file_read_runs_through_the_create_table_route(backend, kept, tmp_path):
@@ -299,11 +375,11 @@ def test_a_database_read_returns_a_reference_to_the_rows_it_read(backend, kept, 
 def test_the_worker_backend_runs_every_operation_kind(kind):
     """Each kind reaches its method, which asks for its payload before it calls the worker."""
     with pytest.raises(ValueError, match="has no 'payload' key"):
-        WorkerBackend().run_op(kind, {})
+        WorkerBackend(url=WORKER_URL).run_op(kind, {})
 
 
 def test_export_and_import_are_unsupported():
-    worker = WorkerBackend()
+    worker = WorkerBackend(url=WORKER_URL)
     ref = ResultRef("worker", "task", [], 0, "materialised", b"/nowhere.arrow")
 
     with pytest.raises(OperationUnsupported):
@@ -383,7 +459,7 @@ def test_a_random_split_on_the_worker_partitions_like_core(backend, kept):
         assert on_worker == {name: in_core.plan_for(ref).collect()["n"].to_list() for name, ref in local_refs.items()}
         assert backend.status(JobHandle("worker", split.job_id)).state == "done"
     finally:
-        subops.clear_task_from_worker(split.job_id)
+        subops.clear_task_from_worker(split.job_id, worker_url=WORKER_URL)
 
 
 def test_a_custom_node_runs_on_the_worker_from_its_node_source(backend, kept):
@@ -447,4 +523,4 @@ def test_a_model_trained_on_the_worker_scores_on_the_worker(backend, kept, tmp_p
         assert backend.plan_for(ref).collect()["pred"].round(6).to_list() == [21.0]
     finally:
         # Clearing the training task deletes the file it names, the model.
-        subops.clear_task_from_worker(train.job_id)
+        subops.clear_task_from_worker(train.job_id, worker_url=WORKER_URL)

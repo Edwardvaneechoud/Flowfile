@@ -1,16 +1,18 @@
-"""Ratchet on inline execution-location branches and worker env-var reads in flowfile_core.
+"""No inline execution-location branch and no worker setting read outside the backend registry in flowfile_core.
 
-The flow graph, its node builders, the flow node and the data engine decide where work runs by comparing
-``execution_location`` or ``run_location`` inline, and a number of core modules read ``OFFLOAD_TO_WORKER`` or
-``WORKER_URL`` on their own. Every such site is a second copy of the same decision, so both counts are pinned
-at the value measured when this test landed and may only fall: a new inline branch or a new module reading
-the worker settings fails here. When a count drops, lower its pin to the new value.
+The flow graph, its node builders, the flow node and the data engine decide where work runs through the execution
+context and the backend it names, never by comparing ``execution_location`` or ``run_location`` inline; and no core
+module reads ``OFFLOAD_TO_WORKER`` or ``WORKER_URL`` itself: it asks the backend registry, or the backend it holds,
+for the default backend and the worker's URL. Every such site would be a second copy of the same decision, so both
+counts are asserted to be zero: a new inline branch or a new module reading the worker settings fails here, and the
+failure lists the sites.
 
 Compares between an old and a new ``execution_location`` are not counted: they detect a settings change, not
 where to run, and stay regardless of how execution is dispatched.
 
 ``configs/settings.py`` and ``flowfile/execution/registry.py`` are exempt from the reader count: settings defines
-the worker settings, and the registry is the one place that turns them into the default compute backend.
+the worker settings, and the registry is the one place that turns them into the default compute backend and the
+URL its worker backend is made with.
 
 The check is static: source files are parsed with ``ast`` or scanned as text, and nothing from flowfile_core is
 imported. Run with ``-s`` to print the per-file tables.
@@ -24,9 +26,6 @@ from pathlib import Path
 import pytest
 
 pytestmark = pytest.mark.core
-
-PINNED_INLINE_LOCATION_BRANCHES = 1
-PINNED_ENV_VAR_READER_FILES = 6
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[3] / "flowfile_core"
 _FLOWFILE_DIR = _PACKAGE_ROOT / "flowfile"
@@ -90,23 +89,29 @@ def _table(title: str, rows: list[tuple[str, ...]]) -> str:
     return "\n".join([title, *body])
 
 
-def test_inline_location_branches_do_not_grow():
+def test_no_inline_location_branches():
     sites = _inline_location_branches()
     table = _table(
-        f"inline location branches: {len(sites)} (pinned {PINNED_INLINE_LOCATION_BRANCHES})",
+        f"inline location branches: {len(sites)}",
         [(file, str(line), src) for file, line, src in sites],
     )
-    message = f"A new inline execution_location/run_location compare was added; this count may only fall.\n{table}"
-    assert len(sites) <= PINNED_INLINE_LOCATION_BRANCHES, message
     print("\n" + table)
+    message = (
+        "An inline execution_location/run_location compare decides where work runs; read the execution "
+        f"context (current_context) instead.\n{table}"
+    )
+    assert len(sites) == 0, message
 
 
-def test_env_var_reader_files_do_not_grow():
+def test_no_module_reads_the_worker_settings_outside_the_registry():
     readers = _env_var_reader_files()
     table = _table(
-        f"files reading OFFLOAD_TO_WORKER / WORKER_URL: {len(readers)} (pinned {PINNED_ENV_VAR_READER_FILES})",
+        f"files reading OFFLOAD_TO_WORKER / WORKER_URL: {len(readers)}",
         [(file, str(refs)) for file, refs in readers.items()],
     )
-    message = f"A module outside configs/settings.py newly reads a worker setting; this count may only fall.\n{table}"
-    assert len(readers) <= PINNED_ENV_VAR_READER_FILES, message
     print("\n" + table)
+    message = (
+        "A module outside configs/settings.py and execution/registry.py reads a worker setting; ask the backend "
+        f"registry (default_backend_id, worker_url, child_env) instead.\n{table}"
+    )
+    assert len(readers) == 0, message

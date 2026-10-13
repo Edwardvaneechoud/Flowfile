@@ -87,6 +87,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     store_database_connection,
     update_database_connection,
 )
+from flowfile_core.flowfile.execution import registry as compute_registry
 from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.execution.payloads import FileWritePayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
@@ -1890,8 +1891,8 @@ def fetch_rest_api_sample(
 ) -> RestApiSampleResponse:
     """Fetch a small sample from the configured REST API and infer its schema.
 
-    Runs one capped request through the worker (so all network I/O stays
-    sandboxed off the core event loop), infers the output columns with Polars,
+    Runs one capped request through the worker the worker backend runs on (so
+    all network I/O stays sandboxed off the core event loop), infers the output columns with Polars,
     caches them on the node's ``fields`` (so downstream schema prediction needs
     no network), and returns the inferred columns. This powers the node's
     "Fetch sample" button. Defined as a sync endpoint so the blocking worker
@@ -1916,7 +1917,9 @@ def fetch_rest_api_sample(
     sample_size = max(1, sample_size)
     worker_settings = build_rest_api_worker_settings(node, secret_encrypted, sample_size=sample_size)
     try:
-        fetcher = ExternalRestApiFetcher(worker_settings, wait_on_completion=True)
+        fetcher = ExternalRestApiFetcher(
+            worker_settings, wait_on_completion=True, worker_url=compute_registry.worker_url()
+        )
         sample_df = fetcher.get_result().head(sample_size).collect()
     except Exception as e:
         raise HTTPException(422, f"Failed to fetch sample from REST API: {e}") from e

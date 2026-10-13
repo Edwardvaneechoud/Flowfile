@@ -4,48 +4,69 @@ A backend is made by a factory. Core registers its own in process with ``registe
 package adds one through the ``flowfile.compute_backends`` entry-point group, where the entry point's name
 is the backend id and it loads to the factory. Entry points are scanned once, on the first lookup, and an
 in-process registration wins over an entry point of the same name. Core's own backends are built in: ``_BUILTIN``
-names the module and class of each, imported and registered on the first lookup of an id nothing registered, and an
-entry point never shadows a built-in id. ``backend`` calls a factory once per process and hands out that instance
-from then on.
+holds the factory of each, which imports the backend's module when it first makes one and is registered on the
+first lookup of an id nothing registered; an entry point never shadows a built-in id. ``backend`` calls a factory
+once per process and hands out that instance from then on.
 
 ``default_backend_id`` names the default backend, the one a ``"remote"`` flow and a call without a graph use:
+the process-wide override a headless runner sets (``set_default_override``) when there is one, else
 ``FLOWFILE_COMPUTE_BACKEND`` when set, else ``"worker"`` while the ``OFFLOAD_TO_WORKER`` setting is on and
-``"local"`` when it is off. That setting is read here through ``flowfile_core.configs.settings``; once every call
-site resolves compute through this registry, this module is the only place outside ``configs/settings.py`` that
-reads the worker settings.
+``"local"`` when it is off.
+
+This module is the one place outside ``configs/settings.py`` that reads the worker settings: the offload setting
+above, and ``WORKER_URL``, the URL the built-in worker backend is made with. Every other module asks this registry,
+or the backend it holds, where compute goes and which worker it reaches (``worker_url``); ``child_env`` names the
+variables a child process needs to run on core's own backend.
 """
 
 from __future__ import annotations
 
-import importlib
 import importlib.metadata
 import os
 import threading
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from flowfile_core.configs import settings
 
 if TYPE_CHECKING:
+    from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
     from flowfile_core.flowfile.execution.protocol import ComputeBackend
 
 BackendFactory = Callable[[], "ComputeBackend"]
 
 ENTRY_POINT_GROUP = "flowfile.compute_backends"
 BACKEND_ENV_VAR = "FLOWFILE_COMPUTE_BACKEND"
+LEGACY_OFFLOAD_ENV_VAR = "FLOWFILE_OFFLOAD_TO_WORKER"
 LOCAL_BACKEND_ID = "local"
 WORKER_BACKEND_ID = "worker"
 
-_BUILTIN: dict[str, tuple[str, str]] = {
-    "local": ("flowfile_core.flowfile.execution.backends.local", "LocalBackend"),
-    "worker": ("flowfile_core.flowfile.execution.backends.worker", "WorkerBackend"),
+
+def _local_backend() -> ComputeBackend:
+    """Core's own process as a compute."""
+    from flowfile_core.flowfile.execution.backends.local import LocalBackend
+
+    return LocalBackend()
+
+
+def _worker_backend() -> ComputeBackend:
+    """The worker at ``settings.WORKER_URL``, which ``FLOWFILE_WORKER_URL`` sets, else ``WORKER_HOST`` and the port."""
+    from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+
+    return WorkerBackend(url=settings.WORKER_URL)
+
+
+_BUILTIN: dict[str, BackendFactory] = {
+    LOCAL_BACKEND_ID: _local_backend,
+    WORKER_BACKEND_ID: _worker_backend,
 }
-"""Backend id -> (module, class) of the backends core ships, imported on their first lookup."""
+"""Backend id -> factory of the backends core ships; each imports its backend's module on first use."""
 
 _lock = threading.RLock()
 _factories: dict[str, BackendFactory] = {}
 _instances: dict[str, ComputeBackend] = {}
 _entry_points_scanned = False
+_default_override: str | None = None
 
 
 def register_backend(backend_id: str, factory: BackendFactory) -> None:
@@ -70,8 +91,7 @@ def backend(backend_id: str) -> ComputeBackend:
         if instance is not None:
             return instance
         if backend_id not in _factories and backend_id in _BUILTIN:
-            module_name, class_name = _BUILTIN[backend_id]
-            _factories[backend_id] = getattr(importlib.import_module(module_name), class_name)
+            _factories[backend_id] = _BUILTIN[backend_id]
         _scan_entry_points()
         factory = _factories.get(backend_id)
         if factory is None:
@@ -84,9 +104,12 @@ def backend(backend_id: str) -> ComputeBackend:
 def default_backend_id() -> str:
     """The id of the default backend, the one a ``"remote"`` flow and a call without a graph use.
 
-    ``FLOWFILE_COMPUTE_BACKEND`` when set to a non-empty value, else ``"worker"`` while ``OFFLOAD_TO_WORKER`` is on
-    and ``"local"`` when it is off.
+    The override ``set_default_override`` set, when there is one; else ``FLOWFILE_COMPUTE_BACKEND`` when set to a
+    non-empty value; else ``"worker"`` while ``OFFLOAD_TO_WORKER`` is on and ``"local"`` when it is off.
     """
+    override = _default_override
+    if override is not None:
+        return override
     configured = os.environ.get(BACKEND_ENV_VAR, "").strip()
     if configured:
         return configured
@@ -98,8 +121,40 @@ def default_backend() -> ComputeBackend:
     return backend(default_backend_id())
 
 
+def set_default_override(backend_id: str | None) -> str | None:
+    """Make ``backend_id`` the default backend of this process, ahead of ``FLOWFILE_COMPUTE_BACKEND`` and the flag.
+
+    The headless flow runners set it to core's own backend for the run they make. ``None`` removes the override, so
+    the default follows the environment variable and the flag again. Returns the override this call replaced
+    (``None`` when there was none); passing it back here undoes the call.
+    """
+    global _default_override
+    with _lock:
+        previous, _default_override = _default_override, backend_id
+    return previous
+
+
+def default_override() -> str | None:
+    """The override ``set_default_override`` set, or ``None`` when the default follows the environment and the flag."""
+    return _default_override
+
+
+def child_env() -> dict[str, str]:
+    """The environment variables a child process needs to run on core's own backend.
+
+    ``FLOWFILE_COMPUTE_BACKEND`` names it; the legacy ``FLOWFILE_OFFLOAD_TO_WORKER=0`` says the same to a release
+    that only knows that flag.
+    """
+    return {BACKEND_ENV_VAR: LOCAL_BACKEND_ID, LEGACY_OFFLOAD_ENV_VAR: "0"}
+
+
+def worker_url() -> str:
+    """The base URL of the worker the registry's worker backend runs on, for a caller that sends work there itself."""
+    return cast("WorkerBackend", backend(WORKER_BACKEND_ID)).url
+
+
 def reset() -> None:
-    """Forget every registration, every instance and the entry-point scan, for tests."""
+    """Forget every registration, every instance and the entry-point scan, for tests; the default override stays."""
     global _entry_points_scanned
     with _lock:
         _factories.clear()

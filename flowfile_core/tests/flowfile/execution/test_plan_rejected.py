@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 
+from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile import api_runner
 from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.execution.errors import (
@@ -76,7 +77,12 @@ def test_worker_reports_an_unloadable_plan_as_an_environment_failure(running_wor
     if transport == "rest":
         _force_rest(monkeypatch)
     fetcher = subops.ExternalDfFetcher(
-        flow_id=1, node_id=1, lf=_NotAPlan(), file_ref=_task_id(transport), wait_on_completion=False
+        flow_id=1,
+        node_id=1,
+        lf=_NotAPlan(),
+        file_ref=_task_id(transport),
+        wait_on_completion=False,
+        worker_url=WORKER_URL,
     )
 
     with pytest.raises(RemoteExecutionError) as excinfo:
@@ -92,7 +98,12 @@ def test_worker_reports_an_unloadable_plan_as_an_environment_failure(running_wor
 def test_blocking_websocket_fetch_carries_the_kind_on_the_raised_error(running_worker):
     with pytest.raises(RemoteExecutionError) as excinfo:
         subops.ExternalDfFetcher(
-            flow_id=1, node_id=1, lf=_NotAPlan(), file_ref=_task_id("blocking"), wait_on_completion=True
+            flow_id=1,
+            node_id=1,
+            lf=_NotAPlan(),
+            file_ref=_task_id("blocking"),
+            wait_on_completion=True,
+            worker_url=WORKER_URL,
         )
 
     assert excinfo.value.error_kind == "environment"

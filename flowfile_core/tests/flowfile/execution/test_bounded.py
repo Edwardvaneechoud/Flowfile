@@ -13,6 +13,7 @@ import pytest
 import requests
 from polars.io.plugins import register_io_source
 
+from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
@@ -150,7 +151,7 @@ def backend(request):
     """A fresh backend of each kind; the worker's needs a running worker."""
     if request.param == "worker":
         request.getfixturevalue("running_worker")
-        return WorkerBackend()
+        return WorkerBackend(url=WORKER_URL)
     return LocalBackend()
 
 
@@ -166,7 +167,7 @@ def recorded_context(request, fresh_registry):
     """An execution context whose backend records what the engine asks of it; core's own, then the worker's."""
     if request.param == "worker":
         request.getfixturevalue("running_worker")
-        recording = Recording(WorkerBackend())
+        recording = Recording(WorkerBackend(url=WORKER_URL))
     else:
         recording = Recording(LocalBackend())
     registry.register_backend(recording.id, lambda: recording)
@@ -188,7 +189,7 @@ def unreachable_context(fresh_registry):
 
 def test_the_hints_keep_a_plan_deferred_with_no_sample_on_every_core_backend():
     plan, produced = counting_source(LARGE)
-    for backend in (LocalBackend(), WorkerBackend()):
+    for backend in (LocalBackend(), WorkerBackend(url=WORKER_URL)):
         result = backend.submit(plan, [], DEFERRED_HINTS, "bounded_hints", flow_id=-1, node_id=-1)
         try:
             assert (result.ref.state, result.sample) == ("deferred", None)
@@ -335,14 +336,16 @@ def worker_tasks(monkeypatch, tmp_path):
 
     monkeypatch.setattr(worker_module, "ExternalSampler", sampler)
     monkeypatch.setattr(worker_module, "ExternalDfFetcher", dataframe_task)
-    monkeypatch.setattr(worker_module, "clear_task_from_worker", tasks.cleared.append)
+    monkeypatch.setattr(
+        worker_module, "clear_task_from_worker", lambda task_id, *, worker_url: tasks.cleared.append(task_id)
+    )
     return tasks
 
 
 def test_a_head_on_the_worker_is_one_sampler_task_for_n_rows(worker_tasks):
     plan = large_plan()
 
-    rows = head_rows(WorkerBackend(), plan, 5)
+    rows = head_rows(WorkerBackend(url=WORKER_URL), plan, 5)
 
     (task,) = worker_tasks.samplers
     assert task.kwargs["lf"] is plan, "the plan itself, serialised only by the fetcher"
@@ -357,7 +360,7 @@ def test_a_head_on_the_worker_is_one_sampler_task_for_n_rows(worker_tasks):
 def test_a_count_on_the_worker_is_one_count_task(worker_tasks):
     plan = large_plan()
 
-    assert count_rows(WorkerBackend(), plan) == LARGE
+    assert count_rows(WorkerBackend(url=WORKER_URL), plan) == LARGE
 
     (task,) = worker_tasks.counts
     assert task.kwargs["operation_type"] == "calculate_number_of_records"
@@ -367,7 +370,7 @@ def test_a_count_on_the_worker_is_one_count_task(worker_tasks):
 
 
 def test_distinct_values_on_the_worker_are_one_sampler_task_up_to_the_limit(worker_tasks):
-    values = unique_values(WorkerBackend(), pl.LazyFrame({"k": ["b", "a", "b", "c"]}), 2)
+    values = unique_values(WorkerBackend(url=WORKER_URL), pl.LazyFrame({"k": ["b", "a", "b", "c"]}), 2)
 
     (task,) = worker_tasks.samplers
     assert task.kwargs["sample_size"] == 2
@@ -375,7 +378,7 @@ def test_distinct_values_on_the_worker_are_one_sampler_task_up_to_the_limit(work
 
 
 def test_a_running_worker_reads_only_the_bounded_rows_back(running_worker, monkeypatch):
-    worker = WorkerBackend()
+    worker = WorkerBackend(url=WORKER_URL)
     collects = count_collects(monkeypatch)
 
     assert count_rows(worker, large_plan()) == LARGE
@@ -426,8 +429,8 @@ def test_a_failing_worker_fails_each_helper_typed_and_nothing_collects_in_core(h
 
     monkeypatch.setattr(worker_module, "ExternalSampler", start)
     monkeypatch.setattr(worker_module, "ExternalDfFetcher", start)
-    monkeypatch.setattr(worker_module, "clear_task_from_worker", lambda task_id: None)
-    recording = Recording(WorkerBackend())
+    monkeypatch.setattr(worker_module, "clear_task_from_worker", lambda task_id, *, worker_url: None)
+    recording = Recording(WorkerBackend(url=WORKER_URL))
     collects = count_collects(monkeypatch)
 
     with pytest.raises(error_type) as raised:

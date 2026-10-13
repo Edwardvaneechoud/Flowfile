@@ -29,6 +29,7 @@ from typing import Any
 
 import requests
 
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable, worker_failure
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import ExternalDfFetcher
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
@@ -166,6 +167,7 @@ def _materialize(data: Any, max_rows: int | None, flow: Any, api_node: Any):
             flow_id=flow.flow_id,
             node_id=api_node.node_id,
             wait_on_completion=False,
+            worker_url=registry.worker_url(),
         )
     except ComputeError:
         # The handshake or the transport already typed it (unreachable, version mismatch).

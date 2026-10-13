@@ -20,10 +20,14 @@ from fastapi.testclient import TestClient
 from flowfile_core import main
 from flowfile_core.auth.jwt import get_current_active_user, get_current_user
 from flowfile_core.auth.models import User as PydanticUser
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
-from flowfile_core.routes import system_worker
 from shared.compute_protocol import local_capabilities
+
+
+def point_the_worker_backend_at(monkeypatch, url: str) -> None:
+    """The proxy forwards to the worker the registry's worker backend runs on; make that ``url`` for the test."""
+    monkeypatch.setattr(registry.backend(registry.WORKER_BACKEND_ID), "url", url)
 
 
 @pytest.fixture
@@ -52,7 +56,7 @@ def non_admin_client() -> Iterator[TestClient]:
 
 @pytest.fixture
 def live_worker(monkeypatch, tmp_path) -> Iterator[str]:
-    """Serve the real flowfile_worker app on a free local port; point the proxy at it."""
+    """Serve the real flowfile_worker app on a free local port; point the worker backend, and so the proxy, at it."""
     from flowfile_worker import main as worker_main
     from flowfile_worker import pool as worker_pool
 
@@ -74,7 +78,7 @@ def live_worker(monkeypatch, tmp_path) -> Iterator[str]:
         time.sleep(0.05)
 
     base_url = f"http://127.0.0.1:{port}"
-    monkeypatch.setattr(system_worker, "WORKER_URL", base_url)
+    point_the_worker_backend_at(monkeypatch, base_url)
     try:
         yield base_url
     finally:
@@ -120,7 +124,7 @@ def test_worker_down_surfaces_typed_503(admin_client: TestClient, monkeypatch) -
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         dead_port = probe.getsockname()[1]
-    monkeypatch.setattr(system_worker, "WORKER_URL", f"http://127.0.0.1:{dead_port}")
+    point_the_worker_backend_at(monkeypatch, f"http://127.0.0.1:{dead_port}")
 
     response = admin_client.get("/system/worker_pool")
     assert response.status_code == 503, response.text
@@ -145,7 +149,7 @@ def test_worker_on_other_versions_surfaces_typed_503(admin_client: TestClient, u
     assert response.json()["detail"] == {
         "error_code": "WORKER_UNAVAILABLE",
         "message": (
-            f"The worker at {subops.WORKER_URL} does not match core "
+            f"The worker at {registry.worker_url()} does not match core "
             f"(polars_version: core {pl.__version__}, worker 0.0.1)"
         ),
     }
@@ -157,8 +161,7 @@ def test_worker_down_on_first_contact_surfaces_typed_503(
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         dead_url = f"http://127.0.0.1:{probe.getsockname()[1]}"
-    monkeypatch.setattr(system_worker, "WORKER_URL", dead_url)
-    monkeypatch.setattr(subops, "WORKER_URL", dead_url)
+    point_the_worker_backend_at(monkeypatch, dead_url)
 
     response = admin_client.get("/system/worker_pool")
 

@@ -14,6 +14,7 @@ import polars as pl
 import pytest
 from pydantic import SecretStr
 
+from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import local as local_module
 from flowfile_core.flowfile.execution.backends import worker as worker_module
@@ -45,6 +46,12 @@ from shared.delta_utils import Scd2Result
 from tests.flowfile.conftest import add_test_manual_input, create_test_graph
 
 pytestmark = pytest.mark.core
+
+
+def make(backend_type: type):
+    """An instance of ``backend_type``: the worker backend on the session worker, core's own backend as it is."""
+    return backend_type(url=WORKER_URL) if backend_type is WorkerBackend else backend_type()
+
 
 USER_ID = 1
 SECRET = "plain-s3-secret"
@@ -166,7 +173,7 @@ def test_the_worker_backend_sends_a_file_write_to_the_output_writer(built, tmp_p
     settings = csv_settings(tmp_path, delimiter=";")
     write = FileWritePayload(plan=ROWS.lazy(), settings=settings, flow_id=7, node_id=3)
 
-    result = WorkerBackend().run_op(OperationKind.file_write, op_payload(write))
+    result = WorkerBackend(url=WORKER_URL).run_op(OperationKind.file_write, op_payload(write))
 
     (fetcher,) = built
     assert fetcher.kwargs == {
@@ -180,6 +187,7 @@ def test_the_worker_backend_sends_a_file_write_to_the_output_writer(built, tmp_p
         "delimiter": ";",
         "compression": None,
         "wait_on_completion": False,
+        "worker_url": WORKER_URL,
     }
     assert result == OpResult(refs={})
 
@@ -213,7 +221,7 @@ def test_the_worker_backend_sends_a_referenced_database_write_with_the_stored_ci
         node_id=3,
     )
 
-    WorkerBackend().run_op(OperationKind.database_write, op_payload(write))
+    WorkerBackend(url=WORKER_URL).run_op(OperationKind.database_write, op_payload(write))
 
     (fetcher,) = built
     (sent,) = fetcher.args
@@ -238,7 +246,7 @@ def test_the_worker_backend_sends_a_cloud_write_with_its_secrets_still_encrypted
         node_id=3,
     )
 
-    WorkerBackend().run_op(OperationKind.cloud_write, op_payload(write))
+    WorkerBackend(url=WORKER_URL).run_op(OperationKind.cloud_write, op_payload(write))
 
     (fetcher,) = built
     (sent,) = fetcher.args
@@ -254,7 +262,7 @@ def test_the_worker_backend_sends_a_cloud_write_with_its_secrets_still_encrypted
 def test_the_worker_backend_runs_the_delta_operations_with_the_encrypted_storage_payload(built, with_connection):
     connection = s3_connection().get_worker_interface(USER_ID) if with_connection else None
     storage_payload = {"connection": connection.model_dump()} if with_connection else None
-    backend = WorkerBackend()
+    backend = WorkerBackend(url=WORKER_URL)
 
     written = backend.run_op(OperationKind.delta_write, op_payload(delta_write("s3://bucket/t", connection)))
     merged = backend.run_op(
@@ -289,7 +297,7 @@ def test_the_worker_backend_runs_an_scd2_write_with_the_encrypted_storage_payloa
     connection = s3_connection().get_worker_interface(USER_ID) if with_connection else None
     write = delta_scd2("s3://bucket/dim", connection)
 
-    result = WorkerBackend().run_op(OperationKind.delta_scd2, op_payload(write))
+    result = WorkerBackend(url=WORKER_URL).run_op(OperationKind.delta_scd2, op_payload(write))
 
     (task,) = built
     assert task.kwargs["operation_type"] == "scd2_delta"
@@ -325,13 +333,13 @@ def test_the_worker_scd2_report_is_the_metadata_unchanged(built, monkeypatch):
 
     monkeypatch.setattr(RecordingFetcher, "on_wait", staticmethod(finish_with_the_report))
 
-    result = WorkerBackend().run_op(OperationKind.delta_scd2, op_payload(delta_scd2("/tables/dim")))
+    result = WorkerBackend(url=WORKER_URL).run_op(OperationKind.delta_scd2, op_payload(delta_scd2("/tables/dim")))
 
     assert result == OpResult(refs={}, metadata={"skipped": True, "version": 4})
 
 
 def test_cancel_reaches_the_scd2_write_while_it_runs(built, monkeypatch):
-    backend = WorkerBackend()
+    backend = WorkerBackend(url=WORKER_URL)
     write = delta_scd2("/tables/dim")
 
     def cancel_while_waiting(fetcher):
@@ -503,7 +511,7 @@ def test_a_cloud_payload_carries_no_decrypted_secret():
 @pytest.mark.parametrize("kind", list(WRITE_KINDS), ids=lambda kind: kind.value)
 def test_a_write_without_its_payload_key_names_the_key(backend_type, kind, built):
     with pytest.raises(ValueError, match=r"has no 'payload' key; it carries a \w+Payload"):
-        backend_type().run_op(kind, {"input": ROWS.lazy()})
+        make(backend_type).run_op(kind, {"input": ROWS.lazy()})
     assert built == []
 
 
@@ -512,7 +520,7 @@ def test_a_write_given_another_kind_of_payload_names_the_one_it_expects(backend_
     wrong = FileWritePayload(plan=ROWS.lazy(), settings=csv_settings(tmp_path), flow_id=1, node_id=1)
 
     with pytest.raises(TypeError, match=r"payload\['payload'\] must be a DeltaWritePayload, not FileWritePayload"):
-        backend_type().run_op(OperationKind.delta_write, op_payload(wrong))
+        make(backend_type).run_op(OperationKind.delta_write, op_payload(wrong))
     assert built == []
 
 

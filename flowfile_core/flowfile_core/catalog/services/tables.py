@@ -48,6 +48,7 @@ from flowfile_core.catalog.storage_backend import (
 )
 from flowfile_core.catalog.validators import format_full_name, validate_table_registration
 from flowfile_core.database.models import CatalogCdcCursor, CatalogNamespace, CatalogTable, TableFavorite
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_add_key_column,
@@ -279,7 +280,9 @@ class TableService:
         is_cloud = storage is not None
         if is_cloud or uses_worker():
             try:
-                data = trigger_read_table_metadata(_catalog_table_dir_name(table_path), storage=storage)
+                data = trigger_read_table_metadata(
+                    _catalog_table_dir_name(table_path), storage=storage, worker_url=registry.worker_url()
+                )
                 schema_list = [{"name": c["name"], "dtype": c["dtype"]} for c in data["column_schema"]]
                 return schema_list, data["row_count"], data["column_count"], data["size_bytes"]
             except (RuntimeError, OSError, ValueError, KeyError, ComputeError):
@@ -608,6 +611,7 @@ class TableService:
             source_file_path=source_file_path,
             table_name=table_name,
             storage=storage,
+            worker_url=registry.worker_url(),
         )
         if response.ok:
             data = response.json()
@@ -916,6 +920,7 @@ class TableService:
                 _catalog_table_dir_name(data_path),
                 z_order_columns,
                 storage=target.to_worker_payload() if target else None,
+                worker_url=registry.worker_url(),
             )
             metrics, size_bytes = result.get("metrics", {}), result.get("size_bytes")
         else:
@@ -960,6 +965,7 @@ class TableService:
                 retention_hours,
                 dry_run,
                 storage=target.to_worker_payload() if target else None,
+                worker_url=registry.worker_url(),
             )
             files, size_bytes = result.get("files_removed", []), result.get("size_bytes")
         else:
@@ -1193,6 +1199,7 @@ class TableService:
                         "commit_metadata": commit_metadata,
                     },
                     storage=target.to_worker_payload() if target else None,
+                    worker_url=registry.worker_url(),
                 )
             else:
                 from shared.delta_utils import DeltaEditError, DeltaEditStaleError, apply_delta_edits
@@ -1272,6 +1279,7 @@ class TableService:
                     column_name,
                     expected_version=expected_version,
                     storage=target.to_worker_payload() if target else None,
+                    worker_url=registry.worker_url(),
                 )
             else:
                 from shared.delta_utils import DeltaEditError, DeltaEditStaleError, add_delta_row_id_column

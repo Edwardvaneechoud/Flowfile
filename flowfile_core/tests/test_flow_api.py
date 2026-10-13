@@ -23,6 +23,7 @@ from sqlalchemy.orm import sessionmaker
 from flowfile_core.auth import api_key as api_key_mod
 from flowfile_core.database import models as db_models
 from flowfile_core.flowfile import api_consumer_manager, api_runner
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, PlanRejected
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import BaseFetcher
 from flowfile_core.flowfile.flow_graph import add_connection
@@ -167,8 +168,9 @@ def test_serialize_offloads_final_collect_to_worker_when_remote(monkeypatch):
         error_code = 0
         error_description = None
 
-        def __init__(self, *, lf, **_kwargs):
+        def __init__(self, *, lf, worker_url, **_kwargs):
             used["called"] = True
+            used["worker_url"] = worker_url
             self._lf = lf  # the (capped) lazy plan; stands in for the worker's IPC result
 
         def get_result(self):
@@ -187,6 +189,7 @@ def test_serialize_offloads_final_collect_to_worker_when_remote(monkeypatch):
 
     out = api_runner._serialize(data, settings, flow, api_node)
     assert used.get("called") is True  # offloaded to the worker
+    assert used["worker_url"] == registry.worker_url()
     assert used.get("local") is None  # core did not run the heavy collect
     assert out == {"data": [{"region": "US", "v": 2}], "row_count": 1, "orientation": "records"}
 
@@ -244,8 +247,8 @@ class _PlanNotLoadedFetcher(BaseFetcher):
 
     description = "ComputeError: failed to read incoming DSL_VERSION"
 
-    def __init__(self, *, file_ref, **_kwargs):
-        super().__init__(file_ref=file_ref)
+    def __init__(self, *, file_ref, worker_url, **_kwargs):
+        super().__init__(file_ref=file_ref, worker_url=worker_url)
         with self._lock:
             self._started = True  # the run is over, so get_result must not start polling the worker
         self._record_task_failure(self.description, -1, "environment")

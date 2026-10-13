@@ -20,6 +20,7 @@ from pydantic import SecretStr
 
 from flowfile_core.auth.models import SecretInput
 from flowfile_core.configs.node_store import add_to_custom_node_store, remove_from_custom_node_store
+from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile import flow_graph as flow_graph_package
@@ -53,6 +54,12 @@ from flowfile_core.secret_manager.secret_manager import store_secret
 from tests.flowfile.conftest import add_test_manual_input, create_test_graph
 
 pytestmark = pytest.mark.core
+
+
+def make(backend_type: type):
+    """An instance of ``backend_type``: the worker backend on the session worker, core's own backend as it is."""
+    return backend_type(url=WORKER_URL) if backend_type is WorkerBackend else backend_type()
+
 
 SECRET = "plain-api-key-for-the-node"
 NAMES = pl.LazyFrame({"name": ["eduward", "edward", "courtney"]})
@@ -340,7 +347,7 @@ def test_an_operation_without_its_payload_key_names_the_key(backend_type, kind, 
     message = rf"has no 'payload' key; it carries a {expected}"
 
     with pytest.raises(ValueError, match=message):
-        backend_type().run_op(kind, {"left": NAMES, "right": NAMES})
+        make(backend_type).run_op(kind, {"left": NAMES, "right": NAMES})
     assert tasks.built == []
 
 
@@ -354,7 +361,7 @@ def test_an_operation_given_another_payload_names_the_one_it_expects(backend_typ
     wrong = FileWritePayload(plan=NUMBERS.lazy(), settings=settings, flow_id=1, node_id=1)
 
     with pytest.raises(TypeError, match=rf"payload\['payload'\] must be a {expected}, not FileWritePayload"):
-        backend_type().run_op(kind, op_payload(wrong))
+        make(backend_type).run_op(kind, op_payload(wrong))
     assert tasks.built == []
 
 
@@ -487,7 +494,7 @@ def test_the_worker_backend_prepares_both_sides_and_files_the_match_under_the_jo
     join = fuzzy_join(job_id="node-hash_fm")
     settings_before = join.settings.join_input.model_dump()
 
-    result = WorkerBackend().run_op(OperationKind.fuzzy_join, op_payload(join))
+    result = WorkerBackend(url=WORKER_URL).run_op(OperationKind.fuzzy_join, op_payload(join))
 
     (task,) = tasks.built
     sent = task.kwargs
@@ -519,14 +526,14 @@ def test_the_worker_backend_refuses_an_invalid_join_before_it_starts_a_task(task
     settings.join_input.join_mapping[0].left_col = "missing"
 
     with pytest.raises(Exception, match="missing"):
-        WorkerBackend().run_op(OperationKind.fuzzy_join, op_payload(fuzzy_join(settings=settings)))
+        WorkerBackend(url=WORKER_URL).run_op(OperationKind.fuzzy_join, op_payload(fuzzy_join(settings=settings)))
     assert tasks.built == []
 
 
 def test_the_worker_backend_stores_one_shuffle_and_splits_it_like_core(tasks):
     tasks.replace("ExternalDfFetcher", rows=stored_rows)
     split = random_split(seed=7, job_id="split-job")
-    backend = WorkerBackend()
+    backend = WorkerBackend(url=WORKER_URL)
 
     refs = backend.run_op(OperationKind.random_split, op_payload(split)).refs
 
@@ -551,7 +558,7 @@ def test_the_worker_backend_stores_one_shuffle_and_splits_it_like_core(tasks):
 def test_the_worker_backend_draws_a_seed_when_the_settings_have_none(tasks):
     tasks.replace("ExternalDfFetcher", rows=stored_rows)
 
-    refs = WorkerBackend().run_op(OperationKind.random_split, op_payload(random_split(seed=None))).refs
+    refs = WorkerBackend(url=WORKER_URL).run_op(OperationKind.random_split, op_payload(random_split(seed=None))).refs
 
     assert [ref.row_count for ref in refs.values()] == [80, 20]
 
@@ -568,7 +575,7 @@ def test_the_worker_backend_sends_a_custom_node_with_its_inputs_serialised_and_i
     settings_values = {"main": {"threshold": "89", "api_key": stored_secret}}
     job = custom_node(settings_values=settings_values, user_id=user_id, job_id=custom_node_task_id("node-hash"))
 
-    refs = WorkerBackend().run_op(OperationKind.custom_node, op_payload(job)).refs
+    refs = WorkerBackend(url=WORKER_URL).run_op(OperationKind.custom_node, op_payload(job)).refs
 
     (task,) = tasks.built
     (request,) = task.args
@@ -599,14 +606,14 @@ def test_the_worker_backend_refuses_a_custom_node_whose_task_left_out_a_declared
     )
 
     with pytest.raises(ValueError, match="Worker did not return declared output 'small'"):
-        WorkerBackend().run_op(OperationKind.custom_node, op_payload(custom_node()))
+        WorkerBackend(url=WORKER_URL).run_op(OperationKind.custom_node, op_payload(custom_node()))
 
 
 def test_the_worker_backend_runs_no_custom_node_without_a_node_file(tasks):
     tasks.replace_all()
 
     with pytest.raises(OperationUnsupported, match="node file"):
-        WorkerBackend().run_op(OperationKind.custom_node, op_payload(custom_node(node_source=None)))
+        WorkerBackend(url=WORKER_URL).run_op(OperationKind.custom_node, op_payload(custom_node(node_source=None)))
     assert tasks.built == []
 
 
@@ -615,7 +622,7 @@ def test_the_worker_backend_refuses_a_selected_secret_it_cannot_find_before_it_s
     job = custom_node(settings_values={"main": {"api_key": "no_such_secret"}}, user_id=user_id)
 
     with pytest.raises(ValueError, match="no_such_secret"):
-        WorkerBackend().run_op(OperationKind.custom_node, op_payload(job))
+        WorkerBackend(url=WORKER_URL).run_op(OperationKind.custom_node, op_payload(job))
     assert tasks.built == []
 
 
@@ -624,7 +631,7 @@ def test_the_worker_backend_trains_under_the_job_id_and_reports_the_model_as_met
     tasks.replace("MLTrainFetcher", result=report)
     train = ml_train(job_id="train-hash")
 
-    result = WorkerBackend().run_op(OperationKind.ml_train, op_payload(train))
+    result = WorkerBackend(url=WORKER_URL).run_op(OperationKind.ml_train, op_payload(train))
 
     (task,) = tasks.built
     assert task.kwargs == {
@@ -638,6 +645,7 @@ def test_the_worker_backend_trains_under_the_job_id_and_reports_the_model_as_met
         "node_id": 3,
         "file_ref": "train-hash",
         "wait_on_completion": False,
+        "worker_url": WORKER_URL,
     }
     assert result == OpResult(refs={}, metadata=report)
 
@@ -646,7 +654,7 @@ def test_the_worker_backend_scores_under_the_job_id_into_a_stored_result(tasks):
     scored = pl.DataFrame({"x": [1.0, 2.0], "pred": [3.0, 5.0]})
     tasks.replace("MLApplyFetcher", rows=scored)
     apply = ml_apply(job_id="apply-hash")
-    backend = WorkerBackend()
+    backend = WorkerBackend(url=WORKER_URL)
 
     ref = backend.run_op(OperationKind.ml_apply, op_payload(apply)).refs["result"]
 
@@ -659,6 +667,7 @@ def test_the_worker_backend_scores_under_the_job_id_into_a_stored_result(tasks):
         "node_id": 3,
         "file_ref": "apply-hash",
         "wait_on_completion": False,
+        "worker_url": WORKER_URL,
     }
     assert (ref.result_id, ref.state, ref.row_count) == ("apply-hash", "materialised", 2)
     assert backend.plan_for(ref).collect().equals(scored)

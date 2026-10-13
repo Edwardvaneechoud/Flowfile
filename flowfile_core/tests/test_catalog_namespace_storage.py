@@ -562,7 +562,7 @@ def test_cloud_non_versioned_preview_offloads_to_worker(monkeypatch):
 
     captured = {}
 
-    def _fake_trigger(table_name, n_rows, storage=None):
+    def _fake_trigger(table_name, n_rows, storage=None, *, worker_url):
         captured.update(table_name=table_name, n_rows=n_rows, storage=storage)
         return CatalogTablePreview(columns=["a"], dtypes=["Int64"], rows=[[1], [2]], total_rows=2)
 
