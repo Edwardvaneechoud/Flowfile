@@ -23,7 +23,11 @@ import zipfile
 from pathlib import Path
 
 from flowfile_core.flowfile.code_generator.base import referenced_kernel_globals
-from flowfile_core.flowfile.code_generator.code_generator import FlowGraphCodeConverter, FlowGraphToFlowFrameConverter
+from flowfile_core.flowfile.code_generator.code_generator import (
+    FlowGraphCodeConverter,
+    FlowGraphToFlowFrameConverter,
+    _data_literal,
+)
 from flowfile_core.flowfile.code_generator.custom_node_handlers import CustomNodeHandlersMixin
 from flowfile_core.flowfile.code_generator.param_codegen import (
     SENTINEL_PREFIX,
@@ -861,7 +865,7 @@ class SubflowModuleConverter(FlowGraphToProjectConverter):
     def _sample_expression(self, settings: input_schema.NodeFlowInput) -> str:
         if settings.raw_data_format is not None and settings.raw_data_format.columns:
             # Public API only: from_raw_data coerces the dict into RawData via pydantic.
-            return f"ff.from_raw_data({settings.raw_data_format.model_dump()})"
+            return f"ff.from_raw_data({_data_literal(settings.raw_data_format.model_dump(), self.imports)})"
         return "ff.LazyFrame()"
 
     def _handle_flow_output(

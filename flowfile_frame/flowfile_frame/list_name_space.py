@@ -25,11 +25,12 @@ class ExprListNameSpace:
     def _create_next_expr(
         self, *args, method_name: str, result_expr: pl.Expr | None, is_complex: bool = True, **kwargs
     ) -> Expr:
-        from flowfile_frame.expr import Expr
+        from flowfile_frame.expr import Expr, _frame_value, _merge_operand_metadata
 
         """Creates a new Expr instance, appending method call to repr string."""
-        args_repr = ", ".join(repr(a) for a in args)
-        kwargs_repr = ", ".join(f"{k}={repr(v)}" for k, v in kwargs.items())
+        args_repr = ", ".join(repr(a) for a in _frame_value(args))
+        kwargs_repr = ", ".join(f"{k}={repr(v)}" for k, v in _frame_value(kwargs).items())
+        function_sources, convertable_to_code = _merge_operand_metadata(self.parent, *args, *kwargs.values())
 
         if args_repr and kwargs_repr:
             args_str = f"{args_repr}, {kwargs_repr}"
@@ -50,7 +51,8 @@ class ExprListNameSpace:
             selector=None,
             agg_func=self.parent.agg_func,
             is_complex=is_complex,
-            convertable_to_code=self.parent.convertable_to_code,
+            convertable_to_code=convertable_to_code,
+            _function_sources=function_sources,
         )
         return new_expr_instance
 
@@ -155,6 +157,9 @@ class ExprListNameSpace:
         return self._create_next_expr(method_name="n_unique", result_expr=res_expr)
 
     def concat(self, other: list[Expr | str] | Expr | str | pl.Series | list[Any]) -> Expr:
+        from flowfile_frame.expr import Expr, _frame_value
+
+        other = _frame_value(other)
         res_expr = None
         other_expr = None
 

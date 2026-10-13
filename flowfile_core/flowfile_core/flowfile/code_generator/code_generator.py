@@ -1,15 +1,19 @@
 import ast
 import builtins
+import datetime
+import decimal
 import functools
 import heapq
 import io
 import json
 import keyword
+import math
 import os
 import re
 import textwrap
 import tokenize
 import types
+import zoneinfo
 from dataclasses import replace
 
 import polars as pl
@@ -256,6 +260,53 @@ def _annotation_roots(entry: ast.FunctionDef) -> set[str]:
         for node in ast.walk(annotation)
         if isinstance(node, ast.Name)
     }
+
+
+_SANDBOX_IMPORTS = {
+    "cs": "import polars.selectors as cs",
+    "col": "from polars import col",
+    "lit": "from polars import lit",
+    "expr": "from polars import expr",
+    "BytesIO": "from io import BytesIO",
+    "base64": "import base64",
+    "datetime": "import datetime",
+    "time": "import time",
+}
+
+
+def _sandbox_imports(code: str) -> set[str]:
+    """Imports binding the names Polars Code reads from its sandbox besides ``pl`` (``col``, ``BytesIO``, a bare
+    dtype such as ``Int64``), which a node gets from ``PolarsCodeParser`` and an exported script must import."""
+    try:
+        tree = ast.parse("def _f():\n" + textwrap.indent(textwrap.dedent(code).strip(), "    "))
+    except SyntaxError:
+        return set()
+    imports = set()
+    for name in {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}:
+        if name in _SANDBOX_IMPORTS:
+            imports.add(_SANDBOX_IMPORTS[name])
+        elif isinstance(getattr(pl, name, None), type) and issubclass(getattr(pl, name), pl.DataType):
+            imports.add(f"from polars import {name}")
+    return imports
+
+
+def _data_literal(value, imports: set[str]) -> str:
+    """``repr(value)`` as code that runs: a non-finite float as ``float("nan")`` / ``float("inf")``, and the
+    imports the repr of a date, time, decimal or zone needs added to ``imports``."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return f'float("{value}")'
+    if isinstance(value, list):
+        return "[" + ", ".join(_data_literal(item, imports) for item in value) + "]"
+    if isinstance(value, dict):
+        items = (f"{_data_literal(key, imports)}: {_data_literal(item, imports)}" for key, item in value.items())
+        return "{" + ", ".join(items) + "}"
+    if isinstance(value, datetime.date | datetime.time | datetime.timedelta):
+        imports.add("import datetime")
+        if isinstance(getattr(value, "tzinfo", None), zoneinfo.ZoneInfo):
+            imports.add("import zoneinfo")
+    elif isinstance(value, decimal.Decimal):
+        imports.add("from decimal import Decimal")
+    return repr(value)
 
 
 def _legacy_polars_code_body(code: str) -> tuple[list[str], str | None]:
@@ -1265,7 +1316,8 @@ class FlowGraphCodeConverter(
             FlowfileColumn.create_from_minimal_field_info(c) for c in settings.raw_data_format.columns
         )
         schema = self.get_manual_schema_input(flowfile_schema)
-        self._add_code(f"{var_name} = {self.framework}.LazyFrame({data}, schema={schema}, strict=False)")
+        rows = _data_literal(data, self.imports)
+        self._add_code(f"{var_name} = {self.framework}.LazyFrame({rows}, schema={schema}, strict=False)")
         self._add_code("")
 
     def _handle_flow_input(
@@ -1705,6 +1757,7 @@ class FlowGraphCodeConverter(
     ) -> None:
         """Handle custom Polars code nodes."""
         code = textwrap.dedent(settings.polars_code_input.polars_code).strip()
+        self.imports.update(_sandbox_imports(code))
         if len(input_vars) == 0:
             params = ""
             args = ""
@@ -2684,7 +2737,7 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
     ) -> None:
         # Public API only: ff.from_raw_data coerces the dict into RawData via pydantic.
         raw_data = settings.raw_data_format
-        self._add_code(f"{var_name} = ff.from_raw_data({raw_data.model_dump()})")
+        self._add_code(f"{var_name} = ff.from_raw_data({_data_literal(raw_data.model_dump(), self.imports)})")
         self._add_code("")
 
     def _scan_callable(self, file_type: str) -> str:

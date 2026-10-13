@@ -1,10 +1,24 @@
 import code
+import hashlib
+import linecache
 import platform
 import subprocess
 from pathlib import Path
 from typing import Any
 
+import polars as pl
+
 from flowfile_frame._console_source import install_hook
+
+
+def run_exported(source: str) -> pl.DataFrame:
+    """Run exported code as a script file runs (its source readable by ``inspect``) and collect its result."""
+    filename = f"<flowfile-export-{hashlib.sha1(source.encode()).hexdigest()[:12]}>"
+    linecache.cache[filename] = (len(source), None, source.splitlines(True), filename)
+    namespace: dict[str, Any] = {}
+    exec(compile(source, filename, "exec"), namespace)
+    result = namespace["run_etl_pipeline"]()
+    return result.collect() if hasattr(result, "collect") else result
 
 
 def is_docker_available():

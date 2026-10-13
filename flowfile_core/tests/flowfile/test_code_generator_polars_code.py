@@ -1,5 +1,10 @@
 """Polars-code node export: runtime-parity return detection and a token-level ``pl`` -> ``ff`` rename."""
 
+import builtins
+from datetime import date, datetime, time
+from decimal import Decimal
+from zoneinfo import ZoneInfo
+
 import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
@@ -7,9 +12,11 @@ from polars.testing import assert_frame_equal
 from flowfile_core.flowfile.code_generator.code_generator import (
     _polars_code_function_body,
     _polars_code_to_flowframe,
+    _sandbox_imports,
     export_flow_to_flowframe,
     export_flow_to_polars,
 )
+from flowfile_core.flowfile.flow_data_engine.polars_code_parser import PolarsCodeParser
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema, transform_schema
 from tests.flowfile.test_project_exporter import create_basic_flow
@@ -186,3 +193,48 @@ def test_polars_code_function_body(code, expected):
 )
 def test_polars_code_to_flowframe(code, expected):
     assert _polars_code_to_flowframe(code) == expected
+
+
+def test_every_sandbox_name_gets_an_import_binding_the_same_object():
+    for name, value in PolarsCodeParser().safe_globals.items():
+        if name in {"__builtins__", "pl"} or hasattr(builtins, name):
+            continue
+        (statement,) = _sandbox_imports(f"x = {name}")
+        namespace: dict = {}
+        exec(statement, namespace)
+        assert namespace[name] is value, name
+
+
+@pytest.mark.parametrize("export", _EXPORTS)
+@pytest.mark.parametrize(
+    "code",
+    [
+        "input_df.with_columns(col('a').cast(Int64).alias('b'))",
+        "input_df.with_columns(lit(base64.b64encode(b'x').decode()).alias('b'))",
+        "input_df.with_columns(pl.Expr.deserialize(BytesIO(b'{\"Column\":\"a\"}'), format='json').alias('b'))",
+        "input_df.select(cs.numeric())",
+        "input_df.with_columns(lit(datetime.date(2024, 1, 2)).alias('b'))",
+    ],
+    ids=["col_dtype", "base64", "bytesio", "selectors", "datetime"],
+)
+def test_names_the_sandbox_provides_export_and_run(export, code):
+    flow = _polars_code_flow(code)
+    flow.run_graph()
+    expected = flow.get_node(2).get_resulting_data().data_frame.collect()
+    assert_frame_equal(_run_export(export(flow)), expected)
+
+
+@pytest.mark.parametrize("export", _EXPORTS)
+def test_manual_input_rows_export_as_code_that_runs(export):
+    import flowfile_frame as ff
+
+    rows = ff.from_dict(
+        {
+            "f": [1.5, float("nan"), float("inf"), float("-inf")],
+            "d": [date(2024, 1, 1), None, date(2024, 2, 29), date(1999, 12, 31)],
+            "t": [datetime(2024, 1, 1, tzinfo=ZoneInfo("Europe/Amsterdam"))] * 4,
+            "c": [time(1, 2), None, time(23, 59), time(0, 0)],
+            "m": [Decimal("1.50"), None, Decimal("2.25"), Decimal("0.10")],
+        }
+    )
+    assert_frame_equal(_run_export(export(rows.flow_graph)), rows.collect())

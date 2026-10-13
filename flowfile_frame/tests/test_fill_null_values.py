@@ -6,15 +6,14 @@ window, a raw Polars expression, a strategy, ``fill_nan``) is a Polars-code node
 built twice, once with ``ff`` and once with ``pl``, and the collected frames must be equal.
 """
 
-import hashlib
-import linecache
-
 import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
 import flowfile_frame as ff
 from flowfile_core.flowfile.code_generator.code_generator import export_flow_to_flowframe, export_flow_to_polars
+
+from .utils import run_exported
 
 DATA = {
     "a": [1.0, None, float("nan"), None],
@@ -100,7 +99,7 @@ def test_a_column_fill_lowers_to_coalesce():
 
 def test_a_polars_expression_renders_as_its_polars_code():
     out = _check(lambda m: m.col("a").fill_null(pl.col("b")), "polars_code")
-    assert "pl.col('a').fill_null(pl.col(\"b\"))" in _node(out).setting_input.polars_code_input.polars_code
+    assert "pl.col('a').fill_null(pl.col('b'))" in _node(out).setting_input.polars_code_input.polars_code
 
 
 def test_a_fill_value_brings_its_function_definition():
@@ -137,28 +136,16 @@ def test_titanic_age_imputed_by_title_median():
 
 
 def _fills(m):
-    # NaN comes from sqrt(-1): a NaN in the source rows exports as a bare `nan`, a separate export bug
-    data = {**DATA, "a": [1.0, None, -1.0, None]}
-    frame = ff.from_dict(data) if m is ff else pl.LazyFrame(data)
+    frame = ff.from_dict(DATA) if m is ff else pl.LazyFrame(DATA)
     return (
-        frame.with_columns(m.col("a").sqrt())
-        .with_columns(m.col("a").fill_null(m.col("b")).alias("from_column"))
+        frame.with_columns(m.col("a").fill_null(m.col("b")).alias("from_column"))
         .with_columns(m.col("i").fill_null(m.col("b")).alias("supercast"))
         .with_columns(m.col("a").fill_null(m.col("b").mean().over("s")).alias("window"))
         .with_columns(m.col("a").fill_null(pl.col("b")).alias("from_polars"))
+        .with_columns(m.col("a").fill_null(pl.col("b").mean().over("s")).alias("polars_window"))
         .with_columns(m.col("a").fill_null(strategy="forward").alias("forward"))
         .with_columns(m.col("a").fill_nan(m.col("b")).alias("nan_filled"))
     )
-
-
-def _rerun(code: str) -> pl.DataFrame:
-    """Run exported code as a script file runs: with its source readable by ``inspect``."""
-    filename = f"<flowfile-export-{hashlib.sha1(code.encode()).hexdigest()[:12]}>"
-    linecache.cache[filename] = (len(code), None, code.splitlines(True), filename)
-    namespace: dict = {}
-    exec(compile(code, filename, "exec"), namespace)
-    result = namespace["run_etl_pipeline"]()
-    return result.collect() if hasattr(result, "collect") else result
 
 
 @pytest.mark.parametrize("build", [_fills, _titanic], ids=["fills", "titanic"])
@@ -166,4 +153,4 @@ def _rerun(code: str) -> pl.DataFrame:
 def test_exported_code_reruns_to_the_same_result(build, export):
     out = build(ff)
     assert_frame_equal(out.collect(), build(pl).collect())
-    assert_frame_equal(_rerun(export(out.flow_graph)), out.collect())
+    assert_frame_equal(run_exported(export(out.flow_graph)), out.collect())
