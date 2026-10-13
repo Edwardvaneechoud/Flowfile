@@ -1,8 +1,9 @@
 """Each backend's materialisation policy: what ``submit`` holds for each combination of hints.
 
-``LocalBackend`` holds every plan lazily and never samples inline. ``WorkerBackend`` stores a plan on the worker
-when it must be materialised, or when it is wide and a preview is asked for; every other plan stays deferred in
-core, and its samples come from a worker sampler task.
+``LocalBackend`` stores a plan that must be materialised when the protocol flag is on, by a streaming sink to a file
+under core's storage directory that ``release`` removes, holds every other plan lazily, and never samples inline.
+``WorkerBackend`` stores a plan on the worker when it must be materialised, or when it is wide and a preview is asked
+for; every other plan stays deferred in core, and its samples come from a worker sampler task.
 """
 
 import io
@@ -14,6 +15,7 @@ import polars as pl
 import pyarrow as pa
 import pytest
 
+from flowfile_core.configs import settings
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
@@ -21,6 +23,7 @@ from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ResultMissing, TaskFailed
 from flowfile_core.flowfile.execution.protocol import JobHandle, ResultRef, SubmitHints
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
+from shared.storage_config import storage
 
 PEOPLE = pl.DataFrame({"id": list(range(10)), "name": [f"n{i}" for i in range(10)]})
 HINT_COMBINATIONS = [
@@ -94,16 +97,28 @@ def sampler_tasks(monkeypatch) -> list[dict]:
 
 
 @pytest.mark.parametrize(("must_materialise", "wide", "preview_rows"), HINT_COMBINATIONS)
-def test_the_local_backend_holds_every_plan_deferred_without_an_inline_sample(must_materialise, wide, preview_rows):
+def test_the_local_backend_stores_a_required_plan_under_the_flag_and_defers_the_rest(
+    must_materialise, wide, preview_rows
+):
     backend = LocalBackend()
+    stored = must_materialise and bool(settings.FLOWFILE_COMPUTE_PROTOCOL)
+    stored_file = storage.cache_directory / "local" / "1" / "hash.arrow"
 
     result = backend.submit(plan(), [], hints(must_materialise, wide, preview_rows), "hash", flow_id=1, node_id=1)
 
-    assert result.ref.state == "deferred"
+    assert result.ref.state == ("materialised" if stored else "deferred")
     assert result.ref.result_id == "hash"
+    assert result.ref.row_count is None
     assert result.sample is None
+    assert stored_file.is_file() is stored
     assert rows(backend.sample(result.ref, 3)).num_rows == 3
     assert rows(backend.sample(result.ref, 50)).num_rows == 10
+    assert backend.count(result.ref) == 10
+
+    backend.release(result.ref)
+
+    assert backend.exists(result.ref) is False
+    assert not stored_file.exists()
 
 
 @pytest.mark.parametrize(("must_materialise", "wide", "preview_rows"), HINT_COMBINATIONS)
