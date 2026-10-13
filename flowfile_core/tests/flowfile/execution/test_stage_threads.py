@@ -213,7 +213,8 @@ def test_a_subflow_runs_under_the_context_of_the_flow_that_runs_it(counting, rec
 
     assert run_info.success is True
     assert parent.execution_context.backend_id == "counting"
-    assert open_flow(local_subflow["path"]).execution_context.backend_id == "local"
+    reopened = open_flow(local_subflow["path"]).execution_context.backend_id
+    assert reopened == ("counting" if settings.FLOWFILE_COMPUTE_PROTOCOL else "local")
     parent_calls = {call.node_id: call for call in recorder.calls if call.graph_uuid == parent.uuid}
     child_calls = [call for call in recorder.calls if call.graph_uuid != parent.uuid]
     assert sorted(parent_calls) == [1, 2]
@@ -290,7 +291,7 @@ def test_a_call_site_without_a_graph_resolves_the_default_backend(
     monkeypatch.setattr(settings.OFFLOAD_TO_WORKER, "value", offload)
 
     assert get_global_execution_location() == location
-    assert schemas.FlowGraphConfig().execution_location == location
+    assert schemas.FlowGraphConfig().execution_location == ("auto" if settings.FLOWFILE_COMPUTE_PROTOCOL else location)
     assert current_context().backend_id == backend_id
 
 

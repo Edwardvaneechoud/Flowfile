@@ -18,6 +18,13 @@ def default_backend_probe(monkeypatch):
     registry.reset()
 
 
+@pytest.fixture(params=[False, True], ids=["flag-off", "flag-on"])
+def protocol_flag(request, monkeypatch) -> bool:
+    """The compute protocol flag, off and then on."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", request.param)
+    return request.param
+
+
 def make_graph(flow_id: int, **settings_fields) -> FlowGraph:
     fields = {"execution_location": "local", "execution_mode": "Performance", "max_parallel_workers": 4}
     fields.update(settings_fields)
@@ -97,6 +104,29 @@ def test_a_remote_graph_falls_back_to_the_worker_while_offload_is_on(monkeypatch
     graph = make_graph(9105, execution_location="remote")
 
     assert graph.execution_context.backend_id == "worker"
+
+
+def test_an_auto_graph_runs_on_the_default_backend_up_to_its_parallel_workers_at_once(protocol_flag):
+    graph = make_graph(9113, execution_location="auto", max_parallel_workers=6)
+
+    assert graph.execution_location == ("auto" if protocol_flag else "remote")
+    assert graph.execution_context == ExecutionContext(backend_id="probe", parallelism=6, preview_rows=None)
+
+
+def test_a_graph_naming_a_backend_id_runs_on_that_backend_up_to_its_parallel_workers_at_once(protocol_flag):
+    graph = make_graph(9114, execution_location="worker:team", max_parallel_workers=5)
+
+    assert graph.execution_location == "worker:team"
+    assert graph.execution_context == ExecutionContext(backend_id="worker:team", parallelism=5, preview_rows=None)
+
+
+def test_an_auto_graph_runs_in_core_one_node_at_a_time_when_the_default_backend_is_local(protocol_flag, monkeypatch):
+    monkeypatch.setenv("FLOWFILE_COMPUTE_BACKEND", "local")
+
+    graph = make_graph(9115, execution_location="auto", max_parallel_workers=6)
+
+    assert graph.execution_location == ("auto" if protocol_flag else "local")
+    assert graph.execution_context == ExecutionContext(backend_id="local", parallelism=1, preview_rows=None)
 
 
 def test_development_mode_keeps_100_preview_rows_and_performance_mode_none():
