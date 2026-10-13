@@ -12,6 +12,7 @@ import polars as pl
 
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.protocol import OperationKind, OpResult, ResultRef
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
@@ -22,7 +23,6 @@ from flowfile_core.flowfile.sources.external_sources.rest_api_source import (
 )
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.secret_manager.secret_manager import decrypt_secret
-
 
 # --- helpers ------------------------------------------------------------------
 
@@ -59,7 +59,8 @@ def _fake_worker_read(monkeypatch, tmp_path, rows: pl.DataFrame) -> list:
         calls.append((op, payload["payload"]))
         path = tmp_path / "rest_result.arrow"
         rows.write_ipc(path)
-        ref = ResultRef("worker", "fake-task", [], rows.height, "materialised", str(path).encode())
+        schema = [FlowfileColumn.create_from_polars_dtype(name, dtype) for name, dtype in rows.schema.items()]
+        ref = ResultRef("worker", "fake-task", schema, rows.height, "materialised", str(path).encode())
         return OpResult(refs={"result": ref})
 
     monkeypatch.setattr(WorkerBackend, "run_op", run_op)
