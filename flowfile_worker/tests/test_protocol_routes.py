@@ -645,7 +645,7 @@ def minio_over_tls(tmp_path_factory):
 
 @pytest.fixture
 def presign(minio_over_tls, monkeypatch):
-    """A function presigning ``put_object`` or ``get_object`` for a name under a key prefix of the test's, and the prefix.
+    """A function presigning ``put_object`` or ``get_object`` for a name under a key prefix of the test's; the prefix.
 
     ``requests`` trusts the forwarder's certificate through ``REQUESTS_CA_BUNDLE``; every key under the prefix is
     deleted when the test ends.
