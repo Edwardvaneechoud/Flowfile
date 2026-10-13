@@ -70,6 +70,7 @@ from flowfile_core.flowfile.sources.external_sources.base_class import ExternalD
 from flowfile_core.schemas import cloud_storage_schemas, input_schema
 from flowfile_core.schemas import transform_schema as transform_schemas
 from flowfile_core.utils.utils import ensure_similarity_dicts
+from shared.cloud_credential_provider import CredentialRefProvider
 from shared.cloud_storage import (
     get_lazy_frame_from_gcs_pyarrow_dataset,
     scan_delta_from_gcs,
@@ -513,7 +514,9 @@ class FlowDataEngine:
         Azure Data Lake Storage, and Google Cloud Storage, with support for
         various authentication methods.
 
-        The credentials ride in an ``EncryptedCredentialProvider``, since the plan is serialized to the worker.
+        The credentials ride in a credential provider, since the plan is serialized to the worker: encrypted
+        (``EncryptedCredentialProvider``), or with the compute protocol flag on as a reference to the stored
+        connection that the executing process resolves (``CredentialRefProvider``).
 
         Args:
             settings: A `CloudStorageReadSettingsInternal` object containing connection
@@ -533,8 +536,7 @@ class FlowDataEngine:
         read_settings = settings.read_settings
 
         logger.info(f"Reading from {connection.storage_type} storage: {read_settings.resource_path}")
-        storage_options = CloudStorageReader.get_storage_options(connection)
-        credential_provider = CloudStorageReader.get_credential_provider(storage_options, user_id)
+        storage_options, credential_provider = CloudStorageReader.get_read_credentials(connection, user_id)
         use_pyarrow = CloudStorageReader.use_pyarrow_for_gcs(connection)
         if read_settings.file_format == "parquet":
             return cls._read_parquet_from_cloud(
@@ -674,7 +676,7 @@ class FlowDataEngine:
                 resource_path = ensure_path_has_wildcard_pattern(resource_path=resource_path, file_format="parquet")
             scan_kwargs = {"source": resource_path}
             scan_kwargs.update(CloudStorageReader.get_scan_kwargs(storage_options, credential_provider))
-            if storage_options and is_directory:
+            if storage_options and is_directory and not isinstance(credential_provider, CredentialRefProvider):
                 schema = cls._get_schema_from_first_file_in_dir(
                     resource_path, storage_options, "parquet", use_pyarrow=use_pyarrow
                 )
@@ -756,7 +758,11 @@ class FlowDataEngine:
             if read_settings.scan_mode == "directory":
                 resource_path = ensure_path_has_wildcard_pattern(resource_path=resource_path, file_format="csv")
                 scan_kwargs["source"] = resource_path
-            if storage_options and read_settings.scan_mode == "directory":
+            if (
+                storage_options
+                and read_settings.scan_mode == "directory"
+                and not isinstance(credential_provider, CredentialRefProvider)
+            ):
                 schema = cls._get_schema_from_first_file_in_dir(resource_path, storage_options, "csv")
             else:
                 schema = None

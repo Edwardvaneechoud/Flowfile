@@ -3,7 +3,7 @@
 import threading
 from pathlib import Path
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine, make_url
 
 from shared.storage_config import get_database_url
@@ -50,3 +50,53 @@ def sqlite_database_path(url: str | None = None) -> Path | None:
     if parsed.query.get("mode") == "memory":
         return None
     return Path(parsed.database)
+
+
+_CLOUD_CONNECTION_FIELDS = (
+    "connection_name",
+    "storage_type",
+    "auth_method",
+    "aws_region",
+    "aws_access_key_id",
+    "aws_role_arn",
+    "aws_allow_unsafe_html",
+    "aws_profile",
+    "azure_account_name",
+    "azure_tenant_id",
+    "azure_client_id",
+    "gcs_project_id",
+    "endpoint_url",
+    "verify_ssl",
+)
+_CLOUD_CONNECTION_SECRETS = (
+    "aws_secret_access_key",
+    "aws_session_token",
+    "azure_account_key",
+    "azure_client_secret",
+    "azure_sas_token",
+    "gcs_service_account_key",
+)
+
+
+def cloud_connection_record(connection_id: int) -> tuple[dict, dict[str, str | None]] | None:
+    """A stored cloud connection by id: its plain fields and its secrets as stored ciphertext; None when absent.
+
+    Read from the catalog database this process is configured for, by id only, with no access check: who may use
+    the connection was decided where the reference to it was made.
+    """
+    secrets = ", ".join(
+        f"(SELECT encrypted_value FROM secrets WHERE secrets.id = c.{name}_id) AS {name}"
+        for name in _CLOUD_CONNECTION_SECRETS
+    )
+    query = text(
+        f"SELECT {', '.join('c.' + name for name in _CLOUD_CONNECTION_FIELDS)}, {secrets} "
+        "FROM cloud_storage_connections c WHERE c.id = :id"
+    )
+    with get_catalog_engine().connect() as connection:
+        row = connection.execute(query, {"id": connection_id}).mappings().first()
+    if row is None:
+        return None
+    return (
+        {name: row[name] for name in _CLOUD_CONNECTION_FIELDS},
+        {name: row[name] for name in _CLOUD_CONNECTION_SECRETS},
+    )
