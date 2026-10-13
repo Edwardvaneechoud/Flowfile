@@ -195,6 +195,12 @@ poetry run pytest -m kernel
 
 # Cloud storage E2E: spawns its own core + worker on free ports, drives them over HTTP against MinIO (Docker)
 poetry run pytest tests/cloud_e2e -m cloud_e2e
+
+# The same with the compute protocol flag on, the one FLOWFILE_* variable the suite takes from the shell
+FLOWFILE_COMPUTE_PROTOCOL=1 poetry run pytest tests/cloud_e2e -m cloud_e2e
+
+# Core and a worker on storage dirs of their own (no Docker): with the protocol flag on, core opens no file the worker wrote
+poetry run pytest tests/remote_worker
 ```
 
 **Markers** (registered in `pyproject.toml` `[tool.pytest.ini_options]`):
