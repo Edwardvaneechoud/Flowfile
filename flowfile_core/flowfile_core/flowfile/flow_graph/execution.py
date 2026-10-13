@@ -809,32 +809,33 @@ class ExecutionMixin(GraphMixinBase):
         """Place the nodes ``execution_plan`` runs; ``None`` with ``FLOWFILE_COMPUTE_PROTOCOL`` off, placing nothing.
 
         Every node goes to the run's backend but the ones their builders pin to the worker (``SingleBackendPolicy``).
-        Each backend named is asked for its ``capabilities()`` once; one that cannot be asked (a ``ComputeError``, or an
-        id the registry does not know) refuses every node assigned to it with that error's message.
+        Each backend named is asked for its ``capabilities()`` once. One that raises a ``ComputeError`` is left out of
+        the map ``place`` is given, so its nodes are not placed and meet that typed error when they run; an id the
+        registry does not know refuses every node assigned to it with the registry's message.
         """
         if not settings.FLOWFILE_COMPUTE_PROTOCOL:
             return None
         nodes = execution_plan.all_nodes
         policy = SingleBackendPolicy(current_context(self).backend_id)
         declared: dict[str, Capabilities] = {}
-        unasked: dict[str, str] = {}
+        unknown: dict[str, str] = {}
         for backend_id in dict.fromkeys(policy.backend_for(node) for node in nodes):
             try:
                 declared[backend_id] = registry.backend(backend_id).capabilities()
-            except (ComputeError, LookupError) as e:
-                unasked[backend_id] = str(e)
-        placement = place(
-            self, declared, policy, nodes=[node for node in nodes if policy.backend_for(node) in declared]
-        )
-        if not unasked:
+            except ComputeError:
+                continue
+            except LookupError as e:
+                unknown[backend_id] = str(e)
+        placement = place(self, declared, policy, nodes=nodes)
+        if not unknown:
             return placement
         refusals = [
-            Refusal(node.node_id, policy.backend_for(node), unasked[policy.backend_for(node)])
+            Refusal(node.node_id, policy.backend_for(node), unknown[policy.backend_for(node)])
             for node in nodes
-            if policy.backend_for(node) in unasked
+            if policy.backend_for(node) in unknown
         ]
         return Placement(
-            assignment={node.node_id: policy.backend_for(node) for node in nodes},
+            assignment={**placement.assignment, **{refusal.node_id: refusal.backend_id for refusal in refusals}},
             boundaries=placement.boundaries,
             refusals=[*refusals, *placement.refusals],
         )

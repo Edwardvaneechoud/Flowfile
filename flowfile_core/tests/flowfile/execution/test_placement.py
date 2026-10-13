@@ -3,8 +3,9 @@
 With the compute protocol flag on, ``run_graph`` places the nodes it will run: each on the run's backend, the model
 nodes on the worker their builders run them on, and compares what each needs with the ``Capabilities`` that backend
 declares. A refused node is a failed row on the run report naming the backend and the reason; no node runs and the
-backend is sent no work. The backends here are core's own under another id, declaring what each test hands them, so
-no worker is needed. With the flag off nothing is placed.
+backend is sent no work. A backend that cannot be asked for its capabilities is not in the map placement is given: its
+nodes are not refused and meet its typed error when they run. The backends here are core's own under another id,
+declaring what each test hands them, so no worker is needed. With the flag off nothing is placed.
 """
 
 import threading
@@ -46,9 +47,10 @@ def without(capabilities: Capabilities, *, operation=None, scheme=None, plugin=N
 
 
 class DeclaringBackend(LocalBackend):
-    """Core's own backend under another id, declaring the capabilities it is given (raising them when an error).
+    """Core's own backend under another id, declaring the capabilities it is given.
 
-    ``work`` records each ``submit`` and ``run_op`` it is sent; ``asked`` counts its ``capabilities()`` calls.
+    Given an error instead, it is unreachable: ``capabilities()``, ``submit`` and ``run_op`` raise it. ``work`` records
+    each ``submit`` and ``run_op`` it is sent; ``asked`` counts its ``capabilities()`` calls.
     """
 
     def __init__(self, backend_id: str, declared: Capabilities | Exception):
@@ -68,11 +70,15 @@ class DeclaringBackend(LocalBackend):
     def submit(self, plan, inputs, hints, result_id, *, flow_id, node_id):
         with self._work_lock:
             self.work.append(f"submit {node_id}")
+        if isinstance(self.declared, Exception):
+            raise self.declared
         return super().submit(plan, inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
 
     def run_op(self, op, payload):
         with self._work_lock:
             self.work.append(f"run_op {op.value}")
+        if isinstance(self.declared, Exception):
+            raise self.declared
         return super().run_op(op, payload)
 
 
@@ -279,14 +285,27 @@ def test_with_the_flag_off_nothing_is_placed(protocol_off, declare):
     assert "run_op fuzzy_join" in backend.work
 
 
-def test_a_backend_that_cannot_be_asked_refuses_every_node_it_was_assigned(protocol_on, declare):
+def test_a_backend_missing_from_the_map_leaves_its_nodes_unplaced_and_unrefused():
+    graph = train_flow(8408)
+
+    placement = place(graph, {registry.LOCAL_BACKEND_ID: everything()}, SingleBackendPolicy(registry.LOCAL_BACKEND_ID))
+
+    assert placement == Placement(assignment={1: registry.LOCAL_BACKEND_ID}, boundaries=[], refusals=[])
+
+
+def test_the_nodes_of_a_backend_that_cannot_be_asked_meet_its_error_when_they_run(protocol_on, declare):
     backend = declare(ComputeUnavailable("Connection refused"))
-    graph = fuzzy_flow(8408)
+    graph = fuzzy_flow(8412)
 
     run_info = graph.run_graph()
 
-    reason = ["Connection refused", "Is the worker running?"]
-    assert_refused_before_any_node(graph, run_info, backend, {1: reason, 2: reason, 3: reason})
+    errors = {result.node_id: result.error for result in run_info.node_step_result}
+    assert errors.keys() == {1, 2}, errors
+    for error in errors.values():
+        assert error.startswith("Connection refused"), error
+    assert graph.get_node(3).results.errors is None
+    assert run_info.success is False
+    assert sorted(backend.work) == ["submit 1", "submit 2"]
     assert backend.asked == 1
 
 

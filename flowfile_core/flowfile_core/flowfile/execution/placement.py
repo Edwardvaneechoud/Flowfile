@@ -93,18 +93,23 @@ def place(
 ) -> Placement:
     """Assign each of ``nodes`` (default all of the flow's) its backend by ``policy``, refusing each it cannot run.
 
-    ``backends`` holds the capabilities of every backend the policy names for them. Nothing is asked of a backend; the
-    one lookup is where a catalog reader's or writer's namespace keeps its tables (``locate_for_namespace``, which
-    reads the namespace row and no credential).
+    ``backends`` holds the capabilities in hand of the backends the policy names for them. A node whose backend is not
+    among them (one that could not be asked) is neither assigned nor refused: reaching a backend is the handshake's
+    concern, and the node meets that backend's typed error when it runs. Nothing is asked of a backend; the one lookup
+    is where a catalog reader's or writer's namespace keeps its tables (``locate_for_namespace``, which reads the
+    namespace row and no credential).
     """
     assignment: dict[int, str] = {}
     refusals: list[Refusal] = []
     for node in flow.nodes if nodes is None else nodes:
         backend_id = policy.backend_for(node)
+        capabilities = backends.get(backend_id)
+        if capabilities is None:
+            continue
         assignment[node.node_id] = backend_id
         target, namespace = _catalog_target(node)
         requirements = requirements_for(node.node_template, node.setting_input, catalog_target=target)
-        reasons = _unmet(requirements, backends[backend_id], namespace)
+        reasons = _unmet(requirements, capabilities, namespace)
         if reasons:
             refusals.append(Refusal(node_id=node.node_id, backend_id=backend_id, reason="; ".join(reasons)))
     return Placement(assignment=assignment, boundaries=[], refusals=refusals)
