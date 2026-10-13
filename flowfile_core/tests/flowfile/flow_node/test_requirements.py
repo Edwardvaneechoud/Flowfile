@@ -403,19 +403,36 @@ def test_the_same_node_without_a_formula_needs_nothing(item, settings):
     assert _requirements(item, settings) == NOTHING
 
 
-def test_train_model_runs_ml_train_and_writes_the_model_file():
-    settings = input_schema.NodeTrainModel(**_ids(depending_on_id=1))
+@pytest.mark.parametrize(
+    ("publish_to_catalog", "artifact_scheme", "write_schemes"),
+    [(False, "file", set()), (True, "file", {"file"}), (True, "https", {"https"}), (True, None, set())],
+)
+def test_train_model_writes_the_artifact_store_only_when_it_publishes(
+    publish_to_catalog, artifact_scheme, write_schemes
+):
+    train_input = input_schema.TrainModelSettings(model_name="m", publish_to_catalog=publish_to_catalog)
+    settings = input_schema.NodeTrainModel(**_ids(depending_on_id=1, train_input=train_input))
 
-    assert _requirements("train_model", settings) == NodeRequirements(
-        operation=OperationKind.ml_train, write_schemes=frozenset({"file"})
+    assert _requirements("train_model", settings, artifact_scheme=artifact_scheme) == NodeRequirements(
+        operation=OperationKind.ml_train, write_schemes=frozenset(write_schemes)
     )
 
 
-def test_apply_model_runs_ml_apply_and_reads_the_model_file():
-    settings = input_schema.NodeApplyModel(**_ids(depending_on_id=1))
+@pytest.mark.parametrize(
+    ("source", "artifact_scheme", "read_schemes"),
+    [
+        ("upstream", "file", set()),
+        ("catalog", "file", {"file"}),
+        ("catalog", "https", {"https"}),
+        ("catalog", None, set()),
+    ],
+)
+def test_apply_model_reads_the_artifact_store_only_from_the_catalog(source, artifact_scheme, read_schemes):
+    apply_input = input_schema.ApplyModelSettings(source=source, upstream_node_id=1, model_name="m")
+    settings = input_schema.NodeApplyModel(**_ids(depending_on_id=1, apply_input=apply_input))
 
-    assert _requirements("apply_model", settings) == NodeRequirements(
-        operation=OperationKind.ml_apply, read_schemes=frozenset({"file"})
+    assert _requirements("apply_model", settings, artifact_scheme=artifact_scheme) == NodeRequirements(
+        operation=OperationKind.ml_apply, read_schemes=frozenset(read_schemes)
     )
 
 

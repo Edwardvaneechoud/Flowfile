@@ -3,10 +3,12 @@
 These tests focus on the orchestration logic (settings validation, schema
 callbacks, artifact lifecycle) rather than the worker compute path — the
 actual training runs in :mod:`flowfile_worker.tests.test_train_apply_model`.
-Both nodes reach the worker only through ``WorkerBackend.run_op``, which the
-tests replace with a stand-in that sees the payload each node sends; a
-training's stand-in answers the model as a blob reference and writes nothing.
-The two nodes on a running worker are in ``test_ml_nodes_on_the_worker``.
+Both nodes run on the flow's backend. On the worker they reach it only through
+``WorkerBackend.run_op``, which the tests replace with a stand-in that sees the
+payload each node sends; a training's stand-in answers the model as a blob
+reference and writes nothing. A local flow fits and scores in core's own
+process. The two nodes on a running worker are in
+``test_ml_nodes_on_the_worker``.
 """
 
 from typing import Literal
@@ -15,6 +17,9 @@ import polars as pl
 import pytest
 
 from flowfile_core.auth.models import User
+from flowfile_core.configs import settings
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ResultMissing
 from flowfile_core.flowfile.execution.payloads import PAYLOAD_KEY, MlApplyPayload, MlTrainPayload
@@ -786,20 +791,34 @@ def _flow_only_train_settings(graph: FlowGraph) -> input_schema.NodeTrainModel:
     )
 
 
-def test_a_local_flow_still_trains_on_the_worker_backend(monkeypatch):
-    """Core's own backend fits no models, so the fit goes to the worker backend whatever the flow's location."""
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+def test_a_local_flow_trains_and_scores_in_core(monkeypatch, flag):
+    """Core's own backend fits and holds the model, and Apply Model releases the deferred rows it scored there."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
     graph = _make_graph()
     graph._flow_settings.path = ""
     graph.flow_settings.execution_location = "local"
     _seed_manual_input(graph, node_id=1)
-    _wire_ml_node(graph, "train_model", node_id=2, upstream_id=1)
-    calls = _route_worker_ops(monkeypatch, _trained())
+    _refuse_worker_ops(monkeypatch, AssertionError("the worker backend was sent an operation"))
+    released = []
+    release = LocalBackend.release
 
-    graph.add_train_model(_flow_only_train_settings(graph))
-    result = graph.get_node(2).get_resulting_data()
+    def record_release(self, ref):
+        released.append((ref.kind, ref.state))
+        release(self, ref)
 
-    assert [op for op, _ in calls] == [OperationKind.ml_train]
-    assert result.collect().columns == ["x1", "x2", "y"], "the node passes its input through"
+    monkeypatch.setattr(LocalBackend, "release", record_release)
+    _upstream_flow(graph)
+
+    run_info = graph.run_graph()
+
+    assert run_info.success is True, [result.error for result in run_info.node_step_result]
+    assert released == [("table", "deferred")]
+    model = graph.get_node(10).results.model_ref
+    assert (model.backend_id, model.kind) == (registry.LOCAL_BACKEND_ID, "blob")
+    assert registry.backend(registry.LOCAL_BACKEND_ID).exists(model)
+    assert graph.get_node(20).get_resulting_data().collect()["pred"].to_list() == pytest.approx([5.0, 13.0])
+    registry.backend(registry.LOCAL_BACKEND_ID).release(model)
 
 
 def test_a_train_result_without_the_model_digest_fails_the_node(monkeypatch):
