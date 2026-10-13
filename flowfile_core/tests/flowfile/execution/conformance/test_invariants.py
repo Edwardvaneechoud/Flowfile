@@ -6,6 +6,9 @@
   every method that takes one, and leaves the result where it is.
 - Core learns a result's schema from its reference: every result carries the columns of its rows, core predicts the
   columns downstream from them, and a stored result whose file core cannot open is still known by its reference.
+- Materialising is the backend's choice except where core marks it required: a required result is computed once and
+  answers the same rows on every read, a plan that need not be materialised stays deferred, and a wide plan follows
+  the backend's documented policy.
 - A backend runs the operations its capabilities name and refuses every other kind with ``OperationUnsupported``.
 - Failures are typed: a compute out of reach is ``ComputeUnavailable``, never a missing result; a released result is
   missing; a compute on other versions is refused with ``VersionMismatch`` before it runs anything.
@@ -20,6 +23,7 @@ import polars as pl
 import pyarrow as pa
 import pytest
 
+from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution.errors import (
     ComputeUnavailable,
     ForeignRef,
@@ -64,6 +68,15 @@ DOWNSTREAM = [
 
 STATES = pytest.mark.parametrize("must_materialise", [False, True], ids=["deferred", "materialised"])
 
+POLICIES: dict[str, Callable[[SubmitHints], bool]] = {
+    "local": lambda given: given.must_materialise and bool(settings.FLOWFILE_COMPUTE_PROTOCOL),
+    "worker": lambda given: given.must_materialise or (given.wide and given.preview_rows is not None),
+}
+"""Whether each backend in ``conftest.BACKENDS`` stores a submit with these hints, as its class docstring says."""
+
+SHUFFLED = pl.LazyFrame({"id": list(range(1000))}).select(pl.col("id").shuffle())
+"""A plan whose rows come in another order each time it runs."""
+
 CALLS_WITH_A_REF: dict[str, Callable[[ComputeBackend, ResultRef], object]] = {
     "plan_for": lambda backend, ref: backend.plan_for(ref),
     "sample": lambda backend, ref: backend.sample(ref, 1),
@@ -73,17 +86,27 @@ CALLS_WITH_A_REF: dict[str, Callable[[ComputeBackend, ResultRef], object]] = {
 }
 
 
-def hints(*, must_materialise: bool = False, preview_rows: int | None = None) -> SubmitHints:
-    return SubmitHints(must_materialise=must_materialise, wide=False, fanout=1, preview_rows=preview_rows)
+def hints(*, must_materialise: bool = False, wide: bool = False, preview_rows: int | None = None) -> SubmitHints:
+    return SubmitHints(must_materialise=must_materialise, wide=wide, fanout=1, preview_rows=preview_rows)
 
 
-def submit_people(backend: ComputeBackend, submit_hints: SubmitHints, frame: pl.DataFrame = PEOPLE) -> SubmitResult:
-    plan = frame.lazy().filter(pl.col("id") >= 0)
+def submit_people(
+    backend: ComputeBackend,
+    submit_hints: SubmitHints,
+    frame: pl.DataFrame = PEOPLE,
+    plan: pl.LazyFrame | None = None,
+) -> SubmitResult:
+    if plan is None:
+        plan = frame.lazy().filter(pl.col("id") >= 0)
     return backend.submit(plan, [], submit_hints, f"conformance-{uuid.uuid4().hex}", flow_id=-1, node_id=-1)
 
 
 def rows(stream: bytes) -> int:
     return pa.ipc.open_stream(io.BytesIO(stream)).read_all().num_rows
+
+
+def ids(stream: bytes) -> list[int]:
+    return pl.read_ipc_stream(stream)["id"].to_list()
 
 
 def polars_columns(schema: pl.Schema) -> list[tuple[str, str]]:
@@ -96,11 +119,11 @@ def flowfile_columns(schema: list[FlowfileColumn]) -> list[tuple[str, str]]:
 
 @pytest.fixture
 def submitted(backend: ComputeBackend) -> Iterator[Callable[..., SubmitResult]]:
-    """Submits ``PEOPLE``, or ``frame``, to ``backend`` with the given hints; each result is released at the end."""
+    """Submits ``PEOPLE``, ``frame`` or ``plan`` to ``backend`` with the given hints; each is released at the end."""
     refs = []
 
-    def submit(frame: pl.DataFrame = PEOPLE, **hint_values) -> SubmitResult:
-        result = submit_people(backend, hints(**hint_values), frame)
+    def submit(frame: pl.DataFrame = PEOPLE, plan: pl.LazyFrame | None = None, **hint_values) -> SubmitResult:
+        result = submit_people(backend, hints(**hint_values), frame, plan)
         refs.append(result.ref)
         return result
 
@@ -175,6 +198,37 @@ def test_a_stored_result_is_known_by_its_reference_where_core_cannot_open_it(unr
     assert flowfile_columns(engine.schema) == polars_columns(MIXED.schema)
     assert unreadable.count(ref) == MIXED.height
     assert rows(unreadable.sample(ref, 2)) == 2
+
+
+def test_a_required_result_is_computed_once_and_read_the_same_twice(backend, backend_name, submitted):
+    if not POLICIES[backend_name](hints(must_materialise=True)):
+        pytest.skip(f"the {backend_name} backend holds every plan deferred with the protocol flag off")
+    deferred = submitted(plan=SHUFFLED).ref
+    assert ids(backend.sample(deferred, 1000)) != ids(backend.sample(deferred, 1000)), "the plan reads one order"
+
+    ref = submitted(plan=SHUFFLED, must_materialise=True).ref
+
+    assert ref.state == "materialised"
+    first, second = ids(backend.sample(ref, 1000)), ids(backend.sample(ref, 1000))
+    assert first == second
+    assert sorted(first) == list(range(1000))
+    assert backend.count(ref) == 1000
+
+
+def test_a_result_that_need_not_be_materialised_stays_deferred(backend, submitted):
+    ref = submitted().ref
+
+    assert ref.state == "deferred"
+    assert ref.row_count is None
+    assert backend.count(ref) == PEOPLE.height
+
+
+@pytest.mark.parametrize("preview_rows", [None, 4])
+def test_a_wide_plan_follows_the_backend_policy(backend_name, submitted, preview_rows):
+    ref = submitted(wide=True, preview_rows=preview_rows).ref
+
+    stored = POLICIES[backend_name](hints(wide=True, preview_rows=preview_rows))
+    assert ref.state == ("materialised" if stored else "deferred")
 
 
 def test_capabilities_name_only_operation_kinds(backend):
