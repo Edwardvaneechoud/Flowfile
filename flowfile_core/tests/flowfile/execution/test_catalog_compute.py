@@ -6,6 +6,7 @@ backend, recorded from that code on the same inputs; only ``size_bytes`` is meas
 measured it, since a file's byte size belongs to the Parquet writer of the day.
 """
 
+import dataclasses
 import datetime
 import shutil
 import types
@@ -31,15 +32,15 @@ from flowfile_core.flowfile.execution.backends import local as local_module
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
-from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, OpResult
 from flowfile_core.flowfile.execution.payloads import (
-    op_payload,
     PAYLOAD_KEY,
     CatalogTableIdentity,
     DeltaMergePayload,
     DeltaScd2Payload,
     DeltaWritePayload,
+    op_payload,
 )
+from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, OpResult
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_graph.catalog_write import (
@@ -225,6 +226,11 @@ def test_a_preview_runs_where_the_context_says(delta_table, monkeypatch):
 # The catalog writer's operation and payload
 
 
+def payload_fields(payload) -> dict:
+    """The payload's fields but ``plan``, compared by identity instead: a LazyFrame has no equality."""
+    return {f.name: getattr(payload, f.name) for f in dataclasses.fields(payload) if f.name != "plan"}
+
+
 @pytest.mark.parametrize("write_mode", ["overwrite", "append", "error"])
 def test_a_plain_write_mode_is_a_delta_write(write_mode):
     plan = pl.LazyFrame({"id": [1]})
@@ -244,16 +250,19 @@ def test_a_plain_write_mode_is_a_delta_write(write_mode):
     )
 
     assert operation is OperationKind.delta_write
-    assert write == DeltaWritePayload(
-        plan=plan,
-        path="s3://bucket/catalog/t_1",
-        mode=write_mode,
-        partition_by=["id"],
-        enable_cdf=write_mode == "append",
-        connection=connection,
-        flow_id=4,
-        node_id=2,
-        job_id=write.job_id,
+    assert write.plan is plan
+    assert payload_fields(write) == payload_fields(
+        DeltaWritePayload(
+            plan=plan,
+            path="s3://bucket/catalog/t_1",
+            mode=write_mode,
+            partition_by=["id"],
+            enable_cdf=write_mode == "append",
+            connection=connection,
+            flow_id=4,
+            node_id=2,
+            job_id=write.job_id,
+        )
     )
     assert write.connection.aws_secret_access_key.startswith("$ffsec$")
 
@@ -275,17 +284,20 @@ def test_a_merge_mode_is_a_delta_merge_by_the_merge_keys(write_mode):
     )
 
     assert operation is OperationKind.delta_merge
-    assert write == DeltaMergePayload(
-        plan=plan,
-        path="/catalog/t_1",
-        merge_mode=write_mode,
-        merge_keys=["id"],
-        partition_by=[],
-        enable_cdf=True,
-        connection=None,
-        flow_id=4,
-        node_id=2,
-        job_id=write.job_id,
+    assert write.plan is plan
+    assert payload_fields(write) == payload_fields(
+        DeltaMergePayload(
+            plan=plan,
+            path="/catalog/t_1",
+            merge_mode=write_mode,
+            merge_keys=["id"],
+            partition_by=[],
+            enable_cdf=True,
+            connection=None,
+            flow_id=4,
+            node_id=2,
+            job_id=write.job_id,
+        )
     )
 
 
@@ -306,23 +318,26 @@ def test_an_scd2_write_carries_the_resolved_config_as_typed_fields():
     )
 
     assert operation is OperationKind.delta_scd2
-    assert write == DeltaScd2Payload(
-        plan=plan,
-        path="/catalog/t_1",
-        business_keys=["id"],
-        compare_columns=["val"],
-        full_snapshot=True,
-        surrogate_key_column="sk",
-        valid_from_column="valid_from",
-        valid_to_column="valid_to",
-        is_current_column="is_current",
-        run_timestamp=RUN_TIMESTAMP,
-        partition_by=["val"],
-        partition_on_current=False,
-        connection=None,
-        flow_id=4,
-        node_id=2,
-        job_id=write.job_id,
+    assert write.plan is plan
+    assert payload_fields(write) == payload_fields(
+        DeltaScd2Payload(
+            plan=plan,
+            path="/catalog/t_1",
+            business_keys=["id"],
+            compare_columns=["val"],
+            full_snapshot=True,
+            surrogate_key_column="sk",
+            valid_from_column="valid_from",
+            valid_to_column="valid_to",
+            is_current_column="is_current",
+            run_timestamp=RUN_TIMESTAMP,
+            partition_by=["val"],
+            partition_on_current=False,
+            connection=None,
+            flow_id=4,
+            node_id=2,
+            job_id=write.job_id,
+        )
     )
 
 
