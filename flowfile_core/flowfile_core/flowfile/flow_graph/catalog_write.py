@@ -251,18 +251,29 @@ def _catalog_delta_written(report: dict[str, Any]) -> CatalogDeltaWrite:
     return CatalogDeltaWrite(meta, version)
 
 
+def _same_location(left: str, right: str) -> bool:
+    """Whether two spellings of a table's location name the same place.
+
+    Object-storage URIs compare without a trailing slash; local paths compare resolved, so a symlinked or relative
+    spelling of a directory is that directory.
+    """
+    if _is_cloud_uri(left) or _is_cloud_uri(right):
+        return left.rstrip("/") == right.rstrip("/")
+    return Path(left).resolve() == Path(right).resolve()
+
+
 def _catalog_table_identity(table_name: str, existing, dest_path: str, base_uri: str | None) -> CatalogTableIdentity:
     """The catalog table *table_name* stored at *dest_path*, by identity: its directory under the catalog's root.
 
     *base_uri* is the catalog's object-storage root for a table in object storage and ``None`` for one in the catalog
     tables directory; *existing* is the table's catalog record, ``None`` for a table the write creates. A destination
-    that is not that root joined with a directory name, as the catalog joins it, has no identity and raises
-    ``ValueError``: a table registered at a location of its own, or one stored under another spelling of the root,
-    would otherwise be written somewhere other than its record says.
+    that is not that root joined with a directory name, compared as a location, has no identity and raises
+    ``ValueError``: a table registered at a location of its own would otherwise be written somewhere other than its
+    record says.
     """
     dir_name = _catalog_table_dir_name(dest_path)
     root = base_uri if base_uri is not None else str(storage.catalog_tables_directory)
-    if join_catalog_uri(root, dir_name) != dest_path:
+    if not _same_location(join_catalog_uri(root, dir_name), dest_path):
         raise ValueError(
             f"Catalog table '{table_name}' is stored at {dest_path}, which is not a table directory under its "
             f"catalog's storage root {root}; with FLOWFILE_COMPUTE_PROTOCOL on a catalog table is written by its "
@@ -749,9 +760,15 @@ def _handle_physical_table_write(
     report = writer_node.run_op(current_context(graph).backend, operation, op_payload(write), job_id=write.job_id)
     written = _catalog_delta_written(report.metadata)
     meta_kwargs = written.meta
-    # By identity the table is where the compute answered; a skipped write answers nothing and stays where it was.
-    if by_identity and report.metadata.get("table_path"):
-        dest_path = report.metadata["table_path"]
+    # By identity a new table is where the compute answered; an existing one stays where its record resolved.
+    answered = report.metadata.get("table_path") if by_identity else None
+    if answered and existing is None:
+        dest_path = answered
+    elif answered and not _same_location(answered, dest_path):
+        raise ValueError(
+            f"Catalog table '{settings.table_name}' is stored at {dest_path}, but the compute answered {answered}, "
+            "which is another location; the write is not registered and the table keeps its data."
+        )
 
     def _node_output() -> FlowDataEngine:
         """Only an SCD2 write changes what leaves the node; every other mode passes its input on."""

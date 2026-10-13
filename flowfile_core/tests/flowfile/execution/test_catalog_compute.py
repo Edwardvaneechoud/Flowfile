@@ -10,6 +10,7 @@ import datetime
 import shutil
 import types
 import uuid
+from pathlib import Path
 
 import polars as pl
 import pytest
@@ -846,6 +847,63 @@ def test_a_table_outside_its_catalog_root_is_refused_by_identity(protocol, clean
     else:
         assert run.success
         assert pl.read_delta(external).height == 2
+
+
+@pytest.mark.parametrize("same_place", [True, False], ids=["same-place", "another-place"])
+def test_an_existing_table_stays_where_its_record_puts_it(protocol, same_place, clean_catalog, monkeypatch, tmp_path):
+    """A compute that resolves the table under a catalog directory of its own never moves or deletes the table: the
+    same directory spelled through a symlink keeps the record's location, another directory fails the write."""
+    namespace_id = create_test_namespace()
+
+    def append(flow_id, rows):
+        graph = create_test_graph(flow_id=flow_id, execution_location="local")
+        add_test_manual_input(graph, rows, node_id=1)
+        add_test_catalog_writer(
+            graph, node_id=2, depending_on_id=1, table_name="dim", namespace_id=namespace_id, write_mode="append"
+        )
+        return graph.run_graph()
+
+    assert append(9391, [{"id": 1, "name": "ada"}, {"id": 2, "name": "grace"}]).success
+    stored = registered(namespace_id).file_path
+    compute_root = tmp_path / "compute_root"
+    if same_place:
+        compute_root.symlink_to(Path(stored).parent, target_is_directory=True)
+    else:
+        compute_root.mkdir()
+    monkeypatch.setattr(local_module, "storage", types.SimpleNamespace(catalog_tables_directory=compute_root))
+
+    run = append(9392, [{"id": 3, "name": "edsger"}])
+
+    refused = protocol and not same_place
+    assert run.success is not refused
+    assert registered(namespace_id).file_path == stored
+    assert pl.read_delta(stored).height == (2 if refused else 3)
+    if refused:
+        assert "which is another location" in str(run.node_step_result[-1].error)
+
+
+def test_a_table_stored_through_another_spelling_of_its_catalog_root_is_written_in_place(
+    protocol, clean_catalog, tmp_path
+):
+    namespace_id = create_test_namespace()
+    root_link = tmp_path / "catalog_link"
+    root_link.symlink_to(resolve_for_namespace(namespace_id).base, target_is_directory=True)
+    stored = str(root_link / f"dim_{uuid.uuid4().hex[:8]}")
+    pl.DataFrame({"id": [1], "name": ["ada"]}).write_delta(stored)
+    with get_db_context() as db:
+        CatalogService(SQLAlchemyCatalogRepository(db)).register_table_from_data(
+            name="dim", table_path=stored, owner_id=1, namespace_id=namespace_id, storage_format="delta"
+        )
+    graph = create_test_graph(flow_id=9393, execution_location="local")
+    add_test_manual_input(graph, [{"id": 2, "name": "grace"}], node_id=1)
+    add_test_catalog_writer(
+        graph, node_id=2, depending_on_id=1, table_name="dim", namespace_id=namespace_id, write_mode="append"
+    )
+
+    run_test_graph(graph)
+
+    assert registered(namespace_id).file_path == stored
+    assert pl.read_delta(stored).sort("id").rows() == [(1, "ada"), (2, "grace")]
 
 
 @requires_minio
