@@ -7,6 +7,7 @@ Covers:
 - check_flow_laziness / check_upstream_laziness scoping
 - FlowRegistration.flow_path usage (regression for file_path AttributeError)
 - Source table version tracking and staleness detection
+- Virtual table previews read through a backend with the protocol flag on
 """
 
 import json
@@ -18,14 +19,19 @@ import pytest
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.delta_utils import check_source_versions_current
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+from flowfile_core.catalog.services import previews
+from flowfile_core.configs import settings
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
     FlowRegistration,
     FlowSchedule,
 )
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.flow_graph import add_connection
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.transform_schema import BasicFilter, FilterInput, PivotInput
+from shared.compute_protocol import WorkerLocation
 from shared.delta_models import SourceTableVersion
 from tests.flowfile.conftest import (
     CATALOG_SAMPLE_DATA as SAMPLE_DATA,
@@ -1381,3 +1387,103 @@ class TestVersionRestampAndClear:
                 )
             )
             assert _collect_source_table_versions(graph) is None
+
+
+@pytest.fixture()
+def protocol_on(monkeypatch):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
+
+
+@pytest.fixture()
+def no_snapshot(monkeypatch):
+    """Fail the test if a preview asks the worker for a virtual table snapshot or reads a file in core."""
+
+    def _refused(*_args, **_kwargs):
+        pytest.fail("the preview read a virtual table snapshot")
+
+    monkeypatch.setattr(previews, "trigger_resolve_virtual_table", _refused)
+    monkeypatch.setattr(previews, "read_top_n", _refused)
+
+
+@pytest.fixture()
+def sampled(monkeypatch) -> list:
+    """Every ``WorkerBackend.sample`` as ``(ref, n)``."""
+    calls = []
+    real_sample = WorkerBackend.sample
+
+    def _recording_sample(self, ref, n):
+        calls.append((ref, n))
+        return real_sample(self, ref, n)
+
+    monkeypatch.setattr(WorkerBackend, "sample", _recording_sample)
+    return calls
+
+
+def _run_samples(sampled: list) -> list:
+    """The samples of a run's result, without those of the bounded reads a node makes while it runs (pivot values)."""
+    return [(ref, n) for ref, n in sampled if not ref.result_id.startswith("bounded_")]
+
+
+@pytest.mark.usefixtures("protocol_on", "no_snapshot")
+class TestVirtualTablePreviewThroughABackend:
+    """With the protocol flag on, a virtual table's preview is read through a backend, never from a snapshot file."""
+
+    def test_a_table_whose_producer_runs_previews_a_sample_of_that_runs_reference(
+        self, eager_virtual_table_id, catalog_service, sampled
+    ):
+        preview = catalog_service.get_table_preview(eager_virtual_table_id)
+
+        assert len(preview.rows) == 3
+        assert preview.total_rows == 3
+        [(ref, n)] = _run_samples(sampled)
+        assert n == 100
+        assert ref.state == "deferred"
+        assert WorkerLocation.model_validate_json(ref.location).kind == "plan"
+        assert not registry.backend(ref.backend_id).exists(ref)
+
+    def test_an_optimised_table_previews_its_plan_through_a_bounded_read(
+        self, lazy_virtual_table_id, catalog_service, sampled
+    ):
+        preview = catalog_service.get_table_preview(lazy_virtual_table_id)
+
+        assert len(preview.rows) == 2
+        assert preview.total_rows == 2
+        assert sampled
+        assert all(ref.result_id.startswith("bounded_") for ref, _ in sampled)
+
+    def test_a_query_table_previews_its_plan_through_a_bounded_read(
+        self, lazy_virtual_table_id, catalog_service, sampled
+    ):
+        query_table = catalog_service.create_query_virtual_table(
+            name="q_lazy_virtual", owner_id=1, sql_query="SELECT * FROM lazy_virtual", namespace_id=_create_namespace()
+        )
+
+        preview = catalog_service.get_table_preview(query_table.id)
+
+        assert len(preview.rows) == 2
+        assert preview.total_rows == 2
+        assert sampled
+        assert all(ref.result_id.startswith("bounded_") for ref, _ in sampled)
+
+    def test_the_resolve_route_reads_the_producer_runs_reference(
+        self, eager_virtual_table_id, catalog_service, sampled
+    ):
+        preview = catalog_service.resolve_virtual_flow_table_preview(eager_virtual_table_id, 2)
+
+        assert len(preview.rows) == 2
+        assert preview.total_rows == 3
+        [(ref, n)] = _run_samples(sampled)
+        assert n == 2
+        assert not registry.backend(ref.backend_id).exists(ref)
+
+    def test_a_table_whose_producer_cannot_run_previews_empty(self, catalog_service, sampled, tmp_path):
+        ns_id = _create_namespace()
+        reg_id = _create_flow_registration(ns_id, name="gone_producer", path=str(tmp_path / "gone.yaml"))
+        table = catalog_service.create_virtual_flow_table(
+            name="gone_virtual", owner_id=1, producer_registration_id=reg_id, namespace_id=ns_id
+        )
+
+        preview = catalog_service.get_table_preview(table.id)
+
+        assert (preview.columns, preview.rows, preview.total_rows) == ([], [], 0)
+        assert sampled == []

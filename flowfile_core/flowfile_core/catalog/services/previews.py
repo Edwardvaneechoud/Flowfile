@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import logging
+from contextlib import ExitStack
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import polars as pl
+import pyarrow as pa
 from deltalake import DeltaTable
 from deltalake.exceptions import DeltaError
 
@@ -28,9 +32,12 @@ from flowfile_core.catalog.storage_backend import (
     resolve_for_namespace,
 )
 from flowfile_core.catalog.text_utils import parse_delta_history
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.database.models import CatalogTable
 from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.execution.errors import ComputeError
+from flowfile_core.flowfile.flow_data_engine.bounded import count_rows, head_rows
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_delta_history,
     trigger_delta_preview,
@@ -44,6 +51,9 @@ from flowfile_core.schemas.catalog_schema import (
 from flowfile_core.utils.arrow_reader import read_top_n
 from shared.delta_utils import validate_catalog_path
 from shared.storage_config import storage
+
+if TYPE_CHECKING:
+    from flowfile_core.flowfile.execution.protocol import ResultRef
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +111,25 @@ class TablePreviewService:
         pa_table = read_top_n(str(ipc_path), n=limit)
         return format_pyarrow_preview(pa_table, total_rows=result.get("row_count"))
 
+    @staticmethod
+    def _read_virtual_preview(lazy_frame: pl.LazyFrame, ref: ResultRef | None, limit: int) -> CatalogTablePreview:
+        """The first *limit* rows of a virtual table and its row count, read through a backend; no file is opened.
+
+        With *ref*, the producer run's output reference, the backend that holds it samples it, and ``total_rows`` is
+        its row count, counted there when the reference carries none. Without one, *lazy_frame* is read through
+        ``head_rows`` and ``count_rows`` on the current context's backend.
+        """
+        if ref is not None:
+            backend = registry.backend(ref.backend_id)
+            with pa.ipc.open_stream(io.BytesIO(backend.sample(ref, limit))) as reader:
+                pa_table = reader.read_all()
+            total_rows = ref.row_count if ref.row_count is not None else backend.count(ref)
+        else:
+            backend = current_context().backend
+            pa_table = head_rows(backend, lazy_frame, limit)
+            total_rows = count_rows(backend, lazy_frame)
+        return format_pyarrow_preview(pa_table, total_rows=total_rows)
+
     def _get_query_virtual_table_preview(
         self,
         table: CatalogTable,
@@ -115,6 +144,8 @@ class TablePreviewService:
         )
         if lazy_frame is None:
             return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
+        if FLOWFILE_COMPUTE_PROTOCOL:
+            return self._read_virtual_preview(lazy_frame, None, limit)
         return self._format_virtual_preview(lazy_frame, table, limit)
 
     def _get_virtual_table_preview(
@@ -123,7 +154,23 @@ class TablePreviewService:
         limit: int,
         user_id: int | None,
     ) -> CatalogTablePreview:
-        """Resolve a virtual flow table and return a preview of the collected result."""
+        """Resolve a virtual flow table and return a preview of the collected result.
+
+        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, the rows are read through a backend (``_read_virtual_preview``) while
+        the producer run's reference, when there is one, is still held.
+        """
+        if FLOWFILE_COMPUTE_PROTOCOL:
+            with ExitStack() as stack:
+                held = resolve_or_log(
+                    lambda: stack.enter_context(
+                        self._virtual_tables.held_virtual_flow_table(table.id, user_id=user_id)
+                    ),
+                    kind="virtual flow table for preview",
+                    identifier=table.id,
+                )
+                if held is None:
+                    return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
+                return self._read_virtual_preview(*held, limit)
         lazy_frame = resolve_or_log(
             lambda: self._virtual_tables.resolve_virtual_flow_table(table.id, user_id=user_id),
             kind="virtual flow table for preview",
@@ -139,10 +186,17 @@ class TablePreviewService:
         limit: int,
         user_id: int | None = None,
     ) -> CatalogTablePreview:
-        """Resolve a virtual flow table and return a preview (worker-backed)."""
+        """Resolve a virtual flow table and return a preview (worker-backed).
+
+        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, the rows are read through a backend (``_read_virtual_preview``) while
+        the producer run's reference, when there is one, is still held.
+        """
         table = self.repo.get_table(table_id)
         if table is None:
             raise TableNotFoundError(table_id=table_id)
+        if FLOWFILE_COMPUTE_PROTOCOL:
+            with self._virtual_tables.held_virtual_flow_table(table_id, user_id=user_id) as held:
+                return self._read_virtual_preview(*held, limit)
         lazy_frame = self._virtual_tables.resolve_virtual_flow_table(table_id, user_id=user_id)
         return self._format_virtual_preview(lazy_frame, table, limit)
 
