@@ -615,11 +615,17 @@ def test_an_unchanged_progress_is_sent_again_as_a_heartbeat(held, monkeypatch):
 
 
 def test_a_client_that_leaves_does_not_stop_the_submit(held):
+    """The client leaves once a progress frame says its submit runs.
+
+    Leaving a test client's socket cancels the route and closes the event loop it ran on, so a submit not yet in the
+    threadpool would never start; a real server keeps its loop and reads both frames before the close.
+    """
     result_id = held()
 
     with client.websocket_connect("/v1/ws/submit") as websocket:
         websocket.send_text(_meta(result_id, must_materialise=True))
         websocket.send_bytes(_plan().serialize())
+        assert websocket.receive_json()["type"] == "progress"
 
     deadline = time.monotonic() + 30
     while True:
