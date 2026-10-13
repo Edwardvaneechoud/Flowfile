@@ -2,7 +2,7 @@
 
 Drives the real app over HTTP: the public ``/api/data/{slug}`` route answers with generic detail (it never
 exposes node or worker detail to an API-key holder), the owner's ``/flow-api/endpoints/{id}/test`` route with
-the typed message.
+the typed message. With the protocol flag on, a remote response is a sample of the result the worker holds.
 """
 
 import socket
@@ -10,16 +10,20 @@ import time
 from types import SimpleNamespace
 from uuid import uuid4
 
+import polars as pl
 import pytest
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
+from flowfile_core.configs import settings
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile import api_runner
 from flowfile_core.flowfile.api_runner import ApiExecutionError
 from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, PlanRejected, TaskFailed
+from flowfile_core.flowfile.flow_data_engine.bounded import DEFERRED_HINTS
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import BaseFetcher
 from flowfile_core.flowfile.flow_graph import add_connection
@@ -157,6 +161,35 @@ def running_worker():
         pytest.skip("flowfile_worker is not running")
 
 
+@pytest.fixture
+def task_routes(monkeypatch):
+    """The protocol flag off: these tests reach the worker through the task routes' fetcher, which the flag replaces."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
+
+
+@pytest.fixture
+def protocol_on(monkeypatch):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
+
+
+@pytest.fixture
+def sampled(monkeypatch) -> list[tuple[str, int]]:
+    """Every ``WorkerBackend.sample`` as ``(result id, n)``; the task routes' fetcher fails the test if it is built."""
+    calls: list[tuple[str, int]] = []
+    real_sample = WorkerBackend.sample
+
+    def _recording_sample(self, ref, n):
+        calls.append((ref.result_id, n))
+        return real_sample(self, ref, n)
+
+    def _no_fetcher(**_kwargs):
+        pytest.fail("the response was read through the task routes' fetcher")
+
+    monkeypatch.setattr(WorkerBackend, "sample", _recording_sample)
+    monkeypatch.setattr(api_runner, "ExternalDfFetcher", _no_fetcher)
+    return calls
+
+
 def test_counter_sees_the_in_core_collect_of_a_local_run(client, endpoint, run_record, monkeypatch):
     monkeypatch.setattr(api_runner, "get_global_execution_location", lambda: "local")
 
@@ -168,7 +201,7 @@ def test_counter_sees_the_in_core_collect_of_a_local_run(client, endpoint, run_r
 
 
 @pytest.mark.parametrize("route", ["public", "owner"])
-def test_unreachable_worker_answers_503(client, endpoint, run_record, closed_worker_port, route):
+def test_unreachable_worker_answers_503(client, endpoint, task_routes, run_record, closed_worker_port, route):
     response = _call(client, endpoint, route)
 
     assert response.status_code == 503, response.text
@@ -181,7 +214,9 @@ def test_unreachable_worker_answers_503(client, endpoint, run_record, closed_wor
 
 
 @pytest.mark.parametrize("route", ["public", "owner"])
-def test_plan_the_worker_cannot_load_answers_500(client, endpoint, run_record, running_worker, route, monkeypatch):
+def test_plan_the_worker_cannot_load_answers_500(
+    client, endpoint, task_routes, run_record, running_worker, route, monkeypatch
+):
     real_fetcher = api_runner.ExternalDfFetcher
 
     def _ship_not_a_plan(*, lf, file_ref, **kwargs):
@@ -201,7 +236,7 @@ def test_plan_the_worker_cannot_load_answers_500(client, endpoint, run_record, r
 
 
 @pytest.mark.parametrize("route", ["public", "owner"])
-def test_killed_worker_child_answers_500(client, endpoint, run_record, route, monkeypatch):
+def test_killed_worker_child_answers_500(client, endpoint, task_routes, run_record, route, monkeypatch):
     monkeypatch.setattr(api_runner, "ExternalDfFetcher", _KilledChildFetcher)
 
     response = _call(client, endpoint, route)
@@ -215,7 +250,9 @@ def test_killed_worker_child_answers_500(client, endpoint, run_record, route, mo
     assert run_record.core_collects == 0
 
 
-def test_plan_core_cannot_serialise_answers_500_with_its_detail_to_the_owner(client, endpoint, run_record, monkeypatch):
+def test_plan_core_cannot_serialise_answers_500_with_its_detail_to_the_owner(
+    client, endpoint, task_routes, run_record, monkeypatch
+):
     real_fetcher = api_runner.ExternalDfFetcher
 
     def _ship_unserialisable(*, lf, **kwargs):
@@ -231,3 +268,58 @@ def test_plan_core_cannot_serialise_answers_500_with_its_detail_to_the_owner(cli
     assert isinstance(raised.__cause__, RuntimeError)
     assert response.json()["detail"] == _UnserialisablePlan.message
     assert run_record.core_collects == 0
+
+
+@pytest.mark.parametrize("route", ["public", "owner"])
+def test_with_the_protocol_flag_the_response_is_a_sample_of_the_result_the_worker_holds(
+    client, endpoint, protocol_on, run_record, sampled, running_worker, route
+):
+    response = _call(client, endpoint, route)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == [{"region": "EU", "v": 1}]
+    assert [n for _, n in sampled] == [10_000]
+    assert run_record.raised == []
+    assert run_record.core_collects == 0
+
+
+def test_with_the_protocol_flag_a_worker_gone_before_the_read_answers_503(
+    client, endpoint, protocol_on, run_record, running_worker, monkeypatch
+):
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    recording_materialize = api_runner._materialize
+
+    def _worker_gone_first(*args, **kwargs):
+        monkeypatch.setattr(registry.backend(registry.WORKER_BACKEND_ID), "url", f"http://127.0.0.1:{port}")
+        return recording_materialize(*args, **kwargs)
+
+    monkeypatch.setattr(api_runner, "_materialize", _worker_gone_first)
+
+    response = _call(client, endpoint, "public")
+
+    assert response.status_code == 503, response.text
+    [raised] = run_record.raised
+    assert type(raised) is ComputeUnavailable
+    assert f"port={port}" in str(raised)
+    assert response.json()["detail"] == PUBLIC_UNAVAILABLE_DETAIL
+    assert run_record.core_collects == 0
+
+
+@pytest.mark.parametrize("max_rows, n", [(None, 10_000), (2, 2), (20_000, 10_000)])
+def test_with_the_protocol_flag_max_rows_is_clamped_to_the_workers_sample_cap(
+    protocol_on, sampled, running_worker, max_rows, n
+):
+    backend = registry.backend(registry.WORKER_BACKEND_ID)
+    plan = pl.LazyFrame({"v": [1, 2, 3]})
+    ref = backend.submit(plan, [], DEFERRED_HINTS, f"api_{uuid4().hex}", flow_id=-1, node_id=-1).ref
+    remote_flow = SimpleNamespace(flow_settings=SimpleNamespace(execution_location="remote"))
+    api_node = SimpleNamespace(results=SimpleNamespace(result_ref=ref))
+    try:
+        response = api_runner._materialize(None, max_rows, remote_flow, api_node)
+    finally:
+        backend.release(ref)
+
+    assert sampled == [(ref.result_id, n)]
+    assert response.equals(plan.head(n).collect())

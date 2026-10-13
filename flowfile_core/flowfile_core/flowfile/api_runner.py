@@ -4,7 +4,9 @@ Loads a registered flow fresh per request, validates and injects typed query
 parameters, runs the graph in performance mode (with a remote execution location the
 single terminal collect runs on the worker, and a worker that cannot run it fails the
 request with a typed compute error), and serializes the data flowing into the flow's
-single ``api_response`` node.
+single ``api_response`` node. With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a remote run's
+response is instead a sample of the api_response node's result on the backend that
+holds it, bounded by the worker's sample cap.
 
 A freshly opened flow keeps the ``flow_id`` stored in its file, and that id keys
 *process-wide* scratch state: the singleton ``FlowLogger``, the kernel I/O dirs
@@ -23,12 +25,15 @@ through this seam and keep full expressivity.
 
 from __future__ import annotations
 
+import io
 import threading
 from pathlib import Path
 from typing import Any
 
+import polars as pl
 import requests
 
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable, worker_failure
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import ExternalDfFetcher
@@ -50,6 +55,9 @@ class ApiConfigError(Exception):
 class ApiExecutionError(Exception):
     """The flow ran but failed or produced no data (-> HTTP 500)."""
 
+
+# The most rows a worker answers for one sample; a published response is never larger.
+_SAMPLE_ROWS_CAP = 10_000
 
 _run_locks_guard = threading.Lock()
 _run_locks: dict[int, threading.Lock] = {}
@@ -147,15 +155,27 @@ def _materialize(data: Any, max_rows: int | None, flow: Any, api_node: Any):
     first so the worker materializes only what's returned. On the remote path the collect
     never runs in core.
 
+    With ``FLOWFILE_COMPUTE_PROTOCOL`` on, the run already submitted every node to its
+    backend, so a remote response is ``sample(ref, n)`` of the api_response node's reference
+    on the backend that minted it, ``n`` being *max_rows* clamped to the worker's sample cap
+    (an unset *max_rows* too); core receives at most ``n`` rows and collects nothing. A local
+    run collects in core in both flag states.
+
     Raises:
         ComputeUnavailable: The worker could not be reached to submit the plan.
         ComputeError: The worker could not run the plan (error code -1, typed by
-            :func:`~flowfile_core.flowfile.execution.errors.worker_failure`).
+            :func:`~flowfile_core.flowfile.execution.errors.worker_failure`); with the flag
+            on, any typed failure of the sample.
         ApiExecutionError: The plan could not be submitted (core cannot serialise it, or
             the worker refused it), or it ran on the worker and failed on its data.
     """
     if flow.flow_settings.execution_location == "local":
         return data.collect(n_records=max_rows)
+
+    if FLOWFILE_COMPUTE_PROTOCOL:
+        ref = api_node.results.result_ref
+        n = _SAMPLE_ROWS_CAP if max_rows is None else min(max_rows, _SAMPLE_ROWS_CAP)
+        return pl.read_ipc_stream(io.BytesIO(registry.backend(ref.backend_id).sample(ref, n)))
 
     lf = data.data_frame
     if max_rows is not None:
