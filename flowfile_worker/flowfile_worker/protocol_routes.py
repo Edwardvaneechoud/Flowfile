@@ -12,8 +12,11 @@ each output that child wrote as the materialised result ``<job_id>_<i>``, which 
 count, probe and release. ``POST /v1/results/{id}/export`` writes a held result to a URI as parquet in
 a ``funcs.export_result`` child; ``POST /v1/results/{id}/import`` holds a scan of a URI as a deferred
 result, with the columns and row count core sent and nothing read. A credential crosses either as a
-stored connection's id and user, resolved where the plan runs. The legacy routes in ``routes.py`` stay
-as they are; the two share only ``status_dict``.
+stored connection's id and user, resolved where the plan runs. A blob, a held file of bytes that is not
+rows, takes the same two routes: its export copies the file to a ``file://`` URI or ``PUT``s it to a
+presigned ``https://`` URL, and an import with ``kind="blob"`` copies or ``GET``s one into a blob of
+this worker's own, in this process; a presigned URL carries its own authorisation, so neither takes a
+credential. The legacy routes in ``routes.py`` stay as they are; the two share only ``status_dict``.
 """
 
 import io
@@ -22,12 +25,12 @@ import os
 import uuid
 from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import polars as pl
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response
 from fastapi.requests import HTTPConnection
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from flowfile_worker import CACHE_EXPIRATION_TIME, PROCESS_MEMORY_USAGE, models, status_dict, status_dict_lock
 from flowfile_worker.auth import verify_internal_token
@@ -60,7 +63,9 @@ from shared.compute_protocol import (
     SubmitHints,
     SubmitResult,
     WireColumn,
+    get_blob,
     local_capabilities,
+    put_blob,
     schema_to_wire,
 )
 from shared.kafka.models import KafkaReadSettings
@@ -192,7 +197,8 @@ class ExportBody(BaseModel):
 class ImportBody(BaseModel):
     """What ``POST /v1/results/{id}/import`` holds: the URI to scan, its connection, and its columns and row count.
 
-    The columns and the row count are core's, never read from the URI.
+    The columns and the row count are core's, never read from the URI. With ``kind="blob"`` the URI's bytes are
+    fetched instead, and a blob takes no credential, no columns and no row count.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -201,11 +207,33 @@ class ImportBody(BaseModel):
     credential: CredentialRefBody | None = None
     columns: list[WireColumn]
     row_count: int | None = None
+    kind: Literal["table", "blob"] = "table"
+
+    @model_validator(mode="after")
+    def _a_blob_is_bytes(self) -> "ImportBody":
+        if self.kind == "blob" and (self.credential is not None or self.columns or self.row_count is not None):
+            raise ValueError("A blob import takes no credential, no columns and no row count")
+        return self
 
 
 def _credential_provider(credential: CredentialRefBody) -> CredentialRefProvider:
     """The provider a scan carries for *credential*, resolved by whichever child runs the scan."""
     return CredentialRefProvider(credential.connection_id, credential.user_id)
+
+
+def _copy_blob(copy: Callable[[], None]) -> None:
+    """Run a blob's copy: a scheme it does not copy is 422, a copy that fails the 500 a failed export answers.
+
+    The messages name no URL query, so a presigned URL's signature is in no answer.
+    """
+    try:
+        copy()
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+    except OSError as e:
+        raise HTTPException(
+            status_code=500, detail={"status": "Error", "error_message": str(e), "error_kind": "task"}
+        ) from None
 
 
 def _materialise(hints: SubmitHints) -> bool:
@@ -406,11 +434,13 @@ def _read(job_id: str, func: Callable, kwargs: dict[str, Any], flow_id: int, nod
 def worker_capabilities() -> Capabilities:
     """The capabilities of this process with what this worker declares: ``OPERATIONS`` and the schemes it uses.
 
-    It reads and writes object storage, and the local disk too when ``FLOWFILE_WORKER_LOCAL_FILES`` is ``1`` at
-    the time of the call: the desktop shell and the single-host compose set it for a worker on core's host, which
-    sees core's files.
+    It reads and writes object storage and ``https``, a presigned URL a blob is copied to or from, and the local disk
+    too when ``FLOWFILE_WORKER_LOCAL_FILES`` is ``1`` at the time of the call: the desktop shell and the single-host
+    compose set it for a worker on core's host, which sees core's files.
     """
-    schemes = CLOUD_SCHEMES | {"file"} if os.environ.get("FLOWFILE_WORKER_LOCAL_FILES") == "1" else CLOUD_SCHEMES
+    schemes = CLOUD_SCHEMES | {"https"}
+    if os.environ.get("FLOWFILE_WORKER_LOCAL_FILES") == "1":
+        schemes |= {"file"}
     return local_capabilities().model_copy(
         update={"operations": OPERATIONS, "read_schemes": schemes, "write_schemes": schemes}
     )
@@ -553,10 +583,18 @@ def export(result_id: str, body: ExportBody) -> dict[str, str]:
     rows stream to the target without passing through this process. A credential reaches the child as the stored
     connection's id and user, which it resolves against its catalog with its master key. A result that is not held
     is 404; a sink that fails is the 500 a failed submit answers, and the result stays held.
+
+    A blob is not rows: its file is copied here to a ``file://`` URI or ``PUT`` to a presigned ``https://`` URL, with
+    no child (``put_blob``). A credential or another scheme is 422, a copy that fails the 500, and the blob stays held.
     """
     record = _held(result_id)
     if record is None:
         raise _not_held(result_id)
+    if record.kind == "blob":
+        if body.credential is not None:
+            raise HTTPException(status_code=422, detail="A blob is copied to a URI that carries its own authorisation")
+        _copy_blob(lambda: put_blob(Path(record.path), body.uri))
+        return {"uri": body.uri}
     plan = pl.scan_ipc(record.path).serialize() if record.state == "materialised" else record.plan
     credential = body.credential.model_dump() if body.credential is not None else None
     return {"uri": _run_child(record, plan, "export_result", {"uri": body.uri, "credential": credential})}
@@ -571,9 +609,30 @@ def import_uri(result_id: str, body: ImportBody) -> ResultRef:
     released; the record is stamped now, so it ages out with the rest. ``count`` answers the given row count without
     a child, ``sample`` and ``export`` run the scan in one, and ``DELETE`` forgets the record and leaves the file,
     which is not this worker's.
+
+    With ``kind="blob"`` the bytes at ``body.uri`` are copied from a ``file://`` URI or fetched from a presigned
+    ``https://`` URL here (``get_blob``) into ``result_path(-1, id)`` with a ``.blob`` suffix, and held as a blob
+    record of that file, whose ``DELETE`` removes it. Another scheme is 422 and a fetch that fails the 500; either way
+    nothing is held and nothing is left of the file.
     """
     sweep_expired()
     _release(result_id)
+    if body.kind == "blob":
+        path = result_path(-1, result_id).with_suffix(".blob")
+        _copy_blob(lambda: get_blob(body.uri, path))
+        record = ResultRecord(
+            result_id=result_id,
+            state="materialised",
+            columns=[],
+            row_count=None,
+            flow_id=-1,
+            node_id=-1,
+            path=str(path),
+            kind="blob",
+        )
+        results.put(record)
+        results.mark_ended(result_id)
+        return record.ref()
     provider = {} if body.credential is None else {"credential_provider": _credential_provider(body.credential)}
     record = ResultRecord(
         result_id=result_id,

@@ -1,6 +1,11 @@
-"""The worker's side of the wire models: what it encodes survives JSON unchanged, without importing core."""
+"""The worker's side of the wire models: what it encodes survives JSON unchanged, without importing core.
+
+A blob's bytes are copied to and from a ``file://`` URI here; the presigned ``https://`` side runs in the worker's route
+tests against MinIO.
+"""
 
 import io
+import socket
 
 import polars as pl
 import pytest
@@ -12,10 +17,13 @@ from shared.compute_protocol import (
     SubmitResult,
     WireColumn,
     WorkerLocation,
+    get_blob,
+    put_blob,
     schema_to_wire,
 )
 
 GEOARROW_WKB = pl.Extension("geoarrow.wkb", pl.Binary, "{}")
+BLOB = bytes(range(256)) * 64
 
 
 def _arrow_stream(df: pl.DataFrame) -> bytes:
@@ -106,6 +114,80 @@ def test_a_state_outside_the_two_literals_is_refused():
         ResultRef(result_id="x", columns=[], row_count=None, state="cached", location=b"")
 
 
-def test_a_location_kind_outside_file_and_plan_is_refused():
+def test_a_location_kind_outside_file_plan_and_blob_is_refused():
     with pytest.raises(ValidationError):
         WorkerLocation(kind="s3", path="s3://bucket/key")
+
+
+def test_a_blob_reference_survives_json_with_its_kind_and_the_path_of_its_bytes():
+    location = WorkerLocation(kind="blob", path="/cache/-1/abc.blob").model_dump_json().encode()
+    ref = ResultRef(result_id="abc", columns=[], row_count=None, state="materialised", location=location, kind="blob")
+
+    back = ResultRef.model_validate_json(ref.model_dump_json())
+
+    assert back == ref
+    assert back.kind == "blob"
+    assert WorkerLocation.model_validate_json(back.location) == WorkerLocation(kind="blob", path="/cache/-1/abc.blob")
+
+
+def test_a_reference_without_a_kind_is_a_table():
+    sent = {"result_id": "abc", "columns": [], "row_count": 0, "state": "deferred", "location": ""}
+
+    assert ResultRef.model_validate(sent).kind == "table"
+
+
+def test_a_kind_outside_table_and_blob_is_refused():
+    with pytest.raises(ValidationError):
+        ResultRef(result_id="x", columns=[], row_count=None, state="materialised", location=b"", kind="model")
+
+
+def test_a_blob_is_copied_to_and_from_a_file_uri(tmp_path):
+    source = tmp_path / "model.bin"
+    source.write_bytes(BLOB)
+
+    put_blob(source, f"file://{tmp_path}/out.bin")
+    get_blob(f"file://{tmp_path}/out.bin", tmp_path / "back" / "model.bin")
+
+    assert (tmp_path / "out.bin").read_bytes() == BLOB
+    assert (tmp_path / "back" / "model.bin").read_bytes() == BLOB
+
+
+def test_a_put_into_a_missing_folder_fails_and_makes_none(tmp_path):
+    source = tmp_path / "model.bin"
+    source.write_bytes(BLOB)
+
+    with pytest.raises(FileNotFoundError):
+        put_blob(source, f"file://{tmp_path}/missing/out.bin")
+    assert not (tmp_path / "missing").exists()
+
+
+@pytest.mark.parametrize("uri", ["s3://bucket/model.bin", "http://host/model.bin", "/plain/path.bin"])
+def test_a_blob_uri_of_another_scheme_is_refused_before_anything_is_read_or_written(tmp_path, uri):
+    with pytest.raises(ValueError, match="file:// and https:// only"):
+        put_blob(tmp_path / "never-read.bin", uri)
+    with pytest.raises(ValueError, match="file:// and https:// only"):
+        get_blob(uri, tmp_path / "never" / "written.bin")
+    assert not (tmp_path / "never").exists()
+
+
+def test_a_failed_get_leaves_no_file_and_names_no_query(tmp_path):
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    target = tmp_path / "held" / "model.blob"
+
+    with pytest.raises(OSError) as raised:
+        get_blob(f"https://127.0.0.1:{port}/bucket/model.bin?X-Amz-Signature=secret", target)
+
+    assert str(raised.value) == f"GET https://127.0.0.1:{port}/bucket/model.bin failed: ConnectionError"
+    assert raised.value.__suppress_context__, "the client's error, which repeats the URL, is not chained"
+    assert not target.exists()
+
+
+def test_a_failed_file_copy_leaves_no_file(tmp_path):
+    target = tmp_path / "held" / "model.blob"
+
+    with pytest.raises(FileNotFoundError):
+        get_blob(f"file://{tmp_path}/missing.bin", target)
+
+    assert not target.exists()
