@@ -21,7 +21,6 @@ from shared.compute_protocol import (
     Capabilities,
     SubmitResult,
     WorkerLocation,
-    local_capabilities,
     schema_to_wire,
 )
 from tests.conftest import INTERNAL_AUTH_HEADERS
@@ -180,7 +179,7 @@ def test_capabilities_reports_this_process():
     response = client.get("/v1/capabilities")
 
     assert response.status_code == 200
-    assert Capabilities.model_validate(response.json()) == local_capabilities()
+    assert Capabilities.model_validate(response.json()) == protocol_routes.worker_capabilities()
 
 
 @pytest.mark.parametrize(

@@ -1,9 +1,10 @@
 """The compute protocol's version and what a compute reports about itself.
 
-Core and the worker import this one definition. The worker answers ``GET /capabilities``
-with the ``Capabilities`` that ``local_capabilities()`` builds for its process; core builds
-the same for its own process, so the two can be compared field by field. The wire models
-(``SubmitHints``, ``SubmitResult``, ``ResultRef``) are what the two exchange about one result.
+Core and the worker import this one definition. ``local_capabilities()`` builds the
+``Capabilities`` of the running process; the worker answers ``GET /capabilities`` with it and
+the operations and schemes it declares, and core builds the same for its own process, so the
+two can be compared field by field. The wire models (``SubmitHints``, ``SubmitResult``,
+``ResultRef``) are what the two exchange about one result.
 """
 
 import importlib.metadata
@@ -27,12 +28,17 @@ PLUGIN_PACKAGES = ("polars_grouper", "polars_simed", "polars_ds", "deltalake", "
 # plugin's library path as Polars resolved it, relative to the sending process's sys.prefix.
 EXPRESSION_PLUGINS = ("polars_grouper", "polars_ds")
 
+# The object-storage schemes every Flowfile process reads and writes; ``file`` is the declarer's to add.
+CLOUD_SCHEMES = frozenset({"s3", "az", "gs"})
+
 
 class Capabilities(BaseModel):
     """What one compute process can run.
 
-    A handshake compares every field but ``operations``: the values of the ``OperationKind``s a backend's
-    ``run_op`` runs, which core's backend fills in from its own table. A compute answers it empty.
+    A handshake compares the four versions, ``platform``, ``plugins`` and ``plugin_libs``. The other four fields
+    are what a compute declares and are never compared: ``operations``, the values of the ``OperationKind``s it
+    runs; ``read_schemes`` and ``write_schemes``, the URI schemes it reads and writes; and
+    ``credential_resolution``, how it resolves a connection a plan names.
     """
 
     app_version: str
@@ -43,6 +49,9 @@ class Capabilities(BaseModel):
     plugins: dict[str, str]
     plugin_libs: dict[str, str]
     operations: frozenset[str] = frozenset()
+    read_schemes: frozenset[str] = frozenset()
+    write_schemes: frozenset[str] = frozenset()
+    credential_resolution: Literal["master_key", "vended", "ambient"]
 
 
 def plugin_versions() -> dict[str, str]:
@@ -79,7 +88,11 @@ def plugin_libs() -> dict[str, str]:
 
 
 def local_capabilities() -> Capabilities:
-    """The capabilities of the running process."""
+    """The capabilities of the running process.
+
+    A Flowfile process, core or worker, resolves a connection with the master key it holds. ``operations`` and
+    the schemes are left empty, for the process that declares them to fill.
+    """
     return Capabilities(
         app_version=get_version(),
         polars_version=pl.__version__,
@@ -88,6 +101,7 @@ def local_capabilities() -> Capabilities:
         platform=f"{sys.platform}-{platform.machine()}",
         plugins=plugin_versions(),
         plugin_libs=plugin_libs(),
+        credential_resolution="master_key",
     )
 
 
