@@ -6,6 +6,9 @@
   every method that takes one, and leaves the result where it is.
 - Core learns a result's schema from its reference: every result carries the columns of its rows, core predicts the
   columns downstream from them, and a stored result whose file core cannot open is still known by its reference.
+- Data crosses a backend boundary only through ``export`` and ``import_uri``: ``export`` writes a result to a URI and
+  answers the URI, no rows, and ``import_uri`` holds what is at a URI as a deferred result of the importing backend,
+  known by the schema and row count it was given; releasing it leaves the file.
 - Materialising is the backend's choice except where core marks it required: a required result is computed once and
   answers the same rows on every read, a plan that need not be materialised stays deferred, and a wide plan follows
   the backend's documented policy.
@@ -83,6 +86,7 @@ CALLS_WITH_A_REF: dict[str, Callable[[ComputeBackend, ResultRef], object]] = {
     "count": lambda backend, ref: backend.count(ref),
     "exists": lambda backend, ref: backend.exists(ref),
     "release": lambda backend, ref: backend.release(ref),
+    "export": lambda backend, ref: backend.export(ref, "file:///nowhere/out.parquet", None),
 }
 
 
@@ -198,6 +202,27 @@ def test_a_stored_result_is_known_by_its_reference_where_core_cannot_open_it(unr
     assert flowfile_columns(engine.schema) == polars_columns(MIXED.schema)
     assert unreadable.count(ref) == MIXED.height
     assert rows(unreadable.sample(ref, 2)) == 2
+
+
+@STATES
+def test_a_result_crosses_a_boundary_only_through_export_and_import_uri(backend, submitted, must_materialise, tmp_path):
+    ref = submitted(frame=MIXED, must_materialise=must_materialise).ref
+    target = f"file://{tmp_path}/out.parquet"
+
+    uri = backend.export(ref, target, None)
+
+    assert isinstance(uri, str) and uri == target
+    assert pl.read_parquet(uri).equals(MIXED)
+    imported = backend.import_uri(uri, ref.schema, MIXED.height, None)
+    try:
+        assert (imported.backend_id, imported.state) == (backend.id, "deferred")
+        assert flowfile_columns(imported.schema) == polars_columns(MIXED.schema)
+        assert backend.count(imported) == MIXED.height
+        assert rows(backend.sample(imported, 2)) == 2
+    finally:
+        backend.release(imported)
+    assert backend.exists(imported) is False
+    assert (tmp_path / "out.parquet").is_file()
 
 
 def test_a_required_result_is_computed_once_and_read_the_same_twice(backend, backend_name, submitted):

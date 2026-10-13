@@ -9,8 +9,11 @@ been held for ``CACHE_EXPIRATION_TIME``. ``run_submit`` is the submit itself, wh
 ``/v1/ws/submit`` runs too. ``POST /v1/ops/<kind>`` runs a read, a fuzzy join, a random split or a
 custom node in the child its task route spawns, as the job the request's ``job_id`` names, and holds
 each output that child wrote as the materialised result ``<job_id>_<i>``, which the same routes read,
-count, probe and release. The legacy routes in ``routes.py`` stay as they are; the two share only
-``status_dict``.
+count, probe and release. ``POST /v1/results/{id}/export`` writes a held result to a URI as parquet in
+a ``funcs.export_result`` child; ``POST /v1/results/{id}/import`` holds a scan of a URI as a deferred
+result, with the columns and row count core sent and nothing read. A credential crosses either as a
+stored connection's id and user, resolved where the plan runs. The legacy routes in ``routes.py`` stay
+as they are; the two share only ``status_dict``.
 """
 
 import io
@@ -47,6 +50,7 @@ from flowfile_worker.spawner import (
     start_generic_process,
     start_process,
 )
+from shared.cloud_credential_provider import CredentialRefProvider
 from shared.compute_protocol import (
     CLOUD_SCHEMES,
     PROTOCOL_VERSION,
@@ -55,6 +59,7 @@ from shared.compute_protocol import (
     ResultRef,
     SubmitHints,
     SubmitResult,
+    WireColumn,
     local_capabilities,
     schema_to_wire,
 )
@@ -161,6 +166,46 @@ class RandomSplitInput(models.PolarsOperation):
     model_config = ConfigDict(extra="forbid")
 
     splits: list[tuple[str, float]]
+
+
+class CredentialRefBody(BaseModel):
+    """A stored connection as an export or an import names it: its id and the user it runs for, nothing else.
+
+    An unknown field is refused rather than dropped, because core builds this body by hand.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    connection_id: int
+    user_id: int
+
+
+class ExportBody(BaseModel):
+    """Where ``POST /v1/results/{id}/export`` writes the result, and the stored connection the target needs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    uri: str
+    credential: CredentialRefBody | None = None
+
+
+class ImportBody(BaseModel):
+    """What ``POST /v1/results/{id}/import`` holds: the URI to scan, its connection, and its columns and row count.
+
+    The columns and the row count are core's, never read from the URI.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    uri: str
+    credential: CredentialRefBody | None = None
+    columns: list[WireColumn]
+    row_count: int | None = None
+
+
+def _credential_provider(credential: CredentialRefBody) -> CredentialRefProvider:
+    """The provider a scan carries for *credential*, resolved by whichever child runs the scan."""
+    return CredentialRefProvider(credential.connection_id, credential.user_id)
 
 
 def _materialise(hints: SubmitHints) -> bool:
@@ -498,6 +543,50 @@ def release(result_id: str) -> Response:
     if not _release(result_id):
         raise _not_held(result_id)
     return Response(status_code=204)
+
+
+@router.post("/results/{result_id}/export")
+def export(result_id: str, body: ExportBody) -> dict[str, str]:
+    """Write a held result to ``body.uri`` as parquet in a child, and answer the URI written.
+
+    The child sinks the result's plan, a scan of its file when materialised and the held plan when deferred, so the
+    rows stream to the target without passing through this process. A credential reaches the child as the stored
+    connection's id and user, which it resolves against its catalog with its master key. A result that is not held
+    is 404; a sink that fails is the 500 a failed submit answers, and the result stays held.
+    """
+    record = _held(result_id)
+    if record is None:
+        raise _not_held(result_id)
+    plan = pl.scan_ipc(record.path).serialize() if record.state == "materialised" else record.plan
+    credential = body.credential.model_dump() if body.credential is not None else None
+    return {"uri": _run_child(record, plan, "export_result", {"uri": body.uri, "credential": credential})}
+
+
+@router.post("/results/{result_id}/import", response_model=ResultRef)
+def import_uri(result_id: str, body: ImportBody) -> ResultRef:
+    """Hold a scan of the parquet at ``body.uri`` as the deferred result *result_id*, and answer its reference.
+
+    Nothing is read: the scan is built and serialised here, never run, so the file need not exist yet, and the
+    columns and row count are the ones core sent. Expired results are swept first and a result held under the id is
+    released; the record is stamped now, so it ages out with the rest. ``count`` answers the given row count without
+    a child, ``sample`` and ``export`` run the scan in one, and ``DELETE`` forgets the record and leaves the file,
+    which is not this worker's.
+    """
+    sweep_expired()
+    _release(result_id)
+    provider = {} if body.credential is None else {"credential_provider": _credential_provider(body.credential)}
+    record = ResultRecord(
+        result_id=result_id,
+        state="deferred",
+        columns=body.columns,
+        row_count=body.row_count,
+        flow_id=-1,
+        node_id=-1,
+        plan=pl.scan_parquet(body.uri, **provider).serialize(),
+    )
+    results.put(record)
+    results.mark_ended(result_id)
+    return record.ref()
 
 
 @router.get("/jobs/{job_id}", response_model=models.Status)

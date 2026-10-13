@@ -7,7 +7,9 @@ policy). ``run_op`` runs the operations a
 flow's nodes run whole when they execute in core, one method per ``OperationKind``; each method's docstring names
 the payload keys it reads; every other kind takes its dataclass from ``execution/payloads.py`` under ``"payload"``.
 A read holds what it read as a deferred plan, so the reader keeps the frame through ``plan_for`` and can release the
-ref at once. Nothing runs asynchronously: every job has ended when its call returns, so ``cancel`` has nothing to stop.
+ref at once. A result crosses to another backend only through ``export``, a streaming sink of its plan to a URI, and
+``import_uri``, a scan of a URI held deferred. Nothing runs asynchronously: every job has ended when its call returns,
+so ``cancel`` has nothing to stop.
 """
 
 from __future__ import annotations
@@ -74,6 +76,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
     FullCloudStorageConnectionWorkerInterface,
 )
 from flowfile_core.secret_manager.secret_manager import decrypt_secret
+from shared.cloud_credential_provider import CredentialRefProvider
 from shared.compute_protocol import CLOUD_SCHEMES, PROTOCOL_VERSION, Capabilities, local_capabilities
 from shared.delta_utils import (
     get_delta_size_bytes,
@@ -200,14 +203,30 @@ class LocalBackend:
         return self._plan(ref)
 
     def export(self, ref: ResultRef, uri: str, credential: CredentialRef | None) -> str:
-        """Always raises ``OperationUnsupported``: this backend writes no result to a URI."""
-        raise OperationUnsupported(f"The {self.id!r} backend does not export results")
+        """Write ``ref``'s rows to ``uri`` as parquet by a streaming sink of its plan, and return ``uri``.
+
+        Nothing is collected into memory. ``credential`` names the stored connection the target needs; this process
+        resolves it with its own catalog and master key when the sink opens the target. The target is the caller's,
+        so a sink that fails leaves it to the caller and its Polars error propagates.
+
+        Raises:
+            ForeignRef: Another backend minted ``ref``.
+            ResultMissing: This backend no longer holds ``ref``.
+        """
+        self._plan(ref).sink_parquet(uri, **_credential_kwargs(credential))
+        return uri
 
     def import_uri(
         self, uri: str, schema: Schema, row_count: int | None, credential: CredentialRef | None
     ) -> ResultRef:
-        """Always raises ``OperationUnsupported``: this backend reads no result from a URI."""
-        raise OperationUnsupported(f"The {self.id!r} backend does not import results from a URI")
+        """Hold a scan of the parquet at ``uri`` as a deferred result with the ``schema`` and ``row_count`` given.
+
+        Nothing is read here: the schema and the count are the caller's, so ``count`` answers the given count (and
+        counts the rows only when it is ``None``) and the file need not exist until something reads the rows.
+        ``credential`` is resolved in this process when the scan runs. ``release`` forgets the scan and leaves the
+        file, which is not this backend's.
+        """
+        return self._hold(pl.scan_parquet(uri, **_credential_kwargs(credential)), row_count=row_count, schema=schema)
 
     def status(self, handle: JobHandle) -> JobStatus:
         """Done: a job here has ended, and ``submit`` raised if it could not hold the plan."""
@@ -623,6 +642,17 @@ def _result_path(flow_id: int, result_id: str) -> Path:
 def _partial_path(path: Path) -> Path:
     """The file a stored result's sink writes beside ``path`` before the result is moved there."""
     return path.with_name(f"{path.name}.part")
+
+
+def _credential_kwargs(credential: CredentialRef | None) -> dict[str, Any]:
+    """The ``credential_provider`` a sink or scan of a URI takes for ``credential``; nothing without one.
+
+    The provider carries the stored connection's id and user only, and resolves it where the plan runs. Without a
+    credential Polars resolves the target as it does for any scan.
+    """
+    if credential is None:
+        return {}
+    return {"credential_provider": CredentialRefProvider(credential.connection_id, credential.user_id)}
 
 
 def _flowfile_schema(schema: pl.Schema) -> Schema:

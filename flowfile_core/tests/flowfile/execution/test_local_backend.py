@@ -1,7 +1,8 @@
 """Core's own process as a compute: plans held lazily in an in-process store, operations run in process.
 
 With the protocol flag on, a plan that must be materialised is streamed to a file under core's storage directory
-instead, and held as a scan of that file.
+instead, and held as a scan of that file. A result is exported to a URI by a streaming sink of its plan, and a URI is
+imported as a scan held deferred.
 """
 
 import datetime
@@ -281,13 +282,54 @@ def test_a_ref_from_another_backend_is_refused(backend, foreign_ref):
         backend.sample(foreign_ref, 1)
 
 
-def test_export_and_import_are_unsupported(backend, ten_rows):
-    ref = submit(backend, ten_rows).ref
+@pytest.mark.parametrize("must_materialise", [False, True], ids=["deferred", "required"])
+def test_export_streams_the_rows_to_the_uri_without_collecting(
+    backend, ten_rows, foreign_ref, must_materialise, monkeypatch, tmp_path
+):
+    """With the protocol flag on, a required result is stored, so its export sinks the scan of its file."""
+    monkeypatch.setattr(storage, "_base_dir", tmp_path / "storage")
+    ref = submit(backend, ten_rows, submit_hints=hints(must_materialise=must_materialise)).ref
+    stored = must_materialise and bool(settings.FLOWFILE_COMPUTE_PROTOCOL)
+    assert ref.state == ("materialised" if stored else "deferred")
+    target = f"file://{tmp_path}/out.parquet"
+    collects = count_collects(monkeypatch)
 
-    with pytest.raises(OperationUnsupported, match="'local'"):
-        backend.export(ref, "s3://bucket/key", None)
-    with pytest.raises(OperationUnsupported, match="'local'"):
-        backend.import_uri("s3://bucket/key", ref.schema, None, None)
+    assert backend.export(ref, target, None) == target
+
+    assert sum(collects) == 0
+    assert pl.read_parquet(target).equals(ten_rows.collect())
+    with pytest.raises(ForeignRef):
+        backend.export(foreign_ref, f"file://{tmp_path}/foreign.parquet", None)
+    backend.release(ref)
+    with pytest.raises(ResultMissing):
+        backend.export(ref, f"file://{tmp_path}/released.parquet", None)
+    assert not (tmp_path / "foreign.parquet").exists()
+    assert not (tmp_path / "released.parquet").exists()
+
+
+def test_import_uri_holds_a_scan_with_the_given_schema_and_count_and_reads_nothing(
+    backend, ten_rows, monkeypatch, tmp_path
+):
+    """The file is written only after the import, so an import that read it would fail."""
+    path = tmp_path / "in.parquet"
+    schema = submit(backend, ten_rows, result_id="source").ref.schema
+    collects = count_collects(monkeypatch)
+
+    ref = backend.import_uri(f"file://{path}", schema, 10, None)
+
+    assert (ref.backend_id, ref.state, ref.row_count) == ("local", "deferred", 10)
+    assert [(c.column_name, c.data_type) for c in ref.schema] == [("n", "Int64"), ("label", "String")]
+    assert backend.exists(ref)
+    assert backend.count(ref) == 10
+    assert collects == []
+
+    ten_rows.collect().write_parquet(path)
+
+    assert ipc_rows(backend.sample(ref, 3)).equals(ten_rows.head(3).collect())
+    assert isinstance(backend.plan_for(ref), pl.LazyFrame)
+    backend.release(ref)
+    assert not backend.exists(ref)
+    assert path.is_file()
 
 
 @pytest.mark.parametrize("kind", UNSUPPORTED_KINDS, ids=lambda kind: kind.value)

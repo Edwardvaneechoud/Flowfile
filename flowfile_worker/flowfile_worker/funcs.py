@@ -417,6 +417,44 @@ def submit_result(
         progress.value = 100
 
 
+def export_result(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,
+    flowfile_flow_id: int,
+    flowfile_node_id: int | str,
+    uri: str,
+    credential: dict | None,
+):
+    """Write a held result's plan to *uri* as parquet by a streaming sink, for ``POST /v1/results/{id}/export``.
+
+    The task routes run it too, as the operation ``export_result`` with *uri* and *credential* as kwargs, when core
+    exports a result it minted over them. Nothing is collected: the rows stream from the plan's source to the target.
+    *credential*, a stored connection's ``connection_id`` and ``user_id``, becomes a ``CredentialRefProvider`` that
+    this child resolves against its catalog with its master key when the sink opens the target. The URI written is
+    queued. *file_path* is not read.
+    """
+    from shared.cloud_credential_provider import CredentialRefProvider
+
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info("Starting export to parquet")
+    try:
+        lf = _load_plan(polars_serializable_object)
+        provider = {} if credential is None else {"credential_provider": CredentialRefProvider(**credential)}
+        lf.sink_parquet(uri, **provider)
+    except BaseException as e:
+        flowfile_logger.error(f"Error during export: {str(e)}")
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
+        return
+    queue.put(uri)
+    with progress.get_lock():
+        progress.value = 100
+
+
 def split_result(
     polars_serializable_object: bytes,
     progress: Value,
