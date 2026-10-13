@@ -502,11 +502,17 @@ def release(result_id: str) -> Response:
 
 @router.get("/jobs/{job_id}", response_model=models.Status)
 def job_status(job_id: str) -> models.Status:
-    """The status of a job; a submit's job id is its result id, an operation's the ``job_id`` it was posted with."""
-    status = status_dict.get(job_id)
-    if status is None:
-        raise HTTPException(status_code=404, detail=f"No job {job_id} on this worker")
-    return status
+    """The status of a job; a submit's job id is its result id, an operation's the ``job_id`` it was posted with.
+
+    The answer is a copy taken under ``status_dict_lock`` with ``results`` left out: between a child's end and the
+    moment its route reads it, the entry holds what the child reported, a ``pl.Schema`` and sample bytes for a
+    submit, which do not serialise.
+    """
+    with status_dict_lock:
+        status = status_dict.get(job_id)
+        if status is None:
+            raise HTTPException(status_code=404, detail=f"No job {job_id} on this worker")
+        return status.model_copy(update={"results": None})
 
 
 @router.post("/jobs/{job_id}/cancel")

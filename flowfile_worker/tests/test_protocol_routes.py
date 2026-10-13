@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from polars.testing import assert_frame_equal
 from starlette.testclient import WebSocketDenialResponse
 
-from flowfile_worker import main, protocol_routes, status_dict, status_dict_lock, streaming
+from flowfile_worker import main, models, protocol_routes, status_dict, status_dict_lock, streaming
 from flowfile_worker.results import result_path
 from shared.compute_protocol import (
     PROTOCOL_VERSION,
@@ -451,6 +451,22 @@ def test_a_submits_job_is_its_result_id(held):
     assert job.json()["results"] is None
 
 
+def test_a_jobs_answer_leaves_out_what_its_child_reported(held):
+    result_id = held()
+    reported = {"columns": _plan().collect_schema(), "row_count": 5, "sample": b"\x00"}
+    with status_dict_lock:
+        status_dict[result_id] = models.Status(
+            background_task_id=result_id, status="Completed", file_ref="", result_type="other", results=reported
+        )
+
+    job = client.get(f"/v1/jobs/{result_id}")
+
+    assert job.status_code == 200
+    assert job.json()["status"] == "Completed"
+    assert job.json()["results"] is None
+    assert status_dict[result_id].results is reported
+
+
 def test_a_failed_submits_job_carries_the_error(held):
     result_id = held()
     _post(pl.LazyFrame({"a": [1]}).select("missing").serialize(), _meta(result_id))
@@ -598,11 +614,17 @@ def test_an_unchanged_progress_is_sent_again_as_a_heartbeat(held, monkeypatch):
 
 
 def test_a_client_that_leaves_does_not_stop_the_submit(held):
+    """The client leaves once a progress frame says its submit runs.
+
+    Leaving a test client's socket cancels the route and closes the event loop it ran on, so a submit not yet in the
+    threadpool would never start; a real server keeps its loop and reads both frames before the close.
+    """
     result_id = held()
 
     with client.websocket_connect("/v1/ws/submit") as websocket:
         websocket.send_text(_meta(result_id, must_materialise=True))
         websocket.send_bytes(_plan().serialize())
+        assert websocket.receive_json()["type"] == "progress"
 
     deadline = time.monotonic() + 30
     while True:
