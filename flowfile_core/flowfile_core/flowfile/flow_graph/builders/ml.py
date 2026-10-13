@@ -203,9 +203,9 @@ class MlBuildersMixin(GraphMixinBase):
         Scores the input data with the ``ml_apply`` operation on the worker
         backend, whatever the flow's execution location, returning a
         LazyFrame with one extra prediction column. The model is sent by
-        reference: the one the upstream Train Model node holds, or the catalog
-        artifact ``fetch_artifact`` holds on the worker for this call and
-        releases after it. A model the upstream node fitted that is no longer
+        reference: the one the upstream Train Model node holds, or a catalog
+        artifact fetched onto the worker with ``fetch_artifact`` for this call
+        and released after it. A model the upstream node fitted that is no longer
         held fails the node, asking for that Train Model node to run again.
         The scored rows stay on the worker as the node's result.
 
