@@ -98,8 +98,8 @@ class LocalBackend:
         self._results: dict[str, pl.LazyFrame] = {}
 
     def capabilities(self) -> Capabilities:
-        """The capabilities of this process."""
-        return local_capabilities()
+        """The capabilities of this process, with the operations ``run_op`` runs here."""
+        return local_capabilities().model_copy(update={"operations": frozenset(op.value for op in self._OPERATIONS)})
 
     def submit(
         self,
