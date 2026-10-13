@@ -450,7 +450,7 @@ class TransformBuildersMixin(GraphMixinBase):
             backend = current_context(self).backend
             refs = node.run_op(backend, OperationKind.random_split, op_payload(split), job_id=split.job_id).refs
             engines = {
-                name: FlowDataEngine(backend.plan_for(ref), number_of_records=ref.row_count)
+                name: FlowDataEngine(backend.plan_for(ref), schema=ref.schema, number_of_records=ref.row_count)
                 for name, ref in refs.items()
             }
             for ref in refs.values():

@@ -5,30 +5,45 @@ It runs everything through the transport in ``flow_data_engine/subprocess_operat
 cancel routes follow a task, and a stored result stays in the Arrow IPC file the task wrote. Core and the worker
 share a disk, so schemas, row counts and samples of a stored result are read from that file here, not sent over the
 wire. ``submit`` stores a plan or keeps it deferred in this process; the class docstring has the policy.
+
+With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on, ``submit``, ``status``, ``cancel`` and ``capabilities`` speak the
+worker's versioned ``/v1`` routes instead, and the worker holds what ``submit`` returns, whether stored or deferred:
+its schema, row count and samples come over the wire, never from a file core opens. ``submit`` goes over
+``WS /v1/ws/submit``, and to ``POST /v1/submit`` only when that socket cannot be opened or the plan not sent. A result
+is read over the routes that minted it, whatever the flag says when it is read; ``run_op`` stays on the task routes.
 """
 
 from __future__ import annotations
 
 import base64
+import io
+import json
 import os
 import random
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from time import monotonic
 from typing import Any, Literal
 
 import polars as pl
 import pyarrow as pa
 import requests
+from websockets.exceptions import ConnectionClosed, InvalidStatus
+from websockets.sync.client import ClientConnection, connect
 
+from flowfile_core.auth.jwt import get_internal_token
+from flowfile_core.configs import logger, settings
 from flowfile_core.flowfile.execution.errors import (
+    ComputeError,
     ComputeUnavailable,
     ForeignRef,
     OperationUnsupported,
     ResultMissing,
     TaskFailed,
+    VersionMismatch,
     worker_failure,
 )
 from flowfile_core.flowfile.execution.payloads import (
@@ -66,9 +81,18 @@ from flowfile_core.flowfile.execution.protocol import (
 )
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import convert_stats_to_column_info
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import safe_eval_pl_type
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import CustomNodeExecuteInput
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import ensure_handshake, reset_handshake
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import CustomNodeExecuteInput, Status
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.streaming import (
+    _WS_INACTIVITY_TIMEOUT,
+    _WS_RECV_POLL_SECONDS,
+    _get_ws_url,
+)
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+    _POLL_DEADLINE_SECONDS,
+    _WORKER_TIMEOUT,
     BaseFetcher,
     ExternalCloudWriter,
     ExternalCreateFetcher,
@@ -84,6 +108,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     ExternalSampler,
     MLApplyFetcher,
     MLTrainFetcher,
+    _worker_session,
     cancel_task,
     clear_task_from_worker,
     fetch_kafka_offsets,
@@ -107,6 +132,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
 )
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.utils.arrow_reader import get_read_top_n
+from shared import compute_protocol as wire
 from shared.compute_protocol import PROTOCOL_VERSION, Capabilities
 from shared.google_analytics.models import GoogleAnalyticsFilter, GoogleAnalyticsOrderBy, GoogleAnalyticsReadSettings
 from shared.kafka.models import KafkaReadSettings
@@ -166,9 +192,25 @@ class WorkerBackend:
     task's fetcher; while a ``run_op`` that runs a worker task waits, so does the handle with its payload's
     ``job_id``.
 
-    Nothing here runs the worker handshake: every worker call goes through the transport's worker session or
-    its WebSocket submit, which run it before they reach the worker, so every method that calls the worker is
-    gated by it already and can raise its ``VersionMismatch`` or ``ComputeUnavailable``.
+    The worker handshake runs before any call reaches the worker: every worker call goes through the transport's
+    worker session or its WebSocket submit, which run it, and the ``/v1`` submit's socket calls ``ensure_handshake``
+    before it dials, as the transport's WebSocket submit does. So every method that calls the worker is gated by it
+    and can raise its ``VersionMismatch`` or ``ComputeUnavailable``.
+
+    With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on (read on each call), ``submit`` sends a meta JSON (hints, inputs,
+    ids) and the plan over the worker's ``WS /v1/ws/submit``, and posts them to ``POST /v1/submit`` only when the socket
+    cannot be opened or the plan not sent. A 426 on the socket's upgrade is ``VersionMismatch`` and nothing is posted;
+    once the plan is sent nothing is resent: silence past ``FLOWFILE_WORKER_WS_TIMEOUT`` (each frame resets it) is
+    ``TaskFailed`` and a closed socket ``ComputeUnavailable``. The worker applies the same policy and holds the result
+    itself, in its own file or as the plan it was sent. The reference carries the worker's columns, read here with
+    ``safe_eval_pl_type``, and a ``WorkerLocation`` JSON as ``location``. For such a reference ``sample``, ``count``,
+    ``exists`` and ``release`` go to ``/v1/results/{id}``, ``plan_for`` decodes the location without a call (a
+    ``pl.scan_ipc`` of the worker's path, or the deferred plan) and ``result_file`` names no file. A reference is read
+    over the routes that minted it, whatever the flag says when it is read, and only ``/v1`` references go as a submit's
+    ``inputs``; ``run_op`` and its results stay on the task routes. ``status`` and ``cancel`` of a job no fetcher waits
+    on use ``/v1/jobs/{id}``. Every ``/v1`` request and the socket's upgrade carry ``X-Protocol-Version``. A REST
+    answer, a refused upgrade and an ``error`` frame map alike (``_v1_error``): 426 is ``VersionMismatch``, a 404
+    ``ResultMissing``, and a failed child's 500 goes through ``worker_failure``.
     """
 
     id = WORKER_BACKEND_ID
@@ -200,7 +242,13 @@ class WorkerBackend:
         }
 
     def capabilities(self) -> Capabilities:
-        """The answer of the worker at ``url`` to ``GET /capabilities``, with the operations ``run_op`` runs there."""
+        """The answer of the worker at ``url`` to ``GET /capabilities``, with the operations ``run_op`` runs there.
+
+        With the protocol flag on, the answer to ``GET /v1/capabilities``.
+        """
+        if settings.FLOWFILE_COMPUTE_PROTOCOL:
+            answer = Capabilities.model_validate(self._v1("GET", "/capabilities").json())
+            return answer.model_copy(update={"operations": frozenset(op.value for op in self._operations)})
         answer = get_worker_capabilities(worker_url=self.url)
         return answer.model_copy(update={"operations": frozenset(op.value for op in self._operations)})
 
@@ -221,13 +269,48 @@ class WorkerBackend:
         checked. The worker files the store or sampler task as ``result_id`` under flow ``flow_id`` and node
         ``node_id``, which is where its log lines go.
 
+        With the protocol flag on, the plan goes with the ids of the ``/v1`` results among ``inputs``, which the worker
+        checks it still holds, over ``WS /v1/ws/submit``, or to ``POST /v1/submit`` when the socket cannot be opened or
+        the plan not sent, and the worker's answer is the result. Once the plan is sent over the socket nothing is
+        resent.
+
         Raises:
+            ComputeUnavailable: Over ``/v1``, the worker could not be reached, or its socket closed after the plan was
+                sent.
             ForeignRef: An input another backend minted.
             PlanRejected: The worker could not load the plan.
-            TaskFailed: The plan failed on the worker.
+            ResultMissing: Over ``/v1``, the worker no longer holds an input.
+            TaskFailed: The plan failed on the worker, or over ``/v1`` the socket went silent past
+                ``FLOWFILE_WORKER_WS_TIMEOUT``.
+            VersionMismatch: Over ``/v1``, the worker refused this backend's protocol version, on the socket's upgrade
+                or on the REST route.
         """
         for ref in inputs:
             self._check(ref)
+        if settings.FLOWFILE_COMPUTE_PROTOCOL:
+            with self._lock:
+                self._deferred.pop(result_id, None)
+            meta = json.dumps(
+                {
+                    "hints": wire.SubmitHints.model_validate(asdict(hints)).model_dump(),
+                    "inputs": [ref.result_id for ref in inputs if self._v1_location(ref) is not None],
+                    "result_id": result_id,
+                    "flow_id": flow_id,
+                    "node_id": node_id,
+                }
+            )
+            plan_bytes = plan.serialize()
+            answer = self._v1_socket_submit(meta, plan_bytes, result_id)
+            if answer is None:
+                response = self._v1(
+                    "POST",
+                    "/submit",
+                    waits=True,
+                    files={"plan": ("plan", plan_bytes, "application/octet-stream")},
+                    data={"meta": meta},
+                )
+                answer = wire.SubmitResult.model_validate_json(response.content)
+            return self._from_wire(answer)
         if hints.must_materialise or (hints.wide and hints.preview_rows is not None):
             ref = self._store(plan, result_id, flow_id, node_id)
             sample = None if hints.preview_rows is None else self.sample(ref, hints.preview_rows)
@@ -287,8 +370,11 @@ class WorkerBackend:
         """The first ``n`` rows of ``ref``, or all of them when it has fewer, as an Arrow IPC stream.
 
         A stored result's rows are read from its file; a deferred one's come from a worker sampler task over its
-        plan, filed under ``ref.result_id`` like the sample ``submit`` took.
+        plan, filed under ``ref.result_id`` like the sample ``submit`` took. A ``/v1`` result's are the worker's
+        answer to ``GET /v1/results/{id}/sample``.
         """
+        if self._v1_location(ref) is not None:
+            return self._v1("GET", f"/results/{ref.result_id}/sample", waits=True, params={"n": n}).content
         if ref.state == "deferred":
             held = self._held_plan(ref)
             held.sample_file = self._run_sampler(held, ref.result_id, n)
@@ -296,7 +382,12 @@ class WorkerBackend:
         return _read_sample(ref, self._file(ref), n)
 
     def count(self, ref: ResultRef) -> int:
-        """The number of rows in ``ref``'s file, or for a deferred result what the worker's count task returns."""
+        """The number of rows in ``ref``'s file, or for a deferred result what the worker's count task returns.
+
+        A ``/v1`` result's count is the worker's answer, asked even when the reference carries one.
+        """
+        if self._v1_location(ref) is not None:
+            return self._v1("GET", f"/results/{ref.result_id}/count", waits=True).json()["row_count"]
         if ref.state == "deferred":
             held = self._held_plan(ref)
             fetcher = _run(
@@ -315,7 +406,12 @@ class WorkerBackend:
             return _row_count(path)
 
     def exists(self, ref: ResultRef) -> bool:
-        """Whether this backend holds a deferred ``ref``, or the worker still holds the task that stored it."""
+        """Whether this backend holds a deferred ``ref``, or the worker still holds the task that stored it.
+
+        For a ``/v1`` result, whether the worker still holds it (``HEAD /v1/results/{id}``).
+        """
+        if self._v1_location(ref) is not None:
+            return self._v1("HEAD", f"/results/{ref.result_id}", missing_ok=True).status_code == 200
         if ref.state == "deferred":
             self._check(ref)
             with self._lock:
@@ -326,8 +422,12 @@ class WorkerBackend:
     def release(self, ref: ResultRef) -> None:
         """Drop a deferred ``ref`` and clear its sampler task, or clear the task that stored ``ref``.
 
-        Clearing a task deletes the file it registered.
+        Clearing a task deletes the file it registered. A ``/v1`` result is released on the worker
+        (``DELETE /v1/results/{id}``); one it no longer holds is left as it is.
         """
+        if self._v1_location(ref) is not None:
+            self._v1("DELETE", f"/results/{ref.result_id}", missing_ok=True)
+            return
         if ref.state == "deferred":
             self._check(ref)
             with self._lock:
@@ -344,10 +444,19 @@ class WorkerBackend:
         A stored result is checked on the shared disk, not with the worker: the scan needs the file, and clearing
         the task deletes it.
 
+        A ``/v1`` result's location is decoded without a call: a scan of the path the worker wrote, which core does
+        not open, or the deferred plan the worker was sent. A plan composed on a result the worker has released fails
+        when it is submitted, which names it among its inputs.
+
         Raises:
             ForeignRef: Another backend minted ``ref``.
             ResultMissing: This backend no longer holds the deferred plan, or the stored result's file is gone.
         """
+        location = self._v1_location(ref)
+        if location is not None:
+            if location.kind == "file":
+                return pl.scan_ipc(location.path)
+            return pl.LazyFrame.deserialize(io.BytesIO(location.plan))
         if ref.state == "deferred":
             return self._held_plan(ref).plan
         path = self._file(ref)
@@ -360,8 +469,11 @@ class WorkerBackend:
 
         A stored result's own file, or the file of a deferred result's last sampler task; ``None`` for a deferred
         result no sample was taken of, or one this backend no longer holds. Core reads the first rows of a result
-        through it and treats a file that vanished as a result to compute again.
+        through it and treats a file that vanished as a result to compute again. ``None`` for a ``/v1`` result, whose
+        file core never opens.
         """
+        if self._v1_location(ref) is not None:
+            return None
         if ref.state == "deferred":
             self._check(ref)
             with self._lock:
@@ -380,8 +492,22 @@ class WorkerBackend:
         raise OperationUnsupported(f"The {self.id} backend does not import data from a URI")
 
     def status(self, handle: JobHandle) -> JobStatus:
-        """The worker's ``GET /status`` answer for the task ``handle`` names."""
+        """The worker's ``GET /status`` answer for the task ``handle`` names.
+
+        With the protocol flag on, its ``GET /v1/jobs/{id}`` answer, which covers task-route jobs too.
+
+        Raises:
+            LookupError: Over ``/v1``, the worker has no job by that id.
+        """
         self._own(handle)
+        if settings.FLOWFILE_COMPUTE_PROTOCOL:
+            response = self._v1("GET", f"/jobs/{handle.job_id}", missing_ok=True)
+            if response.status_code == 404:
+                raise LookupError(f"The worker at {self.url} has no job {handle.job_id!r}")
+            status = Status.model_validate(response.json())
+            state = _JOB_STATES[status.status]
+            error = (status.error_message or status.status) if state == "failed" else None
+            return JobStatus(state=state, progress=status.progress, error=error)
         try:
             status = get_status(handle.job_id, worker_url=self.url)
         except requests.RequestException as e:
@@ -408,13 +534,17 @@ class WorkerBackend:
     def cancel(self, handle: JobHandle) -> None:
         """Cancel the task ``handle`` names: through its fetcher while ``submit`` waits on it, else on the worker.
 
-        A task that already ended is left as it is.
+        A task that already ended is left as it is. With the protocol flag on, a job no fetcher waits on is
+        cancelled through ``POST /v1/jobs/{id}/cancel``; a ``/v1`` submit waiting on it then fails with
+        ``TaskFailed``.
         """
         self._own(handle)
         with self._lock:
             fetcher = self._in_flight.get(handle.job_id)
         if fetcher is not None:
             fetcher.cancel()
+        elif settings.FLOWFILE_COMPUTE_PROTOCOL:
+            self._v1("POST", f"/jobs/{handle.job_id}/cancel", missing_ok=True)
         else:
             cancel_task(handle.job_id, worker_url=self.url)
 
@@ -437,6 +567,114 @@ class WorkerBackend:
         if held is None:
             raise ResultMissing(f"The {self.id} backend no longer holds result {ref.result_id!r}")
         return held
+
+    def _v1(
+        self, method: str, path: str, *, missing_ok: bool = False, waits: bool = False, **kwargs: Any
+    ) -> requests.Response:
+        """Send one request to the worker's ``/v1`` route ``path`` with this backend's protocol version.
+
+        ``waits`` is for a call that waits on a worker child (a submit, a sample, a count): its read timeout is the
+        deadline the task routes' poll honours. A 2xx answer is returned, a 404 too with ``missing_ok``.
+
+        Raises:
+            ComputeUnavailable: The worker could not be reached.
+            ComputeError: The worker answered anything else (``_v1_failure``).
+        """
+        timeout = (_WORKER_TIMEOUT[0], _POLL_DEADLINE_SECONDS or None) if waits else _WORKER_TIMEOUT
+        try:
+            response = _worker_session.request(
+                method,
+                f"/v1{path}",
+                worker_url=self.url,
+                headers={wire.PROTOCOL_VERSION_HEADER: str(self.protocol_version)},
+                timeout=timeout,
+                **kwargs,
+            )
+        except requests.RequestException as e:
+            raise ComputeUnavailable(f"Could not reach the worker at {self.url}: {e}") from e
+        if response.ok or (missing_ok and response.status_code == 404):
+            return response
+        raise _v1_failure(response.status_code, response.content, response.reason)
+
+    def _v1_socket_submit(self, meta: str, plan: bytes, result_id: str) -> wire.SubmitResult | None:
+        """The worker's answer to a submit over ``WS /v1/ws/submit``, or ``None`` for ``submit`` to post it instead.
+
+        ``None`` means the socket could not be opened or the plan not sent. The worker reads both frames before it runs
+        anything and drops a socket that closed before the plan, so the post never runs a plan twice. The socket is
+        dialled after ``ensure_handshake``, with the internal token, this backend's ``X-Protocol-Version`` and no
+        frame-size cap (a deferred result's ``complete`` frame carries its plan); a connect that fails at the network
+        re-arms the handshake, as the transport's WebSocket submit does. Once the plan is sent the answer is the final
+        frame's, and nothing is resent.
+
+        Raises:
+            ComputeUnavailable: The socket closed after the plan was sent.
+            TaskFailed: The worker sent nothing for longer than ``FLOWFILE_WORKER_WS_TIMEOUT``.
+            VersionMismatch: The worker refused the upgrade with 426.
+            ComputeError: The handshake failed, or the worker's ``error`` frame (``_v1_error``).
+        """
+        ensure_handshake(self.url)
+        try:
+            ws = connect(
+                _get_ws_url(self.url) + "/v1/ws/submit",
+                additional_headers={
+                    "X-Flowfile-Internal": get_internal_token(),
+                    wire.PROTOCOL_VERSION_HEADER: str(self.protocol_version),
+                },
+                max_size=None,
+            )
+        except OSError as e:
+            reset_handshake()
+            logger.debug(f"The /v1 submit socket to {self.url} could not be opened ({e}); posting the plan instead")
+            return None
+        except Exception as e:
+            if isinstance(e, InvalidStatus) and e.response.status_code == 426:
+                raise _v1_failure(426, bytes(e.response.body), e.response.reason_phrase) from e
+            logger.debug(f"The /v1 submit socket to {self.url} was refused ({e}); posting the plan instead")
+            return None
+        try:
+            ws.send(meta)
+            ws.send(plan)
+        except Exception as e:
+            ws.close()
+            logger.debug(f"The plan could not be sent over the /v1 submit socket ({e}); posting it instead")
+            return None
+        try:
+            frame = _final_frame(ws, self.url, result_id)
+        finally:
+            ws.close()
+        if frame["type"] == "error":
+            raise _v1_error(frame["status_code"], frame["detail"])
+        return wire.SubmitResult.model_validate(frame["result"])
+
+    def _v1_location(self, ref: ResultRef) -> wire.WorkerLocation | None:
+        """The ``WorkerLocation`` of a result ``/v1`` minted; ``None`` for a task-route result.
+
+        A task-route result's location is a file path or its result id, never JSON.
+
+        Raises:
+            ForeignRef: Another backend minted ``ref``.
+        """
+        self._check(ref)
+        if not ref.location.startswith(b"{"):
+            return None
+        return wire.WorkerLocation.model_validate_json(ref.location)
+
+    def _from_wire(self, answer: wire.SubmitResult) -> SubmitResult:
+        """Core's ``SubmitResult`` for the worker's answer: this backend's id stamped, the columns read as dtypes."""
+        ref = answer.ref
+        columns = pl.Schema([(column.name, safe_eval_pl_type(column.data_type)) for column in ref.columns])
+        return SubmitResult(
+            ref=ResultRef(
+                backend_id=self.id,
+                result_id=ref.result_id,
+                schema=_flowfile_schema(columns),
+                row_count=ref.row_count,
+                state=ref.state,
+                location=ref.location,
+            ),
+            sample=answer.sample,
+            handle=JobHandle(self.id, answer.job_id),
+        )
 
     def _store(self, plan: pl.LazyFrame, result_id: str, flow_id: int, node_id: int | str) -> ResultRef:
         """Run ``plan`` as worker store task ``result_id`` and return the result it wrote."""
@@ -761,30 +999,28 @@ class WorkerBackend:
     def _delta_write(self, payload: OpPayload) -> OpResult:
         write = unpack(payload, DeltaWritePayload)
         kwargs = {
-            "output_path": write.path,
+            **_delta_destination(write),
             "mode": write.mode,
             "partition_by": write.partition_by,
             "enable_cdf": write.enable_cdf,
-            "storage_payload": _storage_payload(write.connection),
         }
         return self._delta_task(write, "write_delta", kwargs)
 
     def _delta_merge(self, payload: OpPayload) -> OpResult:
         write = unpack(payload, DeltaMergePayload)
         kwargs = {
-            "output_path": write.path,
+            **_delta_destination(write),
             "merge_mode": write.merge_mode,
             "merge_keys": write.merge_keys,
             "partition_by": write.partition_by,
             "enable_cdf": write.enable_cdf,
-            "storage_payload": _storage_payload(write.connection),
         }
         return self._delta_task(write, "merge_delta", kwargs)
 
     def _delta_scd2(self, payload: OpPayload) -> OpResult:
         write = unpack(payload, DeltaScd2Payload)
         kwargs = {
-            "output_path": write.path,
+            **_delta_destination(write),
             "run_timestamp": write.run_timestamp,
             "business_keys": write.business_keys,
             "compare_columns": write.compare_columns,
@@ -795,7 +1031,6 @@ class WorkerBackend:
             "is_current_column": write.is_current_column,
             "partition_by": write.partition_by,
             "partition_on_current": write.partition_on_current,
-            "storage_payload": _storage_payload(write.connection),
         }
         return self._delta_task(write, "scd2_delta", kwargs)
 
@@ -863,12 +1098,91 @@ def _run(start: Callable[[], BaseFetcher], on_started: Callable[[BaseFetcher], N
     return fetcher
 
 
+def _final_frame(ws: ClientConnection, worker_url: str, result_id: str) -> dict[str, Any]:
+    """The first ``complete`` or ``error`` frame the worker sends on the ``/v1`` submit socket ``ws``.
+
+    Progress frames are read past. Every frame resets the silence clock that the task routes' socket keeps too:
+    nothing received for longer than ``FLOWFILE_WORKER_WS_TIMEOUT`` (0 disables) means the worker is presumed wedged.
+
+    Raises:
+        ComputeUnavailable: The socket closed before a final frame.
+        TaskFailed: The worker went silent past the timeout.
+    """
+    last_frame_at = monotonic()
+    while True:
+        try:
+            message = ws.recv(timeout=_WS_RECV_POLL_SECONDS)
+        except TimeoutError:
+            silence = monotonic() - last_frame_at
+            if _WS_INACTIVITY_TIMEOUT and silence > _WS_INACTIVITY_TIMEOUT:
+                raise TaskFailed(
+                    f"No data from the worker at {worker_url} for {silence:.0f}s (submit {result_id}); worker presumed "
+                    "unresponsive. Tune or disable via FLOWFILE_WORKER_WS_TIMEOUT."
+                ) from None
+            continue
+        except ConnectionClosed as e:
+            raise ComputeUnavailable(
+                f"The worker at {worker_url} closed the connection before it answered submit {result_id}: {e}"
+            ) from e
+        last_frame_at = monotonic()
+        frame = json.loads(message)
+        if frame.get("type") in ("complete", "error"):
+            return frame
+
+
+def _v1_error(status_code: int, detail: Any) -> ComputeError:
+    """The typed error for a ``/v1`` failure the worker answered with ``status_code`` and ``detail``.
+
+    A REST answer, a refused socket upgrade and an ``error`` frame on the socket all come here. 426 is a protocol
+    version the worker refuses, 404 a result or input it does not hold, and a 500 carrying a child's ``status``,
+    ``error_message`` and ``error_kind`` goes through ``worker_failure`` as a failed task does. Any other code (a token
+    the worker refuses, a meta it cannot read) is a ``TaskFailed`` naming the code.
+    """
+    if status_code == 426:
+        return VersionMismatch(str(detail))
+    if status_code == 404:
+        return ResultMissing(str(detail))
+    if status_code == 500 and isinstance(detail, dict) and "status" in detail:
+        return worker_failure(detail.get("error_kind"), detail.get("error_message") or detail["status"])
+    return TaskFailed(f"The worker answered {status_code}: {detail}")
+
+
+def _v1_failure(status_code: int, body: bytes, reason: str) -> ComputeError:
+    """The typed error for an HTTP ``/v1`` answer that is no success, through ``_v1_error``.
+
+    The detail is the ``detail`` of the JSON ``body``, else the body as text, else the code and its ``reason``.
+    """
+    try:
+        answer = json.loads(body)
+    except ValueError:
+        answer = None
+    detail = answer.get("detail") if isinstance(answer, dict) else None
+    if detail is None:
+        detail = body.decode(errors="replace") or f"{status_code} {reason}"
+    return _v1_error(status_code, detail)
+
+
 def _storage_payload(connection: FullCloudStorageConnectionWorkerInterface | None) -> dict[str, Any] | None:
     """The ``storage_payload`` the worker's Delta operations take; ``None`` for a table on the worker's disk.
 
     It carries the connection with its secrets still encrypted; the worker decrypts them.
     """
     return None if connection is None else {"connection": connection.model_dump()}
+
+
+def _delta_destination(write: DeltaWritePayload | DeltaMergePayload | DeltaScd2Payload) -> dict[str, Any]:
+    """Where the worker's Delta operation writes, as its keyword arguments.
+
+    A catalog table named by identity goes as ``table_id``, ``table_name`` and a ``storage_payload`` carrying the
+    catalog's ``base_uri`` beside the connection (``None`` for the worker's catalog tables directory), so no path
+    crosses and the worker resolves the table under its own root; any other write goes as its ``output_path``.
+    """
+    storage_payload = _storage_payload(write.connection)
+    if write.table is None:
+        return {"output_path": write.path, "storage_payload": storage_payload}
+    if write.table.base_uri is not None:
+        storage_payload = {"base_uri": write.table.base_uri, **(storage_payload or {})}
+    return {"table_id": write.table.table_id, "table_name": write.table.table_name, "storage_payload": storage_payload}
 
 
 def _reported(fetcher: BaseFetcher) -> dict[str, Any]:

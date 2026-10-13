@@ -18,10 +18,10 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
+# External dependencies
+import polars as pl
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, JSONResponse, Response
-
-# External dependencies
 from polars.exceptions import ColumnNotFoundError
 from polars_expr_transformer.function_overview import get_all_expressions, get_expression_overview
 from pydantic import BaseModel, Field, ValidationError
@@ -42,7 +42,7 @@ from flowfile_core.catalog.exceptions import (
 )
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import check_if_has_default_setting, nodes_list
-from flowfile_core.configs.settings import is_electron_mode
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL, is_electron_mode
 from flowfile_core.database.connection import get_db, get_db_context
 
 # File handling
@@ -96,8 +96,10 @@ from flowfile_core.flowfile.extensions import (
     get_formula_chain_instant_result,
     get_instant_func_results,
 )
+from flowfile_core.flowfile.flow_data_engine.bounded import head_rows
 from flowfile_core.flowfile.flow_data_engine.column_stats import ColumnStatsUnavailable
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     ExternalRestApiFetcher,
 )
@@ -2239,7 +2241,10 @@ def export_node_data(
 ):
     """Downloads up to 10,000 rows of a node's cached result as CSV/TSV without re-executing it.
 
-    TSV is also capped at 100,000 cells. Larger exports belong in a write node.
+    TSV is also capped at 100,000 cells. Larger exports belong in a write node. The file is written by a
+    ``file_write`` on the flow's backend; with ``FLOWFILE_COMPUTE_PROTOCOL`` on, the schema checks read the
+    engine's cached schema, the rows are read through ``bounded.head_rows`` on the flow's backend and the file is
+    written in core by ``LocalBackend``, so core never serves a file another process wrote.
     """
     flow, node = _get_analysis_node(flow_id, node_id, current_user)
     try:
@@ -2247,10 +2252,15 @@ def export_node_data(
     except ColumnStatsUnavailable as e:
         raise HTTPException(409, str(e)) from None
     data = engine.data_frame
-    try:
-        schema = data.collect_schema()
-    except Exception:
-        raise HTTPException(409, "The cached result is no longer available. Run the flow again.") from None
+    if FLOWFILE_COMPUTE_PROTOCOL:
+        schema = pl.Schema(
+            [(column.column_name, cast_str_to_polars_type(column.data_type)) for column in engine.schema]
+        )
+    else:
+        try:
+            schema = data.collect_schema()
+        except Exception:
+            raise HTTPException(409, "The cached result is no longer available. Run the flow again.") from None
     if any(dtype.is_nested() for dtype in schema.dtypes()):
         raise HTTPException(422, "CSV cannot hold list or struct columns.")
     n = min(limit, 100_000 // max(len(schema), 1)) if file_format == "tsv" else limit
@@ -2263,9 +2273,15 @@ def export_node_data(
     )
     path = Path(output_settings.abs_file_path)
     try:
-        # head before lazy(): an in-memory DataFrame is sliced so only n rows get serialized.
-        write = FileWritePayload(plan=data.head(n).lazy(), settings=output_settings, flow_id=flow_id, node_id=node_id)
-        current_context(flow).backend.run_op(OperationKind.file_write, op_payload(write))
+        backend = current_context(flow).backend
+        if FLOWFILE_COMPUTE_PROTOCOL:
+            rows = pl.from_arrow(head_rows(backend, data, n)).lazy()
+            writer = compute_registry.backend(compute_registry.LOCAL_BACKEND_ID)
+        else:
+            # head before lazy(): an in-memory DataFrame is sliced so only n rows get serialized.
+            rows, writer = data.head(n).lazy(), backend
+        write = FileWritePayload(plan=rows, settings=output_settings, flow_id=flow_id, node_id=node_id)
+        writer.run_op(OperationKind.file_write, op_payload(write))
     except Exception as e:
         path.unlink(missing_ok=True)
         logger.error(f"Failed to export data for node {node_id}: {e}")

@@ -83,6 +83,8 @@ class ExecutionDecision:
 if False:
     from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 
+from flowfile_core.configs import settings  # noqa: E402
+from flowfile_core.flowfile.execution import registry  # noqa: E402
 from flowfile_core.flowfile.execution.protocol import JobHandle, ResultRef  # noqa: E402
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine  # noqa: E402
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn  # noqa: E402
@@ -343,14 +345,26 @@ class NodeResults:
             return self.example_data_generator()
 
     def artifact_is_missing(self) -> bool:
-        """True when the worker file backing the current result has been removed.
+        """True when the result this node holds is gone from where it was kept.
 
-        ``example_data_path`` is the file the last run produced on the shared disk: for a result the worker
-        stored it is the very file ``resulting_data`` scans, for a deferred one the sample its sampler task
-        wrote in the same flow cache dir. It is set only from the backend's ``result_file`` after a submit and
-        cleared before every run, so a path that no longer exists means whatever is held here is a dangling scan.
+        A result with a file on the shared disk is checked there. ``example_data_path`` is the file the last run
+        produced: for a result the worker stored it is the very file ``resulting_data`` scans, for a deferred one
+        the sample its sampler task wrote in the same flow cache dir. It is set only from the backend's
+        ``result_file`` after a task-route submit and cleared before every run, so a path that no longer exists
+        means whatever is held here is a dangling scan.
+
+        A held result with no such file is asked of the backend that minted it (``exists``) when
+        ``settings.FLOWFILE_COMPUTE_PROTOCOL`` is on; with the flag off it counts as present, as does no result.
+
+        Raises:
+            ComputeError: The minting backend could not answer (``ComputeUnavailable`` when the worker cannot be
+                reached). The executor records it as a node failure, never as a missing result.
         """
-        return self.example_data_path is not None and not os.path.exists(self.example_data_path)
+        if self.example_data_path is not None:
+            return not os.path.exists(self.example_data_path)
+        if not settings.FLOWFILE_COMPUTE_PROTOCOL or self.result_ref is None:
+            return False
+        return not registry.backend(self.result_ref.backend_id).exists(self.result_ref)
 
     @property
     def resulting_data(self) -> FlowDataEngine | None:
