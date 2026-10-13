@@ -1836,7 +1836,8 @@ class FlowNode:
         """Holds ``result`` and makes the result ``backend`` holds this node's resulting data and preview.
 
         A deferred result is this node's own plan, so its engine keeps what ``engine`` knew of it (schema, a
-        known row count, streamability); a stored one is read like any scan, with the row count it carries.
+        known row count, streamability); a stored one is read like any scan, with the schema and the row count its
+        reference carries, so core never resolves a stored result's schema from the backend's storage.
         """
         ref = result.ref
         self.results.result_ref = ref
@@ -1846,7 +1847,7 @@ class FlowNode:
             data = FlowDataEngine(plan, schema=engine.schema, number_of_records=engine.known_record_count())
             data.set_streamable(self.node_settings.streamable)
         else:
-            data = FlowDataEngine(plan, number_of_records=ref.row_count)
+            data = FlowDataEngine(plan, schema=ref.schema, number_of_records=ref.row_count)
         self.results.resulting_data = data
         self.node_schema.result_schema = data.schema
         self.results.example_data_path = backend.result_file(ref) if isinstance(backend, WorkerBackend) else None

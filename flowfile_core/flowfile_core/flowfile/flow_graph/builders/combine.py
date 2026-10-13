@@ -162,7 +162,7 @@ class CombineBuildersMixin(GraphMixinBase):
             )
             backend = current_context(self).backend
             ref = node.run_op(backend, OperationKind.fuzzy_join, op_payload(join), job_id=join.job_id).refs["result"]
-            matched = FlowDataEngine(backend.plan_for(ref), number_of_records=ref.row_count)
+            matched = FlowDataEngine(backend.plan_for(ref), schema=ref.schema, number_of_records=ref.row_count)
             if ref.state == "deferred":
                 backend.release(ref)
             return matched

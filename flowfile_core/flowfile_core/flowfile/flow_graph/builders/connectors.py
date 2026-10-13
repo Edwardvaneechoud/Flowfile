@@ -63,12 +63,12 @@ from shared.kafka.models import KafkaReadSettings
 
 
 def engine_from_read(backend: ComputeBackend, ref: ResultRef) -> FlowDataEngine:
-    """The engine over a read operation's result.
+    """The engine over a read operation's result, with the schema and the row count the reference carries.
 
     A deferred result is a plan that holds what it reads, so the backend's holding is released at once; a stored
     one stays held, because the plan scans the copy the backend stored (a worker read's Arrow file).
     """
-    engine = FlowDataEngine(backend.plan_for(ref), number_of_records=ref.row_count)
+    engine = FlowDataEngine(backend.plan_for(ref), schema=ref.schema, number_of_records=ref.row_count)
     if ref.state == "deferred":
         backend.release(ref)
     return engine
