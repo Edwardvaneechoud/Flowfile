@@ -7,6 +7,10 @@ settings page, a deployment's control plane over these routes; core manages no w
 registered or scaled is the control plane's. The registry makes a ``WorkerBackend`` from a row on the first lookup of
 its id (``registry.backend``), and removing the row forgets that instance.
 
+The token travels as an HTTP header value, so the add route refuses one that is no header value
+(``worker.is_header_value``) with a 422 whose detail states the rule and never the token. The route checks it itself:
+a validator on the request model would fail with an error that echoes the field's input.
+
 The handshake reads the worker's capabilities with the row's token and compares them with this process's, field by
 field, each difference naming both sides (``handshake.capability_differences``). The verdict is the answer, so a worker
 that cannot be reached, refuses the protocol version or refuses the token is a 200 verdict with ``ok`` false and the
@@ -24,6 +28,7 @@ from flowfile_core.auth.models import User
 from flowfile_core.database.connection import get_db
 from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.backends.worker import TOKEN_RULE, is_header_value
 from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import capability_differences
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
@@ -88,7 +93,12 @@ def add_compute_backend(
     current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db),
 ) -> ComputeBackendOut:
-    """Configure the worker ``worker:<name>``, its token encrypted for the admin who adds it; 409 when the id exists."""
+    """Configure the worker ``worker:<name>``, its token encrypted for the admin who adds it; 409 when the id exists.
+
+    A token that is no header value is a 422 stating ``TOKEN_RULE``, and nothing is stored.
+    """
+    if not is_header_value(body.token.get_secret_value()):
+        raise HTTPException(status_code=422, detail=f"The token was not stored: {TOKEN_RULE}")
     backend_id = registry.CONFIGURED_WORKER_PREFIX + body.name
     if db.get(ConfiguredBackend, backend_id) is not None:
         raise HTTPException(status_code=409, detail=f"Compute backend {backend_id!r} already exists")

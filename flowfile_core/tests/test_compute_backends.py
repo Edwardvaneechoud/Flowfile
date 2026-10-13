@@ -2,8 +2,8 @@
 
 A configured worker here is a fake: a small FastAPI app on a local uvicorn that answers ``GET /capabilities`` and
 ``GET /v1/capabilities`` only to the token it was started with, so a verdict that passes proves the row's own token was
-sent, not the process's. The handshake cases run under both states of the protocol flag. Auth fixtures mirror
-``test_system_worker.py``.
+sent, not the process's. The handshake cases, and the refusal of a token that is no header value, run under both
+states of the protocol flag. Auth fixtures mirror ``test_system_worker.py``.
 """
 
 import socket
@@ -24,9 +24,16 @@ from flowfile_core.configs import settings
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.backends.worker import TOKEN_RULE
+from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared.compute_protocol import local_capabilities
 
 ROUTE = "/compute_backends"
+NO_HEADER_VALUES = pytest.mark.parametrize(
+    "token",
+    ["row-token\n", "row-token\r\n", "row-token\x00", "row-token\u20ac"],
+    ids=["line-feed", "crlf", "nul", "beyond-latin-1"],
+)
 
 
 def free_port() -> int:
@@ -160,6 +167,37 @@ def test_a_bad_name_or_url_is_refused(admin_client, name, url):
 
     assert response.status_code == 422, response.text
     assert admin_client.get(ROUTE).json() == []
+
+
+@NO_HEADER_VALUES
+def test_a_token_that_is_no_header_value_is_refused_naming_the_rule_never_the_token(admin_client, flag, token):
+    response = add(admin_client, "http://team-worker.test:63579", token=token)
+
+    assert response.status_code == 422, response.text
+    assert response.json() == {"detail": f"The token was not stored: {TOKEN_RULE}"}
+    assert "row-token" not in response.text
+    assert admin_client.get(ROUTE).json() == []
+
+
+@NO_HEADER_VALUES
+def test_a_row_whose_token_is_no_header_value_fails_the_handshake_naming_the_rule_never_the_token(
+    admin_client, flag, token
+):
+    """A row filled in by hand skips the add route's check; the backend refuses to send its token instead."""
+    with get_db_context() as db:
+        db.add(
+            ConfiguredBackend(id="worker:team", url=f"http://127.0.0.1:{free_port()}", token=encrypt_secret(token, 1))
+        )
+        db.commit()
+
+    response = admin_client.post(f"{ROUTE}/worker:team/handshake")
+
+    assert response.status_code == 200, response.text
+    verdict = response.json()
+    assert verdict["ok"] is False
+    assert verdict["worker"] is None
+    assert verdict["error"] == f"The token configured for the worker:team backend cannot be sent: {TOKEN_RULE}"
+    assert "row-token" not in response.text
 
 
 def test_a_worker_on_this_process_versions_passes_the_handshake_with_the_rows_token(admin_client, fake_worker, flag):
