@@ -1,10 +1,14 @@
 """With the protocol flag on, the worker backend submits plans and reads results over the worker's ``/v1`` routes.
 
-Every test here turns ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on; the dispatch tests turn it off again mid-test to show
-that a result is read over the routes that minted it.
+Every test here turns ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on and runs over both submit transports (``transport``):
+``socket`` submits over ``WS /v1/ws/submit``, ``rest`` has every dial refused, as a proxy that passes no upgrade would,
+so each submit falls back to ``POST /v1/submit``. The socket-only tests at the end play the worker's frames from a fake
+socket. The dispatch tests turn the flag off again mid-test to show that a result is read over the routes that minted
+it.
 """
 
 import io
+import json
 import re
 import socket
 import uuid
@@ -15,7 +19,12 @@ import polars as pl
 import pyarrow as pa
 import pytest
 import requests
+from websockets.datastructures import Headers
+from websockets.exceptions import ConnectionClosedError, InvalidStatus
+from websockets.frames import Close
+from websockets.http11 import Response
 
+from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend, _flowfile_schema
@@ -33,6 +42,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake imp
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.input_schema import NodeRead, ReceivedTable
+from shared import compute_protocol as wire
 from shared.compute_protocol import PROTOCOL_VERSION_HEADER, Capabilities, WorkerLocation
 from shared.storage_config import storage
 
@@ -41,12 +51,28 @@ PEOPLE = pl.DataFrame(
 )
 GEOARROW_WKB = pl.Extension("geoarrow.wkb", pl.Binary, "{}")
 STATES = pytest.mark.parametrize("must_materialise", [True, False], ids=["materialised", "deferred"])
+SOCKET_ONLY = pytest.mark.parametrize("transport", ["socket"], indirect=True)
 
 
 @pytest.fixture(autouse=True)
 def protocol_on(monkeypatch):
     """The protocol flag is on for every test here and back to what it was when the test ends."""
     monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
+
+
+@pytest.fixture(autouse=True, params=["socket", "rest"])
+def transport(request, monkeypatch) -> str:
+    """How a submit reaches the worker: its socket, or ``POST /v1/submit`` after every dial is refused 400.
+
+    A refused upgrade is not a network failure, so the handshake is not re-armed by each submit.
+    """
+    if request.param == "rest":
+
+        def refused(uri, **kwargs):
+            raise InvalidStatus(Response(400, "Bad Request", Headers()))
+
+        monkeypatch.setattr(worker_module, "connect", refused)
+    return request.param
 
 
 @pytest.fixture
@@ -72,21 +98,31 @@ def kept(backend):
 
 
 @pytest.fixture
-def sent(running_worker, monkeypatch):
-    """Every HTTP request core sends from here on, as (method, path on the worker, ``X-Protocol-Version``).
+def sent(running_worker, transport, monkeypatch):
+    """Every request core sends from here on, as (method, path on the worker, ``X-Protocol-Version``).
 
-    The handshake runs first, so its own calls are not among them.
+    A submit socket that opened counts as ``("WS", path, version)``. The handshake runs first, so its own calls are
+    not among them.
     """
     handshake.ensure_handshake(settings.WORKER_URL)
     requests_sent: list[tuple[str, str, str | None]] = []
     real_send = requests.Session.send
+    real_connect = worker_module.connect
+    socket_base = settings.WORKER_URL.replace("http://", "ws://")
 
     def recording_send(self, request, **kwargs):
         path = request.url.removeprefix(settings.WORKER_URL)
         requests_sent.append((request.method, path, request.headers.get(PROTOCOL_VERSION_HEADER)))
         return real_send(self, request, **kwargs)
 
+    def recording_connect(uri, **kwargs):
+        ws = real_connect(uri, **kwargs)
+        version = kwargs["additional_headers"].get(PROTOCOL_VERSION_HEADER)
+        requests_sent.append(("WS", uri.removeprefix(socket_base), version))
+        return ws
+
     monkeypatch.setattr(requests.Session, "send", recording_send)
+    monkeypatch.setattr(worker_module, "connect", recording_connect)
     return requests_sent
 
 
@@ -219,7 +255,7 @@ def test_the_reference_carries_the_columns_a_task_route_reference_would(backend,
     assert [column.semantic_type for column in ref.schema] == [None, None, None, "geometry"]
 
 
-def test_every_call_goes_to_the_v1_routes_with_the_protocol_version(backend, kept, sent):
+def test_every_call_goes_to_the_v1_routes_with_the_protocol_version(backend, kept, sent, transport):
     result = submit(backend, kept, must_materialise=True, preview_rows=4)
     ref, handle = result.ref, result.handle
 
@@ -233,7 +269,7 @@ def test_every_call_goes_to_the_v1_routes_with_the_protocol_version(backend, kep
 
     held = f"/v1/results/{ref.result_id}"
     assert [(method, path) for method, path, _ in sent] == [
-        ("POST", "/v1/submit"),
+        ("WS", "/v1/ws/submit") if transport == "socket" else ("POST", "/v1/submit"),
         ("GET", f"{held}/sample?n=2"),
         ("GET", f"{held}/count"),
         ("HEAD", held),
@@ -370,13 +406,16 @@ def test_a_plan_the_worker_cannot_load_is_rejected(backend, core_only_udf_plan):
         backend.submit(core_only_udf_plan, [], hints(True), new_result_id(), flow_id=-1, node_id=-1)
 
 
-def test_a_backend_on_another_protocol_version_is_refused_and_nothing_is_held(backend):
+def test_a_backend_on_another_protocol_version_is_refused_and_nothing_is_held(backend, sent, transport):
+    """A 426 on the socket's upgrade is final: the plan is not posted instead."""
     result_id = new_result_id()
     backend.protocol_version = 2
 
     with pytest.raises(VersionMismatch, match=r"protocol version 1; the request carries 2"):
         backend.submit(people(), [], hints(True), result_id, flow_id=-1, node_id=-1)
 
+    submits = [(method, path) for method, path, _ in sent if "submit" in path]
+    assert submits == ([] if transport == "socket" else [("POST", "/v1/submit")])
     assert WorkerBackend(url=settings.WORKER_URL).exists(v1_ref(result_id)) is False
 
 
@@ -468,3 +507,170 @@ def test_a_remote_node_previews_the_inline_sample_without_reading_a_worker_file(
         assert [row["rank"] for row in sort.get_table_example(True).data] == [1, 2, 3]
     finally:
         graph.close_flow()
+
+
+class FakeClock:
+    """``worker_module.monotonic`` for the silence tests: time moves only when the fake socket lets it."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class FakeSocket:
+    """A submit socket the test plays the worker's side of: ``recv`` plays ``script``; ``send`` and ``close`` are kept.
+
+    ``"timeout"`` in the script, and an exhausted script, let ``gap`` seconds pass on ``clock`` and raise
+    ``TimeoutError``; an exception is raised; anything else is the frame received. ``refuse_plan`` is raised by the
+    send of the plan, the binary frame.
+    """
+
+    def __init__(self, script=(), *, clock: FakeClock | None = None, gap: float = 0.0, refuse_plan=None):
+        self.script = list(script)
+        self.clock = clock
+        self.gap = gap
+        self.refuse_plan = refuse_plan
+        self.frames_sent: list[str | bytes] = []
+        self.closed = False
+
+    def send(self, message):
+        if isinstance(message, bytes) and self.refuse_plan is not None:
+            raise self.refuse_plan
+        self.frames_sent.append(message)
+
+    def recv(self, timeout=None):
+        item = self.script.pop(0) if self.script else "timeout"
+        if item == "timeout":
+            if self.clock is not None:
+                self.clock.now += self.gap
+            raise TimeoutError
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    def close(self):
+        self.closed = True
+
+
+@pytest.fixture
+def clock(monkeypatch) -> FakeClock:
+    fake = FakeClock()
+    monkeypatch.setattr(worker_module, "monotonic", fake)
+    return fake
+
+
+def dial_into(monkeypatch, socket: FakeSocket) -> list[tuple[str, dict]]:
+    """Make every dial of the submit socket open ``socket``; the dials made, as (URI, keyword arguments)."""
+    dials: list[tuple[str, dict]] = []
+
+    def fake_connect(uri, **kwargs):
+        dials.append((uri, kwargs))
+        return socket
+
+    monkeypatch.setattr(worker_module, "connect", fake_connect)
+    return dials
+
+
+def complete_frame(result_id: str, plan: pl.LazyFrame) -> str:
+    """The ``complete`` frame the worker sends for ``plan`` held deferred as ``result_id``."""
+    held = WorkerLocation(kind="plan", plan=plan.serialize()).model_dump_json().encode()
+    answer = wire.SubmitResult(
+        ref=wire.ResultRef(result_id=result_id, columns=[], row_count=None, state="deferred", location=held),
+        job_id=result_id,
+    )
+    return json.dumps({"type": "complete", "result": answer.model_dump(mode="json")})
+
+
+@SOCKET_ONLY
+def test_a_complete_frame_over_one_mebibyte_is_read_whole(backend, kept, sent):
+    """A deferred result's ``complete`` frame carries its plan, base64 inside base64, so it outgrows any frame cap."""
+    plan = pl.LazyFrame({"n": pl.int_range(150_000, eager=True)})
+
+    result = submit(backend, kept, must_materialise=False, preview_rows=3, plan=plan)
+
+    ref = result.ref
+    assert ref.state == "deferred"
+    assert len(ref.location) > 2**20
+    assert location(ref).plan == plan.serialize()
+    assert read_stream(result.sample).num_rows == 3
+    assert [(method, path) for method, path, _ in sent] == [("WS", "/v1/ws/submit")]
+
+
+@SOCKET_ONLY
+def test_a_plan_the_socket_could_not_send_is_posted_instead(backend, kept, sent, monkeypatch):
+    socket = FakeSocket(refuse_plan=ConnectionClosedError(None, None))
+    dial_into(monkeypatch, socket)
+
+    ref = submit(backend, kept, must_materialise=True).ref
+
+    assert ref.row_count == 10
+    assert socket.closed
+    assert [(method, path) for method, path, _ in sent] == [("POST", "/v1/submit")]
+
+
+@SOCKET_ONLY
+def test_a_silent_worker_fails_the_submit_without_posting_it(backend, sent, monkeypatch, clock):
+    monkeypatch.setattr(worker_module, "_WS_INACTIVITY_TIMEOUT", 0.05)
+    socket = FakeSocket(clock=clock, gap=0.01)
+    dial_into(monkeypatch, socket)
+
+    with pytest.raises(TaskFailed, match="FLOWFILE_WORKER_WS_TIMEOUT"):
+        backend.submit(people(), [], hints(True), new_result_id(), flow_id=-1, node_id=-1)
+
+    assert socket.closed
+    assert sent == []
+
+
+@SOCKET_ONLY
+def test_progress_frames_keep_the_socket_alive(backend, monkeypatch, clock):
+    """Each silence (0.1) stays under the timeout (0.25) and the three add up past it, so only a reset passes."""
+    monkeypatch.setattr(worker_module, "_WS_INACTIVITY_TIMEOUT", 0.25)
+    result_id = new_result_id()
+    plan = people()
+    progress = json.dumps({"type": "progress", "progress": 50})
+    script = ["timeout", progress, "timeout", progress, "timeout", complete_frame(result_id, plan)]
+    socket = FakeSocket(script, clock=clock, gap=0.1)
+    dial_into(monkeypatch, socket)
+
+    ref = backend.submit(plan, [], hints(False), result_id, flow_id=-1, node_id=-1).ref
+
+    assert (ref.result_id, ref.state) == (result_id, "deferred")
+    assert location(ref).plan == plan.serialize()
+    assert json.loads(socket.frames_sent[0])["result_id"] == result_id
+    assert socket.frames_sent[1] == plan.serialize()
+
+
+@SOCKET_ONLY
+def test_a_socket_closed_after_the_plan_is_unavailable_and_not_posted(backend, sent, monkeypatch):
+    socket = FakeSocket([ConnectionClosedError(Close(1011, "internal error"), None)])
+    dial_into(monkeypatch, socket)
+
+    with pytest.raises(ComputeUnavailable, match=re.escape(settings.WORKER_URL)):
+        backend.submit(people(), [], hints(True), new_result_id(), flow_id=-1, node_id=-1)
+
+    assert socket.closed
+    assert sent == []
+
+
+@SOCKET_ONLY
+@pytest.mark.parametrize(
+    ("worker_url", "socket_url"),
+    [
+        ("http://127.0.0.1:63578/worker", "ws://127.0.0.1:63578/worker/v1/ws/submit"),
+        ("https://flowfile.example/worker", "wss://flowfile.example/worker/v1/ws/submit"),
+    ],
+    ids=["single-file", "tls"],
+)
+def test_the_socket_is_dialled_under_the_workers_url_with_the_token_and_version(
+    running_worker, monkeypatch, worker_url, socket_url
+):
+    handshake.ensure_handshake(settings.WORKER_URL)
+    result_id = new_result_id()
+    dials = dial_into(monkeypatch, FakeSocket([complete_frame(result_id, people())]))
+
+    WorkerBackend(url=worker_url).submit(people(), [], hints(False), result_id, flow_id=-1, node_id=-1)
+
+    headers = {"X-Flowfile-Internal": get_internal_token(), PROTOCOL_VERSION_HEADER: "1"}
+    assert dials == [(socket_url, {"additional_headers": headers, "max_size": None})]
