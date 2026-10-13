@@ -138,8 +138,13 @@ def minio_prefix():
         client.delete_object(Bucket=_BUCKET, Key=obj["Key"])
 
 
-def _run_in_fresh_process(plan: bytes, tmp_path: Path, register_decryptor: bool) -> subprocess.CompletedProcess:
-    """Deserialize and collect *plan* in a new interpreter, as the worker does with a core-built plan."""
+def _run_in_fresh_process(
+    plan: bytes, tmp_path: Path, register_decryptor: bool, **env_vars: str
+) -> subprocess.CompletedProcess:
+    """Deserialize and collect *plan* in a new interpreter, as the worker does with a core-built plan.
+
+    The child's environment holds no ``AWS_*`` variable but those given in *env_vars*.
+    """
     plan_file = tmp_path / "plan.bin"
     plan_file.write_bytes(plan)
     register = (
@@ -157,7 +162,7 @@ def _run_in_fresh_process(plan: bytes, tmp_path: Path, register_decryptor: bool)
         """
     )
     env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_")}
-    env.update(TEST_MODE="1", AWS_EC2_METADATA_DISABLED="true", PYTHONPATH=str(REPO_ROOT))
+    env.update(TEST_MODE="1", AWS_EC2_METADATA_DISABLED="true", PYTHONPATH=str(REPO_ROOT), **env_vars)
     return subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env, cwd=tmp_path)
 
 
@@ -431,6 +436,29 @@ class TestCredentialRefProvider:
         assert MINIO_SECRET_KEY.encode() not in plan
         assert b"$ffsec$" not in plan
         ran = _run_in_fresh_process(plan, tmp_path, register_decryptor=True)
+        assert ran.returncode == 0, ran.stderr
+        assert ran.stdout.strip() == "3"
+
+    @requires_minio
+    def test_an_executor_session_token_does_not_mix_into_a_delta_read(
+        self, catalog, aws_free_env, minio_prefix, tmp_path
+    ):
+        """Access keys without a session token resolve to an empty one, as the builder gives them, so delta-rs
+        never pairs the stored keys with the executing process's own ``AWS_SESSION_TOKEN``."""
+        from shared.delta_utils import write_delta
+
+        path = f"s3://{_BUCKET}/{minio_prefix}/delta"
+        write_delta(
+            pl.DataFrame({"a": [1, 2, 3]}),
+            path,
+            mode="overwrite",
+            storage_options={**_NON_SECRET, **_MINIO_CREDENTIALS},
+        )
+        provider = CredentialRefProvider(_minio_connection(catalog), 1)
+
+        assert provider()[0]["aws_session_token"] == ""
+        plan = pl.scan_delta(path, storage_options=_NON_SECRET, credential_provider=provider).serialize()
+        ran = _run_in_fresh_process(plan, tmp_path, register_decryptor=True, AWS_SESSION_TOKEN="bogus")
         assert ran.returncode == 0, ran.stderr
         assert ran.stdout.strip() == "3"
 

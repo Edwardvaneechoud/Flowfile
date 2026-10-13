@@ -146,7 +146,8 @@ def _provider_credentials(storage_type: str, options: Mapping[str, str]) -> tupl
     """What a Polars provider may return for resolved *options*: S3 keys, an Azure key, SAS or bearer, a GCS bearer."""
     if storage_type == "s3":
         keys = ("aws_access_key_id", "aws_secret_access_key", "aws_session_token")
-        return {key: options[key] for key in keys if options.get(key)}, None
+        # The builder's "" session token stays: it keeps an ambient AWS_SESSION_TOKEN out, as in split_credentials.
+        return {key: options[key] for key in keys if options.get(key) is not None}, None
     if storage_type == "adls":
         if options.get("client_secret"):
             return _azure_bearer_token(options["tenant_id"], options["client_id"], options["client_secret"])
