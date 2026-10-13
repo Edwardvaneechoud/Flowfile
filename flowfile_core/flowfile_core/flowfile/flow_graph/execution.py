@@ -13,7 +13,7 @@ from typing import Any, Literal
 import polars as pl
 from polars_expr_transformer import simple_function_to_expr as to_expr
 
-from flowfile_core.configs import logger
+from flowfile_core.configs import logger, settings
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.events import publish
@@ -22,6 +22,7 @@ from flowfile_core.flowfile.catalog_cdc import (
     resolve_consumer_key,
 )
 from flowfile_core.flowfile.execution.context import ExecutionContext, current_context, use_context
+from flowfile_core.flowfile.flow_data_engine.bounded import head_rows
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
@@ -71,17 +72,22 @@ def _gate_formula_matches(source: FlowDataEngine, formula: str) -> bool:
     """True when at least one row of *source* satisfies the gate's formula.
 
     The formula is the Filter node's flowfile expression language applied as
-    a row predicate; matching is existence — ``filter(pred).head(1)`` — so
-    only a bounded single-row collect happens in core. An empty formula, a
-    formula that does not parse, or one referencing unknown columns raises,
-    failing the gate visibly instead of silently picking a branch. An empty
-    input (zero rows) is simply "no match": the gate closes.
+    a row predicate; matching is existence — ``filter(pred).head(1)``. With
+    ``FLOWFILE_COMPUTE_PROTOCOL`` off that one row is collected in core; with
+    it on it is read through ``bounded.head_rows`` on the current execution
+    context's backend, the run's, so core never opens a result that backend
+    stored and a formula error comes back as its ``ComputeError``. An empty
+    formula, a formula that does not parse, or one referencing unknown
+    columns raises, failing the gate visibly instead of silently picking a
+    branch. An empty input (zero rows) is simply "no match": the gate closes.
     """
     if not formula.strip():
         raise ValueError("Gate is set to route on a formula, but no formula is configured")
     predicate = to_expr(formula)
     data_frame = source.data_frame
     lazy_frame = data_frame.lazy() if isinstance(data_frame, pl.DataFrame) else data_frame
+    if settings.FLOWFILE_COMPUTE_PROTOCOL:
+        return head_rows(current_context().backend, lazy_frame.filter(predicate), 1).num_rows > 0
     return lazy_frame.filter(predicate).head(1).collect().height > 0
 
 

@@ -5,24 +5,32 @@ core keeps the reference and composes on the ``scan_ipc`` leaf ``plan_for`` retu
 host, but any read of that leaf from core raises ``FileNotFoundError``. A touch fails the run or the test outright
 instead of being counted, so these flows pass only while core takes a stored result's schema from its reference.
 They run with the protocol flag off and on: with it on, core asks the backend that holds a result whether it still
-does. The last two tests check the same over the session worker's ``/v1`` routes.
+does, and reads rows of those results through the backend: the formula editor's preview row, a formula gate's probe,
+column statistics and the CSV export. The tests named for ``v1`` results check the same over the session worker's
+``/v1`` routes.
 """
 
 import dataclasses
 import os
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import polars as pl
 import pytest
 
+from flowfile_core import flow_file_handler
 from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+from flowfile_core.flowfile.extensions import get_instant_func_results
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_node.executor import NodeExecutor
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.models import InvalidationReason
+from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
+from flowfile_core.routes.routes import export_node_data
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from shared.compute_protocol import WorkerLocation
 
@@ -381,3 +389,136 @@ def test_a_v1_result_the_worker_dropped_is_run_again(remote_worker, protocol_on)
         assert worker.exists(sort.results.result_ref)
     finally:
         graph.close_flow()
+
+
+READ_SITES_USER = 1
+
+
+def read_sites_flow(flow_id: int) -> FlowGraph:
+    """Manual input 1 → select 2, which caches its result → formula 3; random split 4 on 1; formula gate 5 on 1,
+    controlled by 4's second output. The flow is open in the handler for ``READ_SITES_USER``, so the export route
+    finds it.
+    """
+    graph = flow_file_handler.register_flow(
+        schemas.FlowSettings(
+            flow_id=flow_id,
+            name=f"read_sites_{flow_id}",
+            path=".",
+            execution_location="remote",
+            execution_mode="Development",
+            max_parallel_workers=1,
+        ),
+        user_id=READ_SITES_USER,
+    )
+    add_manual_input(graph, 1, [{"id": i, "name": f"n{i}", "amount": i * 10} for i in range(1, 5)])
+    add_select_on(graph, 2, 1, [("id", "id"), ("name", "name"), ("amount", "amount")], False)
+    graph.get_node(2).node_settings.cache_results = True
+    add_promise(graph, 3, "formula")
+    connect(graph, 2, 3)
+    add_promise(graph, 4, "random_split")
+    graph.add_random_split(
+        input_schema.NodeRandomSplit(
+            flow_id=flow_id,
+            node_id=4,
+            depending_on_id=1,
+            seed=1,
+            splits=[
+                input_schema.RandomSplitGroup(name="train", percentage=50.0),
+                input_schema.RandomSplitGroup(name="test", percentage=50.0),
+            ],
+        )
+    )
+    connect(graph, 1, 4)
+    add_promise(graph, 5, "gate")
+    connect(graph, 1, 5)
+    add_connection(
+        graph, input_schema.NodeConnection.create_from_simple_input(4, 5, input_type="right", output_handle="output-1")
+    )
+    graph.add_gate(
+        input_schema.NodeGate(
+            flow_id=flow_id,
+            node_id=5,
+            depending_on_id=1,
+            is_setup=True,
+            gate_input=transform_schema.GateInput(condition_source="formula", formula="[amount] > 0"),
+        )
+    )
+    return graph
+
+
+@pytest.fixture
+def read_sites(unreadable, protocol_on):
+    """The read-sites flow, run once on the unreadable backend with the protocol flag on, and closed afterwards."""
+    graph = read_sites_flow(9345)
+    try:
+        graph.run_graph()
+        yield graph
+    finally:
+        flow_file_handler.delete_flow(9345)
+
+
+def export_lines(graph: FlowGraph, node_id: int, limit: int) -> list[str]:
+    """The lines of the CSV export of ``node_id``'s result; the file is removed, as serving the response would."""
+    response = export_node_data(
+        flow_id=graph.flow_id,
+        node_id=node_id,
+        output_handle=DEFAULT_OUTPUT_HANDLE,
+        file_format="csv",
+        limit=limit,
+        current_user=SimpleNamespace(id=READ_SITES_USER),
+    )
+    try:
+        return Path(response.path).read_text().splitlines()
+    finally:
+        os.remove(response.path)
+
+
+def test_the_formula_editor_reads_its_input_row_through_the_backend(read_sites):
+    select = read_sites.get_node(2)
+    assert not os.path.exists(select.results.result_ref.location.decode("utf-8"))
+
+    assert get_instant_func_results(read_sites.get_node(3), "[name]").result == "n1"
+    select.results.example_data_generator = None
+    assert get_instant_func_results(read_sites.get_node(3), "[name]").result == "n1"
+    second_split = get_instant_func_results(read_sites.get_node(5), "[amount]")
+    assert second_split.success and int(second_split.result) in {10, 20, 30, 40}
+
+
+def test_a_formula_gate_probes_its_control_input_through_the_backend(read_sites):
+    assert read_sites.latest_run_info.success, failures(read_sites.latest_run_info)
+
+
+def test_column_statistics_take_the_dtype_from_the_cached_schema(read_sites):
+    stats = read_sites.get_node(2).get_column_stats("amount")
+
+    assert (stats.number_of_filled_values, stats.min_value, stats.max_value) == (4, "10", "40")
+
+
+def test_the_csv_export_reads_its_rows_through_the_backend(read_sites):
+    assert export_lines(read_sites, 2, 3) == ['"id","name","amount"', '"1","n1","10"', '"2","n2","20"', '"3","n3","30"']
+
+
+def test_rows_of_v1_results_come_over_the_wire(remote_worker, protocol_on, monkeypatch):
+    ops = []
+    run_op = WorkerBackend.run_op
+
+    def recording(self, op, payload):
+        ops.append(op.value)
+        return run_op(self, op, payload)
+
+    monkeypatch.setattr(WorkerBackend, "run_op", recording)
+    graph = read_sites_flow(9346)
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        select = graph.get_node(2)
+        assert WorkerLocation.model_validate_json(select.results.result_ref.location).kind == "file"
+        assert get_instant_func_results(graph.get_node(3), "[name]").result == "n1"
+        select.results.example_data_generator = None
+        assert get_instant_func_results(graph.get_node(3), "[name]").result == "n1"
+        assert select.get_column_stats("amount").max_value == "40"
+        assert export_lines(graph, 2, 10_000)[1:] == [f'"{i}","n{i}","{i * 10}"' for i in range(1, 5)]
+        assert ops == ["random_split"]
+    finally:
+        flow_file_handler.delete_flow(9346)
