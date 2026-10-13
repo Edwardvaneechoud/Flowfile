@@ -12,6 +12,7 @@ import io
 import logging
 import os
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 
 import polars as pl
@@ -19,6 +20,7 @@ import pytest
 from pydantic import SecretStr
 
 from flowfile_core.auth.models import SecretInput
+from flowfile_core.configs import settings
 from flowfile_core.configs.node_store import add_to_custom_node_store, remove_from_custom_node_store
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.database import models as db_models
@@ -40,7 +42,7 @@ from flowfile_core.flowfile.execution.payloads import (
     RandomSplitPayload,
     unpack,
 )
-from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, OpResult
+from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, OpResult, ResultRef
 from flowfile_core.flowfile.execution.payloads import FileWritePayload
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
@@ -51,6 +53,7 @@ from flowfile_core.flowfile.flow_graph import add_connection
 from flowfile_core.flowfile.node_designer import CustomNodeBase, NodeSettings, SecretSelector, Section, TextInput
 from flowfile_core.schemas import input_schema
 from flowfile_core.secret_manager.secret_manager import store_secret
+from shared.storage_config import storage
 from tests.flowfile.conftest import add_test_manual_input, create_test_graph
 
 pytestmark = pytest.mark.core
@@ -161,7 +164,6 @@ def ml_train(**overrides) -> MlTrainPayload:
     return MlTrainPayload(
         **{
             "plan": pl.LazyFrame({"x": [1.0, 2.0], "y": [3.0, 5.0]}),
-            "staging_path": "/models/m.json",
             "model_type": "linear_regression",
             "target_column": "y",
             "feature_columns": ["x"],
@@ -173,11 +175,16 @@ def ml_train(**overrides) -> MlTrainPayload:
     )
 
 
+def staged_model(path: Path | str) -> ResultRef:
+    """A model a training over the task routes staged at ``path``, as it answers it."""
+    return ResultRef("worker", "train-hash_0", [], None, "materialised", str(path).encode(), kind="blob")
+
+
 def ml_apply(**overrides) -> MlApplyPayload:
     return MlApplyPayload(
         **{
             "plan": pl.LazyFrame({"x": [1.0, 2.0]}),
-            "model_path": "/models/m.json",
+            "model": staged_model("/models/m.json"),
             "output_column": "pred",
             "flow_id": 7,
             "node_id": 3,
@@ -276,6 +283,20 @@ class WorkerTasks:
 @pytest.fixture
 def tasks(monkeypatch, tmp_path) -> WorkerTasks:
     return WorkerTasks(monkeypatch, tmp_path)
+
+
+@pytest.fixture
+def task_routes(monkeypatch):
+    """The protocol flag off for the test, so the worker backend runs the operation over its task routes."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
+
+
+@pytest.fixture
+def model_file(tmp_path) -> Path:
+    """A model file a training over the task routes staged."""
+    path = tmp_path / "m.json"
+    path.write_text("{}")
+    return path
 
 
 def stored_rows(kwargs) -> pl.DataFrame:
@@ -626,34 +647,37 @@ def test_the_worker_backend_refuses_a_selected_secret_it_cannot_find_before_it_s
     assert tasks.built == []
 
 
-def test_the_worker_backend_trains_under_the_job_id_and_reports_the_model_as_metadata(tasks):
+def test_the_worker_backend_trains_under_the_job_id_and_reports_the_model_as_metadata(tasks, task_routes):
+    """The model is staged in the flow's cache directory as a task of its own beside the node's, ``<job_id>_0``."""
     report = {"sha256": "ab" * 32, "size_bytes": 14, "model_type": "linear_regression"}
     tasks.replace("MLTrainFetcher", result=report)
     train = ml_train(job_id="train-hash")
+    staged = str(storage.get_flow_cache_directory(7) / "ml_models" / "train-hash_0.json")
 
     result = WorkerBackend(url=WORKER_URL).run_op(OperationKind.ml_train, op_payload(train))
 
     (task,) = tasks.built
     assert task.kwargs == {
         "lf": train.plan,
-        "staging_path": "/models/m.json",
+        "staging_path": staged,
         "model_type": "linear_regression",
         "target_column": "y",
         "feature_columns": ["x"],
         "params": {"add_bias": True},
         "flow_id": 7,
         "node_id": 3,
-        "file_ref": "train-hash",
+        "file_ref": "train-hash_0",
         "wait_on_completion": False,
         "worker_url": WORKER_URL,
     }
-    assert result == OpResult(refs={}, metadata=report)
+    model = ResultRef("worker", "train-hash_0", [], None, "materialised", staged.encode(), kind="blob")
+    assert result == OpResult(refs={"model": model}, metadata=report)
 
 
-def test_the_worker_backend_scores_under_the_job_id_into_a_stored_result(tasks):
+def test_the_worker_backend_scores_under_the_job_id_into_a_stored_result(tasks, task_routes, model_file):
     scored = pl.DataFrame({"x": [1.0, 2.0], "pred": [3.0, 5.0]})
     tasks.replace("MLApplyFetcher", rows=scored)
-    apply = ml_apply(job_id="apply-hash")
+    apply = ml_apply(job_id="apply-hash", model=staged_model(model_file))
     backend = WorkerBackend(url=WORKER_URL)
 
     ref = backend.run_op(OperationKind.ml_apply, op_payload(apply)).refs["result"]
@@ -661,7 +685,7 @@ def test_the_worker_backend_scores_under_the_job_id_into_a_stored_result(tasks):
     (task,) = tasks.built
     assert task.kwargs == {
         "lf": apply.plan,
-        "model_path": "/models/m.json",
+        "model_path": str(model_file),
         "output_column": "pred",
         "flow_id": 7,
         "node_id": 3,
@@ -693,13 +717,18 @@ CANCELLED_KINDS = {
 
 
 @pytest.mark.parametrize("kind", list(CANCELLED_KINDS), ids=kind_id)
-def test_cancelling_a_node_reaches_the_operation_it_is_waiting_on(kind, remote_node, tasks, monkeypatch):
+def test_cancelling_a_node_reaches_the_operation_it_is_waiting_on(
+    kind, remote_node, tasks, monkeypatch, request, model_file
+):
+    """The model kinds run over the task routes here, where the stand-in fetchers wait."""
     fetcher, stand_in = CANCELLED_KINDS[kind]
     if kind is OperationKind.custom_node:
         stand_in["result"] = custom_node_outputs(tasks, {"big": NUMBERS, "small": NUMBERS})
+    if kind in (OperationKind.ml_train, OperationKind.ml_apply):
+        request.getfixturevalue("task_routes")
     tasks.replace(fetcher, **stand_in)
     backend = registry.backend(registry.WORKER_BACKEND_ID)
-    payload = PAYLOADS[kind]()
+    payload = ml_apply(model=staged_model(model_file)) if kind is OperationKind.ml_apply else PAYLOADS[kind]()
     seen = []
 
     def cancel_while_waiting(task):

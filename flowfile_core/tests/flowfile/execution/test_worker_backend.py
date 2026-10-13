@@ -1,9 +1,12 @@
 """The worker backend runs plans and operations as worker tasks and reads their results from the shared disk.
 
 It exports such a result in a worker task that sinks it, never in core, and holds an imported URI as a deferred plan
-in process. A blob is held over the ``/v1`` routes only, so an import of one over the task routes is refused.
+in process. A blob over the task routes is a file on that disk, a model a training staged in the flow's cache directory
+or the path a ``file://`` import names, which an export copies to a ``file://`` URI; a presigned URL needs the ``/v1``
+routes.
 """
 
+import hashlib
 import io
 import re
 import socket
@@ -62,7 +65,8 @@ from flowfile_core.schemas.input_schema import (
     ReceivedTable,
 )
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
-from shared.compute_protocol import local_capabilities
+from shared.compute_protocol import WorkerLocation, local_capabilities
+from shared.storage_config import storage
 
 PEOPLE = pl.DataFrame(
     {"id": list(range(10)), "name": [f"n{i}" for i in range(10)], "score": [i * 1.5 for i in range(10)]}
@@ -486,15 +490,82 @@ def test_import_uri_holds_a_deferred_plan_in_process(backend, task_routes, tmp_p
     assert path.is_file()
 
 
-def test_a_blob_import_over_the_task_routes_is_unsupported(task_routes, monkeypatch, tmp_path):
+def staged_model(path: Path) -> ResultRef:
+    """A model a training over the task routes staged at ``path``, as it answers it."""
+    return ResultRef("worker", "train-job_0", [], None, "materialised", str(path).encode(), kind="blob")
+
+
+def test_a_file_blob_over_the_task_routes_is_a_reference_to_its_path(backend, task_routes, monkeypatch, tmp_path):
+    source = tmp_path / "a b" / "model.json"
+    source.parent.mkdir()
+    source.write_bytes(b'{"coefficients": [2.0]}')
+    sent = []
+    real_send = requests.Session.send
+
+    def recording_send(self, request, **kwargs):
+        sent.append(request)
+        return real_send(self, request, **kwargs)
+
+    monkeypatch.setattr(requests.Session, "send", recording_send)
+    monkeypatch.setattr(worker_module, "ExternalDfFetcher", lambda *args, **kwargs: sent.append(kwargs))
+
+    ref = backend.import_uri(f"file://{source}", None, None, None, kind="blob")
+
+    assert (ref.backend_id, ref.kind, ref.state, ref.schema, ref.row_count) == (
+        "worker",
+        "blob",
+        "materialised",
+        [],
+        None,
+    )
+    assert ref.location == str(source).encode()
+    assert backend.exists(ref) is True
+    assert sent == []
+
+    backend.release(ref)
+
+    assert source.read_bytes() == b'{"coefficients": [2.0]}'
+
+
+def test_a_presigned_url_needs_the_v1_routes(task_routes, monkeypatch, tmp_path):
     sent = []
     monkeypatch.setattr(requests.Session, "send", lambda self, request, **kwargs: sent.append(request))
     monkeypatch.setattr(worker_module, "ExternalDfFetcher", lambda *args, **kwargs: sent.append(kwargs))
+    model = tmp_path / "model.json"
+    model.write_bytes(b"{}")
+    presigned = "https://bucket.example/model.json?X-Amz-Signature=signed"
+    backend = WorkerBackend(url=WORKER_URL)
 
     with pytest.raises(OperationUnsupported, match="/v1 routes"):
-        WorkerBackend(url=WORKER_URL).import_uri(f"file://{tmp_path}/model.bin", None, None, None, kind="blob")
+        backend.import_uri(presigned, None, None, None, kind="blob")
+    with pytest.raises(OperationUnsupported, match="/v1 routes"):
+        backend.export(staged_model(model), presigned, None)
 
     assert sent == []
+
+
+def test_an_apply_whose_model_file_is_gone_is_missing_before_any_task(task_routes, monkeypatch, tmp_path):
+    """A model whose file is gone, and one held over ``/v1``, which the task routes cannot read."""
+    built = []
+    monkeypatch.setattr(worker_module, "MLApplyFetcher", lambda *args, **kwargs: built.append(kwargs))
+    model = tmp_path / "model.json"
+    model.write_bytes(b"{}")
+    over_v1 = WorkerLocation(kind="blob", path=str(model)).model_dump_json().encode()
+    held_over_v1 = ResultRef("worker", "train-job_0", [], None, "materialised", over_v1, kind="blob")
+
+    for unheld in (staged_model(tmp_path / "gone.json"), held_over_v1):
+        apply = MlApplyPayload(
+            plan=pl.LazyFrame({"x": [10.0]}),
+            model=unheld,
+            output_column="pred",
+            flow_id=1,
+            node_id=6,
+            job_id=new_result_id(),
+        )
+        with pytest.raises(ResultMissing, match="train-job_0"):
+            WorkerBackend(url=WORKER_URL).run_op(OperationKind.ml_apply, op_payload(apply))
+
+    assert built == []
 
 
 SPLIT_NODE_SOURCE = """
@@ -595,12 +666,11 @@ def test_a_custom_node_runs_on_the_worker_from_its_node_source(backend, kept):
     assert backend.plan_for(refs["output-1"]).collect()["id"].to_list() == list(range(7))
 
 
-def test_a_model_trained_on_the_worker_scores_on_the_worker(backend, kept, tmp_path):
-    model_path = tmp_path / "model.json"
+def test_a_model_trained_on_the_worker_scores_on_the_worker(backend, kept, task_routes, tmp_path):
+    """The training stages the model in the flow's cache directory as its own task, which releasing it clears."""
     training = pl.LazyFrame({"x": [1.0, 2.0, 3.0, 4.0], "y": [3.0, 5.0, 7.0, 9.0]})
     train = MlTrainPayload(
         plan=training,
-        staging_path=str(model_path),
         model_type="linear_regression",
         target_column="y",
         feature_columns=["x"],
@@ -609,27 +679,44 @@ def test_a_model_trained_on_the_worker_scores_on_the_worker(backend, kept, tmp_p
         node_id=5,
         job_id=new_result_id(),
     )
-    apply = MlApplyPayload(
-        plan=pl.LazyFrame({"x": [10.0]}),
-        model_path=str(model_path),
-        output_column="pred",
-        flow_id=1,
-        node_id=6,
-        job_id=new_result_id(),
-    )
+    staged = storage.get_flow_cache_directory(1) / "ml_models" / f"{train.job_id}_0.json"
+
+    trained = backend.run_op(OperationKind.ml_train, op_payload(train))
+
+    model = trained.refs["model"]
     try:
-        report = backend.run_op(OperationKind.ml_train, op_payload(train))
+        assert list(trained.refs) == ["model"]
+        assert (model.result_id, model.kind, model.state, model.schema, model.row_count) == (
+            f"{train.job_id}_0",
+            "blob",
+            "materialised",
+            [],
+            None,
+        )
+        assert model.location == str(staged).encode()
+        assert trained.metadata["model_type"] == "linear_regression"
+        assert trained.metadata["size_bytes"] == staged.stat().st_size
+        assert trained.metadata["sha256"] == hashlib.sha256(staged.read_bytes()).hexdigest()
+        assert backend.exists(model) is True
 
-        assert report.refs == {}
-        assert report.metadata["model_type"] == "linear_regression"
-        assert report.metadata["size_bytes"] == model_path.stat().st_size
-        assert len(report.metadata["sha256"]) == 64
-
+        apply = MlApplyPayload(
+            plan=pl.LazyFrame({"x": [10.0]}),
+            model=model,
+            output_column="pred",
+            flow_id=1,
+            node_id=6,
+            job_id=new_result_id(),
+        )
         ref = backend.run_op(OperationKind.ml_apply, op_payload(apply)).refs["result"]
         kept.append(ref)
 
         assert (ref.result_id, ref.state, ref.row_count) == (apply.job_id, "materialised", 1)
         assert backend.plan_for(ref).collect()["pred"].round(6).to_list() == [21.0]
+        target = tmp_path / "exported.json"
+        assert backend.export(model, f"file://{target}", None) == f"file://{target}"
+        assert target.read_bytes() == staged.read_bytes()
     finally:
-        # Clearing the training task deletes the file it names, the model.
-        subops.clear_task_from_worker(train.job_id, worker_url=WORKER_URL)
+        backend.release(model)
+
+    assert not staged.exists()
+    assert backend.exists(model) is False
