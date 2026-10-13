@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from polars.testing import assert_frame_equal
 from starlette.testclient import WebSocketDenialResponse
 
-from flowfile_worker import main, protocol_routes, status_dict, status_dict_lock, streaming
+from flowfile_worker import main, models, protocol_routes, status_dict, status_dict_lock, streaming
 from flowfile_worker.results import result_path
 from shared.compute_protocol import (
     PROTOCOL_VERSION,
@@ -450,6 +450,22 @@ def test_a_submits_job_is_its_result_id(held):
     assert job.status_code == 200
     assert job.json()["status"] == "Completed"
     assert job.json()["results"] is None
+
+
+def test_a_jobs_answer_leaves_out_what_its_child_reported(held):
+    result_id = held()
+    reported = {"columns": _plan().collect_schema(), "row_count": 5, "sample": b"\x00"}
+    with status_dict_lock:
+        status_dict[result_id] = models.Status(
+            background_task_id=result_id, status="Completed", file_ref="", result_type="other", results=reported
+        )
+
+    job = client.get(f"/v1/jobs/{result_id}")
+
+    assert job.status_code == 200
+    assert job.json()["status"] == "Completed"
+    assert job.json()["results"] is None
+    assert status_dict[result_id].results is reported
 
 
 def test_a_failed_submits_job_carries_the_error(held):
