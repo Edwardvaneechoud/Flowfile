@@ -10,10 +10,12 @@ it. The operation tests run the reads, the fuzzy join, the random split and a cu
 
 import io
 import json
+import logging
 import re
 import socket
 import threading
 import time
+import traceback
 import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,7 +34,7 @@ from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
-from flowfile_core.flowfile.execution.backends.worker import WorkerBackend, _flowfile_schema
+from flowfile_core.flowfile.execution.backends.worker import TOKEN_RULE, WorkerBackend, _flowfile_schema
 from flowfile_core.flowfile.execution.errors import (
     ComputeUnavailable,
     PlanRejected,
@@ -485,6 +487,73 @@ def test_capabilities_are_the_workers_answer_with_the_operations_run_op_runs(bac
 
     assert capabilities == fetch_worker_capabilities(settings.WORKER_URL)
     assert capabilities.operations == {kind.value for kind in OperationKind}
+
+
+def test_a_backend_with_its_own_token_signs_every_v1_call_and_the_socket_with_it(
+    running_worker, transport, monkeypatch
+):
+    """The session worker knows only the process's token, so it answers 401 to every call this backend signs."""
+    handshake.ensure_handshake(settings.WORKER_URL)
+    tokens: list[str | None] = []
+    real_send = requests.Session.send
+
+    def recording_send(self, request, **kwargs):
+        tokens.append(request.headers.get("X-Flowfile-Internal"))
+        return real_send(self, request, **kwargs)
+
+    def recording_refusal(uri, **kwargs):
+        tokens.append(kwargs["additional_headers"].get("X-Flowfile-Internal"))
+        raise InvalidStatus(Response(400, "Bad Request", Headers()))
+
+    monkeypatch.setattr(requests.Session, "send", recording_send)
+    monkeypatch.setattr(worker_module, "connect", recording_refusal)
+    team = WorkerBackend(url=settings.WORKER_URL, backend_id="worker:team", token="row-token")
+
+    with pytest.raises(TaskFailed, match="The worker answered 401"):
+        team.capabilities()
+    with pytest.raises(TaskFailed, match="The worker answered 401"):
+        team.submit(people(), [], hints(True), new_result_id(), flow_id=-1, node_id=-1)
+
+    assert tokens == ["row-token"] * 3, "capabilities, the socket's upgrade, then the post"
+
+    tokens.clear()
+    WorkerBackend(url=settings.WORKER_URL).capabilities()
+
+    assert tokens == [get_internal_token()]
+
+
+@SOCKET_ONLY
+@pytest.mark.parametrize(
+    "token", ["row-token\n", "row-token\x00", "row-token\u20ac"], ids=["line-feed", "nul", "beyond-latin-1"]
+)
+def test_a_token_that_is_no_header_value_fails_each_call_typed_and_is_never_quoted(
+    running_worker, token, monkeypatch, caplog
+):
+    """``http.client`` quotes such a token in its error and ``websockets`` logs it, so neither is ever handed it."""
+    dialled = []
+    real_dial = worker_module.connect
+
+    def recording_dial(uri, **kwargs):
+        dialled.append(uri)
+        return real_dial(uri, **kwargs)
+
+    monkeypatch.setattr(worker_module, "connect", recording_dial)
+    team = WorkerBackend(url=settings.WORKER_URL, backend_id="worker:team", token=token)
+    calls = {
+        "capabilities": team.capabilities,
+        "submit": lambda: team.submit(people(), [], hints(True), new_result_id(), flow_id=-1, node_id=-1),
+        "status": lambda: team.status(JobHandle("worker:team", new_result_id())),
+    }
+
+    with caplog.at_level(logging.DEBUG):
+        for name, call in calls.items():
+            with pytest.raises(TaskFailed) as failed:
+                call()
+            assert str(failed.value) == f"The token configured for the worker:team backend cannot be sent: {TOKEN_RULE}"
+            assert "row-token" not in "".join(traceback.format_exception(failed.type, failed.value, failed.tb)), name
+
+    assert dialled == [], "the submit socket is never dialled with it"
+    assert "row-token" not in caplog.text
 
 
 @pytest.fixture

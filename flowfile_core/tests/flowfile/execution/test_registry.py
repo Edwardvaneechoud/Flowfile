@@ -6,8 +6,14 @@ from collections.abc import Callable
 
 import pytest
 
+from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.configs import settings
+from flowfile_core.database.connection import get_db_context
+from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.execution import registry
+from flowfile_core.secret_manager.secret_manager import encrypt_secret
+
+TEAM_URL = "http://team-worker.test:63579"
 
 
 class FakeEntryPoint:
@@ -70,6 +76,20 @@ def fresh_registry(monkeypatch, installed):
     registry.reset()
     yield
     registry.reset()
+
+
+@pytest.fixture
+def configured_row():
+    """A ``compute_backends`` row configuring ``worker:team`` with a token of its own, deleted when the test ends."""
+    with get_db_context() as db:
+        db.add(ConfiguredBackend(id="worker:team", url=TEAM_URL, token=encrypt_secret("row-token", 1)))
+        db.commit()
+    yield "worker:team"
+    with get_db_context() as db:
+        row = db.get(ConfiguredBackend, "worker:team")
+        if row is not None:
+            db.delete(row)
+            db.commit()
 
 
 @pytest.fixture
@@ -334,3 +354,47 @@ def test_the_child_env_makes_core_s_own_backend_the_default_whatever_the_flag(mo
         monkeypatch.setenv(name, value)
 
     assert registry.default_backend_id() == registry.LOCAL_BACKEND_ID
+
+
+def test_a_configured_worker_resolves_with_its_url_and_its_own_token(configured_row):
+    from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+
+    worker = registry.backend("worker:team")
+
+    assert isinstance(worker, WorkerBackend)
+    assert worker.id == "worker:team"
+    assert worker.url == TEAM_URL
+    assert worker.token == "row-token"
+    assert worker.token != get_internal_token()
+    assert registry.backend("worker:team") is worker
+
+
+def test_a_worker_name_no_row_configures_is_unknown():
+    with pytest.raises(LookupError) as raised:
+        registry.backend("worker:nobody")
+
+    assert str(raised.value) == "Unknown compute backend 'worker:nobody'; no compute_backends row has that id"
+
+
+def test_forget_drops_the_instance_so_a_changed_row_is_read_again(configured_row):
+    first = registry.backend("worker:team")
+    with get_db_context() as db:
+        db.get(ConfiguredBackend, "worker:team").url = "http://moved.test:63579"
+        db.commit()
+    assert registry.backend("worker:team") is first
+
+    registry.forget("worker:team")
+    again = registry.backend("worker:team")
+
+    assert again is not first
+    assert again.url == "http://moved.test:63579"
+    assert again.token == "row-token"
+
+
+def test_a_registration_wins_a_configured_name(configured_row):
+    made, factory = counting_factory("worker:team")
+    registry.register_backend("worker:team", factory)
+
+    instance = registry.backend("worker:team")
+
+    assert made == [instance]
