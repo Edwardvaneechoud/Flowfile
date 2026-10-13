@@ -1,4 +1,9 @@
-"""``GET /capabilities``: what this worker process can run, behind the internal token."""
+"""``GET /capabilities`` and ``GET /v1/capabilities``: what this worker process can run, behind the internal token.
+
+Beside the versions and plugins the handshake compares, both answer with what the worker declares: the operation
+kinds it runs, the URI schemes it reads and writes (``file`` only with ``FLOWFILE_WORKER_LOCAL_FILES=1``) and
+``credential_resolution``.
+"""
 
 import importlib.metadata
 import importlib.util
@@ -19,6 +24,17 @@ from shared.compute_protocol import PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER, C
 from tests.conftest import INTERNAL_AUTH_HEADERS
 
 client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
+v1_client = TestClient(main.app, headers={**INTERNAL_AUTH_HEADERS, PROTOCOL_VERSION_HEADER: str(PROTOCOL_VERSION)})
+
+both_routes = pytest.mark.parametrize(
+    ("route_client", "path"), [(client, "/capabilities"), (v1_client, "/v1/capabilities")], ids=["legacy", "v1"]
+)
+
+
+def declared(route_client: TestClient, path: str) -> Capabilities:
+    response = route_client.get(path)
+    assert response.status_code == 200
+    return Capabilities.model_validate(response.json())
 
 
 @pytest.mark.worker
@@ -59,6 +75,71 @@ def test_capabilities_plugin_libs_are_prefix_relative_and_match_plan_bytes():
     plan = pl.LazyFrame({"a": ["x"], "b": ["y"]}).select(graph_solver(pl.col("a"), pl.col("b"))).serialize()
     assert caps.plugin_libs["polars_grouper"].encode() in plan
     assert sys.prefix.encode() not in plan
+
+
+@pytest.mark.worker
+@both_routes
+def test_capabilities_name_the_operations_this_worker_runs(route_client, path):
+    assert declared(route_client, path).operations == {
+        "database_read",
+        "kafka_read",
+        "google_analytics_read",
+        "rest_api_read",
+        "database_write",
+        "cloud_write",
+        "file_write",
+        "file_read",
+        "fuzzy_join",
+        "custom_node",
+        "random_split",
+        "ml_train",
+        "ml_apply",
+        "delta_write",
+        "delta_merge",
+        "delta_scd2",
+        "viz_session",
+    }
+
+
+@pytest.mark.worker
+@both_routes
+def test_every_v1_operation_route_is_among_the_operations(route_client, path):
+    routed = {p.removeprefix("/v1/ops/") for p in main.app.openapi()["paths"] if p.startswith("/v1/ops/")}
+
+    assert len(routed) == 8
+    assert routed <= declared(route_client, path).operations
+
+
+@pytest.mark.worker
+@both_routes
+@pytest.mark.parametrize("value", [None, "0", ""], ids=["unset", "0", "empty"])
+def test_without_local_files_the_worker_reads_and_writes_object_storage_only(monkeypatch, route_client, path, value):
+    if value is None:
+        monkeypatch.delenv("FLOWFILE_WORKER_LOCAL_FILES", raising=False)
+    else:
+        monkeypatch.setenv("FLOWFILE_WORKER_LOCAL_FILES", value)
+
+    caps = declared(route_client, path)
+
+    assert caps.read_schemes == caps.write_schemes == {"s3", "az", "gs"}
+
+
+@pytest.mark.worker
+@both_routes
+def test_local_files_add_the_file_scheme_on_the_next_request(monkeypatch, route_client, path):
+    monkeypatch.delenv("FLOWFILE_WORKER_LOCAL_FILES", raising=False)
+    assert "file" not in declared(route_client, path).read_schemes
+
+    monkeypatch.setenv("FLOWFILE_WORKER_LOCAL_FILES", "1")
+    caps = declared(route_client, path)
+
+    assert caps.read_schemes == caps.write_schemes == {"file", "s3", "az", "gs"}
+
+
+@pytest.mark.worker
+@both_routes
+def test_the_worker_resolves_credentials_with_its_master_key(route_client, path):
+    assert declared(route_client, path).credential_resolution == "master_key"
 
 
 @pytest.mark.worker

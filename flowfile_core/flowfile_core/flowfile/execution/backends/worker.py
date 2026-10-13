@@ -265,15 +265,14 @@ class WorkerBackend:
         }
 
     def capabilities(self) -> Capabilities:
-        """The answer of the worker at ``url`` to ``GET /capabilities``, with the operations ``run_op`` runs there.
+        """The answer of the worker at ``url`` to ``GET /capabilities``, as the worker declares it.
 
-        With the protocol flag on, the answer to ``GET /v1/capabilities``.
+        With the protocol flag on, the answer to ``GET /v1/capabilities``. Its ``operations`` are the kinds the worker
+        runs, the ones ``run_op`` sends it.
         """
         if settings.FLOWFILE_COMPUTE_PROTOCOL:
-            answer = Capabilities.model_validate(self._v1("GET", "/capabilities").json())
-            return answer.model_copy(update={"operations": frozenset(op.value for op in self._operations)})
-        answer = get_worker_capabilities(worker_url=self.url)
-        return answer.model_copy(update={"operations": frozenset(op.value for op in self._operations)})
+            return Capabilities.model_validate(self._v1("GET", "/capabilities").json())
+        return get_worker_capabilities(worker_url=self.url)
 
     def submit(
         self,

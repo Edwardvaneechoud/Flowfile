@@ -16,12 +16,12 @@ from starlette.testclient import WebSocketDenialResponse
 
 from flowfile.web import include_worker_routes
 from flowfile_worker import internal_token
+from flowfile_worker.protocol_routes import worker_capabilities
 from shared.compute_protocol import (
     PROTOCOL_VERSION,
     PROTOCOL_VERSION_HEADER,
     Capabilities,
     SubmitResult,
-    local_capabilities,
 )
 
 TOKEN = "single-file-test-token"
@@ -77,7 +77,7 @@ def test_capabilities_answer_under_worker_behind_the_token_and_the_version(app, 
     response = client.get("/worker/v1/capabilities")
 
     assert response.status_code == 200
-    assert Capabilities.model_validate(response.json()) == local_capabilities()
+    assert Capabilities.model_validate(response.json()) == worker_capabilities()
     assert TestClient(app).get("/worker/v1/capabilities").status_code == 401
     foreign = TestClient(app, headers={TOKEN_HEADER: TOKEN, PROTOCOL_VERSION_HEADER: "2"})
     assert foreign.get("/worker/v1/capabilities").status_code == 426

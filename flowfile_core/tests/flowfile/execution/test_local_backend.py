@@ -105,7 +105,11 @@ def test_the_local_backend_satisfies_the_backend_interface(backend):
     assert isinstance(backend, ComputeBackend)
     assert backend.id == "local"
     assert backend.protocol_version == PROTOCOL_VERSION
-    assert backend.capabilities().model_copy(update={"operations": frozenset()}) == local_capabilities()
+    capabilities = backend.capabilities()
+    undeclared = {"operations": frozenset(), "read_schemes": frozenset(), "write_schemes": frozenset()}
+    assert capabilities.model_copy(update=undeclared) == local_capabilities()
+    assert capabilities.read_schemes == capabilities.write_schemes == {"file", "s3", "az", "gs"}
+    assert capabilities.credential_resolution == "master_key"
 
 
 def test_the_registry_makes_the_local_backend_without_a_registration(fresh_registry):

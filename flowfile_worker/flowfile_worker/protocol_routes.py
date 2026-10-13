@@ -48,6 +48,7 @@ from flowfile_worker.spawner import (
     start_process,
 )
 from shared.compute_protocol import (
+    CLOUD_SCHEMES,
     PROTOCOL_VERSION,
     PROTOCOL_VERSION_HEADER,
     Capabilities,
@@ -66,6 +67,34 @@ SAMPLE_ROWS_CAP = 10_000
 
 SAMPLE_ROWS_IN_PARENT = 1_000
 """The most rows of a materialised result a sample reads in this process; more are read in a child."""
+
+OPERATIONS = frozenset(
+    {
+        "database_read",
+        "kafka_read",
+        "google_analytics_read",
+        "rest_api_read",
+        "file_read",
+        "fuzzy_join",
+        "custom_node",
+        "random_split",
+        "database_write",
+        "cloud_write",
+        "file_write",
+        "ml_train",
+        "ml_apply",
+        "delta_write",
+        "delta_merge",
+        "delta_scd2",
+        "viz_session",
+    }
+)
+"""The operation kinds this worker runs, by ``OperationKind`` value; a kind is named while a route here runs it.
+
+The first eight are the ``POST /v1/ops/<kind>`` routes below. The other nine are served by the task routes in
+``routes.py``: the database, cloud and file writes, ML training and apply, the Delta write, merge and SCD2 write,
+and the visualisation sessions.
+"""
 
 # An operation's job id names its output files, so it holds no path separator.
 JobId = Annotated[str, Query(pattern=r"^[A-Za-z0-9_-]+$")]
@@ -329,10 +358,23 @@ def _read(job_id: str, func: Callable, kwargs: dict[str, Any], flow_id: int, nod
     return OpOutputs(outputs={"result": _read_into(job_id, result_id, path, func, kwargs, flow_id, node_id)})
 
 
+def worker_capabilities() -> Capabilities:
+    """The capabilities of this process with what this worker declares: ``OPERATIONS`` and the schemes it uses.
+
+    It reads and writes object storage, and the local disk too when ``FLOWFILE_WORKER_LOCAL_FILES`` is ``1`` at
+    the time of the call: the desktop shell and the single-host compose set it for a worker on core's host, which
+    sees core's files.
+    """
+    schemes = CLOUD_SCHEMES | {"file"} if os.environ.get("FLOWFILE_WORKER_LOCAL_FILES") == "1" else CLOUD_SCHEMES
+    return local_capabilities().model_copy(
+        update={"operations": OPERATIONS, "read_schemes": schemes, "write_schemes": schemes}
+    )
+
+
 @router.get("/capabilities", response_model=Capabilities)
 async def capabilities() -> Capabilities:
     """What this worker can run, as the legacy ``GET /capabilities`` answers it."""
-    return local_capabilities()
+    return worker_capabilities()
 
 
 def parse_submit_meta(meta: str) -> SubmitMeta:
