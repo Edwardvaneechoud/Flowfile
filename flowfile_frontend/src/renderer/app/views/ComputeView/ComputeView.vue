@@ -10,6 +10,7 @@
     <div class="compute-content">
       <KernelManagerView v-if="activeTab === 'kernels'" />
       <PerformancePanel v-else-if="activeTab === 'performance'" />
+      <ComputeBackendsPanel v-else-if="activeTab === 'backends'" />
       <PrivacyPanel v-else-if="activeTab === 'privacy'" />
       <BackupsPanel v-else-if="activeTab === 'backups'" />
     </div>
@@ -22,6 +23,7 @@ import { useRoute, useRouter } from "vue-router";
 import SettingsTabBar from "../../components/settings/SettingsTabBar.vue";
 import KernelManagerView from "../KernelManagerView/KernelManagerView.vue";
 import PerformancePanel from "./PerformancePanel.vue";
+import ComputeBackendsPanel from "./ComputeBackendsPanel.vue";
 import PrivacyPanel from "./PrivacyPanel.vue";
 import BackupsPanel from "./BackupsPanel.vue";
 import { computeTabs, COMPUTE_TAB_GROUP_LABELS, COMPUTE_TAB_KEYS } from "./computeTabs";
