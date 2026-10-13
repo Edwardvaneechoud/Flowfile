@@ -2,6 +2,8 @@
 
 - Core receives at most ``n`` rows of a result: ``sample`` and the sample ``submit`` returns are the only rows,
   ``count`` answers a number and ``plan_for`` a plan.
+- Only the backend that minted a result reads it: every other backend refuses its reference with ``ForeignRef``, in
+  every method that takes one, and leaves the result where it is.
 - A backend runs the operations its capabilities name and refuses every other kind with ``OperationUnsupported``.
 - Failures are typed: a compute out of reach is ``ComputeUnavailable``, never a missing result; a released result is
   missing; a compute on other versions is refused with ``VersionMismatch`` before it runs anything.
@@ -17,15 +19,30 @@ import pytest
 
 from flowfile_core.flowfile.execution.errors import (
     ComputeUnavailable,
+    ForeignRef,
     OperationUnsupported,
     ResultMissing,
     VersionMismatch,
 )
-from flowfile_core.flowfile.execution.protocol import ComputeBackend, OperationKind, SubmitHints, SubmitResult
+from flowfile_core.flowfile.execution.protocol import (
+    ComputeBackend,
+    OperationKind,
+    ResultRef,
+    SubmitHints,
+    SubmitResult,
+)
 
 PEOPLE = pl.DataFrame({"id": list(range(10)), "name": [f"n{i}" for i in range(10)]})
 
 STATES = pytest.mark.parametrize("must_materialise", [False, True], ids=["deferred", "materialised"])
+
+CALLS_WITH_A_REF: dict[str, Callable[[ComputeBackend, ResultRef], object]] = {
+    "plan_for": lambda backend, ref: backend.plan_for(ref),
+    "sample": lambda backend, ref: backend.sample(ref, 1),
+    "count": lambda backend, ref: backend.count(ref),
+    "exists": lambda backend, ref: backend.exists(ref),
+    "release": lambda backend, ref: backend.release(ref),
+}
 
 
 def hints(*, must_materialise: bool = False, preview_rows: int | None = None) -> SubmitHints:
@@ -81,6 +98,14 @@ def test_count_answers_a_number_and_plan_for_a_plan(backend, submitted, must_mat
 
     assert backend.count(ref) == PEOPLE.height
     assert isinstance(backend.plan_for(ref), pl.LazyFrame)
+
+
+@pytest.mark.parametrize("call", list(CALLS_WITH_A_REF))
+def test_another_backend_refuses_a_result_it_did_not_mint(backend, minted_elsewhere, call):
+    for minter, ref in minted_elsewhere:
+        with pytest.raises(ForeignRef):
+            CALLS_WITH_A_REF[call](backend, ref)
+        assert minter.exists(ref), f"the {minter.id} backend lost its {ref.state} result"
 
 
 def test_capabilities_name_only_operation_kinds(backend):
