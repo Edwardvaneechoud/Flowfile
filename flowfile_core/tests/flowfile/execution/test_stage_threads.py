@@ -15,6 +15,7 @@ from flowfile_core.flowfile.execution.context import ExecutionContext, current_c
 from flowfile_core.flowfile.execution.protocol import ComputeBackend
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+from flowfile_core.flowfile.manage import io_flowfile
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.schemas import get_global_execution_location
@@ -221,6 +222,53 @@ def test_a_subflow_runs_under_the_context_of_the_flow_that_runs_it(counting, rec
     assert {call.thread for call in child_calls} == {parent_calls[2].thread}
     assert parent_calls[2].thread != threading.current_thread().name
     assert parent.get_node(2).get_output("output-0").collect().height == 2
+
+
+@pytest.fixture
+def opened_flows(monkeypatch) -> list[FlowGraph]:
+    """Every graph ``open_flow`` returns from here on; a run_flow node opens its child through it."""
+    opened: list[FlowGraph] = []
+    real_open_flow = io_flowfile.open_flow
+
+    def recording_open_flow(*args, **kwargs):
+        opened.append(real_open_flow(*args, **kwargs))
+        return opened[-1]
+
+    monkeypatch.setattr(io_flowfile, "open_flow", recording_open_flow)
+    return opened
+
+
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+@pytest.mark.parametrize("location", ["remote", "local"])
+def test_a_subflow_child_takes_its_parent_s_location_with_the_protocol_on(
+    monkeypatch, counting, local_subflow, opened_flows, location, flag
+):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    parent = make_graph(9207, execution_location=location)
+    add_manual_input(parent, 1)
+    add_promise(parent, 2, "run_flow")
+    parent.add_run_flow(
+        input_schema.NodeRunFlow(
+            flow_id=parent.flow_id,
+            node_id=2,
+            user_id=1,
+            flow_reference=input_schema.SubflowReference(registration_id=local_subflow["registration_id"]),
+            input_slots=["rows"],
+            output_slots=["result"],
+            parameter_bindings=[],
+            iteration_mode="first_value",
+            append_run_metadata=False,
+        )
+    )
+
+    run_info = parent.run_graph()
+
+    assert run_info.success is True
+    children = [graph for graph in opened_flows if graph._subflow_depth == 1]
+    assert len(children) == 1
+    child_location = location if flag else "local"
+    assert children[0].execution_location == child_location
+    assert children[0].execution_context.backend_id == ("counting" if child_location == "remote" else "local")
 
 
 @pytest.mark.parametrize(
