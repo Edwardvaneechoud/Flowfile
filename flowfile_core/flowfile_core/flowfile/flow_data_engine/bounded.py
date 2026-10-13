@@ -75,22 +75,28 @@ def single_row(backend: ComputeBackend, plan: pl.LazyFrame | pl.DataFrame, empty
     return rows.row(0, named=True)
 
 
-def unique_values(backend: ComputeBackend, plan: pl.LazyFrame | pl.DataFrame, limit: int) -> pl.Series:
+def unique_values(
+    backend: ComputeBackend, plan: pl.LazyFrame | pl.DataFrame, limit: int, column: str | None = None
+) -> pl.Series:
     """The distinct values of ``plan``'s one column in ascending order (null first), at most ``limit`` of them.
 
     The plan computes the distinct values and sorts them (``plan.unique().sort(...)``) where ``backend`` runs it, and
     only the first ``limit`` reach core, in the column's own dtype: a caller that needs them as text casts the series,
-    so they are ordered by the column's values, not by their text.
+    so they are ordered by the column's values, not by their text. A caller that selected the column by name passes it
+    as ``column``; the plan's schema is then not resolved in core, where its leaf may scan a file only ``backend`` can
+    read.
 
     Raises:
         ComputeError: ``backend`` could not compute them.
-        ValueError: ``plan`` has more or fewer columns than one.
+        ValueError: ``plan`` has more or fewer columns than one (checked only without ``column``).
     """
     lazy = plan.lazy()
-    columns = lazy.collect_schema().names()
-    if len(columns) != 1:
-        raise ValueError(f"Distinct values are read from a plan of one column, not {len(columns)}: {columns}")
-    distinct = lazy.unique().sort(columns[0])
+    if column is None:
+        columns = lazy.collect_schema().names()
+        if len(columns) != 1:
+            raise ValueError(f"Distinct values are read from a plan of one column, not {len(columns)}: {columns}")
+        column = columns[0]
+    distinct = lazy.unique().sort(column)
     return pl.from_arrow(head_rows(backend, distinct, limit)).to_series(0)
 
 

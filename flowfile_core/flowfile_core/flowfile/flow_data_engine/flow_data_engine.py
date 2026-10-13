@@ -25,6 +25,7 @@ from pyarrow.parquet import ParquetFile
 
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import NodeLogger
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.flow_data_engine import utils
@@ -219,6 +220,21 @@ def _build_window_expr(w: transform_schemas.WindowFunctionInput, partition_by: l
         return tile.alias(w.new_column_name)
 
     raise ValueError(f"Unsupported window function: {func!r}")
+
+
+def _derived_schema(
+    derive: Callable[..., pl.LazyFrame | pl.DataFrame], *inputs: FlowDataEngine
+) -> list[FlowfileColumn] | None:
+    """The schema of what ``derive`` builds from ``inputs``, resolved over an empty frame of each input's schema.
+
+    A node function passes it as its output engine's ``schema``, so with ``FLOWFILE_COMPUTE_PROTOCOL`` on the output's
+    schema never comes from resolving an input's plan, whose leaf may scan a file only its backend can read. The
+    columns are new ones, never an input's. With the flag off it is ``None`` and the engine resolves its own plan.
+    """
+    if not FLOWFILE_COMPUTE_PROTOCOL:
+        return None
+    resolved = derive(*(pl.LazyFrame(schema=engine.polars_schema()) for engine in inputs)).collect_schema()
+    return convert_stats_to_column_info(FlowDataEngine._create_schema_stats_from_pl_schema(resolved))
 
 
 @dataclass
@@ -902,6 +918,23 @@ class FlowDataEngine:
             self._add_schema_from_schema_stats(schema_stats)
         return self._schema
 
+    def polars_schema(self) -> pl.Schema:
+        """The frame's Polars schema: with ``FLOWFILE_COMPUTE_PROTOCOL`` on the cached one when the engine has it.
+
+        Without a cached schema, or with the flag off, the frame's plan is resolved.
+        """
+        cached = self._cached_polars_schema()
+        return self.data_frame.collect_schema() if cached is None else cached
+
+    def _cached_polars_schema(self) -> pl.Schema | None:
+        """The cached schema as a Polars schema from each column's dtype; ``None`` with the flag off or none cached.
+
+        It reads ``_schema``, not ``schema``, so it never resolves the plan and is safe inside ``_calculate_schema``.
+        """
+        if not FLOWFILE_COMPUTE_PROTOCOL or self._schema is None:
+            return None
+        return pl.Schema([(column.column_name, cast_str_to_polars_type(column.data_type)) for column in self._schema])
+
     @property
     def number_of_fields(self) -> int:
         """The number of columns (fields) in the DataFrame.
@@ -1033,29 +1066,20 @@ class FlowDataEngine:
         """
         aggregations = [c for c in group_by_input.agg_cols if c.agg != "groupby"]
         group_columns = [c for c in group_by_input.agg_cols if c.agg == "groupby"]
-
-        if len(group_columns) == 0:
-            return FlowDataEngine(
-                self.data_frame.select(ac.agg_func(ac.old_name).alias(ac.new_name) for ac in aggregations),
-                calculate_schema_stats=calculate_schema_stats,
-            )
-
         # A renamed group key must not collide with a dropped column.
         group_exprs = [pl.col(c.old_name).alias(c.new_name) for c in group_columns]
 
-        if len(aggregations) == 0:
-            return FlowDataEngine(
-                self.data_frame.select(group_exprs).unique(),
-                calculate_schema_stats=calculate_schema_stats,
-            )
-
-        result_df = self.data_frame.group_by(group_exprs).agg(
-            ac.agg_func(ac.old_name).alias(ac.new_name) for ac in aggregations
-        )
+        def grouped(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+            if len(group_columns) == 0:
+                return frame.select(ac.agg_func(ac.old_name).alias(ac.new_name) for ac in aggregations)
+            if len(aggregations) == 0:
+                return frame.select(group_exprs).unique()
+            return frame.group_by(group_exprs).agg(ac.agg_func(ac.old_name).alias(ac.new_name) for ac in aggregations)
 
         return FlowDataEngine(
-            result_df,
+            grouped(self.data_frame),
             calculate_schema_stats=calculate_schema_stats,
+            schema=_derived_schema(grouped, self),
         )
 
     def do_window_functions(
@@ -1110,7 +1134,7 @@ class FlowDataEngine:
         Returns:
             A new `FlowDataEngine` instance with the updated column types.
         """
-        dtypes = [dtype.base_type() for dtype in self.data_frame.collect_schema().dtypes()]
+        dtypes = [dtype.base_type() for dtype in self.polars_schema().dtypes()]
         idx_mapping = list(
             (transform.old_name, self.cols_idx.get(transform.old_name), get_polars_type(transform.polars_type))
             for transform in transforms
@@ -1132,6 +1156,7 @@ class FlowDataEngine:
             number_of_records=self.number_of_records,
             calculate_schema_stats=calculate_schema,
             streamable=self._streamable,
+            schema=_derived_schema(lambda frame: frame.with_columns(transformations), self),
         )
 
     def save(self, path: str, data_type: str = "parquet") -> Future:
@@ -1440,7 +1465,12 @@ class FlowDataEngine:
         max_unique_vals = 200
         # TODO: a null pivot value ends up as a column name and raises; give it its own bucket instead.
         new_cols_unique = (
-            unique_values(current_context().backend, self.data_frame.select(pivot_input.pivot_column), max_unique_vals)
+            unique_values(
+                current_context().backend,
+                self.data_frame.select(pivot_input.pivot_column),
+                max_unique_vals,
+                column=pivot_input.pivot_column,
+            )
             .cast(pl.String)
             .to_list()
         )
@@ -1513,10 +1543,12 @@ class FlowDataEngine:
         except Exception as e:
             logger.warning(f"Error in filter expression: {e}")
             f = to_expr("False")
-        df = self.data_frame.filter(f)
-        _ = df.collect_schema()  # Collecting schema to ensure the filter is valid
-
-        return FlowDataEngine(df, streamable=self._streamable)
+        # Resolving the output's schema is what checks the predicate.
+        return FlowDataEngine(
+            self.data_frame.filter(f),
+            streamable=self._streamable,
+            schema=_derived_schema(lambda frame: frame.filter(f), self),
+        )
 
     def filter_split(self, predicate: str) -> NamedOutputs:
         """Partition rows by ``predicate`` into ``pass`` and ``fail`` streams.
@@ -1534,11 +1566,18 @@ class FlowDataEngine:
             f = to_expr("False")
         pass_df = self.data_frame.filter(f)
         fail_df = self.data_frame.filter(~f)
-        _ = pass_df.collect_schema()
         return NamedOutputs(
             {
-                "pass": FlowDataEngine(pass_df, streamable=self._streamable),
-                "fail": FlowDataEngine(fail_df, streamable=self._streamable),
+                "pass": FlowDataEngine(
+                    pass_df,
+                    streamable=self._streamable,
+                    schema=_derived_schema(lambda frame: frame.filter(f), self),
+                ),
+                "fail": FlowDataEngine(
+                    fail_df,
+                    streamable=self._streamable,
+                    schema=_derived_schema(lambda frame: frame.filter(~f), self),
+                ),
             }
         )
 
@@ -1996,10 +2035,19 @@ class FlowDataEngine:
             # keys for matching. Stale entries in left_select are therefore irrelevant here.
             left_on = [jm.left_col for jm in join_manager.join_mapping]
             right_on = [jm.right_col for jm in join_manager.join_mapping]
-            right = right_lf.select(list(dict.fromkeys(right_on)))
-            joined_df = left_lf.join(other=right, left_on=left_on, right_on=right_on, how=join_manager.how)
+
+            def filtered(left: pl.LazyFrame, right: pl.LazyFrame) -> pl.LazyFrame:
+                right = right.select(list(dict.fromkeys(right_on)))
+                return left.join(other=right, left_on=left_on, right_on=right_on, how=join_manager.how)
+
             # -1 = unknown (not 0): a 0 here reads as a real "empty result" count.
-            return FlowDataEngine(joined_df, calculate_schema_stats=False, number_of_records=-1, streamable=False)
+            return FlowDataEngine(
+                filtered(left_lf, right_lf),
+                calculate_schema_stats=False,
+                number_of_records=-1,
+                streamable=False,
+                schema=_derived_schema(filtered, self, other),
+            )
 
         if auto_generate_selection:
             join_manager.auto_rename()
@@ -2007,55 +2055,62 @@ class FlowDataEngine:
         if duplicate_problems:
             raise ValueError("Join is not valid: " + "; ".join(duplicate_problems))
 
-        left = left_lf.select(join_manager.left_manager.get_select_cols()).rename(
-            join_manager.left_manager.get_rename_table()
-        )
-        right = right_lf.select(join_manager.right_manager.get_select_cols()).rename(
-            join_manager.right_manager.get_rename_table()
-        )
+        def joined(left_lf: pl.LazyFrame, right_lf: pl.LazyFrame) -> pl.LazyFrame:
+            left = left_lf.select(join_manager.left_manager.get_select_cols()).rename(
+                join_manager.left_manager.get_rename_table()
+            )
+            right = right_lf.select(join_manager.right_manager.get_select_cols()).rename(
+                join_manager.right_manager.get_rename_table()
+            )
 
-        left, right, reverse_join_key_mapping = _handle_duplication_join_keys(left, right, join_manager)
-        left, right = rename_df_table_for_join(left, right, join_manager.get_join_key_renames())
-        if join_manager.how == "right":
-            joined_df = right.join(
-                other=left,
-                left_on=join_manager.right_join_keys,
-                right_on=join_manager.left_join_keys,
-                how="left",
-                suffix="",
-            ).rename(reverse_join_key_mapping)
-        else:
-            joined_df = left.join(
-                other=right,
-                left_on=join_manager.left_join_keys,
-                right_on=join_manager.right_join_keys,
-                how=join_manager.how,
-                suffix="",
-            ).rename(reverse_join_key_mapping)
+            left, right, reverse_join_key_mapping = _handle_duplication_join_keys(left, right, join_manager)
+            left, right = rename_df_table_for_join(left, right, join_manager.get_join_key_renames())
+            if join_manager.how == "right":
+                joined_df = right.join(
+                    other=left,
+                    left_on=join_manager.right_join_keys,
+                    right_on=join_manager.left_join_keys,
+                    how="left",
+                    suffix="",
+                ).rename(reverse_join_key_mapping)
+            else:
+                joined_df = left.join(
+                    other=right,
+                    left_on=join_manager.left_join_keys,
+                    right_on=join_manager.right_join_keys,
+                    how=join_manager.how,
+                    suffix="",
+                ).rename(reverse_join_key_mapping)
 
-        left_cols_to_delete_after = [
-            get_col_name_to_delete(col, "left")
-            for col in join_manager.input.left_select.renames
-            if not col.keep and col.is_available and col.join_key
-        ]
+            left_cols_to_delete_after = [
+                get_col_name_to_delete(col, "left")
+                for col in join_manager.input.left_select.renames
+                if not col.keep and col.is_available and col.join_key
+            ]
 
-        right_cols_to_delete_after = [
-            get_col_name_to_delete(col, "right")
-            for col in join_manager.input.right_select.renames
-            if not col.keep
-            and col.is_available
-            and col.join_key
-            and join_manager.how in ("left", "right", "inner", "cross", "outer")
-        ]
+            right_cols_to_delete_after = [
+                get_col_name_to_delete(col, "right")
+                for col in join_manager.input.right_select.renames
+                if not col.keep
+                and col.is_available
+                and col.join_key
+                and join_manager.how in ("left", "right", "inner", "cross", "outer")
+            ]
 
-        if len(right_cols_to_delete_after + left_cols_to_delete_after) > 0:
-            joined_df = joined_df.drop(left_cols_to_delete_after + right_cols_to_delete_after)
+            if len(right_cols_to_delete_after + left_cols_to_delete_after) > 0:
+                joined_df = joined_df.drop(left_cols_to_delete_after + right_cols_to_delete_after)
 
-        undo_join_key_remapping = get_undo_rename_mapping_join(join_manager)
-        joined_df = joined_df.rename(undo_join_key_remapping)
+            undo_join_key_remapping = get_undo_rename_mapping_join(join_manager)
+            return joined_df.rename(undo_join_key_remapping)
 
         # -1 = unknown (not 0): a 0 here reads as a real "empty result" count.
-        return FlowDataEngine(joined_df, calculate_schema_stats=False, number_of_records=-1, streamable=False)
+        return FlowDataEngine(
+            joined(left_lf, right_lf),
+            calculate_schema_stats=False,
+            number_of_records=-1,
+            streamable=False,
+            schema=_derived_schema(joined, self, other),
+        )
 
     def solve_graph(self, graph_solver_input: transform_schemas.GraphSolverInput) -> FlowDataEngine:
         """Solves a graph problem represented by 'from' and 'to' columns.
@@ -2088,7 +2143,7 @@ class FlowDataEngine:
         Returns:
             A new, lazy `FlowDataEngine` with an unknown row count.
         """
-        lf = explode_hierarchy_frame(self.data_frame.lazy(), settings)
+        lf = explode_hierarchy_frame(self.data_frame.lazy(), settings, schema=self._cached_polars_schema())
         return FlowDataEngine(lf, number_of_records=-1)
 
     def add_new_values(self, values: Iterable, col_name: str = None) -> FlowDataEngine:
@@ -2859,7 +2914,7 @@ class FlowDataEngine:
             ComputeError: The backend could not compute the aggregation.
         """
         lf = self.data_frame.lazy()
-        names = lf.collect_schema().names()
+        names = self.polars_schema().names()
         if not names:
             return 0, {}
 
@@ -2930,7 +2985,10 @@ class FlowDataEngine:
         """
         df = self.data_frame
         lf = df.lazy() if isinstance(df, pl.DataFrame) else df
-        return FlowDataEngine(apply_formula_entries(lf, entries), number_of_records=self.number_of_records)
+        return FlowDataEngine(
+            apply_formula_entries(lf, entries, schema=self._cached_polars_schema()),
+            number_of_records=self.number_of_records,
+        )
 
     def output(
         self, output_fs: input_schema.OutputSettings, flow_id: int, node_id: int | str, execute_remote: bool = False
@@ -3008,7 +3066,7 @@ class FlowDataEngine:
             A new `FlowDataEngine` with the transformed selection.
         """
         new_schema = deepcopy(self.schema)
-        frame_cols = set(self.data_frame.collect_schema().names())
+        frame_cols = set(self.polars_schema().names())
         renames = [r for r in select_inputs.renames if r.is_available]
         if not keep_missing:
             drop_cols = frame_cols - set(r.old_name for r in renames).union(
@@ -3044,11 +3102,15 @@ class FlowDataEngine:
         )
         fl = fl.change_column_types(transforms=[r for r in renames if r.keep])
         ndf = fl.data_frame.rename(rename_dict)
+        output_file = FlowDataEngine(
+            ndf,
+            number_of_records=self.number_of_records,
+            schema=_derived_schema(lambda frame: frame.rename(rename_dict), fl),
+        )
         renames.sort(key=lambda r: 0 if r.position is None else r.position)
         sorted_cols = utils.match_order(
-            ndf.collect_schema().names(), [r.new_name for r in renames] + self.data_frame.collect_schema().names()
+            output_file.columns, [r.new_name for r in renames] + self.polars_schema().names()
         )
-        output_file = FlowDataEngine(ndf, number_of_records=self.number_of_records)
         return output_file.reorganize_order(sorted_cols)
 
     def set_streamable(self, streamable: bool = False):
@@ -3082,7 +3144,7 @@ class FlowDataEngine:
         """Calculates schema statistics on the current execution context's backend (`utils.calculate_schema`)."""
         if self.external_source is not None:
             self.collect_external()
-        return utils.calculate_schema(self.data_frame, current_context().backend)
+        return utils.calculate_schema(self.data_frame, current_context().backend, schema=self._cached_polars_schema())
 
     def calculate_schema(self):
         """Calculates and returns the schema."""

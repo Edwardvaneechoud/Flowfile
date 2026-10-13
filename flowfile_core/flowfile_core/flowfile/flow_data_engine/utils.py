@@ -28,7 +28,9 @@ def get_data_type(vals: Iterable[Any]):
         return "str"
 
 
-def calculate_schema(lf: pl.LazyFrame | pl.DataFrame, backend: ComputeBackend) -> list[dict]:
+def calculate_schema(
+    lf: pl.LazyFrame | pl.DataFrame, backend: ComputeBackend, schema: pl.Schema | None = None
+) -> list[dict]:
     """The schema of ``lf`` with the statistics of each column, as the ``PlType`` fields a ``FlowfileColumn`` reads.
 
     One statistics plan, built here over the first ``SCHEMA_STATS_MAX_ROWS`` rows, yields every column's statistics
@@ -42,13 +44,14 @@ def calculate_schema(lf: pl.LazyFrame | pl.DataFrame, backend: ComputeBackend) -
     deviation for numeric ones, and a minimum and maximum for every column but nested, extension, categorical,
     enum, null, object and unknown ones. A numeric, boolean, nested or null column states its mean, minimum and
     maximum as the text of their float value, any other column as the text of the value; a statistic a column has
-    none of is ``None``. A frame without columns has no statistics.
+    none of is ``None``. A frame without columns has no statistics. The columns and dtypes are ``schema`` when the
+    caller passes ``lf``'s, which then is not resolved in core, else ``lf``'s resolved schema.
 
     Raises:
         ComputeError: ``backend`` could not compute the statistics.
     """
     lazy = lf.lazy()
-    schema = lazy.collect_schema()
+    schema = lazy.collect_schema() if schema is None else schema
     if not schema:
         return []
     exprs = [expr for index, (name, dtype) in enumerate(schema.items()) for expr in _stat_exprs(index, name, dtype)]

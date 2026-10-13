@@ -142,7 +142,7 @@ def _scd2_writer_output(
     if version is not None:
         scan_kwargs["version"] = version
     system_dtypes = _scd2_system_column_dtypes(scd2_config)
-    input_dtypes = dict(df.data_frame.collect_schema())
+    input_dtypes = dict(df.polars_schema())
     output_dtypes = {**input_dtypes, **system_dtypes}
     is_current = scd2_config["is_current_column"]
     table = pl.scan_delta(str(dest_path), **scan_kwargs)
