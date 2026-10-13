@@ -4,6 +4,8 @@
   ``count`` answers a number and ``plan_for`` a plan.
 - Only the backend that minted a result reads it: every other backend refuses its reference with ``ForeignRef``, in
   every method that takes one, and leaves the result where it is.
+- Core learns a result's schema from its reference: every result carries the columns of its rows, core predicts the
+  columns downstream from them, and a stored result whose file core cannot open is still known by its reference.
 - A backend runs the operations its capabilities name and refuses every other kind with ``OperationUnsupported``.
 - Failures are typed: a compute out of reach is ``ComputeUnavailable``, never a missing result; a released result is
   missing; a compute on other versions is refused with ``VersionMismatch`` before it runs anything.
@@ -12,6 +14,7 @@
 import io
 import uuid
 from collections.abc import Callable, Iterator
+from datetime import date, datetime
 
 import polars as pl
 import pyarrow as pa
@@ -31,8 +34,33 @@ from flowfile_core.flowfile.execution.protocol import (
     SubmitHints,
     SubmitResult,
 )
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 
 PEOPLE = pl.DataFrame({"id": list(range(10)), "name": [f"n{i}" for i in range(10)]})
+
+MIXED = pl.DataFrame(
+    {
+        "id": [0, 1, 2],
+        "name": ["a", None, "c"],
+        "score": [0.5, 1.5, 2.5],
+        "active": [True, False, True],
+        "day": [date(2026, 1, 1), date(2026, 1, 2), date(2026, 1, 3)],
+        "seen": [datetime(2026, 1, 1, 12), datetime(2026, 1, 2, 12), datetime(2026, 1, 3, 12)],
+        "tags": [[1, 2], [], [3]],
+        "point": [{"x": 1, "label": "a"}, {"x": 2, "label": "b"}, {"x": 3, "label": None}],
+    },
+    schema_overrides={"seen": pl.Datetime("us", "UTC")},
+)
+
+DOWNSTREAM = [
+    (pl.col("score") * pl.col("id")).alias("weighted"),
+    pl.col("day").dt.offset_by("1mo").alias("next_month"),
+    pl.col("seen").dt.offset_by("1d").alias("next_day"),
+    pl.col("tags").list.first().alias("first_tag"),
+    pl.col("point").struct.field("label"),
+]
+"""Each column's dtype follows from an input column's, so a wrong dtype in the reference shows downstream."""
 
 STATES = pytest.mark.parametrize("must_materialise", [False, True], ids=["deferred", "materialised"])
 
@@ -49,8 +77,8 @@ def hints(*, must_materialise: bool = False, preview_rows: int | None = None) ->
     return SubmitHints(must_materialise=must_materialise, wide=False, fanout=1, preview_rows=preview_rows)
 
 
-def submit_people(backend: ComputeBackend, submit_hints: SubmitHints) -> SubmitResult:
-    plan = PEOPLE.lazy().filter(pl.col("id") >= 0)
+def submit_people(backend: ComputeBackend, submit_hints: SubmitHints, frame: pl.DataFrame = PEOPLE) -> SubmitResult:
+    plan = frame.lazy().filter(pl.col("id") >= 0)
     return backend.submit(plan, [], submit_hints, f"conformance-{uuid.uuid4().hex}", flow_id=-1, node_id=-1)
 
 
@@ -58,13 +86,21 @@ def rows(stream: bytes) -> int:
     return pa.ipc.open_stream(io.BytesIO(stream)).read_all().num_rows
 
 
+def polars_columns(schema: pl.Schema) -> list[tuple[str, str]]:
+    return [(name, str(dtype)) for name, dtype in schema.items()]
+
+
+def flowfile_columns(schema: list[FlowfileColumn]) -> list[tuple[str, str]]:
+    return [(column.column_name, column.data_type) for column in schema]
+
+
 @pytest.fixture
 def submitted(backend: ComputeBackend) -> Iterator[Callable[..., SubmitResult]]:
-    """Submits ``PEOPLE`` to ``backend`` with the given hints; every result is released when the test ends."""
+    """Submits ``PEOPLE``, or ``frame``, to ``backend`` with the given hints; each result is released at the end."""
     refs = []
 
-    def submit(**hint_values) -> SubmitResult:
-        result = submit_people(backend, hints(**hint_values))
+    def submit(frame: pl.DataFrame = PEOPLE, **hint_values) -> SubmitResult:
+        result = submit_people(backend, hints(**hint_values), frame)
         refs.append(result.ref)
         return result
 
@@ -106,6 +142,39 @@ def test_another_backend_refuses_a_result_it_did_not_mint(backend, minted_elsewh
         with pytest.raises(ForeignRef):
             CALLS_WITH_A_REF[call](backend, ref)
         assert minter.exists(ref), f"the {minter.id} backend lost its {ref.state} result"
+
+
+@STATES
+def test_every_result_carries_the_schema_of_its_rows(backend, submitted, must_materialise):
+    ref = submitted(frame=MIXED, must_materialise=must_materialise).ref
+    expected = polars_columns(MIXED.schema)
+
+    assert flowfile_columns(ref.schema) == expected
+    assert polars_columns(pl.read_ipc_stream(backend.sample(ref, 0)).schema) == expected
+
+
+@STATES
+def test_core_predicts_downstream_columns_from_the_reference(submitted, must_materialise):
+    ref = submitted(frame=MIXED, must_materialise=must_materialise).ref
+
+    predicted = FlowDataEngine.create_from_schema(ref.schema).data_frame.select(DOWNSTREAM).collect_schema()
+
+    assert predicted == MIXED.lazy().select(DOWNSTREAM).collect_schema()
+
+
+@STATES
+def test_a_stored_result_is_known_by_its_reference_where_core_cannot_open_it(unreadable, submitted, must_materialise):
+    ref = submitted(frame=MIXED, must_materialise=must_materialise).ref
+    leaf = unreadable.plan_for(ref)
+    if ref.state == "materialised":
+        with pytest.raises(FileNotFoundError):
+            leaf.collect_schema()
+
+    engine = FlowDataEngine(leaf, schema=ref.schema, number_of_records=ref.row_count)
+
+    assert flowfile_columns(engine.schema) == polars_columns(MIXED.schema)
+    assert unreadable.count(ref) == MIXED.height
+    assert rows(unreadable.sample(ref, 2)) == 2
 
 
 def test_capabilities_name_only_operation_kinds(backend):

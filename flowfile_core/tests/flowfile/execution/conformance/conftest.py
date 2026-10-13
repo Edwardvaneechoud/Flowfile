@@ -2,13 +2,16 @@
 
 ``backend`` is each backend as core configures it. ``unreachable`` and ``on_other_versions`` are the same kind of
 backend with its compute out of reach, or on other versions than core; a backend whose compute is core's own process
-can be neither, so those tests skip for it. ``minted_elsewhere`` holds results every other backend minted, for
-``backend`` to refuse.
+can be neither, so those tests skip for it. ``unreadable`` is ``backend`` as core on another host sees it: the leaf of a
+stored result names a file core cannot open (``UnreadableLocation``). ``minted_elsewhere`` holds results every other
+backend minted, for ``backend`` to refuse.
 """
 
 import socket
 import uuid
 from collections.abc import Callable, Iterator
+from pathlib import Path
+from typing import Any
 
 import polars as pl
 import pytest
@@ -46,6 +49,28 @@ def _worker_on_other_polars(monkeypatch: pytest.MonkeyPatch) -> WorkerBackend:
     return WorkerBackend(url=_worker_url())
 
 
+class UnreadableLocation:
+    """A backend whose stored results sit where core cannot open them, as on a compute on another host.
+
+    Every call is the wrapped backend's, except ``plan_for`` of a ``"materialised"`` reference: it runs the backend's
+    own, so a foreign or released reference still raises, then answers ``scan_ipc`` of ``<root>/<result id>.arrow``,
+    which never exists. Reading that leaf in core raises ``FileNotFoundError``; ``sample`` and ``count`` still answer.
+    """
+
+    def __init__(self, backend: ComputeBackend, root: Path) -> None:
+        self._backend = backend
+        self._root = root
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._backend, name)
+
+    def plan_for(self, ref: ResultRef) -> pl.LazyFrame:
+        leaf = self._backend.plan_for(ref)
+        if ref.state != "materialised":
+            return leaf
+        return pl.scan_ipc(self._root / f"{ref.result_id}.arrow")
+
+
 BACKENDS: dict[str, Callable[[], ComputeBackend]] = {"local": LocalBackend, "worker": _session_worker}
 OUT_OF_REACH: dict[str, Callable[[], ComputeBackend]] = {"worker": _worker_out_of_reach}
 ON_OTHER_VERSIONS: dict[str, Callable[[pytest.MonkeyPatch], ComputeBackend]] = {"worker": _worker_on_other_polars}
@@ -59,6 +84,12 @@ def backend_name(request: pytest.FixtureRequest) -> str:
 @pytest.fixture
 def backend(backend_name: str) -> ComputeBackend:
     return BACKENDS[backend_name]()
+
+
+@pytest.fixture
+def unreadable(backend: ComputeBackend, tmp_path: Path) -> UnreadableLocation:
+    """``backend`` itself behind ``UnreadableLocation``, so what a test submits through ``backend`` it reads here."""
+    return UnreadableLocation(backend, tmp_path / "unreadable")
 
 
 @pytest.fixture
