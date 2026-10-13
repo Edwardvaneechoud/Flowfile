@@ -129,10 +129,11 @@ class LocalBackend:
         A deferred plan is the object itself, never serialised or copied, so a chain of deferred results composes
         lazily over the frames the first plan read. With the protocol flag on, a plan whose hints say
         ``must_materialise`` is streamed to ``cache/local/<flow_id>/<result_id>.arrow`` under core's storage
-        directory and held as a scan of that file; a sink that fails leaves no file and nothing held, and its Polars
-        error propagates. The other hints are not read (see the class docstring), nor is ``node_id``. What the id
-        held is dropped first, its file included. ``inputs`` are only validated: a plan over results of this backend
-        already reads them through its own leaves (``plan_for``). The returned sample is always ``None``.
+        directory and held as a scan of that file; a sink that fails leaves no file at that path and nothing held, and
+        its Polars error propagates, while what it wrote beside the path goes with the id's next ``release`` or
+        ``submit``. The other hints are not read (see the class docstring), nor is ``node_id``. What the id held is
+        dropped first, its files included. ``inputs`` are only validated: a plan over results of this backend already
+        reads them through its own leaves (``plan_for``). The returned sample is always ``None``.
 
         Raises:
             ForeignRef: An input was minted by another backend.
@@ -248,15 +249,19 @@ class LocalBackend:
     def _store(self, plan: pl.LazyFrame, *, result_id: str, flow_id: int) -> ResultRef:
         """Stream ``plan`` to its file under core's storage directory and hold a scan of that file.
 
-        The schema is the plan's, never read back from the file; the row count is left to ``count``.
+        The sink writes to a partial file beside the result's, which is moved into place only once the sink has
+        returned, so a sink that fails never leaves a file at the result's path. Polars can still write the partial
+        file after its error is raised; the result's path is registered under the id before the sink runs, so the
+        id's next ``release`` or ``submit`` removes that file, as does the startup sweep of the cache directory. The
+        schema is the plan's, never read back from the file; the row count is left to ``count``.
         """
         schema = _flowfile_schema(plan.collect_schema())
         path = _result_path(flow_id, result_id)
-        try:
-            plan.sink_ipc(path, mkdir=True)
-        except BaseException:
-            path.unlink(missing_ok=True)
-            raise
+        partial = _partial_path(path)
+        with self._lock:
+            self._files[result_id] = path
+        plan.sink_ipc(partial, mkdir=True)
+        partial.replace(path)
         ref = ResultRef(
             backend_id=self.id,
             result_id=result_id,
@@ -267,16 +272,16 @@ class LocalBackend:
         )
         with self._lock:
             self._results[result_id] = pl.scan_ipc(path)
-            self._files[result_id] = path
         return ref
 
     def _drop(self, key: str) -> None:
-        """Forget what the store holds under ``key`` and remove its file when it was stored."""
+        """Forget what the store holds under ``key`` and remove the files a store under it wrote."""
         with self._lock:
             self._results.pop(key, None)
             path = self._files.pop(key, None)
         if path is not None:
             path.unlink(missing_ok=True)
+            _partial_path(path).unlink(missing_ok=True)
 
     def _hold_engine(self, engine: FlowDataEngine) -> ResultRef:
         """Store an engine's frame with the schema and the row count the engine already has."""
@@ -603,6 +608,11 @@ def _store_key(ref: ResultRef) -> str:
 def _result_path(flow_id: int, result_id: str) -> Path:
     """Where a stored result's file is written: ``cache/local/<flow_id>/<result_id>.arrow`` in core's storage."""
     return storage.cache_directory / "local" / str(flow_id) / f"{result_id}.arrow"
+
+
+def _partial_path(path: Path) -> Path:
+    """The file a stored result's sink writes beside ``path`` before the result is moved there."""
+    return path.with_name(f"{path.name}.part")
 
 
 def _flowfile_schema(schema: pl.Schema) -> Schema:
