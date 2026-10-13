@@ -14,12 +14,19 @@ from flowfile_core.catalog.delta_utils import (
     is_delta_table,
 )
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
-from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace
+from flowfile_core.catalog.storage_backend import (
+    _catalog_table_dir_name,
+    _is_cloud_uri,
+    join_catalog_uri,
+    resolve_for_namespace,
+)
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import NodeLogger
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.execution.payloads import (
+    CatalogTableIdentity,
     DeltaMergePayload,
     DeltaScd2Payload,
     DeltaWritePayload,
@@ -44,6 +51,7 @@ from shared.delta_utils import (
     get_delta_partition_columns,
     scd2_parse_iso_utc,
 )
+from shared.storage_config import storage
 
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_graph.graph import FlowGraph
@@ -180,12 +188,13 @@ def _catalog_delta_op(
     settings: input_schema.CatalogWriteSettings,
     *,
     plan: pl.LazyFrame,
-    path: str,
+    path: str | None,
     connection: FullCloudStorageConnectionWorkerInterface | None,
     scd2_config: dict | None,
     run_timestamp: str,
     flow_id: int,
     node_id: int | str,
+    table: CatalogTableIdentity | None = None,
 ) -> tuple[OperationKind, DeltaWritePayload | DeltaMergePayload | DeltaScd2Payload]:
     """The operation a catalog Delta write in *delta_mode* runs, and its payload.
 
@@ -193,11 +202,13 @@ def _catalog_delta_op(
     returns it) and the write's one instant *run_timestamp*; a merge mode is a ``delta_merge`` by the settings'
     merge keys; any other mode is a ``delta_write`` in that mode. Only the last two take change tracking: the
     settings refuse ``track_changes`` with ``"scd2"``. *connection* is the catalog's object-storage connection,
-    encrypted for its owner, and ``None`` for a table on the local filesystem.
+    encrypted for its owner, and ``None`` for a table on the local filesystem. *table* names the table by identity
+    instead of *path*, which is then ``None``.
     """
     common: dict[str, Any] = {
         "plan": plan,
         "path": path,
+        "table": table,
         "partition_by": settings.partition_by,
         "connection": connection,
         "flow_id": flow_id,
@@ -238,6 +249,28 @@ def _catalog_delta_written(report: dict[str, Any]) -> CatalogDeltaWrite:
     if report.get("scd2_metrics"):
         meta["scd2_metrics"] = report["scd2_metrics"]
     return CatalogDeltaWrite(meta, version)
+
+
+def _catalog_table_identity(table_name: str, existing, dest_path: str, base_uri: str | None) -> CatalogTableIdentity:
+    """The catalog table *table_name* stored at *dest_path*, by identity: its directory under the catalog's root.
+
+    *base_uri* is the catalog's object-storage root for a table in object storage and ``None`` for one in the catalog
+    tables directory; *existing* is the table's catalog record, ``None`` for a table the write creates. A destination
+    that is not that root joined with a directory name, as the catalog joins it, has no identity and raises
+    ``ValueError``: a table registered at a location of its own, or one stored under another spelling of the root,
+    would otherwise be written somewhere other than its record says.
+    """
+    dir_name = _catalog_table_dir_name(dest_path)
+    root = base_uri if base_uri is not None else str(storage.catalog_tables_directory)
+    if join_catalog_uri(root, dir_name) != dest_path:
+        raise ValueError(
+            f"Catalog table '{table_name}' is stored at {dest_path}, which is not a table directory under its "
+            f"catalog's storage root {root}; with FLOWFILE_COMPUTE_PROTOCOL on a catalog table is written by its "
+            "identity, which cannot name that location."
+        )
+    return CatalogTableIdentity(
+        table_id=existing.id if existing is not None else None, table_name=dir_name, base_uri=base_uri
+    )
 
 
 _SCD2_DRIFT_FIELDS = (
@@ -685,6 +718,14 @@ def _handle_physical_table_write(
         connection = None
         storage_options = None
 
+    # Read once per write and refused before anything touches the table.
+    by_identity = bool(FLOWFILE_COMPUTE_PROTOCOL)
+    table = (
+        _catalog_table_identity(settings.table_name, existing, dest_path, target.base if dest_is_cloud else None)
+        if by_identity
+        else None
+    )
+
     if settings.track_changes and existing is not None:
         # Enable before the write so this write's own commit lands above the cursor floor.
         _ensure_catalog_cdc_enabled(settings.table_name, namespace_id, dest_path, storage_options)
@@ -697,7 +738,8 @@ def _handle_physical_table_write(
         delta_mode,
         settings,
         plan=df.data_frame,
-        path=dest_path,
+        path=None if by_identity else dest_path,
+        table=table,
         connection=connection,
         scd2_config=scd2_config,
         run_timestamp=run_timestamp,
@@ -707,6 +749,9 @@ def _handle_physical_table_write(
     report = writer_node.run_op(current_context(graph).backend, operation, op_payload(write), job_id=write.job_id)
     written = _catalog_delta_written(report.metadata)
     meta_kwargs = written.meta
+    # By identity the table is where the compute answered; a skipped write answers nothing and stays where it was.
+    if by_identity and report.metadata.get("table_path"):
+        dest_path = report.metadata["table_path"]
 
     def _node_output() -> FlowDataEngine:
         """Only an SCD2 write changes what leaves the node; every other mode passes its input on."""

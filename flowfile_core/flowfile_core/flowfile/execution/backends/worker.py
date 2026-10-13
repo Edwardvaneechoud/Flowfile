@@ -999,30 +999,28 @@ class WorkerBackend:
     def _delta_write(self, payload: OpPayload) -> OpResult:
         write = unpack(payload, DeltaWritePayload)
         kwargs = {
-            "output_path": write.path,
+            **_delta_destination(write),
             "mode": write.mode,
             "partition_by": write.partition_by,
             "enable_cdf": write.enable_cdf,
-            "storage_payload": _storage_payload(write.connection),
         }
         return self._delta_task(write, "write_delta", kwargs)
 
     def _delta_merge(self, payload: OpPayload) -> OpResult:
         write = unpack(payload, DeltaMergePayload)
         kwargs = {
-            "output_path": write.path,
+            **_delta_destination(write),
             "merge_mode": write.merge_mode,
             "merge_keys": write.merge_keys,
             "partition_by": write.partition_by,
             "enable_cdf": write.enable_cdf,
-            "storage_payload": _storage_payload(write.connection),
         }
         return self._delta_task(write, "merge_delta", kwargs)
 
     def _delta_scd2(self, payload: OpPayload) -> OpResult:
         write = unpack(payload, DeltaScd2Payload)
         kwargs = {
-            "output_path": write.path,
+            **_delta_destination(write),
             "run_timestamp": write.run_timestamp,
             "business_keys": write.business_keys,
             "compare_columns": write.compare_columns,
@@ -1033,7 +1031,6 @@ class WorkerBackend:
             "is_current_column": write.is_current_column,
             "partition_by": write.partition_by,
             "partition_on_current": write.partition_on_current,
-            "storage_payload": _storage_payload(write.connection),
         }
         return self._delta_task(write, "scd2_delta", kwargs)
 
@@ -1171,6 +1168,21 @@ def _storage_payload(connection: FullCloudStorageConnectionWorkerInterface | Non
     It carries the connection with its secrets still encrypted; the worker decrypts them.
     """
     return None if connection is None else {"connection": connection.model_dump()}
+
+
+def _delta_destination(write: DeltaWritePayload | DeltaMergePayload | DeltaScd2Payload) -> dict[str, Any]:
+    """Where the worker's Delta operation writes, as its keyword arguments.
+
+    A catalog table named by identity goes as ``table_id``, ``table_name`` and a ``storage_payload`` carrying the
+    catalog's ``base_uri`` beside the connection (``None`` for the worker's catalog tables directory), so no path
+    crosses and the worker resolves the table under its own root; any other write goes as its ``output_path``.
+    """
+    storage_payload = _storage_payload(write.connection)
+    if write.table is None:
+        return {"output_path": write.path, "storage_payload": storage_payload}
+    if write.table.base_uri is not None:
+        storage_payload = {"base_uri": write.table.base_uri, **(storage_payload or {})}
+    return {"table_id": write.table.table_id, "table_name": write.table.table_name, "storage_payload": storage_payload}
 
 
 def _reported(fetcher: BaseFetcher) -> dict[str, Any]:

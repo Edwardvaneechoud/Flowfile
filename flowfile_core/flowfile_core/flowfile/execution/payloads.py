@@ -13,7 +13,9 @@ a backend running in core calls (a cancel check, the node logger, the Kafka cons
 The Delta writes (``DeltaWritePayload``, ``DeltaMergePayload``, ``DeltaScd2Payload``) report what they wrote as the
 ``OpResult.metadata``: ``{"skipped": True}`` when the write changed nothing, else the ``table_path``, the ``schema``
 (``name``/``dtype`` per column), ``row_count``, ``column_count`` and ``size_bytes``. An SCD2 write adds the Delta
-``version`` it settled on, a skip included, and its ``scd2_metrics``. A visualisation session request
+``version`` it settled on, a skip included, and its ``scd2_metrics``. A catalog table's write names the table by its
+``CatalogTableIdentity`` instead of a ``path``, and the compute reports the path or URI it resolved that to as the
+``table_path``. A visualisation session request
 (``VizSessionPayload``) reports the session's answer as the metadata too.
 """
 
@@ -196,25 +198,43 @@ class CloudWritePayload(OperationPayload):
 
 
 @dataclass(frozen=True, kw_only=True)
+class CatalogTableIdentity:
+    """A catalog table by identity, which the compute that writes it resolves to a path or URI of its own.
+
+    Attributes:
+        table_id: The catalog table's id; ``None`` for a table the write creates.
+        table_name: The table's directory under its catalog's storage root, a bare name.
+        base_uri: The catalog's object-storage root; ``None`` for a table in the compute's own catalog tables
+            directory. With the payload's ``connection`` it is the table's storage target.
+    """
+
+    table_id: int | None
+    table_name: str
+    base_uri: str | None
+
+
+@dataclass(frozen=True, kw_only=True)
 class DeltaWritePayload(OperationPayload):
     """Write a plan's rows to a Delta table.
 
     Attributes:
         plan: The rows to write.
-        path: The table's normalised path or URI.
+        path: The table's normalised path or URI; ``None`` when ``table`` names it.
         mode: The Delta write mode (``"overwrite"``, ``"append"`` or ``"error"``).
         partition_by: The partition columns a new table is created with, or ``None``.
         enable_cdf: Turn the table's change data feed on before writing.
         connection: The object-storage connection, its secrets encrypted for the node's user; ``None`` for a table
             on the filesystem the compute writes to.
+        table: The catalog table the write names by identity instead of a ``path``.
     """
 
     plan: pl.LazyFrame
-    path: str
+    path: str | None = None
     mode: str
     partition_by: list[str] | None
     enable_cdf: bool
     connection: FullCloudStorageConnectionWorkerInterface | None
+    table: CatalogTableIdentity | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -223,22 +243,24 @@ class DeltaMergePayload(OperationPayload):
 
     Attributes:
         plan: The rows to merge.
-        path: The table's normalised path or URI.
+        path: The table's normalised path or URI; ``None`` when ``table`` names it.
         merge_mode: ``"upsert"``, ``"update"`` or ``"delete"``.
         merge_keys: The columns that match a row to the table's.
         partition_by: The partition columns a new table is created with, or ``None``.
         enable_cdf: Turn the table's change data feed on before writing.
         connection: The object-storage connection, its secrets encrypted for the node's user; ``None`` for a table
             on the filesystem the compute writes to.
+        table: The catalog table the write names by identity instead of a ``path``.
     """
 
     plan: pl.LazyFrame
-    path: str
+    path: str | None = None
     merge_mode: str
     merge_keys: list[str]
     partition_by: list[str] | None
     enable_cdf: bool
     connection: FullCloudStorageConnectionWorkerInterface | None
+    table: CatalogTableIdentity | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -251,7 +273,7 @@ class DeltaScd2Payload(OperationPayload):
 
     Attributes:
         plan: The rows to apply.
-        path: The table's path or URI.
+        path: The table's path or URI; ``None`` when ``table`` names it.
         business_keys: The columns that identify a row across versions.
         compare_columns: The columns whose change opens a new version.
         full_snapshot: Also end-date the current rows whose key the batch does not carry.
@@ -266,10 +288,11 @@ class DeltaScd2Payload(OperationPayload):
         partition_on_current: Partition a new table by the is-current column.
         connection: The object-storage connection, its secrets encrypted for the user it resolves as (a catalog
             table's owner); ``None`` for a table on the filesystem the compute writes to.
+        table: The catalog table the write names by identity instead of a ``path``.
     """
 
     plan: pl.LazyFrame
-    path: str
+    path: str | None = None
     business_keys: list[str]
     compare_columns: list[str]
     full_snapshot: bool
@@ -281,6 +304,7 @@ class DeltaScd2Payload(OperationPayload):
     partition_by: list[str] | None
     partition_on_current: bool
     connection: FullCloudStorageConnectionWorkerInterface | None
+    table: CatalogTableIdentity | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
