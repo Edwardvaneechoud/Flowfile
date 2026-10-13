@@ -1,4 +1,8 @@
-"""Core's own process as a compute: plans held lazily in an in-process store, operations run in process."""
+"""Core's own process as a compute: plans held lazily in an in-process store, operations run in process.
+
+With the protocol flag on, a plan that must be materialised is streamed to a file under core's storage directory
+instead, and held as a scan of that file.
+"""
 
 import datetime
 import io
@@ -6,6 +10,7 @@ import io
 import polars as pl
 import pytest
 
+from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.errors import (
@@ -35,6 +40,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.schemas import input_schema
 from shared.compute_protocol import PROTOCOL_VERSION, local_capabilities
 from shared.delta_utils import get_delta_size_bytes
+from shared.storage_config import storage
 
 UNSUPPORTED_KINDS = (
     OperationKind.google_analytics_read,
@@ -63,13 +69,14 @@ def submit(backend: LocalBackend, plan: pl.LazyFrame, inputs=(), submit_hints=No
 
 
 def count_collects(monkeypatch) -> list[int]:
-    """One entry per ``LazyFrame.collect`` from here on."""
+    """The height of each frame ``LazyFrame.collect`` returns from here on (a streaming sink's own is empty)."""
     collects = []
     real_collect = pl.LazyFrame.collect
 
     def counting_collect(self, *args, **kwargs):
-        collects.append(1)
-        return real_collect(self, *args, **kwargs)
+        collected = real_collect(self, *args, **kwargs)
+        collects.append(collected.height)
+        return collected
 
     monkeypatch.setattr(pl.LazyFrame, "collect", counting_collect)
     return collects
@@ -174,22 +181,62 @@ def test_must_materialise_does_not_collect(backend, ten_rows, monkeypatch):
 
     ref = submit(backend, ten_rows, submit_hints=hints(must_materialise=True)).ref
 
-    assert collects == []
-    assert ref.state == "deferred"
+    assert sum(collects) == 0
+    assert ref.state == ("materialised" if settings.FLOWFILE_COMPUTE_PROTOCOL else "deferred")
     assert ref.row_count is None
     assert backend.count(ref) == 10
+    backend.release(ref)
 
 
-def test_a_plan_that_fails_to_collect_is_held_and_fails_where_it_is_read(backend):
+def test_a_plan_that_fails_to_collect_is_held_and_fails_where_it_is_read(backend, monkeypatch, tmp_path):
     failing = pl.LazyFrame({"a": ["x"]}).select(pl.col("a").cast(pl.Int64, strict=True))
+    required = hints(must_materialise=True, preview_rows=5)
 
-    ref = submit(backend, failing, submit_hints=hints(must_materialise=True, preview_rows=5)).ref
+    if settings.FLOWFILE_COMPUTE_PROTOCOL:
+        monkeypatch.setattr(storage, "_base_dir", tmp_path)  # Polars writes the failed sink's file after raising
+        with pytest.raises(pl.exceptions.InvalidOperationError):
+            submit(backend, failing, submit_hints=required)
+        assert backend._results == {}
+        assert not (tmp_path / "cache" / "local" / "1" / "node-hash.arrow").exists()
+        return
+
+    ref = submit(backend, failing, submit_hints=required).ref
 
     assert ref.state == "deferred"
     with pytest.raises(pl.exceptions.InvalidOperationError):
         backend.plan_for(ref).collect()
     with pytest.raises(pl.exceptions.InvalidOperationError):
         backend.sample(ref, 5)
+
+
+@pytest.mark.parametrize("next_call", ["release", "submit"])
+def test_a_failed_sink_never_writes_the_result_file_and_what_it_wrote_goes_with_the_ids_next_call(
+    backend, ten_rows, next_call, monkeypatch, tmp_path
+):
+    """Polars can write a failed sink's file after raising; that file sits beside the result's and goes with the id."""
+    if not settings.FLOWFILE_COMPUTE_PROTOCOL:
+        pytest.skip("the local backend stores nothing with the protocol flag off")
+    monkeypatch.setattr(storage, "_base_dir", tmp_path)
+    result_file = tmp_path / "cache" / "local" / "1" / "node-hash.arrow"
+    held = submit(backend, ten_rows, submit_hints=hints(must_materialise=True)).ref
+    sinks = []
+
+    def failing_sink(self, path, **kwargs):
+        sinks.append(path)
+        raise pl.exceptions.ComputeError("the sink failed")
+
+    monkeypatch.setattr(pl.LazyFrame, "sink_ipc", failing_sink)
+    with pytest.raises(pl.exceptions.ComputeError):
+        submit(backend, ten_rows, submit_hints=hints(must_materialise=True))
+    sinks[0].touch()  # the file Polars writes once the error is raised, made here so nothing waits for it
+
+    assert sinks[0].parent == result_file.parent
+    assert not result_file.exists()
+    if next_call == "release":
+        backend.release(held)
+    else:
+        submit(backend, ten_rows)
+    assert not sinks[0].exists()
 
 
 def test_the_plan_is_held_as_the_object_submitted(backend, monkeypatch):

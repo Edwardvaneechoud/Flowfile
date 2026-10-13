@@ -746,16 +746,17 @@ class TestBackendPathByLocation:
         assert graph.get_node(2).results.example_data_path is None
         assert (tmp_path / "out.csv").exists()
 
-    def test_local_mode_holds_every_plan_deferred(self, tmp_path):
+    def test_local_mode_defers_every_plan_and_stores_a_cached_node_only_under_the_flag(self, protocol):
         graph = create_graph_with_sort_and_select(flow_id=47, execution_location="local")
         graph.get_node(3).node_settings.cache_results = True
 
         assert graph.run_graph().success
 
         for node_id in (1, 2, 3):
-            ref = graph.get_node(node_id).results.result_ref
-            assert ref.backend_id == "local"
-            assert ref.state == "deferred"
+            assert graph.get_node(node_id).results.result_ref.backend_id == "local"
+        assert _held_ref_state(graph, 1) == "deferred"
+        assert _held_ref_state(graph, 2) == "deferred"
+        assert _held_ref_state(graph, 3) == ("materialised" if protocol else "deferred")  # cached select
         select_node = graph.get_node(3)
         assert select_node.results.example_data_path is None
         assert select_node.get_table_example(True).data == [{"Name": "Alice"}, {"Name": "Charlie"}]
