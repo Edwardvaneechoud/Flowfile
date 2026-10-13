@@ -2,6 +2,7 @@
 folder); core recomputes the absolute paths on this machine (no Docker)."""
 
 import copy
+from pathlib import PurePosixPath
 
 from flowfile_core.notebook.validate import host_file_paths
 
@@ -48,3 +49,35 @@ def test_paths_stay_as_written_and_absolute_paths_are_recomputed_here(tmp_path):
     assert _paths(out) == [str(csv), r"C:\Users\me\data\orders.csv", str(tmp_path), str(tmp_path), "s3://b/x"]
     assert out["nodes"][0]["setting_input"]["received_file"]["abs_file_path"] == str(csv.resolve())
     assert data == before, "the kernel's data is copied, never changed in place"
+
+
+def test_a_relative_windows_path_named_by_a_linux_kernel_is_not_joined_twice(tmp_path, monkeypatch):
+    """The Linux kernel names ``titanic\\train.csv`` by its whole path (``\\`` is no separator there), so the host
+    must not append that name to the path it already ends in."""
+    monkeypatch.chdir(tmp_path)
+    read, mixed, written = r"titanic\train.csv", r"titanic/sub\train.csv", r"out\x.csv"
+    data = _flow(
+        {
+            "id": 1,
+            "type": "read",
+            "setting_input": {"received_file": {"path": read, "name": PurePosixPath(read).name, "file_type": "csv"}},
+        },
+        {
+            "id": 2,
+            "type": "read",
+            "setting_input": {"received_file": {"path": mixed, "name": PurePosixPath(mixed).name, "file_type": "csv"}},
+        },
+        {
+            "id": 3,
+            "type": "output",
+            "setting_input": {
+                "output_settings": {"name": PurePosixPath(written).name, "directory": written, "file_type": "csv"}
+            },
+        },
+    )
+    out = host_file_paths(data)
+    assert [node["setting_input"].get("received_file", {}).get("abs_file_path") for node in out["nodes"][:2]] == [
+        str((tmp_path / read).resolve()),
+        str((tmp_path / mixed).resolve()),
+    ]
+    assert out["nodes"][2]["setting_input"]["output_settings"]["abs_file_path"] == str((tmp_path / written).resolve())

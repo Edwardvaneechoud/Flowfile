@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
     ExprType = TypeVar("ExprType", bound="Expr")
     ColumnType = "Column"  # Use string literal instead of direct class reference
-    from polars._typing import IntoExprColumn, PolarsTemporalType
+    from polars._typing import FillNullStrategy, IntoExprColumn, PolarsTemporalType
 
 ExprOrStr = Union["Expr", str]  # noqa: UP007
 ExprOrStrList = list[ExprOrStr]
@@ -151,6 +151,13 @@ def _merge_operand_metadata(left: Expr, *operands: Any) -> tuple[list[str], bool
             sources.extend(source for source in operand._function_sources if source not in sources)
             convertable = convertable and operand.convertable_to_code
     return sources, convertable
+
+
+def _operand(value: Any) -> tuple[Any, Any]:
+    """``value`` as written into code (a Polars expression wrapped as an ``Expr``) and as handed to Polars."""
+    if isinstance(value, pl.Expr):
+        value = Expr(value)
+    return value, value.expr if isinstance(value, Expr) else value
 
 
 class StringMethods:
@@ -1111,7 +1118,8 @@ class Expr:
 
     def is_in(self, values):
         refuse_parameter_argument("is_in", (values,), {}, hint="compare with == instead: (ff.col(x) == parameter)")
-        res_expr = self.expr.is_in(values) if self.expr is not None else None
+        values, polars_values = _operand(values)
+        res_expr = self.expr.is_in(polars_values) if self.expr is not None else None
         # is_in is not an aggregation, resets agg_func
         result = self._create_next_expr(
             values,
@@ -1144,23 +1152,37 @@ class Expr:
         new_instance._window_spec = self._window_spec
         return new_instance
 
-    def fill_null(self, value):
+    def fill_null(
+        self,
+        value: Any | Expr | pl.Expr | None = None,
+        strategy: FillNullStrategy | None = None,
+        limit: int | None = None,
+    ) -> Expr:
         refuse_parameter_argument(
             "fill_null", (value,), {}, hint="use ff.when(expr.is_null()).then(parameter).otherwise(expr)"
         )
-        res_expr = self.expr.fill_null(value) if self.expr is not None else None
-        val_ff = _get_ff_repr(value)
+        value, polars_value = _operand(value)
+        options = {name: option for name, option in (("strategy", strategy), ("limit", limit)) if option is not None}
+        res_expr = self.expr.fill_null(polars_value, **options) if self.expr is not None else None
+        val_ff = _get_ff_repr(value) if value is not None and strategy is None else None
         ff = f"coalesce({self._ff_repr}, {val_ff})" if self._ff_repr is not None and val_ff is not None else None
-        result = self._create_next_expr(value, method_name="fill_null", result_expr=res_expr, is_complex=True,
-                                        ff_repr=ff)
+        sources, convertable = _merge_operand_metadata(self, value)
+        args = () if value is None else (value,)
+        result = self._create_next_expr(*args, method_name="fill_null", result_expr=res_expr, is_complex=True,
+                                        convertable_to_code=convertable, ff_repr=ff, **options)
+        result._function_sources = sources
         result.agg_func = None
         return result
 
-    def fill_nan(self, value):
+    def fill_nan(self, value: int | float | Expr | pl.Expr | None) -> Expr:
+        value, polars_value = _operand(value)
         res_expr = None
         if self.expr is not None and hasattr(self.expr, "fill_nan"):
-            res_expr = self.expr.fill_nan(value)
-        result = self._create_next_expr(value, method_name="fill_nan", result_expr=res_expr, is_complex=True)
+            res_expr = self.expr.fill_nan(polars_value)
+        sources, convertable = _merge_operand_metadata(self, value)
+        result = self._create_next_expr(value, method_name="fill_nan", result_expr=res_expr, is_complex=True,
+                                        convertable_to_code=convertable)
+        result._function_sources = sources
         result.agg_func = None
         return result
 
