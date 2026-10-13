@@ -13,6 +13,7 @@ from typing import Literal
 import pytest
 import yaml
 
+from flowfile_core.configs import settings
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
@@ -783,7 +784,8 @@ class TestFlowfileRoundTrip:
 
         assert loaded_flow.flow_settings.description == 'Test description'
         assert loaded_flow.flow_settings.execution_mode == 'Development'
-        assert loaded_flow.flow_settings.execution_location == 'remote'
+        reopened_on = 'auto' if settings.FLOWFILE_COMPUTE_PROTOCOL else 'remote'
+        assert loaded_flow.flow_settings.execution_location == reopened_on
         assert loaded_flow.flow_settings.auto_save == True
         assert loaded_flow.flow_settings.show_detailed_progress == False
 
@@ -901,6 +903,68 @@ class TestFlowfileRoundTrip:
         loaded_output = open_flow(path).get_node(2)
         assert loaded_output.setting_input.output_settings.write_mode == 'overwrite'
         assert loaded_output.setting_input.output_settings.table_settings.sheet_name == 'Results'
+
+
+@pytest.fixture(params=[False, True], ids=['flag-off', 'flag-on'])
+def protocol_flag(request, monkeypatch) -> bool:
+    """The compute protocol flag, off and then on, with a default backend that is not core's own, so a saved
+    ``remote`` is not turned into ``local``."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, 'value', request.param)
+    monkeypatch.setenv('FLOWFILE_COMPUTE_BACKEND', 'worker')
+    return request.param
+
+
+class TestExecutionLocationRoundTrip:
+    """A flow's execution location through save and load: ``auto`` and a backend id are kept, and with the compute
+    protocol on a flow saved ``local`` or ``remote``, or with no location, opens as ``auto``."""
+
+    @pytest.mark.parametrize('suffix', ['.yaml', '.json'])
+    def test_a_flow_on_a_backend_id_reopens_on_that_backend(self, protocol_flag, temp_dir: Path, suffix):
+        flow = create_graph(flow_id=230)
+        flow.execution_location = 'worker:team'
+        path = temp_dir / f'on_team{suffix}'
+        flow.save_flow(str(path))
+
+        loaded_flow = open_flow(path)
+
+        assert loaded_flow.execution_location == 'worker:team'
+        assert loaded_flow.execution_context.backend_id == 'worker:team'
+
+    def test_a_flow_on_auto_reopens_on_auto_with_the_protocol_on(self, protocol_flag, temp_dir: Path):
+        flow = create_graph(flow_id=231)
+        flow.execution_location = 'auto'
+        path = temp_dir / 'on_auto.yaml'
+        flow.save_flow(str(path))
+
+        assert open_flow(path).execution_location == ('auto' if protocol_flag else 'remote')
+
+    @pytest.mark.parametrize(
+        ('saved', 'opened_with_the_flag_off'),
+        [('local', 'local'), ('remote', 'remote'), (None, 'local')],
+        ids=['local', 'remote', 'no-key'],
+    )
+    def test_a_file_saved_local_or_remote_opens_as_auto_with_the_protocol_on(
+        self, protocol_flag, temp_dir: Path, saved, opened_with_the_flag_off
+    ):
+        path = temp_dir / 'saved.yaml'
+        create_graph(flow_id=232).save_flow(str(path))
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        del data['flowfile_settings']['execution_location']
+        if saved is not None:
+            data['flowfile_settings']['execution_location'] = saved
+        with open(path, 'w') as f:
+            yaml.dump(data, f)
+
+        assert open_flow(path).execution_location == ('auto' if protocol_flag else opened_with_the_flag_off)
+
+    def test_a_legacy_pickle_saved_remote_opens_as_auto_with_the_protocol_on(self, protocol_flag):
+        flowfile_path = (
+                find_parent_directory("Flowfile")
+                / "flowfile_core/tests/support_files/flows/read_csv.flowfile"
+        )
+
+        assert open_flow(flowfile_path).execution_location == ('auto' if protocol_flag else 'remote')
 
 
 class TestJsonRoundTrip:
