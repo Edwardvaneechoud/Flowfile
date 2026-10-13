@@ -88,6 +88,22 @@ def _resolve_catalog_target(table_name: str, base_uri: str | None) -> str:
     return str(_validate_catalog_path(table_name))
 
 
+def _delta_target(output_path: str | None, table_name: str | None, storage_payload: dict | None) -> str:
+    """The table a Delta operation writes: *output_path* as given, or the catalog table *table_name*.
+
+    *table_name* is a bare directory name, joined onto the payload's ``base_uri`` for object storage or onto this
+    worker's catalog tables directory, unresolved, as ``/catalog/materialize`` joins a new table's directory. A name
+    with a path separator or ``..`` raises ``ValueError``.
+    """
+    if table_name is None:
+        return output_path
+    base_uri = (storage_payload or {}).get("base_uri")
+    if base_uri is not None:
+        return _resolve_catalog_target(table_name, base_uri)
+    _validate_catalog_path(table_name)
+    return str(storage.catalog_tables_directory / table_name)
+
+
 def _resolve_storage_options(storage_payload: dict | None) -> dict | None:
     """Decrypt object-storage options from a serialized ``CatalogStorageInterface`` (``None`` for local).
 
@@ -724,11 +740,13 @@ def write_delta(
     error_message: Array,
     queue: Queue,
     file_path: str,
-    output_path: str,
+    output_path: str | None = None,
     mode: str = "overwrite",
     partition_by: list[str] | None = None,
     storage_payload: dict | None = None,
     enable_cdf: bool = False,
+    table_name: str | None = None,
+    table_id: int | None = None,
     flowfile_flow_id: int = -1,
     flowfile_node_id: int | str = -1,
 ):
@@ -740,13 +758,17 @@ def write_delta(
 
     *storage_payload* routes the write to object storage (``None`` ⇒ local); *output_path* is
     the fully-resolved destination (local path or ``s3://`` URI). *enable_cdf* is forwarded to the
-    shared writer, which turns the change data feed on for a table this write creates.
+    shared writer, which turns the change data feed on for a table this write creates. A catalog
+    table named by identity comes as *table_name* and *table_id* instead of *output_path*
+    (``_delta_target``), and the reported ``table_path`` is where it was written.
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
-    flowfile_logger.info(f"Starting write_delta operation to: {output_path}")
     try:
         from shared.delta_utils import write_delta as _write_delta
 
+        output_path = _delta_target(output_path, table_name, storage_payload)
+        catalog_table = f" (catalog table {table_id})" if table_id is not None else ""
+        flowfile_logger.info(f"Starting write_delta operation to: {output_path}{catalog_table}")
         storage_options = _resolve_storage_options(storage_payload)
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
         df = collect_lazy_frame(lf)
@@ -794,12 +816,14 @@ def merge_delta(
     error_message: Array,
     queue: Queue,
     file_path: str,
-    output_path: str,
+    output_path: str | None = None,
     merge_mode: str = "upsert",
     merge_keys: list[str] | None = None,
     partition_by: list[str] | None = None,
     storage_payload: dict | None = None,
     enable_cdf: bool = False,
+    table_name: str | None = None,
+    table_id: int | None = None,
     flowfile_flow_id: int = -1,
     flowfile_node_id: int | str = -1,
 ):
@@ -812,13 +836,16 @@ def merge_delta(
 
     *storage_payload* routes the merge to object storage (``None`` ⇒ local-filesystem table).
     *enable_cdf* is forwarded to the shared merger, which turns the change data feed on for a
-    table this merge creates.
+    table this merge creates. A catalog table named by identity comes as *table_name* and
+    *table_id* instead of *output_path* (``_delta_target``).
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
-    flowfile_logger.info(f"Starting merge_delta ({merge_mode}) to: {output_path}")
     try:
         from shared.delta_utils import merge_into_delta
 
+        output_path = _delta_target(output_path, table_name, storage_payload)
+        catalog_table = f" (catalog table {table_id})" if table_id is not None else ""
+        flowfile_logger.info(f"Starting merge_delta ({merge_mode}) to: {output_path}{catalog_table}")
         storage_options = _resolve_storage_options(storage_payload)
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
         df = collect_lazy_frame(lf)
@@ -870,7 +897,7 @@ def scd2_delta(
     error_message: Array,
     queue: Queue,
     file_path: str,
-    output_path: str,
+    output_path: str | None = None,
     run_timestamp: str = "",
     business_keys: list[str] | None = None,
     compare_columns: list[str] | None = None,
@@ -882,6 +909,8 @@ def scd2_delta(
     partition_by: list[str] | None = None,
     partition_on_current: bool = True,
     storage_payload: dict | None = None,
+    table_name: str | None = None,
+    table_id: int | None = None,
     flowfile_flow_id: int = -1,
     flowfile_node_id: int | str = -1,
 ):
@@ -893,13 +922,17 @@ def scd2_delta(
     from it, so it is never re-read here. Nothing to do ⇒ the skip protocol (``{"skipped": True}``),
     which keeps an unchanged re-run from bumping the catalog record.
 
-    *storage_payload* routes the write to object storage (``None`` ⇒ local-filesystem table).
+    *storage_payload* routes the write to object storage (``None`` ⇒ local-filesystem table). A
+    catalog table named by identity comes as *table_name* and *table_id* instead of *output_path*
+    (``_delta_target``).
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
-    flowfile_logger.info(f"Starting scd2_delta to: {output_path}")
     try:
         from shared.delta_utils import scd2_into_delta
 
+        output_path = _delta_target(output_path, table_name, storage_payload)
+        catalog_table = f" (catalog table {table_id})" if table_id is not None else ""
+        flowfile_logger.info(f"Starting scd2_delta to: {output_path}{catalog_table}")
         storage_options = _resolve_storage_options(storage_payload)
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
         df = collect_lazy_frame(lf)
