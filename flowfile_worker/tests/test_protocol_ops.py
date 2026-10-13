@@ -1,10 +1,16 @@
-"""The worker's ``POST /v1/ops/<kind>`` routes: an operation runs in its child and each output it wrote is held."""
+"""The worker's ``POST /v1/ops/<kind>`` routes: an operation runs in its child and each output it wrote is held.
+
+A training holds the model it fitted as a blob, and an apply scores with a blob held here.
+"""
 
 import base64
+import hashlib
+import json
 import os
 import threading
 import time
 import uuid
+from pathlib import Path
 
 import polars as pl
 import pytest
@@ -24,6 +30,7 @@ from shared.compute_protocol import (
     WorkerLocation,
     schema_to_wire,
 )
+from shared.ml.trainers import get_trainer
 from tests.conftest import INTERNAL_AUTH_HEADERS
 from tests.utils import is_docker_available
 
@@ -36,6 +43,9 @@ OTHER_FLOW_ID = 4244
 NODE_ID = 9
 GEOARROW_WKB = pl.Extension("geoarrow.wkb", pl.Binary, "{}")
 PEOPLE = pl.DataFrame({"id": [1, 2, 3, 4, 5], "name": ["a", "b", "c", "d", "e"]})
+TRAINING = pl.LazyFrame({"x1": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], "x2": [3.0, 1.0, 4.0, 1.0, 5.0, 9.0]})
+TRAINING = TRAINING.with_columns(y=2 * pl.col("x1") + 3 * pl.col("x2") + 1)
+SCORING = pl.LazyFrame({"x1": [10.0, 0.0, 1.5], "x2": [20.0, 1.0, -2.0]})
 
 SPLIT_NODE_SOURCE = """
 import polars as pl
@@ -119,6 +129,30 @@ def _split_body(plan: pl.LazyFrame, splits: list[tuple[str, float]], flow_id: in
         "flowfile_flow_id": flow_id,
         "flowfile_node_id": NODE_ID,
         "splits": [list(split) for split in splits],
+    }
+
+
+def _train_body(target: str = "y", flow_id: int = FLOW_ID, **extra) -> dict:
+    return {
+        "operation": base64.b64encode(TRAINING.serialize()).decode("ascii"),
+        "flowfile_flow_id": flow_id,
+        "flowfile_node_id": NODE_ID,
+        "model_type": "linear_regression",
+        "target_column": target,
+        "feature_columns": ["x1", "x2"],
+        "params": {"add_bias": True},
+        **extra,
+    }
+
+
+def _apply_body(model: str, **extra) -> dict:
+    return {
+        "operation": base64.b64encode(SCORING.serialize()).decode("ascii"),
+        "flowfile_flow_id": FLOW_ID,
+        "flowfile_node_id": NODE_ID,
+        "model": model,
+        "output_column": "pred",
+        **extra,
     }
 
 
@@ -377,3 +411,120 @@ def test_a_body_missing_a_required_field_is_422(jobs):
 
     assert response.status_code == 422
     assert job_id not in status_dict
+
+
+def test_a_training_holds_the_model_as_a_blob_and_reports_its_digest(jobs, tmp_path):
+    job_id = jobs()
+
+    answer = _answer(_post_op("ml_train", job_id, _train_body()))
+
+    assert list(answer.outputs) == ["model"]
+    model = answer.outputs["model"]
+    assert (model.result_id, model.kind, model.state, model.columns, model.row_count) == (
+        f"{job_id}_0",
+        "blob",
+        "materialised",
+        [],
+        None,
+    )
+    location = _location(model)
+    path = result_path(FLOW_ID, model.result_id).with_suffix(".blob")
+    assert (location.kind, location.path) == ("blob", str(path))
+    written = path.read_bytes()
+    assert json.loads(written)["model_type"] == "linear_regression"
+    assert answer.metadata == {
+        "sha256": hashlib.sha256(written).hexdigest(),
+        "size_bytes": len(written),
+        "model_type": "linear_regression",
+    }
+    assert client.head(f"/v1/results/{model.result_id}").status_code == 200
+    copy = tmp_path / "model.json"
+    exported = client.post(f"/v1/results/{model.result_id}/export", json={"uri": f"file://{copy}"})
+    assert exported.status_code == 200, exported.text
+    assert copy.read_bytes() == written
+    job = client.get(f"/v1/jobs/{job_id}").json()
+    assert (job["status"], job["results"]) == ("Completed", None)
+
+
+def test_an_apply_scores_with_a_held_model_and_holds_the_scored_rows(jobs):
+    model = _answer(_post_op("ml_train", jobs(), _train_body())).outputs["model"]
+    job_id = jobs()
+
+    answer = _answer(_post_op("ml_apply", job_id, _apply_body(model.result_id)))
+
+    assert list(answer.outputs) == ["result"]
+    assert answer.metadata == {}
+    ref = answer.outputs["result"]
+    assert (ref.result_id, ref.kind, ref.state, ref.row_count) == (f"{job_id}_0", "table", "materialised", 3)
+    assert ref.columns == schema_to_wire(pl.Schema({"x1": pl.Float64, "x2": pl.Float64, "pred": pl.Float64}))
+    fitted = json.loads(Path(_location(model).path).read_bytes())
+    assert_frame_equal(_rows(ref), get_trainer("linear_regression").apply(SCORING, fitted, "pred").collect())
+    assert client.head(f"/v1/results/{model.result_id}").status_code == 200
+
+
+def test_an_apply_whose_model_is_not_held_is_404(jobs):
+    released = _answer(_post_op("ml_train", jobs(), _train_body())).outputs["model"]
+    assert client.delete(f"/v1/results/{released.result_id}").status_code == 204
+
+    for model in (uuid.uuid4().hex, released.result_id):
+        job_id = jobs()
+        response = _post_op("ml_apply", job_id, _apply_body(model))
+
+        assert response.status_code == 404
+        assert model in response.json()["detail"]
+        assert client.head(f"/v1/results/{job_id}_0").status_code == 404
+        assert job_id not in status_dict
+
+
+def test_an_apply_whose_model_is_a_table_is_422(jobs):
+    split = _answer(_post_op("random_split", jobs(), _split_body(SCORING, [("all", 100.0)]))).outputs["all"]
+    job_id = jobs()
+
+    response = _post_op("ml_apply", job_id, _apply_body(split.result_id))
+
+    assert response.status_code == 422
+    assert split.result_id in response.json()["detail"]
+    assert client.head(f"/v1/results/{job_id}_0").status_code == 404
+    assert job_id not in status_dict
+    assert client.head(f"/v1/results/{split.result_id}").status_code == 200
+
+
+def test_a_training_that_fails_names_the_error_and_holds_no_model(jobs):
+    job_id = jobs()
+
+    response = _post_op("ml_train", job_id, _train_body(target="missing"))
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert (detail["status"], detail["error_kind"]) == ("Error", "task")
+    assert detail["error_message"].startswith('ColumnNotFoundError: unable to find column "missing"')
+    assert not result_path(FLOW_ID, f"{job_id}_0").with_suffix(".blob").exists()
+    assert client.head(f"/v1/results/{job_id}_0").status_code == 404
+    assert client.get(f"/v1/jobs/{job_id}").json()["status"] == "Error"
+
+
+def test_a_rerun_of_a_training_replaces_its_model(jobs):
+    job_id = jobs()
+    first = _answer(_post_op("ml_train", job_id, _train_body())).outputs["model"]
+    first_path = _location(first).path
+
+    again = _answer(_post_op("ml_train", job_id, _train_body(flow_id=OTHER_FLOW_ID))).outputs["model"]
+
+    assert again.result_id == first.result_id == f"{job_id}_0"
+    assert _location(again).path == str(result_path(OTHER_FLOW_ID, again.result_id).with_suffix(".blob"))
+    assert not os.path.exists(first_path)
+    assert os.path.isfile(_location(again).path)
+
+
+def test_an_ml_body_that_names_a_path_is_422(jobs, tmp_path):
+    model = _answer(_post_op("ml_train", jobs(), _train_body())).outputs["model"]
+    job_id = jobs()
+
+    train = _post_op("ml_train", job_id, _train_body(staging_path=str(tmp_path / "model.json")))
+    apply = _post_op("ml_apply", job_id, _apply_body(model.result_id, model_path=str(tmp_path / "model.json")))
+
+    assert (train.status_code, apply.status_code) == (422, 422)
+    assert "staging_path" in train.text
+    assert "model_path" in apply.text
+    assert job_id not in status_dict
+    assert not (tmp_path / "model.json").exists()

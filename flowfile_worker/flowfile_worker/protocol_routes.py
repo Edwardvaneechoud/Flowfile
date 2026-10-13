@@ -6,11 +6,13 @@ runs the plan in a spawned ``funcs.submit_result`` child and keeps the result in
 written to a file or deferred as ``_materialise`` decides; the other routes read, count, probe and
 release what it holds. A submit's job id is its result id, and every submit first drops what has
 been held for ``CACHE_EXPIRATION_TIME``. ``run_submit`` is the submit itself, which ``streaming.py``'s
-``/v1/ws/submit`` runs too. ``POST /v1/ops/<kind>`` runs a read, a fuzzy join, a random split or a
-custom node in the child its task route spawns, as the job the request's ``job_id`` names, and holds
-each output that child wrote as the materialised result ``<job_id>_<i>``, which the same routes read,
-count, probe and release. ``POST /v1/results/{id}/export`` writes a held result to a URI as parquet in
-a ``funcs.export_result`` child; ``POST /v1/results/{id}/import`` holds a scan of a URI as a deferred
+``/v1/ws/submit`` runs too. ``POST /v1/ops/<kind>`` runs a read, a fuzzy join, a random split, a
+custom node, a model's training or its apply in the child its task route spawns, as the job the
+request's ``job_id`` names, and holds each output that child wrote as the materialised result
+``<job_id>_<i>``, which the same routes read, count, probe and release. A training's output is the
+model it fitted, held as a blob; an apply scores with a model held here, named by its result id.
+``POST /v1/results/{id}/export`` writes a held result to a URI as parquet in a
+``funcs.export_result`` child; ``POST /v1/results/{id}/import`` holds a scan of a URI as a deferred
 result, with the columns and row count core sent and nothing read. A credential crosses either as a
 stored connection's id and user, resolved where the plan runs. A blob, a held file of bytes that is not
 rows, takes the same two routes: its export copies the file to a ``file://`` URI or ``PUT``s it to a
@@ -48,10 +50,12 @@ from flowfile_worker.external_sources.sql_source.models import DatabaseReadSetti
 from flowfile_worker.results import ResultRecord, result_path, results
 from flowfile_worker.spawner import (
     process_manager,
+    start_apply_model_process,
     start_custom_node_process,
     start_fuzzy_process,
     start_generic_process,
     start_process,
+    start_train_model_process,
 )
 from shared.cloud_credential_provider import CredentialRefProvider
 from shared.compute_protocol import (
@@ -101,9 +105,9 @@ OPERATIONS = frozenset(
 )
 """The operation kinds this worker runs, by ``OperationKind`` value; a kind is named while a route here runs it.
 
-The first eight are the ``POST /v1/ops/<kind>`` routes below. The other nine are served by the task routes in
-``routes.py``: the database, cloud and file writes, ML training and apply, the Delta write, merge and SCD2 write,
-and the visualisation sessions.
+Ten are the ``POST /v1/ops/<kind>`` routes below: the reads, the fuzzy join, the custom node, the random split, and
+ML training and apply. The other seven are served by the task routes in ``routes.py``: the database, cloud and file
+writes, the Delta write, merge and SCD2 write, and the visualisation sessions.
 """
 
 # An operation's job id names its output files, so it holds no path separator.
@@ -155,7 +159,8 @@ class OpOutputs(BaseModel):
     """The answer of an operation: the reference of each output, by name, and what it reports besides rows.
 
     ``metadata`` is empty except for a Kafka read that consumed messages, which reports the ``KafkaReadResult`` its
-    child wrote: the offsets core commits once the flow completes.
+    child wrote: the offsets core commits once the flow completes, and a training, which reports the model it fitted:
+    its ``sha256``, ``size_bytes`` and ``model_type``.
     """
 
     outputs: dict[str, ResultRef]
@@ -171,6 +176,34 @@ class RandomSplitInput(models.PolarsOperation):
     model_config = ConfigDict(extra="forbid")
 
     splits: list[tuple[str, float]]
+
+
+class MlTrainInput(models.PolarsOperation):
+    """The body of a training: the rows to fit on, the model type, the target and feature columns, and the parameters.
+
+    An unknown field is refused rather than dropped, because core builds this body by hand; a path to write the model
+    to is one, as the model is held here.
+    """
+
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+    model_type: str
+    target_column: str
+    feature_columns: list[str]
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class MlApplyInput(models.PolarsOperation):
+    """The body of an apply: the rows to score, the model as the result id of a blob held here, and the column to add.
+
+    An unknown field is refused rather than dropped, because core builds this body by hand; a path to read the model
+    from is one, as the model is held here.
+    """
+
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+    model: str
+    output_column: str
 
 
 class CredentialRefBody(BaseModel):
@@ -810,3 +843,79 @@ def random_split(body: RandomSplitInput, job_id: JobId) -> OpOutputs:
         )
     }
     return OpOutputs(outputs=refs)
+
+
+@router.post("/ops/ml_train", response_model=OpOutputs)
+def ml_train(body: MlTrainInput, job_id: JobId) -> OpOutputs:
+    """Fit a model to the body's rows in a child as job *job_id* and hold it as the blob ``model``.
+
+    The child writes the model to ``result_path`` of ``<job_id>_0`` with a ``.blob`` suffix, held as a blob record of
+    that file; ``metadata`` is what the child reported of it, its ``sha256``, ``size_bytes`` and ``model_type``.
+    """
+    flow_id, node_id = body.flowfile_flow_id, body.flowfile_node_id
+    (model_id,) = _op_outputs(job_id, 1)
+    path = str(Path(_output_file(flow_id, model_id)).with_suffix(".blob"))
+    reported, _ = _run_op(
+        job_id,
+        lambda: start_train_model_process(
+            polars_serializable_object=body.polars_serializable_object(),
+            task_id=job_id,
+            file_ref=path,
+            model_type=body.model_type,
+            target_column=body.target_column,
+            feature_columns=body.feature_columns,
+            params=body.params,
+            staging_path=path,
+            flowfile_flow_id=flow_id,
+            flowfile_node_id=node_id,
+        ),
+        [path],
+    )
+    record = ResultRecord(
+        result_id=model_id,
+        state="materialised",
+        columns=[],
+        row_count=None,
+        flow_id=flow_id,
+        node_id=node_id,
+        path=path,
+        kind="blob",
+    )
+    results.put(record)
+    results.mark_ended(model_id)
+    return OpOutputs(outputs={"model": record.ref()}, metadata=reported)
+
+
+@router.post("/ops/ml_apply", response_model=OpOutputs)
+def ml_apply(body: MlApplyInput, job_id: JobId) -> OpOutputs:
+    """Score the body's rows with a held model in a child as job *job_id* and hold the scored rows as ``result``.
+
+    The model is the blob held under ``body.model``: one that is not held is 404, and a held result that is not a
+    blob 422, before anything runs. The child reports no count, so the rows are counted here from the file's metadata.
+    """
+    flow_id, node_id = body.flowfile_flow_id, body.flowfile_node_id
+    (result_id,) = _op_outputs(job_id, 1)
+    model = _held(body.model)
+    if model is None:
+        raise _not_held(body.model)
+    if model.kind != "blob":
+        raise HTTPException(status_code=422, detail=f"Result {body.model} holds rows, not a model")
+    path = _output_file(flow_id, result_id)
+    _run_op(
+        job_id,
+        lambda: start_apply_model_process(
+            polars_serializable_object=body.polars_serializable_object(),
+            task_id=job_id,
+            file_ref=path,
+            model_path=model.path,
+            output_column=body.output_column,
+            flowfile_flow_id=flow_id,
+            flowfile_node_id=node_id,
+        ),
+        [path],
+    )
+    rows = pl.scan_ipc(path)
+    row_count = rows.select(pl.len()).collect().item()
+    return OpOutputs(
+        outputs={"result": _hold_output(result_id, path, rows.collect_schema(), row_count, flow_id, node_id)}
+    )
