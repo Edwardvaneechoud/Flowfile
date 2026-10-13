@@ -327,7 +327,7 @@ class MlBuildersMixin(GraphMixinBase):
             worker = registry.backend(registry.WORKER_BACKEND_ID)
             ref = node.run_op(worker, OperationKind.ml_apply, op_payload(apply), job_id=apply.job_id).refs["result"]
             self.flow_logger.info(f"Apply Model: scored using {origin_label} -> column '{settings.output_column}'")
-            return FlowDataEngine(worker.plan_for(ref), number_of_records=ref.row_count)
+            return FlowDataEngine(worker.plan_for(ref), schema=ref.schema, number_of_records=ref.row_count)
 
         def schema_callback():
             input_node: FlowNode = self.get_node(apply_settings.node_id).node_inputs.main_inputs[0]

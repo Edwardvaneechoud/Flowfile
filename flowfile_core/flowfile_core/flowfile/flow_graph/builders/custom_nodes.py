@@ -358,7 +358,8 @@ class CustomNodeBuildersMixin(GraphMixinBase):
             )
             refs = node.run_op(backend, OperationKind.custom_node, op_payload(job), job_id=job.job_id).refs
             engines = {
-                key: FlowDataEngine(backend.plan_for(ref), number_of_records=ref.row_count) for key, ref in refs.items()
+                key: FlowDataEngine(backend.plan_for(ref), schema=ref.schema, number_of_records=ref.row_count)
+                for key, ref in refs.items()
             }
             for ref in refs.values():
                 if ref.state == "deferred":
