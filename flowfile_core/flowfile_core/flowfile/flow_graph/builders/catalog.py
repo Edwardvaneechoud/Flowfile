@@ -10,7 +10,7 @@ from flowfile_core.catalog.delta_utils import (
     is_legacy_parquet,
 )
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
-from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace
+from flowfile_core.catalog.storage_backend import CatalogStorageTarget, _is_cloud_uri, resolve_for_namespace
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.catalog_cdc import (
     make_cdc_commit_callback,
@@ -18,7 +18,6 @@ from flowfile_core.flowfile.catalog_cdc import (
     resolve_change_window,
     resolve_consumer_key,
 )
-from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
@@ -83,15 +82,15 @@ class CatalogBuildersMixin(GraphMixinBase):
         table_namespaces = resolved.table_namespaces
 
         # Memoized per namespace: one SQL query can join tables from catalogs with different storage.
-        storage_options_by_name: dict[str, dict | None] = {}
-        _opts_by_namespace: dict[int | None, dict | None] = {}
+        targets_by_name: dict[str, CatalogStorageTarget] = {}
+        _targets_by_namespace: dict[int | None, CatalogStorageTarget] = {}
         for _name, _path in table_paths.items():
             if not _is_cloud_uri(_path):
                 continue
             _ns = table_namespaces.get(_name)
-            if _ns not in _opts_by_namespace:
-                _opts_by_namespace[_ns] = resolve_for_namespace(_ns).storage_options or None
-            storage_options_by_name[_name] = _opts_by_namespace[_ns]
+            if _ns not in _targets_by_namespace:
+                _targets_by_namespace[_ns] = resolve_for_namespace(_ns)
+            targets_by_name[_name] = _targets_by_namespace[_ns]
 
         def _func() -> FlowDataEngine:
             if not table_paths and not virtual_tables:
@@ -99,9 +98,7 @@ class CatalogBuildersMixin(GraphMixinBase):
             ctx = pl.SQLContext()
             for name, path in table_paths.items():
                 if _is_cloud_uri(path):
-                    scan_kwargs = CloudStorageReader.get_secure_scan_kwargs(
-                        storage_options_by_name.get(name), node_catalog_reader.user_id
-                    )
+                    scan_kwargs = targets_by_name[name].scan_kwargs(node_catalog_reader.user_id)
                     ctx.register(name, pl.scan_delta(path, **scan_kwargs))
                 else:
                     ctx.register(name, pl.scan_delta(path))
@@ -171,11 +168,13 @@ class CatalogBuildersMixin(GraphMixinBase):
         _authorized = info.authorized
         _user_id = node_catalog_reader.user_id
 
-        # Resolve cloud storage options once at wiring time; local tables don't touch the DB.
+        # Resolve cloud storage once at wiring time; local tables don't touch the DB.
+        _reader_target = None
         _reader_storage_options = None
         if resolved_path and _is_cloud_uri(resolved_path):
             _reader_namespace_id = info.namespace_id or node_catalog_reader.catalog_namespace_id
-            _reader_storage_options = resolve_for_namespace(_reader_namespace_id).storage_options or None
+            _reader_target = resolve_for_namespace(_reader_namespace_id)
+            _reader_storage_options = _reader_target.storage_options or None
 
         _scd2_filter = _scd2_row_filter(
             info.scd2_config,
@@ -254,7 +253,7 @@ class CatalogBuildersMixin(GraphMixinBase):
                 table_path,
                 starting_version,
                 head,
-                **CloudStorageReader.get_secure_scan_kwargs(_reader_storage_options, _user_id),
+                **(_reader_target.scan_kwargs(_user_id) if _reader_target is not None else {}),
                 include_preimage=node_catalog_reader.cdc_include_preimage,
             )
             if cursor_consumer is not None:
@@ -312,7 +311,7 @@ class CatalogBuildersMixin(GraphMixinBase):
                 scan_kwargs["version"] = delta_version
             if _is_cloud_uri(resolved_path):
                 # Cloud catalog table: scan directly (stays lazy ⇒ no collect in core).
-                scan_kwargs.update(CloudStorageReader.get_secure_scan_kwargs(_reader_storage_options, _user_id))
+                scan_kwargs.update(_reader_target.scan_kwargs(_user_id))
                 return _apply_scd2_filter(pl.scan_delta(resolved_path, **scan_kwargs))
             if is_delta_table(resolved_path):
                 return _apply_scd2_filter(pl.scan_delta(resolved_path, **scan_kwargs))
