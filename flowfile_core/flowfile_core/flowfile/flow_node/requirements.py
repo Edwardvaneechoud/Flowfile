@@ -194,7 +194,7 @@ def _database(
     *,
     write: bool,
 ) -> NodeRequirements:
-    """A stored connection is named by reference; an inline file-based database (SQLite, DuckDB) is a local file."""
+    """Any mode but inline names a stored connection; an inline file-based database (SQLite, DuckDB) is a local file."""
     connection = database.database_connection
     file_based = (
         database.connection_mode == "inline"
@@ -202,7 +202,7 @@ def _database(
         and get_dialect_or_generic(connection.database_type).file_based
     )
     schemes = _FILE if file_based else frozenset()
-    by_reference = database.connection_mode == "reference"
+    by_reference = database.connection_mode != "inline"
     return NodeRequirements(
         operation=operation,
         read_schemes=frozenset() if write else schemes,

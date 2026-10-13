@@ -208,9 +208,9 @@ def test_a_virtual_catalog_write_needs_nothing_from_its_compute():
     assert _requirements("catalog_writer", settings, catalog_target=CLOUD_CATALOG) == NOTHING
 
 
-def _database_settings(mode: str, database_type: str = "postgresql", **fields) -> dict:
-    if mode == "reference":
-        return {"connection_mode": "reference", "database_connection_name": "warehouse", **fields}
+def _database_settings(mode: str | None, database_type: str = "postgresql", **fields) -> dict:
+    if mode != "inline":
+        return {"connection_mode": mode, "database_connection_name": "warehouse", **fields}
     connection = input_schema.DatabaseConnection(database_type=database_type, database="/data/local.db")
     return {"connection_mode": "inline", "database_connection": connection, **fields}
 
@@ -219,6 +219,7 @@ def _database_settings(mode: str, database_type: str = "postgresql", **fields) -
     ("mode", "database_type", "schemes", "credentials"),
     [
         ("reference", "postgresql", frozenset(), frozenset({"warehouse"})),
+        (None, "postgresql", frozenset(), frozenset({"warehouse"})),
         ("inline", "postgresql", frozenset(), frozenset()),
         ("inline", "sqlite", frozenset({"file"}), frozenset()),
         ("inline", "duckdb", frozenset({"file"}), frozenset()),
@@ -237,6 +238,7 @@ def test_a_database_read_names_its_stored_connection_or_reads_its_local_file(mod
     ("mode", "database_type", "schemes", "credentials"),
     [
         ("reference", "postgresql", frozenset(), frozenset({"warehouse"})),
+        (None, "postgresql", frozenset(), frozenset({"warehouse"})),
         ("inline", "mysql", frozenset(), frozenset()),
         ("inline", "sqlite", frozenset({"file"}), frozenset()),
     ],
