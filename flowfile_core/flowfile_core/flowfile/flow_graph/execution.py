@@ -71,6 +71,18 @@ executes, so a graph opened in-process during the run (a virtual table's produce
 Schema prefetches copy their starting context, so they carry it as well.
 """
 
+_COMPUTE_ERRORS = frozenset(error.__name__ for error in (ComputeError, *ComputeError.__subclasses__()))
+
+
+def _compute_error(node: FlowNode) -> str | None:
+    """The class name of the typed compute error that failed ``node`` this run, else ``None``.
+
+    Read from the class the executor records on the node for telemetry (``_last_exception_class``), so a run report
+    row says when a node failed on its compute (unreachable, another version) rather than on its own settings or data.
+    """
+    error_class = getattr(node, "_last_exception_class", None)
+    return error_class if error_class in _COMPUTE_ERRORS else None
+
 
 def _gate_formula_matches(source: FlowDataEngine, formula: str) -> bool:
     """True when at least one row of *source* satisfies the gate's formula.
@@ -324,6 +336,8 @@ class ExecutionMixin(GraphMixinBase):
                 )
             errors = flow_node.results.errors
             node_result.finish(success=errors is None, error="" if errors is None else str(errors))
+            if errors is not None:
+                node_result.compute_error = _compute_error(flow_node)
             if self.flow_settings.is_canceled:
                 node_result.success = None
             if node_result.success:
@@ -488,6 +502,8 @@ class ExecutionMixin(GraphMixinBase):
                 node_result.is_running = False
                 return node_result, node
             node_result.finish(success=errors is None, error="" if errors is None else str(errors))
+            if errors is not None:
+                node_result.compute_error = _compute_error(node)
         except Exception as e:
             node_logger.error(f"Error in node {node.node_id}: {e}")
             node_result.finish(success=False, error=str(e))
@@ -850,6 +866,7 @@ class ExecutionMixin(GraphMixinBase):
                 node_id=node.node_id,
                 node_name=node.name,
                 description=node.get_node_information().description,
+                compute_error="Refusal",
             )
             node_result.finish(success=False, error=error)
             self.latest_run_info.node_step_result.append(node_result)

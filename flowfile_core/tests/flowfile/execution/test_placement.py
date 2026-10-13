@@ -6,6 +6,9 @@ declares. A refused node is a failed row on the run report naming the backend an
 backend is sent no work. A backend that cannot be asked for its capabilities is not in the map placement is given: its
 nodes are not refused and meet its typed error when they run. The backends here are core's own under another id,
 declaring what each test hands them, so no worker is needed. With the flag off nothing is placed.
+
+A row's ``compute_error`` says what kind of failure it is: ``"Refusal"`` on a refused row, the class name of the typed
+compute error that failed a node on that node's row, in both flag states, and ``None`` for any other failure.
 """
 
 import threading
@@ -16,7 +19,7 @@ import pytest
 from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
-from flowfile_core.flowfile.execution.errors import ComputeUnavailable
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable, VersionMismatch
 from flowfile_core.flowfile.execution.placement import Placement, SingleBackendPolicy, place
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
@@ -194,6 +197,7 @@ def assert_refused_before_any_node(
         for phrase in phrases:
             assert phrase in errors[node_id], errors[node_id]
     assert all(result.success is False for result in run_info.node_step_result)
+    assert all(result.compute_error == "Refusal" for result in run_info.node_step_result)
     assert run_info.success is False
     assert run_info.nodes_completed == 0
     assert run_info.is_running is False
@@ -303,10 +307,58 @@ def test_the_nodes_of_a_backend_that_cannot_be_asked_meet_its_error_when_they_ru
     assert errors.keys() == {1, 2}, errors
     for error in errors.values():
         assert error.startswith("Connection refused"), error
+    assert {result.compute_error for result in run_info.node_step_result} == {"ComputeUnavailable"}
     assert graph.get_node(3).results.errors is None
     assert run_info.success is False
     assert sorted(backend.work) == ["submit 1", "submit 2"]
     assert backend.asked == 1
+
+
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+def test_a_node_a_version_mismatch_failed_carries_the_error_s_class_on_its_row(declare, monkeypatch, flag):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    declare(VersionMismatch("polars_version: core 1, worker 2"))
+    graph = fuzzy_flow(8414 if flag else 8413)
+
+    run_info = graph.run_graph()
+
+    results = {result.node_id: result for result in run_info.node_step_result}
+    assert results.keys() == {1, 2}, results
+    for result in results.values():
+        assert result.success is False
+        assert result.error.startswith("polars_version: core 1, worker 2"), result.error
+        assert result.compute_error == "VersionMismatch"
+    assert run_info.success is False
+
+
+def test_a_node_another_error_failed_carries_no_compute_error(protocol_off, declare):
+    declare(RuntimeError("boom"))
+    graph = fuzzy_flow(8415)
+
+    run_info = graph.run_graph()
+
+    results = {result.node_id: result for result in run_info.node_step_result}
+    assert results.keys() == {1, 2}, results
+    for result in results.values():
+        assert result.success is False
+        assert "boom" in result.error, result.error
+        assert result.compute_error is None
+    assert run_info.success is False
+
+
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+def test_a_fetched_node_a_compute_error_failed_carries_the_error_s_class_on_its_row(declare, monkeypatch, flag):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    declare(ComputeUnavailable("Connection refused"))
+    graph = fuzzy_flow(8417 if flag else 8416)
+
+    run_info = graph.trigger_fetch_node(1)
+
+    [result] = run_info.node_step_result
+    assert result.node_id == 1
+    assert result.success is False
+    assert result.error.startswith("Connection refused"), result.error
+    assert result.compute_error == "ComputeUnavailable"
 
 
 def test_a_node_the_run_skips_is_not_placed(protocol_on, declare):

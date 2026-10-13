@@ -27,6 +27,14 @@ class NodeResult(BaseModel):
     # skipped because of an upstream *failure* still produce no result at all.
     skipped: bool = False
     error: str = ""
+    compute_error: str | None = Field(
+        default=None,
+        description=(
+            "The class name of the typed compute error that failed the node (ComputeUnavailable, VersionMismatch, "
+            "... as execution/errors.py names them), or 'Refusal' when placement refused the node before the run "
+            "started; None for any other outcome."
+        ),
+    )
     run_time_ms: int = Field(
         default=-1,
         description="Run time in milliseconds",
