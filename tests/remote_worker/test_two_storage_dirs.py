@@ -2,7 +2,8 @@
 
 Each service starts in a working directory of its own with a relative ``FLOWFILE_STORAGE_DIR`` of its own, so a
 path under the worker's storage names, in core, a file that is not there, as it would on another host. The two share
-the catalog database and the secure store, as a deployment's core and worker do. With the compute protocol flag on,
+the catalog database and the secure store, as a deployment's core and worker do. The worker reads the flow's CSV files
+on this host, so it declares local files (``FLOWFILE_WORKER_LOCAL_FILES``). With the compute protocol flag on,
 every node's preview, schema and record count comes from the worker and core's cache directory stays empty; with it
 off, core opens the worker's files and the flow fails, which shows the services share no storage. Nothing here imports
 flowfile_core; the services start as in ``tests/cloud_e2e``.
@@ -122,6 +123,7 @@ def _running(root: Path, protocol: str) -> Iterator[Services]:
         FLOWFILE_KERNEL_WARMUP="0",
         FLOWFILE_KERNEL_GC="0",
         FLOWFILE_COMPUTE_PROTOCOL=protocol,
+        FLOWFILE_WORKER_LOCAL_FILES="1",
         WORKER_HOST="127.0.0.1",
         CORE_HOST="127.0.0.1",
         CORE_PORT=str(core_port),
