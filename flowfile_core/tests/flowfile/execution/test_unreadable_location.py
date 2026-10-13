@@ -11,6 +11,7 @@ column statistics and the CSV export. The tests named for ``v1`` results check t
 """
 
 import dataclasses
+import io
 import os
 from contextlib import contextmanager
 from pathlib import Path
@@ -37,6 +38,21 @@ from shared.compute_protocol import WorkerLocation
 BACKEND_ID = "unreadable"
 
 
+def detached(plan: pl.LazyFrame) -> pl.LazyFrame:
+    """A copy of ``plan`` through its serialised form, sharing nothing Polars resolved on the original."""
+    return pl.LazyFrame.deserialize(io.BytesIO(plan.serialize()))
+
+
+def detached_payload(payload):
+    """An operation payload with each of its ``pl.LazyFrame`` fields detached."""
+    frames = {
+        field.name: detached(getattr(payload, field.name))
+        for field in dataclasses.fields(payload)
+        if isinstance(getattr(payload, field.name), pl.LazyFrame)
+    }
+    return dataclasses.replace(payload, **frames)
+
+
 class UnreadableBackend(LocalBackend):
     """Core's own backend, except that a result it stores sits at a path that exists only while one of its calls runs.
 
@@ -45,6 +61,10 @@ class UnreadableBackend(LocalBackend):
     ``<root>/<result id>.arrow``, which is its ``location``, and ``plan_for`` returns ``scan_ipc`` of that path.
     ``submit``, ``run_op``, ``sample`` and ``count`` write every stored result to its path, so the plans composed on
     them run, and remove the files before they return.
+
+    Like a worker, it runs a copy of each plan core sends (``detached``) and hands core a copy of each deferred plan
+    it holds: Polars keeps what it resolves of a scan on the plan object, so a backend that resolved core's own plans
+    while their files existed would answer core's later reads of the same leaves without touching the files.
     """
 
     def __init__(self, root: Path):
@@ -55,14 +75,14 @@ class UnreadableBackend(LocalBackend):
 
     def submit(self, plan, inputs, hints, result_id, *, flow_id, node_id):
         with self._readable(storing=hints.must_materialise):
-            result = super().submit(plan, inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
+            result = super().submit(detached(plan), inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
             if result.ref.state == "materialised" and hints.preview_rows is not None:
                 result = dataclasses.replace(result, sample=super().sample(result.ref, hints.preview_rows))
         return result
 
     def run_op(self, op, payload):
         with self._readable(storing=True):
-            return super().run_op(op, payload)
+            return super().run_op(op, {key: detached_payload(value) for key, value in payload.items()})
 
     def sample(self, ref, n):
         with self._readable():
@@ -74,7 +94,7 @@ class UnreadableBackend(LocalBackend):
 
     def plan_for(self, ref):
         if ref.state == "deferred":
-            return super().plan_for(ref)
+            return detached(super().plan_for(ref))
         self._plan(ref)
         return pl.scan_ipc(ref.location.decode("utf-8"))
 
