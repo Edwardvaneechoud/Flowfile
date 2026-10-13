@@ -282,7 +282,12 @@ def pre_calculate_pivot_schema(
     else:
         max_unique_vals = 200
         unique_vals = (
-            unique_values(current_context().backend, input_lf.select(pivot_input.pivot_column), max_unique_vals)
+            unique_values(
+                current_context().backend,
+                input_lf.select(pivot_input.pivot_column),
+                max_unique_vals,
+                column=pivot_input.pivot_column,
+            )
             .cast(pl.String)
             .to_list()
         )
