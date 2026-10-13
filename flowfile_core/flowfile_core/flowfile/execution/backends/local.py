@@ -73,7 +73,15 @@ from flowfile_core.schemas.cloud_storage_schemas import (
 )
 from flowfile_core.secret_manager.secret_manager import decrypt_secret
 from shared.compute_protocol import PROTOCOL_VERSION, Capabilities, local_capabilities
-from shared.delta_utils import get_delta_size_bytes, merge_into_delta, scd2_into_delta, write_delta
+from shared.delta_utils import (
+    get_delta_size_bytes,
+    merge_into_delta,
+    scd2_into_delta,
+    validate_catalog_path,
+    validate_catalog_uri,
+    write_delta,
+)
+from shared.storage_config import storage
 
 _CLOUD_SECRET_FIELDS = tuple(
     name for name, field in FullCloudStorageConnection.model_fields.items() if SecretStr in get_args(field.annotation)
@@ -435,10 +443,11 @@ class LocalBackend:
         (``_written_report``), or ``{"skipped": True}`` for an append of no rows to a table with the same columns.
         """
         write = unpack(payload, DeltaWritePayload)
+        path = _delta_path(write)
         storage_options = _storage_options(write.connection)
         wrote = write_delta(
             write.plan,
-            write.path,
+            path,
             mode=write.mode,
             partition_by=write.partition_by,
             storage_options=storage_options,
@@ -446,7 +455,7 @@ class LocalBackend:
         )
         if not wrote:
             return OpResult(refs={}, metadata={"skipped": True})
-        return OpResult(refs={}, metadata=_written_report(FlowDataEngine(write.plan), write.path, storage_options))
+        return OpResult(refs={}, metadata=_written_report(FlowDataEngine(write.plan), path, storage_options))
 
     def _merge_delta(self, payload: OpPayload) -> OpResult:
         """Merge the rows of the ``DeltaMergePayload`` under ``"payload"`` into its Delta table by key.
@@ -456,11 +465,12 @@ class LocalBackend:
         columns.
         """
         write = unpack(payload, DeltaMergePayload)
+        path = _delta_path(write)
         storage_options = _storage_options(write.connection)
         rows = write.plan.collect()
         wrote = merge_into_delta(
             rows,
-            write.path,
+            path,
             merge_mode=write.merge_mode,
             merge_keys=write.merge_keys,
             partition_by=write.partition_by,
@@ -469,7 +479,7 @@ class LocalBackend:
         )
         if not wrote:
             return OpResult(refs={}, metadata={"skipped": True})
-        return OpResult(refs={}, metadata=_written_report(FlowDataEngine(rows), write.path, storage_options))
+        return OpResult(refs={}, metadata=_written_report(FlowDataEngine(rows), path, storage_options))
 
     def _scd2_delta(self, payload: OpPayload) -> OpResult:
         """Apply the rows of the ``DeltaScd2Payload`` under ``"payload"`` to its Delta table as an SCD2 write.
@@ -481,10 +491,11 @@ class LocalBackend:
         ``{"skipped": True, "version": ...}``, the version it was classified against.
         """
         write = unpack(payload, DeltaScd2Payload)
+        path = _delta_path(write)
         storage_options = _storage_options(write.connection)
         result = scd2_into_delta(
             write.plan.collect(),
-            write.path,
+            path,
             business_keys=write.business_keys,
             valid_from_iso=write.run_timestamp,
             compare_columns=write.compare_columns,
@@ -500,16 +511,16 @@ class LocalBackend:
         if result.skipped:
             return OpResult(refs={}, metadata={"skipped": True, "version": result.version})
         table_schema = pl.scan_delta(
-            write.path, **({} if storage_options is None else {"storage_options": storage_options})
+            path, **({} if storage_options is None else {"storage_options": storage_options})
         ).collect_schema()
         return OpResult(
             refs={},
             metadata={
-                "table_path": write.path,
+                "table_path": path,
                 "schema": [{"name": name, "dtype": str(dtype)} for name, dtype in table_schema.items()],
                 "row_count": result.rows_total,
                 "column_count": len(table_schema),
-                "size_bytes": get_delta_size_bytes(write.path, storage_options=storage_options),
+                "size_bytes": get_delta_size_bytes(path, storage_options=storage_options),
                 "version": result.version,
                 "scd2_metrics": {
                     "rows_inserted": result.rows_inserted,
@@ -588,6 +599,22 @@ def _decrypted_connection(connection: FullCloudStorageConnectionWorkerInterface)
         if values.get(name) is not None:
             values[name] = decrypt_secret(values[name])
     return FullCloudStorageConnection(**values)
+
+
+def _delta_path(write: DeltaWritePayload | DeltaMergePayload | DeltaScd2Payload) -> str:
+    """The Delta table a write names: its ``path``, or its catalog table under the catalog's storage root.
+
+    A catalog table's name is a bare directory name, joined onto the identity's object-storage root or onto this
+    process's catalog tables directory the way core's catalog joins a table's directory; a name with a path separator
+    or ``..`` raises ``ValueError``.
+    """
+    table = write.table
+    if table is None:
+        return write.path
+    if table.base_uri is not None:
+        return validate_catalog_uri(table.table_name, table.base_uri)
+    validate_catalog_path(table.table_name, storage.catalog_tables_directory)
+    return str(storage.catalog_tables_directory / table.table_name)
 
 
 def _storage_options(connection: FullCloudStorageConnectionWorkerInterface | None) -> dict[str, Any] | None:

@@ -7,17 +7,22 @@ measured it, since a file's byte size belongs to the Parquet writer of the day.
 """
 
 import datetime
+import shutil
 import types
+import uuid
+from pathlib import Path
 
 import polars as pl
 import pytest
 
+from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog import compute as catalog_compute
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.services import previews as previews_module
 from flowfile_core.catalog.services import tables as tables_module
 from flowfile_core.catalog.services.previews import TablePreviewService
 from flowfile_core.catalog.services.tables import TableService
+from flowfile_core.catalog.storage_backend import resolve_for_namespace
 from flowfile_core.configs import settings
 from flowfile_core.configs.utils import MutableBool
 from flowfile_core.database.connection import get_db_context
@@ -26,10 +31,11 @@ from flowfile_core.flowfile.execution.backends import local as local_module
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
-from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind
+from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, OpResult
 from flowfile_core.flowfile.execution.payloads import (
     op_payload,
     PAYLOAD_KEY,
+    CatalogTableIdentity,
     DeltaMergePayload,
     DeltaScd2Payload,
     DeltaWritePayload,
@@ -52,6 +58,13 @@ from tests.flowfile.conftest import (
     create_test_graph,
     create_test_namespace,
     run_test_graph,
+)
+from tests.test_catalog_cloud_virtual import (
+    _BUCKET,
+    _create_cloud_schema,
+    _ensure_connection,
+    get_minio_client,
+    requires_minio,
 )
 
 pytestmark = pytest.mark.core
@@ -560,13 +573,17 @@ class Writes:
         self.calls: list[tuple[str, OperationKind, object, JobHandle | None]] = []
         self.writer = None
 
-    def take_one(self, backend_id: str, op: OperationKind, payload_type: type) -> None:
-        """Assert exactly one write ran since the last take: ``op`` on ``backend_id``, cancellable through the node."""
+    def take_one(self, backend_id: str, op: OperationKind, payload_type: type):
+        """Assert exactly one write ran since the last take: ``op`` on ``backend_id``, cancellable through the node.
+
+        Returns the write's payload.
+        """
         (call,) = self.calls
         self.calls.clear()
         ran_on, ran, payload, held = call
         assert (ran_on, ran, type(payload)) == (backend_id, op, payload_type)
         assert held == JobHandle(backend_id, payload.job_id)
+        return payload
 
 
 @pytest.fixture
@@ -669,3 +686,269 @@ def test_the_catalog_writer_versions_an_scd2_table_on_the_flows_backend(executio
     emitted = second.get_node(2).get_resulting_data().collect()
     assert emitted.columns == ["id", "val", "sk", "valid_from", "valid_to", "is_current"]
     assert emitted.sort("id").select("id", "val", "is_current").rows() == [(1, "A", True), (2, "b", True)]
+
+
+# The catalog writer names its table by identity (FLOWFILE_COMPUTE_PROTOCOL on)
+
+
+@pytest.fixture(params=[False, True], ids=["protocol-off", "protocol-on"])
+def protocol(request, monkeypatch) -> bool:
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", request.param)
+    return request.param
+
+
+@pytest.fixture
+def worker_kwargs(monkeypatch) -> list[dict]:
+    """The keyword arguments each worker Delta task was sent with, in order; the tasks still run."""
+    sent: list[dict] = []
+    delta_task = WorkerBackend._delta_task
+
+    def spy(self, write, operation_type, kwargs):
+        sent.append(kwargs)
+        return delta_task(self, write, operation_type, kwargs)
+
+    monkeypatch.setattr(WorkerBackend, "_delta_task", spy)
+    return sent
+
+
+@pytest.fixture
+def s3_namespace(clean_catalog):
+    """A schema under a catalog stored in MinIO: its id, the catalog's URI and the storage options core reads with."""
+    _ensure_connection()
+    try:
+        get_minio_client().create_bucket(Bucket=_BUCKET)
+    except Exception:
+        pass
+    uri = f"s3://{_BUCKET}/identity_{uuid.uuid4().hex[:8]}"
+    namespace_id = _create_cloud_schema(uri)
+    return namespace_id, uri, resolve_for_namespace(namespace_id).storage_options
+
+
+def dir_name(file_path: str) -> str:
+    return file_path.rstrip("/").rsplit("/", 1)[-1]
+
+
+def assert_addressed(protocol, payloads, worker_sent, file_path, table_ids, base_uri=None):
+    """Off, every write names ``file_path``; on, each names the table by identity and no write carries a path."""
+    if protocol:
+        assert [(payload.path, payload.table) for payload in payloads] == [
+            (None, CatalogTableIdentity(table_id=table_id, table_name=dir_name(file_path), base_uri=base_uri))
+            for table_id in table_ids
+        ]
+        for kwargs in worker_sent:
+            assert "output_path" not in kwargs
+            assert kwargs["table_name"] == dir_name(file_path)
+            assert (kwargs["storage_payload"] or {}).get("base_uri") == base_uri
+    else:
+        assert [(payload.path, payload.table) for payload in payloads] == [(file_path, None)] * len(payloads)
+        assert [kwargs["output_path"] for kwargs in worker_sent] == [file_path] * len(worker_sent)
+
+
+@pytest.mark.parametrize("delta_mode", ["overwrite", "upsert", "scd2"])
+def test_a_write_by_identity_carries_no_path(delta_mode):
+    table = CatalogTableIdentity(table_id=5, table_name="t_1", base_uri="s3://bucket/catalog")
+
+    _, write = _catalog_delta_op(
+        delta_mode,
+        writer_settings(delta_mode, merge_keys=["id"]),
+        plan=pl.LazyFrame({"id": [1], "val": ["a"]}),
+        path=None,
+        table=table,
+        connection=None,
+        scd2_config=SCD2_CONFIG if delta_mode == "scd2" else None,
+        run_timestamp=RUN_TIMESTAMP,
+        flow_id=4,
+        node_id=2,
+    )
+
+    assert (write.path, write.table) == (None, table)
+
+
+def test_the_catalog_writer_names_a_local_table_by_identity_when_the_flag_is_on(
+    execution_location, protocol, clean_catalog, writes, worker_kwargs
+):
+    namespace_id = create_test_namespace()
+    first = write_flow(writes, 9341, execution_location, namespace_id, [{"id": 1, "name": "ada"}])
+    backend_id = first.execution_context.backend_id
+    run_test_graph(first)
+    created_by = writes.take_one(backend_id, OperationKind.delta_write, DeltaWritePayload)
+    created = registered(namespace_id)
+    upsert = write_flow(
+        writes, 9342, execution_location, namespace_id, [{"id": 2, "name": "grace"}], "upsert", merge_keys=["id"]
+    )
+    run_test_graph(upsert)
+    merged_by = writes.take_one(backend_id, OperationKind.delta_merge, DeltaMergePayload)
+    merged = registered(namespace_id)
+
+    assert_addressed(protocol, [created_by, merged_by], worker_kwargs, created.file_path, [None, created.id])
+    assert len(worker_kwargs) == (2 if backend_id == registry.WORKER_BACKEND_ID else 0)
+    assert merged.file_path == created.file_path
+    assert pl.read_delta(merged.file_path).sort("id").rows() == [(1, "ada"), (2, "grace")]
+
+
+def test_core_stores_and_reads_the_table_where_the_compute_answered(clean_catalog, monkeypatch, tmp_path):
+    """The location the compute answers, not the one core resolved, is what core registers and reads back."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
+    run_op = LocalBackend.run_op
+
+    def moved(self, op, payload):
+        result = run_op(self, op, payload)
+        answered = result.metadata.get("table_path")
+        if not answered:
+            return result
+        elsewhere = tmp_path / "elsewhere" / dir_name(answered)
+        elsewhere.parent.mkdir(exist_ok=True)
+        shutil.move(answered, elsewhere)
+        return OpResult(refs=result.refs, metadata={**result.metadata, "table_path": str(elsewhere)})
+
+    monkeypatch.setattr(LocalBackend, "run_op", moved)
+    namespace_id = create_test_namespace()
+    graph = create_test_graph(flow_id=9351, execution_location="local")
+    add_test_manual_input(graph, [{"id": 1, "val": "a"}, {"id": 2, "val": "b"}], node_id=1)
+    add_test_catalog_writer(
+        graph,
+        node_id=2,
+        depending_on_id=1,
+        table_name="dim",
+        namespace_id=namespace_id,
+        write_mode="scd2",
+        merge_keys=["id"],
+        scd2=input_schema.Scd2Settings(),
+    )
+    run_test_graph(graph)
+
+    table = registered(namespace_id)
+    assert table.file_path.startswith(str(tmp_path / "elsewhere"))
+    assert pl.read_delta(table.file_path).height == 2
+    emitted = graph.get_node(2).get_resulting_data().collect()
+    assert emitted.sort("id").select("id", "val", "is_current").rows() == [(1, "a", True), (2, "b", True)]
+
+
+def test_a_table_outside_its_catalog_root_is_refused_by_identity(protocol, clean_catalog, tmp_path):
+    external = str(tmp_path / "external_dim")
+    pl.DataFrame({"id": [1], "name": ["ada"]}).write_delta(external)
+    namespace_id = create_test_namespace()
+    with get_db_context() as db:
+        CatalogService(SQLAlchemyCatalogRepository(db)).register_table_from_data(
+            name="dim", table_path=external, owner_id=1, namespace_id=namespace_id, storage_format="delta"
+        )
+    graph = create_test_graph(flow_id=9361, execution_location="local")
+    add_test_manual_input(graph, [{"id": 2, "name": "grace"}], node_id=1)
+    add_test_catalog_writer(
+        graph, node_id=2, depending_on_id=1, table_name="dim", namespace_id=namespace_id, write_mode="append"
+    )
+
+    run = graph.run_graph()
+
+    if protocol:
+        assert not run.success
+        assert "not a table directory under its catalog's storage root" in str(run.node_step_result[-1].error)
+        assert pl.read_delta(external).height == 1
+    else:
+        assert run.success
+        assert pl.read_delta(external).height == 2
+
+
+@pytest.mark.parametrize("same_place", [True, False], ids=["same-place", "another-place"])
+def test_an_existing_table_stays_where_its_record_puts_it(protocol, same_place, clean_catalog, monkeypatch, tmp_path):
+    """A compute that resolves the table under a catalog directory of its own never moves or deletes the table: the
+    same directory spelled through a symlink keeps the record's location, another directory fails the write."""
+    namespace_id = create_test_namespace()
+
+    def append(flow_id, rows):
+        graph = create_test_graph(flow_id=flow_id, execution_location="local")
+        add_test_manual_input(graph, rows, node_id=1)
+        add_test_catalog_writer(
+            graph, node_id=2, depending_on_id=1, table_name="dim", namespace_id=namespace_id, write_mode="append"
+        )
+        return graph.run_graph()
+
+    assert append(9391, [{"id": 1, "name": "ada"}, {"id": 2, "name": "grace"}]).success
+    stored = registered(namespace_id).file_path
+    compute_root = tmp_path / "compute_root"
+    if same_place:
+        compute_root.symlink_to(Path(stored).parent, target_is_directory=True)
+    else:
+        compute_root.mkdir()
+    monkeypatch.setattr(local_module, "storage", types.SimpleNamespace(catalog_tables_directory=compute_root))
+
+    run = append(9392, [{"id": 3, "name": "edsger"}])
+
+    refused = protocol and not same_place
+    assert run.success is not refused
+    assert registered(namespace_id).file_path == stored
+    assert pl.read_delta(stored).height == (2 if refused else 3)
+    if refused:
+        assert "which is another location" in str(run.node_step_result[-1].error)
+
+
+def test_a_table_stored_through_another_spelling_of_its_catalog_root_is_written_in_place(
+    protocol, clean_catalog, tmp_path
+):
+    namespace_id = create_test_namespace()
+    root_link = tmp_path / "catalog_link"
+    root_link.symlink_to(resolve_for_namespace(namespace_id).base, target_is_directory=True)
+    stored = str(root_link / f"dim_{uuid.uuid4().hex[:8]}")
+    pl.DataFrame({"id": [1], "name": ["ada"]}).write_delta(stored)
+    with get_db_context() as db:
+        CatalogService(SQLAlchemyCatalogRepository(db)).register_table_from_data(
+            name="dim", table_path=stored, owner_id=1, namespace_id=namespace_id, storage_format="delta"
+        )
+    graph = create_test_graph(flow_id=9393, execution_location="local")
+    add_test_manual_input(graph, [{"id": 2, "name": "grace"}], node_id=1)
+    add_test_catalog_writer(
+        graph, node_id=2, depending_on_id=1, table_name="dim", namespace_id=namespace_id, write_mode="append"
+    )
+
+    run_test_graph(graph)
+
+    assert registered(namespace_id).file_path == stored
+    assert pl.read_delta(stored).sort("id").rows() == [(1, "ada"), (2, "grace")]
+
+
+@requires_minio
+def test_the_catalog_writer_writes_an_object_storage_table_on_the_flows_backend(
+    execution_location, protocol, writes, worker_kwargs, s3_namespace
+):
+    namespace_id, uri, options = s3_namespace
+    first = write_flow(writes, 9371, execution_location, namespace_id, [{"id": 1, "name": "ada"}])
+    backend_id = first.execution_context.backend_id
+    run_test_graph(first)
+    created_by = writes.take_one(backend_id, OperationKind.delta_write, DeltaWritePayload)
+    created = registered(namespace_id)
+    upsert = write_flow(
+        writes, 9372, execution_location, namespace_id, [{"id": 2, "name": "grace"}], "upsert", merge_keys=["id"]
+    )
+    run_test_graph(upsert)
+    merged_by = writes.take_one(backend_id, OperationKind.delta_merge, DeltaMergePayload)
+    merged = registered(namespace_id)
+
+    assert created.file_path.startswith(uri + "/") and merged.file_path == created.file_path
+    assert_addressed(protocol, [created_by, merged_by], worker_kwargs, created.file_path, [None, created.id], uri)
+    assert pl.read_delta(merged.file_path, storage_options=options).sort("id").rows() == [(1, "ada"), (2, "grace")]
+    assert merged.size_bytes == get_delta_size_bytes(merged.file_path, storage_options=options)
+
+
+@requires_minio
+def test_the_catalog_writer_versions_an_object_storage_scd2_table_on_the_flows_backend(
+    execution_location, protocol, writes, worker_kwargs, s3_namespace
+):
+    namespace_id, uri, options = s3_namespace
+    scd2 = {"write_mode": "scd2", "merge_keys": ["id"], "scd2": input_schema.Scd2Settings()}
+    first = write_flow(writes, 9381, execution_location, namespace_id, [{"id": 1, "val": "a"}], **scd2)
+    backend_id = first.execution_context.backend_id
+    run_test_graph(first)
+    loaded_by = writes.take_one(backend_id, OperationKind.delta_scd2, DeltaScd2Payload)
+    loaded = registered(namespace_id)
+    second = write_flow(writes, 9382, execution_location, namespace_id, [{"id": 1, "val": "A"}], **scd2)
+    run_test_graph(second)
+    versioned_by = writes.take_one(backend_id, OperationKind.delta_scd2, DeltaScd2Payload)
+    versioned = registered(namespace_id)
+
+    assert loaded.file_path.startswith(uri + "/") and versioned.file_path == loaded.file_path
+    assert_addressed(protocol, [loaded_by, versioned_by], worker_kwargs, loaded.file_path, [None, loaded.id], uri)
+    assert versioned.size_bytes == get_delta_size_bytes(versioned.file_path, storage_options=options)
+    history = pl.read_delta(versioned.file_path, storage_options=options).sort("valid_from")
+    assert history.select("id", "val", "is_current").rows() == [(1, "a", False), (1, "A", True)]
+    emitted = second.get_node(2).get_resulting_data().collect()
+    assert emitted.select("id", "val", "is_current").rows() == [(1, "A", True)]

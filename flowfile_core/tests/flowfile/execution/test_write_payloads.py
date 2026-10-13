@@ -8,7 +8,9 @@ target is the local disk, and records the call where it would need object storag
 import base64
 import dataclasses
 import io
+import shutil
 import sqlite3
+import uuid
 
 import polars as pl
 import pytest
@@ -25,6 +27,7 @@ from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, 
 from flowfile_core.flowfile.execution.payloads import (
     op_payload,
     PAYLOAD_KEY,
+    CatalogTableIdentity,
     CloudWritePayload,
     DatabaseWritePayload,
     DeltaMergePayload,
@@ -43,6 +46,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
 )
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared.delta_utils import Scd2Result
+from shared.storage_config import storage
 from tests.flowfile.conftest import add_test_manual_input, create_test_graph
 
 pytestmark = pytest.mark.core
@@ -575,3 +579,76 @@ def test_other_write_failures_propagate_as_raised(node, error):
         node.run_op(FailingBackend(error), OperationKind.file_write, {}, job_id="j")
 
     assert raised.value is error
+
+
+# A catalog table named by identity
+
+
+IDENTITY_KINDS = {
+    "write": (OperationKind.delta_write, lambda connection: delta_write("unused", connection)),
+    "merge": (OperationKind.delta_merge, lambda connection: delta_merge("unused", ROWS.lazy(), connection)),
+    "scd2": (OperationKind.delta_scd2, lambda connection: delta_scd2("unused", connection)),
+}
+
+
+def by_identity(write, table: CatalogTableIdentity):
+    return dataclasses.replace(write, path=None, table=table)
+
+
+@pytest.mark.parametrize("kind", IDENTITY_KINDS)
+@pytest.mark.parametrize("with_connection", [True, False], ids=["object-storage", "local-table"])
+def test_the_worker_backend_sends_a_catalog_table_by_identity_and_no_path(built, kind, with_connection):
+    operation, make_write = IDENTITY_KINDS[kind]
+    connection = s3_connection().get_worker_interface(USER_ID) if with_connection else None
+    base_uri = "s3://bucket/catalog" if with_connection else None
+    write = by_identity(
+        make_write(connection), CatalogTableIdentity(table_id=12, table_name="dim_ab12", base_uri=base_uri)
+    )
+
+    WorkerBackend(url=WORKER_URL).run_op(operation, op_payload(write))
+
+    (task,) = built
+    sent = task.kwargs["kwargs"]
+    assert "output_path" not in sent
+    assert (sent["table_id"], sent["table_name"]) == (12, "dim_ab12")
+    expected = {"base_uri": base_uri, "connection": connection.model_dump()} if with_connection else None
+    assert sent["storage_payload"] == expected
+    assert not any(isinstance(value, str) and value.startswith("/") for value in sent.values())
+    assert SECRET not in repr(task.kwargs)
+
+
+@pytest.mark.parametrize("kind", IDENTITY_KINDS)
+def test_the_local_backend_writes_a_catalog_table_by_identity_under_its_catalog_directory(kind):
+    operation, make_write = IDENTITY_KINDS[kind]
+    name = f"identity_{uuid.uuid4().hex[:8]}"
+    expected = str(storage.catalog_tables_directory / name)
+    write = by_identity(make_write(None), CatalogTableIdentity(table_id=None, table_name=name, base_uri=None))
+    try:
+        result = LocalBackend().run_op(operation, op_payload(write))
+
+        assert result.metadata["table_path"] == expected
+        assert pl.read_delta(expected).height == 3
+    finally:
+        shutil.rmtree(expected, ignore_errors=True)
+
+
+def test_the_local_backend_resolves_an_object_storage_identity_under_its_root(monkeypatch):
+    received = []
+    monkeypatch.setattr(local_module, "write_delta", lambda plan, path, **kwargs: received.append(path))
+    write = by_identity(
+        delta_write("unused", s3_connection().get_worker_interface(USER_ID)),
+        CatalogTableIdentity(table_id=3, table_name="dim_ab12", base_uri="s3://bucket/catalog"),
+    )
+
+    LocalBackend().run_op(OperationKind.delta_write, op_payload(write))
+
+    assert received == ["s3://bucket/catalog/dim_ab12"]
+
+
+def test_an_identity_names_a_directory_and_never_a_path():
+    write = by_identity(
+        delta_write("unused"), CatalogTableIdentity(table_id=None, table_name="../escape", base_uri=None)
+    )
+
+    with pytest.raises(ValueError, match="path separators"):
+        LocalBackend().run_op(OperationKind.delta_write, op_payload(write))
