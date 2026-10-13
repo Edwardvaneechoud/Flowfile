@@ -110,7 +110,8 @@ def on_other_versions(backend_name: str, monkeypatch: pytest.MonkeyPatch) -> Ite
 
 @pytest.fixture
 def minted_elsewhere(backend_name: str) -> Iterator[list[tuple[ComputeBackend, ResultRef]]]:
-    """A deferred and a stored result from every other backend in ``BACKENDS``, each beside the backend that minted it.
+    """From every other backend in ``BACKENDS``, a result it submitted deferred and one it submitted as
+    ``must_materialise``, each beside the backend that minted it.
 
     The minting backend releases them when the test ends; one whose compute is not running skips the test.
     """
