@@ -22,6 +22,7 @@ import io
 import json
 import os
 import random
+import re
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -117,11 +118,11 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     MLApplyFetcher,
     MLTrainFetcher,
     _worker_session,
+    _WorkerAuth,
     cancel_task,
     clear_task_from_worker,
     fetch_kafka_offsets,
     get_status,
-    get_worker_capabilities,
     results_exists,
     trigger_visualize_fields,
     trigger_visualize_query,
@@ -149,6 +150,11 @@ from shared.path_utils import DirectoryScanUnsupportedError, refuse_cloud_path
 from shared.rest_api.models import RestApiReadSettings
 
 WORKER_BACKEND_ID = "worker"
+TOKEN_RULE = (
+    "a worker token is sent as an HTTP header value, so it cannot hold a CR, a LF, any other ASCII control character "
+    "but a tab, or a character beyond Latin-1"
+)
+_HEADER_VALUE = re.compile(r"[\t\x20-\x7e\x80-\xff]*")
 _OUTPUT_SEPARATOR = "#"
 _SPLIT_RANK = "__split_rank__"
 _NO_FLOW = -1
@@ -192,6 +198,15 @@ class WorkerBackend:
     another URL reaches that worker instead. The version handshake is once per process, not per backend: the first
     worker called is checked, and a later call to another one is not.
 
+    ``backend_id`` is the id the backend answers to, ``"worker"`` for the built-in one and ``worker:<name>`` for a
+    configured one: the references and job handles it makes carry it, and it refuses those of any other id.
+    ``token`` is the worker's own bearer token, which every ``/v1`` request and the ``/v1`` submit socket's upgrade
+    carry as ``X-Flowfile-Internal``, and ``capabilities`` too in both flag states; ``None`` (the built-in backend)
+    signs them with the process's internal token. The task routes, and the handshake gate in front of them, always
+    sign with the process's token. A token that is no header value (``is_header_value``) fails each call it would
+    sign as a ``TaskFailed`` naming ``TOKEN_RULE``, before any HTTP or socket client is handed it, so no message, log
+    line or traceback carries it.
+
     Materialisation policy: ``submit`` stores a plan on the worker when ``hints.must_materialise`` is set, or when
     the plan is ``wide`` and a preview is asked for (``preview_rows`` is not ``None``); every other plan stays
     deferred. A wide plan is stored so its preview and its consumers read rows computed once; with no preview
@@ -216,7 +231,8 @@ class WorkerBackend:
     The worker handshake runs before any call reaches the worker: every worker call goes through the transport's
     worker session or its WebSocket submit, which run it, and the ``/v1`` submit's socket calls ``ensure_handshake``
     before it dials, as the transport's WebSocket submit does. So every method that calls the worker is gated by it
-    and can raise its ``VersionMismatch`` or ``ComputeUnavailable``.
+    and can raise its ``VersionMismatch`` or ``ComputeUnavailable``, except ``capabilities``: it is the one read that
+    goes around the gate, so a caller can read a worker's versions and compare them with core's itself.
 
     With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on (read on each call), ``submit`` sends a meta JSON (hints, inputs,
     ids) and the plan over the worker's ``WS /v1/ws/submit``, and posts them to ``POST /v1/submit`` only when the socket
@@ -239,8 +255,11 @@ class WorkerBackend:
     id = WORKER_BACKEND_ID
     protocol_version = PROTOCOL_VERSION
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, *, backend_id: str = WORKER_BACKEND_ID, token: str | None = None) -> None:
         self.url = url
+        self.id = backend_id
+        self.token = token
+        self._auth = _TokenAuth(token, backend_id) if token is not None else None
         self._lock = threading.Lock()
         self._deferred: dict[str, _DeferredPlan] = {}
         self._in_flight: dict[str, BaseFetcher] = {}
@@ -267,12 +286,36 @@ class WorkerBackend:
     def capabilities(self) -> Capabilities:
         """The answer of the worker at ``url`` to ``GET /capabilities``, as the worker declares it.
 
-        With the protocol flag on, the answer to ``GET /v1/capabilities``. Its ``operations`` are the kinds the worker
-        runs, the ones ``run_op`` sends it.
+        With the protocol flag on, the answer to ``GET /v1/capabilities``. Either is one request outside the handshake
+        gate, signed with this backend's token and carrying its ``X-Protocol-Version``. Its ``operations`` are the
+        kinds the worker runs, the ones ``run_op`` sends it.
+
+        Raises:
+            ComputeUnavailable: The worker could not be reached.
+            VersionMismatch: With the flag off, the worker has no ``/capabilities`` route, so it predates core; with
+                it on, the worker refused this protocol version (426).
+            TaskFailed: This backend's token is no header value (``is_header_value``); nothing was sent.
+            ComputeError: Any other answer that is no success (``_v1_failure``): a refused token is a ``TaskFailed``
+                naming 401.
         """
-        if settings.FLOWFILE_COMPUTE_PROTOCOL:
-            return Capabilities.model_validate(self._v1("GET", "/capabilities").json())
-        return get_worker_capabilities(worker_url=self.url)
+        protocol = bool(settings.FLOWFILE_COMPUTE_PROTOCOL)
+        try:
+            response = requests.get(
+                f"{self.url}{'/v1' if protocol else ''}/capabilities",
+                auth=self._auth or _WorkerAuth(),
+                headers={wire.PROTOCOL_VERSION_HEADER: str(self.protocol_version)},
+                timeout=_WORKER_TIMEOUT,
+            )
+        except requests.RequestException as e:
+            raise ComputeUnavailable(f"Could not reach the worker at {self.url}: {e}") from e
+        if response.status_code == 404 and not protocol:
+            raise VersionMismatch(
+                f"The worker at {self.url} does not report its capabilities (GET /capabilities answered 404), "
+                "so it is an older release than core"
+            )
+        if not response.ok:
+            raise _v1_failure(response.status_code, response.content, response.reason)
+        return Capabilities.model_validate(response.json())
 
     def submit(
         self,
@@ -606,13 +649,16 @@ class WorkerBackend:
     def _v1(
         self, method: str, path: str, *, missing_ok: bool = False, waits: bool = False, **kwargs: Any
     ) -> requests.Response:
-        """Send one request to the worker's ``/v1`` route ``path`` with this backend's protocol version.
+        """Send one request to the worker's ``/v1`` route ``path`` with this backend's protocol version and token.
 
         ``waits`` is for a call that waits on a worker child (a submit, a sample, a count): its read timeout is the
-        deadline the task routes' poll honours. A 2xx answer is returned, a 404 too with ``missing_ok``.
+        deadline the task routes' poll honours. A 2xx answer is returned, a 404 too with ``missing_ok``. The request
+        goes through the worker session, so the handshake gates it; this backend's token, when it has one, signs it
+        in place of the session's process token.
 
         Raises:
             ComputeUnavailable: The worker could not be reached.
+            TaskFailed: This backend's token is no header value (``is_header_value``); nothing was sent.
             ComputeError: The worker answered anything else (``_v1_failure``).
         """
         timeout = (_WORKER_TIMEOUT[0], _POLL_DEADLINE_SECONDS or None) if waits else _WORKER_TIMEOUT
@@ -623,6 +669,7 @@ class WorkerBackend:
                 worker_url=self.url,
                 headers={wire.PROTOCOL_VERSION_HEADER: str(self.protocol_version)},
                 timeout=timeout,
+                auth=self._auth,
                 **kwargs,
             )
         except requests.RequestException as e:
@@ -636,23 +683,25 @@ class WorkerBackend:
 
         ``None`` means the socket could not be opened or the plan not sent. The worker reads both frames before it runs
         anything and drops a socket that closed before the plan, so the post never runs a plan twice. The socket is
-        dialled after ``ensure_handshake``, with the internal token, this backend's ``X-Protocol-Version`` and no
-        frame-size cap (a deferred result's ``complete`` frame carries its plan); a connect that fails at the network
-        re-arms the handshake, as the transport's WebSocket submit does. Once the plan is sent the answer is the final
-        frame's, and nothing is resent.
+        dialled after ``ensure_handshake``, with this backend's token (``_internal_token``), its ``X-Protocol-Version``
+        and no frame-size cap (a deferred result's ``complete`` frame carries its plan); a connect that fails at the
+        network re-arms the handshake, as the transport's WebSocket submit does. Once the plan is sent the answer is the
+        final frame's, and nothing is resent.
 
         Raises:
             ComputeUnavailable: The socket closed after the plan was sent.
-            TaskFailed: The worker sent nothing for longer than ``FLOWFILE_WORKER_WS_TIMEOUT``.
+            TaskFailed: The worker sent nothing for longer than ``FLOWFILE_WORKER_WS_TIMEOUT``, or this backend's
+                token is no header value (``is_header_value``), found before the socket is dialled.
             VersionMismatch: The worker refused the upgrade with 426.
             ComputeError: The handshake failed, or the worker's ``error`` frame (``_v1_error``).
         """
         ensure_handshake(self.url)
+        token = self._internal_token()
         try:
             ws = connect(
                 _get_ws_url(self.url) + "/v1/ws/submit",
                 additional_headers={
-                    "X-Flowfile-Internal": get_internal_token(),
+                    "X-Flowfile-Internal": token,
                     wire.PROTOCOL_VERSION_HEADER: str(self.protocol_version),
                 },
                 max_size=None,
@@ -680,6 +729,14 @@ class WorkerBackend:
         if frame["type"] == "error":
             raise _v1_error(frame["status_code"], frame["detail"])
         return wire.SubmitResult.model_validate(frame["result"])
+
+    def _internal_token(self) -> str:
+        """The token this backend signs the worker's ``/v1`` calls with: its own, else the process's internal token.
+
+        Raises:
+            TaskFailed: Its own token is no header value (``_sendable_token``).
+        """
+        return _sendable_token(self.token, self.id) if self.token is not None else get_internal_token()
 
     def _v1_location(self, ref: ResultRef) -> wire.WorkerLocation | None:
         """The ``WorkerLocation`` of a result ``/v1`` minted; ``None`` for a task-route result.
@@ -1199,6 +1256,43 @@ def _final_frame(ws: ClientConnection, worker_url: str, result_id: str) -> dict[
         frame = json.loads(message)
         if frame.get("type") in ("complete", "error"):
             return frame
+
+
+def is_header_value(value: str) -> bool:
+    """Whether ``value`` can be sent as an HTTP header value by ``requests`` and by the ``/v1`` submit socket.
+
+    Tabs, spaces, printable ASCII and the Latin-1 characters above it. ``http.client`` refuses a CR or a LF and a
+    character beyond Latin-1 with an error that quotes the value, and ``websockets`` refuses any other ASCII control
+    character but a tab too, logging the value before it raises.
+    """
+    return _HEADER_VALUE.fullmatch(value) is not None
+
+
+def _sendable_token(token: str, backend_id: str) -> str:
+    """``token``, once it is known to be a header value, so no client is handed one it would quote in an error.
+
+    Raises:
+        TaskFailed: It is no header value; the message names the backend and ``TOKEN_RULE``, never the token.
+    """
+    if not is_header_value(token):
+        raise TaskFailed(f"The token configured for the {backend_id} backend cannot be sent: {TOKEN_RULE}")
+    return token
+
+
+class _TokenAuth(requests.auth.AuthBase):
+    """Signs a worker request with one configured backend's own token in place of the process's internal token.
+
+    The check of the token (``_sendable_token``) runs as the request is prepared, before ``http.client`` sees it, and
+    its ``TaskFailed`` leaves ``requests`` as it is raised.
+    """
+
+    def __init__(self, token: str, backend_id: str) -> None:
+        self._token = token
+        self._backend_id = backend_id
+
+    def __call__(self, request: requests.PreparedRequest) -> requests.PreparedRequest:
+        request.headers["X-Flowfile-Internal"] = _sendable_token(self._token, self._backend_id)
+        return request
 
 
 def _v1_error(status_code: int, detail: Any) -> ComputeError:

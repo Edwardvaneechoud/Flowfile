@@ -106,6 +106,9 @@ class UnreadableBackend(LocalBackend):
         self._plan(ref)
         return pl.scan_ipc(ref.location.decode("utf-8"))
 
+    def _store(self, plan, *, result_id, flow_id):
+        return self._hold(plan, result_id=result_id)
+
     def _hold(self, frame, row_count=None, schema=None, result_id=None):
         if not self._storing:
             return super()._hold(frame, row_count=row_count, schema=schema, result_id=result_id)

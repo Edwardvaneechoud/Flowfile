@@ -149,7 +149,10 @@ def test_capabilities_pass_the_workers_declaration_through(monkeypatch):
             "credential_resolution": "vended",
         }
     )
-    monkeypatch.setattr(worker_module, "get_worker_capabilities", lambda *, worker_url: declared)
+    answer = requests.Response()
+    answer.status_code = 200
+    answer._content = declared.model_dump_json().encode()
+    monkeypatch.setattr(worker_module.requests, "get", lambda url, **kwargs: answer)
 
     assert WorkerBackend(url=WORKER_URL).capabilities() == declared
 

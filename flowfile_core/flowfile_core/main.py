@@ -43,6 +43,7 @@ from flowfile_core.routes.cloud_connections import router as cloud_connections_r
 from flowfile_core.routes.cloud_delta import router as cloud_delta_router
 from flowfile_core.routes.community_github import router as community_github_router
 from flowfile_core.routes.community_nodes import router as community_nodes_router
+from flowfile_core.routes.compute_backends import router as compute_backends_router
 from flowfile_core.routes.converters import router as converters_router
 from flowfile_core.routes.custom_node_mounts import router as custom_node_mounts_router
 from flowfile_core.routes.file_manager import router as file_manager_router
@@ -259,6 +260,7 @@ app.include_router(ai_admin_router, prefix="/system", tags=["system"])
 app.include_router(lsp_admin_router, prefix="/system", tags=["system"])
 app.include_router(system_worker_router, prefix="/system", tags=["system"])
 app.include_router(system_backups_router, prefix="/system", tags=["system"])
+app.include_router(compute_backends_router, tags=["compute_backends"])
 
 core_telemetry.install(app)
 
