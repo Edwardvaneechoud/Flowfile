@@ -61,6 +61,12 @@ from shared.kafka.models import KafkaReadSettings
 
 ARROW_STREAM = "application/vnd.apache.arrow.stream"
 
+SAMPLE_ROWS_CAP = 10_000
+"""The most rows ``GET /v1/results/{id}/sample`` answers; a larger ``n`` is refused, not truncated."""
+
+SAMPLE_ROWS_IN_PARENT = 1_000
+"""The most rows of a materialised result a sample reads in this process; more are read in a child."""
+
 # An operation's job id names its output files, so it holds no path separator.
 JobId = Annotated[str, Query(pattern=r"^[A-Za-z0-9_-]+$")]
 
@@ -214,11 +220,11 @@ def _run(
     )
 
 
-def _run_deferred(record: ResultRecord, operation: str, kwargs: dict | None = None) -> Any:
-    """Run *operation* over a deferred result's plan as a task of its own and return its result; no entry is left."""
+def _run_child(record: ResultRecord, plan: bytes, operation: str, kwargs: dict | None = None) -> Any:
+    """Run *operation* over *plan* as a task of its own under *record*'s flow and node; its result, no entry left."""
     task_id = uuid.uuid4().hex
     try:
-        status = _run(task_id, record.plan, operation, "", record.flow_id, record.node_id, kwargs)
+        status = _run(task_id, plan, operation, "", record.flow_id, record.node_id, kwargs)
     finally:
         with status_dict_lock:
             status_dict.pop(task_id, None)
@@ -405,21 +411,23 @@ def submit(plan: bytes = File(), meta: str = Form()) -> SubmitResult:
 
 
 @router.get("/results/{result_id}/sample")
-def sample(result_id: str, n: int = Query(ge=0)) -> Response:
+def sample(result_id: str, n: int = Query(ge=0, le=SAMPLE_ROWS_CAP)) -> Response:
     """The first *n* rows of a held result as an Arrow IPC stream.
 
-    A materialised result's rows are read from its file here, bounded by *n*; a deferred one's are
-    collected from ``head(n)`` of its plan in a child.
+    An *n* above ``SAMPLE_ROWS_CAP`` is 422 before anything runs. Up to ``SAMPLE_ROWS_IN_PARENT`` rows
+    of a materialised result are read from its file here; more are collected from ``head(n)`` of a
+    scan of the file in a child, as a deferred result's rows are from ``head(n)`` of its plan.
     """
     record = _held(result_id)
     if record is None:
         raise _not_held(result_id)
-    if record.state == "materialised":
+    if record.state == "materialised" and n <= SAMPLE_ROWS_IN_PARENT:
         buffer = io.BytesIO()
         pl.scan_ipc(record.path).head(n).collect().write_ipc_stream(buffer)
         data = buffer.getvalue()
     else:
-        data = _run_deferred(record, "submit_result", {"materialise": False, "preview_rows": n})["sample"]
+        plan = pl.scan_ipc(record.path).serialize() if record.state == "materialised" else record.plan
+        data = _run_child(record, plan, "submit_result", {"materialise": False, "preview_rows": n})["sample"]
     return Response(content=data, media_type=ARROW_STREAM)
 
 
@@ -431,7 +439,7 @@ def count(result_id: str) -> dict[str, int]:
         raise _not_held(result_id)
     if record.row_count is not None:
         return {"row_count": record.row_count}
-    return {"row_count": int(_run_deferred(record, "calculate_number_of_records"))}
+    return {"row_count": int(_run_child(record, record.plan, "calculate_number_of_records"))}
 
 
 @router.head("/results/{result_id}")

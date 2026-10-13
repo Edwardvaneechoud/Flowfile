@@ -311,6 +311,53 @@ def test_sample_and_count_of_an_unknown_result_are_404():
     assert client.get("/v1/results/unknown/count").status_code == 404
 
 
+def _record_children(monkeypatch) -> list[str]:
+    """The operation of every child the routes run from here on, in order."""
+    operations: list[str] = []
+    run = protocol_routes._run
+
+    def recording(task_id, plan, operation, *args, **kwargs):
+        operations.append(operation)
+        return run(task_id, plan, operation, *args, **kwargs)
+
+    monkeypatch.setattr(protocol_routes, "_run", recording)
+    return operations
+
+
+def test_more_than_a_thousand_rows_of_a_stored_result_are_read_in_a_child(held, monkeypatch):
+    result_id = held()
+    plan = pl.LazyFrame({"id": range(1_500)})
+    _submit(result_id, plan, must_materialise=True)
+    jobs_before = set(status_dict)
+    children = _record_children(monkeypatch)
+
+    in_parent = client.get(f"/v1/results/{result_id}/sample", params={"n": 1_000})
+    assert children == []
+    in_child = client.get(f"/v1/results/{result_id}/sample", params={"n": 1_001})
+
+    assert children == ["submit_result"]
+    assert_frame_equal(pl.read_ipc_stream(in_parent.content), plan.head(1_000).collect())
+    assert_frame_equal(pl.read_ipc_stream(in_child.content), plan.head(1_001).collect())
+    assert set(status_dict) == jobs_before
+
+
+def test_a_sample_above_the_cap_is_refused_before_anything_runs(held, monkeypatch):
+    result_id = held()
+    plan = _plan()
+    _submit(result_id, plan, must_materialise=True)
+    children = _record_children(monkeypatch)
+
+    refused = client.get(f"/v1/results/{result_id}/sample", params={"n": 10_001})
+    assert refused.status_code == 422
+    assert "10000" in refused.text
+    assert children == []
+
+    capped = client.get(f"/v1/results/{result_id}/sample", params={"n": 10_000})
+    assert capped.status_code == 200
+    assert_frame_equal(pl.read_ipc_stream(capped.content), plan.collect())
+    assert children == ["submit_result"]
+
+
 def test_release_removes_the_file_the_record_and_the_job(held):
     result_id = held()
     path = _location(_submit(result_id, _plan(), must_materialise=True)).path
