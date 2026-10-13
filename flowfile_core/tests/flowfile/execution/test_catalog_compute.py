@@ -740,7 +740,8 @@ def s3_namespace(clean_catalog):
 
 
 def dir_name(file_path: str) -> str:
-    return file_path.rstrip("/").rsplit("/", 1)[-1]
+    """The last segment of a path or URI, whichever separator the platform registered it with."""
+    return file_path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
 
 
 def assert_addressed(protocol, payloads, worker_sent, file_path, table_ids, base_uri=None):
