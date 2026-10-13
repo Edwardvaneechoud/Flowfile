@@ -1,9 +1,11 @@
 """Runtime for the run_flow node: resolve, inspect, and execute catalog flows as subflows.
 
-The child graph always runs in-process and local (fresh flow_id, never registered
-in the FlowfileHandler, per-graph execution settings — the global worker-offload
-flag is untouched). Outputs stay lazy; only the small parameter frame is
-bounded-collected in core.
+The child graph runs in-process under the parent run's execution context (fresh
+flow_id, never registered in the FlowfileHandler, per-graph execution settings —
+the global worker-offload flag is untouched). With ``FLOWFILE_COMPUTE_PROTOCOL``
+on, the child takes the parent's ``execution_location``, so a local parent's
+subflow stays local; off, the child is set ``local``. Outputs stay lazy; only the
+small parameter frame is bounded-collected in core.
 """
 
 import threading
@@ -20,6 +22,7 @@ from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.service import CatalogService
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
@@ -531,7 +534,9 @@ def execute_run_flow_node(
         # runs log into the subflow file's own editor log (and collide when the
         # same subflow runs from two parents at once).
         child.flow_logger = FlowLogger(child.flow_id)
-        child.flow_settings.execution_location = "local"
+        child.flow_settings.execution_location = (
+            parent_graph.flow_settings.execution_location if FLOWFILE_COMPUTE_PROTOCOL else "local"
+        )
         child.flow_settings.execution_mode = "Performance"
         child.flow_settings.auto_save = False
         child._subflow_ancestry = ancestry | {path_key}
