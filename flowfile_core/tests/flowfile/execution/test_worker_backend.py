@@ -1,7 +1,7 @@
 """The worker backend runs plans and operations as worker tasks and reads their results from the shared disk.
 
 It exports such a result in a worker task that sinks it, never in core, and holds an imported URI as a deferred plan
-in process.
+in process. A blob is held over the ``/v1`` routes only, so an import of one over the task routes is refused.
 """
 
 import io
@@ -25,6 +25,7 @@ from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import (
     ComputeUnavailable,
     ForeignRef,
+    OperationUnsupported,
     PlanRejected,
     ResultMissing,
 )
@@ -483,6 +484,17 @@ def test_import_uri_holds_a_deferred_plan_in_process(backend, task_routes, tmp_p
         backend.release(ref)
     assert not backend.exists(ref)
     assert path.is_file()
+
+
+def test_a_blob_import_over_the_task_routes_is_unsupported(task_routes, monkeypatch, tmp_path):
+    sent = []
+    monkeypatch.setattr(requests.Session, "send", lambda self, request, **kwargs: sent.append(request))
+    monkeypatch.setattr(worker_module, "ExternalDfFetcher", lambda *args, **kwargs: sent.append(kwargs))
+
+    with pytest.raises(OperationUnsupported, match="/v1 routes"):
+        WorkerBackend(url=WORKER_URL).import_uri(f"file://{tmp_path}/model.bin", None, None, None, kind="blob")
+
+    assert sent == []
 
 
 SPLIT_NODE_SOURCE = """

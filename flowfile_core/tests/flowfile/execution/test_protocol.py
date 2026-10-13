@@ -88,3 +88,10 @@ def test_a_class_missing_a_method_is_not_a_compute_backend(missing):
     methods = tuple(name for name in BACKEND_METHODS if name != missing)
 
     assert not isinstance(_backend_class(methods)(), ComputeBackend)
+
+
+def test_a_reference_is_a_table_unless_it_says_blob():
+    table = ResultRef("local", "h1", [], None, "deferred", b"h1")
+    blob = ResultRef("local", "h2", [], None, "materialised", b"h2", kind="blob")
+
+    assert (table.kind, blob.kind) == ("table", "blob")

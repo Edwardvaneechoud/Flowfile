@@ -1,8 +1,8 @@
 """``GET /capabilities`` and ``GET /v1/capabilities``: what this worker process can run, behind the internal token.
 
 Beside the versions and plugins the handshake compares, both answer with what the worker declares: the operation
-kinds it runs, the URI schemes it reads and writes (``file`` only with ``FLOWFILE_WORKER_LOCAL_FILES=1``) and
-``credential_resolution``.
+kinds it runs, the URI schemes it reads and writes (object storage and ``https``, the presigned URLs a blob is copied
+to and from, and ``file`` only with ``FLOWFILE_WORKER_LOCAL_FILES=1``) and ``credential_resolution``.
 """
 
 import importlib.metadata
@@ -113,7 +113,9 @@ def test_every_v1_operation_route_is_among_the_operations(route_client, path):
 @pytest.mark.worker
 @both_routes
 @pytest.mark.parametrize("value", [None, "0", ""], ids=["unset", "0", "empty"])
-def test_without_local_files_the_worker_reads_and_writes_object_storage_only(monkeypatch, route_client, path, value):
+def test_without_local_files_the_worker_reads_and_writes_object_storage_and_https_only(
+    monkeypatch, route_client, path, value
+):
     if value is None:
         monkeypatch.delenv("FLOWFILE_WORKER_LOCAL_FILES", raising=False)
     else:
@@ -121,7 +123,7 @@ def test_without_local_files_the_worker_reads_and_writes_object_storage_only(mon
 
     caps = declared(route_client, path)
 
-    assert caps.read_schemes == caps.write_schemes == {"s3", "az", "gs"}
+    assert caps.read_schemes == caps.write_schemes == {"s3", "az", "gs", "https"}
 
 
 @pytest.mark.worker
@@ -133,7 +135,7 @@ def test_local_files_add_the_file_scheme_on_the_next_request(monkeypatch, route_
     monkeypatch.setenv("FLOWFILE_WORKER_LOCAL_FILES", "1")
     caps = declared(route_client, path)
 
-    assert caps.read_schemes == caps.write_schemes == {"file", "s3", "az", "gs"}
+    assert caps.read_schemes == caps.write_schemes == {"file", "s3", "az", "gs", "https"}
 
 
 @pytest.mark.worker

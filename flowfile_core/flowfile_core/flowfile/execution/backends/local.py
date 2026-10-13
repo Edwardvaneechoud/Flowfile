@@ -8,8 +8,10 @@ flow's nodes run whole when they execute in core, one method per ``OperationKind
 the payload keys it reads; every other kind takes its dataclass from ``execution/payloads.py`` under ``"payload"``.
 A read holds what it read as a deferred plan, so the reader keeps the frame through ``plan_for`` and can release the
 ref at once. A result crosses to another backend only through ``export``, a streaming sink of its plan to a URI, and
-``import_uri``, a scan of a URI held deferred. Nothing runs asynchronously: every job has ended when its call returns,
-so ``cancel`` has nothing to stop.
+``import_uri``, a scan of a URI held deferred. A blob, a file of bytes that is not rows, is held beside the store as a
+copy under core's storage directory, which ``import_uri(kind="blob")`` makes from a ``file://`` URI or a presigned
+``https://`` URL and ``export`` copies out the same way. Nothing runs asynchronously: every job has ended when its call
+returns, so ``cancel`` has nothing to stop.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ import uuid
 from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, ClassVar, get_args
+from typing import Any, ClassVar, Literal, get_args
 
 import polars as pl
 from pydantic import SecretStr
@@ -77,7 +79,14 @@ from flowfile_core.schemas.cloud_storage_schemas import (
 )
 from flowfile_core.secret_manager.secret_manager import decrypt_secret
 from shared.cloud_credential_provider import CredentialRefProvider
-from shared.compute_protocol import CLOUD_SCHEMES, PROTOCOL_VERSION, Capabilities, local_capabilities
+from shared.compute_protocol import (
+    CLOUD_SCHEMES,
+    PROTOCOL_VERSION,
+    Capabilities,
+    get_blob,
+    local_capabilities,
+    put_blob,
+)
 from shared.delta_utils import (
     get_delta_size_bytes,
     merge_into_delta,
@@ -103,6 +112,11 @@ class LocalBackend:
     the flag off, is held deferred as the object submitted. No sample is returned inline either way, even when
     ``preview_rows`` asks for one, because ``sample`` serves it when something reads it. Apart from a stored result,
     nothing in core computes a node's rows before a consumer, a write or an opened preview needs them.
+
+    A blob (``ResultRef.kind == "blob"``) is held as a copy of its bytes at ``cache/local/-1/<result_id>.blob`` under
+    core's storage directory, beside the store, in both flag states. It has no rows: ``plan_for``, ``sample`` and
+    ``count`` raise ``OperationUnsupported`` for one, as ``submit`` does for one among its inputs, while ``exists``
+    and ``export`` take it, and ``release`` removes the copy.
     """
 
     id = LOCAL_BACKEND_ID
@@ -112,13 +126,15 @@ class LocalBackend:
         self._lock = threading.Lock()
         self._results: dict[str, pl.LazyFrame] = {}
         self._files: dict[str, Path] = {}
+        self._blobs: dict[str, Path] = {}
 
     def capabilities(self) -> Capabilities:
         """The capabilities of this process, with the operations ``run_op`` runs here and the schemes it uses.
 
-        Core's process is on core's host, so it reads and writes local files as well as object storage.
+        Core's process is on core's host, so it reads and writes local files as well as object storage, and ``https``:
+        a presigned URL a blob is copied to or from.
         """
-        schemes = CLOUD_SCHEMES | {"file"}
+        schemes = CLOUD_SCHEMES | {"file", "https"}
         return local_capabilities().model_copy(
             update={
                 "operations": frozenset(op.value for op in self._OPERATIONS),
@@ -150,6 +166,7 @@ class LocalBackend:
 
         Raises:
             ForeignRef: An input was minted by another backend.
+            OperationUnsupported: An input is a blob, which a plan cannot read.
             ResultMissing: This backend no longer holds an input.
         """
         for ref in inputs:
@@ -188,13 +205,13 @@ class LocalBackend:
         return plan.select(pl.len()).collect().item()
 
     def exists(self, ref: ResultRef) -> bool:
-        """Whether the store still holds ``ref``."""
+        """Whether the store, or the blobs beside it, still hold ``ref``."""
         self._check_backend(ref.backend_id)
         with self._lock:
-            return _store_key(ref) in self._results
+            return _store_key(ref) in self._results or _store_key(ref) in self._blobs
 
     def release(self, ref: ResultRef) -> None:
-        """Drop ``ref`` from the store, and a stored result's file; releasing it again does nothing."""
+        """Drop ``ref`` from the store, and a stored result's file or a blob's copy; releasing it again does nothing."""
         self._check_backend(ref.backend_id)
         self._drop(_store_key(ref))
 
@@ -209,15 +226,31 @@ class LocalBackend:
         resolves it with its own catalog and master key when the sink opens the target. The target is the caller's,
         so a sink that fails leaves it to the caller and its Polars error propagates.
 
+        A blob's copy is copied as it is to a ``file://`` URI or ``PUT`` to a presigned ``https://`` URL
+        (``put_blob``), which carries its own authorisation, so a blob takes no credential.
+
         Raises:
             ForeignRef: Another backend minted ``ref``.
+            OSError: A blob's copy or ``PUT`` failed; the message names no URL query.
             ResultMissing: This backend no longer holds ``ref``.
+            ValueError: ``ref`` is a blob and ``credential`` is set, or ``uri`` is no ``file://`` or ``https://`` one.
         """
+        self._check_backend(ref.backend_id)
+        if ref.kind == "blob":
+            if credential is not None:
+                raise ValueError("A blob is copied to a URI that carries its own authorisation; it takes no credential")
+            put_blob(self._blob(ref), uri)
+            return uri
         self._plan(ref).sink_parquet(uri, **_credential_kwargs(credential))
         return uri
 
     def import_uri(
-        self, uri: str, schema: Schema, row_count: int | None, credential: CredentialRef | None
+        self,
+        uri: str,
+        schema: Schema | None,
+        row_count: int | None,
+        credential: CredentialRef | None,
+        kind: Literal["table", "blob"] = "table",
     ) -> ResultRef:
         """Hold a scan of the parquet at ``uri`` as a deferred result with the ``schema`` and ``row_count`` given.
 
@@ -225,7 +258,35 @@ class LocalBackend:
         counts the rows only when it is ``None``) and the file need not exist until something reads the rows.
         ``credential`` is resolved in this process when the scan runs. ``release`` forgets the scan and leaves the
         file, which is not this backend's.
+
+        With ``kind="blob"`` the bytes at a ``file://`` URI or a presigned ``https://`` URL are copied now
+        (``get_blob``) to ``cache/local/-1/<result_id>.blob`` under core's storage directory and held under a fresh id
+        as a materialised blob with no columns and no row count; ``release`` removes that copy and leaves the source.
+
+        Raises:
+            OSError: A blob's copy or ``GET`` failed; nothing is held and nothing is left of the copy.
+            ValueError: A table without ``schema``, a blob with a ``schema``, a ``row_count`` or a ``credential``, or
+                a blob ``uri`` that is no ``file://`` or ``https://`` one; nothing is held.
         """
+        if kind == "blob":
+            if schema is not None or row_count is not None or credential is not None:
+                raise ValueError("A blob import takes no schema, no row count and no credential")
+            result_id = _new_result_id()
+            path = _result_path(-1, result_id).with_suffix(".blob")
+            get_blob(uri, path)
+            with self._lock:
+                self._blobs[result_id] = path
+            return ResultRef(
+                backend_id=self.id,
+                result_id=result_id,
+                schema=[],
+                row_count=None,
+                state="materialised",
+                location=result_id.encode("utf-8"),
+                kind="blob",
+            )
+        if schema is None:
+            raise ValueError("A table import needs its schema: it is the caller's, never read from the file")
         return self._hold(pl.scan_parquet(uri, **_credential_kwargs(credential)), row_count=row_count, schema=schema)
 
     def status(self, handle: JobHandle) -> JobStatus:
@@ -243,11 +304,23 @@ class LocalBackend:
 
     def _plan(self, ref: ResultRef) -> pl.LazyFrame:
         self._check_backend(ref.backend_id)
+        if ref.kind == "blob":
+            raise OperationUnsupported(
+                f"Result {ref.result_id} is a blob: it has no rows to plan over, sample or count"
+            )
         with self._lock:
             plan = self._results.get(_store_key(ref))
         if plan is None:
             raise ResultMissing(f"The {self.id!r} backend no longer holds result {ref.result_id!r}")
         return plan
+
+    def _blob(self, ref: ResultRef) -> Path:
+        """The copy a blob ``ref`` is held as."""
+        with self._lock:
+            path = self._blobs.get(_store_key(ref))
+        if path is None:
+            raise ResultMissing(f"The {self.id!r} backend no longer holds result {ref.result_id!r}")
+        return path
 
     def _hold(
         self,
@@ -304,13 +377,16 @@ class LocalBackend:
         return ref
 
     def _drop(self, key: str) -> None:
-        """Forget what the store holds under ``key`` and remove the files a store under it wrote."""
+        """Forget what the store holds under ``key`` and remove the files a store under it wrote, or a blob's copy."""
         with self._lock:
             self._results.pop(key, None)
             path = self._files.pop(key, None)
+            blob = self._blobs.pop(key, None)
         if path is not None:
             path.unlink(missing_ok=True)
             _partial_path(path).unlink(missing_ok=True)
+        if blob is not None:
+            blob.unlink(missing_ok=True)
 
     def _hold_engine(self, engine: FlowDataEngine) -> ResultRef:
         """Store an engine's frame with the schema and the row count the engine already has."""
