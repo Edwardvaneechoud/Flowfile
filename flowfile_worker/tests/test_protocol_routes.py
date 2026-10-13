@@ -44,6 +44,19 @@ ROUTES = [
     ("DELETE", "/v1/results/some-id"),
     ("GET", "/v1/jobs/some-id"),
     ("POST", "/v1/jobs/some-id/cancel"),
+    *[
+        ("POST", f"/v1/ops/{kind}?job_id=some-id")
+        for kind in (
+            "database_read",
+            "kafka_read",
+            "google_analytics_read",
+            "rest_api_read",
+            "file_read",
+            "fuzzy_join",
+            "custom_node",
+            "random_split",
+        )
+    ],
 ]
 
 
@@ -151,6 +164,14 @@ def test_the_v1_paths_are_in_the_openapi_document():
         "/v1/results/{result_id}",
         "/v1/jobs/{job_id}",
         "/v1/jobs/{job_id}/cancel",
+        "/v1/ops/database_read",
+        "/v1/ops/kafka_read",
+        "/v1/ops/google_analytics_read",
+        "/v1/ops/rest_api_read",
+        "/v1/ops/file_read",
+        "/v1/ops/fuzzy_join",
+        "/v1/ops/custom_node",
+        "/v1/ops/random_split",
     }
     assert set(paths["/v1/results/{result_id}"]) == {"head", "delete"}
 
