@@ -71,7 +71,12 @@ def test_a_relative_windows_path_named_by_a_linux_kernel_is_not_joined_twice(tmp
             "id": 3,
             "type": "output",
             "setting_input": {
-                "output_settings": {"name": PurePosixPath(written).name, "directory": written, "file_type": "csv"}
+                "output_settings": {
+                    "name": PurePosixPath(written).name,
+                    "directory": written,
+                    "file_type": "csv",
+                    "table_settings": {"file_type": "csv"},
+                }
             },
         },
     )

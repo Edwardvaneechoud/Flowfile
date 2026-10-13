@@ -55,6 +55,11 @@ class Trainer(Protocol):
     ) -> pl.LazyFrame: ...
 
 
+def _float_features(features: list[str]) -> list[pl.Expr]:
+    # polars_ds panics on Int8/Int16/Decimal inputs; apply() casts the same way.
+    return [pl.col(f).cast(pl.Float64) for f in features]
+
+
 class _LinearFamilyTrainer:
     """Shared implementation for linear-coefficient trainers (linear/ridge/lasso).
 
@@ -107,10 +112,16 @@ class _LinearFamilyTrainer:
 
         validated = self.params_class(**params)
         kwargs = self._lin_reg_kwargs(validated)
-        coefs_frame = lf.select(pds.lin_reg(*features, target=target, **kwargs)).collect()
+        coefs_frame = lf.select(pds.lin_reg(*_float_features(features), target=target, **kwargs)).collect()
         if coefs_frame.height == 0:
             raise ValueError("Training data is empty; cannot fit a regression model.")
         coeffs = coefs_frame.row(0)[0]
+        if coeffs is None:
+            raise ValueError(
+                f"{self.label} could not be fitted: a feature column is constant, or a linear combination of "
+                f"other features (e.g. a total next to its parts). Features: {features!r}. Remove the redundant "
+                "column(s), or use Ridge Regression."
+            )
         if validated.add_bias:
             *coefficients, intercept = coeffs
         else:
@@ -308,7 +319,7 @@ class LogisticRegressionTrainer:
         validated = self.params_class(**params)
         coefs_frame = lf.select(
             pds.logistic_reg(
-                *features,
+                *_float_features(features),
                 target=target,
                 add_bias=validated.add_bias,
                 l1_reg=validated.l1_reg,

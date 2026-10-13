@@ -46,6 +46,13 @@ A canvas notebook session in a kernel sets it: the kernel mounts no host folder 
 (core reads the file for it), and core recomputes the absolute path on the host when it checks a push.
 """
 
+
+def _ends_with(path: str, name: str) -> bool:
+    """Whether ``path`` already ends in ``name``: a Linux kernel names a Windows file by its whole path."""
+    tail = Path(name).parts
+    return bool(tail) and Path(path).parts[-len(tail) :] == tail
+
+
 SecretRef = Annotated[
     str, StringConstraints(min_length=1, max_length=100), Field(description="An ID referencing an encrypted secret.")
 ]
@@ -315,7 +322,8 @@ class ReceivedTable(BaseModel):
         if not base_path.is_absolute():
             base_path = Path.cwd() / base_path
         # In directory mode the name is a node label, not a filename to append.
-        if self.scan_mode == "single_file" and self.name and self.name not in base_path.name:
+        named = self.name and self.name not in base_path.name and not _ends_with(self.path, self.name)
+        if self.scan_mode == "single_file" and named:
             base_path = base_path / self.name
         resolved = str(base_path.resolve())
         if self.scan_mode == "directory":
@@ -481,7 +489,7 @@ class OutputSettings(BaseModel):
         base_path = Path(self.directory)
         if not base_path.is_absolute():
             base_path = Path.cwd() / base_path
-        if self.name and self.name not in base_path.name:
+        if self.name and self.name not in base_path.name and not _ends_with(self.directory, self.name):
             base_path = base_path / self.name
         self.abs_file_path = str(base_path.resolve())
 
