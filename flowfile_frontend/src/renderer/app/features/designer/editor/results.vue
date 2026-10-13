@@ -29,6 +29,16 @@
         ×
       </button>
     </div>
+    <div v-if="computeBanner" class="compute-error-banner" role="alert">
+      <strong class="compute-error-banner__title">{{ computeBanner.title }}</strong>
+      <p
+        v-for="message in computeBanner.messages"
+        :key="message"
+        class="compute-error-banner__message"
+      >
+        {{ message }}
+      </p>
+    </div>
     <br />
     <div>
       <el-timeline>
@@ -97,6 +107,7 @@ import { useNodeStore } from "../../../stores/column-store";
 import { useAiStore } from "../../../stores/ai-store";
 import { useEditorStore } from "../../../stores/editor-store";
 import { useDrawerStore } from "../../../stores/drawer-store";
+import { computeErrorBanner } from "../../../utils/computeErrorBanner";
 
 interface RunNode {
   node_id: number;
@@ -115,6 +126,12 @@ const runInformation = computed(() => nodeStore.currentRunResult);
 const selectedNode = ref<Element | null>(null);
 
 const openFlowSettings = () => editorStore.requestOpenFlowSettings();
+
+const computeBanner = computed(() =>
+  runInformation.value?.is_running
+    ? null
+    : computeErrorBanner(runInformation.value?.node_step_result),
+);
 
 // Flow status. The backend leaves `success` null while the flow is running
 // and sets `is_running`, so we never render a running flow as "Failed". A
@@ -269,6 +286,19 @@ const navigateToNode = (nodeId: string) => {
   content: "·";
   margin: 0 6px;
   color: var(--color-text-tertiary);
+}
+.compute-error-banner {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-danger);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--color-text-primary);
+}
+.compute-error-banner__message {
+  margin: 4px 0 0;
+  word-break: break-word;
 }
 .perf-mode-notice {
   display: flex;
