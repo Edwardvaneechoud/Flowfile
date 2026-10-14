@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from multiprocessing import Queue
 from pathlib import Path
 
 import polars as pl
@@ -23,8 +24,9 @@ from fastapi.testclient import TestClient
 from polars.testing import assert_frame_equal
 from starlette.testclient import WebSocketDenialResponse
 
-from flowfile_worker import main, models, protocol_routes, status_dict, status_dict_lock, streaming
+from flowfile_worker import funcs, main, models, mp_context, protocol_routes, status_dict, status_dict_lock, streaming
 from flowfile_worker.results import result_path
+from flowfile_worker.task_errors import WorkerEnvironmentError, split_failure
 from shared.compute_protocol import (
     PROTOCOL_VERSION,
     PROTOCOL_VERSION_HEADER,
@@ -859,6 +861,31 @@ def test_a_failed_submits_job_carries_the_error(held):
 
     assert job["status"] == "Error"
     assert job["error_message"].startswith("ColumnNotFoundError")
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [pl.exceptions.ColumnNotFoundError("x" * 3000), WorkerEnvironmentError(ImportError("y" * 3000))],
+    ids=["task", "environment"],
+)
+def test_a_deferred_submit_without_a_preview_fails_as_its_child_would(held, monkeypatch, failure):
+    def load(plan):
+        raise failure
+
+    monkeypatch.setattr(funcs, "_load_plan", load)
+    monkeypatch.setattr(protocol_routes, "_load_plan", load)
+    plan = _plan().serialize()
+    progress, error_message = mp_context.Value("i", 0), mp_context.Array("c", 1024)
+    funcs.submit_result(plan, progress, error_message, Queue(maxsize=1), "", FLOW_ID, NODE_ID, False, None)
+    kind, message = split_failure(error_message.value.decode(errors="replace"))
+    result_id = held()
+
+    response = _post(plan, _meta(result_id))
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == {"status": "Error", "error_message": message, "error_kind": kind}
+    assert len(message.encode()) <= 1024
+    assert client.get(f"/v1/jobs/{result_id}").json()["progress"] == progress.value == -1
 
 
 def test_an_unknown_job_is_404():

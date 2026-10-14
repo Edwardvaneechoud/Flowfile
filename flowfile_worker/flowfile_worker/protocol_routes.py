@@ -59,7 +59,7 @@ from flowfile_worker.spawner import (
     start_process,
     start_train_model_process,
 )
-from flowfile_worker.task_errors import WorkerEnvironmentError, describe_exception
+from flowfile_worker.task_errors import DEFAULT_ERROR_LIMIT, WorkerEnvironmentError, describe_exception
 from shared.cloud_credential_provider import CredentialRefProvider
 from shared.compute_protocol import (
     CLOUD_SCHEMES,
@@ -363,18 +363,22 @@ def _resolve_columns(task_id: str, plan: bytes) -> None:
 
     It does what a deferred ``submit_result`` child with no preview does, and no more: deserialise the plan, which
     loads its UDF modules and plugin libraries, and resolve its schema; nothing is collected. The entry ends
-    ``Completed`` with the dict that child queues, or ``Error`` with the kind and message its recorded failure splits
-    into.
+    ``Completed`` with the dict that child queues, or ``Error`` with ``progress`` -1 and the kind and message its
+    recorded failure splits into, the message cut to fit that child's ``DEFAULT_ERROR_LIMIT``-byte buffer.
     """
     try:
         columns = _load_plan(plan).collect_schema()
     except (Exception, pl.exceptions.PanicException) as e:
         environment = isinstance(e, WorkerEnvironmentError)
+        # A child's buffer spends one byte on the environment marker.
+        limit = DEFAULT_ERROR_LIMIT - 1 if environment else DEFAULT_ERROR_LIMIT
+        description = describe_exception(e.original if environment else e).encode()[:limit]
         with status_dict_lock:
             status = status_dict[task_id]
             status.status = "Error"
+            status.progress = -1
             status.error_kind = "environment" if environment else "task"
-            status.error_message = describe_exception(e.original if environment else e)
+            status.error_message = description.decode(errors="replace")
         return
     with status_dict_lock:
         status = status_dict[task_id]
