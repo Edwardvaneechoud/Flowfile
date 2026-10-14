@@ -53,6 +53,7 @@ import {
 } from "../../composables/useDragAndDrop";
 import type { AutoConnectMatch } from "../../utils/autoConnect";
 import { useStaleModifierGuard } from "../../composables/useStaleModifierGuard";
+import { isMultiSelectClick } from "./multiSelect";
 import NodeList from "./NodeList.vue";
 import { useAiStore } from "../../stores/ai-store";
 import { useNodeStore } from "../../stores/column-store";
@@ -795,10 +796,12 @@ const openNodeData = (nodeId: number) => {
 /**
  * Single click opens Settings; if the dock is already open (data or logs), show this node's Data.
  * With the flow's Data in its own window the node goes there instead, and the dock is left alone.
+ * An Alt (or Cmd/Ctrl) click only toggles the node in the selection, which VueFlow already did.
  */
 const nodeClick = async (mouseEvent: any) => {
   const rawId = String(mouseEvent.node.id);
   if (isCommentNodeId(rawId)) return; // comments have no settings or data
+  if (isMultiSelectClick(mouseEvent.event)) return;
   if (!(await openNodeSettings(parseInt(rawId)))) return;
   const tableOut = editorStore.isPoppedOut("table", flowStore.flowId);
   const dockOpen = drawerStore.previewNodeId !== null || editorStore.isShowingLogViewer;
@@ -1226,6 +1229,10 @@ let lastPointerPosition: CursorPosition | null = null;
 const trackPointerMove = (event: PointerEvent) => {
   lastPointerPosition = { x: event.clientX, y: event.clientY };
 };
+// The only writer of multi-select (VueFlow's key listener is off): a lost keyup can't latch it, no keydown is swallowed.
+const syncMultiSelection = (event: PointerEvent) => {
+  instance.multiSelectionActive.value = isMultiSelectClick(event);
+};
 const keyboardPastePosition = (): CursorPosition => {
   if (lastPointerPosition) return lastPointerPosition;
   const bounds = mainContainerRef.value?.getBoundingClientRect();
@@ -1475,6 +1482,7 @@ defineExpose({
       @dragend="fileDrop.handleDragEnd"
       @dblclick="handleMainDblClick"
       @pointermove="trackPointerMove"
+      @pointerdown.capture="syncMultiSelection"
     >
       <VueFlow
         ref="vueFlow"
@@ -1488,6 +1496,7 @@ defineExpose({
         :edge-updater-radius="15"
         :default-viewport="{ zoom: 1 }"
         :zoom-on-double-click="false"
+        :multi-selection-key-code="null"
         :is-valid-connection="isValidConnection"
         @edge-update="onEdgeUpdate"
         @edge-mouse-enter="onEdgeMouseEnter"
@@ -1654,6 +1663,12 @@ body,
 .custom-node-flow .vue-flow__edge.edge-drop-target .vue-flow__edge-path {
   stroke-width: 4;
   stroke-dasharray: 6 4;
+}
+
+/* Selected nodes (Alt/Cmd/Ctrl+click, Shift+drag); the node whose settings are open keeps its own border. */
+.custom-node-flow .vue-flow__node.selected .node-button:not(.selected) {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
 }
 
 /* Palette drag within snapping range of this node: the drop auto-connects. */

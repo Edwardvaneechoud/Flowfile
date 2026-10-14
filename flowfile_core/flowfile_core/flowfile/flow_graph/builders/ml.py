@@ -1,8 +1,12 @@
 """Machine-learning nodes: train, apply and evaluate a model."""
 
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+import polars as pl
 
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
@@ -37,7 +41,56 @@ def ml_flow_model_path(flow_id: int, train_node_id: int | str) -> Path:
     Stable across runs (keyed off the train node's id), so an Apply Model node
     elsewhere in the flow can read the model without a catalog round-trip.
     """
-    return storage.get_flow_cache_directory(flow_id) / "ml_models" / f"{train_node_id}.json"
+    return storage.cache_directory / str(flow_id) / "ml_models" / f"{train_node_id}.json"
+
+
+@contextmanager
+def _panics_as_errors() -> Iterator[None]:
+    """Re-raise a Rust panic (pyo3 ``PanicException``, a ``BaseException``) as a ``RuntimeError``.
+
+    The worker's ML tasks catch ``BaseException``; in this process the node executor catches only
+    ``Exception``, so an uncaught panic would abort the whole run instead of failing the node.
+    """
+    try:
+        yield
+    except Exception:
+        raise
+    except BaseException as e:
+        if type(e).__name__ != "PanicException":
+            raise
+        raise RuntimeError(f"PanicException: {e}") from e
+
+
+def _train_in_process(data: FlowDataEngine, staging_path: Path, settings: input_schema.TrainModelSettings) -> dict:
+    """Fit the model in this process and write its bytes to *staging_path*, as the worker's ``train_model_task`` does.
+
+    A local flow computes every node in the process that runs it, and a graph built with ``flowfile_frame`` is
+    local, so a script that never started a worker can still train. Returns the report the worker would:
+    ``sha256``, ``size_bytes`` and ``model_type``.
+    """
+    from shared.ml.trainers import fit_to_path
+
+    with _panics_as_errors():
+        return fit_to_path(
+            data.data_frame.lazy(),
+            staging_path,
+            settings.model_type,
+            settings.target_column,
+            settings.feature_columns,
+            settings.params,
+        )
+
+
+def _apply_in_process(data: FlowDataEngine, model_path: str, output_column: str) -> pl.LazyFrame:
+    """Score *data* in this process with the model JSON at *model_path*, as the worker's ``apply_model_task`` does.
+
+    A linear or logistic model returns a lazy plan; a KNN model collects the input once here to query neighbours.
+    """
+    from shared.ml.trainers import get_trainer, load_model
+
+    model = load_model(model_path)
+    with _panics_as_errors():
+        return get_trainer(model["model_type"]).apply(data.data_frame.lazy(), model, output_column)
 
 
 class MlBuildersMixin(GraphMixinBase):
@@ -45,11 +98,12 @@ class MlBuildersMixin(GraphMixinBase):
     def add_train_model(self, train_settings: input_schema.NodeTrainModel) -> "FlowGraph":
         """Adds a Train Model node.
 
-        Fits a regression model on the worker, stores the serialised artifact
+        Fits a model where the flow runs (in this process for a local flow,
+        on the worker otherwise), optionally stores the serialised artifact
         in the global catalog (via :class:`ArtifactService`), and passes the
         input data through unchanged so downstream nodes can keep transforming.
-        The fit is the ``ml_train`` operation on the worker backend, whatever
-        the flow's execution location: core's own backend fits no models.
+        On the worker the fit is the ``ml_train`` operation on the worker
+        backend, as core's own backend fits no models.
 
         Args:
             train_settings: Settings (model name, target/features, model_type, params).
@@ -151,21 +205,27 @@ class MlBuildersMixin(GraphMixinBase):
             node = self.get_node(node_id=train_settings.node_id)
             flow_path_written = False
             try:
-                train = MlTrainPayload(
-                    plan=data.data_frame.lazy(),
-                    staging_path=str(staging_path),
-                    model_type=settings.model_type,
-                    target_column=settings.target_column,
-                    feature_columns=settings.feature_columns,
-                    params=settings.params,
-                    flow_id=self.flow_id,
-                    node_id=train_settings.node_id,
-                    job_id=node.hash,
-                )
-                worker = registry.backend(registry.WORKER_BACKEND_ID)
-                result = node.run_op(worker, OperationKind.ml_train, op_payload(train), job_id=train.job_id).metadata
-                if "sha256" not in result or "size_bytes" not in result:
-                    raise RuntimeError(f"Worker did not return expected sha256/size_bytes payload, got: {result!r}")
+                if self.execution_location == "local":
+                    result = _train_in_process(data, staging_path, settings)
+                    if self.flow_settings.is_canceled:
+                        raise RuntimeError("Train Model: the run was cancelled before the model was stored.")
+                else:
+                    train = MlTrainPayload(
+                        plan=data.data_frame.lazy(),
+                        staging_path=str(staging_path),
+                        model_type=settings.model_type,
+                        target_column=settings.target_column,
+                        feature_columns=settings.feature_columns,
+                        params=settings.params,
+                        flow_id=self.flow_id,
+                        node_id=train_settings.node_id,
+                        job_id=node.hash,
+                    )
+                    worker = registry.backend(registry.WORKER_BACKEND_ID)
+                    trained = node.run_op(worker, OperationKind.ml_train, op_payload(train), job_id=train.job_id)
+                    result = trained.metadata
+                if not isinstance(result, dict) or "sha256" not in result or "size_bytes" not in result:
+                    raise RuntimeError(f"Train Model did not get the expected sha256/size_bytes report: {result!r}")
 
                 if prepared is not None:
                     # Atomically replace flow_path (.tmp + os.replace) before finalize_upload moves the staging file.
@@ -243,11 +303,12 @@ class MlBuildersMixin(GraphMixinBase):
     def add_apply_model(self, apply_settings: input_schema.NodeApplyModel) -> "FlowGraph":
         """Adds an Apply Model node.
 
-        Fetches the artifact from the catalog and asks the worker to score the
-        input data, returning a LazyFrame with one extra ``Float64`` column.
-        The scoring is the ``ml_apply`` operation on the worker backend,
-        whatever the flow's execution location; the node reads the file the
-        worker wrote, which stays on the worker as the node's result.
+        Reads the model from the upstream Train Model node or the catalog and
+        scores the input data where the flow runs (lazily in this process for
+        a local flow, on the worker otherwise), returning a LazyFrame with one
+        extra prediction column. On the worker the scoring is the ``ml_apply``
+        operation on the worker backend; the node reads the file the worker
+        wrote, which stays on the worker as the node's result.
 
         Args:
             apply_settings: Settings (model_name, optional version, output_column).
@@ -315,19 +376,23 @@ class MlBuildersMixin(GraphMixinBase):
                     )
                 origin_label = f"catalog '{settings.model_name}' v{artifact.version}"
 
-            node = self.get_node(node_id=apply_settings.node_id)
-            apply = MlApplyPayload(
-                plan=data.data_frame.lazy(),
-                model_path=model_path,
-                output_column=settings.output_column,
-                flow_id=self.flow_id,
-                node_id=apply_settings.node_id,
-                job_id=node.hash,
-            )
-            worker = registry.backend(registry.WORKER_BACKEND_ID)
-            ref = node.run_op(worker, OperationKind.ml_apply, op_payload(apply), job_id=apply.job_id).refs["result"]
+            if self.execution_location == "local":
+                scored = FlowDataEngine(_apply_in_process(data, model_path, settings.output_column))
+            else:
+                node = self.get_node(node_id=apply_settings.node_id)
+                apply = MlApplyPayload(
+                    plan=data.data_frame.lazy(),
+                    model_path=model_path,
+                    output_column=settings.output_column,
+                    flow_id=self.flow_id,
+                    node_id=apply_settings.node_id,
+                    job_id=node.hash,
+                )
+                worker = registry.backend(registry.WORKER_BACKEND_ID)
+                ref = node.run_op(worker, OperationKind.ml_apply, op_payload(apply), job_id=apply.job_id).refs["result"]
+                scored = FlowDataEngine(worker.plan_for(ref), schema=ref.schema, number_of_records=ref.row_count)
             self.flow_logger.info(f"Apply Model: scored using {origin_label} -> column '{settings.output_column}'")
-            return FlowDataEngine(worker.plan_for(ref), schema=ref.schema, number_of_records=ref.row_count)
+            return scored
 
         def schema_callback():
             input_node: FlowNode = self.get_node(apply_settings.node_id).node_inputs.main_inputs[0]
