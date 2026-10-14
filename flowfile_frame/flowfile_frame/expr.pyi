@@ -28,6 +28,7 @@ ExprOrStrList = List[ExprOrStr]
 ExprStrOrList = Union[ExprOrStr, ExprOrStrList]
 
 class StringMethods:
+    convertable_to_code: bool
     __module__: Any
     __annotations__: Any
     __dict__: Any
@@ -36,9 +37,9 @@ class StringMethods:
 
     def __getattr__(self, name) -> Any: ...
 
-    def __init__(self, parent_expr: Expr, parent_repr_str: str, convertable_to_code: bool=True, _function_sources: list[str] | None=None) -> Any: ...
+    def __init__(self, parent_expr: Expr, parent_repr_str: str) -> Any: ...
 
-    def _create_next_expr(self, *args, method_name: str, result_expr: pl.Expr | None, is_complex: bool, convertable_to_code: bool=None, **kwargs) -> Expr: ...
+    def _create_next_expr(self, *args, method_name: str, result_expr: pl.Expr | None, is_complex: bool, **kwargs) -> Expr: ...
 
     def contains(self, pattern, literal=False) -> Any: ...
 
@@ -72,6 +73,7 @@ class StringMethods:
 
 
 class DateTimeMethods:
+    convertable_to_code: bool
     __module__: Any
     __annotations__: Any
     __dict__: Any
@@ -80,9 +82,9 @@ class DateTimeMethods:
 
     def __getattr__(self, name) -> Any: ...
 
-    def __init__(self, parent_expr: Expr, parent_repr_str: str, convertable_to_code: bool=True, _function_sources: list[str] | None=None) -> Any: ...
+    def __init__(self, parent_expr: Expr, parent_repr_str: str) -> Any: ...
 
-    def _create_next_expr(self, method_name: str, result_expr: pl.Expr | None, convertable_to_code: bool=None, *args, **kwargs) -> Expr: ...
+    def _create_next_expr(self, *args, method_name: str, result_expr: pl.Expr | None, **kwargs) -> Expr: ...
 
     def day(self, ) -> Any: ...
 
@@ -145,6 +147,7 @@ class ExprListNameSpace:
 
     def __init__(self, parent_expr: Expr, parent_repr_str: str) -> Any: ...
 
+    # Creates a new Expr instance, appending method call to repr string.
     def _create_next_expr(self, *args, method_name: str, result_expr: pl.Expr | None, is_complex: bool=True, **kwargs) -> Expr: ...
 
     def all(self, ) -> Expr: ...
@@ -1767,6 +1770,9 @@ class When(Expr):
 
     def __truediv__(self, other) -> 'When': ...
 
+    # Carry a branch operand's function sources and code-convertibility on the chain.
+    def _absorb(self, value) -> None: ...
+
     def _build_ff_repr(self, else_ff: str | None) -> str | None: ...
 
     # Creates a new Expr for binary operations.
@@ -1781,7 +1787,7 @@ class When(Expr):
     # Formula form of a branch operand; bare strings are column names, as in Polars.
     def _get_branch_ff_repr(self, value) -> str | None: ...
 
-    # Extract expression and representation from a value.
+    # Extract expression and representation from a value (a Polars expression comes wrapped).
     def _get_expr_and_repr(self, value) -> Any: ...
 
     # Helper to get appropriate string representation for an expression

@@ -1,5 +1,3 @@
-import hashlib
-import linecache
 import platform
 import subprocess
 from contextlib import contextmanager
@@ -8,6 +6,7 @@ from flowfile_core.auth.models import SecretInput
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.schemas import input_schema
 from flowfile_core.secret_manager.secret_manager import get_encrypted_secret, store_secret
+from test_utils.exec_script import exec_script  # noqa: F401  (re-exported for the suites that import it here)
 
 
 def is_docker_available():
@@ -19,15 +18,6 @@ def is_docker_available():
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
-
-
-def exec_script(code: str, namespace: dict | None = None) -> dict:
-    """Exec generated code the way a script file runs it: with its source readable by ``inspect``."""
-    filename = f"<flowfile-export-{hashlib.sha1(code.encode()).hexdigest()[:12]}>"
-    linecache.cache[filename] = (len(code), None, code.splitlines(True), filename)
-    namespace = {} if namespace is None else namespace
-    exec(compile(code, filename, "exec"), namespace)
-    return namespace
 
 
 def ensure_password_is_available():

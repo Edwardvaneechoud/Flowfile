@@ -14,6 +14,13 @@ if TYPE_CHECKING:
     from flowfile_frame.expr import Expr
 
 
+def _polars(value: Any) -> Any:
+    """``value`` with its frame expressions replaced by Polars expressions (``expr._polars_argument``)."""
+    from flowfile_frame.expr import _polars_argument
+
+    return _polars_argument(value)
+
+
 class ExprListNameSpace:
     """Namespace for list related expressions."""
 
@@ -25,36 +32,12 @@ class ExprListNameSpace:
     def _create_next_expr(
         self, *args, method_name: str, result_expr: pl.Expr | None, is_complex: bool = True, **kwargs
     ) -> Expr:
-        from flowfile_frame.expr import Expr, _frame_value, _merge_operand_metadata
-
         """Creates a new Expr instance, appending method call to repr string."""
-        args_repr = ", ".join(repr(a) for a in _frame_value(args))
-        kwargs_repr = ", ".join(f"{k}={repr(v)}" for k, v in _frame_value(kwargs).items())
-        function_sources, convertable_to_code = _merge_operand_metadata(self.parent, *args, *kwargs.values())
+        from flowfile_frame.expr import _frame_value, _namespace_expr, _repr_args
 
-        if args_repr and kwargs_repr:
-            args_str = f"{args_repr}, {kwargs_repr}"
-        elif args_repr:
-            args_str = args_repr
-        elif kwargs_repr:
-            args_str = kwargs_repr
-        else:
-            args_str = ""
-
-        new_repr = f"{self.parent_repr_str}.list.{method_name}({args_str})"
-
-        new_expr_instance = Expr(
-            result_expr,
-            self.parent.column_name,
-            repr_str=new_repr,
-            initial_column_name=self.parent._initial_column_name,
-            selector=None,
-            agg_func=self.parent.agg_func,
-            is_complex=is_complex,
-            convertable_to_code=convertable_to_code,
-            _function_sources=function_sources,
-        )
-        return new_expr_instance
+        args, kwargs = _frame_value(args), _frame_value(kwargs)
+        new_repr = f"{self.parent_repr_str}.list.{method_name}({_repr_args(*args, **kwargs)})"
+        return _namespace_expr(self.parent, new_repr, (*args, *kwargs.values()), result_expr, is_complex=is_complex)
 
     def all(self) -> Expr:
         res_expr = self.expr.all() if self.expr is not None else None
@@ -88,12 +71,12 @@ class ExprListNameSpace:
         if self.expr is not None:
             try:
                 if fraction is not None:
-                    expr_fraction = fraction.expr if hasattr(fraction, "expr") else fraction
+                    expr_fraction = _polars(fraction)
                     res_expr = self.expr.sample(
                         n=None, fraction=expr_fraction, with_replacement=with_replacement, shuffle=shuffle, seed=seed
                     )
                 else:
-                    expr_n = n.expr if hasattr(n, "expr") else (1 if n is None else n)
+                    expr_n = _polars(1 if n is None else n)
                     res_expr = self.expr.sample(
                         n=expr_n, fraction=None, with_replacement=with_replacement, shuffle=shuffle, seed=seed
                     )
@@ -172,7 +155,7 @@ class ExprListNameSpace:
             other_expr = pl.lit(other)
         elif isinstance(other, list):
             if len(other) > 0 and isinstance(other[0], Expr | str | pl.Series):
-                other_expr = [o.expr if hasattr(o, "expr") else (pl.col(o) if isinstance(o, str) else o) for o in other]
+                other_expr = [pl.col(o) if isinstance(o, str) else _polars(o) for o in other]
             else:
                 other_expr = pl.lit(other)
 
@@ -189,23 +172,19 @@ class ExprListNameSpace:
         return self._create_next_expr(other, method_name="concat", result_expr=res_expr)
 
     def get(self, index: int | Expr | str, *, null_on_oob: bool = False) -> Expr:
-        index_expr = index.expr if hasattr(index, "expr") else index
+        index_expr = _polars(index)
         res_expr = self.expr.get(index_expr, null_on_oob=null_on_oob) if self.expr is not None else None
         return self._create_next_expr(index, method_name="get", result_expr=res_expr, null_on_oob=null_on_oob)
 
     def gather(self, indices: Expr | pl.Series | list[int] | list[list[int]], *, null_on_oob: bool = False) -> Expr:
-        indices_expr = indices
-        if isinstance(indices, list):
-            indices_expr = pl.Series(indices)
-        elif hasattr(indices, "expr"):
-            indices_expr = indices.expr
+        indices_expr = pl.Series(indices) if isinstance(indices, list) else _polars(indices)
 
         res_expr = self.expr.gather(indices_expr, null_on_oob=null_on_oob) if self.expr is not None else None
         return self._create_next_expr(indices, method_name="gather", result_expr=res_expr, null_on_oob=null_on_oob)
 
     def gather_every(self, n: int | IntoExprColumn, offset: int | IntoExprColumn = 0) -> Expr:
-        n_expr = n.expr if hasattr(n, "expr") else n
-        offset_expr = offset.expr if hasattr(offset, "expr") else offset
+        n_expr = _polars(n)
+        offset_expr = _polars(offset)
 
         res_expr = self.expr.gather_every(n_expr, offset_expr) if self.expr is not None else None
         return self._create_next_expr(n, method_name="gather_every", result_expr=res_expr, offset=offset)
@@ -219,12 +198,12 @@ class ExprListNameSpace:
         return self._create_next_expr(method_name="last", result_expr=res_expr)
 
     def contains(self, item: float | str | bool | int | date | datetime | time | IntoExprColumn) -> Expr:
-        item_expr = item.expr if hasattr(item, "expr") else item
+        item_expr = _polars(item)
         res_expr = self.expr.contains(item_expr) if self.expr is not None else None
         return self._create_next_expr(item, method_name="contains", result_expr=res_expr)
 
     def join(self, separator: IntoExprColumn, *, ignore_nulls: bool = True) -> Expr:
-        separator_expr = separator.expr if hasattr(separator, "expr") else separator
+        separator_expr = _polars(separator)
         res_expr = self.expr.join(separator_expr, ignore_nulls=ignore_nulls) if self.expr is not None else None
         return self._create_next_expr(separator, method_name="join", result_expr=res_expr, ignore_nulls=ignore_nulls)
 
@@ -241,24 +220,24 @@ class ExprListNameSpace:
         return self._create_next_expr(method_name="diff", result_expr=res_expr, n=n, null_behavior=null_behavior)
 
     def shift(self, n: int | IntoExprColumn = 1) -> Expr:
-        n_expr = n.expr if hasattr(n, "expr") else n
+        n_expr = _polars(n)
         res_expr = self.expr.shift(n_expr) if self.expr is not None else None
         return self._create_next_expr(n, method_name="shift", result_expr=res_expr)
 
     def slice(self, offset: int | str | Expr, length: int | str | Expr | None = None) -> Expr:
-        offset_expr = offset.expr if hasattr(offset, "expr") else offset
-        length_expr = length.expr if hasattr(length, "expr") and length is not None else length
+        offset_expr = _polars(offset)
+        length_expr = _polars(length)
 
         res_expr = self.expr.slice(offset_expr, length_expr) if self.expr is not None else None
         return self._create_next_expr(offset, length, method_name="slice", result_expr=res_expr)
 
     def head(self, n: int | str | Expr = 5) -> Expr:
-        n_expr = n.expr if hasattr(n, "expr") else n
+        n_expr = _polars(n)
         res_expr = self.expr.head(n_expr) if self.expr is not None else None
         return self._create_next_expr(n, method_name="head", result_expr=res_expr)
 
     def tail(self, n: int | str | Expr = 5) -> Expr:
-        n_expr = n.expr if hasattr(n, "expr") else n
+        n_expr = _polars(n)
         res_expr = self.expr.tail(n_expr) if self.expr is not None else None
         return self._create_next_expr(n, method_name="tail", result_expr=res_expr)
 
@@ -267,7 +246,7 @@ class ExprListNameSpace:
         return self._create_next_expr(method_name="explode", result_expr=res_expr)
 
     def count_matches(self, element: Any) -> Expr:
-        element_expr = element.expr if hasattr(element, "expr") else element
+        element_expr = _polars(element)
         res_expr = self.expr.count_matches(element_expr) if self.expr is not None else None
         return self._create_next_expr(element, method_name="count_matches", result_expr=res_expr)
 
@@ -303,26 +282,26 @@ class ExprListNameSpace:
         )
 
     def eval(self, expr: Expr, *, parallel: bool = False) -> Expr:
-        expr_inner = expr.expr if hasattr(expr, "expr") else expr
+        expr_inner = _polars(expr)
         res_expr = self.expr.eval(expr_inner, parallel=parallel) if self.expr is not None else None
         return self._create_next_expr(expr, method_name="eval", result_expr=res_expr, parallel=parallel)
 
     def set_union(self, other: Any) -> Expr:
-        other_expr = other.expr if hasattr(other, "expr") else other
+        other_expr = _polars(other)
         res_expr = self.expr.set_union(other_expr) if self.expr is not None else None
         return self._create_next_expr(other, method_name="set_union", result_expr=res_expr)
 
     def set_difference(self, other: Any) -> Expr:
-        other_expr = other.expr if hasattr(other, "expr") else other
+        other_expr = _polars(other)
         res_expr = self.expr.set_difference(other_expr) if self.expr is not None else None
         return self._create_next_expr(other, method_name="set_difference", result_expr=res_expr)
 
     def set_intersection(self, other: Any) -> Expr:
-        other_expr = other.expr if hasattr(other, "expr") else other
+        other_expr = _polars(other)
         res_expr = self.expr.set_intersection(other_expr) if self.expr is not None else None
         return self._create_next_expr(other, method_name="set_intersection", result_expr=res_expr)
 
     def set_symmetric_difference(self, other: Any) -> Expr:
-        other_expr = other.expr if hasattr(other, "expr") else other
+        other_expr = _polars(other)
         res_expr = self.expr.set_symmetric_difference(other_expr) if self.expr is not None else None
         return self._create_next_expr(other, method_name="set_symmetric_difference", result_expr=res_expr)

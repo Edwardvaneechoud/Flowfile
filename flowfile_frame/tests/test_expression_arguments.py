@@ -39,6 +39,11 @@ DATA = {
 # receiver namespace ``b``, argument namespace ``m``
 CASES = {
     "fill_null": lambda b, m: b.col("x").fill_null(m.col("lo")),
+    "fill_null-nan": lambda b, m: b.col("x").fill_null(float("nan")),
+    "fill_null-when_then": lambda b, m: b.col("x").fill_null(m.when(m.col("p")).then(m.col("lo"))),
+    "clip-inf": lambda b, m: b.col("x").clip(float("-inf"), 6.0),
+    "clip-when_then": lambda b, m: b.col("x").clip(m.when(m.col("p")).then(m.col("lo"))),
+    "str.contains-lit": lambda b, m: b.col("s").str.contains(m.lit("an")),
     "fill_nan": lambda b, m: b.col("x").fill_nan(m.col("lo")),
     "clip": lambda b, m: b.col("x").clip(m.col("lo"), m.col("hi")),
     "is_between": lambda b, m: b.col("x").is_between(m.col("lo"), m.col("hi")),
@@ -152,6 +157,52 @@ def test_any_other_polars_expression_renders_as_its_plan():
     )
 
 
+def test_a_literal_argument_renders_as_code_not_as_its_plan():
+    assert repr(ff.col("x").clip(pl.lit(5.0))) == "pl.col('x').clip(pl.lit(5.0))"
+    assert repr(ff.col("x").clip(pl.lit(5, dtype=pl.Int8))) == "pl.col('x').clip(pl.lit(5, dtype=pl.Int8))"
+    assert repr(ff.col("x").fill_null(float("nan"))) == """pl.col('x').fill_null(float("nan"))"""
+    assert repr(ff.col("x").clip(float("-inf"), 6.0)) == """pl.col('x').clip(float("-inf"), 6.0)"""
+
+
+@pytest.mark.parametrize(
+    "argument",
+    [
+        pl.fold(pl.lit(0.0), lambda acc, value: acc + value, [pl.col("lo"), pl.col("hi")]),
+        pl.reduce(lambda acc, value: acc + value, [pl.col("lo"), pl.col("hi")]),
+        pl.col("lo").name.map(lambda name: name.upper()),
+    ],
+    ids=["fold", "reduce", "name.map"],
+)
+def test_a_polars_expression_holding_a_hidden_python_function_is_run_instead_of_written(argument):
+    expr = ff.col("x").fill_null(argument)
+    assert not expr.convertable_to_code
+    out = ff.from_dict(DATA).select(expr.alias("out"))
+    expected = pl.LazyFrame(DATA).select(pl.col("x").fill_null(argument).alias("out"))
+    assert_frame_equal(out.collect(), expected.collect())
+
+
+def test_a_when_chain_carries_its_branches_functions_and_convertibility():
+    condition = pl.col("lo").map_elements(_double, return_dtype=pl.Float64) > 2
+    chain = ff.when(condition).then(ff.lit(1.0)).otherwise(0.0)
+    assert not chain.convertable_to_code
+    out = ff.from_dict(DATA).select(chain.alias("out"))
+    expected = pl.LazyFrame(DATA).select(pl.when(condition).then(pl.lit(1.0)).otherwise(0.0).alias("out"))
+    assert_frame_equal(out.collect(), expected.collect())
+
+    sourced = ff.when(ff.col("p")).then(ff.col("lo").map_elements(_double, return_dtype=pl.Float64)).otherwise(0.0)
+    out = ff.from_dict(DATA).select(sourced.alias("out"))
+    assert "def _double" in _node(out).setting_input.polars_code_input.polars_code
+    assert out.collect()["out"].to_list() == [4.0, 0.0, 4.0, 0.0]
+
+
+def test_a_then_without_otherwise_is_a_polars_expression():
+    chain = ff.when(ff.col("p")).then(ff.col("lo"))
+    assert chain.expr is not None
+    out = ff.from_dict(DATA).select((chain + 1).alias("out"))
+    expected = pl.LazyFrame(DATA).select((pl.when(pl.col("p")).then(pl.col("lo")) + 1).alias("out"))
+    assert_frame_equal(out.collect(), expected.collect())
+
+
 def test_a_polars_expression_holding_a_python_function_is_run_instead_of_written():
     argument = pl.col("lo").map_elements(_double, return_dtype=pl.Float64)
     expr = ff.col("x").clip(argument)
@@ -193,6 +244,9 @@ def _flow(b, m):
         .with_columns(b.col("l").list.concat(m.col("l2")).alias("joined"))
         .with_columns(b.col("x").fill_null(m.col("lo").median().over("p")).alias("by_group"))
         .with_columns((b.col("x") * (m.col("lo") * 2)).alias("scaled"))
+        .with_columns(b.col("x").fill_null(float("nan")).alias("nan_filled"))
+        .with_columns(b.col("x").clip(m.when(m.col("p")).then(m.col("lo"))).alias("gated"))
+        .with_columns(b.col("s").str.contains(m.lit("an")).alias("has_an"))
     )
 
 

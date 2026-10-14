@@ -20,7 +20,7 @@ from flowfile_core.flowfile.flow_data_engine.polars_code_parser import PolarsCod
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema, transform_schema
 from tests.flowfile.test_project_exporter import create_basic_flow
-from tests.flowfile_core_test_utils import exec_script
+from test_utils.exec_script import run_exported
 
 _EXPORTS = [
     pytest.param(export_flow_to_polars, id="polars"),
@@ -31,8 +31,7 @@ _EXPORTS = [
 pytestmark = pytest.mark.usefixtures("keep_single_file_env")
 
 
-def _run_export(code: str) -> pl.DataFrame:
-    return exec_script(code)["run_etl_pipeline"]().collect()
+_run_export = run_exported
 
 
 def _polars_code_flow(polars_code: str) -> FlowGraph:
@@ -222,6 +221,25 @@ def test_names_the_sandbox_provides_export_and_run(export, code):
     flow.run_graph()
     expected = flow.get_node(2).get_resulting_data().data_frame.collect()
     assert_frame_equal(_run_export(export(flow)), expected)
+
+
+@pytest.mark.parametrize("export", _EXPORTS)
+def test_decimal_rows_and_a_decimal_cast_export_together(export):
+    """``from decimal import Decimal`` beside ``from polars import Decimal`` made the rows ``pl.Decimal('1.50')``."""
+    import flowfile_frame as ff
+
+    rows = ff.from_dict({"m": [Decimal("1.50"), Decimal("2.25")], "x": [1, 2]})
+    out = rows.polars_code("input_df.with_columns(col('x').cast(Decimal(10, 2)).alias('y'))")
+    assert_frame_equal(_run_export(export(out.flow_graph)), out.collect())
+
+
+@pytest.mark.parametrize("export", _EXPORTS)
+def test_flow_input_sample_rows_export_as_code_that_runs(export):
+    import flowfile_frame as ff
+
+    sample = {"d": [date(2024, 1, 1), None], "f": [float("nan"), 1.5], "m": [Decimal("1.50"), None]}
+    frame = ff.FlowInput("orders", sample=sample, flow_graph=ff.create_flow_graph())
+    assert_frame_equal(_run_export(export(frame.flow_graph)), frame.collect())
 
 
 @pytest.mark.parametrize("export", _EXPORTS)

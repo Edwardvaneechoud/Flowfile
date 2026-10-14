@@ -11,7 +11,6 @@ from shared._version import get_version
 
 __version__ = get_version()
 
-import contextlib
 import functools
 import logging
 import os
@@ -19,29 +18,12 @@ import sys
 
 os.environ["FLOWFILE_WORKER_PORT"] = "63578"
 os.environ["FLOWFILE_SINGLE_FILE_MODE"] = "1"
-
-
-@contextlib.contextmanager
-def _quiet_startup():
-    # Core's import migrates the catalog and configures the root logger (basicConfig, alembic's fileConfig).
-    root = logging.getLogger()
-    level, handlers, disabled = root.level, root.handlers[:], root.manager.disable
-    logging.disable(logging.INFO)
-    try:
-        yield
-    finally:
-        logging.disable(disabled)
-        root.setLevel(level)
-        root.handlers[:] = handlers
-
-
-with _quiet_startup():
-    from flowfile.api import open_graph_in_editor as _open_graph_in_editor
-    from flowfile.web import start_server as _start_web_ui
-    from flowfile_frame import _fl_namespace
-    from flowfile_frame._fl_namespace import *  # noqa: F403
-    from flowfile_frame._fl_namespace import node_designer
-    from flowfile_frame.notebook import refuse
+from flowfile.api import open_graph_in_editor as _open_graph_in_editor
+from flowfile.web import start_server as _start_web_ui
+from flowfile_frame import _fl_namespace
+from flowfile_frame._fl_namespace import *  # noqa: F403
+from flowfile_frame._fl_namespace import node_designer
+from flowfile_frame.notebook import refuse
 
 
 @functools.wraps(_open_graph_in_editor)

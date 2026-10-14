@@ -5,6 +5,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 import pytest
 
 from shared.path_utils import (
+    file_name,
     DIRECTORY_SCAN_FILE_TYPES,
     CloudPathNotSupportedError,
     DirectoryScanUnsupportedError,
@@ -291,3 +292,18 @@ def test_assert_directory_scan_supported_refuses_an_empty_csv_encoding():
     with pytest.raises(DirectoryScanUnsupportedError):
         assert_directory_scan_supported("csv", "")
     assert_directory_scan_supported("csv", None)
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        (r"titanic\train.csv", "train.csv"),
+        ("titanic/sub\\train.csv", "train.csv"),
+        ("/data/titanic/train.csv", "train.csv"),
+        (r"C:\data\train.csv", "train.csv"),
+        ("s3://bucket/dir/train.csv", "train.csv"),
+        ("train.csv", "train.csv"),
+    ],
+)
+def test_file_name_takes_the_last_component_under_either_separator(path, expected):
+    assert file_name(path) == expected

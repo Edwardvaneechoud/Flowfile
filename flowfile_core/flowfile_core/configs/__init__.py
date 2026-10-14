@@ -36,4 +36,4 @@ try:
 except Exception as e:
     logger.warning(f"Failed to create logs directory: {e}")
 
-logger.info("Logging system initialized")
+logger.debug("Logging system initialized")

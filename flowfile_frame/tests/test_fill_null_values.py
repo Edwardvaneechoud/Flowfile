@@ -55,6 +55,7 @@ def _double(x):
     ("build", "node_type"),
     [
         (lambda m: m.col("a").fill_null(0.0), "formula"),
+        (lambda m: m.col("a").fill_null(float("nan")), "polars_code"),
         (lambda m: m.col("a").fill_null(m.col("b")), "formula"),
         (lambda m: m.col("i").fill_null(m.col("b")), "formula"),
         (lambda m: m.col("s").fill_null(m.col("i")), "formula"),
@@ -72,6 +73,7 @@ def _double(x):
     ],
     ids=[
         "literal",
+        "nan-literal-value",
         "column-keeps-nan",
         "int-from-float-column",
         "string-from-int-column",

@@ -12,7 +12,7 @@ import json
 import polars as pl
 import pytest
 
-from shared.ml.trainers import TRAINER_REGISTRY, get_trainer
+from shared.ml.trainers import TRAINER_REGISTRY, _fit_coefficients, get_trainer
 
 FEATURES = ["flag", "x"]
 CLASSIFIERS = {"logistic_regression", "knn_classifier"}
@@ -93,6 +93,12 @@ def test_linear_regression_names_redundant_features(redundant):
 
     with pytest.raises(ValueError, match="constant, or a linear combination"):
         trainer.train(df.lazy(), "y_reg", [*FEATURES, "total"], {})
+
+
+def test_a_fit_that_returns_no_coefficients_is_an_actionable_error():
+    """Every coefficient trainer shares the guard, so a null logistic fit is named too, not unpacked."""
+    with pytest.raises(ValueError, match="Logistic Regression could not be fitted"):
+        _fit_coefficients(pl.DataFrame({"coefficients": [None]}), FEATURES, True, "Logistic Regression")
 
 
 @pytest.mark.parametrize("model_type", ["ridge_regression", "lasso_regression", "logistic_regression"])
