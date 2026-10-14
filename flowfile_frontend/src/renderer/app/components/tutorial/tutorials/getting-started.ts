@@ -355,7 +355,7 @@ export const gettingStartedTutorial: Tutorial = {
       title: "Execution Settings",
       content: `
         <p>Set <strong>Execution Mode</strong> to <strong>Development</strong> for this tutorial — it runs every node and keeps its result so you can inspect each step. <strong>Performance</strong> computes only what the outputs need: faster, but no previews.</p>
-        <p style="font-size: 12px; color: var(--color-text-secondary);"><strong>Execution location</strong> picks where the flow runs (local or remote worker); <strong>Parallel workers</strong> caps how many independent nodes run at once on remote runs. More in the
+        <p style="font-size: 12px; color: var(--color-text-secondary);"><strong>Execution location</strong> picks the worker the flow runs on (<strong>Auto</strong> is the default worker); <strong>Parallel workers</strong> caps how many independent nodes run at once. More in the
         <a href="https://edwardvaneechoud.github.io/Flowfile/users/build-flows-visually.html?h=build+ship+performanc+development#4-build-in-development-ship-in-performance" target="_blank" rel="noopener" style="color: var(--color-accent); text-decoration: underline;">docs</a>.</p>
         <p>Close the settings when you're done.</p>
       `,
