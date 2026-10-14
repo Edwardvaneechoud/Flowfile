@@ -59,6 +59,9 @@ class ApiExecutionError(Exception):
 # The most rows a worker answers for one sample; a published response is never larger.
 _SAMPLE_ROWS_CAP = 10_000
 
+# The typed compute errors by class name, as a run report row names the one that failed its node.
+_COMPUTE_ERRORS = {error.__name__: error for error in (ComputeError, *ComputeError.__subclasses__())}
+
 _run_locks_guard = threading.Lock()
 _run_locks: dict[int, threading.Lock] = {}
 
@@ -142,6 +145,25 @@ def _first_error(run_info: RunInformation | None) -> str | None:
     for node_result in run_info.node_step_result:
         if node_result.success is False and node_result.error:
             return f"node {node_result.node_id}: {node_result.error}"
+    return None
+
+
+def _first_compute_error(run_info: RunInformation | None) -> ComputeError | None:
+    """The typed compute error that failed the run's first failed node, rebuilt from its run report row, else None.
+
+    The row keeps the error's class name and its text. ``ComputeUnavailable`` adds its hint when it is read, and the
+    row's text carries it already, so the rebuilt error is given the text without it and reads as the row does.
+    """
+    if run_info is None:
+        return None
+    for node_result in run_info.node_step_result:
+        if node_result.success is False and node_result.error:
+            error_class = _COMPUTE_ERRORS.get(node_result.compute_error)
+            if error_class is None:
+                return None
+            message = f"node {node_result.node_id}: {node_result.error}"
+            added = str(error_class(message))[len(message) :]
+            return error_class(message.removesuffix(added))
     return None
 
 
@@ -260,7 +282,9 @@ def run_flow_as_api(
         ApiConfigError: The flow does not have exactly one api_response node.
         ApiExecutionError: The flow failed or produced no data.
         ComputeError: The worker could not be reached (``ComputeUnavailable``) or could
-            not run the final collect; nothing is collected in core instead.
+            not run the final collect; with ``FLOWFILE_COMPUTE_PROTOCOL`` on, also the typed
+            error that failed the run's first failed node, rebuilt from its run report row.
+            Nothing is collected in core instead.
     """
     flow = open_flow(Path(flow_path), user_id=owner_id)
     # Machine traffic, not a user pressing Run.
@@ -292,6 +316,9 @@ def run_flow_as_api(
     with _flow_run_lock(flow.flow_id):
         run_info = flow.run_graph()
         if run_info is None or not run_info.success:
+            compute_error = _first_compute_error(run_info) if FLOWFILE_COMPUTE_PROTOCOL else None
+            if compute_error is not None:
+                raise compute_error
             raise ApiExecutionError(_first_error(run_info) or "flow execution failed")
 
         deliberately_skipped = {nr.node_id for nr in run_info.node_step_result if nr.skipped}
