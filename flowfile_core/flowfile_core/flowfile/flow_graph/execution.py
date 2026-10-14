@@ -3,6 +3,7 @@
 import contextvars
 import datetime
 import threading
+import uuid
 from collections.abc import Collection, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import ExitStack
@@ -24,6 +25,7 @@ from flowfile_core.flowfile.catalog_cdc import (
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.context import ExecutionContext, current_context, use_context
 from flowfile_core.flowfile.execution.errors import ComputeError
+from flowfile_core.flowfile.execution.exchange import ExchangeRun
 from flowfile_core.flowfile.execution.placement import Placement, Refusal, SingleBackendPolicy, place
 from flowfile_core.flowfile.flow_data_engine.bounded import head_rows
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
@@ -137,6 +139,9 @@ def execution_order_message(flow_logger: FlowLogger, stages: list[ExecutionStage
 
 
 class ExecutionMixin(GraphMixinBase):
+    # The running run's prefix in the exchange store; None between runs.
+    exchange_run: ExchangeRun | None = None
+
     @property
     def last_closed_gate_handles(self) -> Mapping[str | int, frozenset[str]]:
         """Gate id -> the output handles the last ``run_graph`` routed dead (parameter and formula gates)."""
@@ -1107,6 +1112,10 @@ class ExecutionMixin(GraphMixinBase):
         With ``FLOWFILE_COMPUTE_PROTOCOL`` on, the nodes the execution plan runs are placed first (``_place_run``): a
         node its backend cannot run ends the run before any node starts, each refused node a failed result.
 
+        The run holds ``exchange_run``, its prefix ``<uri>/<flow id>/<run id>/`` in the exchange store, from before
+        ``flow_run_started`` is published; when the run ends, however it ends, what was written under the prefix is
+        removed and ``exchange_run`` is ``None`` again (``_end_exchange_run``).
+
         Args:
             node_ids: Restrict the run to these nodes; pass a closed set (each node together with
                 every node it reads from), since a node whose input lies outside it is unreachable.
@@ -1141,6 +1150,7 @@ class ExecutionMixin(GraphMixinBase):
             raise Exception("Flow is already running")
         ambient = ambient_kernel_hold.set(kernel_hold)
         released = False
+        exchange_run = self.exchange_run = ExchangeRun(self.flow_id, uuid.uuid4().hex)
         try:
             with use_context(current_context(self)):
                 self.flow_logger.info("Starting to run flowfile flow...")
@@ -1215,6 +1225,20 @@ class ExecutionMixin(GraphMixinBase):
             # Released once: a second release would end a run another caller claimed meanwhile.
             if not released:
                 self.release_run()
+            self._end_exchange_run(exchange_run)
+
+    def _end_exchange_run(self, exchange_run: ExchangeRun) -> None:
+        """Remove what the run wrote to the exchange store; a failure is a warning on the flow log, never the run's.
+
+        ``exchange_run`` is reset only while it is still this run's: a run claimed once this one released its slot
+        holds its own.
+        """
+        if self.exchange_run is exchange_run:
+            self.exchange_run = None
+        try:
+            exchange_run.collect()
+        except Exception as e:
+            self.flow_logger.warning(f"Could not remove the run's exchange-store prefix: {type(e).__name__}: {e}")
 
     def get_run_info(self) -> RunInformation:
         """Gets a summary of the most recent graph execution.
