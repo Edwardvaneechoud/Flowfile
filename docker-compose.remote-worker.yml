@@ -74,7 +74,6 @@ services:
       - "127.0.0.1::63578"
     environment:
       - FLOWFILE_MODE=docker
-      - FLOWFILE_COMPUTE_PROTOCOL=1
       - FLOWFILE_ADMIN_USER=${FLOWFILE_ADMIN_USER:?}
       - FLOWFILE_ADMIN_PASSWORD=${FLOWFILE_ADMIN_PASSWORD:?}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?}
@@ -113,7 +112,6 @@ services:
       - printf '%s\n' "$$MINIO_TLS_CERT" > /tmp/minio-ca.pem && exec python -m flowfile_worker --host 0.0.0.0
     environment:
       - FLOWFILE_MODE=docker
-      - FLOWFILE_COMPUTE_PROTOCOL=1
       - CORE_HOST=flowfile-core
       - FLOWFILE_INTERNAL_TOKEN=${FLOWFILE_INTERNAL_TOKEN:?}
       - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:?}

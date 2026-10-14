@@ -408,7 +408,7 @@ def test_the_worker_backend_runs_every_operation_kind(kind):
         WorkerBackend(url=WORKER_URL).run_op(kind, {})
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def task_routes(monkeypatch):
     """The protocol flag off for the test, so its results are minted over the task routes."""
     monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)

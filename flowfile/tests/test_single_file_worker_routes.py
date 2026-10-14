@@ -15,7 +15,7 @@ from polars.testing import assert_frame_equal
 from starlette.testclient import WebSocketDenialResponse
 
 from flowfile.web import include_worker_routes
-from flowfile_worker import internal_token
+from flowfile_worker import internal_token, models, status_dict, status_dict_lock
 from flowfile_worker.protocol_routes import worker_capabilities
 from shared.compute_protocol import (
     PROTOCOL_VERSION,
@@ -92,6 +92,22 @@ def test_the_co_hosted_worker_declares_local_files(client):
 
     assert "file" in capabilities.read_schemes
     assert "file" in capabilities.write_schemes
+
+
+def test_a_deprecated_task_route_under_worker_answers_with_the_header(client, tmp_path):
+    task_id = uuid.uuid4().hex
+    with status_dict_lock:
+        status_dict[task_id] = models.Status(
+            background_task_id=task_id, status="Completed", file_ref=str(tmp_path / "result.arrow")
+        )
+    try:
+        response = client.get(f"/worker/kafka_offsets/{task_id}")
+    finally:
+        with status_dict_lock:
+            status_dict.pop(task_id, None)
+
+    assert response.status_code == 200
+    assert response.headers["Deprecation"] == "true"
 
 
 def test_a_materialised_submit_is_held_and_released_under_worker(client, held):
