@@ -604,13 +604,15 @@ class FlowFrame:
         pass
 
     def __repr__(self) -> str:
-        """Show the frame's node, flow, and usage hints without resolving or executing data."""
+        """Show the frame's node, flow, and data object without resolving or executing data."""
         node = self.get_node_settings()
         node_label = repr(node) if node is not None else f"Node id: {self.node_id} (unavailable)"
-        return (
-            "FlowFrame (lazy)\n"
-            f"  {node_label}\n"
-            f"  Flow id: {self.flow_graph.flow_id}\n\n"
+        return f"FlowFrame (lazy)\n  {node_label}\n  Flow id: {self.flow_graph.flow_id}\n  Data object: {self.data!r}"
+
+    def help(self) -> None:
+        """Print a short guide to transforming, inspecting, and saving this frame."""
+        print(
+            "FlowFrame usage:\n"
             "  .select(...), .filter(...), .with_columns(...)  Transform data\n"
             "  .get_node_settings()                          Inspect node settings\n"
             "  .explain()                                    View the query plan\n"
