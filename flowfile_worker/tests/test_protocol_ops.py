@@ -28,6 +28,7 @@ from shared.compute_protocol import (
     PROTOCOL_VERSION_HEADER,
     ResultRef,
     WorkerLocation,
+    file_uri,
     schema_to_wire,
 )
 from shared.ml.trainers import get_trainer
@@ -439,7 +440,7 @@ def test_a_training_holds_the_model_as_a_blob_and_reports_its_digest(jobs, tmp_p
     }
     assert client.head(f"/v1/results/{model.result_id}").status_code == 200
     copy = tmp_path / "model.json"
-    exported = client.post(f"/v1/results/{model.result_id}/export", json={"uri": f"file://{copy}"})
+    exported = client.post(f"/v1/results/{model.result_id}/export", json={"uri": file_uri(copy)})
     assert exported.status_code == 200, exported.text
     assert copy.read_bytes() == written
     job = client.get(f"/v1/jobs/{job_id}").json()

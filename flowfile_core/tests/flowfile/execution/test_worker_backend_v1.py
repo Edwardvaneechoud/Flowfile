@@ -82,7 +82,7 @@ from flowfile_core.schemas.input_schema import (
 )
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared import compute_protocol as wire
-from shared.compute_protocol import PROTOCOL_VERSION_HEADER, WorkerLocation
+from shared.compute_protocol import PROTOCOL_VERSION_HEADER, WorkerLocation, file_uri
 from shared.storage_config import storage
 
 PEOPLE = pl.DataFrame(
@@ -444,13 +444,13 @@ def test_export_goes_to_the_v1_export_route_and_the_worker_writes_the_uri(
     backend, kept, sent, must_materialise, tmp_path
 ):
     ref = submit(backend, kept, must_materialise=must_materialise).ref
-    target = f"file://{tmp_path}/out.parquet"
+    target = file_uri(tmp_path / "out.parquet")
     sent.clear()
 
     assert backend.export(ref, target, None) == target
 
     assert sent == [("POST", f"/v1/results/{ref.result_id}/export", "1")]
-    assert pl.read_parquet(target).equals(PEOPLE)
+    assert pl.read_parquet(tmp_path / "out.parquet").equals(PEOPLE)
     assert backend.exists(ref) is True
 
 
@@ -466,12 +466,12 @@ def test_an_export_carries_only_the_credential_reference(backend, kept, monkeypa
         return real_send(self, request, **kwargs)
 
     monkeypatch.setattr(requests.Session, "send", recording_send)
-    target = f"file://{tmp_path}/out.parquet"
+    target = file_uri(tmp_path / "out.parquet")
 
     assert backend.export(ref, target, CredentialRef(connection_id=7, user_id=3)) == target
 
     assert bodies == [{"uri": target, "credential": {"connection_id": 7, "user_id": 3}}]
-    assert pl.read_parquet(target).equals(PEOPLE)
+    assert pl.read_parquet(tmp_path / "out.parquet").equals(PEOPLE)
 
 
 def test_import_uri_posts_to_the_v1_import_route_and_answers_a_deferred_v1_reference(backend, sent, tmp_path):
@@ -480,7 +480,7 @@ def test_import_uri_posts_to_the_v1_import_route_and_answers_a_deferred_v1_refer
     schema = _flowfile_schema(PEOPLE.schema)
     sent.clear()
 
-    ref = backend.import_uri(f"file://{path}", schema, PEOPLE.height, None)
+    ref = backend.import_uri(file_uri(path), schema, PEOPLE.height, None)
 
     try:
         assert sent == [("POST", f"/v1/results/{ref.result_id}/import", "1")]
@@ -506,7 +506,7 @@ def test_an_export_of_a_result_the_worker_no_longer_holds_is_missing(backend, tm
     gone = v1_ref(new_result_id())
 
     with pytest.raises(ResultMissing, match=gone.result_id):
-        backend.export(gone, f"file://{tmp_path}/out.parquet", None)
+        backend.export(gone, file_uri(tmp_path / "out.parquet"), None)
     assert not (tmp_path / "out.parquet").exists()
 
 
@@ -514,13 +514,13 @@ def test_an_export_of_a_result_the_worker_no_longer_holds_is_missing(backend, tm
 def test_a_v1_result_is_exported_over_v1_after_the_flag_goes_off(backend, kept, sent, must_materialise, tmp_path):
     ref = submit(backend, kept, must_materialise=must_materialise).ref
     settings.FLOWFILE_COMPUTE_PROTOCOL.value = False
-    target = f"file://{tmp_path}/out.parquet"
+    target = file_uri(tmp_path / "out.parquet")
     sent.clear()
 
     assert backend.export(ref, target, None) == target
 
     assert [(method, path) for method, path, _ in sent] == [("POST", f"/v1/results/{ref.result_id}/export")]
-    assert pl.read_parquet(target).equals(PEOPLE)
+    assert pl.read_parquet(tmp_path / "out.parquet").equals(PEOPLE)
 
 
 def test_a_blob_import_posts_kind_blob_and_answers_a_blob_reference(backend, sent, monkeypatch, tmp_path):
@@ -538,12 +538,12 @@ def test_a_blob_import_posts_kind_blob_and_answers_a_blob_reference(backend, sen
     monkeypatch.setattr(requests.Session, "send", body_recording_send)
     sent.clear()
 
-    ref = backend.import_uri(f"file://{source}", None, None, None, kind="blob")
+    ref = backend.import_uri(file_uri(source), None, None, None, kind="blob")
 
     try:
         assert sent == [("POST", f"/v1/results/{ref.result_id}/import", "1")]
         assert bodies == [
-            {"uri": f"file://{source}", "credential": None, "columns": [], "row_count": None, "kind": "blob"}
+            {"uri": file_uri(source), "credential": None, "columns": [], "row_count": None, "kind": "blob"}
         ]
         assert (ref.backend_id, ref.kind, ref.state, ref.schema, ref.row_count) == (
             "worker",
@@ -560,7 +560,7 @@ def test_a_blob_import_posts_kind_blob_and_answers_a_blob_reference(backend, sen
                 read(ref)
         assert sent == []
         target = tmp_path / "copy.bin"
-        assert backend.export(ref, f"file://{target}", None) == f"file://{target}"
+        assert backend.export(ref, file_uri(target), None) == file_uri(target)
         assert sent == [("POST", f"/v1/results/{ref.result_id}/export", "1")]
         assert target.read_bytes() == BLOB
     finally:
@@ -586,9 +586,9 @@ def test_a_blob_takes_no_credential(backend, sent, tmp_path, given):
     sent.clear()
 
     with pytest.raises(ValueError, match="A blob import takes no"):
-        backend.import_uri(f"file://{tmp_path}/model.bin", **arguments, kind="blob")
+        backend.import_uri(file_uri(tmp_path / "model.bin"), **arguments, kind="blob")
     with pytest.raises(ValueError, match="takes no credential"):
-        backend.export(blob_ref(new_result_id()), f"file://{tmp_path}/out.bin", CredentialRef(7, 3))
+        backend.export(blob_ref(new_result_id()), file_uri(tmp_path / "out.bin"), CredentialRef(7, 3))
 
     assert sent == []
 
@@ -597,7 +597,7 @@ def test_a_table_import_needs_its_schema(backend, sent, tmp_path):
     sent.clear()
 
     with pytest.raises(ValueError, match="needs its schema"):
-        backend.import_uri(f"file://{tmp_path}/in.parquet", None, 10, None)
+        backend.import_uri(file_uri(tmp_path / "in.parquet"), None, 10, None)
 
     assert sent == []
 
@@ -1133,7 +1133,7 @@ def test_a_model_is_trained_and_applied_over_the_v1_operations(backend, kept, se
     assert location(model).kind == "blob"
     assert trained.metadata["model_type"] == "linear_regression"
     target = tmp_path / "model.json"
-    backend.export(model, f"file://{target}", None)
+    backend.export(model, file_uri(target), None)
     exported = target.read_bytes()
     assert (len(exported), hashlib.sha256(exported).hexdigest()) == (
         trained.metadata["size_bytes"],

@@ -18,6 +18,7 @@ from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ForeignRef
 from flowfile_core.flowfile.execution.protocol import ComputeBackend, ResultRef, SubmitHints
+from shared.compute_protocol import file_uri
 
 CUSTOMERS = pl.DataFrame(
     {
@@ -67,11 +68,11 @@ def node_a(backend: ComputeBackend, kept: Held, must_materialise: bool) -> Resul
 
 def cross(source: ComputeBackend, target: ComputeBackend, ref_a: ResultRef, kept: Held, tmp_path) -> ResultRef:
     """A's result exported by ``source`` to a temporary URI and imported by ``target``; the edge ``target`` holds."""
-    uri = f"file://{tmp_path}/edge.parquet"
+    uri = file_uri(tmp_path / "edge.parquet")
 
     assert source.export(ref_a, uri, None) == uri
 
-    assert pl.read_parquet(uri).sort("id").equals(A_ROWS)
+    assert pl.read_parquet(tmp_path / "edge.parquet").sort("id").equals(A_ROWS)
     edge = target.import_uri(uri, ref_a.schema, source.count(ref_a), None)
     kept.append((target, edge))
     assert (edge.backend_id, edge.state, edge.row_count) == (target.id, "deferred", A_ROWS.height)

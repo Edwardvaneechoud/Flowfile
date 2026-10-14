@@ -70,6 +70,7 @@ from shared.compute_protocol import (
     SubmitHints,
     SubmitResult,
     WireColumn,
+    file_uri_path,
     get_blob,
     local_capabilities,
     put_blob,
@@ -715,7 +716,7 @@ def import_uri(result_id: str, body: ImportBody) -> ResultRef:
         row_count=body.row_count,
         flow_id=-1,
         node_id=-1,
-        plan=pl.scan_parquet(body.uri, **provider).serialize(),
+        plan=pl.scan_parquet(file_uri_path(body.uri), **provider).serialize(),
     )
     results.put(record)
     results.mark_ended(result_id)

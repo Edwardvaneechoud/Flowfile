@@ -44,7 +44,7 @@ from flowfile_core.flowfile.execution.protocol import (
 )
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.schemas import input_schema
-from shared.compute_protocol import PROTOCOL_VERSION, local_capabilities
+from shared.compute_protocol import PROTOCOL_VERSION, file_uri, local_capabilities
 from shared.delta_utils import get_delta_size_bytes
 from shared.ml.trainers import get_trainer
 from shared.storage_config import storage
@@ -297,18 +297,18 @@ def test_export_streams_the_rows_to_the_uri_without_collecting(
     ref = submit(backend, ten_rows, submit_hints=hints(must_materialise=must_materialise)).ref
     stored = must_materialise and bool(settings.FLOWFILE_COMPUTE_PROTOCOL)
     assert ref.state == ("materialised" if stored else "deferred")
-    target = f"file://{tmp_path}/out.parquet"
+    target = file_uri(tmp_path / "out.parquet")
     collects = count_collects(monkeypatch)
 
     assert backend.export(ref, target, None) == target
 
     assert sum(collects) == 0
-    assert pl.read_parquet(target).equals(ten_rows.collect())
+    assert pl.read_parquet(tmp_path / "out.parquet").equals(ten_rows.collect())
     with pytest.raises(ForeignRef):
-        backend.export(foreign_ref, f"file://{tmp_path}/foreign.parquet", None)
+        backend.export(foreign_ref, file_uri(tmp_path / "foreign.parquet"), None)
     backend.release(ref)
     with pytest.raises(ResultMissing):
-        backend.export(ref, f"file://{tmp_path}/released.parquet", None)
+        backend.export(ref, file_uri(tmp_path / "released.parquet"), None)
     assert not (tmp_path / "foreign.parquet").exists()
     assert not (tmp_path / "released.parquet").exists()
 
@@ -321,7 +321,7 @@ def test_import_uri_holds_a_scan_with_the_given_schema_and_count_and_reads_nothi
     schema = submit(backend, ten_rows, result_id="source").ref.schema
     collects = count_collects(monkeypatch)
 
-    ref = backend.import_uri(f"file://{path}", schema, 10, None)
+    ref = backend.import_uri(file_uri(path), schema, 10, None)
 
     assert (ref.backend_id, ref.state, ref.row_count) == ("local", "deferred", 10)
     assert [(c.column_name, c.data_type) for c in ref.schema] == [("n", "Int64"), ("label", "String")]
@@ -348,13 +348,13 @@ def blob_source(monkeypatch, tmp_path):
 
 
 def test_a_blob_is_copied_into_cores_storage_and_out_again(backend, blob_source, tmp_path):
-    ref = backend.import_uri(f"file://{blob_source}", None, None, None, kind="blob")
+    ref = backend.import_uri(file_uri(blob_source), None, None, None, kind="blob")
 
     (held,) = storage.cache_directory.rglob("*.blob")
     assert held.read_bytes() == BLOB
     assert (ref.kind, ref.state, ref.schema, ref.row_count) == ("blob", "materialised", [], None)
     assert backend.exists(ref)
-    target = f"file://{tmp_path}/copy.bin"
+    target = file_uri(tmp_path / "copy.bin")
     assert backend.export(ref, target, None) == target
     assert (tmp_path / "copy.bin").read_bytes() == BLOB
     backend.release(ref)
@@ -362,11 +362,11 @@ def test_a_blob_is_copied_into_cores_storage_and_out_again(backend, blob_source,
     assert not held.exists()
     assert blob_source.read_bytes() == (tmp_path / "copy.bin").read_bytes() == BLOB
     with pytest.raises(ResultMissing):
-        backend.export(ref, f"file://{tmp_path}/released.bin", None)
+        backend.export(ref, file_uri(tmp_path / "released.bin"), None)
 
 
 def test_a_plan_cannot_read_a_blob(backend, blob_source, ten_rows):
-    blob = backend.import_uri(f"file://{blob_source}", None, None, None, kind="blob")
+    blob = backend.import_uri(file_uri(blob_source), None, None, None, kind="blob")
 
     with pytest.raises(OperationUnsupported, match="is a blob"):
         submit(backend, ten_rows, [blob])
@@ -386,20 +386,20 @@ def test_a_blob_takes_no_credential_schema_or_row_count(backend, blob_source, tm
     arguments = {"schema": None, "row_count": None, "credential": None, **given}
 
     with pytest.raises(ValueError, match="A blob import takes no"):
-        backend.import_uri(f"file://{blob_source}", **arguments, kind="blob")
+        backend.import_uri(file_uri(blob_source), **arguments, kind="blob")
 
     assert backend._blobs == {}
     assert list(storage.cache_directory.rglob("*.blob")) == []
-    blob = backend.import_uri(f"file://{blob_source}", None, None, None, kind="blob")
+    blob = backend.import_uri(file_uri(blob_source), None, None, None, kind="blob")
     with pytest.raises(ValueError, match="takes no credential"):
-        backend.export(blob, f"file://{tmp_path}/out.bin", CredentialRef(connection_id=7, user_id=3))
+        backend.export(blob, file_uri(tmp_path / "out.bin"), CredentialRef(connection_id=7, user_id=3))
     assert not (tmp_path / "out.bin").exists()
     backend.release(blob)
 
 
 def test_a_table_import_needs_its_schema(backend, tmp_path):
     with pytest.raises(ValueError, match="needs its schema"):
-        backend.import_uri(f"file://{tmp_path}/in.parquet", None, 10, None)
+        backend.import_uri(file_uri(tmp_path / "in.parquet"), None, 10, None)
 
     assert backend._results == {}
 
@@ -408,7 +408,7 @@ def test_a_blob_uri_of_another_scheme_is_refused(backend, blob_source, tmp_path)
     with pytest.raises(ValueError, match="not s3://"):
         backend.import_uri("s3://bucket/model.bin", None, None, None, kind="blob")
     assert backend._blobs == {}
-    blob = backend.import_uri(f"file://{blob_source}", None, None, None, kind="blob")
+    blob = backend.import_uri(file_uri(blob_source), None, None, None, kind="blob")
     with pytest.raises(ValueError, match="not s3://"):
         backend.export(blob, "s3://bucket/model.bin", None)
     backend.release(blob)
@@ -518,7 +518,7 @@ def test_a_training_holds_the_model_as_a_blob_with_its_digest(backend, training_
     assert backend.exists(model)
     (held,) = storage.cache_directory.rglob("*.blob")
     target = tmp_path / "model.json"
-    assert backend.export(model, f"file://{target}", None) == f"file://{target}"
+    assert backend.export(model, file_uri(target), None) == file_uri(target)
     exported = target.read_bytes()
     assert trained.metadata == {
         "sha256": hashlib.sha256(exported).hexdigest(),
@@ -532,7 +532,7 @@ def test_a_training_holds_the_model_as_a_blob_with_its_digest(backend, training_
 
 def test_an_apply_scores_with_a_held_model_and_holds_the_rows_deferred(backend, training_rows, tmp_path):
     model = backend.run_op(OperationKind.ml_train, op_payload(training(training_rows))).refs["model"]
-    backend.export(model, f"file://{tmp_path}/model.json", None)
+    backend.export(model, file_uri(tmp_path / "model.json"), None)
     fitted = json.loads((tmp_path / "model.json").read_bytes())
 
     scored = backend.run_op(OperationKind.ml_apply, op_payload(scoring(training_rows, model)))

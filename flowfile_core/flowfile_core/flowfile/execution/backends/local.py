@@ -87,6 +87,7 @@ from shared.compute_protocol import (
     CLOUD_SCHEMES,
     PROTOCOL_VERSION,
     Capabilities,
+    file_uri_path,
     get_blob,
     local_capabilities,
     put_blob,
@@ -230,8 +231,9 @@ class LocalBackend:
         """Write ``ref``'s rows to ``uri`` as parquet by a streaming sink of its plan, and return ``uri``.
 
         Nothing is collected into memory. ``credential`` names the stored connection the target needs; this process
-        resolves it with its own catalog and master key when the sink opens the target. The target is the caller's,
-        so a sink that fails leaves it to the caller and its Polars error propagates.
+        resolves it with its own catalog and master key when the sink opens the target. A ``file:`` URI is sunk to
+        the local path it names, whose folder is the caller's. The target is the caller's, so a sink that fails
+        leaves it to the caller and its Polars error propagates.
 
         A blob's copy is copied as it is to a ``file://`` URI or ``PUT`` to a presigned ``https://`` URL
         (``put_blob``), which carries its own authorisation, so a blob takes no credential.
@@ -248,7 +250,7 @@ class LocalBackend:
                 raise ValueError("A blob is copied to a URI that carries its own authorisation; it takes no credential")
             put_blob(self._blob(ref), uri)
             return uri
-        self._plan(ref).sink_parquet(uri, **_credential_kwargs(credential))
+        self._plan(ref).sink_parquet(file_uri_path(uri), **_credential_kwargs(credential))
         return uri
 
     def import_uri(
@@ -263,8 +265,8 @@ class LocalBackend:
 
         Nothing is read here: the schema and the count are the caller's, so ``count`` answers the given count (and
         counts the rows only when it is ``None``) and the file need not exist until something reads the rows.
-        ``credential`` is resolved in this process when the scan runs. ``release`` forgets the scan and leaves the
-        file, which is not this backend's.
+        ``credential`` is resolved in this process when the scan runs. A ``file:`` URI is scanned as the local path it
+        names. ``release`` forgets the scan and leaves the file, which is not this backend's.
 
         With ``kind="blob"`` the bytes at a ``file://`` URI or a presigned ``https://`` URL are copied now
         (``get_blob``) to ``cache/local/-1/<result_id>.blob`` under core's storage directory and held under a fresh id
@@ -294,7 +296,8 @@ class LocalBackend:
             )
         if schema is None:
             raise ValueError("A table import needs its schema: it is the caller's, never read from the file")
-        return self._hold(pl.scan_parquet(uri, **_credential_kwargs(credential)), row_count=row_count, schema=schema)
+        scan = pl.scan_parquet(file_uri_path(uri), **_credential_kwargs(credential))
+        return self._hold(scan, row_count=row_count, schema=schema)
 
     def status(self, handle: JobHandle) -> JobStatus:
         """Done: a job here has ended, and ``submit`` raised if it could not hold the plan."""

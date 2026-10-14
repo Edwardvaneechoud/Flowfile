@@ -5,18 +5,24 @@ tests against MinIO.
 """
 
 import io
+import nturl2path
 import socket
+import urllib.request
+from pathlib import Path, PureWindowsPath
 
 import polars as pl
 import pytest
 from pydantic import ValidationError
 
+from shared import compute_protocol
 from shared.compute_protocol import (
     ResultRef,
     SubmitHints,
     SubmitResult,
     WireColumn,
     WorkerLocation,
+    file_uri,
+    file_uri_path,
     get_blob,
     put_blob,
     schema_to_wire,
@@ -145,8 +151,8 @@ def test_a_blob_is_copied_to_and_from_a_file_uri(tmp_path):
     source = tmp_path / "model.bin"
     source.write_bytes(BLOB)
 
-    put_blob(source, f"file://{tmp_path}/out.bin")
-    get_blob(f"file://{tmp_path}/out.bin", tmp_path / "back" / "model.bin")
+    put_blob(source, file_uri(tmp_path / "out.bin"))
+    get_blob(file_uri(tmp_path / "out.bin"), tmp_path / "back" / "model.bin")
 
     assert (tmp_path / "out.bin").read_bytes() == BLOB
     assert (tmp_path / "back" / "model.bin").read_bytes() == BLOB
@@ -157,7 +163,7 @@ def test_a_put_into_a_missing_folder_fails_and_makes_none(tmp_path):
     source.write_bytes(BLOB)
 
     with pytest.raises(FileNotFoundError):
-        put_blob(source, f"file://{tmp_path}/missing/out.bin")
+        put_blob(source, file_uri(tmp_path / "missing" / "out.bin"))
     assert not (tmp_path / "missing").exists()
 
 
@@ -188,6 +194,36 @@ def test_a_failed_file_copy_leaves_no_file(tmp_path):
     target = tmp_path / "held" / "model.blob"
 
     with pytest.raises(FileNotFoundError):
-        get_blob(f"file://{tmp_path}/missing.bin", target)
+        get_blob(file_uri(tmp_path / "missing.bin"), target)
 
     assert not target.exists()
+
+
+def test_a_file_uri_is_written_and_read_back_in_one_form_on_every_platform(monkeypatch, tmp_path):
+    (tmp_path / "a b").mkdir()
+    path = tmp_path / "a b" / "x#1.bin"
+    source = tmp_path / "model.bin"
+    source.write_bytes(BLOB)
+
+    uri = file_uri(path)
+    put_blob(source, uri)
+    get_blob(uri, tmp_path / "back" / "model.bin")
+
+    assert uri == path.as_uri()
+    assert uri.startswith("file:///")
+    assert Path(file_uri_path(uri)) == path
+    assert path.read_bytes() == BLOB
+    assert (tmp_path / "back" / "model.bin").read_bytes() == BLOB
+    for other in ("s3://bucket/k.parquet", "https://host/k?X-Amz-Signature=s", "/plain/path.bin"):
+        assert file_uri_path(other) == other
+    with pytest.raises(ValueError):
+        file_uri("relative/out.parquet")
+
+    monkeypatch.setattr(compute_protocol, "Path", PureWindowsPath)
+    monkeypatch.setattr(urllib.request, "url2pathname", nturl2path.url2pathname)
+    for windows_path, written in (
+        (r"C:\Users\me\a b\out.parquet", "file:///C:/Users/me/a%20b/out.parquet"),
+        (r"\\server\share\out.parquet", "file://server/share/out.parquet"),
+    ):
+        assert file_uri(windows_path) == written
+        assert file_uri_path(written) == windows_path

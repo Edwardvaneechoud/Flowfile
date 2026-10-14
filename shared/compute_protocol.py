@@ -6,7 +6,8 @@ the operations and schemes it declares, and core builds the same for its own pro
 two can be compared field by field. The wire models (``SubmitHints``, ``SubmitResult``,
 ``ResultRef``) are what the two exchange about one result. A result is a table or a blob, a file of bytes such as a
 fitted model that is never read as rows; ``put_blob`` and ``get_blob`` copy a blob's bytes to and from a ``file://`` URI
-or a presigned ``https://`` URL, in whichever process holds it.
+or a presigned ``https://`` URL, in whichever process holds it. ``file_uri`` writes a local path's ``file:`` URI and
+``file_uri_path`` reads the path back, in one form on every platform.
 """
 
 import importlib.metadata
@@ -180,6 +181,31 @@ _BLOB_TIMEOUT = 600
 """Seconds a blob's ``PUT`` or ``GET`` waits to connect and between bytes, what a kernel's presigned transfer gets."""
 
 
+def file_uri(path: str | Path) -> str:
+    """The ``file:`` URI of the absolute ``path`` as ``Path.as_uri()`` writes it (RFC 8089), read by ``file_uri_path``.
+
+    The path is percent-encoded: ``/tmp/a b`` is ``file:///tmp/a%20b``, ``C:\\Users\\me`` is ``file:///C:/Users/me``
+    and a UNC path ``\\\\server\\share\\x`` is ``file://server/share/x``.
+
+    Raises:
+        ValueError: ``path`` is relative.
+    """
+    return Path(path).as_uri()
+
+
+def file_uri_path(uri: str) -> str:
+    """The local path a ``file:`` URI names, percent-decoded as ``file_uri`` wrote it; another URI or a path as it is.
+
+    A URI with a host names a UNC share, and the host is kept before the path as ``//<host>``.
+    """
+    parts = urlsplit(uri)
+    if parts.scheme != "file":
+        return uri
+    from urllib.request import url2pathname
+
+    return url2pathname(f"//{parts.netloc}{parts.path}" if parts.netloc else parts.path)
+
+
 def put_blob(path: Path, uri: str) -> None:
     """Copy the file at ``path`` to ``uri``: a copy to a ``file://`` URI, a ``PUT`` to a presigned ``https://`` URL.
 
@@ -191,7 +217,7 @@ def put_blob(path: Path, uri: str) -> None:
             URL without its query, which holds a presigned URL's signature.
     """
     if _blob_scheme(uri) == "file":
-        shutil.copyfile(path, uri.removeprefix("file://"))
+        shutil.copyfile(path, file_uri_path(uri))
         return
     with open(path, "rb") as body:
         _transfer("PUT", uri, data=body)
@@ -213,7 +239,7 @@ def get_blob(uri: str, path: Path) -> None:
     try:
         with open(path, "wb") as out:
             if scheme == "file":
-                with open(uri.removeprefix("file://"), "rb") as source:
+                with open(file_uri_path(uri), "rb") as source:
                     shutil.copyfileobj(source, out)
             else:
                 _transfer("GET", uri, out=out)
