@@ -269,6 +269,7 @@ def test_save_and_open_keeps_the_reference():
         path = os.path.join(tmp, "child.yaml")
         kept.save_graph(path)
         reopened = open_flow(Path(path))
+    reopened.execution_location = "local"
     node = reopened.get_node(kept.node_id)
     assert node.setting_input.filter_input.advanced_filter == "([amount] >= ${min_amount})"
     assert [p.name for p in reopened.flow_settings.parameters] == ["min_amount"]
