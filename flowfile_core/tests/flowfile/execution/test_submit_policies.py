@@ -50,6 +50,12 @@ def new_result_id() -> str:
     return f"t-submit-policy-{uuid.uuid4().hex}"
 
 
+@pytest.fixture(autouse=True)
+def task_routes(monkeypatch):
+    """The protocol flag off: these tests reach the worker through the task routes' fetcher, which the flag replaces."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
+
+
 @pytest.fixture
 def running_worker():
     from tests.conftest import is_worker_running

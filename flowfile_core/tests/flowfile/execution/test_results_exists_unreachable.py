@@ -50,6 +50,12 @@ def protocol(request, monkeypatch) -> bool:
 
 
 @pytest.fixture
+def task_routes(monkeypatch):
+    """The protocol flag off: these tests reach the worker through the task routes' fetcher, which the flag replaces."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
+
+
+@pytest.fixture
 def running_worker():
     from tests.conftest import is_worker_running
 
@@ -209,7 +215,7 @@ def test_cached_node_fails_instead_of_running_in_core(stop_worker, monkeypatch):
     assert counts == {"function": 0, "execution": 0, "collect": 0}
 
 
-def test_other_compute_errors_fail_the_node_the_same_way(running_worker, monkeypatch):
+def test_other_compute_errors_fail_the_node_the_same_way(running_worker, task_routes, monkeypatch):
     graph = _cached_input_graph(9106, "remote")
     cached = graph.get_node(1)
     assert graph.run_graph().success is True
@@ -279,7 +285,7 @@ def test_local_cached_node_never_asks_the_worker(
     node.release_result()
 
 
-def test_cached_node_recovers_after_the_worker_returns(running_worker, monkeypatch):
+def test_cached_node_recovers_after_the_worker_returns(running_worker, task_routes, monkeypatch):
     graph = _cached_input_graph(9103, "remote")
     node = graph.get_node(1)
     assert graph.run_graph().success is True

@@ -13,6 +13,7 @@ import polars as pl
 import pytest
 from pydantic import SecretStr
 
+from flowfile_core.configs import settings
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
@@ -37,6 +38,12 @@ from shared.google_analytics.models import GoogleAnalyticsReadSettings
 from shared.kafka.models import KafkaReadResult, KafkaReadSettings
 from shared.path_utils import CloudPathNotSupportedError, DirectoryScanUnsupportedError
 from shared.rest_api.models import RestApiReadSettings
+
+
+@pytest.fixture(autouse=True)
+def task_routes(monkeypatch):
+    """The protocol flag off: these tests reach the worker through the task routes' fetcher, which the flag replaces."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
 
 
 def make(backend_type: type):

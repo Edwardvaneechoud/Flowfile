@@ -13,6 +13,7 @@ import pytest
 import requests
 from polars.io.plugins import register_io_source
 
+from flowfile_core.configs import settings
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import worker as worker_module
@@ -39,6 +40,12 @@ pytestmark = pytest.mark.core
 
 LARGE = 2_000_000
 EMPTY = "nothing to read here"
+
+
+@pytest.fixture(autouse=True)
+def task_routes(monkeypatch):
+    """The protocol flag off: these tests reach the worker through the task routes' fetcher, which the flag replaces."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
 
 
 def large_plan(rows: int = LARGE) -> pl.LazyFrame:

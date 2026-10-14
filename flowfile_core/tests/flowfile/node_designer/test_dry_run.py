@@ -14,6 +14,7 @@ import polars as pl
 import pytest
 import requests
 
+from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
@@ -48,6 +49,12 @@ CODE_WITH_EXAMPLES = (
     "    def process(self, *inputs):\n"
     "        return inputs[0]\n"
 )
+
+
+@pytest.fixture(autouse=True)
+def task_routes(monkeypatch):
+    """The protocol flag off: these tests reach the worker through the task routes' fetcher, which the flag replaces."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
 
 
 def _designer_state() -> DesignerState:

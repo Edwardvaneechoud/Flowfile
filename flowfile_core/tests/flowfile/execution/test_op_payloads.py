@@ -285,7 +285,7 @@ def tasks(monkeypatch, tmp_path) -> WorkerTasks:
     return WorkerTasks(monkeypatch, tmp_path)
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def task_routes(monkeypatch):
     """The protocol flag off for the test, so the worker backend runs the operation over its task routes."""
     monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
