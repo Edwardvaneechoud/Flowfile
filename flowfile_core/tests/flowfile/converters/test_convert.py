@@ -6939,9 +6939,22 @@ def test_a_numeric_looking_string_column_is_typed_int64_and_the_body_raises_at_c
         flow.get_node(row.flowfile_node_ids[0]).get_resulting_data().data_frame.collect()
 
 
+def open_without_the_numeric_code_summarize(result: ConversionResult, target: Path):
+    """The exotic flow opened without tool 7, whose body reads `Code` as text while Flowfile types it Int64.
+
+    That body raises when its rows are read, which the test above pins. A backend that computes a node's preview
+    while the flow runs, as the worker does, reads them then; core's own process reads nothing until asked. Left in,
+    the node would decide whether these runs pass by where they run.
+    """
+    flow = open_flow(write_flow(result, target))
+    for node_id in report_row(result, 7).flowfile_node_ids:
+        flow.delete_node(node_id)
+    return flow
+
+
 def test_the_exotic_summarize_flow_runs_on_blanks_nulls_and_a_tie(tmp_path: Path, summarize_exotic: ConversionResult):
     """Six rows: one null name, one all-spaces name that is *not* blank, and a tie on the modal spend."""
-    flow = open_flow(write_flow(summarize_exotic, tmp_path / "flow.yaml"))
+    flow = open_without_the_numeric_code_summarize(summarize_exotic, tmp_path / "flow.yaml")
     run_info = flow.run_graph()
     assert run_info.success, [step.error for step in run_info.node_step_result if not step.success]
     frames = {
@@ -6977,7 +6990,7 @@ def test_the_empty_string_half_of_blank_is_executed_not_just_printed(
     assert "(pl.col('Name').is_not_null() & (pl.col('Name') != \"\")).sum()" in code
     assert "(pl.col('Name').is_null() | (pl.col('Name') == \"\")).sum()" in code
 
-    flow = open_flow(write_flow(summarize_exotic, tmp_path / "flow.yaml"))
+    flow = open_without_the_numeric_code_summarize(summarize_exotic, tmp_path / "flow.yaml")
     run_info = flow.run_graph()
     assert run_info.success, [step.error for step in run_info.node_step_result if not step.success]
     counts = flow.get_node(row.flowfile_node_ids[0]).get_resulting_data().data_frame.collect()
