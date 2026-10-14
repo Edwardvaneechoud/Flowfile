@@ -34,6 +34,7 @@ def app(monkeypatch) -> FastAPI:
     """A bare app given the worker routes single-file mode mounts, with the worker's token set for this test."""
     monkeypatch.setenv("FLOWFILE_INTERNAL_TOKEN", TOKEN)
     monkeypatch.setattr(internal_token, "_token", None)
+    monkeypatch.delenv("FLOWFILE_WORKER_LOCAL_FILES", raising=False)
     app = FastAPI()
     include_worker_routes(app)
     return app
@@ -81,6 +82,13 @@ def test_capabilities_answer_under_worker_behind_the_token_and_the_version(app, 
     assert TestClient(app).get("/worker/v1/capabilities").status_code == 401
     foreign = TestClient(app, headers={TOKEN_HEADER: TOKEN, PROTOCOL_VERSION_HEADER: "2"})
     assert foreign.get("/worker/v1/capabilities").status_code == 426
+
+
+def test_the_co_hosted_worker_declares_local_files(client):
+    capabilities = Capabilities.model_validate(client.get("/worker/v1/capabilities").json())
+
+    assert "file" in capabilities.read_schemes
+    assert "file" in capabilities.write_schemes
 
 
 def test_a_materialised_submit_is_held_and_released_under_worker(client, held):
