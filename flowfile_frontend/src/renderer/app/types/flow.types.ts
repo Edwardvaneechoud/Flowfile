@@ -7,7 +7,8 @@ import type { Position } from "@vue-flow/core";
 // Flow Execution Types
 
 export type ExecutionMode = "Development" | "Performance";
-export type ExecutionLocation = "local" | "remote";
+// "auto" or a backend id; core answers "local" or "remote" with the compute protocol off.
+export type ExecutionLocation = string;
 
 // Flow Parameters
 

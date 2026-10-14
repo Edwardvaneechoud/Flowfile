@@ -502,6 +502,7 @@ class NodeBase(BaseModel):
     flow_id: int
     node_id: int
     cache_results: bool | None = False
+    execution_location: str = "auto"  # "auto" (the flow's backend) or a backend id; saved with the node
     pos_x: float | None = 0
     pos_y: float | None = 0
     group_id: int | None = None  # Visual group membership (organizational only; no execution impact)
@@ -588,6 +589,7 @@ class NodeSelect(NodeSingleInput):
         """Converts the select node settings to a dictionary for YAML serialization."""
         result: NodeSelectYaml = {
             "cache_results": bool(self.cache_results),
+            "execution_location": self.execution_location,
             "keep_missing": self.keep_missing,
             "select_input": [s.to_yaml_dict() for s in self.select_input],
             "sorted_by": self.sorted_by,
@@ -804,6 +806,7 @@ class NodeJoin(NodeMultiInput):
         """Converts the join node settings to a dictionary for YAML serialization."""
         result: NodeJoinYaml = {
             "cache_results": self.cache_results,
+            "execution_location": self.execution_location,
             "auto_generate_selection": self.auto_generate_selection,
             "verify_integrity": self.verify_integrity,
             "join_input": self.join_input.to_yaml_dict(),
@@ -846,6 +849,7 @@ class NodeCrossJoin(NodeMultiInput):
         """Converts the cross join node settings to a dictionary for YAML serialization."""
         result: NodeCrossJoinYaml = {
             "cache_results": self.cache_results,
+            "execution_location": self.execution_location,
             "auto_generate_selection": self.auto_generate_selection,
             "verify_integrity": self.verify_integrity,
             "cross_join_input": self.cross_join_input.to_yaml_dict(),
@@ -894,6 +898,7 @@ class NodeFuzzyMatch(NodeJoin):
         """Converts the fuzzy match node settings to a dictionary for YAML serialization."""
         result: NodeFuzzyMatchYaml = {
             "cache_results": self.cache_results,
+            "execution_location": self.execution_location,
             "auto_generate_selection": self.auto_generate_selection,
             "verify_integrity": self.verify_integrity,
             "join_input": self.join_input.to_yaml_dict(),
@@ -1692,6 +1697,7 @@ class NodeOutput(NodeSingleInput):
         """Converts the output node settings to a dictionary for YAML serialization."""
         result: NodeOutputYaml = {
             "cache_results": self.cache_results,
+            "execution_location": self.execution_location,
             "output_settings": self.output_settings.to_yaml_dict(),
         }
         if self.output_field_config:

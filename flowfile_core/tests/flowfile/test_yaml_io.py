@@ -967,6 +967,91 @@ class TestExecutionLocationRoundTrip:
         assert open_flow(flowfile_path).execution_location == ('auto' if protocol_flag else 'remote')
 
 
+def build_flow_with_every_hand_written_yaml_dict(flow_id: int) -> FlowGraph:
+    """Two inputs, then a select, a join, a cross join, a fuzzy match and an output, the node types whose settings
+    write their own YAML dict, each on a backend id of its own; input 2 keeps the default. Nothing runs."""
+    flow = create_graph(flow_id=flow_id)
+    add_manual_input(flow, [{'id': 1, 'name': 'Ann'}], node_id=1)
+    add_manual_input(flow, [{'id': 1, 'name': 'Anne'}], node_id=2)
+
+    def wire(node_id: int, node_type: str, right: bool = True):
+        add_node_promise(flow, node_type, node_id)
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, node_id))
+        if right:
+            add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, node_id, input_type='right'))
+
+    def both_sides():
+        return dict(
+            left_select=transform_schema.JoinInputs(renames=[transform_schema.SelectInput(old_name='id')]),
+            right_select=transform_schema.JoinInputs(renames=[transform_schema.SelectInput(old_name='name')]),
+        )
+
+    wire(3, 'select', right=False)
+    flow.add_select(input_schema.NodeSelect(
+        flow_id=flow_id, node_id=3, depending_on_id=1, execution_location='worker:n3',
+        select_input=[transform_schema.SelectInput(old_name='id')],
+    ))
+    wire(4, 'join')
+    flow.add_join(input_schema.NodeJoin(
+        flow_id=flow_id, node_id=4, depending_on_ids=[1, 2], execution_location='worker:n4',
+        auto_generate_selection=False,
+        join_input=transform_schema.JoinInput(
+            join_mapping=[transform_schema.JoinMap(left_col='id', right_col='id')], how='inner', **both_sides()
+        ),
+    ))
+    wire(5, 'cross_join')
+    flow.add_cross_join(input_schema.NodeCrossJoin(
+        flow_id=flow_id, node_id=5, depending_on_ids=[1, 2], execution_location='worker:n5',
+        auto_generate_selection=False, cross_join_input=transform_schema.CrossJoinInput(**both_sides()),
+    ))
+    wire(6, 'fuzzy_match')
+    flow.add_fuzzy_match(input_schema.NodeFuzzyMatch(
+        flow_id=flow_id, node_id=6, depending_on_ids=[1, 2], execution_location='worker:n6',
+        auto_generate_selection=False,
+        join_input=transform_schema.FuzzyMatchInput(
+            join_mapping=[transform_schema.FuzzyMap('name')], how='inner', **both_sides()
+        ),
+    ))
+    add_node_promise(flow, 'output', 7)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(3, 7))
+    flow.add_output(input_schema.NodeOutput(
+        flow_id=flow_id, node_id=7, depending_on_id=3, execution_location='worker:n7',
+        output_settings=input_schema.OutputSettings(
+            name='out.csv', directory='.', file_type='csv', table_settings=input_schema.OutputCsvTable()
+        ),
+    ))
+    flow.get_node(1).setting_input.execution_location = 'worker:n1'
+    return flow
+
+
+class TestNodeExecutionLocationRoundTrip:
+    """A node's own execution location through save and load: a backend id is kept as saved, and a node saved
+    without one opens on ``auto``."""
+
+    @pytest.mark.parametrize('suffix', ['.yaml', '.json'])
+    def test_each_node_reopens_on_the_backend_it_was_saved_on(self, temp_dir: Path, suffix):
+        path = temp_dir / f'nodes{suffix}'
+        build_flow_with_every_hand_written_yaml_dict(240).save_flow(str(path))
+
+        loaded_flow = open_flow(path)
+
+        assert {node.node_id: node.setting_input.execution_location for node in loaded_flow.nodes} == {
+            1: 'worker:n1', 2: 'auto', 3: 'worker:n3', 4: 'worker:n4', 5: 'worker:n5', 6: 'worker:n6', 7: 'worker:n7',
+        }
+
+    def test_a_node_saved_without_a_location_opens_on_auto(self, temp_dir: Path):
+        path = temp_dir / 'nodes.yaml'
+        build_flow_with_every_hand_written_yaml_dict(241).save_flow(str(path))
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        for node in data['nodes']:
+            del node['setting_input']['execution_location']
+        with open(path, 'w') as f:
+            yaml.dump(data, f)
+
+        assert {node.setting_input.execution_location for node in open_flow(path).nodes} == {'auto'}
+
+
 class TestJsonRoundTrip:
     """Test JSON format produces same results as YAML."""
 
