@@ -121,7 +121,8 @@ def test_the_local_backend_satisfies_the_backend_interface(backend):
     capabilities = backend.capabilities()
     undeclared = {"operations": frozenset(), "read_schemes": frozenset(), "write_schemes": frozenset()}
     assert capabilities.model_copy(update=undeclared) == local_capabilities()
-    assert capabilities.read_schemes == capabilities.write_schemes == {"file", "s3", "az", "gs", "https"}
+    assert capabilities.read_schemes == {"file", "s3", "az", "gs", "http", "https"}
+    assert capabilities.write_schemes == {"file", "s3", "az", "gs", "https"}
     assert capabilities.credential_resolution == "master_key"
 
 

@@ -137,13 +137,14 @@ class LocalBackend:
         """The capabilities of this process, with the operations ``run_op`` runs here and the schemes it uses.
 
         Core's process is on core's host, so it reads and writes local files as well as object storage, and ``https``:
-        a presigned URL a blob is copied to or from.
+        a presigned URL a blob is copied to or from. It also fetches a Read node's ``http`` or ``https`` URL itself, so
+        it reads ``http`` too; nothing writes to an ``http`` URL.
         """
         schemes = CLOUD_SCHEMES | {"file", "https"}
         return local_capabilities().model_copy(
             update={
                 "operations": frozenset(op.value for op in self._OPERATIONS),
-                "read_schemes": schemes,
+                "read_schemes": schemes | {"http"},
                 "write_schemes": schemes,
             }
         )

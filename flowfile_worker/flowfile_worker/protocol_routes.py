@@ -469,13 +469,15 @@ def worker_capabilities() -> Capabilities:
 
     It reads and writes object storage and ``https``, a presigned URL a blob is copied to or from, and the local disk
     too when ``FLOWFILE_WORKER_LOCAL_FILES`` is ``1`` at the time of the call: the desktop shell and the single-host
-    compose set it for a worker on core's host, which sees core's files.
+    compose set it for a worker on core's host, which sees core's files. It also reads ``http``: the child that runs a
+    node's plan or its ``file_read`` fetches a Read node's ``http`` or ``https`` URL itself, and nothing writes to an
+    ``http`` URL.
     """
     schemes = CLOUD_SCHEMES | {"https"}
     if os.environ.get("FLOWFILE_WORKER_LOCAL_FILES") == "1":
         schemes |= {"file"}
     return local_capabilities().model_copy(
-        update={"operations": OPERATIONS, "read_schemes": schemes, "write_schemes": schemes}
+        update={"operations": OPERATIONS, "read_schemes": schemes | {"http"}, "write_schemes": schemes}
     )
 
 

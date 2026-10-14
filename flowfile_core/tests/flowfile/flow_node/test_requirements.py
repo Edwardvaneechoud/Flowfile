@@ -72,7 +72,8 @@ def test_a_read_runs_file_read_only_for_a_format_polars_cannot_scan(tmp_path, fi
 @pytest.mark.parametrize(
     ("path", "scheme"),
     [
-        ("https://example.com/data.parquet", "http"),
+        ("https://example.com/data.parquet", "https"),
+        ("http://example.com/data.parquet", "http"),
         ("s3://bucket/data.parquet", "s3"),
         ("gs://bucket/data.parquet", "gs"),
     ],
@@ -81,11 +82,11 @@ def test_a_read_names_the_scheme_of_its_path(path, scheme):
     assert _requirements("read", _read(path, "parquet")).read_schemes == frozenset({scheme})
 
 
-def test_an_excel_read_from_a_url_runs_file_read_over_http():
+def test_an_excel_read_from_a_url_runs_file_read_over_https():
     settings = _read("https://example.com/book.xlsx", "excel")
 
     assert _requirements("read", settings) == NodeRequirements(
-        operation=OperationKind.file_read, read_schemes=frozenset({"http"})
+        operation=OperationKind.file_read, read_schemes=frozenset({"https"})
     )
 
 

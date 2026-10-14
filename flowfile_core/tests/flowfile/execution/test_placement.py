@@ -13,6 +13,7 @@ compute error that failed a node on that node's row, in both flag states, and ``
 """
 
 import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import polars as pl
 import pytest
@@ -458,3 +459,69 @@ def test_an_s3_artifact_store_needs_https_where_a_model_crosses_it(s3_artifact_s
         Refusal(3, BACKEND_ID, "it reads storage this backend does not read: https"),
     ]
     assert without_file.refusals == []
+
+
+@pytest.fixture(scope="module")
+def csv_url():
+    """A CSV of three rows served on a free loopback port; the fixture is its ``http://`` URL."""
+    body = b"n,label\n1,a\n2,b\n3,c\n"
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def _answer(self) -> bytes:
+            start, _, end = self.headers.get("Range", "bytes=0-").removeprefix("bytes=").partition("-")
+            part = body[int(start) : int(end) + 1 if end else None]
+            self.send_response(206 if "Range" in self.headers else 200)
+            self.send_header("Content-Length", str(len(part)))
+            self.send_header("Content-Range", f"bytes {start}-{int(start) + len(part) - 1}/{len(body)}")
+            self.send_header("Accept-Ranges", "bytes")
+            self.end_headers()
+            return part
+
+        def do_HEAD(self):  # noqa: N802
+            self._answer()
+
+        def do_GET(self):  # noqa: N802
+            self.wfile.write(self._answer())
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/rows.csv"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def url_read_flow(flow_id: int, url: str) -> FlowGraph:
+    """Read node 1 over the CSV at ``url``."""
+    graph = make_graph(flow_id)
+    add_promise(graph, 1, "read")
+    received = input_schema.ReceivedTable(path=url, file_type="csv", table_settings={"encoding": "utf-8"})
+    graph.add_read(input_schema.NodeRead(flow_id=flow_id, node_id=1, received_file=received))
+    return graph
+
+
+def test_a_read_from_a_url_is_refused_on_a_backend_that_does_not_read_its_scheme(protocol_on, declare, csv_url):
+    backend = declare(without(everything(), scheme="http"))
+    graph = url_read_flow(8432, csv_url)
+
+    run_info = graph.run_graph()
+
+    assert_refused_before_any_node(graph, run_info, backend, {1: ["it reads storage this backend does not read: http"]})
+
+
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+def test_a_read_from_a_url_runs_on_a_backend_that_reads_its_scheme(declare, monkeypatch, flag, csv_url):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    backend = declare(everything())
+    graph = url_read_flow(8431 if flag else 8430, csv_url)
+
+    run_info = graph.run_graph()
+
+    assert run_info.success is True, [result.error for result in run_info.node_step_result]
+    assert graph.get_node(1).get_resulting_data().collect().rows() == [(1, "a"), (2, "b"), (3, "c")]
+    assert backend.work == ["submit 1"]
