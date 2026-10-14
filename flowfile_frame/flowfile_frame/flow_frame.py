@@ -603,8 +603,19 @@ class FlowFrame:
         """
         pass
 
-    def __repr__(self):
-        return str(self.data)
+    def __repr__(self) -> str:
+        """Show the frame's node, flow, and usage hints without resolving or executing data."""
+        node = self.get_node_settings()
+        node_label = repr(node) if node is not None else f"Node id: {self.node_id} (unavailable)"
+        return (
+            "FlowFrame (lazy)\n"
+            f"  {node_label}\n"
+            f"  Flow id: {self.flow_graph.flow_id}\n\n"
+            "  .select(...), .filter(...), .with_columns(...)  Transform data\n"
+            "  .get_node_settings()                          Inspect node settings\n"
+            "  .explain()                                    View the query plan\n"
+            '  .save_graph("flow.yaml")                      Save the flow'
+        )
 
     def _add_connection(
         self,
@@ -1769,8 +1780,10 @@ class FlowFrame:
         """
         Fit an ML model (regression or classification) and optionally publish it to the catalog.
 
-        Compute runs on the worker. Catalog publishing requires the flow to be
-        registered (so the artifact has a ``source_registration_id``); see
+        The model is fitted where the flow runs: in the core process for a local
+        flow (a new graph is local), or on the worker for a remote one. Catalog
+        publishing requires the flow to be registered (so the artifact has a
+        ``source_registration_id``); see
         :class:`flowfile_core.flowfile.flow_graph.FlowGraph.add_train_model`.
 
         Parameters

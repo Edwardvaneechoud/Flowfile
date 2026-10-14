@@ -1,8 +1,12 @@
 """Machine-learning nodes: train, apply and evaluate a model."""
 
+import hashlib
+import json
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+import polars as pl
 
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
@@ -38,12 +42,44 @@ def ml_flow_model_path(flow_id: int, train_node_id: int | str) -> Path:
     return storage.get_flow_cache_directory(flow_id) / "ml_models" / f"{train_node_id}.json"
 
 
+def _train_in_process(data: FlowDataEngine, staging_path: Path, settings: input_schema.TrainModelSettings) -> dict:
+    """Fit the model in this process and write its bytes to *staging_path*, as the worker's ``train_model_task`` does.
+
+    A local flow computes every node in the process that runs it, and a graph built with ``flowfile_frame`` is
+    local, so a script that never started a worker can still train. Returns the report the worker would:
+    ``sha256``, ``size_bytes`` and ``model_type``.
+    """
+    from shared.ml.trainers import get_trainer
+
+    model = get_trainer(settings.model_type).train(
+        data.data_frame.lazy(),
+        target=settings.target_column,
+        features=settings.feature_columns,
+        params=settings.params or {},
+    )
+    staging_path.parent.mkdir(parents=True, exist_ok=True)
+    staging_path.write_bytes(model)
+    return {"sha256": hashlib.sha256(model).hexdigest(), "size_bytes": len(model), "model_type": settings.model_type}
+
+
+def _apply_in_process(data: FlowDataEngine, model_path: str, output_column: str) -> pl.LazyFrame:
+    """Score *data* in this process with the model JSON at *model_path*, as the worker's ``apply_model_task`` does.
+
+    The scored plan stays lazy: nothing is collected until a downstream node or the caller reads it.
+    """
+    from shared.ml.trainers import get_trainer
+
+    model = json.loads(Path(model_path).read_bytes())
+    return get_trainer(model["model_type"]).apply(data.data_frame.lazy(), model, output_column)
+
+
 class MlBuildersMixin(GraphMixinBase):
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_train_model(self, train_settings: input_schema.NodeTrainModel) -> "FlowGraph":
         """Adds a Train Model node.
 
-        Fits a regression model on the worker, stores the serialised artifact
+        Fits a model where the flow runs (in this process for a local flow,
+        on the worker otherwise), optionally stores the serialised artifact
         in the global catalog (via :class:`ArtifactService`), and passes the
         input data through unchanged so downstream nodes can keep transforming.
 
@@ -147,20 +183,23 @@ class MlBuildersMixin(GraphMixinBase):
             node = self.get_node(node_id=train_settings.node_id)
             flow_path_written = False
             try:
-                fetcher = root().MLTrainFetcher(
-                    lf=data.data_frame,
-                    staging_path=str(staging_path),
-                    model_type=settings.model_type,
-                    target_column=settings.target_column,
-                    feature_columns=settings.feature_columns,
-                    params=settings.params,
-                    flow_id=self.flow_id,
-                    node_id=train_settings.node_id,
-                    file_ref=node.hash,
-                    wait_on_completion=False,
-                )
-                node._fetch_cached_df = fetcher
-                result = fetcher.get_result()
+                if self.execution_location == "local":
+                    result = _train_in_process(data, staging_path, settings)
+                else:
+                    fetcher = root().MLTrainFetcher(
+                        lf=data.data_frame,
+                        staging_path=str(staging_path),
+                        model_type=settings.model_type,
+                        target_column=settings.target_column,
+                        feature_columns=settings.feature_columns,
+                        params=settings.params,
+                        flow_id=self.flow_id,
+                        node_id=train_settings.node_id,
+                        file_ref=node.hash,
+                        wait_on_completion=False,
+                    )
+                    node._fetch_cached_df = fetcher
+                    result = fetcher.get_result()
                 if not isinstance(result, dict) or "sha256" not in result or "size_bytes" not in result:
                     raise RuntimeError(f"Worker did not return expected sha256/size_bytes payload, got: {result!r}")
 
@@ -240,8 +279,10 @@ class MlBuildersMixin(GraphMixinBase):
     def add_apply_model(self, apply_settings: input_schema.NodeApplyModel) -> "FlowGraph":
         """Adds an Apply Model node.
 
-        Fetches the artifact from the catalog and asks the worker to score the
-        input data, returning a LazyFrame with one extra ``Float64`` column.
+        Reads the model from the upstream Train Model node or the catalog and
+        scores the input data where the flow runs (lazily in this process for
+        a local flow, on the worker otherwise), returning a LazyFrame with one
+        extra prediction column.
 
         Args:
             apply_settings: Settings (model_name, optional version, output_column).
@@ -309,18 +350,21 @@ class MlBuildersMixin(GraphMixinBase):
                     )
                 origin_label = f"catalog '{settings.model_name}' v{artifact.version}"
 
-            node = self.get_node(node_id=apply_settings.node_id)
-            fetcher = root().MLApplyFetcher(
-                lf=data.data_frame,
-                model_path=model_path,
-                output_column=settings.output_column,
-                flow_id=self.flow_id,
-                node_id=apply_settings.node_id,
-                file_ref=node.hash,
-                wait_on_completion=False,
-            )
-            node._fetch_cached_df = fetcher
-            result_lf = fetcher.get_result()
+            if self.execution_location == "local":
+                result_lf = _apply_in_process(data, model_path, settings.output_column)
+            else:
+                node = self.get_node(node_id=apply_settings.node_id)
+                fetcher = root().MLApplyFetcher(
+                    lf=data.data_frame,
+                    model_path=model_path,
+                    output_column=settings.output_column,
+                    flow_id=self.flow_id,
+                    node_id=apply_settings.node_id,
+                    file_ref=node.hash,
+                    wait_on_completion=False,
+                )
+                node._fetch_cached_df = fetcher
+                result_lf = fetcher.get_result()
             self.flow_logger.info(f"Apply Model: scored using {origin_label} -> column '{settings.output_column}'")
             return FlowDataEngine(result_lf)
 
