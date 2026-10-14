@@ -31,10 +31,13 @@ FLOW_ID = 4343
 
 @pytest.fixture
 def app(monkeypatch) -> FastAPI:
-    """A bare app given the worker routes single-file mode mounts, with the worker's token set for this test."""
+    """A bare app given the worker routes single-file mode mounts, with the worker's token set for this test.
+
+    ``FLOWFILE_WORKER_LOCAL_FILES`` starts off and the mount turns it on; setting it here lets teardown restore it.
+    """
     monkeypatch.setenv("FLOWFILE_INTERNAL_TOKEN", TOKEN)
     monkeypatch.setattr(internal_token, "_token", None)
-    monkeypatch.delenv("FLOWFILE_WORKER_LOCAL_FILES", raising=False)
+    monkeypatch.setenv("FLOWFILE_WORKER_LOCAL_FILES", "0")
     app = FastAPI()
     include_worker_routes(app)
     return app
