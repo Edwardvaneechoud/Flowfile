@@ -78,6 +78,22 @@ def get_catalog_storage_connection() -> str | None:
     return os.environ.get("FLOWFILE_CATALOG_STORAGE_CONNECTION") or None
 
 
+def get_exchange_uri() -> str | None:
+    """Object-storage root of the exchange store results cross between backends through, e.g. ``s3://bucket/exchange``.
+
+    Read per call, as ``get_catalog_storage_uri`` is. ``None`` ⇒ no exchange store.
+    """
+    return os.environ.get("FLOWFILE_EXCHANGE_URI") or None
+
+
+def get_exchange_connection() -> str | None:
+    """Name of the ``CloudStorageConnection`` that opens the exchange store.
+
+    Only consulted when ``get_exchange_uri()`` is set; required in that case.
+    """
+    return os.environ.get("FLOWFILE_EXCHANGE_CONNECTION") or None
+
+
 COMMUNITY_DEFAULT_REPO = "edwardvaneechoud/flowfile-community-nodes"
 
 

@@ -152,7 +152,7 @@ from flowfile_core.schemas.input_schema import ReceivedTable
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from shared import compute_protocol as wire
-from shared.cloud_credential_provider import CredentialRefProvider
+from shared.cloud_credential_provider import credential_ref_kwargs
 from shared.compute_protocol import PROTOCOL_VERSION, Capabilities
 from shared.google_analytics.models import GoogleAnalyticsFilter, GoogleAnalyticsOrderBy, GoogleAnalyticsReadSettings
 from shared.kafka.models import KafkaReadSettings
@@ -1555,14 +1555,16 @@ def _delta_destination(write: DeltaWritePayload | DeltaMergePayload | DeltaScd2P
 
 
 def _credential_kwargs(credential: CredentialRef | None) -> dict[str, Any]:
-    """The ``credential_provider`` a scan of a URI takes for ``credential``; nothing without one.
+    """What a scan of a URI takes for ``credential``: its provider and its connection's plain options.
 
-    The provider carries the stored connection's id and user only, and resolves it where the plan runs. Without a
-    credential Polars resolves the target as it does for any scan.
+    The provider carries the stored connection's id and user only, and resolves it where the plan runs; the options
+    (``credential_ref_kwargs``, read from core's catalog, no secret among them) carry the connection's endpoint and
+    region, so an S3-compatible store is reached. Without a credential Polars resolves the target as it does for any
+    scan.
     """
     if credential is None:
         return {}
-    return {"credential_provider": CredentialRefProvider(credential.connection_id, credential.user_id)}
+    return credential_ref_kwargs(credential.connection_id, credential.user_id)
 
 
 def _wire_credential(credential: CredentialRef | None) -> dict[str, int] | None:

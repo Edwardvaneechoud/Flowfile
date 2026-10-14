@@ -60,7 +60,7 @@ from flowfile_worker.spawner import (
     start_train_model_process,
 )
 from flowfile_worker.task_errors import DEFAULT_ERROR_LIMIT, WorkerEnvironmentError, describe_exception
-from shared.cloud_credential_provider import CredentialRefProvider
+from shared.cloud_credential_provider import credential_ref_kwargs
 from shared.compute_protocol import (
     CLOUD_SCHEMES,
     PROTOCOL_VERSION,
@@ -251,11 +251,6 @@ class ImportBody(BaseModel):
         if self.kind == "blob" and (self.credential is not None or self.columns or self.row_count is not None):
             raise ValueError("A blob import takes no credential, no columns and no row count")
         return self
-
-
-def _credential_provider(credential: CredentialRefBody) -> CredentialRefProvider:
-    """The provider a scan carries for *credential*, resolved by whichever child runs the scan."""
-    return CredentialRefProvider(credential.connection_id, credential.user_id)
 
 
 def _copy_blob(copy: Callable[[], None]) -> None:
@@ -679,11 +674,12 @@ def export(result_id: str, body: ExportBody) -> dict[str, str]:
 def import_uri(result_id: str, body: ImportBody) -> ResultRef:
     """Hold a scan of the parquet at ``body.uri`` as the deferred result *result_id*, and answer its reference.
 
-    Nothing is read: the scan is built and serialised here, never run, so the file need not exist yet, and the
-    columns and row count are the ones core sent. Expired results are swept first and a result held under the id is
-    released; the record is stamped now, so it ages out with the rest. ``count`` answers the given row count without
-    a child, ``sample`` and ``export`` run the scan in one, and ``DELETE`` forgets the record and leaves the file,
-    which is not this worker's.
+    Nothing of the file is read: the scan is built and serialised here, never run, so the file need not exist yet,
+    and the columns and row count are the ones core sent. A credential's connection is read from the catalog here for
+    its endpoint and region (``credential_ref_kwargs``); its secrets are resolved by the child that runs the scan.
+    Expired results are swept first and a result held under the id is released; the record is stamped now, so it ages
+    out with the rest. ``count`` answers the given row count without a child, ``sample`` and ``export`` run the scan
+    in one, and ``DELETE`` forgets the record and leaves the file, which is not this worker's.
 
     With ``kind="blob"`` the bytes at ``body.uri`` are copied from a ``file://`` URI or fetched from a presigned
     ``https://`` URL here (``get_blob``) into ``result_path(-1, id)`` with a ``.blob`` suffix, and held as a blob
@@ -708,7 +704,8 @@ def import_uri(result_id: str, body: ImportBody) -> ResultRef:
         results.put(record)
         results.mark_ended(result_id)
         return record.ref()
-    provider = {} if body.credential is None else {"credential_provider": _credential_provider(body.credential)}
+    ref = body.credential
+    credential_kwargs = {} if ref is None else credential_ref_kwargs(ref.connection_id, ref.user_id)
     record = ResultRecord(
         result_id=result_id,
         state="deferred",
@@ -716,7 +713,7 @@ def import_uri(result_id: str, body: ImportBody) -> ResultRef:
         row_count=body.row_count,
         flow_id=-1,
         node_id=-1,
-        plan=pl.scan_parquet(file_uri_path(body.uri), **provider).serialize(),
+        plan=pl.scan_parquet(file_uri_path(body.uri), **credential_kwargs).serialize(),
     )
     results.put(record)
     results.mark_ended(result_id)
