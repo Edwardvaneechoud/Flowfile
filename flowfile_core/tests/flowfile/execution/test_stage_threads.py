@@ -14,10 +14,11 @@ from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.context import ExecutionContext, current_context, use_context
 from flowfile_core.flowfile.execution.protocol import ComputeBackend
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
+from flowfile_core.flowfile.flow_graph import execution as graph_execution
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.manage import io_flowfile
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
-from flowfile_core.schemas import input_schema, schemas
+from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.schemas import get_global_execution_location
 
 
@@ -302,3 +303,39 @@ def test_a_flow_asking_for_remote_runs_locally_when_the_default_backend_is_local
 
     assert flow_settings.execution_location == "local"
     assert FlowGraph(flow_settings).execution_context.backend_id == "local"
+
+
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+@pytest.mark.parametrize(
+    ("location", "graph_backend", "run_backend"), [("local", "local", "counting"), ("remote", "counting", "local")]
+)
+def test_a_formula_gate_probed_outside_a_run_reads_on_its_graph_s_backend(
+    monkeypatch, counting, location, graph_backend, run_backend, flag
+):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    probes: list[str] = []
+    real_head_rows = graph_execution.head_rows
+
+    def recording_head_rows(backend, plan, n):
+        probes.append(backend.id)
+        return real_head_rows(backend, plan, n)
+
+    monkeypatch.setattr(graph_execution, "head_rows", recording_head_rows)
+    graph = make_graph(9208, execution_location=location)
+    add_manual_input(graph, 1)
+    add_promise(graph, 2, "gate")
+    graph.add_gate(
+        input_schema.NodeGate(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            gate_input=transform_schema.GateInput(condition_source="formula", formula="[rank] > 2"),
+        )
+    )
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    gate = graph.get_node(2)
+
+    assert graph._formula_gate_is_closed(gate) is False
+    with use_context(ExecutionContext(backend_id=run_backend, parallelism=1, preview_rows=None)):
+        assert graph._formula_gate_is_closed(gate) is False
+    assert probes == ([graph_backend, run_backend] if flag else [])
