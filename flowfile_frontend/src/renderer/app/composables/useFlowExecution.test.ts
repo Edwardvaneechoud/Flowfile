@@ -151,6 +151,31 @@ describe("useFlowExecution.runFlow", () => {
     );
   });
 
+  it("names the flow's execution location in the start notification", async () => {
+    vi.stubGlobal("document", {
+      createElement: () => ({
+        textContent: "",
+        get innerHTML() {
+          return this.textContent;
+        },
+      }),
+    });
+    mocks.getFlowSettings.mockResolvedValueOnce({
+      name: "flow",
+      execution_mode: "Development",
+      execution_location: "worker:team",
+    });
+
+    await useFlowExecution(1).runFlow();
+
+    expect(mocks.notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Flow Started",
+        message: expect.stringContaining("<strong>Location:</strong> worker:team"),
+      }),
+    );
+  });
+
   it("skips the flush when no settings drawer is open", async () => {
     const save = vi.fn(async () => false);
     const editor = useEditorStore();

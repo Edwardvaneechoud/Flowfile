@@ -52,13 +52,15 @@ The **gear icon** in the top toolbar opens the flow-level settings:
 | Setting | Options |
 |---|---|
 | Execution mode | **Development** (preview everything) / **Performance** (optimized, outputs only) |
-| Execution location | **Local** (core process, sequential) / **Remote** (worker service, independent nodes run in parallel) |
-| Parallel workers | 1–32, default 4 — remote execution only |
+| Execution location | **Auto (default worker)**, or a worker added under **Settings → Execution → Backends** |
+| Parallel workers | 1–32, default 4 |
 | Show detailed progress | More granular per-node status during runs |
 | Show edge labels | Display each connection's name on the canvas |
 | Warn about invalid node settings | Flag nodes whose settings no longer match their input, before you run |
 
-**Parallel workers** applies to Remote runs. The worker service runs independent steps at the same time, up to the number you set, so a flow with independent branches finishes in a few *rounds* instead of one step after another. At 1 — or on Local, which is always sequential — every step waits its turn.
+**Execution location** picks the worker the flow runs on. **Auto** runs it on the default worker: the worker service that comes with Flowfile, on the same machine by default (in Docker, the worker container). An administrator can add workers on other hosts under **Settings → Execution → Backends** and pick one here by its id, `worker:<name>`. A flow run from the designer runs on a worker, so a step that runs out of memory fails on its own instead of taking Flowfile down. A flow saved with Local or Remote by an earlier version opens as **Auto**.
+
+**Parallel workers** sets how many independent steps the worker runs at the same time, so a flow with independent branches finishes in a few *rounds* instead of one step after another. At 1 every step waits its turn.
 
 ![The same flow — four Read data inputs, a Group by and a Formula transforming two of them, all merged by Union data — at two Parallel workers settings. With one worker the seven steps run one after another (numbered 1 to 7) and the total-time bar is long; with four workers the four reads run together as round 1, the two transforms as round 2, and Union data as round 3, so the flow finishes in three rounds instead of seven and the total-time bar is far shorter, the rest marked time saved.](../../assets/images/concepts/parallel-workers.svg)
 

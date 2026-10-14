@@ -1,5 +1,12 @@
-"""The worker backend runs plans and operations as worker tasks and reads their results from the shared disk."""
+"""The worker backend runs plans and operations as worker tasks and reads their results from the shared disk.
 
+It exports such a result in a worker task that sinks it, never in core, and holds an imported URI as a deferred plan
+in process. A blob over the task routes is a file on that disk, a model a training staged in the flow's cache directory
+or the path a ``file://`` import names, which an export copies to a ``file://`` URI; a presigned URL needs the ``/v1``
+routes.
+"""
+
+import hashlib
 import io
 import re
 import socket
@@ -12,8 +19,10 @@ import pyarrow as pa
 import pytest
 import requests
 
+from flowfile_core.configs import settings
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import (
@@ -33,6 +42,7 @@ from flowfile_core.flowfile.execution.payloads import (
 )
 from flowfile_core.flowfile.execution.protocol import (
     ComputeBackend,
+    CredentialRef,
     JobHandle,
     OperationKind,
     OpResult,
@@ -55,7 +65,8 @@ from flowfile_core.schemas.input_schema import (
     ReceivedTable,
 )
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
-from shared.compute_protocol import Capabilities
+from shared.compute_protocol import WorkerLocation, file_uri, local_capabilities
+from shared.storage_config import storage
 
 PEOPLE = pl.DataFrame(
     {"id": list(range(10)), "name": [f"n{i}" for i in range(10)], "score": [i * 1.5 for i in range(10)]}
@@ -116,11 +127,6 @@ def read_stream(data: bytes) -> pa.Table:
     return pa.ipc.open_stream(io.BytesIO(data)).read_all()
 
 
-def handshake_fields(capabilities: Capabilities) -> dict:
-    """What the worker reports about itself; ``operations`` is what the backend adds."""
-    return capabilities.model_dump(exclude={"operations"})
-
-
 def test_the_worker_backend_is_a_compute_backend():
     worker = WorkerBackend(url=WORKER_URL)
 
@@ -141,9 +147,24 @@ def test_the_registry_builds_the_worker_backend_from_its_built_in_table():
 
 
 def test_capabilities_are_the_workers_answer(running_worker):
-    assert handshake_fields(WorkerBackend(url=WORKER_URL).capabilities()) == handshake_fields(
-        fetch_worker_capabilities(WORKER_URL)
+    assert WorkerBackend(url=WORKER_URL).capabilities() == fetch_worker_capabilities(WORKER_URL)
+
+
+def test_capabilities_pass_the_workers_declaration_through(monkeypatch):
+    declared = local_capabilities().model_copy(
+        update={
+            "operations": frozenset({"fuzzy_join"}),
+            "read_schemes": frozenset({"s3"}),
+            "write_schemes": frozenset({"s3"}),
+            "credential_resolution": "vended",
+        }
     )
+    answer = requests.Response()
+    answer.status_code = 200
+    answer._content = declared.model_dump_json().encode()
+    monkeypatch.setattr(worker_module.requests, "get", lambda url, **kwargs: answer)
+
+    assert WorkerBackend(url=WORKER_URL).capabilities() == declared
 
 
 @pytest.fixture
@@ -186,7 +207,7 @@ def test_a_backend_made_on_another_url_sends_every_call_there(running_worker, mo
         result = worker.submit(PEOPLE.lazy(), [], hints(4), new_result_id(), flow_id=-1, node_id=-1)
         assert read_stream(result.sample).num_rows == 4
         assert worker.exists(result.ref) is True
-        assert handshake_fields(worker.capabilities()) == handshake_fields(configured_answer)
+        assert worker.capabilities() == configured_answer
         worker.release(result.ref)
         assert worker.exists(result.ref) is False
     finally:
@@ -207,7 +228,7 @@ def test_a_backend_made_on_a_url_nothing_answers_fails_naming_it(running_worker,
 
     configured = registry.backend(registry.WORKER_BACKEND_ID)
     assert configured.url == WORKER_URL
-    assert handshake_fields(configured.capabilities()) == handshake_fields(fetch_worker_capabilities(WORKER_URL))
+    assert configured.capabilities() == fetch_worker_capabilities(WORKER_URL)
 
 
 def test_submit_holds_the_result_in_the_file_the_worker_wrote(backend, kept, transport):
@@ -299,11 +320,12 @@ def test_the_job_is_done_once_submit_returns(backend, kept):
         lambda worker: worker.exists(FOREIGN_REF),
         lambda worker: worker.release(FOREIGN_REF),
         lambda worker: worker.plan_for(FOREIGN_REF),
+        lambda worker: worker.export(FOREIGN_REF, "file:///nowhere/out.parquet", None),
         lambda worker: worker.submit(PEOPLE.lazy(), [FOREIGN_REF], hints(None), "t-foreign", flow_id=-1, node_id=-1),
         lambda worker: worker.status(JobHandle("local", "elsewhere")),
         lambda worker: worker.cancel(JobHandle("local", "elsewhere")),
     ],
-    ids=["sample", "count", "exists", "release", "plan_for", "submit_input", "status", "cancel"],
+    ids=["sample", "count", "exists", "release", "plan_for", "export", "submit_input", "status", "cancel"],
 )
 def test_a_reference_another_backend_minted_is_refused_before_the_worker_is_called(call):
     with pytest.raises(ForeignRef, match="'local'"):
@@ -386,14 +408,164 @@ def test_the_worker_backend_runs_every_operation_kind(kind):
         WorkerBackend(url=WORKER_URL).run_op(kind, {})
 
 
-def test_export_and_import_are_unsupported():
-    worker = WorkerBackend(url=WORKER_URL)
-    ref = ResultRef("worker", "task", [], 0, "materialised", b"/nowhere.arrow")
+@pytest.fixture(autouse=True)
+def task_routes(monkeypatch):
+    """The protocol flag off for the test, so its results are minted over the task routes."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
 
-    with pytest.raises(OperationUnsupported):
-        worker.export(ref, "s3://bucket/out.parquet", None)
-    with pytest.raises(OperationUnsupported):
-        worker.import_uri("s3://bucket/in.parquet", [], None, None)
+
+DEFERRED = SubmitHints(must_materialise=False, wide=False, fanout=1, preview_rows=None)
+
+
+def test_export_of_a_task_route_result_is_a_worker_task_that_sinks_it(
+    backend, kept, task_routes, transport, monkeypatch, tmp_path
+):
+    stored = submit_people(backend, kept).ref
+    deferred = backend.submit(PEOPLE.lazy(), [], DEFERRED, new_result_id(), flow_id=-1, node_id=-1).ref
+    kept.append(deferred)
+    sunk, tasks = [], []
+    real_sink, real_fetcher = pl.LazyFrame.sink_parquet, worker_module.ExternalDfFetcher
+
+    def recording_sink(self, path, *args, **kwargs):
+        sunk.append(path)
+        return real_sink(self, path, *args, **kwargs)
+
+    def recording_fetcher(*args, **kwargs):
+        tasks.append((kwargs["operation_type"], kwargs["kwargs"]))
+        return real_fetcher(*args, **kwargs)
+
+    monkeypatch.setattr(pl.LazyFrame, "sink_parquet", recording_sink)
+    monkeypatch.setattr(worker_module, "ExternalDfFetcher", recording_fetcher)
+    from_file, from_plan = file_uri(tmp_path / "stored.parquet"), file_uri(tmp_path / "deferred.parquet")
+
+    assert backend.export(stored, from_file, CredentialRef(connection_id=7, user_id=3)) == from_file
+    assert backend.export(deferred, from_plan, None) == from_plan
+
+    assert (stored.state, deferred.state) == ("materialised", "deferred")
+    assert sunk == []
+    assert tasks == [
+        ("export_result", {"uri": from_file, "credential": {"connection_id": 7, "user_id": 3}}),
+        ("export_result", {"uri": from_plan, "credential": None}),
+    ]
+    assert pl.read_parquet(tmp_path / "stored.parquet").equals(PEOPLE)
+    assert pl.read_parquet(tmp_path / "deferred.parquet").equals(PEOPLE)
+
+
+def test_an_export_of_a_task_route_result_writes_nothing_when_the_worker_is_unreachable(
+    task_routes, closed_port_url, tmp_path
+):
+    dead = WorkerBackend(url=closed_port_url)
+    deferred = dead.submit(PEOPLE.lazy(), [], DEFERRED, new_result_id(), flow_id=-1, node_id=-1).ref
+    target = tmp_path / "out.parquet"
+
+    try:
+        with pytest.raises(ComputeUnavailable):
+            dead.export(deferred, file_uri(target), None)
+    finally:
+        dead.release(deferred)
+
+    assert not target.exists()
+
+
+def test_import_uri_holds_a_deferred_plan_in_process(backend, task_routes, tmp_path):
+    path = tmp_path / "in.parquet"
+
+    ref = backend.import_uri(file_uri(path), worker_module._flowfile_schema(PEOPLE.schema), PEOPLE.height, None)
+
+    try:
+        assert (ref.backend_id, ref.state, ref.row_count) == ("worker", "deferred", PEOPLE.height)
+        assert ref.location == ref.result_id.encode()
+        assert backend.exists(ref)
+        assert isinstance(backend.plan_for(ref), pl.LazyFrame)
+        assert backend.result_file(ref) is None
+
+        PEOPLE.write_parquet(path)
+
+        assert pl.from_arrow(read_stream(backend.sample(ref, 3))).equals(PEOPLE.head(3))
+        assert backend.result_file(ref) is not None
+        assert backend.count(ref) == PEOPLE.height
+    finally:
+        backend.release(ref)
+    assert not backend.exists(ref)
+    assert path.is_file()
+
+
+def staged_model(path: Path) -> ResultRef:
+    """A model a training over the task routes staged at ``path``, as it answers it."""
+    return ResultRef("worker", "train-job_0", [], None, "materialised", str(path).encode(), kind="blob")
+
+
+def test_a_file_blob_over_the_task_routes_is_a_reference_to_its_path(backend, task_routes, monkeypatch, tmp_path):
+    source = tmp_path / "a b" / "model.json"
+    source.parent.mkdir()
+    source.write_bytes(b'{"coefficients": [2.0]}')
+    sent = []
+    real_send = requests.Session.send
+
+    def recording_send(self, request, **kwargs):
+        sent.append(request)
+        return real_send(self, request, **kwargs)
+
+    monkeypatch.setattr(requests.Session, "send", recording_send)
+    monkeypatch.setattr(worker_module, "ExternalDfFetcher", lambda *args, **kwargs: sent.append(kwargs))
+
+    ref = backend.import_uri(file_uri(source), None, None, None, kind="blob")
+
+    assert (ref.backend_id, ref.kind, ref.state, ref.schema, ref.row_count) == (
+        "worker",
+        "blob",
+        "materialised",
+        [],
+        None,
+    )
+    assert ref.location == str(source).encode()
+    assert backend.exists(ref) is True
+    assert sent == []
+
+    backend.release(ref)
+
+    assert source.read_bytes() == b'{"coefficients": [2.0]}'
+
+
+def test_a_presigned_url_needs_the_v1_routes(task_routes, monkeypatch, tmp_path):
+    sent = []
+    monkeypatch.setattr(requests.Session, "send", lambda self, request, **kwargs: sent.append(request))
+    monkeypatch.setattr(worker_module, "ExternalDfFetcher", lambda *args, **kwargs: sent.append(kwargs))
+    model = tmp_path / "model.json"
+    model.write_bytes(b"{}")
+    presigned = "https://bucket.example/model.json?X-Amz-Signature=signed"
+    backend = WorkerBackend(url=WORKER_URL)
+
+    with pytest.raises(OperationUnsupported, match="/v1 routes"):
+        backend.import_uri(presigned, None, None, None, kind="blob")
+    with pytest.raises(OperationUnsupported, match="/v1 routes"):
+        backend.export(staged_model(model), presigned, None)
+
+    assert sent == []
+
+
+def test_an_apply_whose_model_file_is_gone_is_missing_before_any_task(task_routes, monkeypatch, tmp_path):
+    """A model whose file is gone, and one held over ``/v1``, which the task routes cannot read."""
+    built = []
+    monkeypatch.setattr(worker_module, "MLApplyFetcher", lambda *args, **kwargs: built.append(kwargs))
+    model = tmp_path / "model.json"
+    model.write_bytes(b"{}")
+    over_v1 = WorkerLocation(kind="blob", path=str(model)).model_dump_json().encode()
+    held_over_v1 = ResultRef("worker", "train-job_0", [], None, "materialised", over_v1, kind="blob")
+
+    for unheld in (staged_model(tmp_path / "gone.json"), held_over_v1):
+        apply = MlApplyPayload(
+            plan=pl.LazyFrame({"x": [10.0]}),
+            model=unheld,
+            output_column="pred",
+            flow_id=1,
+            node_id=6,
+            job_id=new_result_id(),
+        )
+        with pytest.raises(ResultMissing, match="train-job_0"):
+            WorkerBackend(url=WORKER_URL).run_op(OperationKind.ml_apply, op_payload(apply))
+
+    assert built == []
 
 
 SPLIT_NODE_SOURCE = """
@@ -494,12 +666,11 @@ def test_a_custom_node_runs_on_the_worker_from_its_node_source(backend, kept):
     assert backend.plan_for(refs["output-1"]).collect()["id"].to_list() == list(range(7))
 
 
-def test_a_model_trained_on_the_worker_scores_on_the_worker(backend, kept, tmp_path):
-    model_path = tmp_path / "model.json"
+def test_a_model_trained_on_the_worker_scores_on_the_worker(backend, kept, task_routes, tmp_path):
+    """The training stages the model in the flow's cache directory as its own task, which releasing it clears."""
     training = pl.LazyFrame({"x": [1.0, 2.0, 3.0, 4.0], "y": [3.0, 5.0, 7.0, 9.0]})
     train = MlTrainPayload(
         plan=training,
-        staging_path=str(model_path),
         model_type="linear_regression",
         target_column="y",
         feature_columns=["x"],
@@ -508,27 +679,44 @@ def test_a_model_trained_on_the_worker_scores_on_the_worker(backend, kept, tmp_p
         node_id=5,
         job_id=new_result_id(),
     )
-    apply = MlApplyPayload(
-        plan=pl.LazyFrame({"x": [10.0]}),
-        model_path=str(model_path),
-        output_column="pred",
-        flow_id=1,
-        node_id=6,
-        job_id=new_result_id(),
-    )
+    staged = storage.get_flow_cache_directory(1) / "ml_models" / f"{train.job_id}_0.json"
+
+    trained = backend.run_op(OperationKind.ml_train, op_payload(train))
+
+    model = trained.refs["model"]
     try:
-        report = backend.run_op(OperationKind.ml_train, op_payload(train))
+        assert list(trained.refs) == ["model"]
+        assert (model.result_id, model.kind, model.state, model.schema, model.row_count) == (
+            f"{train.job_id}_0",
+            "blob",
+            "materialised",
+            [],
+            None,
+        )
+        assert model.location == str(staged).encode()
+        assert trained.metadata["model_type"] == "linear_regression"
+        assert trained.metadata["size_bytes"] == staged.stat().st_size
+        assert trained.metadata["sha256"] == hashlib.sha256(staged.read_bytes()).hexdigest()
+        assert backend.exists(model) is True
 
-        assert report.refs == {}
-        assert report.metadata["model_type"] == "linear_regression"
-        assert report.metadata["size_bytes"] == model_path.stat().st_size
-        assert len(report.metadata["sha256"]) == 64
-
+        apply = MlApplyPayload(
+            plan=pl.LazyFrame({"x": [10.0]}),
+            model=model,
+            output_column="pred",
+            flow_id=1,
+            node_id=6,
+            job_id=new_result_id(),
+        )
         ref = backend.run_op(OperationKind.ml_apply, op_payload(apply)).refs["result"]
         kept.append(ref)
 
         assert (ref.result_id, ref.state, ref.row_count) == (apply.job_id, "materialised", 1)
         assert backend.plan_for(ref).collect()["pred"].round(6).to_list() == [21.0]
+        target = tmp_path / "exported.json"
+        assert backend.export(model, file_uri(target), None) == file_uri(target)
+        assert target.read_bytes() == staged.read_bytes()
     finally:
-        # Clearing the training task deletes the file it names, the model.
-        subops.clear_task_from_worker(train.job_id, worker_url=WORKER_URL)
+        backend.release(model)
+
+    assert not staged.exists()
+    assert backend.exists(model) is False

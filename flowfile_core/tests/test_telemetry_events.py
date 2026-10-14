@@ -1082,7 +1082,7 @@ def test_spawn_flow_run_forwards_the_suppression_flag(monkeypatch) -> None:
     FlowRunService(FakeSpawnRepo()).spawn_flow_run(
         FakeRegistration(), user_id=1, run_type="on_demand", schedule_id=3, suppress_telemetry=True
     )
-    assert calls[-1][1] == {"suppress_telemetry": True}
+    assert calls[-1][1] == {"suppress_telemetry": True, "backend": None}
 
 
 def test_spawn_flow_run_does_not_suppress_by_default(monkeypatch) -> None:
@@ -1091,7 +1091,7 @@ def test_spawn_flow_run_does_not_suppress_by_default(monkeypatch) -> None:
 
     calls = _spawn_recorder(monkeypatch)
     FlowRunService(FakeSpawnRepo()).spawn_flow_run(FakeRegistration(), user_id=1, run_type="scheduled")
-    assert calls[-1][1] == {"suppress_telemetry": False}
+    assert calls[-1][1] == {"suppress_telemetry": False, "backend": None}
 
 
 def test_spawn_flow_subprocess_kills_telemetry_without_touching_the_parent(monkeypatch, tmp_path) -> None:

@@ -241,6 +241,8 @@ def start_worker() -> tuple[subprocess.Popen, bool]:
         Tuple containing the process object and a success flag
     """
     logger.info("Starting flowfile_worker process on port %s...", WORKER_PORT)
+    # The worker runs on this host and reads the suite's local files, so it declares the file scheme.
+    env = {**os.environ, "FLOWFILE_WORKER_LOCAL_FILES": "1"}
 
     if platform.system() == "Windows":
         # Use shell=True on Windows
@@ -250,6 +252,7 @@ def start_worker() -> tuple[subprocess.Popen, bool]:
             stdout=sys.stdout,
             stderr=sys.stderr,
             universal_newlines=True,
+            env=env,
             # On Windows, CREATE_NEW_PROCESS_GROUP flag allows sending Ctrl+C to child process
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP') else 0
         )
@@ -262,6 +265,7 @@ def start_worker() -> tuple[subprocess.Popen, bool]:
             stdout=sys.stdout,
             stderr=sys.stderr,
             universal_newlines=True,
+            env=env,
             # On Unix, start in a new process group for clean signal handling
             preexec_fn=os.setsid if hasattr(os, 'setsid') else None
         )

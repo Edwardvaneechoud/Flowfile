@@ -313,6 +313,9 @@ class NodeSchemaInformation:
 class NodeResults:
     """
     Stores the outputs of a `FlowNode`'s execution, including data, errors, and metadata.
+
+    ``model_ref`` is the model a Train Model node's fit returned, a blob held on the backend that fit it, which an
+    Apply Model node scores with; ``reset`` leaves it, as it leaves ``result_ref``.
     """
 
     _resulting_data: FlowDataEngine | None = None
@@ -320,6 +323,7 @@ class NodeResults:
     example_data_path: str | None = None
     example_data_generator: Callable[[], pa.Table] | None = None
     result_ref: ResultRef | None = None
+    model_ref: ResultRef | None = None
     job_handle: JobHandle | None = None
     run_time_ms: int = -1
     errors: str | None = None
@@ -334,6 +338,7 @@ class NodeResults:
         self.example_data_generator = None
         self.example_data_path = None
         self.result_ref = None
+        self.model_ref = None
         self.job_handle = None
 
     def get_example_data(self) -> pa.Table | None:

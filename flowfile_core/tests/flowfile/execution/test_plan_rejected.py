@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 
+from flowfile_core.configs import settings
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile import api_runner
 from flowfile_core.flowfile.execution.backends import worker as worker_module
@@ -30,6 +31,12 @@ class _NotAPlan:
 
     def serialize(self) -> bytes:
         return b"not a plan"
+
+
+@pytest.fixture(autouse=True)
+def task_routes(monkeypatch):
+    """The protocol flag off: these tests reach the worker through the task routes' fetcher, which the flag replaces."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
 
 
 @pytest.fixture

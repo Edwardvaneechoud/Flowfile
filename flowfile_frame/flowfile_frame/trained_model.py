@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import copy
-import functools
 import json
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from flowfile_core.flowfile.flow_graph.builders.ml import ml_flow_model_path
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.errors import ResultMissing
+from shared.compute_protocol import file_uri
 
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_graph import FlowGraph
@@ -87,27 +90,26 @@ def _train_model_note(flow_graph: FlowGraph) -> str:
     return f"Train Model nodes in this flow: {', '.join(nodes)}; call read_model() on the frame train_model returned"
 
 
-def _read_trained_model(flow_id: int, node_id: int) -> TrainedModel | None:
-    """The model Train Model node ``node_id`` of flow ``flow_id`` last fitted, or ``None`` before it ran.
+def _read_trained_model(flow_graph: FlowGraph, node_id: int) -> TrainedModel | None:
+    """The model Train Model node ``node_id`` of ``flow_graph`` last fitted, or ``None`` when it holds none.
 
-    The one place the frame reads where a fitted model is kept.
+    The one place the frame reads where a fitted model is kept: the node holds it by reference
+    (``results.model_ref``), a blob on the backend that fitted it, which copies it out with ``export``.
     """
-    path = ml_flow_model_path(flow_id, node_id)
-    return _from_stored(json.loads(path.read_text())) if path.exists() else None
-
-
-def _trained_model_summary(flow_id: int, node_id: int) -> str | None:
-    """``repr`` of the model :func:`_read_trained_model` would return, parsed once per version of its file."""
-    path = ml_flow_model_path(flow_id, node_id)
-    try:
-        stat = path.stat()
-    except FileNotFoundError:
+    node = flow_graph.get_node(node_id)
+    ref = node.results.model_ref if node is not None else None
+    if ref is None:
         return None
-    return _summary_of_file(str(path), stat.st_mtime_ns, stat.st_size)
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "model.json"
+        try:
+            registry.backend(ref.backend_id).export(ref, file_uri(path), None)
+        except ResultMissing:
+            return None
+        return _from_stored(json.loads(path.read_bytes()))
 
 
-@functools.lru_cache(maxsize=16)
-def _summary_of_file(path: str, mtime_ns: int, size: int) -> str:
-    """The model summary of the file at *path*; *mtime_ns* and *size* key the cache to this version of it."""
-    with open(path, encoding="utf-8") as f:
-        return repr(_from_stored(json.load(f)))
+def _trained_model_summary(flow_graph: FlowGraph, node_id: int) -> str | None:
+    """``repr`` of the model :func:`_read_trained_model` would return, or ``None`` when the node holds none."""
+    model = _read_trained_model(flow_graph, node_id)
+    return None if model is None else repr(model)

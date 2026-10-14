@@ -93,6 +93,8 @@ export interface NodeResult {
   // Deliberately skipped behind a closed gate: reported as success with a zero
   // runtime, so the run stays green. Failure-driven skips emit no result at all.
   skipped?: boolean;
+  // The class of the compute error that failed the node, "Refusal" when placement refused it.
+  compute_error?: string | null;
 }
 
 // Node Description Types

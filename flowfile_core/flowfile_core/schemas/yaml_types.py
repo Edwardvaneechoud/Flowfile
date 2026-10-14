@@ -91,6 +91,7 @@ class OutputSettingsYaml(TypedDict, total=False):
 
 class NodeSelectYaml(TypedDict, total=False):
     cache_results: bool
+    execution_location: str
     keep_missing: bool
     select_input: list[SelectInputYaml]
     sorted_by: str
@@ -99,6 +100,7 @@ class NodeSelectYaml(TypedDict, total=False):
 
 class NodeJoinYaml(TypedDict, total=False):
     cache_results: bool
+    execution_location: str
     auto_generate_selection: bool
     verify_integrity: bool
     join_input: JoinInputYaml
@@ -110,6 +112,7 @@ class NodeJoinYaml(TypedDict, total=False):
 
 class NodeCrossJoinYaml(TypedDict, total=False):
     cache_results: bool
+    execution_location: str
     auto_generate_selection: bool
     verify_integrity: bool
     cross_join_input: CrossJoinInputYaml
@@ -121,6 +124,7 @@ class NodeCrossJoinYaml(TypedDict, total=False):
 
 class NodeFuzzyMatchYaml(TypedDict, total=False):
     cache_results: bool
+    execution_location: str
     auto_generate_selection: bool
     verify_integrity: bool
     join_input: FuzzyMatchInputYaml
@@ -132,5 +136,6 @@ class NodeFuzzyMatchYaml(TypedDict, total=False):
 
 class NodeOutputYaml(TypedDict, total=False):
     cache_results: bool
+    execution_location: str
     output_settings: OutputSettingsYaml
     output_field_config: OutputFieldConfigYaml

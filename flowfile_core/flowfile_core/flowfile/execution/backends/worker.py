@@ -10,9 +10,16 @@ With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on, ``submit``, ``status``, ``cancel
 worker's versioned ``/v1`` routes instead, and the worker holds what ``submit`` returns, whether stored or deferred:
 its schema, row count and samples come over the wire, never from a file core opens. ``submit`` goes over
 ``WS /v1/ws/submit``, and to ``POST /v1/submit`` only when that socket cannot be opened or the plan not sent. ``run_op``
-runs the reads, ``fuzzy_join``, ``random_split`` and ``custom_node`` over ``POST /v1/ops/{kind}``, whose outputs the
-worker holds as it holds a stored submit; the writes, the ML kinds and ``viz_session`` stay on the task routes. A result
-is read over the routes that minted it, whatever the flag says when it is read.
+runs the reads, ``fuzzy_join``, ``random_split``, ``custom_node``, ``ml_train`` and ``ml_apply`` over
+``POST /v1/ops/{kind}``, whose outputs the worker holds as it holds a stored submit, a trained model as a blob; the
+writes and ``viz_session`` stay on the task routes. ``import_uri`` asks the worker to hold a scan of the URI
+(``POST /v1/results/{id}/import``). A result is read and exported over the routes that minted it, whatever the flag
+says when it is read: a ``/v1`` result is exported by a child on the worker (``POST /v1/results/{id}/export``), a
+task-route result by a worker task running the same child.
+A blob, a file of bytes that is not rows, is held by the worker over ``/v1``: ``import_uri(kind="blob")`` has the
+worker copy or fetch it and ``export`` has it copy or ``PUT`` it. Over the task routes a blob is a file on the shared
+disk, a model a training staged in the flow's cache directory or the path a ``file://`` import names, which ``export``
+copies to a ``file://`` URI in core. ``plan_for``, ``sample`` and ``count`` refuse a blob before any call.
 """
 
 from __future__ import annotations
@@ -22,11 +29,14 @@ import io
 import json
 import os
 import random
+import re
 import threading
+import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from time import monotonic
 from typing import Any, Literal
 
@@ -117,11 +127,11 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     MLApplyFetcher,
     MLTrainFetcher,
     _worker_session,
+    _WorkerAuth,
     cancel_task,
     clear_task_from_worker,
     fetch_kafka_offsets,
     get_status,
-    get_worker_capabilities,
     results_exists,
     trigger_visualize_fields,
     trigger_visualize_query,
@@ -142,13 +152,20 @@ from flowfile_core.schemas.input_schema import ReceivedTable
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from shared import compute_protocol as wire
+from shared.cloud_credential_provider import CredentialRefProvider
 from shared.compute_protocol import PROTOCOL_VERSION, Capabilities
 from shared.google_analytics.models import GoogleAnalyticsFilter, GoogleAnalyticsOrderBy, GoogleAnalyticsReadSettings
 from shared.kafka.models import KafkaReadSettings
 from shared.path_utils import DirectoryScanUnsupportedError, refuse_cloud_path
 from shared.rest_api.models import RestApiReadSettings
+from shared.storage_config import storage
 
 WORKER_BACKEND_ID = "worker"
+TOKEN_RULE = (
+    "a worker token is sent as an HTTP header value, so it cannot hold a CR, a LF, any other ASCII control character "
+    "but a tab, or a character beyond Latin-1"
+)
+_HEADER_VALUE = re.compile(r"[\t\x20-\x7e\x80-\xff]*")
 _OUTPUT_SEPARATOR = "#"
 _SPLIT_RANK = "__split_rank__"
 _NO_FLOW = -1
@@ -162,6 +179,8 @@ _V1_OPERATIONS = frozenset(
         OperationKind.fuzzy_join,
         OperationKind.random_split,
         OperationKind.custom_node,
+        OperationKind.ml_train,
+        OperationKind.ml_apply,
     }
 )
 _JOB_STATES: dict[str, Literal["running", "done", "failed", "cancelled"]] = {
@@ -192,6 +211,15 @@ class WorkerBackend:
     another URL reaches that worker instead. The version handshake is once per process, not per backend: the first
     worker called is checked, and a later call to another one is not.
 
+    ``backend_id`` is the id the backend answers to, ``"worker"`` for the built-in one and ``worker:<name>`` for a
+    configured one: the references and job handles it makes carry it, and it refuses those of any other id.
+    ``token`` is the worker's own bearer token, which every ``/v1`` request and the ``/v1`` submit socket's upgrade
+    carry as ``X-Flowfile-Internal``, and ``capabilities`` too in both flag states; ``None`` (the built-in backend)
+    signs them with the process's internal token. The task routes, and the handshake gate in front of them, always
+    sign with the process's token. A token that is no header value (``is_header_value``) fails each call it would
+    sign as a ``TaskFailed`` naming ``TOKEN_RULE``, before any HTTP or socket client is handed it, so no message, log
+    line or traceback carries it.
+
     Materialisation policy: ``submit`` stores a plan on the worker when ``hints.must_materialise`` is set, or when
     the plan is ``wide`` and a preview is asked for (``preview_rows`` is not ``None``); every other plan stays
     deferred. A wide plan is stored so its preview and its consumers read rows computed once; with no preview
@@ -216,7 +244,8 @@ class WorkerBackend:
     The worker handshake runs before any call reaches the worker: every worker call goes through the transport's
     worker session or its WebSocket submit, which run it, and the ``/v1`` submit's socket calls ``ensure_handshake``
     before it dials, as the transport's WebSocket submit does. So every method that calls the worker is gated by it
-    and can raise its ``VersionMismatch`` or ``ComputeUnavailable``.
+    and can raise its ``VersionMismatch`` or ``ComputeUnavailable``, except ``capabilities``: it is the one read that
+    goes around the gate, so a caller can read a worker's versions and compare them with core's itself.
 
     With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on (read on each call), ``submit`` sends a meta JSON (hints, inputs,
     ids) and the plan over the worker's ``WS /v1/ws/submit``, and posts them to ``POST /v1/submit`` only when the socket
@@ -225,22 +254,37 @@ class WorkerBackend:
     ``TaskFailed`` and a closed socket ``ComputeUnavailable``. The worker applies the same policy and holds the result
     itself, in its own file or as the plan it was sent. The reference carries the worker's columns, read here with
     ``safe_eval_pl_type``, and a ``WorkerLocation`` JSON as ``location``. For such a reference ``sample``, ``count``,
-    ``exists`` and ``release`` go to ``/v1/results/{id}``, ``plan_for`` decodes the location without a call (a
-    ``pl.scan_ipc`` of the worker's path, or the deferred plan) and ``result_file`` names no file. A reference is read
-    over the routes that minted it, whatever the flag says when it is read, and only ``/v1`` references go as a submit's
-    ``inputs``. ``run_op`` runs the reads, ``fuzzy_join``, ``random_split`` and ``custom_node`` over
-    ``POST /v1/ops/{kind}`` (``run_op`` has the details), whose refs are ``/v1`` references like a stored
-    submit's; every other operation and its results stay on the task routes. ``status`` and ``cancel`` of a job no
-    fetcher waits on use ``/v1/jobs/{id}``. Every ``/v1`` request and the socket's upgrade carry
-    ``X-Protocol-Version``. A REST answer, a refused upgrade and an ``error`` frame map alike (``_v1_error``): 426 is
-    ``VersionMismatch``, a 404 ``ResultMissing``, and a failed child's 500 goes through ``worker_failure``.
+    ``exists`` and ``release`` go to ``/v1/results/{id}`` and ``export`` to ``POST /v1/results/{id}/export``,
+    ``plan_for`` decodes the location without a call (a ``pl.scan_ipc`` of the worker's path, or the deferred plan)
+    and ``result_file`` names no file. ``import_uri`` posts to ``POST /v1/results/{id}/import``, so the worker holds
+    the scan of the URI as a deferred ``/v1`` result, and with ``kind="blob"`` copies a ``file://`` URI or fetches a
+    presigned ``https://`` URL into a blob it holds. A reference is read over the routes that minted it, whatever the
+    flag says when it is read, and only ``/v1`` references go as a submit's ``inputs``. ``run_op`` runs the reads,
+    ``fuzzy_join``, ``random_split``, ``custom_node``, ``ml_train`` and ``ml_apply`` over ``POST /v1/ops/{kind}``
+    (``run_op`` has the details), whose refs are ``/v1`` references like a stored submit's; every other operation and
+    its results stay on the task routes. ``status`` and ``cancel`` of a job no fetcher waits on use ``/v1/jobs/{id}``.
+    Every ``/v1`` request and the socket's upgrade carry ``X-Protocol-Version``. A REST answer, a refused upgrade and
+    an ``error`` frame map alike (``_v1_error``): 426 is ``VersionMismatch``, a 404 ``ResultMissing``, and a failed
+    child's 500 goes through ``worker_failure``.
+
+    A blob (``ResultRef.kind == "blob"``) has no rows: ``plan_for``, ``sample`` and ``count`` raise
+    ``OperationUnsupported`` for one, as ``submit`` does for one among its inputs, before the worker is called, while
+    ``exists``, ``release`` and ``export`` take a ``/v1`` one like any ``/v1`` result. A task-route blob is a file on
+    the shared disk: a training over the task routes stages its model in the flow's cache directory as worker task
+    ``<job_id>_0``, and with the flag off ``import_uri(kind="blob")`` of a ``file://`` URI answers a reference over the
+    path, nothing copied. Such a blob ``exists`` while its file is there, ``release`` clears its task (a training's
+    file goes, an import's stays), and ``export`` copies the file to a ``file://`` URI in core; a presigned
+    ``https://`` URL needs the ``/v1`` routes.
     """
 
     id = WORKER_BACKEND_ID
     protocol_version = PROTOCOL_VERSION
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, *, backend_id: str = WORKER_BACKEND_ID, token: str | None = None) -> None:
         self.url = url
+        self.id = backend_id
+        self.token = token
+        self._auth = _TokenAuth(token, backend_id) if token is not None else None
         self._lock = threading.Lock()
         self._deferred: dict[str, _DeferredPlan] = {}
         self._in_flight: dict[str, BaseFetcher] = {}
@@ -265,15 +309,38 @@ class WorkerBackend:
         }
 
     def capabilities(self) -> Capabilities:
-        """The answer of the worker at ``url`` to ``GET /capabilities``, with the operations ``run_op`` runs there.
+        """The answer of the worker at ``url`` to ``GET /capabilities``, as the worker declares it.
 
-        With the protocol flag on, the answer to ``GET /v1/capabilities``.
+        With the protocol flag on, the answer to ``GET /v1/capabilities``. Either is one request outside the handshake
+        gate, signed with this backend's token and carrying its ``X-Protocol-Version``. Its ``operations`` are the
+        kinds the worker runs, the ones ``run_op`` sends it.
+
+        Raises:
+            ComputeUnavailable: The worker could not be reached.
+            VersionMismatch: With the flag off, the worker has no ``/capabilities`` route, so it predates core; with
+                it on, the worker refused this protocol version (426).
+            TaskFailed: This backend's token is no header value (``is_header_value``); nothing was sent.
+            ComputeError: Any other answer that is no success (``_v1_failure``): a refused token is a ``TaskFailed``
+                naming 401.
         """
-        if settings.FLOWFILE_COMPUTE_PROTOCOL:
-            answer = Capabilities.model_validate(self._v1("GET", "/capabilities").json())
-            return answer.model_copy(update={"operations": frozenset(op.value for op in self._operations)})
-        answer = get_worker_capabilities(worker_url=self.url)
-        return answer.model_copy(update={"operations": frozenset(op.value for op in self._operations)})
+        protocol = bool(settings.FLOWFILE_COMPUTE_PROTOCOL)
+        try:
+            response = requests.get(
+                f"{self.url}{'/v1' if protocol else ''}/capabilities",
+                auth=self._auth or _WorkerAuth(),
+                headers={wire.PROTOCOL_VERSION_HEADER: str(self.protocol_version)},
+                timeout=_WORKER_TIMEOUT,
+            )
+        except requests.RequestException as e:
+            raise ComputeUnavailable(f"Could not reach the worker at {self.url}: {e}") from e
+        if response.status_code == 404 and not protocol:
+            raise VersionMismatch(
+                f"The worker at {self.url} does not report its capabilities (GET /capabilities answered 404), "
+                "so it is an older release than core"
+            )
+        if not response.ok:
+            raise _v1_failure(response.status_code, response.content, response.reason)
+        return Capabilities.model_validate(response.json())
 
     def submit(
         self,
@@ -301,6 +368,7 @@ class WorkerBackend:
             ComputeUnavailable: Over ``/v1``, the worker could not be reached, or its socket closed after the plan was
                 sent.
             ForeignRef: An input another backend minted.
+            OperationUnsupported: An input is a blob, which a plan cannot read; nothing was sent.
             PlanRejected: The worker could not load the plan.
             ResultMissing: Over ``/v1``, the worker no longer holds an input.
             TaskFailed: The plan failed on the worker, or over ``/v1`` the socket went silent past
@@ -309,7 +377,7 @@ class WorkerBackend:
                 or on the REST route.
         """
         for ref in inputs:
-            self._check(ref)
+            self._table(ref)
         if settings.FLOWFILE_COMPUTE_PROTOCOL:
             with self._lock:
                 self._deferred.pop(result_id, None)
@@ -367,30 +435,38 @@ class WorkerBackend:
         ``output-1``, ...). ``random_split`` stores the shuffled rows once, as the payload's ``job_id`` task, and
         returns one deferred ref per split, keyed by the split's name in the settings' order, whose plan slices that
         task's file and which carries the split's row count; releasing a split leaves the shuffled rows in place. A
-        write has no refs. ``ml_train`` and the Delta writes return the worker's result dict as ``metadata``: the
-        trained model's ``sha256``, ``size_bytes`` and ``model_type`` (the model itself is the file at
-        ``staging_path``, not a table, so there is no ref), or the written table's schema, counts, size and version.
+        write has no refs. ``ml_train``'s refs are ``{"model": ref}``, a blob: the worker task ``<job_id>_0`` stages
+        the model at ``ml_models/<job_id>_0.json`` in the flow's cache directory, and ``release`` clears that task and
+        its file. ``ml_train`` and the Delta writes return the worker's result dict as ``metadata``: the trained
+        model's ``sha256``, ``size_bytes`` and ``model_type``, or the written table's schema, counts, size and version.
+        ``ml_apply`` scores with its model's file; a model the task routes do not hold (a ``/v1`` one, or one whose
+        file is gone) is ``ResultMissing`` before any task.
 
         ``viz_session`` takes a ``VizSessionPayload`` and runs no task: it sends the payload's plan, serialised, as a
         ``kind="plan"`` source to the worker's visualisation session named by the payload's ``session_key``, which
         holds the plan lazily in a child and answers each Graphic Walker request over it (``trigger_visualize_fields``
         or ``trigger_visualize_query``), and returns the session's answer as ``metadata`` with no refs.
 
-        With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on, the five reads, ``fuzzy_join``, ``random_split`` and
-        ``custom_node`` go to the worker's ``POST /v1/ops/{kind}`` instead: the body is the request the kind's fetcher
-        sends (the read settings, the file to read with the flow and node as query parameters, the fuzzy join's
-        prepared sides, the custom node's request, a random split's shuffled rows with its splits), the payload's
-        ``job_id`` the query parameter the job runs under, so ``cancel(JobHandle("worker", job_id))`` reaches it
-        through ``POST /v1/jobs/{job_id}/cancel`` and ``status`` follows it. The refs are keyed as on the task routes,
-        but every one is a stored ``/v1`` result ``<job_id>_<i>``, read over ``/v1/results/{id}`` like a stored
-        submit's, its columns and row count as the worker answered them: a random split's splits are each a file of
-        their own, and releasing one output of a custom node or a split leaves the others. A ``kafka_read`` takes its
-        offsets from the answer's ``metadata``. A failure maps as every ``/v1`` answer does.
+        With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on, the five reads, ``fuzzy_join``, ``random_split``,
+        ``custom_node``, ``ml_train`` and ``ml_apply`` go to the worker's ``POST /v1/ops/{kind}`` instead: the body is
+        the request the kind's fetcher sends (the read settings, the file to read with the flow and node as query
+        parameters, the fuzzy join's prepared sides, the custom node's request, a random split's shuffled rows with
+        its splits, a training's rows with the model type, the columns and the parameters, an apply's rows with the
+        result id of its model and the output column), the payload's ``job_id`` the query parameter the job runs
+        under, so ``cancel(JobHandle("worker", job_id))`` reaches it through ``POST /v1/jobs/{job_id}/cancel`` and
+        ``status`` follows it. The refs are keyed as on the task routes, but every one is a stored ``/v1`` result
+        ``<job_id>_<i>``, read over ``/v1/results/{id}`` like a stored submit's, its columns and row count as the worker
+        answered them: a random split's splits are each a file of their own, releasing one output of a custom node or
+        a split leaves the others, and a training's model is the blob ``<job_id>_0``. A ``kafka_read`` takes its
+        offsets, and an ``ml_train`` the model's digest, size and type, from the answer's ``metadata``. A failure maps
+        as every ``/v1`` answer does: an ``ml_apply`` whose model the worker no longer holds is ``ResultMissing``.
 
         Raises:
             ComputeUnavailable: The worker could not be reached for a ``viz_session`` request.
+            ForeignRef: An ``ml_apply`` model another backend minted; nothing was sent.
             OperationUnsupported: A custom node without a node file.
             PlanRejected: The worker could not load the operation's plan.
+            ResultMissing: An ``ml_apply`` model this backend no longer holds.
             RuntimeError: The worker answered a ``viz_session`` request with an error status.
             TaskFailed: The operation failed on the worker.
             ValueError: The worker did not return one of a custom node's declared outputs.
@@ -407,8 +483,9 @@ class WorkerBackend:
 
         A stored result's rows are read from its file; a deferred one's come from a worker sampler task over its
         plan, filed under ``ref.result_id`` like the sample ``submit`` took. A ``/v1`` result's are the worker's
-        answer to ``GET /v1/results/{id}/sample``.
+        answer to ``GET /v1/results/{id}/sample``. A blob is refused with ``OperationUnsupported`` before any call.
         """
+        self._table(ref)
         if self._v1_location(ref) is not None:
             return self._v1("GET", f"/results/{ref.result_id}/sample", waits=True, params={"n": n}).content
         if ref.state == "deferred":
@@ -420,8 +497,10 @@ class WorkerBackend:
     def count(self, ref: ResultRef) -> int:
         """The number of rows in ``ref``'s file, or for a deferred result what the worker's count task returns.
 
-        A ``/v1`` result's count is the worker's answer, asked even when the reference carries one.
+        A ``/v1`` result's count is the worker's answer, asked even when the reference carries one. A blob is refused
+        with ``OperationUnsupported`` before any call.
         """
+        self._table(ref)
         if self._v1_location(ref) is not None:
             return self._v1("GET", f"/results/{ref.result_id}/count", waits=True).json()["row_count"]
         if ref.state == "deferred":
@@ -444,7 +523,8 @@ class WorkerBackend:
     def exists(self, ref: ResultRef) -> bool:
         """Whether this backend holds a deferred ``ref``, or the worker still holds the task that stored it.
 
-        For a ``/v1`` result, whether the worker still holds it (``HEAD /v1/results/{id}``).
+        For a ``/v1`` result, whether the worker still holds it (``HEAD /v1/results/{id}``). A task-route blob is held
+        while its file is there.
         """
         if self._v1_location(ref) is not None:
             return self._v1("HEAD", f"/results/{ref.result_id}", missing_ok=True).status_code == 200
@@ -452,7 +532,9 @@ class WorkerBackend:
             self._check(ref)
             with self._lock:
                 return ref.result_id in self._deferred
-        self._file(ref)
+        path = self._file(ref)
+        if ref.kind == "blob":
+            return os.path.isfile(path)
         return results_exists(_task_id(ref), worker_url=self.url)
 
     def release(self, ref: ResultRef) -> None:
@@ -486,8 +568,10 @@ class WorkerBackend:
 
         Raises:
             ForeignRef: Another backend minted ``ref``.
+            OperationUnsupported: ``ref`` is a blob, which has no rows to plan over.
             ResultMissing: This backend no longer holds the deferred plan, or the stored result's file is gone.
         """
+        self._table(ref)
         location = self._v1_location(ref)
         if location is not None:
             if location.kind == "file":
@@ -518,14 +602,126 @@ class WorkerBackend:
         return self._file(ref)
 
     def export(self, ref: ResultRef, uri: str, credential: CredentialRef | None) -> str:
-        """Not supported: the worker backend has no export."""
-        raise OperationUnsupported(f"The {self.id} backend does not export results")
+        """Write ``ref``'s rows to ``uri`` as parquet where they are held, and return ``uri``.
+
+        A ``/v1`` result is exported by the worker: ``POST /v1/results/{id}/export`` runs a child that sinks the
+        result's plan to ``uri``. A task-route result is exported by a worker task running that child,
+        ``export_result``, over ``plan_for(ref)``, the scan of its file or the plan this backend holds, as ``sample``
+        and ``count`` send a deferred plan to a task; nothing of it runs in this process. Either way ``credential``
+        crosses as the connection's id and its user's, resolved in the child. A result is exported over the routes
+        that minted it, whatever the flag says.
+
+        A ``/v1`` blob goes to the same ``/v1`` route, where the worker copies its file to a ``file://`` URI or
+        ``PUT``s it to a presigned ``https://`` URL; such a URL carries its own authorisation, so a blob takes no
+        credential. A task-route blob is a file on the shared disk, which core copies to a ``file://`` URI
+        (``put_blob``); a presigned URL needs the ``/v1`` routes.
+
+        Raises:
+            ComputeUnavailable: The worker could not be reached.
+            ForeignRef: Another backend minted ``ref``.
+            OperationUnsupported: ``ref`` is a task-route blob and ``uri`` is not ``file://``; nothing was sent.
+            OSError: The copy of a task-route blob failed.
+            ResultMissing: The worker, or this backend, no longer holds ``ref``; for a task-route blob, its file is
+                gone, found before the copy.
+            TaskFailed: The worker's sink or copy failed, or it refused the URI's scheme for a blob (422).
+            ValueError: ``ref`` is a blob and ``credential`` is set; nothing was sent.
+        """
+        location = self._v1_location(ref)
+        if ref.kind == "blob" and credential is not None:
+            raise ValueError("A blob is copied to a URI that carries its own authorisation; it takes no credential")
+        if location is not None:
+            body = {"uri": uri, "credential": _wire_credential(credential)}
+            return self._v1("POST", f"/results/{ref.result_id}/export", waits=True, json=body).json()["uri"]
+        if ref.kind == "blob":
+            path = self._file(ref)
+            if not uri.startswith("file://"):
+                raise OperationUnsupported(
+                    f"Result {ref.result_id} is a file the task routes hold, copied to a file:// URI only; a presigned "
+                    "URL needs the /v1 routes, with the protocol flag on"
+                )
+            if not os.path.isfile(path):
+                raise ResultMissing(f"The worker no longer holds result {ref.result_id!r}")
+            wire.put_blob(Path(path), uri)
+            return uri
+        plan = self.plan_for(ref)
+        _run(
+            lambda: ExternalDfFetcher(
+                flow_id=_NO_FLOW,
+                node_id=_NO_FLOW,
+                lf=plan,
+                operation_type="export_result",
+                kwargs={"uri": uri, "credential": _wire_credential(credential)},
+                wait_on_completion=False,
+                worker_url=self.url,
+            )
+        )
+        return uri
 
     def import_uri(
-        self, uri: str, schema: Schema, row_count: int | None, credential: CredentialRef | None
+        self,
+        uri: str,
+        schema: Schema | None,
+        row_count: int | None,
+        credential: CredentialRef | None,
+        kind: Literal["table", "blob"] = "table",
     ) -> ResultRef:
-        """Not supported: the worker backend has no import."""
-        raise OperationUnsupported(f"The {self.id} backend does not import data from a URI")
+        """Hold a scan of the parquet at ``uri`` as a deferred result with the ``schema`` and ``row_count`` given.
+
+        Nothing is read: the schema and the count are the caller's. With the protocol flag on the worker builds and
+        holds the scan under a fresh id (``POST /v1/results/{id}/import``), ``credential`` crossing as the
+        connection's id and its user's, and the answer is a ``/v1`` reference whose ``plan_for`` decodes the scan
+        without a call. With it off the scan is held in this process like every deferred plan, a ``file:`` URI
+        scanned as the local path it names. ``release`` forgets the scan and leaves the file.
+
+        With ``kind="blob"`` and the flag on, the same route has the worker copy the bytes at a ``file://`` URI or
+        fetch a presigned ``https://`` URL into a blob it holds, before it answers; the reference is a materialised
+        blob with no columns and no row count, and ``release`` removes the worker's copy. With the flag off a
+        ``file://`` URI answers such a reference over the local path it names, as ``file_uri_path`` reads it:
+        nothing is copied and no call is made, and ``release`` leaves the file.
+
+        Raises:
+            ComputeUnavailable: Over ``/v1``, the worker could not be reached.
+            OperationUnsupported: A blob with the protocol flag off whose URI is not ``file://``; nothing was sent.
+            TaskFailed: The worker refused the URI's scheme for a blob (422), or its copy or fetch failed.
+            ValueError: A table without ``schema``, or a blob with a ``schema``, a ``row_count`` or a ``credential``;
+                nothing was sent.
+        """
+        result_id = uuid.uuid4().hex
+        if kind == "blob":
+            if schema is not None or row_count is not None or credential is not None:
+                raise ValueError("A blob import takes no schema, no row count and no credential")
+            if not settings.FLOWFILE_COMPUTE_PROTOCOL:
+                if not uri.startswith("file://"):
+                    raise OperationUnsupported(
+                        "The worker backend's task routes hold a blob from a file:// URI only; a presigned URL needs "
+                        "the /v1 routes, with the protocol flag on"
+                    )
+                return ResultRef(
+                    backend_id=self.id,
+                    result_id=result_id,
+                    schema=[],
+                    row_count=None,
+                    state="materialised",
+                    location=wire.file_uri_path(uri).encode(),
+                    kind="blob",
+                )
+            body = {"uri": uri, "credential": None, "columns": [], "row_count": None, "kind": "blob"}
+            response = self._v1("POST", f"/results/{result_id}/import", waits=True, json=body)
+            return self._ref_from_wire(wire.ResultRef.model_validate_json(response.content))
+        if schema is None:
+            raise ValueError("A table import needs its schema: it is the caller's, never read from the file")
+        if settings.FLOWFILE_COMPUTE_PROTOCOL:
+            body = {
+                "uri": uri,
+                "credential": _wire_credential(credential),
+                "columns": _wire_columns(schema),
+                "row_count": row_count,
+            }
+            response = self._v1("POST", f"/results/{result_id}/import", json=body)
+            return self._ref_from_wire(wire.ResultRef.model_validate_json(response.content))
+        scan = pl.scan_parquet(wire.file_uri_path(uri), **_credential_kwargs(credential))
+        ref, _ = self._defer(scan, result_id, _NO_FLOW, _NO_FLOW, None, schema=schema, row_count=row_count)
+        return ref
 
     def status(self, handle: JobHandle) -> JobStatus:
         """The worker's ``GET /status`` answer for the task ``handle`` names.
@@ -588,6 +784,14 @@ class WorkerBackend:
         if ref.backend_id != self.id:
             raise ForeignRef(f"Result {ref.result_id!r} belongs to backend {ref.backend_id!r}, not {self.id!r}")
 
+    def _table(self, ref: ResultRef) -> None:
+        """``_check``, then ``OperationUnsupported`` for a blob, which has no rows to plan over, sample or count."""
+        self._check(ref)
+        if ref.kind == "blob":
+            raise OperationUnsupported(
+                f"Result {ref.result_id} is a blob: it has no rows to plan over, sample or count"
+            )
+
     def _file(self, ref: ResultRef) -> str:
         self._check(ref)
         return ref.location.decode()
@@ -607,13 +811,16 @@ class WorkerBackend:
     def _v1(
         self, method: str, path: str, *, missing_ok: bool = False, waits: bool = False, **kwargs: Any
     ) -> requests.Response:
-        """Send one request to the worker's ``/v1`` route ``path`` with this backend's protocol version.
+        """Send one request to the worker's ``/v1`` route ``path`` with this backend's protocol version and token.
 
         ``waits`` is for a call that waits on a worker child (a submit, a sample, a count): its read timeout is the
-        deadline the task routes' poll honours. A 2xx answer is returned, a 404 too with ``missing_ok``.
+        deadline the task routes' poll honours. A 2xx answer is returned, a 404 too with ``missing_ok``. The request
+        goes through the worker session, so the handshake gates it; this backend's token, when it has one, signs it
+        in place of the session's process token.
 
         Raises:
             ComputeUnavailable: The worker could not be reached.
+            TaskFailed: This backend's token is no header value (``is_header_value``); nothing was sent.
             ComputeError: The worker answered anything else (``_v1_failure``).
         """
         timeout = (_WORKER_TIMEOUT[0], _POLL_DEADLINE_SECONDS or None) if waits else _WORKER_TIMEOUT
@@ -624,6 +831,7 @@ class WorkerBackend:
                 worker_url=self.url,
                 headers={wire.PROTOCOL_VERSION_HEADER: str(self.protocol_version)},
                 timeout=timeout,
+                auth=self._auth,
                 **kwargs,
             )
         except requests.RequestException as e:
@@ -637,23 +845,25 @@ class WorkerBackend:
 
         ``None`` means the socket could not be opened or the plan not sent. The worker reads both frames before it runs
         anything and drops a socket that closed before the plan, so the post never runs a plan twice. The socket is
-        dialled after ``ensure_handshake``, with the internal token, this backend's ``X-Protocol-Version`` and no
-        frame-size cap (a deferred result's ``complete`` frame carries its plan); a connect that fails at the network
-        re-arms the handshake, as the transport's WebSocket submit does. Once the plan is sent the answer is the final
-        frame's, and nothing is resent.
+        dialled after ``ensure_handshake``, with this backend's token (``_internal_token``), its ``X-Protocol-Version``
+        and no frame-size cap (a deferred result's ``complete`` frame carries its plan); a connect that fails at the
+        network re-arms the handshake, as the transport's WebSocket submit does. Once the plan is sent the answer is the
+        final frame's, and nothing is resent.
 
         Raises:
             ComputeUnavailable: The socket closed after the plan was sent.
-            TaskFailed: The worker sent nothing for longer than ``FLOWFILE_WORKER_WS_TIMEOUT``.
+            TaskFailed: The worker sent nothing for longer than ``FLOWFILE_WORKER_WS_TIMEOUT``, or this backend's
+                token is no header value (``is_header_value``), found before the socket is dialled.
             VersionMismatch: The worker refused the upgrade with 426.
             ComputeError: The handshake failed, or the worker's ``error`` frame (``_v1_error``).
         """
         ensure_handshake(self.url)
+        token = self._internal_token()
         try:
             ws = connect(
                 _get_ws_url(self.url) + "/v1/ws/submit",
                 additional_headers={
-                    "X-Flowfile-Internal": get_internal_token(),
+                    "X-Flowfile-Internal": token,
                     wire.PROTOCOL_VERSION_HEADER: str(self.protocol_version),
                 },
                 max_size=None,
@@ -681,6 +891,14 @@ class WorkerBackend:
         if frame["type"] == "error":
             raise _v1_error(frame["status_code"], frame["detail"])
         return wire.SubmitResult.model_validate(frame["result"])
+
+    def _internal_token(self) -> str:
+        """The token this backend signs the worker's ``/v1`` calls with: its own, else the process's internal token.
+
+        Raises:
+            TaskFailed: Its own token is no header value (``_sendable_token``).
+        """
+        return _sendable_token(self.token, self.id) if self.token is not None else get_internal_token()
 
     def _v1_location(self, ref: ResultRef) -> wire.WorkerLocation | None:
         """The ``WorkerLocation`` of a result ``/v1`` minted; ``None`` for a task-route result.
@@ -713,14 +931,17 @@ class WorkerBackend:
             row_count=ref.row_count,
             state=ref.state,
             location=ref.location,
+            kind=ref.kind,
         )
 
     def _v1_op(self, op: OperationKind, payload: OpPayload) -> OpResult:
         """Run ``op`` over the worker's ``POST /v1/ops/{kind}`` and key its refs as the task-route method does.
 
-        The payload is unpacked before anything is sent, so an empty one is a ``ValueError`` here too.
+        The payload is unpacked before anything is sent, so an empty one is a ``ValueError`` here too. A training's
+        answer ``metadata`` is the model's digest, size and type.
 
         Raises:
+            ForeignRef: An ``ml_apply`` model another backend minted.
             OperationUnsupported: A custom node without a node file.
             ValueError: The worker did not return one of a custom node's declared outputs.
         """
@@ -756,6 +977,27 @@ class WorkerBackend:
             case OperationKind.custom_node:
                 job = unpack(payload, CustomNodePayload)
                 body = _custom_node_request(job).model_dump(mode="json")
+            case OperationKind.ml_train:
+                job = unpack(payload, MlTrainPayload)
+                body = {
+                    "operation": base64.b64encode(job.plan.serialize()).decode("ascii"),
+                    "flowfile_flow_id": job.flow_id,
+                    "flowfile_node_id": job.node_id,
+                    "model_type": job.model_type,
+                    "target_column": job.target_column,
+                    "feature_columns": job.feature_columns,
+                    "params": job.params,
+                }
+            case OperationKind.ml_apply:
+                job = unpack(payload, MlApplyPayload)
+                self._check(job.model)
+                body = {
+                    "operation": base64.b64encode(job.plan.serialize()).decode("ascii"),
+                    "flowfile_flow_id": job.flow_id,
+                    "flowfile_node_id": job.node_id,
+                    "model": job.model.result_id,
+                    "output_column": job.output_column,
+                }
             case _:
                 job = unpack(payload, RandomSplitPayload)
                 body = {
@@ -774,7 +1016,10 @@ class WorkerBackend:
             refs = _declared_outputs(refs, job.output_names)
         elif op is OperationKind.random_split:
             refs = {group.name: refs[group.name] for group in job.settings.splits}
-        metadata = _kafka_offsets(answer["metadata"]) if op is OperationKind.kafka_read else {}
+        if op is OperationKind.kafka_read:
+            metadata = _kafka_offsets(answer["metadata"])
+        else:
+            metadata = answer["metadata"] if op is OperationKind.ml_train else {}
         return OpResult(refs=refs, metadata=metadata)
 
     def _store(self, plan: pl.LazyFrame, result_id: str, flow_id: int, node_id: int | str) -> ResultRef:
@@ -970,10 +1215,13 @@ class WorkerBackend:
 
     def _ml_apply(self, payload: OpPayload) -> OpResult:
         apply = unpack(payload, MlApplyPayload)
+        model = apply.model
+        if self._v1_location(model) is not None or not os.path.isfile(model.location.decode()):
+            raise ResultMissing(f"The worker's task routes do not hold model {model.result_id!r}")
         return self._read(
             lambda: MLApplyFetcher(
                 lf=apply.plan,
-                model_path=apply.model_path,
+                model_path=model.location.decode(),
                 output_column=apply.output_column,
                 flow_id=apply.flow_id,
                 node_id=apply.node_id,
@@ -999,24 +1247,36 @@ class WorkerBackend:
         return OpResult(refs=refs)
 
     def _ml_train(self, payload: OpPayload) -> OpResult:
+        """Stage the model in the flow's cache directory as worker task ``<job_id>_0``, apart from the node's task."""
         train = unpack(payload, MlTrainPayload)
+        model_id = f"{train.job_id}_0"
+        staged = str(storage.get_flow_cache_directory(train.flow_id) / "ml_models" / f"{model_id}.json")
         fetcher = self._run_tracked(
             train.job_id,
             lambda: MLTrainFetcher(
                 lf=train.plan,
-                staging_path=train.staging_path,
+                staging_path=staged,
                 model_type=train.model_type,
                 target_column=train.target_column,
                 feature_columns=train.feature_columns,
                 params=train.params,
                 flow_id=train.flow_id,
                 node_id=train.node_id,
-                file_ref=train.job_id,
+                file_ref=model_id,
                 wait_on_completion=False,
                 worker_url=self.url,
             ),
         )
-        return OpResult(refs={}, metadata=_reported(fetcher))
+        model = ResultRef(
+            backend_id=self.id,
+            result_id=model_id,
+            schema=[],
+            row_count=None,
+            state="materialised",
+            location=staged.encode(),
+            kind="blob",
+        )
+        return OpResult(refs={"model": model}, metadata=_reported(fetcher))
 
     def _database_write(self, payload: OpPayload) -> OpResult:
         write = unpack(payload, DatabaseWritePayload)
@@ -1202,6 +1462,43 @@ def _final_frame(ws: ClientConnection, worker_url: str, result_id: str) -> dict[
             return frame
 
 
+def is_header_value(value: str) -> bool:
+    """Whether ``value`` can be sent as an HTTP header value by ``requests`` and by the ``/v1`` submit socket.
+
+    Tabs, spaces, printable ASCII and the Latin-1 characters above it. ``http.client`` refuses a CR or a LF and a
+    character beyond Latin-1 with an error that quotes the value, and ``websockets`` refuses any other ASCII control
+    character but a tab too, logging the value before it raises.
+    """
+    return _HEADER_VALUE.fullmatch(value) is not None
+
+
+def _sendable_token(token: str, backend_id: str) -> str:
+    """``token``, once it is known to be a header value, so no client is handed one it would quote in an error.
+
+    Raises:
+        TaskFailed: It is no header value; the message names the backend and ``TOKEN_RULE``, never the token.
+    """
+    if not is_header_value(token):
+        raise TaskFailed(f"The token configured for the {backend_id} backend cannot be sent: {TOKEN_RULE}")
+    return token
+
+
+class _TokenAuth(requests.auth.AuthBase):
+    """Signs a worker request with one configured backend's own token in place of the process's internal token.
+
+    The check of the token (``_sendable_token``) runs as the request is prepared, before ``http.client`` sees it, and
+    its ``TaskFailed`` leaves ``requests`` as it is raised.
+    """
+
+    def __init__(self, token: str, backend_id: str) -> None:
+        self._token = token
+        self._backend_id = backend_id
+
+    def __call__(self, request: requests.PreparedRequest) -> requests.PreparedRequest:
+        request.headers["X-Flowfile-Internal"] = _sendable_token(self._token, self._backend_id)
+        return request
+
+
 def _v1_error(status_code: int, detail: Any) -> ComputeError:
     """The typed error for a ``/v1`` failure the worker answered with ``status_code`` and ``detail``.
 
@@ -1255,6 +1552,27 @@ def _delta_destination(write: DeltaWritePayload | DeltaMergePayload | DeltaScd2P
     if write.table.base_uri is not None:
         storage_payload = {"base_uri": write.table.base_uri, **(storage_payload or {})}
     return {"table_id": write.table.table_id, "table_name": write.table.table_name, "storage_payload": storage_payload}
+
+
+def _credential_kwargs(credential: CredentialRef | None) -> dict[str, Any]:
+    """The ``credential_provider`` a scan of a URI takes for ``credential``; nothing without one.
+
+    The provider carries the stored connection's id and user only, and resolves it where the plan runs. Without a
+    credential Polars resolves the target as it does for any scan.
+    """
+    if credential is None:
+        return {}
+    return {"credential_provider": CredentialRefProvider(credential.connection_id, credential.user_id)}
+
+
+def _wire_credential(credential: CredentialRef | None) -> dict[str, int] | None:
+    """A credential as the export and import bodies and the export task carry it: the connection's id and its user's."""
+    return None if credential is None else asdict(credential)
+
+
+def _wire_columns(schema: Schema) -> list[dict[str, str]]:
+    """A schema in the ``WireColumn`` spelling the worker answers and ``_ref_from_wire`` reads back."""
+    return [{"name": column.column_name, "data_type": column.data_type} for column in schema]
 
 
 def _reported(fetcher: BaseFetcher) -> dict[str, Any]:

@@ -1,10 +1,21 @@
-"""The worker's ``/v1`` routes: submit into a held result reference, then sample, count, probe and release it."""
+"""The worker's ``/v1`` routes: submit into a held result reference, then sample, count, probe and release it.
 
+A held result is also exported to a URI as parquet, and a URI imported as a held result. A blob is imported as a copy
+of its bytes and exported as those bytes, to and from a ``file://`` URI and a presigned ``https://`` URL on MinIO.
+"""
+
+import asyncio
+import ipaddress
 import json
+import logging
 import os
+import ssl
+import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from multiprocessing import Queue
+from pathlib import Path
 
 import polars as pl
 import pytest
@@ -13,15 +24,17 @@ from fastapi.testclient import TestClient
 from polars.testing import assert_frame_equal
 from starlette.testclient import WebSocketDenialResponse
 
-from flowfile_worker import main, models, protocol_routes, status_dict, status_dict_lock, streaming
+from flowfile_worker import funcs, main, models, mp_context, protocol_routes, status_dict, status_dict_lock, streaming
 from flowfile_worker.results import result_path
+from flowfile_worker.task_errors import WorkerEnvironmentError, split_failure
 from shared.compute_protocol import (
     PROTOCOL_VERSION,
     PROTOCOL_VERSION_HEADER,
     Capabilities,
+    ResultRef,
     SubmitResult,
     WorkerLocation,
-    local_capabilities,
+    file_uri,
     schema_to_wire,
 )
 from tests.conftest import INTERNAL_AUTH_HEADERS
@@ -34,6 +47,8 @@ token_only = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
 FLOW_ID = 4242
 NODE_ID = 7
 GEOARROW_WKB = pl.Extension("geoarrow.wkb", pl.Binary, "{}")
+BLOB = bytes(range(256)) * 64
+MINIO_BUCKET = "worker-test-bucket"
 
 ROUTES = [
     ("GET", "/v1/capabilities"),
@@ -42,6 +57,8 @@ ROUTES = [
     ("GET", "/v1/results/some-id/count"),
     ("HEAD", "/v1/results/some-id"),
     ("DELETE", "/v1/results/some-id"),
+    ("POST", "/v1/results/some-id/export"),
+    ("POST", "/v1/results/some-id/import"),
     ("GET", "/v1/jobs/some-id"),
     ("POST", "/v1/jobs/some-id/cancel"),
     *[
@@ -55,6 +72,8 @@ ROUTES = [
             "fuzzy_join",
             "custom_node",
             "random_split",
+            "ml_train",
+            "ml_apply",
         )
     ],
 ]
@@ -162,6 +181,8 @@ def test_the_v1_paths_are_in_the_openapi_document():
         "/v1/results/{result_id}/sample",
         "/v1/results/{result_id}/count",
         "/v1/results/{result_id}",
+        "/v1/results/{result_id}/export",
+        "/v1/results/{result_id}/import",
         "/v1/jobs/{job_id}",
         "/v1/jobs/{job_id}/cancel",
         "/v1/ops/database_read",
@@ -172,6 +193,8 @@ def test_the_v1_paths_are_in_the_openapi_document():
         "/v1/ops/fuzzy_join",
         "/v1/ops/custom_node",
         "/v1/ops/random_split",
+        "/v1/ops/ml_train",
+        "/v1/ops/ml_apply",
     }
     assert set(paths["/v1/results/{result_id}"]) == {"head", "delete"}
 
@@ -180,7 +203,7 @@ def test_capabilities_reports_this_process():
     response = client.get("/v1/capabilities")
 
     assert response.status_code == 200
-    assert Capabilities.model_validate(response.json()) == local_capabilities()
+    assert Capabilities.model_validate(response.json()) == protocol_routes.worker_capabilities()
 
 
 @pytest.mark.parametrize(
@@ -254,6 +277,30 @@ def test_no_sample_comes_back_without_preview_rows(held, must_materialise):
     result = _submit(held(), _plan(), must_materialise=must_materialise, preview_rows=None)
 
     assert result.sample is None
+
+
+def test_a_deferred_submit_without_a_preview_runs_no_child(held, monkeypatch):
+    result_id = held()
+    plan = _typed_plan()
+    plan_bytes = plan.serialize()
+
+    def spawn(*args, **kwargs):
+        raise AssertionError("A deferred submit without a preview spawned a child")
+
+    monkeypatch.setattr(protocol_routes, "start_process", spawn)
+
+    response = _post(plan_bytes, _meta(result_id, wide=True, preview_rows=None))
+
+    assert response.status_code == 200, response.text
+    result = SubmitResult.model_validate_json(response.text)
+    assert result.ref.state == "deferred"
+    assert result.ref.row_count is None
+    assert result.ref.columns == schema_to_wire(plan.collect_schema())
+    assert result.ref.columns[3].data_type == "Extension('geoarrow.wkb', Binary, '{}')"
+    assert result.sample is None
+    assert _location(result).plan == plan_bytes
+    assert not result_path(FLOW_ID, result_id).exists()
+    assert client.get(f"/v1/jobs/{result_id}").json()["status"] == "Completed"
 
 
 def test_a_plan_over_a_megabyte_submits_as_a_file_part(held):
@@ -378,10 +425,348 @@ def test_a_result_whose_file_is_gone_is_not_held(held):
     assert client.get(f"/v1/results/{result_id}/count").status_code == 404
 
 
-def test_a_plan_that_fails_on_its_data_is_a_task_failure_and_holds_nothing(held):
+@pytest.mark.parametrize("must_materialise", [True, False], ids=["materialised", "deferred"])
+def test_export_writes_the_result_as_parquet_at_the_uri_in_a_child(held, monkeypatch, tmp_path, must_materialise):
+    result_id = held()
+    plan = _plan()
+    _submit(result_id, plan, must_materialise=must_materialise)
+    jobs_before = set(status_dict)
+    children = _record_children(monkeypatch)
+    uri = file_uri(tmp_path / "out.parquet")
+
+    response = client.post(f"/v1/results/{result_id}/export", json={"uri": uri})
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"uri": uri}
+    assert children == ["export_result"]
+    assert_frame_equal(pl.read_parquet(tmp_path / "out.parquet"), plan.collect())
+    assert set(status_dict) == jobs_before
+    assert client.head(f"/v1/results/{result_id}").status_code == 200
+
+
+def test_export_of_an_unknown_result_is_404(monkeypatch, tmp_path):
+    children = _record_children(monkeypatch)
+
+    response = client.post("/v1/results/unknown/export", json={"uri": file_uri(tmp_path / "out.parquet")})
+
+    assert response.status_code == 404
+    assert children == []
+    assert not (tmp_path / "out.parquet").exists()
+
+
+def test_an_export_whose_sink_fails_is_500_with_the_childs_error(held):
+    result_id = held()
+    _submit(result_id, _plan(), must_materialise=True)
+
+    response = client.post(f"/v1/results/{result_id}/export", json={"uri": "nosuch://bucket/out.parquet"})
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert detail["status"] == "Error"
+    assert detail["error_kind"] == "task"
+    assert "nosuch://bucket/out.parquet" in detail["error_message"]
+    assert client.head(f"/v1/results/{result_id}").status_code == 200
+
+
+def test_import_holds_a_deferred_result_over_the_uri_with_the_given_columns_and_count(held, monkeypatch, tmp_path):
+    result_id = held()
+    plan = _plan()
+    path = tmp_path / "in.parquet"
+    columns = schema_to_wire(plan.collect_schema())
+    children = _record_children(monkeypatch)
+    body = {"uri": file_uri(path), "columns": [column.model_dump() for column in columns], "row_count": 5}
+
+    response = client.post(f"/v1/results/{result_id}/import", json=body)
+
+    assert response.status_code == 200, response.text
+    ref = ResultRef.model_validate_json(response.text)
+    assert (ref.result_id, ref.state, ref.row_count, ref.columns) == (result_id, "deferred", 5, columns)
+    location = WorkerLocation.model_validate_json(ref.location)
+    assert (location.kind, location.path) == ("plan", None)
+    assert client.head(f"/v1/results/{result_id}").status_code == 200
+    assert client.get(f"/v1/results/{result_id}/count").json() == {"row_count": 5}
+    assert children == []
+
+    plan.collect().write_parquet(path)
+    sample = client.get(f"/v1/results/{result_id}/sample", params={"n": 2})
+
+    assert children == ["submit_result"]
+    assert_frame_equal(pl.read_ipc_stream(sample.content), plan.head(2).collect())
+    assert client.delete(f"/v1/results/{result_id}").status_code == 204
+    assert client.head(f"/v1/results/{result_id}").status_code == 404
+    assert path.is_file()
+
+
+def test_import_under_a_held_id_replaces_it(held, tmp_path):
+    result_id = held()
+    stored_file = _location(_submit(result_id, _plan(), must_materialise=True)).path
+    body = {"uri": file_uri(tmp_path / "in.parquet"), "columns": [], "row_count": 0}
+
+    response = client.post(f"/v1/results/{result_id}/import", json=body)
+
+    assert response.status_code == 200, response.text
+    assert ResultRef.model_validate_json(response.text).state == "deferred"
+    assert not os.path.exists(stored_file)
+
+
+@pytest.mark.parametrize(
+    ("route", "body"),
+    [
+        ("export", {"uri": "file:///out.parquet", "format": "csv"}),
+        ("export", {"uri": "file:///out.parquet", "credential": {"connection_id": 1, "user_id": 1, "secret": "s"}}),
+        ("import", {"uri": "file:///in.parquet", "columns": [], "mode": "copy"}),
+        ("import", {"uri": "file:///in.parquet"}),
+        (
+            "import",
+            {"uri": "file:///in.blob", "columns": [], "kind": "blob", "credential": {"connection_id": 1, "user_id": 1}},
+        ),
+        ("import", {"uri": "file:///in.blob", "columns": [{"name": "a", "data_type": "Int64"}], "kind": "blob"}),
+    ],
+    ids=[
+        "export-unknown-field",
+        "export-credential-field",
+        "import-unknown-field",
+        "import-no-columns",
+        "import-blob-credential",
+        "import-blob-columns",
+    ],
+)
+def test_a_bad_export_or_import_body_is_422(held, route, body):
     result_id = held()
 
-    response = _post(pl.LazyFrame({"a": [1]}).select("missing").serialize(), _meta(result_id, must_materialise=True))
+    response = client.post(f"/v1/results/{result_id}/{route}", json=body)
+
+    assert response.status_code == 422
+    assert client.head(f"/v1/results/{result_id}").status_code == 404
+
+
+def _blob_body(uri: str) -> dict:
+    return {"uri": uri, "columns": [], "kind": "blob"}
+
+
+def test_a_blob_import_holds_a_copy_of_the_file(held, monkeypatch, tmp_path):
+    result_id = held()
+    source = tmp_path / "model.bin"
+    source.write_bytes(BLOB)
+    children = _record_children(monkeypatch)
+
+    response = client.post(f"/v1/results/{result_id}/import", json=_blob_body(file_uri(source)))
+
+    assert response.status_code == 200, response.text
+    ref = ResultRef.model_validate_json(response.text)
+    assert (ref.result_id, ref.kind, ref.state, ref.columns, ref.row_count) == (
+        result_id,
+        "blob",
+        "materialised",
+        [],
+        None,
+    )
+    location = WorkerLocation.model_validate_json(ref.location)
+    copy = Path(location.path)
+    assert (location.kind, copy) == ("blob", result_path(-1, result_id).with_suffix(".blob"))
+    assert copy.read_bytes() == BLOB
+    source.unlink()
+    assert client.head(f"/v1/results/{result_id}").status_code == 200
+    target = tmp_path / "out.bin"
+    exported = client.post(f"/v1/results/{result_id}/export", json={"uri": file_uri(target)})
+    assert exported.status_code == 200, exported.text
+    assert exported.json() == {"uri": file_uri(target)}
+    assert target.read_bytes() == BLOB
+    assert children == []
+    assert client.delete(f"/v1/results/{result_id}").status_code == 204
+    assert not copy.exists()
+    assert target.read_bytes() == BLOB
+
+
+def test_a_blob_uri_of_another_scheme_or_with_a_credential_is_422(held, tmp_path):
+    source = tmp_path / "model.bin"
+    source.write_bytes(BLOB)
+    refused = held()
+
+    response = client.post(f"/v1/results/{refused}/import", json=_blob_body("s3://bucket/model.bin"))
+
+    assert response.status_code == 422
+    assert "s3://" in response.json()["detail"]
+    assert client.head(f"/v1/results/{refused}").status_code == 404
+    assert not result_path(-1, refused).with_suffix(".blob").exists()
+    fitted = held()
+    assert client.post(f"/v1/results/{fitted}/import", json=_blob_body(file_uri(source))).status_code == 200
+    credential = {"connection_id": 1, "user_id": 1}
+    with_credential = client.post(
+        f"/v1/results/{fitted}/export", json={"uri": file_uri(tmp_path / "out.bin"), "credential": credential}
+    )
+    to_s3 = client.post(f"/v1/results/{fitted}/export", json={"uri": "s3://bucket/out.bin"})
+    assert (with_credential.status_code, to_s3.status_code) == (422, 422)
+    assert not (tmp_path / "out.bin").exists()
+    assert client.head(f"/v1/results/{fitted}").status_code == 200
+
+
+@pytest.fixture(scope="module")
+def minio_over_tls(tmp_path_factory):
+    """MinIO behind an HTTPS forwarder with a self-signed certificate: the forwarder's URL and the certificate's path.
+
+    MinIO is had as the cloud end-to-end suite has it, and the tests skip when Docker cannot give one. The forwarder is
+    the one the cloud storage options tests build, so a URL presigned on its endpoint is an ``https://`` one that MinIO
+    accepts: the Host header passes through.
+    """
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    from test_utils.s3 import fixtures as s3
+
+    available = s3.is_docker_available() and (
+        s3.is_container_running(s3.MINIO_CONTAINER_NAME) or s3.start_minio_container()
+    )
+    if not (available and s3.wait_for_minio(max_retries=10)):
+        pytest.skip("MinIO (Docker) is not available")
+    folder = tmp_path_factory.mktemp("tls")
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    now = datetime.now(timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5))
+        .not_valid_after(now + timedelta(hours=1))
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+    )
+    (folder / "cert.pem").write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    (folder / "key.pem").write_bytes(
+        key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    )
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(folder / "cert.pem", folder / "key.pem")
+    upstream_host, upstream_port = s3.MINIO_ENDPOINT_URL.removeprefix("http://").split(":")
+
+    async def pipe(reader, writer):
+        try:
+            while data := await reader.read(65536):
+                writer.write(data)
+                await writer.drain()
+        except (ConnectionError, OSError):
+            pass
+        finally:
+            writer.close()
+
+    async def forward(client_reader, client_writer):
+        upstream_reader, upstream_writer = await asyncio.open_connection(upstream_host, int(upstream_port))
+        await asyncio.gather(pipe(client_reader, upstream_writer), pipe(upstream_reader, client_writer))
+
+    loop = asyncio.new_event_loop()
+    loop.set_exception_handler(lambda _loop, _context: None)
+    server = loop.run_until_complete(asyncio.start_server(forward, "127.0.0.1", 0, ssl=context))
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"https://localhost:{server.sockets[0].getsockname()[1]}", folder / "cert.pem"
+    finally:
+        loop.call_soon_threadsafe(server.close)
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=5)
+
+
+@pytest.fixture
+def presign(minio_over_tls, monkeypatch):
+    """A function presigning ``put_object`` or ``get_object`` for a name under a key prefix of the test's; the prefix.
+
+    ``requests`` trusts the forwarder's certificate through ``REQUESTS_CA_BUNDLE``; every key under the prefix is
+    deleted when the test ends.
+    """
+    import boto3
+    from botocore.client import Config
+
+    from test_utils.s3 import fixtures as s3
+
+    endpoint, certificate = minio_over_tls
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(certificate))
+    presigner = boto3.client(
+        "s3",
+        endpoint_url=endpoint,
+        aws_access_key_id=s3.MINIO_ACCESS_KEY,
+        aws_secret_access_key=s3.MINIO_SECRET_KEY,
+        config=Config(signature_version="s3v4"),
+        region_name="us-east-1",
+    )
+    prefix = f"blob-{uuid.uuid4().hex}"
+
+    def url(method: str, name: str) -> str:
+        params = {"Bucket": MINIO_BUCKET, "Key": f"{prefix}/{name}"}
+        return presigner.generate_presigned_url(method, Params=params, ExpiresIn=600)
+
+    yield url, prefix
+    minio = s3.get_minio_client()
+    for listed in minio.list_objects_v2(Bucket=MINIO_BUCKET, Prefix=f"{prefix}/").get("Contents", []):
+        minio.delete_object(Bucket=MINIO_BUCKET, Key=listed["Key"])
+
+
+def test_a_blob_crosses_to_a_presigned_https_url_and_back(held, presign, tmp_path):
+    from test_utils.s3.fixtures import get_minio_client
+
+    url, prefix = presign
+    model = os.urandom(3 * 1024 * 1024)
+    source = tmp_path / "model.bin"
+    source.write_bytes(model)
+    fitted = held()
+    assert client.post(f"/v1/results/{fitted}/import", json=_blob_body(file_uri(source))).status_code == 200
+    put_url = url("put_object", "model.bin")
+    assert put_url.startswith("https://")
+
+    exported = client.post(f"/v1/results/{fitted}/export", json={"uri": put_url})
+
+    assert exported.status_code == 200, exported.text
+    assert exported.json() == {"uri": put_url}
+    assert get_minio_client().get_object(Bucket=MINIO_BUCKET, Key=f"{prefix}/model.bin")["Body"].read() == model
+    fetched = held()
+    imported = client.post(f"/v1/results/{fetched}/import", json=_blob_body(url("get_object", "model.bin")))
+    assert imported.status_code == 200, imported.text
+    ref = ResultRef.model_validate_json(imported.text)
+    assert (ref.result_id, ref.kind, ref.state) == (fetched, "blob", "materialised")
+    copy = tmp_path / "copy.bin"
+    assert client.post(f"/v1/results/{fetched}/export", json={"uri": file_uri(copy)}).status_code == 200
+    assert copy.read_bytes() == model
+
+
+def test_a_failed_blob_transfer_is_500_and_names_no_signature(held, presign, tmp_path, caplog):
+    url, _ = presign
+    source = tmp_path / "model.bin"
+    source.write_bytes(BLOB)
+    fitted = held()
+    assert client.post(f"/v1/results/{fitted}/import", json=_blob_body(file_uri(source))).status_code == 200
+    tampered = url("put_object", "model.bin").replace("X-Amz-Signature=", "X-Amz-Signature=00")
+    missing = held()
+
+    with caplog.at_level(logging.INFO):
+        refused = client.post(f"/v1/results/{fitted}/export", json={"uri": tampered})
+        not_found = client.post(f"/v1/results/{missing}/import", json=_blob_body(url("get_object", "missing.bin")))
+
+    assert refused.status_code == 500
+    assert refused.json()["detail"]["error_kind"] == "task"
+    assert " answered 403 " in refused.json()["detail"]["error_message"]
+    assert client.head(f"/v1/results/{fitted}").status_code == 200
+    assert not_found.status_code == 500
+    assert " answered 404 " in not_found.json()["detail"]["error_message"]
+    assert client.head(f"/v1/results/{missing}").status_code == 404
+    assert not result_path(-1, missing).with_suffix(".blob").exists()
+    for said in (refused.text, not_found.text, caplog.text):
+        assert "X-Amz-Signature" not in said
+
+
+@pytest.mark.parametrize("must_materialise", [True, False], ids=["materialised", "deferred-without-a-preview"])
+def test_a_plan_that_fails_on_its_data_is_a_task_failure_and_holds_nothing(held, must_materialise):
+    result_id = held()
+
+    response = _post(
+        pl.LazyFrame({"a": [1]}).select("missing").serialize(), _meta(result_id, must_materialise=must_materialise)
+    )
 
     assert response.status_code == 500
     detail = response.json()["detail"]
@@ -399,8 +784,9 @@ def test_a_plan_this_worker_cannot_load_is_an_environment_failure(held, unloadab
     assert response.json()["detail"]["error_kind"] == "environment"
 
 
-def test_bytes_that_are_not_a_plan_are_an_environment_failure(held):
-    response = _post(b"not a plan", _meta(held(), preview_rows=10))
+@pytest.mark.parametrize("preview_rows", [10, None], ids=["sampled", "deferred-without-a-preview"])
+def test_bytes_that_are_not_a_plan_are_an_environment_failure(held, preview_rows):
+    response = _post(b"not a plan", _meta(held(), preview_rows=preview_rows))
 
     assert response.status_code == 500
     assert response.json()["detail"]["error_kind"] == "environment"
@@ -476,6 +862,31 @@ def test_a_failed_submits_job_carries_the_error(held):
 
     assert job["status"] == "Error"
     assert job["error_message"].startswith("ColumnNotFoundError")
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [pl.exceptions.ColumnNotFoundError("x" * 3000), WorkerEnvironmentError(ImportError("y" * 3000))],
+    ids=["task", "environment"],
+)
+def test_a_deferred_submit_without_a_preview_fails_as_its_child_would(held, monkeypatch, failure):
+    def load(plan):
+        raise failure
+
+    monkeypatch.setattr(funcs, "_load_plan", load)
+    monkeypatch.setattr(protocol_routes, "_load_plan", load)
+    plan = _plan().serialize()
+    progress, error_message = mp_context.Value("i", 0), mp_context.Array("c", 1024)
+    funcs.submit_result(plan, progress, error_message, Queue(maxsize=1), "", FLOW_ID, NODE_ID, False, None)
+    kind, message = split_failure(error_message.value.decode(errors="replace"))
+    result_id = held()
+
+    response = _post(plan, _meta(result_id))
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == {"status": "Error", "error_message": message, "error_kind": kind}
+    assert len(message.encode()) <= 1024
+    assert client.get(f"/v1/jobs/{result_id}").json()["progress"] == progress.value == -1
 
 
 def test_an_unknown_job_is_404():

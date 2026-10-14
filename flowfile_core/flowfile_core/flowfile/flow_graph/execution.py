@@ -21,7 +21,10 @@ from flowfile_core.flowfile.catalog_cdc import (
     read_cursor,
     resolve_consumer_key,
 )
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.context import ExecutionContext, current_context, use_context
+from flowfile_core.flowfile.execution.errors import ComputeError
+from flowfile_core.flowfile.execution.placement import Placement, Refusal, SingleBackendPolicy, place
 from flowfile_core.flowfile.flow_data_engine.bounded import head_rows
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
@@ -60,6 +63,7 @@ from flowfile_core.kernel.execution import (
 )
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.output_model import NodeResult, RunInformation
+from shared.compute_protocol import Capabilities
 
 ambient_kernel_hold: ContextVar[KernelHold | None] = ContextVar("ambient_kernel_hold", default=None)
 """The ``kernel_hold`` of the run whose thread this is: ``run_graph`` sets it for its own thread and every node it
@@ -67,16 +71,30 @@ executes, so a graph opened in-process during the run (a virtual table's produce
 Schema prefetches copy their starting context, so they carry it as well.
 """
 
+_COMPUTE_ERRORS = frozenset(error.__name__ for error in (ComputeError, *ComputeError.__subclasses__()))
 
-def _gate_formula_matches(source: FlowDataEngine, formula: str) -> bool:
+
+def _compute_error(node: FlowNode) -> str | None:
+    """The class name of the typed compute error that failed ``node`` this run, else ``None``.
+
+    Read from the class the executor records on the node for telemetry (``_last_exception_class``), so a run report
+    row says when a node failed on its compute (unreachable, another version) rather than on its own settings or data.
+    """
+    error_class = getattr(node, "_last_exception_class", None)
+    return error_class if error_class in _COMPUTE_ERRORS else None
+
+
+def _gate_formula_matches(source: FlowDataEngine, formula: str, graph: GraphMixinBase | None = None) -> bool:
     """True when at least one row of *source* satisfies the gate's formula.
 
     The formula is the Filter node's flowfile expression language applied as
     a row predicate; matching is existence — ``filter(pred).head(1)``. With
     ``FLOWFILE_COMPUTE_PROTOCOL`` off that one row is collected in core; with
-    it on it is read through ``bounded.head_rows`` on the current execution
-    context's backend, the run's, so core never opens a result that backend
-    stored and a formula error comes back as its ``ComputeError``. An empty
+    it on it is read through ``bounded.head_rows`` on the backend of
+    ``current_context(graph)``: the run's during a run and, outside one (a
+    FlowFrame's ``Gate.is_open``), the graph's own, so core never opens a
+    result that backend stored and a formula error comes back as its
+    ``ComputeError``. An empty
     formula, a formula that does not parse, or one referencing unknown
     columns raises, failing the gate visibly instead of silently picking a
     branch. An empty input (zero rows) is simply "no match": the gate closes.
@@ -87,7 +105,7 @@ def _gate_formula_matches(source: FlowDataEngine, formula: str) -> bool:
     data_frame = source.data_frame
     lazy_frame = data_frame.lazy() if isinstance(data_frame, pl.DataFrame) else data_frame
     if settings.FLOWFILE_COMPUTE_PROTOCOL:
-        return head_rows(current_context().backend, lazy_frame.filter(predicate), 1).num_rows > 0
+        return head_rows(current_context(graph).backend, lazy_frame.filter(predicate), 1).num_rows > 0
     return lazy_frame.filter(predicate).head(1).collect().height > 0
 
 
@@ -320,6 +338,8 @@ class ExecutionMixin(GraphMixinBase):
                 )
             errors = flow_node.results.errors
             node_result.finish(success=errors is None, error="" if errors is None else str(errors))
+            if errors is not None:
+                node_result.compute_error = _compute_error(flow_node)
             if self.flow_settings.is_canceled:
                 node_result.success = None
             if node_result.success:
@@ -484,6 +504,8 @@ class ExecutionMixin(GraphMixinBase):
                 node_result.is_running = False
                 return node_result, node
             node_result.finish(success=errors is None, error="" if errors is None else str(errors))
+            if errors is not None:
+                node_result.compute_error = _compute_error(node)
         except Exception as e:
             node_logger.error(f"Error in node {node.node_id}: {e}")
             node_result.finish(success=False, error=str(e))
@@ -770,7 +792,7 @@ class ExecutionMixin(GraphMixinBase):
         if source_result is None:
             raise ValueError("gate input produced no result to evaluate its formula against")
         formula = resolve_expression_parameters(gate_input.formula, params or {})
-        return not _gate_formula_matches(source_result, formula)
+        return not _gate_formula_matches(source_result, formula, self)
 
     def _evaluate_gate_conditions(self, nodes: list[FlowNode] | None = None) -> dict[str | int, frozenset[str]]:
         """Evaluate parameter-mode gates (of ``nodes``, default all) before the run; returns per-gate dead handles.
@@ -800,6 +822,58 @@ class ExecutionMixin(GraphMixinBase):
                 node.invalidate_cache()
                 continue
         return closed
+
+    def _place_run(self, execution_plan: ExecutionPlan) -> Placement | None:
+        """Place the nodes ``execution_plan`` runs; ``None`` with ``FLOWFILE_COMPUTE_PROTOCOL`` off, placing nothing.
+
+        Every node goes to the run's backend but the ones their builders pin to the worker (``SingleBackendPolicy``).
+        Each backend named is asked for its ``capabilities()`` once. One that raises a ``ComputeError`` is left out of
+        the map ``place`` is given, so its nodes are not placed and meet that typed error when they run; an id the
+        registry does not know refuses every node assigned to it with the registry's message.
+        """
+        if not settings.FLOWFILE_COMPUTE_PROTOCOL:
+            return None
+        nodes = execution_plan.all_nodes
+        policy = SingleBackendPolicy(current_context(self).backend_id)
+        declared: dict[str, Capabilities] = {}
+        unknown: dict[str, str] = {}
+        for backend_id in dict.fromkeys(policy.backend_for(node) for node in nodes):
+            try:
+                declared[backend_id] = registry.backend(backend_id).capabilities()
+            except ComputeError:
+                continue
+            except LookupError as e:
+                unknown[backend_id] = str(e)
+        placement = place(self, declared, policy, nodes=nodes)
+        if not unknown:
+            return placement
+        refusals = [
+            Refusal(node.node_id, policy.backend_for(node), unknown[policy.backend_for(node)])
+            for node in nodes
+            if policy.backend_for(node) in unknown
+        ]
+        return Placement(
+            assignment={**placement.assignment, **{refusal.node_id: refusal.backend_id for refusal in refusals}},
+            boundaries=placement.boundaries,
+            refusals=[*refusals, *placement.refusals],
+        )
+
+    def _record_refusals(self, refusals: list[Refusal]) -> None:
+        """Record each refused node as a failed result of the run, which starts no node; called single-threaded."""
+        for refusal in refusals:
+            node = self.get_node(refusal.node_id)
+            error = f'cannot run on backend "{refusal.backend_id}": {refusal.reason}'
+            self.flow_logger.get_node_logger(node.node_id).error(error)
+            node_result = NodeResult(
+                node_id=node.node_id,
+                node_name=node.name,
+                description=node.get_node_information().description,
+                compute_error="Refusal",
+            )
+            node_result.finish(success=False, error=error)
+            self.latest_run_info.node_step_result.append(node_result)
+        backend_ids = ", ".join(sorted({refusal.backend_id for refusal in refusals}))
+        self.flow_logger.error(f"{len(refusals)} node(s) cannot run on backend {backend_ids}; no node was started")
 
     def _run_post_execution_callbacks(
         self,
@@ -1030,6 +1104,9 @@ class ExecutionMixin(GraphMixinBase):
         ``execution_context``, or, for a run started inside another run (a subflow's), the
         outer run's context, so a subflow executes where the flow that runs it does.
 
+        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, the nodes the execution plan runs are placed first (``_place_run``): a
+        node its backend cannot run ends the run before any node starts, each refused node a failed result.
+
         Args:
             node_ids: Restrict the run to these nodes; pass a closed set (each node together with
                 every node it reads from), since a node whose input lies outside it is unreachable.
@@ -1088,23 +1165,36 @@ class ExecutionMixin(GraphMixinBase):
                     closed_gate_handles=closed_gate_handles,
                 )
 
-                plan_skip_ids: set[str | int] = {n.node_id for n in execution_plan.skip_nodes}
-                deliberate_skip_ids: set[str | int] = {n.node_id for n in execution_plan.deliberate_skip_nodes}
-                not_selected_ids = set() if selected is None else {n.node_id for n in self.nodes} - selected
-                self._prepare_rerun_artifacts(plan_skip_ids | deliberate_skip_ids | not_selected_ids)
+                placement = self._place_run(execution_plan)
+                if placement is not None and placement.refusals:
+                    # Refused before any node starts: nothing is prepared, executed, skipped or committed.
+                    self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")
+                    self._record_refusals(placement.refusals)
+                else:
+                    plan_skip_ids: set[str | int] = {n.node_id for n in execution_plan.skip_nodes}
+                    deliberate_skip_ids: set[str | int] = {n.node_id for n in execution_plan.deliberate_skip_nodes}
+                    not_selected_ids = set() if selected is None else {n.node_id for n in self.nodes} - selected
+                    self._prepare_rerun_artifacts(plan_skip_ids | deliberate_skip_ids | not_selected_ids)
 
-                self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")
-                skip_node_message(self.flow_logger, execution_plan.skip_nodes)
-                execution_order_message(self.flow_logger, execution_plan.stages)
+                    self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")
+                    skip_node_message(self.flow_logger, execution_plan.skip_nodes)
+                    execution_order_message(self.flow_logger, execution_plan.stages)
 
-                performance_mode = self.flow_settings.execution_mode == "Performance"
-                self._record_deliberate_skips(deliberate_skip_ids)
+                    performance_mode = self.flow_settings.execution_mode == "Performance"
+                    self._record_deliberate_skips(deliberate_skip_ids)
 
-                failed_node_ids = self._execute_stages(
-                    execution_plan, performance_mode, params, plan_skip_ids, deliberate_skip_ids, closed_gate_handles
-                )
-                if commit_sources and not self.flow_settings.is_canceled:
-                    self._run_post_execution_callbacks(failed_node_ids, plan_skip_ids, deliberate_skip_ids, selected)
+                    failed_node_ids = self._execute_stages(
+                        execution_plan,
+                        performance_mode,
+                        params,
+                        plan_skip_ids,
+                        deliberate_skip_ids,
+                        closed_gate_handles,
+                    )
+                    if commit_sources and not self.flow_settings.is_canceled:
+                        self._run_post_execution_callbacks(
+                            failed_node_ids, plan_skip_ids, deliberate_skip_ids, selected
+                        )
 
                 self.latest_run_info.end_time = datetime.datetime.now()
                 self.flow_logger.info("Flow completed!")

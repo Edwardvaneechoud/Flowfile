@@ -5,15 +5,21 @@ Every test here turns ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on and runs over bo
 so each submit falls back to ``POST /v1/submit``. The socket-only tests at the end play the worker's frames from a fake
 socket. The dispatch tests turn the flag off again mid-test to show that a result is read over the routes that minted
 it. The operation tests run the reads, the fuzzy join, the random split and a custom node over
-``POST /v1/ops/{kind}`` (socket only: the transport is a submit's concern) and read every output over the wire.
+``POST /v1/ops/{kind}`` (socket only: the transport is a submit's concern) and read every output over the wire; the
+model tests train a model there, which the worker holds as a blob, and score with it by reference. The export and
+import tests write a result to a URI on the worker and hold a URI there as a result, and hold a blob there, which no
+call reads as rows.
 """
 
+import hashlib
 import io
 import json
+import logging
 import re
 import socket
 import threading
 import time
+import traceback
 import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,9 +38,11 @@ from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
-from flowfile_core.flowfile.execution.backends.worker import WorkerBackend, _flowfile_schema
+from flowfile_core.flowfile.execution.backends.worker import TOKEN_RULE, WorkerBackend, _flowfile_schema
 from flowfile_core.flowfile.execution.errors import (
     ComputeUnavailable,
+    ForeignRef,
+    OperationUnsupported,
     PlanRejected,
     ResultMissing,
     TaskFailed,
@@ -46,11 +54,20 @@ from flowfile_core.flowfile.execution.payloads import (
     FileReadPayload,
     FuzzyJoinPayload,
     GoogleAnalyticsReadPayload,
+    MlApplyPayload,
+    MlTrainPayload,
     RandomSplitPayload,
     RestApiReadPayload,
     op_payload,
 )
-from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, ResultRef, SubmitHints, SubmitResult
+from flowfile_core.flowfile.execution.protocol import (
+    CredentialRef,
+    JobHandle,
+    OperationKind,
+    ResultRef,
+    SubmitHints,
+    SubmitResult,
+)
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import fetch_worker_capabilities
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
@@ -65,13 +82,14 @@ from flowfile_core.schemas.input_schema import (
 )
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared import compute_protocol as wire
-from shared.compute_protocol import PROTOCOL_VERSION_HEADER, Capabilities, WorkerLocation
+from shared.compute_protocol import PROTOCOL_VERSION_HEADER, WorkerLocation, file_uri
 from shared.storage_config import storage
 
 PEOPLE = pl.DataFrame(
     {"id": list(range(10)), "name": [f"n{i}" for i in range(10)], "score": [i * 1.5 for i in range(10)]}
 )
 GEOARROW_WKB = pl.Extension("geoarrow.wkb", pl.Binary, "{}")
+BLOB = bytes(range(256)) * 64
 STATES = pytest.mark.parametrize("must_materialise", [True, False], ids=["materialised", "deferred"])
 SOCKET_ONLY = pytest.mark.parametrize("transport", ["socket"], indirect=True)
 
@@ -236,10 +254,6 @@ def v1_ref(result_id: str) -> ResultRef:
     """A reference as ``/v1`` mints one, for a result the worker never held."""
     nowhere = WorkerLocation(kind="file", path="/nowhere.arrow").model_dump_json().encode()
     return ResultRef("worker", result_id, [], None, "materialised", nowhere)
-
-
-def handshake_fields(capabilities: Capabilities) -> dict:
-    return capabilities.model_dump(exclude={"operations"})
 
 
 def test_a_materialised_submit_is_held_in_the_workers_own_file(backend, kept):
@@ -425,6 +439,178 @@ def test_a_task_route_result_stays_on_the_task_routes_after_the_flag_goes_on(bac
     assert not any(path.startswith("/v1/") for _, path, _ in sent), sent
 
 
+@STATES
+def test_export_goes_to_the_v1_export_route_and_the_worker_writes_the_uri(
+    backend, kept, sent, must_materialise, tmp_path
+):
+    ref = submit(backend, kept, must_materialise=must_materialise).ref
+    target = file_uri(tmp_path / "out.parquet")
+    sent.clear()
+
+    assert backend.export(ref, target, None) == target
+
+    assert sent == [("POST", f"/v1/results/{ref.result_id}/export", "1")]
+    assert pl.read_parquet(tmp_path / "out.parquet").equals(PEOPLE)
+    assert backend.exists(ref) is True
+
+
+def test_an_export_carries_only_the_credential_reference(backend, kept, monkeypatch, tmp_path):
+    """Polars never calls the provider for a local file, so the export of a ``file://`` target still succeeds."""
+    ref = submit(backend, kept, must_materialise=True).ref
+    bodies = []
+    real_send = requests.Session.send
+
+    def recording_send(self, request, **kwargs):
+        if request.url.endswith("/export"):
+            bodies.append(json.loads(request.body))
+        return real_send(self, request, **kwargs)
+
+    monkeypatch.setattr(requests.Session, "send", recording_send)
+    target = file_uri(tmp_path / "out.parquet")
+
+    assert backend.export(ref, target, CredentialRef(connection_id=7, user_id=3)) == target
+
+    assert bodies == [{"uri": target, "credential": {"connection_id": 7, "user_id": 3}}]
+    assert pl.read_parquet(tmp_path / "out.parquet").equals(PEOPLE)
+
+
+def test_import_uri_posts_to_the_v1_import_route_and_answers_a_deferred_v1_reference(backend, sent, tmp_path):
+    """The file is written only after the import: the worker reads nothing until the rows are asked for."""
+    path = tmp_path / "in.parquet"
+    schema = _flowfile_schema(PEOPLE.schema)
+    sent.clear()
+
+    ref = backend.import_uri(file_uri(path), schema, PEOPLE.height, None)
+
+    try:
+        assert sent == [("POST", f"/v1/results/{ref.result_id}/import", "1")]
+        assert (ref.backend_id, ref.state, ref.row_count) == ("worker", "deferred", PEOPLE.height)
+        assert [(c.column_name, c.data_type) for c in ref.schema] == [(c.column_name, c.data_type) for c in schema]
+        assert location(ref).kind == "plan"
+        sent.clear()
+        assert isinstance(backend.plan_for(ref), pl.LazyFrame)
+        assert sent == []
+        assert backend.count(ref) == PEOPLE.height
+
+        PEOPLE.write_parquet(path)
+
+        assert pl.from_arrow(read_stream(backend.sample(ref, 3))).equals(PEOPLE.head(3))
+    finally:
+        backend.release(ref)
+    assert ("DELETE", f"/v1/results/{ref.result_id}", "1") in sent
+    assert backend.exists(ref) is False
+    assert path.is_file()
+
+
+def test_an_export_of_a_result_the_worker_no_longer_holds_is_missing(backend, tmp_path):
+    gone = v1_ref(new_result_id())
+
+    with pytest.raises(ResultMissing, match=gone.result_id):
+        backend.export(gone, file_uri(tmp_path / "out.parquet"), None)
+    assert not (tmp_path / "out.parquet").exists()
+
+
+@STATES
+def test_a_v1_result_is_exported_over_v1_after_the_flag_goes_off(backend, kept, sent, must_materialise, tmp_path):
+    ref = submit(backend, kept, must_materialise=must_materialise).ref
+    settings.FLOWFILE_COMPUTE_PROTOCOL.value = False
+    target = file_uri(tmp_path / "out.parquet")
+    sent.clear()
+
+    assert backend.export(ref, target, None) == target
+
+    assert [(method, path) for method, path, _ in sent] == [("POST", f"/v1/results/{ref.result_id}/export")]
+    assert pl.read_parquet(tmp_path / "out.parquet").equals(PEOPLE)
+
+
+def test_a_blob_import_posts_kind_blob_and_answers_a_blob_reference(backend, sent, monkeypatch, tmp_path):
+    """The source is removed once imported, so what the worker exports is the copy it holds."""
+    source = tmp_path / "model.bin"
+    source.write_bytes(BLOB)
+    bodies = []
+    recording_send = requests.Session.send
+
+    def body_recording_send(self, request, **kwargs):
+        if request.url.endswith("/import"):
+            bodies.append(json.loads(request.body))
+        return recording_send(self, request, **kwargs)
+
+    monkeypatch.setattr(requests.Session, "send", body_recording_send)
+    sent.clear()
+
+    ref = backend.import_uri(file_uri(source), None, None, None, kind="blob")
+
+    try:
+        assert sent == [("POST", f"/v1/results/{ref.result_id}/import", "1")]
+        assert bodies == [
+            {"uri": file_uri(source), "credential": None, "columns": [], "row_count": None, "kind": "blob"}
+        ]
+        assert (ref.backend_id, ref.kind, ref.state, ref.schema, ref.row_count) == (
+            "worker",
+            "blob",
+            "materialised",
+            [],
+            None,
+        )
+        assert location(ref).kind == "blob"
+        source.unlink()
+        sent.clear()
+        for read in (backend.plan_for, backend.count, lambda blob: backend.sample(blob, 1)):
+            with pytest.raises(OperationUnsupported, match="is a blob"):
+                read(ref)
+        assert sent == []
+        target = tmp_path / "copy.bin"
+        assert backend.export(ref, file_uri(target), None) == file_uri(target)
+        assert sent == [("POST", f"/v1/results/{ref.result_id}/export", "1")]
+        assert target.read_bytes() == BLOB
+    finally:
+        backend.release(ref)
+    assert ("DELETE", f"/v1/results/{ref.result_id}", "1") in sent
+    assert backend.exists(ref) is False
+    assert target.read_bytes() == BLOB
+
+
+def blob_ref(result_id: str) -> ResultRef:
+    """A blob reference as ``/v1`` mints one, for a blob the worker never held."""
+    nowhere = WorkerLocation(kind="blob", path="/nowhere.blob").model_dump_json().encode()
+    return ResultRef("worker", result_id, [], None, "materialised", nowhere, kind="blob")
+
+
+@pytest.mark.parametrize(
+    "given",
+    [{"schema": []}, {"row_count": 0}, {"credential": CredentialRef(connection_id=7, user_id=3)}],
+    ids=["schema", "row_count", "credential"],
+)
+def test_a_blob_takes_no_credential(backend, sent, tmp_path, given):
+    arguments = {"schema": None, "row_count": None, "credential": None, **given}
+    sent.clear()
+
+    with pytest.raises(ValueError, match="A blob import takes no"):
+        backend.import_uri(file_uri(tmp_path / "model.bin"), **arguments, kind="blob")
+    with pytest.raises(ValueError, match="takes no credential"):
+        backend.export(blob_ref(new_result_id()), file_uri(tmp_path / "out.bin"), CredentialRef(7, 3))
+
+    assert sent == []
+
+
+def test_a_table_import_needs_its_schema(backend, sent, tmp_path):
+    sent.clear()
+
+    with pytest.raises(ValueError, match="needs its schema"):
+        backend.import_uri(file_uri(tmp_path / "in.parquet"), None, 10, None)
+
+    assert sent == []
+
+
+def test_a_blob_among_a_submits_inputs_is_refused(backend, sent):
+    sent.clear()
+
+    with pytest.raises(OperationUnsupported, match="is a blob"):
+        backend.submit(people(), [blob_ref(new_result_id())], hints(True), new_result_id(), flow_id=-1, node_id=-1)
+
+    assert sent == []
+
+
 def test_a_plan_that_fails_on_the_worker_names_the_error(backend):
     with pytest.raises(TaskFailed, match="ColumnNotFoundError"):
         backend.submit(people().select("missing"), [], hints(True), new_result_id(), flow_id=-1, node_id=-1)
@@ -487,8 +673,75 @@ def test_a_job_the_worker_does_not_know_is_a_lookup_error(backend):
 def test_capabilities_are_the_workers_answer_with_the_operations_run_op_runs(backend):
     capabilities = backend.capabilities()
 
-    assert handshake_fields(capabilities) == handshake_fields(fetch_worker_capabilities(settings.WORKER_URL))
+    assert capabilities == fetch_worker_capabilities(settings.WORKER_URL)
     assert capabilities.operations == {kind.value for kind in OperationKind}
+
+
+def test_a_backend_with_its_own_token_signs_every_v1_call_and_the_socket_with_it(
+    running_worker, transport, monkeypatch
+):
+    """The session worker knows only the process's token, so it answers 401 to every call this backend signs."""
+    handshake.ensure_handshake(settings.WORKER_URL)
+    tokens: list[str | None] = []
+    real_send = requests.Session.send
+
+    def recording_send(self, request, **kwargs):
+        tokens.append(request.headers.get("X-Flowfile-Internal"))
+        return real_send(self, request, **kwargs)
+
+    def recording_refusal(uri, **kwargs):
+        tokens.append(kwargs["additional_headers"].get("X-Flowfile-Internal"))
+        raise InvalidStatus(Response(400, "Bad Request", Headers()))
+
+    monkeypatch.setattr(requests.Session, "send", recording_send)
+    monkeypatch.setattr(worker_module, "connect", recording_refusal)
+    team = WorkerBackend(url=settings.WORKER_URL, backend_id="worker:team", token="row-token")
+
+    with pytest.raises(TaskFailed, match="The worker answered 401"):
+        team.capabilities()
+    with pytest.raises(TaskFailed, match="The worker answered 401"):
+        team.submit(people(), [], hints(True), new_result_id(), flow_id=-1, node_id=-1)
+
+    assert tokens == ["row-token"] * 3, "capabilities, the socket's upgrade, then the post"
+
+    tokens.clear()
+    WorkerBackend(url=settings.WORKER_URL).capabilities()
+
+    assert tokens == [get_internal_token()]
+
+
+@SOCKET_ONLY
+@pytest.mark.parametrize(
+    "token", ["row-token\n", "row-token\x00", "row-token\u20ac"], ids=["line-feed", "nul", "beyond-latin-1"]
+)
+def test_a_token_that_is_no_header_value_fails_each_call_typed_and_is_never_quoted(
+    running_worker, token, monkeypatch, caplog
+):
+    """``http.client`` quotes such a token in its error and ``websockets`` logs it, so neither is ever handed it."""
+    dialled = []
+    real_dial = worker_module.connect
+
+    def recording_dial(uri, **kwargs):
+        dialled.append(uri)
+        return real_dial(uri, **kwargs)
+
+    monkeypatch.setattr(worker_module, "connect", recording_dial)
+    team = WorkerBackend(url=settings.WORKER_URL, backend_id="worker:team", token=token)
+    calls = {
+        "capabilities": team.capabilities,
+        "submit": lambda: team.submit(people(), [], hints(True), new_result_id(), flow_id=-1, node_id=-1),
+        "status": lambda: team.status(JobHandle("worker:team", new_result_id())),
+    }
+
+    with caplog.at_level(logging.DEBUG):
+        for name, call in calls.items():
+            with pytest.raises(TaskFailed) as failed:
+                call()
+            assert str(failed.value) == f"The token configured for the worker:team backend cannot be sent: {TOKEN_RULE}"
+            assert "row-token" not in "".join(traceback.format_exception(failed.type, failed.value, failed.tb)), name
+
+    assert dialled == [], "the submit socket is never dialled with it"
+    assert "row-token" not in caplog.text
 
 
 @pytest.fixture
@@ -833,6 +1086,97 @@ def test_a_cancelled_operation_fails_and_its_job_is_cancelled(backend):
     canceller.join(timeout=30)
 
     assert backend.status(handle).state == "cancelled"
+
+
+def ml_train_payload() -> MlTrainPayload:
+    """A linear fit of ``y = 2x + 1`` on four rows."""
+    return MlTrainPayload(
+        plan=pl.LazyFrame({"x": [1.0, 2.0, 3.0, 4.0], "y": [3.0, 5.0, 7.0, 9.0]}),
+        model_type="linear_regression",
+        target_column="y",
+        feature_columns=["x"],
+        params={"add_bias": True},
+        flow_id=1,
+        node_id=5,
+        job_id=new_result_id(),
+    )
+
+
+def ml_apply_payload(model: ResultRef) -> MlApplyPayload:
+    """A score of ``x = 10`` with ``model`` into ``pred``."""
+    return MlApplyPayload(
+        plan=pl.LazyFrame({"x": [10.0]}),
+        model=model,
+        output_column="pred",
+        flow_id=1,
+        node_id=6,
+        job_id=new_result_id(),
+    )
+
+
+def test_a_model_is_trained_and_applied_over_the_v1_operations(backend, kept, sent, no_file_read_in_core, tmp_path):
+    train = ml_train_payload()
+    sent.clear()
+
+    trained = backend.run_op(OperationKind.ml_train, op_payload(train))
+
+    model = trained.refs["model"]
+    kept.append(model)
+    assert list(trained.refs) == ["model"]
+    assert (model.result_id, model.kind, model.state, model.schema, model.row_count) == (
+        f"{train.job_id}_0",
+        "blob",
+        "materialised",
+        [],
+        None,
+    )
+    assert location(model).kind == "blob"
+    assert trained.metadata["model_type"] == "linear_regression"
+    target = tmp_path / "model.json"
+    backend.export(model, file_uri(target), None)
+    exported = target.read_bytes()
+    assert (len(exported), hashlib.sha256(exported).hexdigest()) == (
+        trained.metadata["size_bytes"],
+        trained.metadata["sha256"],
+    )
+
+    apply = ml_apply_payload(model)
+    scored = backend.run_op(OperationKind.ml_apply, op_payload(apply)).refs["result"]
+    kept.append(scored)
+
+    assert (scored.result_id, scored.state, scored.row_count) == (f"{apply.job_id}_0", "materialised", 1)
+    assert [column.column_name for column in scored.schema] == ["x", "pred"]
+    assert sampled(backend, scored)["pred"].round(6).to_list() == [21.0]
+    assert backend.exists(model) is True, "scoring leaves the model held"
+    assert [(method, path.partition("?")[0]) for method, path, _ in sent] == [
+        ("POST", "/v1/ops/ml_train"),
+        ("POST", f"/v1/results/{model.result_id}/export"),
+        ("POST", "/v1/ops/ml_apply"),
+        ("GET", f"/v1/results/{scored.result_id}/sample"),
+        ("HEAD", f"/v1/results/{model.result_id}"),
+    ]
+
+
+def test_an_apply_whose_model_the_worker_no_longer_holds_is_missing(backend):
+    model = backend.run_op(OperationKind.ml_train, op_payload(ml_train_payload())).refs["model"]
+    backend.release(model)
+    apply = ml_apply_payload(model)
+
+    with pytest.raises(ResultMissing, match=model.result_id):
+        backend.run_op(OperationKind.ml_apply, op_payload(apply))
+
+    with pytest.raises(LookupError):
+        backend.status(JobHandle("worker", apply.job_id))
+
+
+def test_an_apply_with_another_backends_model_is_refused_before_any_call(backend, sent):
+    foreign = ResultRef("local", "elsewhere", [], None, "materialised", b"/elsewhere.blob", kind="blob")
+    sent.clear()
+
+    with pytest.raises(ForeignRef, match="elsewhere"):
+        backend.run_op(OperationKind.ml_apply, op_payload(ml_apply_payload(foreign)))
+
+    assert sent == []
 
 
 class FakeClock:
