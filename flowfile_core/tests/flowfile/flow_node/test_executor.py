@@ -1,13 +1,14 @@
 """Tests for the FlowNode executor module.
 
-Tests the execution strategy determination, state management,
-and decision-making logic introduced in the refactored FlowNode.
+Tests the hints a node submits its plan with, which backend path ran in each execution
+location, state management, and the decision-making logic of the refactored FlowNode.
 """
 
 import os
 import shutil
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -15,20 +16,28 @@ import pytest
 
 from polars.exceptions import ColumnNotFoundError
 
+from flowfile_core.configs.settings import WORKER_URL
+from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
+from flowfile_core.flowfile.execution.protocol import ResultRef, SubmitHints
 from flowfile_core.flowfile.flow_data_engine.column_stats import ColumnStatsUnavailable
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.flow_node.models import (
     ExecutionDecision,
-    ExecutionStrategy,
     InvalidationReason,
 )
 from flowfile_core.flowfile.flow_node.state import (
     NodeExecutionState,
     SourceFileInfo,
 )
-from flowfile_core.flowfile.flow_node.executor import NodeExecutor
+from flowfile_core.flowfile.flow_node.executor import (
+    IN_CORE_NODE_TYPES,
+    NodeExecutor,
+    hints_for,
+    is_narrow_transform,
+)
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from shared.storage_config import storage
 from typing import Literal
@@ -59,6 +68,16 @@ def find_parent_directory(target_dir_name, start_path=None):
 
 ExecutionModeLit = Literal["Development", "Performance"]
 ExecutionLocationLit = Literal["remote", "local"]
+
+
+@pytest.fixture
+def remote_worker():
+    """Skips unless remote execution reaches a running worker (see the ``execution_location`` fixture)."""
+    from flowfile_core.schemas.schemas import is_valid_execution_location_in_current_global_settings
+    from tests.conftest import is_worker_running
+
+    if not (is_worker_running() and is_valid_execution_location_in_current_global_settings("remote")):
+        pytest.skip("Remote execution not active")
 
 def create_graph(execution_mode: ExecutionModeLit = 'Development', flow_id: int = 1,
                  execution_location: ExecutionLocationLit = "remote") -> FlowGraph:
@@ -206,27 +225,6 @@ def create_graph_with_sort_and_select(flow_id: int = 3,
     return graph
 
 
-class TestExecutionStrategy:
-    """Tests for the ExecutionStrategy enum."""
-
-    def test_strategy_values_exist(self):
-        """Verify all expected strategy values exist."""
-        assert ExecutionStrategy.SKIP is not None
-        assert ExecutionStrategy.FULL_LOCAL is not None
-        assert ExecutionStrategy.LOCAL_WITH_SAMPLING is not None
-        assert ExecutionStrategy.REMOTE is not None
-
-    def test_strategy_values_are_distinct(self):
-        """Ensure all strategy values are distinct."""
-        strategies = [
-            ExecutionStrategy.SKIP,
-            ExecutionStrategy.FULL_LOCAL,
-            ExecutionStrategy.LOCAL_WITH_SAMPLING,
-            ExecutionStrategy.REMOTE,
-        ]
-        assert len(strategies) == len(set(strategies))
-
-
 class TestInvalidationReason:
     """Tests for the InvalidationReason enum."""
 
@@ -259,162 +257,15 @@ class TestExecutionDecision:
 
     def test_decision_creation(self):
         """Test creating an execution decision."""
-        decision = ExecutionDecision(
-            should_run=True,
-            strategy=ExecutionStrategy.REMOTE,
-            reason=InvalidationReason.NEVER_RAN,
-        )
+        decision = ExecutionDecision(should_run=True, reason=InvalidationReason.NEVER_RAN)
         assert decision.should_run is True
-        assert decision.strategy == ExecutionStrategy.REMOTE
         assert decision.reason == InvalidationReason.NEVER_RAN
 
     def test_skip_decision(self):
         """Test creating a skip decision."""
-        decision = ExecutionDecision(
-            should_run=False,
-            strategy=ExecutionStrategy.SKIP,
-            reason=None,
-        )
+        decision = ExecutionDecision(should_run=False, reason=None)
         assert decision.should_run is False
-        assert decision.strategy == ExecutionStrategy.SKIP
         assert decision.reason is None
-
-
-class TestSourceFileInfo:
-    """Tests for the SourceFileInfo class."""
-
-    def test_from_path_with_existing_file(self):
-        """Test creating SourceFileInfo from an existing file."""
-        with tempfile.NamedTemporaryFile(delete=False) as f:
-            f.write(b"test content")
-            temp_path = f.name
-
-        try:
-            info = SourceFileInfo.from_path(temp_path)
-            assert info is not None
-            assert info.path == temp_path
-            assert info.mtime > 0
-            assert info.size == 12  # len("test content")
-        finally:
-            os.unlink(temp_path)
-
-    def test_from_path_with_nonexistent_file(self):
-        """Test creating SourceFileInfo from a nonexistent file."""
-        info = SourceFileInfo.from_path("/nonexistent/path/file.txt")
-        assert info is None
-
-    def test_has_changed_detects_modification(self):
-        """Test that has_changed detects file modifications."""
-        with tempfile.NamedTemporaryFile(delete=False, mode='w') as f:
-            f.write("initial content")
-            temp_path = f.name
-
-        try:
-            info = SourceFileInfo.from_path(temp_path)
-            assert info is not None
-            assert info.has_changed() is False
-
-            time.sleep(0.1)  # Ensure mtime changes
-            with open(temp_path, 'w') as f:
-                f.write("modified content that is longer")
-
-            assert info.has_changed() is True
-        finally:
-            os.unlink(temp_path)
-
-    def test_has_changed_detects_deletion(self):
-        """Test that has_changed detects file deletion."""
-        with tempfile.NamedTemporaryFile(delete=False) as f:
-            f.write(b"test")
-            temp_path = f.name
-
-        info = SourceFileInfo.from_path(temp_path)
-        assert info is not None
-        assert info.has_changed() is False
-
-        os.unlink(temp_path)
-        assert info.has_changed() is True
-
-
-class TestNodeExecutionState:
-    """Tests for the NodeExecutionState class."""
-
-    def test_initial_state(self):
-        """Test initial state values."""
-        state = NodeExecutionState()
-        assert state.has_run_with_current_setup is False
-        assert state.execution_hash is None
-        assert state.source_file_info is None
-        assert state.result_schema is None
-
-    def test_mark_successful(self):
-        """Test marking execution as successful."""
-        state = NodeExecutionState()
-        state.mark_successful()
-
-        assert state.has_run_with_current_setup is True
-        assert state.has_completed_last_run is True
-        assert state.error is None
-
-    def test_mark_failed(self):
-        """Test marking execution as failed."""
-        state = NodeExecutionState()
-        state.mark_failed("Test error")
-
-        assert state.has_run_with_current_setup is False
-        assert state.has_completed_last_run is False
-        assert state.error == "Test error"
-
-    def test_reset(self):
-        """Test resetting state."""
-        state = NodeExecutionState()
-        state.mark_successful()
-        state.result_schema = ["col1", "col2"]
-        state.execution_hash = "abc123"
-
-        state.reset()
-
-        assert state.has_run_with_current_setup is False
-        assert state.result_schema is None
-        assert state.execution_hash is None
-
-    def test_source_file_info_tracking(self):
-        """Test tracking source file info."""
-        state = NodeExecutionState()
-
-        with tempfile.NamedTemporaryFile(delete=False) as f:
-            f.write(b"test data")
-            temp_path = f.name
-
-        try:
-            info = SourceFileInfo.from_path(temp_path)
-            state.source_file_info = info
-
-            assert state.source_file_info is not None
-            assert state.source_file_info.path == temp_path
-        finally:
-            os.unlink(temp_path)
-
-    def test_source_file_info_preserved_on_reset(self):
-        """Test that source_file_info is preserved when resetting state."""
-        state = NodeExecutionState()
-
-        with tempfile.NamedTemporaryFile(delete=False) as f:
-            f.write(b"test data")
-            temp_path = f.name
-
-        try:
-            info = SourceFileInfo.from_path(temp_path)
-            state.source_file_info = info
-            state.mark_successful()
-
-            state.reset()
-
-            # source_file_info should NOT be reset (needed for change detection)
-            assert state.source_file_info is not None
-            assert state.source_file_info.path == temp_path
-        finally:
-            os.unlink(temp_path)
 
 
 class TestNodeExecutor:
@@ -429,25 +280,15 @@ class TestNodeExecutor:
         executor = NodeExecutor(node)
         assert executor.node is node
 
-    def test_determine_strategy_local(self):
-        """Test strategy determination for local execution."""
+    def test_a_manual_input_is_submitted_wide_with_a_preview(self):
+        """A source without a narrow template default is wide; Development mode keeps a preview."""
         graph = create_graph()
         add_manual_input(graph, [{"a": 1}], node_id=1)
         node = graph.get_node(1)
 
-        executor = NodeExecutor(node)
-        strategy = executor._determine_strategy("local")
-        assert strategy == ExecutionStrategy.FULL_LOCAL
+        hints = hints_for(node, graph.execution_context, performance_mode=False)
 
-    def test_determine_strategy_remote(self):
-        """Test strategy determination for remote execution."""
-        graph = create_graph()
-        add_manual_input(graph, [{"a": 1}], node_id=1)
-        node = graph.get_node(1)
-
-        executor = NodeExecutor(node)
-        strategy = executor._determine_strategy("remote")
-        assert strategy == ExecutionStrategy.REMOTE
+        assert hints == SubmitHints(must_materialise=False, wide=True, fanout=0, preview_rows=100)
 
     def test_decide_execution_never_ran(self):
         """Test execution decision when node never ran."""
@@ -460,7 +301,6 @@ class TestNodeExecutor:
         executor = NodeExecutor(node)
         decision = executor._decide_execution(
             state=node._execution_state,
-            run_location="remote",
             performance_mode=False,
             force_refresh=False,
         )
@@ -479,7 +319,6 @@ class TestNodeExecutor:
         executor = NodeExecutor(node)
         decision = executor._decide_execution(
             state=node._execution_state,
-            run_location="remote",
             performance_mode=False,
             force_refresh=True,
         )
@@ -499,7 +338,6 @@ class TestNodeExecutor:
         # Development mode: skip
         decision = executor._decide_execution(
             state=node._execution_state,
-            run_location="remote",
             performance_mode=False,
             force_refresh=False,
         )
@@ -508,7 +346,6 @@ class TestNodeExecutor:
         # Performance mode: also skip
         decision = executor._decide_execution(
             state=node._execution_state,
-            run_location="remote",
             performance_mode=True,
             force_refresh=False,
         )
@@ -595,9 +432,36 @@ class TestExecutorIntegration:
         assert node._execution_state.has_run_with_current_setup is True
 
 
-class TestDetermineStrategyByNodeType:
-    """Tests that _determine_strategy routes to the correct strategy
-    based on whether the node has a node_default."""
+def _held_ref_state(graph: FlowGraph, node_id: int) -> str | None:
+    ref = graph.get_node(node_id).results.result_ref
+    return None if ref is None else ref.state
+
+
+def create_graph_with_output(tmp_path: Path, flow_id: int,
+                             execution_location: ExecutionLocationLit = "remote") -> FlowGraph:
+    """manual_input(1) -> csv output(2)."""
+    graph = create_graph(flow_id=flow_id, execution_location=execution_location)
+    add_manual_input(graph, [{"name": "Alice", "age": 30}], node_id=1)
+    add_node_promise(graph, "output", node_id=2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    graph.add_output(
+        input_schema.NodeOutput(
+            flow_id=flow_id,
+            node_id=2,
+            output_settings=input_schema.OutputSettings(
+                name="out.csv",
+                directory=str(tmp_path),
+                file_type="csv",
+                write_mode="overwrite",
+                table_settings=input_schema.OutputCsvTable(),
+            ),
+        )
+    )
+    return graph
+
+
+class TestHintsByNodeType:
+    """``hints_for`` describes a node's plan from its template, settings and place in the graph."""
 
     def test_select_node_has_node_default(self):
         """Verify that the select node has a node_default set."""
@@ -610,75 +474,88 @@ class TestDetermineStrategyByNodeType:
         graph = create_graph_with_select()
         select_node = graph.get_node(2)
         assert select_node.node_default.transform_type == "narrow"
+        assert is_narrow_transform(select_node)
 
-    def test_select_strategy_remote_returns_local_with_sampling(self):
-        """Select node should use LOCAL_WITH_SAMPLING when run_location is 'remote'."""
-        graph = create_graph_with_select()
+    def test_a_narrow_transform_with_one_consumer(self):
+        """A select (narrow, read by one node) is neither wide nor materialised."""
+        graph = create_graph_with_sort_and_select()
+        add_node_promise(graph, "sample", node_id=4)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(3, 4))
+        graph.add_sample(input_schema.NodeSample(flow_id=graph.flow_id, node_id=4, depending_on_id=3))
+
+        hints = hints_for(graph.get_node(3), graph.execution_context, performance_mode=False)
+
+        assert hints == SubmitHints(must_materialise=False, wide=False, fanout=1, preview_rows=100)
+
+    def test_a_wide_transform(self):
+        """A sort (wide) is submitted wide."""
+        graph = create_graph_with_sort()
+        sort_node = graph.get_node(2)
+
+        assert not is_narrow_transform(sort_node)
+        assert hints_for(sort_node, graph.execution_context, performance_mode=False) == SubmitHints(
+            must_materialise=False, wide=True, fanout=0, preview_rows=100
+        )
+
+    def test_a_node_with_two_consumers(self):
+        """fanout counts the distinct nodes that read the result."""
+        graph = create_graph_with_sort_and_select()
+        add_node_promise(graph, "sample", node_id=4)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 4))
+        graph.add_sample(input_schema.NodeSample(flow_id=graph.flow_id, node_id=4, depending_on_id=2))
+
+        hints = hints_for(graph.get_node(2), graph.execution_context, performance_mode=False)
+
+        assert hints.fanout == 2
+        assert hints.wide is True
+
+    def test_a_cached_node_must_materialise_and_keeps_its_preview_in_performance_mode(self):
+        """cache_results asks for the rows, and the node keeps its example data in every mode."""
+        graph = create_graph_with_select(execution_mode="Performance")
         select_node = graph.get_node(2)
-        executor = NodeExecutor(select_node)
+        select_node.node_settings.cache_results = True
 
-        strategy = executor._determine_strategy("remote")
-        assert strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
+        hints = hints_for(select_node, graph.execution_context, performance_mode=True)
 
-    def test_select_strategy_local_returns_full_local(self):
-        """Select node should use FULL_LOCAL when run_location is 'local',
-        regardless of having a node_default."""
-        graph = create_graph_with_select()
-        select_node = graph.get_node(2)
-        executor = NodeExecutor(select_node)
+        assert graph.execution_context.preview_rows is None
+        assert hints == SubmitHints(must_materialise=True, wide=False, fanout=0, preview_rows=100)
 
-        strategy = executor._determine_strategy("local")
-        assert strategy == ExecutionStrategy.FULL_LOCAL
-
-    def test_sort_node_has_node_default(self):
-        """Verify that the sort node has a node_default set."""
-        graph = create_graph_with_sort()
+    def test_performance_mode_asks_for_no_preview(self):
+        """Performance mode drops the preview; Development keeps the context's preview size."""
+        graph = create_graph_with_sort(execution_mode="Performance")
         sort_node = graph.get_node(2)
-        assert sort_node.node_default is not None, "sort node should have a node_default"
 
-    def test_sort_node_is_wide_transform(self):
-        """Verify that the sort node is a wide transform type."""
-        graph = create_graph_with_sort()
-        sort_node = graph.get_node(2)
-        assert sort_node.node_default.transform_type == "wide"
+        assert hints_for(sort_node, graph.execution_context, performance_mode=True).preview_rows is None
+        development = ExecutionContext(backend_id="worker", parallelism=1, preview_rows=7)
+        assert hints_for(sort_node, development, performance_mode=False).preview_rows == 7
 
-    def test_sort_strategy_remote_returns_remote(self):
-        """Sort node (wide transform) should get REMOTE directly from _determine_strategy.
-        Only narrow transforms get LOCAL_WITH_SAMPLING."""
-        graph = create_graph_with_sort()
-        sort_node = graph.get_node(2)
-        executor = NodeExecutor(sort_node)
+    def test_an_output_node_is_never_materialised_wide_or_previewed(self, tmp_path):
+        """A sink's result is the input it wrote: nothing is computed or sampled again."""
+        graph = create_graph_with_output(tmp_path, flow_id=41)
+        output_node = graph.get_node(2)
+        output_node.node_settings.cache_results = True
 
-        strategy = executor._determine_strategy("remote")
-        assert strategy == ExecutionStrategy.REMOTE
+        assert output_node.node_type in IN_CORE_NODE_TYPES
+        assert hints_for(output_node, graph.execution_context, performance_mode=False) == SubmitHints(
+            must_materialise=False, wide=False, fanout=0, preview_rows=None
+        )
 
-    def test_manual_input_has_no_default_settings(self):
-        """Verify that manual_input has a node_default but without has_default_settings."""
-        graph = create_graph()
-        add_manual_input(graph, [{"a": 1}], node_id=1)
-        node = graph.get_node(1)
-        # All nodes get a node_default, but only lightweight transforms
-        # (select, sample, etc.) have has_default_settings=True
-        assert node.node_default is not None
-        assert not node.node_default.has_default_settings
+    def test_hints_do_not_depend_on_the_execution_location(self):
+        """The location picks the backend; the hints describe the plan the same way for both."""
+        remote = create_graph_with_select(flow_id=42, execution_location="remote")
+        local = create_graph_with_select(flow_id=43, execution_location="local")
 
-    def test_manual_input_strategy_remote_returns_remote(self):
-        """Nodes without has_default_settings should get REMOTE strategy."""
-        graph = create_graph()
-        add_manual_input(graph, [{"a": 1}], node_id=1)
-        node = graph.get_node(1)
-        executor = NodeExecutor(node)
-
-        strategy = executor._determine_strategy("remote")
-        assert strategy == ExecutionStrategy.REMOTE
+        assert hints_for(remote.get_node(2), remote.execution_context, False) == hints_for(
+            local.get_node(2), local.execution_context, False
+        )
 
 
 class TestDecideExecutionByNodeType:
     """Tests that _decide_execution returns the correct decision
     for different node types and scenarios."""
 
-    def test_select_never_ran_gets_local_with_sampling(self):
-        """Select node that never ran should decide LOCAL_WITH_SAMPLING."""
+    def test_select_never_ran_runs(self):
+        """Select node that never ran should run."""
         graph = create_graph_with_select()
         select_node = graph.get_node(2)
         select_node._execution_state.has_run_with_current_setup = False
@@ -686,17 +563,15 @@ class TestDecideExecutionByNodeType:
         executor = NodeExecutor(select_node)
         decision = executor._decide_execution(
             state=select_node._execution_state,
-            run_location="remote",
             performance_mode=False,
             force_refresh=False,
         )
 
         assert decision.should_run is True
-        assert decision.strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
         assert decision.reason == InvalidationReason.NEVER_RAN
 
-    def test_select_forced_refresh_gets_local_with_sampling(self):
-        """Select node with forced refresh should decide LOCAL_WITH_SAMPLING."""
+    def test_select_forced_refresh_runs(self):
+        """Select node with forced refresh should run."""
         graph = create_graph_with_select()
         select_node = graph.get_node(2)
         select_node._execution_state.has_run_with_current_setup = True
@@ -704,62 +579,98 @@ class TestDecideExecutionByNodeType:
         executor = NodeExecutor(select_node)
         decision = executor._decide_execution(
             state=select_node._execution_state,
-            run_location="remote",
             performance_mode=False,
             force_refresh=True,
         )
 
         assert decision.should_run is True
-        assert decision.strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
         assert decision.reason == InvalidationReason.FORCED_REFRESH
 
     def test_select_already_ran_skips(self):
-        """Select node that already ran should skip, regardless of mode."""
+        """Select node that already ran should skip in Development and run in Performance mode."""
         graph = create_graph_with_select()
         select_node = graph.get_node(2)
         select_node._execution_state.has_run_with_current_setup = True
 
         executor = NodeExecutor(select_node)
 
-        # Development mode: skip
         decision = executor._decide_execution(
             state=select_node._execution_state,
-            run_location="remote",
             performance_mode=False,
             force_refresh=False,
         )
         assert decision.should_run is False
 
-        # Performance mode: also skip
         decision = executor._decide_execution(
             state=select_node._execution_state,
-            run_location="remote",
             performance_mode=True,
             force_refresh=False,
         )
         assert decision.should_run
+        assert decision.reason == InvalidationReason.PERFORMANCE_MODE
 
-    def test_select_local_always_full_local(self):
-        """Select node with run_location='local' should always get FULL_LOCAL."""
+    def test_a_cached_node_holding_no_stored_result_is_a_cache_miss(self):
+        """A cached node with nothing stored under its hash runs, whatever its run state."""
         graph = create_graph_with_select()
         select_node = graph.get_node(2)
-        select_node._execution_state.has_run_with_current_setup = False
+        select_node.node_settings.cache_results = True
+        select_node._execution_state.has_run_with_current_setup = True
 
-        executor = NodeExecutor(select_node)
-        decision = executor._decide_execution(
+        decision = NodeExecutor(select_node)._decide_execution(
             state=select_node._execution_state,
-            run_location="local",
             performance_mode=False,
             force_refresh=False,
         )
 
         assert decision.should_run is True
-        assert decision.strategy == ExecutionStrategy.FULL_LOCAL
-        assert decision.reason == InvalidationReason.NEVER_RAN
+        assert decision.reason == InvalidationReason.CACHE_MISSING
 
-    def test_sort_never_ran_gets_remote(self):
-        """Sort node (wide transform) should get REMOTE directly.
-        Wide transforms are too expensive to run locally."""
+    def test_a_cached_node_skips_while_its_stored_result_is_held(self):
+        """The decision asks the run's backend whether it still holds the stored result."""
+        graph = create_graph_with_select()
+        select_node = graph.get_node(2)
+        select_node.node_settings.cache_results = True
+        select_node.results.result_ref = _stored_ref(select_node, "worker")
+
+        with use_context(ExecutionContext("worker", 1, 100)):
+            with patch.object(WorkerBackend, "exists", return_value=True) as exists:
+                hit = NodeExecutor(select_node)._decide_execution(
+                    state=select_node._execution_state, performance_mode=True, force_refresh=False
+                )
+            with patch.object(WorkerBackend, "exists", return_value=False):
+                miss = NodeExecutor(select_node)._decide_execution(
+                    state=select_node._execution_state, performance_mode=True, force_refresh=False
+                )
+
+        assert exists.call_count == 1
+        assert hit.should_run is False
+        assert miss.should_run is True and miss.reason == InvalidationReason.CACHE_MISSING
+
+    def test_a_cached_node_holding_a_deferred_plan_follows_the_ordinary_rules(self):
+        """A held plan is no cache: Development skips a node that ran, Performance reruns it."""
+        graph = create_graph_with_select(execution_location="local")
+        select_node = graph.get_node(2)
+        select_node.node_settings.cache_results = True
+        select_node._execution_state.has_run_with_current_setup = True
+        select_node.results.result_ref = ResultRef(
+            backend_id="local", result_id=select_node.hash, schema=[], row_count=None, state="deferred",
+            location=select_node.hash.encode(),
+        )
+        executor = NodeExecutor(select_node)
+
+        with use_context(graph.execution_context):
+            development = executor._decide_execution(
+                state=select_node._execution_state, performance_mode=False, force_refresh=False
+            )
+            performance = executor._decide_execution(
+                state=select_node._execution_state, performance_mode=True, force_refresh=False
+            )
+
+        assert development.should_run is False
+        assert performance.should_run is True and performance.reason == InvalidationReason.PERFORMANCE_MODE
+
+    def test_sort_never_ran_runs(self):
+        """Sort node that never ran should run."""
         graph = create_graph_with_sort()
         sort_node = graph.get_node(2)
         sort_node._execution_state.has_run_with_current_setup = False
@@ -767,85 +678,89 @@ class TestDecideExecutionByNodeType:
         executor = NodeExecutor(sort_node)
         decision = executor._decide_execution(
             state=sort_node._execution_state,
-            run_location="remote",
             performance_mode=False,
             force_refresh=False,
         )
 
         assert decision.should_run is True
-        assert decision.strategy == ExecutionStrategy.REMOTE
-        assert decision.reason == InvalidationReason.NEVER_RAN
-
-    def test_manual_input_never_ran_gets_remote(self):
-        """Manual input node (no default) should get REMOTE strategy."""
-        graph = create_graph()
-        add_manual_input(graph, [{"a": 1}], node_id=1)
-        node = graph.get_node(1)
-        node._execution_state.has_run_with_current_setup = False
-
-        executor = NodeExecutor(node)
-        decision = executor._decide_execution(
-            state=node._execution_state,
-            run_location="remote",
-            performance_mode=False,
-            force_refresh=False,
-        )
-
-        assert decision.should_run is True
-        assert decision.strategy == ExecutionStrategy.REMOTE
         assert decision.reason == InvalidationReason.NEVER_RAN
 
 
-class TestWideVsNarrowTransformStrategy:
-    """Tests that narrow transforms get LOCAL_WITH_SAMPLING and wide
-    transforms go directly to REMOTE from _determine_strategy.
+def _stored_ref(node, backend_id: str) -> ResultRef:
+    return ResultRef(
+        backend_id=backend_id, result_id=node.hash, schema=[], row_count=1, state="materialised", location=b"/x.arrow"
+    )
 
-    The override logic in execute() exists as a safety net but shouldn't
-    trigger now that _determine_strategy handles transform_type directly."""
 
-    def test_sort_always_remote(self):
-        """Sort (wide transform) should always get REMOTE when remote,
-        regardless of optimize_for_downstream."""
-        graph = create_graph_with_sort()
-        sort_node = graph.get_node(2)
-        sort_node._execution_state.has_run_with_current_setup = False
+@contextmanager
+def _worker_holds_the_cache():
+    """Decide under a worker context whose backend answers that it holds every stored result."""
+    with use_context(ExecutionContext("worker", 1, 100)), patch.object(WorkerBackend, "exists", return_value=True):
+        yield
 
-        executor = NodeExecutor(sort_node)
-        strategy = executor._determine_strategy("remote")
-        assert strategy == ExecutionStrategy.REMOTE
 
-    def test_select_always_local_with_sampling(self):
-        """Select (narrow transform) should get LOCAL_WITH_SAMPLING when remote."""
-        graph = create_graph_with_select()
-        select_node = graph.get_node(2)
-        select_node._execution_state.has_run_with_current_setup = False
+class TestBackendPathByLocation:
+    """Which backend path ran, read from the reference each node holds after a run."""
 
-        executor = NodeExecutor(select_node)
-        strategy = executor._determine_strategy("remote")
-        assert strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
+    def test_remote_mode_stores_wide_and_cached_nodes_and_defers_the_rest(self, tmp_path, remote_worker):
+        graph = create_graph_with_sort_and_select(flow_id=44, execution_location="remote")
+        add_node_promise(graph, "sample", node_id=4)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(3, 4))
+        graph.add_sample(input_schema.NodeSample(flow_id=graph.flow_id, node_id=4, depending_on_id=3))
+        graph.get_node(4).node_settings.cache_results = True
 
-    def test_sort_local_still_full_local(self):
-        """Sort (wide transform) should use FULL_LOCAL when run_location='local'."""
-        graph = create_graph_with_sort()
-        sort_node = graph.get_node(2)
+        assert graph.run_graph().success
 
-        executor = NodeExecutor(sort_node)
-        strategy = executor._determine_strategy("local")
-        assert strategy == ExecutionStrategy.FULL_LOCAL
+        assert _held_ref_state(graph, 1) == "materialised"  # manual input: no narrow default, wide
+        assert _held_ref_state(graph, 2) == "materialised"  # sort: wide
+        assert _held_ref_state(graph, 3) == "deferred"  # select: narrow, one consumer
+        assert _held_ref_state(graph, 4) == "materialised"  # cached sample
+        select_node = graph.get_node(3)
+        assert select_node.results.example_data_path is not None, "the sampler's file backs the preview"
+        assert select_node.get_table_example(True).data == [{"Name": "Alice"}, {"Name": "Charlie"}]
 
-    def test_select_local_still_full_local(self):
-        """Select (narrow transform) should use FULL_LOCAL when run_location='local'."""
-        graph = create_graph_with_select()
-        select_node = graph.get_node(2)
+    def test_remote_mode_defers_a_wide_node_with_no_preview(self, remote_worker):
+        """Performance mode asks for no preview, so nothing is stored for a wide node."""
+        graph = create_graph_with_sort(flow_id=45, execution_mode="Performance", execution_location="remote")
 
-        executor = NodeExecutor(select_node)
-        strategy = executor._determine_strategy("local")
-        assert strategy == ExecutionStrategy.FULL_LOCAL
+        assert graph.run_graph().success
+
+        assert _held_ref_state(graph, 2) == "deferred"
+        assert graph.get_node(2).results.example_data_generator is None
+
+    def test_remote_mode_keeps_an_output_node_in_core(self, tmp_path, remote_worker):
+        graph = create_graph_with_output(tmp_path, flow_id=46, execution_location="remote")
+
+        assert graph.run_graph().success
+
+        assert _held_ref_state(graph, 2) == "deferred"
+        assert graph.get_node(2).results.example_data_path is None
+        assert (tmp_path / "out.csv").exists()
+
+    def test_local_mode_holds_every_plan_deferred(self, tmp_path):
+        graph = create_graph_with_sort_and_select(flow_id=47, execution_location="local")
+        graph.get_node(3).node_settings.cache_results = True
+
+        assert graph.run_graph().success
+
+        for node_id in (1, 2, 3):
+            ref = graph.get_node(node_id).results.result_ref
+            assert ref.backend_id == "local"
+            assert ref.state == "deferred"
+        select_node = graph.get_node(3)
+        assert select_node.results.example_data_path is None
+        assert select_node.get_table_example(True).data == [{"Name": "Alice"}, {"Name": "Charlie"}]
+
+    def test_both_locations_give_the_same_rows(self, execution_location):
+        graph = create_graph_with_sort_and_select(flow_id=48, execution_location=execution_location)
+
+        assert graph.run_graph().success
+
+        assert graph.get_node(3).get_resulting_data().collect().to_dicts() == [{"Name": "Alice"}, {"Name": "Charlie"}]
 
 
 class TestNodesWithDefaults:
-    """Verify that all nodes registered in nodes_with_defaults get
-    LOCAL_WITH_SAMPLING and nodes outside that set get REMOTE."""
+    """Verify the node_default and transform_type of the nodes with template defaults."""
 
     @pytest.mark.parametrize("node_type,expected_has_default", [
         ("select", True),
@@ -883,73 +798,6 @@ class TestNodesWithDefaults:
         node_default = node_store.node_defaults.get("manual_input")
         assert node_default is not None
         assert not node_default.has_default_settings
-
-
-class TestCacheResultsStrategy:
-    """When cache_results is enabled, everything should run fully remote.
-
-    Caching requires full materialization of results, which means even
-    narrow transforms that would normally get LOCAL_WITH_SAMPLING must
-    use REMOTE so the result can be stored in the cache."""
-
-    def test_select_with_cache_gets_remote(self):
-        """Select (narrow) with cache_results=True should get REMOTE, not LOCAL_WITH_SAMPLING."""
-        graph = create_graph_with_select()
-        select_node = graph.get_node(2)
-        select_node.node_settings.cache_results = True
-
-        executor = NodeExecutor(select_node)
-        strategy = executor._determine_strategy("remote")
-        assert strategy == ExecutionStrategy.REMOTE
-
-    def test_select_without_cache_gets_local_with_sampling(self):
-        """Select (narrow) without cache_results should still get LOCAL_WITH_SAMPLING."""
-        graph = create_graph_with_select()
-        select_node = graph.get_node(2)
-        assert select_node.node_settings.cache_results is False
-
-        executor = NodeExecutor(select_node)
-        strategy = executor._determine_strategy("remote")
-        assert strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
-
-    def test_sort_with_cache_still_remote(self):
-        """Sort (wide) with cache_results=True should still get REMOTE (was already REMOTE)."""
-        graph = create_graph_with_sort()
-        sort_node = graph.get_node(2)
-        sort_node.node_settings.cache_results = True
-
-        executor = NodeExecutor(sort_node)
-        strategy = executor._determine_strategy("remote")
-        assert strategy == ExecutionStrategy.REMOTE
-
-    def test_cache_does_not_affect_local_execution(self):
-        """cache_results should not affect local execution — still FULL_LOCAL."""
-        graph = create_graph_with_select()
-        select_node = graph.get_node(2)
-        select_node.node_settings.cache_results = True
-
-        executor = NodeExecutor(select_node)
-        strategy = executor._determine_strategy("local")
-        assert strategy == ExecutionStrategy.FULL_LOCAL
-
-    def test_select_with_cache_decide_execution_gets_remote(self):
-        """Full decision flow: select with cache_results should decide REMOTE."""
-        graph = create_graph_with_select()
-        select_node = graph.get_node(2)
-        select_node.node_settings.cache_results = True
-        select_node._execution_state.has_run_with_current_setup = False
-
-        executor = NodeExecutor(select_node)
-        decision = executor._decide_execution(
-            state=select_node._execution_state,
-            run_location="remote",
-            performance_mode=False,
-            force_refresh=False,
-        )
-
-        assert decision.should_run is True
-        assert decision.strategy == ExecutionStrategy.REMOTE
-        assert decision.reason == InvalidationReason.CACHE_MISSING
 
 
 class TestPreviewAfterExecution:
@@ -1161,77 +1009,107 @@ class TestNodeColumnStats:
 
 
 class TestColumnStatsWorkerOffload:
-    """Local-mode results are full upstream plans: their stats collect must run
-    in the worker, never in the core process."""
+    """Local-mode results are full upstream plans: with the worker as the backend their stats aggregate runs
+    in the worker, never in the core process, and a failure there never falls back to core."""
 
-    def test_local_stats_offloaded_never_collect_in_process(self):
-        import requests
+    def test_local_stats_offloaded_never_collect_in_process(self, monkeypatch):
+        from flowfile_core.flowfile.execution import registry
+        from tests.conftest import is_worker_running
 
-        from flowfile_core.flowfile.flow_data_engine import column_stats as column_stats_module
-
-        try:
-            worker_up = requests.get("http://127.0.0.1:63579/docs", timeout=5).ok
-        except requests.exceptions.RequestException:
-            worker_up = False
-        if not worker_up:
+        if not is_worker_running():
             pytest.skip("Worker not running")
 
         graph = create_graph_with_read_and_select(execution_location="local")
         run_info = graph.run_graph()
         assert run_info.success, f"Graph should run: {run_info}"
         node = graph.get_node(2)
+        collects = _count_collects(monkeypatch)
 
-        with patch.object(column_stats_module, "run_stats_query") as mock_in_process:
-            stats = node.get_column_stats("Name", offload_to_worker=True)
+        stats = node.get_column_stats("Name", backend=registry.backend(registry.WORKER_BACKEND_ID))
 
-        mock_in_process.assert_not_called()
+        assert collects == [], "the worker computed the aggregate; core read back one row"
         assert stats.number_of_empty_values + stats.number_of_filled_values == 1000
         assert stats.number_of_unique_values is not None
 
-    def test_offload_failure_raises_instead_of_collecting_in_core(self):
+    def test_offload_failure_raises_instead_of_collecting_in_core(self, monkeypatch):
         """A dead worker must surface as unavailable (409), never as a silent
         in-process collect of the full upstream plan."""
+        from flowfile_core.flowfile.execution.errors import ComputeUnavailable
         from flowfile_core.flowfile.flow_data_engine import column_stats as column_stats_module
 
         graph = create_graph_with_read_and_select(execution_location="local")
         graph.run_graph()
         node = graph.get_node(2)
+        worker = WorkerBackend(url=WORKER_URL)
+        collects = _count_collects(monkeypatch)
 
         with (
             patch.object(
-                column_stats_module, "run_stats_query_in_worker", side_effect=Exception("worker down")
-            ) as mock_worker,
-            patch.object(column_stats_module, "run_stats_query") as mock_in_process,
-            pytest.raises(ColumnStatsUnavailable),
+                column_stats_module, "single_row", side_effect=ComputeUnavailable("connection refused")
+            ) as mock_read,
+            pytest.raises(ColumnStatsUnavailable, match="connection refused"),
         ):
-            node.get_column_stats("Name", offload_to_worker=True)
+            node.get_column_stats("Name", backend=worker)
 
-        assert mock_worker.call_count == 2, "full query, then the count-only retry"
-        mock_in_process.assert_not_called()
+        assert [call.args[0] for call in mock_read.call_args_list] == [worker, worker], (
+            "full query, then the count-only retry, both on the worker"
+        )
+        assert collects == []
 
-    def test_offload_query_failure_retries_counts_only_in_worker(self):
+    def test_offload_query_failure_retries_counts_only_in_worker(self, monkeypatch):
         """A worker-side query error degrades to the count-only exprs — still
         executed in the worker, never in core."""
+        from flowfile_core.flowfile.execution.errors import TaskFailed
         from flowfile_core.flowfile.flow_data_engine import column_stats as column_stats_module
 
         graph = create_graph_with_read_and_select(execution_location="local")
         graph.run_graph()
         node = graph.get_node(2)
+        worker = WorkerBackend(url=WORKER_URL)
+        collects = _count_collects(monkeypatch)
 
-        with (
-            patch.object(
-                column_stats_module,
-                "run_stats_query_in_worker",
-                side_effect=[Exception("dtype error in worker"), {"total_rows": 1000, "null_count": 0}],
-            ) as mock_worker,
-            patch.object(column_stats_module, "run_stats_query") as mock_in_process,
-        ):
-            stats = node.get_column_stats("Name", offload_to_worker=True)
+        with patch.object(
+            column_stats_module,
+            "single_row",
+            side_effect=[TaskFailed("dtype error in worker"), {"total_rows": 1000, "null_count": 0}],
+        ) as mock_read:
+            stats = node.get_column_stats("Name", backend=worker)
 
-        assert mock_worker.call_count == 2
-        mock_in_process.assert_not_called()
+        assert [call.args[0] for call in mock_read.call_args_list] == [worker, worker]
+        assert collects == []
         assert stats.number_of_filled_values == 1000
         assert stats.number_of_unique_values is None, "degraded result carries counts only"
+
+    @pytest.mark.parametrize("backend_id", ["local", "worker"])
+    def test_stats_of_either_flow_run_on_either_backend(self, execution_location, backend_id):
+        """Whichever backend aggregates, it reads the result the node holds: its plan or the worker's file."""
+        from flowfile_core.flowfile.execution import registry
+        from tests.conftest import is_worker_running
+
+        if backend_id == "worker" and not is_worker_running():
+            pytest.skip("Worker not running")
+        graph = create_graph_with_read_and_select(execution_location=execution_location)
+        assert graph.run_graph().success
+
+        stats = graph.get_node(2).get_column_stats("Name", backend=registry.backend(backend_id))
+
+        assert stats.number_of_empty_values + stats.number_of_filled_values == 1000
+        assert stats.number_of_unique_values is not None
+
+
+def _count_collects(monkeypatch) -> list[int]:
+    """One entry per ``LazyFrame.collect`` in this process from here on."""
+    import polars as pl
+
+    collects: list[int] = []
+    real_collect = pl.LazyFrame.collect
+
+    def counting_collect(self, *args, **kwargs):
+        collects.append(1)
+        return real_collect(self, *args, **kwargs)
+
+    monkeypatch.setattr(pl.LazyFrame, "collect", counting_collect)
+    return collects
 
 
 class TestPreviewAfterUpstreamChange:
@@ -1661,14 +1539,16 @@ class TestSourceFileSnapshotUpdate:
 class TestSourceChangeOutranksCache:
     """Decision order: a changed source outranks the worker cache.
 
-    ``results_exists`` is an HTTP call to the worker, so it is patched here to stand in for
-    'the worker holds a cached result' — the behaviour under test is the ordering, not the lookup.
+    The node holds a stored worker result and ``WorkerBackend.exists``, an HTTP call to the worker,
+    is patched to stand in for 'the worker holds a cached result' — the behaviour under test is the
+    ordering, not the lookup.
     """
 
     def _ran_once_with_cache(self, path, flow_id: int):
         """A cache-enabled read node that already ran once and recorded its source fingerprint."""
         node = create_graph_with_read(path, flow_id=flow_id).get_node(1)
         node.node_settings.cache_results = True
+        node.results.result_ref = _stored_ref(node, "worker")
         state = node._execution_state
         _commit_source_snapshot(node)
         state.mark_successful()
@@ -1685,9 +1565,9 @@ class TestSourceChangeOutranksCache:
         stat = os.stat(source)
         os.utime(source, (stat.st_atime + 10, stat.st_mtime + 10))
 
-        with patch("flowfile_core.flowfile.flow_node.executor.results_exists", return_value=True):
+        with _worker_holds_the_cache():
             decision = node.executor._decide_execution(
-                state=state, run_location="local", performance_mode=False, force_refresh=False
+                state=state, performance_mode=False, force_refresh=False
             )
 
         assert decision.should_run is True
@@ -1702,9 +1582,9 @@ class TestSourceChangeOutranksCache:
 
         source.unlink()
 
-        with patch("flowfile_core.flowfile.flow_node.executor.results_exists", return_value=True):
+        with _worker_holds_the_cache():
             decision = node.executor._decide_execution(
-                state=state, run_location="local", performance_mode=False, force_refresh=False
+                state=state, performance_mode=False, force_refresh=False
             )
 
         assert decision.should_run is True
@@ -1717,17 +1597,18 @@ class TestSourceChangeOutranksCache:
         source.write_text("id,val\n1,a\n")
         node = create_graph_with_read(source, flow_id=24).get_node(1)
         node.node_settings.cache_results = True
+        node.results.result_ref = _stored_ref(node, "worker")
         state = node._execution_state
         state.mark_successful()
         assert state.source_file_info is None
 
-        with patch("flowfile_core.flowfile.flow_node.executor.results_exists", return_value=True):
+        with _worker_holds_the_cache():
             decision = node.executor._decide_execution(
-                state=state, run_location="local", performance_mode=False, force_refresh=False
+                state=state, performance_mode=False, force_refresh=False
             )
 
         assert decision.should_run is False
-        assert decision.strategy == ExecutionStrategy.SKIP
+        assert decision.reason is None
 
 
 class TestDirectoryFingerprintIdentity:
@@ -1939,7 +1820,6 @@ class TestMissingWorkerArtifact:
         executor = NodeExecutor(node)
         decision = executor._decide_execution(
             state=node._execution_state,
-            run_location="remote",
             performance_mode=False,
             force_refresh=False,
         )
@@ -1948,7 +1828,6 @@ class TestMissingWorkerArtifact:
         Path(node.results.example_data_path).unlink()
         decision = executor._decide_execution(
             state=node._execution_state,
-            run_location="remote",
             performance_mode=False,
             force_refresh=False,
         )

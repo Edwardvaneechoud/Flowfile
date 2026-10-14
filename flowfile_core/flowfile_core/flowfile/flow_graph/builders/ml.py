@@ -12,12 +12,14 @@ from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.payloads import MlApplyPayload, MlTrainPayload, op_payload
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_graph._base import GraphMixinBase
-from flowfile_core.flowfile.flow_graph._root import root
 from flowfile_core.flowfile.flow_graph.catalog_resolution import _authorize_catalog_write, _effective_namespace_id
 from flowfile_core.flowfile.flow_graph.history import with_history_capture
 from flowfile_core.flowfile.flow_node.flow_node import (
@@ -100,6 +102,8 @@ class MlBuildersMixin(GraphMixinBase):
         on the worker otherwise), optionally stores the serialised artifact
         in the global catalog (via :class:`ArtifactService`), and passes the
         input data through unchanged so downstream nodes can keep transforming.
+        On the worker the fit is the ``ml_train`` operation on the worker
+        backend, as core's own backend fits no models.
 
         Args:
             train_settings: Settings (model name, target/features, model_type, params).
@@ -206,8 +210,8 @@ class MlBuildersMixin(GraphMixinBase):
                     if self.flow_settings.is_canceled:
                         raise RuntimeError("Train Model: the run was cancelled before the model was stored.")
                 else:
-                    fetcher = root().MLTrainFetcher(
-                        lf=data.data_frame,
+                    train = MlTrainPayload(
+                        plan=data.data_frame.lazy(),
                         staging_path=str(staging_path),
                         model_type=settings.model_type,
                         target_column=settings.target_column,
@@ -215,11 +219,11 @@ class MlBuildersMixin(GraphMixinBase):
                         params=settings.params,
                         flow_id=self.flow_id,
                         node_id=train_settings.node_id,
-                        file_ref=node.hash,
-                        wait_on_completion=False,
+                        job_id=node.hash,
                     )
-                    node._fetch_cached_df = fetcher
-                    result = fetcher.get_result()
+                    worker = registry.backend(registry.WORKER_BACKEND_ID)
+                    trained = node.run_op(worker, OperationKind.ml_train, op_payload(train), job_id=train.job_id)
+                    result = trained.metadata
                 if not isinstance(result, dict) or "sha256" not in result or "size_bytes" not in result:
                     raise RuntimeError(f"Train Model did not get the expected sha256/size_bytes report: {result!r}")
 
@@ -302,7 +306,9 @@ class MlBuildersMixin(GraphMixinBase):
         Reads the model from the upstream Train Model node or the catalog and
         scores the input data where the flow runs (lazily in this process for
         a local flow, on the worker otherwise), returning a LazyFrame with one
-        extra prediction column.
+        extra prediction column. On the worker the scoring is the ``ml_apply``
+        operation on the worker backend; the node reads the file the worker
+        wrote, which stays on the worker as the node's result.
 
         Args:
             apply_settings: Settings (model_name, optional version, output_column).
@@ -371,22 +377,22 @@ class MlBuildersMixin(GraphMixinBase):
                 origin_label = f"catalog '{settings.model_name}' v{artifact.version}"
 
             if self.execution_location == "local":
-                result_lf = _apply_in_process(data, model_path, settings.output_column)
+                scored = FlowDataEngine(_apply_in_process(data, model_path, settings.output_column))
             else:
                 node = self.get_node(node_id=apply_settings.node_id)
-                fetcher = root().MLApplyFetcher(
-                    lf=data.data_frame,
+                apply = MlApplyPayload(
+                    plan=data.data_frame.lazy(),
                     model_path=model_path,
                     output_column=settings.output_column,
                     flow_id=self.flow_id,
                     node_id=apply_settings.node_id,
-                    file_ref=node.hash,
-                    wait_on_completion=False,
+                    job_id=node.hash,
                 )
-                node._fetch_cached_df = fetcher
-                result_lf = fetcher.get_result()
+                worker = registry.backend(registry.WORKER_BACKEND_ID)
+                ref = node.run_op(worker, OperationKind.ml_apply, op_payload(apply), job_id=apply.job_id).refs["result"]
+                scored = FlowDataEngine(worker.plan_for(ref), schema=ref.schema, number_of_records=ref.row_count)
             self.flow_logger.info(f"Apply Model: scored using {origin_label} -> column '{settings.output_column}'")
-            return FlowDataEngine(result_lf)
+            return scored
 
         def schema_callback():
             input_node: FlowNode = self.get_node(apply_settings.node_id).node_inputs.main_inputs[0]

@@ -547,7 +547,7 @@ class TestDashboardFilterDatasource:
         table_id = _make_table()
         captured: dict = {}
 
-        def fake_trigger(worker_source, column, limit):
+        def fake_trigger(worker_source, column, limit, *, worker_url):
             captured["source"] = worker_source
             captured["column"] = column
             captured["limit"] = limit

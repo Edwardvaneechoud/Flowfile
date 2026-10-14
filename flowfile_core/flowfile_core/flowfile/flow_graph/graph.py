@@ -16,6 +16,7 @@ from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, register_missing_node_template
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.artifacts import ArtifactContext
+from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
@@ -470,6 +471,7 @@ class FlowGraph(
                     logger.debug(f"Removing lead_to reference {node_id} from node {depend_on}")
                     depend_on.delete_lead_to_node(node_id)
 
+            node.release_result()
             self._node_db.pop(node_id)
             if isinstance(node_id, int):
                 self._node_id_seq = max(self._node_id_seq, node_id)
@@ -608,6 +610,7 @@ class FlowGraph(
             return typed_parameter_values(_graph.flow_settings.parameters)
 
         node._params_getter = _get_params
+        node._execution_context_getter = lambda: current_context(_graph)
         self._notify_node_observers(node, is_new=existing_node is None)
         return node
 

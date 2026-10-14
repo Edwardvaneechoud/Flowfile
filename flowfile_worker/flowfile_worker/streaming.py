@@ -10,6 +10,10 @@ This eliminates:
 - HTTP polling latency (0.5s+ per poll cycle)
 - Base64 encode/decode overhead on result bytes
 - Multiple HTTP round-trips per task
+
+``v1_streaming_router`` serves ``/v1/ws/submit``: the versioned submit of ``protocol_routes.py`` over
+one connection, with the same token and version checks before accepting, the same ``run_submit``,
+progress frames while its child runs and the ``SubmitResult`` in the final frame.
 """
 
 import asyncio
@@ -24,12 +28,15 @@ from multiprocessing.queues import Queue
 from time import monotonic
 from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse
 
 from flowfile_worker import CACHE_DIR, funcs, models, mp_context, pool, status_dict, status_dict_lock
 from flowfile_worker.auth import websocket_authorized
 from flowfile_worker.configs import logger
 from flowfile_worker.pool import PoolMember
+from flowfile_worker.protocol_routes import parse_submit_meta, require_protocol_version, run_submit
 from flowfile_worker.spawner import (
     _TASK_TIMEOUT,
     drain_member_envelope,
@@ -451,3 +458,95 @@ async def ws_submit(websocket: WebSocket):
             await asyncio.to_thread(_cleanup_process, task_id, p)
         del p, progress, error_message
         gc.collect(0)
+
+
+v1_streaming_router = APIRouter(prefix="/v1")
+
+
+def _job_progress(job_id: str) -> int | None:
+    """A running job's progress; ``None`` before it registers, once it ended, or for an earlier job's leftover entry."""
+    with status_dict_lock:
+        status = status_dict.get(job_id)
+        if status is None or status.status not in ("Starting", "Processing"):
+            return None
+        return status.progress
+
+
+async def _send_job_progress(websocket: WebSocket, job: asyncio.Future, job_id: str) -> bool:
+    """Send the job's progress until the job is done; ``False`` once a send failed.
+
+    A frame goes out on each change and every ``_HEARTBEAT_INTERVAL`` otherwise, polled with the
+    ``_monitor_progress`` backoff. A failed send stops the frames, not the wait.
+    """
+    connected = True
+    last_progress = None
+    last_sent = monotonic()
+    delay = _MONITOR_INITIAL_DELAY
+    while not job.done():
+        current = _job_progress(job_id)
+        if (
+            connected
+            and current is not None
+            and (current != last_progress or monotonic() - last_sent >= _HEARTBEAT_INTERVAL)
+        ):
+            try:
+                await websocket.send_json({"type": "progress", "progress": current})
+            except Exception:
+                logger.warning(f"[WS] Client left during /v1 submit {job_id}; the submit continues")
+                connected = False
+            last_progress = current
+            last_sent = monotonic()
+        await asyncio.wait({job}, timeout=delay)
+        delay = min(delay * _MONITOR_BACKOFF, _MONITOR_MAX_DELAY)
+    return connected
+
+
+@v1_streaming_router.websocket("/ws/submit")
+async def ws_submit_v1(websocket: WebSocket):
+    """``POST /v1/submit`` over a WebSocket, with progress frames while the child runs.
+
+    A bad token closes 1008 and a missing or foreign ``X-Protocol-Version`` is answered 426 with the
+    REST routes' body, both before accepting. Core then sends the ``meta`` JSON as a text frame and
+    the plan as a binary frame. The worker runs ``run_submit`` in Starlette's threadpool, the one a
+    REST submit waits in, and sends:
+
+        - JSON: {"type": "progress", "progress": N}  (0-100, on each change and as a heartbeat)
+        - JSON: {"type": "complete", "result": <SubmitResult, bytes base64>}
+        - JSON: {"type": "error", "status_code": N, "detail": ...}  (what the REST route answers)
+
+    then closes with 1000. A client that goes away does not stop the submit: its result is held, as
+    for a REST client that left. Cancel is ``POST /v1/jobs/{id}/cancel``.
+    """
+    if not websocket_authorized(websocket):
+        await websocket.close(code=1008)
+        return
+    try:
+        require_protocol_version(websocket)
+    except HTTPException as e:
+        await websocket.send_denial_response(JSONResponse({"detail": e.detail}, status_code=e.status_code))
+        return
+    await websocket.accept()
+    try:
+        meta = await websocket.receive_text()
+        plan = await websocket.receive_bytes()
+    except WebSocketDisconnect:
+        return
+
+    connected = True
+    try:
+        submit_meta = parse_submit_meta(meta)
+        job = asyncio.ensure_future(run_in_threadpool(run_submit, submit_meta, plan))
+        connected = await _send_job_progress(websocket, job, submit_meta.result_id)
+        frame = {"type": "complete", "result": job.result().model_dump(mode="json")}
+    except HTTPException as e:
+        frame = {"type": "error", "status_code": e.status_code, "detail": e.detail}
+    except Exception as e:
+        logger.error(f"[WS] /v1 submit failed: {e}", exc_info=True)
+        frame = {"type": "error", "status_code": 500, "detail": describe_exception(e)}
+    if not connected:
+        return
+    try:
+        await websocket.send_json(frame)
+        await websocket.close()
+    except Exception:
+        logger.warning("[WS] Client left before the /v1 submit's final frame; the result stays held")

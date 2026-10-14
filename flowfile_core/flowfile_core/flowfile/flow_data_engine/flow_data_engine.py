@@ -10,6 +10,7 @@ from math import ceil
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 if TYPE_CHECKING:
+    from flowfile_core.flowfile.execution.protocol import ComputeBackend
     from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
 
 import polars as pl
@@ -24,7 +25,10 @@ from pyarrow.parquet import ParquetFile
 
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import NodeLogger
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.flow_data_engine import utils
+from flowfile_core.flowfile.flow_data_engine.bounded import count_rows, single_row, unique_values
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import (
     CloudStorageReader,
     ensure_path_has_wildcard_pattern,
@@ -58,15 +62,12 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     ExternalCreateFetcher,
     ExternalDfFetcher,
     ExternalFuzzyMatchFetcher,
-    fetch_unique_values,
 )
 from flowfile_core.flowfile.flow_data_engine.threaded_processes import write_threaded
 from flowfile_core.flowfile.schema_callbacks import _ensure_all_columns_have_select
 from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
 from flowfile_core.schemas import cloud_storage_schemas, input_schema
 from flowfile_core.schemas import transform_schema as transform_schemas
-from flowfile_core.schemas.schemas import ExecutionLocationsLiteral, get_global_execution_location
-from flowfile_core.utils.arrow_reader import read as arrow_read
 from flowfile_core.utils.utils import ensure_similarity_dicts
 from shared.cloud_storage import (
     get_lazy_frame_from_gcs_pyarrow_dataset,
@@ -165,9 +166,7 @@ def get_select_columns(full_select_input: list[transform_schemas.SelectInput]) -
     return [v.old_name for v in full_select_input if (v.keep or v.join_key) and v.is_available]
 
 
-def _build_window_expr(
-    w: transform_schemas.WindowFunctionInput, partition_by: list[str]
-) -> pl.Expr:
+def _build_window_expr(w: transform_schemas.WindowFunctionInput, partition_by: list[str]) -> pl.Expr:
     """Builds a Polars expression for a single window-function operation.
 
     Expected to be applied after any ``order_by`` sort has been performed on
@@ -1077,9 +1076,7 @@ class FlowDataEngine:
             descending = [s.descending for s in settings.order_by]
             df = df.sort([s.column for s in settings.order_by], descending=descending)
 
-        exprs = [
-            _build_window_expr(w, settings.partition_by) for w in settings.window_functions
-        ]
+        exprs = [_build_window_expr(w, settings.partition_by) for w in settings.window_functions]
         df = df.with_columns(exprs)
         return FlowDataEngine(df, calculate_schema_stats=calculate_schema_stats)
 
@@ -1442,12 +1439,10 @@ class FlowDataEngine:
         """
         max_unique_vals = 200
         # TODO: a null pivot value ends up as a column name and raises; give it its own bucket instead.
-        new_cols_unique = fetch_unique_values(
-            self.data_frame.select(pivot_input.pivot_column)
-            .unique()
-            .sort(pivot_input.pivot_column)
-            .limit(max_unique_vals)
+        new_cols_unique = (
+            unique_values(current_context().backend, self.data_frame.select(pivot_input.pivot_column), max_unique_vals)
             .cast(pl.String)
+            .to_list()
         )
         if len(new_cols_unique) >= max_unique_vals:
             if node_logger:
@@ -1634,15 +1629,21 @@ class FlowDataEngine:
     def cache(self) -> FlowDataEngine:
         """Caches the current DataFrame to disk and updates the internal reference.
 
-        This triggers a background process to write the current LazyFrame's result
-        to a temporary file. Subsequent operations on this `FlowDataEngine` instance
-        will read from the cached file, which can speed up downstream computations.
+        This triggers a background process on the worker the worker backend runs on to
+        write the current LazyFrame's result to a temporary file. Subsequent operations on
+        this `FlowDataEngine` instance will read from the cached file, which can speed up
+        downstream computations.
 
         Returns:
             The same `FlowDataEngine` instance, now backed by the cached data.
         """
         edf = ExternalDfFetcher(
-            lf=self.data_frame, file_ref=str(id(self)), wait_on_completion=False, flow_id=-1, node_id=-1
+            lf=self.data_frame,
+            file_ref=str(id(self)),
+            wait_on_completion=False,
+            flow_id=-1,
+            node_id=-1,
+            worker_url=registry.worker_url(),
         )
         logger.info("Caching data in background")
         result = edf.get_result()
@@ -1709,16 +1710,17 @@ class FlowDataEngine:
         random: bool = False,
         shuffle: bool = False,
         seed: int = None,
-        execution_location: ExecutionLocationsLiteral | None = None,
     ) -> FlowDataEngine:
         """Gets a sample of rows from the DataFrame.
+
+        An evenly spaced sample (`random` without `shuffle`) needs the row count of a lazy frame, which the
+        current execution context's backend counts (`bounded.count_rows`).
 
         Args:
             n_rows: The number of rows to sample.
             random: If True, performs random sampling. If False, takes the first n_rows.
             shuffle: If True (and `random` is True), shuffles the data before sampling.
             seed: A random seed for reproducibility.
-            execution_location: Location which is used to calculate the size of the dataframe
         Returns:
             A new `FlowDataEngine` instance containing the sampled data.
         """
@@ -1734,11 +1736,7 @@ class FlowDataEngine:
             elif shuffle:
                 sample_df = self.data_frame.sample(n_rows, seed=seed, shuffle=shuffle)
             else:
-                if execution_location is None:
-                    execution_location = get_global_execution_location()
-                n_rows = min(
-                    n_rows, self.get_number_of_records(calculate_in_worker_process=execution_location == "remote")
-                )
+                n_rows = min(n_rows, self.get_number_of_records(backend=current_context().backend))
 
                 every_n_records = ceil(self.number_of_records / n_rows)
                 sample_df = self.data_frame.gather_every(every_n_records)
@@ -1791,9 +1789,8 @@ class FlowDataEngine:
     ) -> NamedOutputs:
         """Randomly partition rows into N labeled groups (in-process).
 
-        Used by ``add_random_split`` when ``execution_location == "local"``
-        (WASM / no-worker). For remote mode the worker-offloaded variant
-        :meth:`random_split_external` is used instead.
+        What core's own compute backend runs for a random split node; the worker
+        backend shuffles the same way on the worker and slices its stored file.
 
         The shuffled frame is materialized once so that each output shares the
         same shuffle — otherwise every handle's ``.collect()`` would re-run the
@@ -1823,68 +1820,6 @@ class FlowDataEngine:
         for i, (name, percentage) in enumerate(splits):
             length = total - offset if i == len(splits) - 1 else int(round(total * percentage / 100.0))
             out[name] = FlowDataEngine(shuffled.slice(offset, max(0, length)).lazy())
-            offset += length
-        return NamedOutputs(out)
-
-    def random_split_external(
-        self,
-        splits: list[tuple[str, float]],
-        seed: int | None = None,
-        flow_id: int = -1,
-        node_id: int | str = -1,
-    ) -> NamedOutputs:
-        """Worker-offloaded variant of :meth:`random_split`.
-
-        The shuffled frame is materialised once on ``flowfile_worker`` (never
-        in this process). Each returned split is a lazy ``slice`` over the
-        cached parquet, so downstream ``.collect()`` on a handle reads only
-        that split's rows from disk.
-
-        Used by ``add_random_split`` when ``execution_location != "local"``;
-        the in-process path is :meth:`random_split`.
-        """
-        import uuid
-
-        from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
-            ExternalDfFetcher,
-        )
-        from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs
-
-        if seed is None:
-            seed = random.randint(0, 2**31 - 1)
-
-        shuffled_lazy = (
-            self.data_frame.with_columns(pl.int_range(0, pl.len()).shuffle(seed=seed).alias("__split_rank__"))
-            .sort("__split_rank__")
-            .drop("__split_rank__")
-        )
-
-        # Stable, unique file_ref — avoids id()-reuse collisions with cache().
-        file_ref = f"random_split_{flow_id}_{node_id}_{seed}_{uuid.uuid4().hex}"
-        edf = ExternalDfFetcher(
-            lf=shuffled_lazy,
-            file_ref=file_ref,
-            wait_on_completion=True,
-            flow_id=flow_id,
-            node_id=node_id,
-        )
-        cached_lf = edf.get_result()
-        if not isinstance(cached_lf, pl.LazyFrame):
-            raise RuntimeError(f"random_split_external: worker did not return a LazyFrame (got {type(cached_lf)!r})")
-
-        # Cheap — reads parquet footer metadata, not row data.
-        total = cached_lf.select(pl.len()).collect()[0, 0]
-
-        out: dict[str, FlowDataEngine] = {}
-        offset = 0
-        for i, (name, percentage) in enumerate(splits):
-            length = total - offset if i == len(splits) - 1 else int(round(total * percentage / 100.0))
-            length = max(0, length)
-            out[name] = FlowDataEngine(
-                cached_lf.slice(offset, length),
-                number_of_records=length,
-                schema=self.schema,
-            )
             offset += length
         return NamedOutputs(out)
 
@@ -1922,45 +1857,6 @@ class FlowDataEngine:
         for batch in batches:
             yield FlowDataEngine(batch)
 
-    def start_fuzzy_join(
-        self,
-        fuzzy_match_input: transform_schemas.FuzzyMatchInput,
-        other: FlowDataEngine,
-        file_ref: str,
-        flow_id: int = -1,
-        node_id: int | str = -1,
-    ) -> ExternalFuzzyMatchFetcher:
-        """Starts a fuzzy join operation in a background process.
-
-        This method prepares the data and initiates the fuzzy matching in a
-        separate process, returning a tracker object immediately.
-
-        Args:
-            fuzzy_match_input: A `FuzzyMatchInput` object with the matching parameters.
-            other: The right `FlowDataEngine` to join with.
-            file_ref: A reference string for temporary files.
-            flow_id: The flow ID for tracking.
-            node_id: The node ID for tracking.
-
-        Returns:
-            An `ExternalFuzzyMatchFetcher` object that can be used to track the
-            progress and retrieve the result of the fuzzy join.
-        """
-        fuzzy_match_input_manager = transform_schemas.FuzzyMatchInputManager(fuzzy_match_input)
-        left_df, right_df = prepare_for_fuzzy_match(
-            left=self, right=other, fuzzy_match_input_manager=fuzzy_match_input_manager
-        )
-
-        return ExternalFuzzyMatchFetcher(
-            left_df,
-            right_df,
-            fuzzy_maps=fuzzy_match_input_manager.fuzzy_maps,
-            file_ref=file_ref + "_fm",
-            wait_on_completion=False,
-            flow_id=flow_id,
-            node_id=node_id,
-        )
-
     def fuzzy_join_external(
         self,
         fuzzy_match_input: transform_schemas.FuzzyMatchInput,
@@ -1984,6 +1880,7 @@ class FlowDataEngine:
             wait_on_completion=False,
             flow_id=flow_id,
             node_id=node_id,
+            worker_url=registry.worker_url(),
         )
         return FlowDataEngine(external_tracker.get_result())
 
@@ -2262,17 +2159,6 @@ class FlowDataEngine:
         self.number_of_records = 0
         self._lazy = True
 
-    def _calculate_number_of_records_in_worker(self) -> int:
-        """Calculates the number of records in a worker process."""
-        number_of_records = ExternalDfFetcher(
-            lf=self.data_frame,
-            operation_type="calculate_number_of_records",
-            flow_id=-1,
-            node_id=-1,
-            wait_on_completion=True,
-        ).result
-        return number_of_records
-
     def get_number_of_records_in_process(self, force_calculate: bool = False):
         """
         Get the number of records in the DataFrame in the local process.
@@ -2307,7 +2193,7 @@ class FlowDataEngine:
         return None
 
     def get_number_of_records(
-        self, warn: bool = False, force_calculate: bool = False, calculate_in_worker_process: bool = False
+        self, warn: bool = False, force_calculate: bool = False, backend: ComputeBackend | None = None
     ) -> int:
         """Gets the total number of records in the DataFrame.
 
@@ -2316,13 +2202,15 @@ class FlowDataEngine:
         Args:
             warn: If True, logs a warning if a potentially expensive calculation is triggered.
             force_calculate: If True, forces recalculation even if a value is cached.
-            calculate_in_worker_process: If True, offloads the calculation to a worker process.
+            backend: The compute backend that counts a lazy frame (`bounded.count_rows`); its failure propagates
+                and the frame is never counted in this process instead. Without one, it is counted here.
 
         Returns:
             The total number of records.
 
         Raises:
-            ValueError: If the number of records could not be determined.
+            ComputeError: `backend` could not count the rows.
+            ValueError: If the number of records could not be determined in this process.
         """
         if self.is_future and not self.is_collected:
             return -1
@@ -2331,12 +2219,9 @@ class FlowDataEngine:
                 self._number_of_records_callback(self)
 
             if self.lazy:
-                if calculate_in_worker_process:
-                    try:
-                        self.number_of_records = self._calculate_number_of_records_in_worker()
-                        return self.number_of_records
-                    except Exception as e:
-                        logger.error(f"Error: {e}")
+                if backend is not None:
+                    self.number_of_records = count_rows(backend, self.data_frame)
+                    return self.number_of_records
                 if warn:
                     logger.warning("Calculating the number of records this can be expensive on a lazy frame")
                 try:
@@ -2807,33 +2692,19 @@ class FlowDataEngine:
     def _peek_first_row_as_dict(self) -> dict[str, Any]:
         """Return the first row of the underlying frame keyed by column name.
 
-        Runs on the external worker via `ExternalDfFetcher` to keep the heavy
-        compute out of the core process (same pattern as `fetch_unique_values`
-        used by `do_pivot`). Falls back to an in-core collect only if the
-        external fetcher is unavailable. Raises `ValueError` if the frame is
-        empty.
+        The current execution context's backend computes the one row (`bounded.single_row`): in core for a local
+        flow, on the worker for a remote one, so a remote flow's upstream plan never runs in the core process. A
+        failure there propagates as the backend's `ComputeError`; nothing falls back to computing in core.
+
+        Raises:
+            ComputeError: The backend could not compute the row.
+            ValueError: The frame is empty.
         """
-        df = self.data_frame
-        lf = df.lazy() if isinstance(df, pl.DataFrame) else df
-        head_lf = lf.head(1)
-
-        table = None
-        try:
-            external = ExternalDfFetcher(lf=head_lf, flow_id=1, node_id=-1, wait_on_completion=True)
-            if external.status is not None and external.status.status == "Completed":
-                table = arrow_read(external.status.file_ref)
-        except Exception as e:  # noqa: BLE001 - worker availability is best-effort
-            logger.debug(f"ExternalDfFetcher unavailable for first_row peek ({e}); using in-core fallback")
-
-        if table is not None:
-            if table.num_rows == 0:
-                raise ValueError("Dynamic rename (first_row) requires at least one row in the input; got 0.")
-            return {name: table.column(name)[0].as_py() for name in table.column_names}
-
-        head = head_lf.collect()
-        if head.height == 0:
-            raise ValueError("Dynamic rename (first_row) requires at least one row in the input; got 0.")
-        return dict(zip(head.columns, head.row(0), strict=True))
+        return single_row(
+            current_context().backend,
+            self.data_frame.lazy().head(1),
+            empty_message="Dynamic rename (first_row) requires at least one row in the input; got 0.",
+        )
 
     def apply_dynamic_rename(self, settings: transform_schemas.DynamicRenameInput) -> FlowDataEngine:
         """Renames a subset of columns according to a single rule.
@@ -2976,16 +2847,18 @@ class FlowDataEngine:
         Dropping all-null columns is data-dependent, and a lazy plan cannot change its
         schema based on the data flowing through it, so the keep-list has to be resolved
         before the rest of the plan is built. The aggregation is bounded to a single row,
-        and runs on the external worker via `ExternalDfFetcher` (same pattern as
-        `_peek_first_row_as_dict` / `fetch_unique_values`) so core stays collect-free on
-        the hot path; it falls back to an in-core streaming collect only when the worker
-        is unavailable.
+        which the current execution context's backend computes (`bounded.single_row`): in
+        core for a local flow, on the worker for a remote one, so core stays collect-free
+        on a remote flow's hot path. A failure there propagates as the backend's
+        `ComputeError`; nothing falls back to computing in core.
 
         Returns:
             The frame height and the per-column null count, both from one aggregation.
+
+        Raises:
+            ComputeError: The backend could not compute the aggregation.
         """
-        df = self.data_frame
-        lf = df.lazy() if isinstance(df, pl.DataFrame) else df
+        lf = self.data_frame.lazy()
         names = lf.collect_schema().names()
         if not names:
             return 0, {}
@@ -2995,18 +2868,11 @@ class FlowDataEngine:
             height_alias += "_"
         agg_lf = lf.select([pl.len().alias(height_alias), *[pl.col(name).null_count() for name in names]])
 
-        table = None
-        try:
-            external = ExternalDfFetcher(lf=agg_lf, flow_id=1, node_id=-1, wait_on_completion=True)
-            if external.status is not None and external.status.status == "Completed":
-                table = arrow_read(external.status.file_ref)
-        except Exception as e:  # noqa: BLE001 - worker availability is best-effort
-            logger.debug(f"ExternalDfFetcher unavailable for null profile ({e}); using in-core fallback")
-
-        if table is not None:
-            row = {name: table.column(name)[0].as_py() for name in table.column_names}
-        else:
-            row = agg_lf.collect(engine="streaming").to_dicts()[0]
+        row = single_row(
+            current_context().backend,
+            agg_lf,
+            empty_message="The null profile aggregation returned no row.",
+        )
         height = int(row.pop(height_alias))
         return height, {name: int(row[name]) for name in names}
 
@@ -3213,11 +3079,10 @@ class FlowDataEngine:
         )
 
     def _calculate_schema(self) -> list[dict]:
-        """Calculates schema statistics."""
+        """Calculates schema statistics on the current execution context's backend (`utils.calculate_schema`)."""
         if self.external_source is not None:
             self.collect_external()
-        v = utils.calculate_schema(self.data_frame)
-        return v
+        return utils.calculate_schema(self.data_frame, current_context().backend)
 
     def calculate_schema(self):
         """Calculates and returns the schema."""
@@ -3230,14 +3095,18 @@ class FlowDataEngine:
 
     @classmethod
     def create_from_path_worker(cls, received_table: input_schema.ReceivedTable, flow_id: int, node_id: int | str):
-        """Creates a FlowDataEngine from a path in a worker process."""
+        """Creates a FlowDataEngine from a path, read by the worker the worker backend runs on."""
         refuse_cloud_path(received_table.path, received_table.file_type)
         received_table.set_absolute_filepath()
         if received_table.scan_mode == "directory":
             raise DirectoryScanUnsupportedError("Directory scan mode cannot be executed by the worker file reader.")
 
         external_fetcher = ExternalCreateFetcher(
-            received_table=received_table, file_type=received_table.file_type, flow_id=flow_id, node_id=node_id
+            received_table=received_table,
+            file_type=received_table.file_type,
+            flow_id=flow_id,
+            node_id=node_id,
+            worker_url=registry.worker_url(),
         )
         return cls(external_fetcher.get_result())
 

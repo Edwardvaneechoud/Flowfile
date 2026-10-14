@@ -1,4 +1,5 @@
 import hashlib
+import io
 import threading
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -7,9 +8,29 @@ from time import sleep
 from typing import Any, Literal, Optional
 
 import polars as pl
+import pyarrow as pa
 
 from flowfile_core.configs import logger, node_store
 from flowfile_core.configs.flow_logger import NodeLogger
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+from flowfile_core.flowfile.execution.context import (
+    DEFAULT_PREVIEW_ROWS,
+    ExecutionContext,
+    current_context,
+    use_context,
+)
+from flowfile_core.flowfile.execution.errors import ComputeError, TaskFailed
+from flowfile_core.flowfile.execution.protocol import (
+    ComputeBackend,
+    JobHandle,
+    OperationKind,
+    OpPayload,
+    OpResult,
+    ResultRef,
+    SubmitHints,
+    SubmitResult,
+)
 from flowfile_core.flowfile.flow_data_engine.column_stats import ColumnStatsUnavailable, compute_column_stats
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
@@ -19,10 +40,6 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
     ExternalDatabaseWriter,
     ExternalDfFetcher,
     ExternalOutputWriter,
-    ExternalSampler,
-    clear_task_from_worker,
-    get_external_df_result,
-    results_exists,
 )
 from flowfile_core.flowfile.flow_node.executor import NodeExecutor
 from flowfile_core.flowfile.flow_node.input_handles import (
@@ -54,7 +71,6 @@ from flowfile_core.flowfile.setting_generator import setting_generator, setting_
 from flowfile_core.flowfile.utils import HASH_EXCLUDED_KEYS, get_hash
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.output_model import FileColumn, NodeData, TableExample
-from flowfile_core.utils.arrow_reader import get_read_top_n
 
 schema_prefetch_blocked: ContextVar[bool] = ContextVar("schema_prefetch_blocked", default=False)
 """Set while the calling context must start no schema prefetch (notebook build mode); other contexts still do."""
@@ -62,6 +78,48 @@ schema_prefetch_blocked: ContextVar[bool] = ContextVar("schema_prefetch_blocked"
 
 class DeferredNodeError(RuntimeError):
     """Raised when a node marked ``deferred_until_run`` would be executed outside a flow run."""
+
+
+def _failed_class(error: BaseException) -> str | None:
+    """The exception class a failed job names: below a backend's typed error, else in the error's chain or message."""
+    cause = error.__cause__ if isinstance(error, ComputeError) else error
+    return recover_error_class(cause, str(error))
+
+
+def run_operation(backend: ComputeBackend, op: OperationKind, payload: OpPayload) -> OpResult:
+    """``backend.run_op(op, payload)`` under the failure rule a node's operations follow.
+
+    A ``TaskFailed`` whose job names the exception class it failed with is re-raised as ``RemoteExecutionError``
+    carrying that class, so the class reaches the node's error record; every other error, ``PlanRejected`` and
+    ``ComputeUnavailable`` among them, propagates as raised. ``FlowNode.run_op`` is this plus the node's in-flight
+    job; this is for an operation run before the node is bound (a new read node's schema prefetch).
+    """
+    try:
+        return backend.run_op(op, payload)
+    except TaskFailed as e:
+        failed_class = _failed_class(e)
+        if failed_class is None:
+            raise
+        raise RemoteExecutionError(str(e), failed_class) from e
+
+
+def _arrow_table(sample: bytes) -> pa.Table:
+    """A backend's sample, an Arrow IPC stream, as the table a node's preview serves."""
+    with pa.ipc.open_stream(io.BytesIO(sample)) as reader:
+        return reader.read_all()
+
+
+def _sample_on_read(backend: ComputeBackend, ref: ResultRef, n: int) -> Callable[[], pa.Table]:
+    """A preview of ``n`` rows of ``ref`` that ``backend`` samples the first time it is read, then kept."""
+    table: pa.Table | None = None
+
+    def read() -> pa.Table:
+        nonlocal table
+        if table is None:
+            table = _arrow_table(backend.sample(ref, n))
+        return table
+
+    return read
 
 
 ExternalTaskHandle = (
@@ -194,6 +252,7 @@ class FlowNode:
     _cache_epoch: int  # bumped by invalidate_cache() to bust the hash
     _fetch_cached_df: ExternalTaskHandle | None
     _cache_progress: ExternalTaskHandle | None
+    _submit_in_flight: JobHandle | None  # the backend job of a submit or run_op this node is waiting on
 
     _kernel_cancel_context: Any  # (kernel_id, manager, exec_token) of this node's in-flight cell
     _kernel_cancel_event: threading.Event | None
@@ -201,6 +260,8 @@ class FlowNode:
 
     # a live getter (not a snapshot) so ${...} refs resolve against current parameter edits
     _params_getter: Callable[[], dict[str, ParamValue]] | None
+    # the graph's execution context (the run's during a run), read each time the node's function runs
+    _execution_context_getter: Callable[[], ExecutionContext] | None
     # warning text when prediction would require executing an un-run kernel node
     _schema_prediction_blocked: str | None
     _prediction_requires_data: bool  # stamped at placement: prediction needs a collect
@@ -289,12 +350,14 @@ class FlowNode:
         self._cache_epoch = 0
         self._cache_progress = None
         self._fetch_cached_df = None
+        self._submit_in_flight = None
 
         self._kernel_cancel_context = None
         self._kernel_cancel_event = None
         self._subflow_cancel_context = None
 
         self._params_getter = None
+        self._execution_context_getter = None
         self._schema_prediction_blocked = None
         self._prediction_requires_data = False
         self._executes_on_kernel = False
@@ -1249,6 +1312,21 @@ class FlowNode:
         finally:
             self._execution_lock.release()
 
+    @contextmanager
+    def _in_execution_context(self) -> Generator[None, None, None]:
+        """Run the block in the execution context of the node's graph, when the graph gave the node one.
+
+        During a run that is the run's context, unchanged; outside one (a build-time read of a FlowFrame, a schema
+        prediction that calls the node's function) it is the graph's own, so the bounded reads the function makes
+        through ``current_context()`` (a pivot's distinct values, a first row, a null profile) run where the graph
+        runs: in core for a local graph, on the default backend for a remote one.
+        """
+        if self._execution_context_getter is None:
+            yield
+            return
+        with use_context(self._execution_context_getter()):
+            yield
+
     def get_resulting_data(self) -> FlowDataEngine | None:
         """Executes the node's function to produce the actual output data.
 
@@ -1280,7 +1358,8 @@ class FlowNode:
                         if isinstance(self.function, FlowDataEngine):
                             fl: FlowDataEngine = self.function
                         elif self.node_type == "external_source":
-                            fl: FlowDataEngine = self.function()
+                            with self._in_execution_context():
+                                fl: FlowDataEngine = self.function()
                             fl.collect_external()
                             self.node_settings.streamable = False
                         else:
@@ -1320,7 +1399,8 @@ class FlowNode:
                                 self.print(f"Input {i} data type: {type(input_result)}, " f"dataframe type: {_df_type}")
                                 input_data.append(input_result)
                             self.print(f"All {len(input_data)} inputs collected, calling node function")
-                            fl = self._function(*input_data)
+                            with self._in_execution_context():
+                                fl = self._function(*input_data)
                         if isinstance(fl, NamedOutputs):
                             self._named_outputs = fl.by_handle()
                             self._named_schemas = {h: e.schema for h, e in self._named_outputs.items()}
@@ -1377,12 +1457,12 @@ class FlowNode:
                 # Unresolved parameters during lazy eval are non-fatal; just run without substitution
                 restorations = []
         try:
-            fl = self._function(
-                *[
-                    (v.get_predicted_resulting_data(src_handle) if v is not None else None)
-                    for v, src_handle in self._slot_input_pairs()
-                ]
-            )
+            predicted_inputs = [
+                (v.get_predicted_resulting_data(src_handle) if v is not None else None)
+                for v, src_handle in self._slot_input_pairs()
+            ]
+            with self._in_execution_context():
+                fl = self._function(*predicted_inputs)
             fl = self._as_default_output(fl)
 
             # Apply output field configuration if enabled (mirrors get_resulting_data behavior)
@@ -1426,7 +1506,13 @@ class FlowNode:
             if schema:
                 return FlowDataEngine.create_from_schema(schema)
 
-        if self.needs_run(False) and self.schema_callback is not None or self.node_schema.result_schema is not None:
+        # Prediction never depends on the worker: an outage reads as "needs run".
+        try:
+            run_needed = self.needs_run(False)
+        except ComputeError as e:
+            logger.warning(f"Node {self.node_id}: worker not usable, predicting the schema without its cache: {e}")
+            run_needed = True
+        if run_needed and self.schema_callback is not None or self.node_schema.result_schema is not None:
             self.print("Getting data based on the schema")
             # Running the schema callback populates _named_schemas for multi-output
             # nodes; re-check the handle cache afterward before falling back.
@@ -1504,38 +1590,61 @@ class FlowNode:
             return []
 
     def remove_cache(self):
-        """Drops this node's stored result from the worker.
+        """Lets the backend that holds this node's last result drop it (``release_result``).
 
-        Unguarded by results_exists: a task whose result file is already gone
-        still holds a worker status entry, and that is exactly the case that
-        needs clearing.
+        A result the worker stored is cleared unguarded by ``exists``: a task whose result file is already gone
+        still holds a worker status entry, and that is exactly the case that needs clearing.
         """
+        self.release_result()
 
-        clear_task_from_worker(self.hash)
+    def release_result(self) -> None:
+        """Releases the result this node holds on the backend that minted it and forgets the reference."""
+        ref = self.results.result_ref
+        self.results.result_ref = None
+        self.results.job_handle = None
+        if ref is not None:
+            registry.backend(ref.backend_id).release(ref)
 
-    def needs_run(
-        self,
-        performance_mode: bool,
-        node_logger: NodeLogger = None,
-        execution_location: schemas.ExecutionLocationsLiteral = "remote",
-    ) -> bool:
+    def release_deferred_result(self) -> None:
+        """Releases the held result when it is a deferred plan; a stored one is left to whatever scans its file.
+
+        For a graph that is discarded while what it computed lives on (a ``run_flow`` child's output in its
+        parent's result): a consumer holds a deferred plan itself, so only the backend's holding goes.
+        """
+        ref = self.results.result_ref
+        if ref is not None and ref.state == "deferred":
+            self.release_result()
+
+    def held_result(self, backend_id: str) -> ResultRef | None:
+        """The result this node holds on backend ``backend_id`` under its current hash, else ``None``."""
+        ref = self.results.result_ref
+        if ref is None or ref.backend_id != backend_id or ref.result_id != self.hash:
+            return None
+        return ref
+
+    def _held_result_exists(self) -> bool:
+        """Whether the backend that minted this node's result for its current hash still holds it."""
+        ref = self.results.result_ref
+        if ref is None or ref.result_id != self.hash:
+            return False
+        return registry.backend(ref.backend_id).exists(ref)
+
+    def needs_run(self, performance_mode: bool, node_logger: NodeLogger = None) -> bool:
         """Determines if the node needs to be executed.
 
-        The decision is based on its run state, caching settings, and execution mode.
+        The decision is based on its run state, caching settings, and execution mode. The result the node
+        holds counts only when the backend that minted it still holds it under the node's current hash
+        (``exists``); a node holding none has no cached result.
 
         Args:
             performance_mode: True if the flow is in performance mode.
             node_logger: The logger instance for this node.
-            execution_location: The target execution location.
 
         Returns:
             True if the node should be run, False otherwise.
         """
-        if execution_location == "local":
-            return False
-
         flow_logger = logger if node_logger is None else node_logger
-        cache_result_exists = results_exists(self.hash)
+        cache_result_exists = self._held_result_exists()
         if not self.node_stats.has_run_with_current_setup:
             flow_logger.info("Node has not run, needs to run")
             return True
@@ -1551,78 +1660,6 @@ class FlowNode:
     def __call__(self, *args, **kwargs):
         """Makes the node instance callable, acting as an alias for execute_node."""
         self.execute_node(*args, **kwargs)
-
-    def _do_execute_full_local(self, performance_mode: bool = False) -> None:
-        """Executes the node's logic locally, including example data generation.
-
-        Internal method called by NodeExecutor.
-
-        Args:
-            performance_mode: If True, skips generating example data.
-
-        Raises:
-            Exception: Propagates exceptions from the execution.
-        """
-        self.clear_table_example()
-
-        def example_data_generator():
-            example_data = None
-
-            def get_example_data():
-                nonlocal example_data
-                if example_data is None:
-                    example_data = resulting_data.get_sample(100).to_arrow()
-                return example_data
-
-            return get_example_data
-
-        resulting_data = self.get_resulting_data()
-
-        if not performance_mode:
-            self.node_stats.has_run_with_current_setup = True
-            self.results.example_data_generator = example_data_generator()
-            self.node_schema.result_schema = self.results.resulting_data.schema
-            self.node_stats.has_completed_last_run = True
-
-    def _do_execute_local_with_sampling(self, performance_mode: bool = False, flow_id: int = None):
-        """Executes the node's logic locally with external sampling.
-
-        Internal method called by NodeExecutor.
-
-        Args:
-            performance_mode: If True, skips generating example data.
-            flow_id: The ID of the parent flow.
-
-        Raises:
-            Exception: Propagates exceptions from the execution.
-        """
-        try:
-            resulting_data = self.get_resulting_data()
-            if not performance_mode:
-                external_sampler = ExternalSampler(
-                    lf=resulting_data.data_frame,
-                    file_ref=self.hash,
-                    wait_on_completion=True,
-                    node_id=self.node_id,
-                    flow_id=flow_id,
-                )
-                self.store_example_data_generator(external_sampler)
-                if self.results.errors is None and not self.node_stats.is_canceled:
-                    self.node_stats.has_run_with_current_setup = True
-            self.node_schema.result_schema = resulting_data.schema
-
-        except Exception as e:
-            logger.warning(f"Error with step {self.__name__}")
-            logger.error(str(e))
-            self.results.errors = str(e)
-            self.node_stats.has_run_with_current_setup = False
-            self.node_stats.has_completed_last_run = False
-            raise e
-
-        if self.node_stats.has_run_with_current_setup:
-            for step in self.leads_to_nodes:
-                if not self.node_settings.streamable:
-                    step.node_settings.streamable = self.node_settings.streamable
 
     _INFER_SCHEMA_RUNGS = (10_000, 100_000)
 
@@ -1669,145 +1706,159 @@ class FlowNode:
         escalated_file.set_absolute_filepath()
         return FlowDataEngine.create_from_path(escalated_file)
 
-    def _do_execute_remote(self, performance_mode: bool = False, node_logger: NodeLogger = None):
-        """Executes the node's logic remotely or handles cached results.
+    def _do_execute(self, hints: SubmitHints, performance_mode: bool, node_logger: NodeLogger) -> None:
+        """Builds this node's plan and submits it to the run's backend, which holds the result by its policy.
 
-        Internal method called by NodeExecutor.
+        Internal method called by NodeExecutor, inside the run's execution context (``current_context``). The
+        result the backend holds becomes ``results.resulting_data`` through ``plan_for``; the node keeps its
+        reference and job handle on ``results``. A ``cache_results`` node whose stored result the backend still
+        holds reads it back instead (a rerun past the cache after a failed run); if that fails, it builds and
+        submits again. The preview is the backend's inline sample when it returned one, else, outside
+        Performance mode, a sample read from the backend the first time the preview is opened.
+
+        A CSV read whose type inference fails on submit is submitted again at a higher ``infer_schema_length``
+        (configured, then 10k, then 100k rows) under ``<hash>_infer<rows>``, without changing the saved setting.
 
         Args:
-            performance_mode: If True, skips generating example data.
-            node_logger: The logger for this node execution.
+            hints: What the node submits its plan with (``executor.hints_for``).
+            performance_mode: True when the node keeps no preview.
+            node_logger: The logger for this node execution; its flow id files the backend's job.
 
         Raises:
-            Exception: If the node_logger is not provided or if execution fails.
+            ComputeError: From the backend (``PlanRejected``, ``TaskFailed``, ``ComputeUnavailable``,
+                ``VersionMismatch``).
+            RemoteExecutionError: The plan ran and failed with an exception class its message names (a
+                ``TaskFailed`` re-raised with that class), or a CSV read still failed its type inference at the
+                last escalation.
         """
-        if node_logger is None:
-            raise Exception("Node logger is not defined")
-        if self.node_settings.cache_results and results_exists(self.hash):
-            try:
-                self.results.resulting_data = FlowDataEngine(get_external_df_result(self.hash))
-                self._cache_progress = None
+        backend = current_context().backend
+        held = self.held_result(backend.id)
+        if self.node_settings.cache_results and held is not None and held.state == "materialised":
+            if self._read_stored_result(backend, held, performance_mode, node_logger):
                 return
-            except Exception:
-                node_logger.warning("Failed to read the cache, rerunning the code")
-        if self.node_type in ("output", "api_response", "flow_output", "run_flow"):
-            # Stay in-core: sinks have nothing to offload, and run_flow's child
-            # graph already executed in-process while building its result.
-            self.results.resulting_data = self.get_resulting_data()
-            self.node_stats.has_run_with_current_setup = True
-            return
 
+        engine = self.get_resulting_data()
+        if engine is None:
+            raise RemoteExecutionError("get_resulting_data returned None")
+        result = self._submit(backend, engine, hints, node_logger)
+        self._take_result(backend, result, engine, hints.preview_rows, performance_mode)
+
+    def _read_stored_result(
+        self, backend: ComputeBackend, ref: ResultRef, performance_mode: bool, node_logger: NodeLogger
+    ) -> bool:
+        """Takes the stored result ``ref`` as this run's result; False when it cannot be read back.
+
+        Raises:
+            ComputeError: Asking the backend whether it still holds ``ref`` failed.
+        """
+        if not backend.exists(ref):
+            return False
+        handle = self.results.job_handle or JobHandle(backend.id, ref.result_id)
         try:
-            result_data = self.get_resulting_data()
-            # Use 'is not None' instead of truthiness check to avoid triggering __len__()
-            # which calls .collect() on the LazyFrame and can cause issues
-            if result_data is None:
-                self.results.errors = "Error with creating the lazy frame, most likely due to invalid graph"
-                raise RemoteExecutionError("get_resulting_data returned None")
-        except Exception as e:
-            # A cancelled node is not a broken one: the executor reclassifies this as a
-            # clean cancel, so don't leave a misleading "invalid graph" on the result.
-            if not self._execution_state.is_canceled:
-                self.results.errors = "Error with creating the lazy frame, most likely due to invalid graph"
-            raise e
+            self._take_result(backend, SubmitResult(ref=ref, sample=None, handle=handle), None, None, performance_mode)
+        except Exception:
+            node_logger.warning("Failed to read the cache, rerunning the code")
+            return False
+        return True
 
-        if not performance_mode:
-            # Transient CSV schema-inference escalation: on a type-parse failure a read node
-            # re-stores at a higher infer_schema_length (configured -> 10k -> 100k) without ever
-            # mutating the saved setting. Ineligible nodes keep current_infer=None and never escalate.
-            store_frame = self.get_resulting_data().data_frame
-            current_infer = self._eligible_infer_length()
-            file_ref = self.hash
-
-            while True:
-                external_df_fetcher = ExternalDfFetcher(
-                    lf=store_frame,
-                    file_ref=file_ref,
-                    wait_on_completion=False,
-                    flow_id=node_logger.flow_id,
-                    node_id=self.node_id,
-                )
-                self._fetch_cached_df = external_df_fetcher
-
-                try:
-                    lf = external_df_fetcher.get_result()
-                    # Row count rides along on the store result — no extra worker round-trip.
-                    status = external_df_fetcher.status
-                    self.results.resulting_data = FlowDataEngine(
-                        lf,
-                        number_of_records=status.number_of_records if status is not None else None,
+    def _submit(
+        self, backend: ComputeBackend, engine: FlowDataEngine, hints: SubmitHints, node_logger: NodeLogger
+    ) -> SubmitResult:
+        """Submits ``engine``'s plan under this node's hash, escalating a CSV read's type inference on failure."""
+        inputs = self._input_refs(backend.id)
+        frame = engine.data_frame
+        current_infer = self._eligible_infer_length()
+        result_id = self.hash
+        while True:
+            plan = frame.lazy() if isinstance(frame, pl.DataFrame) else frame
+            held = self.results.result_ref
+            if held is not None and (held.backend_id != backend.id or held.result_id != result_id):
+                self.release_result()
+            self._submit_in_flight = JobHandle(backend.id, result_id)
+            try:
+                return backend.submit(plan, inputs, hints, result_id, flow_id=node_logger.flow_id, node_id=self.node_id)
+            except Exception as e:
+                description = str(e)
+                if current_infer is None or not self._is_type_inference_error(description):
+                    failed_class = _failed_class(e) if isinstance(e, TaskFailed) else None
+                    if failed_class is None:
+                        raise
+                    raise RemoteExecutionError(description, failed_class) from e
+                next_rung = self._next_infer_rung(current_infer)
+                escalated = self._escalated_read_frame(next_rung) if next_rung is not None else None
+                if escalated is None:
+                    guidance = (
+                        f"{description}\n\n"
+                        "Automatic schema-inference escalation reached its maximum "
+                        f"({self._INFER_SCHEMA_RUNGS[-1]} rows) but the file still has a type conflict. "
+                        "Increase 'Schema Infer Length' further, turn off 'Infer data types' to read "
+                        "every column as text, or enable 'Ignore Errors' to null the unparseable values."
                     )
-                    self.store_example_data_generator(external_df_fetcher)
-                    self.node_stats.has_run_with_current_setup = True
-                    break
+                    raise RemoteExecutionError(guidance, _failed_class(e)) from e
+                node_logger.warning(f"CSV type inference failed; retrying read with infer_schema_length={next_rung}.")
+                frame = escalated.data_frame
+                current_infer = next_rung
+                result_id = f"{self.hash}_infer{next_rung}"
+            finally:
+                self._submit_in_flight = None
 
-                except Exception as e:
-                    node_logger.error("Error with external process")
-                    if current_infer is not None and self._is_type_inference_error(
-                        external_df_fetcher.error_description
-                    ):
-                        next_rung = self._next_infer_rung(current_infer)
-                        escalated = self._escalated_read_frame(next_rung) if next_rung is not None else None
-                        if escalated is not None:
-                            node_logger.warning(
-                                "CSV type inference failed; retrying read with " f"infer_schema_length={next_rung}."
-                            )
-                            store_frame = escalated.data_frame
-                            current_infer = next_rung
-                            file_ref = f"{self.hash}_infer{next_rung}"
-                            self._fetch_cached_df = None
-                            continue
-                        # Ladder exhausted on a type conflict: surface the real cause with guidance.
-                        guidance = (
-                            f"{external_df_fetcher.error_description}\n\n"
-                            "Automatic schema-inference escalation reached its maximum "
-                            f"({self._INFER_SCHEMA_RUNGS[-1]} rows) but the file still has a type conflict. "
-                            "Increase 'Schema Infer Length' further, turn off 'Infer data types' to read "
-                            "every column as text, or enable 'Ignore Errors' to null the unparseable values."
-                        )
-                        self.results.errors = guidance
-                        raise RemoteExecutionError(
-                            guidance, recover_error_class(e, external_df_fetcher.error_description)
-                        ) from e
-                    # Never degrade-gracefully on a canceled node: the raise below
-                    # feeds the executor's clean-cancel reclassification instead.
-                    if external_df_fetcher.error_code == -1 and not self._execution_state.is_canceled:
-                        try:
-                            self.results.resulting_data = self.get_resulting_data()
-                            self.results.warnings = (
-                                "Error with external process (unknown error), "
-                                "likely the process was killed by the server because of memory constraints, "
-                                "continue with the process. "
-                                "We cannot display example data..."
-                            )
-                        except Exception as e:
-                            self.results.errors = str(e)
-                            raise e
-                    elif external_df_fetcher.error_description is None:
-                        self.results.errors = str(e)
-                        raise e
-                    else:
-                        self.results.errors = external_df_fetcher.error_description
-                        raise RemoteExecutionError(
-                            external_df_fetcher.error_description,
-                            recover_error_class(e, external_df_fetcher.error_description),
-                        ) from e
-                    break
-                finally:
-                    self._fetch_cached_df = None
+    def run_op(self, backend: ComputeBackend, op: OperationKind, payload: OpPayload, *, job_id: str) -> OpResult:
+        """Run ``op`` on ``backend`` for this node, so that ``cancel`` reaches it while it runs.
 
-    # Backward-compatible aliases for renamed methods
-    def execute_full_local(self, performance_mode: bool = False) -> None:
-        """Backward-compatible alias for _do_execute_full_local."""
-        return self._do_execute_full_local(performance_mode)
+        ``job_id`` is the id the payload gives the backend for the job (the payload's ``job_id``): while the call
+        runs, ``cancel`` hands ``JobHandle(backend.id, job_id)`` to ``backend.cancel``, as it does for a submit.
 
-    def execute_local(self, flow_id: int, performance_mode: bool = False):
-        """Backward-compatible alias for _do_execute_local_with_sampling."""
-        return self._do_execute_local_with_sampling(performance_mode, flow_id)
+        Failures follow ``run_operation``'s rule, which is ``_submit``'s.
+        """
+        self._submit_in_flight = JobHandle(backend.id, job_id)
+        try:
+            return run_operation(backend, op, payload)
+        finally:
+            self._submit_in_flight = None
 
-    def execute_remote(self, performance_mode: bool = False, node_logger: NodeLogger = None):
-        """Backward-compatible alias for _do_execute_remote."""
-        return self._do_execute_remote(performance_mode, node_logger)
+    def _input_refs(self, backend_id: str) -> list[ResultRef]:
+        """The results this node's upstream nodes hold on backend ``backend_id``; one holding none is left out."""
+        refs: dict[str, ResultRef] = {}
+        for node in self.all_inputs:
+            ref = node.results.result_ref
+            if ref is not None and ref.backend_id == backend_id:
+                refs[ref.result_id] = ref
+        return list(refs.values())
+
+    def _take_result(
+        self,
+        backend: ComputeBackend,
+        result: SubmitResult,
+        engine: FlowDataEngine | None,
+        preview_rows: int | None,
+        performance_mode: bool,
+    ) -> None:
+        """Holds ``result`` and makes the result ``backend`` holds this node's resulting data and preview.
+
+        A deferred result is this node's own plan, so its engine keeps what ``engine`` knew of it (schema, a
+        known row count, streamability); a stored one is read like any scan, with the schema and the row count its
+        reference carries, so core never resolves a stored result's schema from the backend's storage.
+        """
+        ref = result.ref
+        self.results.result_ref = ref
+        self.results.job_handle = result.handle
+        plan = backend.plan_for(ref)
+        if ref.state == "deferred" and engine is not None:
+            data = FlowDataEngine(plan, schema=engine.schema, number_of_records=engine.known_record_count())
+            data.set_streamable(self.node_settings.streamable)
+        else:
+            data = FlowDataEngine(plan, schema=ref.schema, number_of_records=ref.row_count)
+        self.results.resulting_data = data
+        self.node_schema.result_schema = data.schema
+        self.results.example_data_path = backend.result_file(ref) if isinstance(backend, WorkerBackend) else None
+        if result.sample is not None:
+            table = _arrow_table(result.sample)
+            self.results.example_data_generator = lambda: table
+        elif not performance_mode:
+            self.results.example_data_generator = _sample_on_read(backend, ref, preview_rows or DEFAULT_PREVIEW_ROWS)
+        if ref.state == "deferred" and not self.node_settings.streamable:
+            for step in self.leads_to_nodes:
+                step.node_settings.streamable = False
 
     def prepare_before_run(self):
         """Resets results and errors before a new execution."""
@@ -1819,9 +1870,18 @@ class FlowNode:
         self._named_schemas = {}
 
     def cancel(self):
-        """Cancels an ongoing external process if one is running."""
+        """Cancels an ongoing external process if one is running.
 
-        if self._fetch_cached_df is not None:
+        While the node waits on its backend's submit or ``run_op``, the backend's ``cancel`` gets the job's handle.
+        """
+
+        submit_in_flight = self._submit_in_flight
+        if submit_in_flight is not None:
+            try:
+                registry.backend(submit_in_flight.backend_id).cancel(submit_in_flight)
+            except Exception:
+                logger.exception("Failed to cancel the backend job of node %s", self.node_id)
+        elif self._fetch_cached_df is not None:
             self._fetch_cached_df.cancel()
         elif self._kernel_cancel_context is not None:
             kernel_id, manager, exec_token = self._kernel_cancel_context
@@ -1848,25 +1908,24 @@ class FlowNode:
 
     def execute_node(
         self,
-        run_location: schemas.ExecutionLocationsLiteral,
         reset_cache: bool = False,
         performance_mode: bool = False,
         retry: bool = True,
         node_logger: NodeLogger | None = None,
-        optimize_for_downstream: bool = True,
     ) -> None:
         """Execute the node based on its current state and settings.
 
         Delegates all execution and skip logic to the NodeExecutor, which is
         the single source of truth for deciding whether a node should run.
+        The node runs on the backend of the current execution context
+        (``current_context``): a caller outside ``run_graph`` enters the
+        graph's context first (``use_context(graph.execution_context)``).
 
         Args:
-            run_location: Where to execute ('local' or 'remote')
             reset_cache: Force cache invalidation
             performance_mode: Skip example data generation for speed
             retry: Allow retry on recoverable errors
             node_logger: Logger for this node's execution
-            optimize_for_downstream: Cache wide transforms for downstream nodes
         """
         if node_logger is None:
             raise ValueError("node_logger is required")
@@ -1875,26 +1934,11 @@ class FlowNode:
             return
 
         self.executor.execute(
-            run_location=run_location,
             reset_cache=reset_cache,
             performance_mode=performance_mode,
             retry=retry,
             node_logger=node_logger,
-            optimize_for_downstream=optimize_for_downstream,
         )
-
-    def store_example_data_generator(self, external_df_fetcher: ExternalDfFetcher | ExternalSampler):
-        """Stores a generator function for fetching a sample of the result data.
-
-        Args:
-            external_df_fetcher: The process that generated the sample data.
-        """
-        if external_df_fetcher.status is not None:
-            file_ref = external_df_fetcher.status.file_ref
-            self.results.example_data_path = file_ref
-            self.results.example_data_generator = get_read_top_n(file_path=file_ref, n=100)
-        else:
-            logger.error("Could not get the sample data, the external process is not ready")
 
     def needs_reset(self) -> bool:
         """Checks if the node's hash has changed, indicating an outdated state.
@@ -2203,23 +2247,28 @@ class FlowNode:
         self,
         column_name: str,
         output_handle: str = DEFAULT_OUTPUT_HANDLE,
-        offload_to_worker: bool = False,
+        backend: ComputeBackend | None = None,
     ) -> FileColumn:
         """Computes on-demand stats for one column of this node's cached result.
 
         The stats land on the result engine's ``FlowfileColumn`` (the single
         source of truth), so this run's later previews carry them too; the
         return value is that column's ordinary ``FileColumn`` representation.
-        ``offload_to_worker`` ships the aggregate to the worker — used for
-        locally-run flows, whose cached engine is the full upstream plan.
-        Raises ``ColumnStatsUnavailable`` when there is no cached result to
-        aggregate over without executing or re-pulling data, and
+        The aggregate runs on ``backend``, by default the current execution
+        context's: outside a run that is the default backend, not the flow's,
+        so with the worker configured a locally-run node's result (its full
+        upstream plan) is aggregated on the worker, and in core only when the
+        default backend is core's own. Raises ``ColumnStatsUnavailable`` when
+        there is no cached result to aggregate over without executing or
+        re-pulling data, or the backend cannot compute even the counts, and
         ``pl.exceptions.ColumnNotFoundError`` for an unknown column.
         """
         if sink := self._sink_source():
-            return sink[0].get_column_stats(column_name, output_handle=sink[1], offload_to_worker=offload_to_worker)
+            return sink[0].get_column_stats(column_name, output_handle=sink[1], backend=backend)
         engine = self.get_cached_result(output_handle)
-        stats = compute_column_stats(engine, column_name, offload_to_worker=offload_to_worker)
+        if backend is None:
+            backend = current_context().backend
+        stats = compute_column_stats(engine, column_name, backend=backend)
         # compute rebinds the engine's schema list (copy-on-write); follow it on
         # this node so previews via self.schema carry the stats too.
         if engine is self.results.resulting_data:

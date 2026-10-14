@@ -1,4 +1,5 @@
-"""A headless run child must not sweep the cache and temp directories a live core still references."""
+"""A headless run child must not sweep the cache and temp directories a live core still references, and both
+headless runners make core's own backend the process's default through the backend registry."""
 
 from __future__ import annotations
 
@@ -65,3 +66,34 @@ def test_run_flow_child_leaves_cache_and_temp_alone(tmp_path, monkeypatch, comma
     monkeypatch.setattr(storage, "_base_dir", storage_dir)
     storage.cleanup_directories()
     assert not cached.exists() and not scratch.exists()
+
+
+def _frozen_runner(flow_path: str) -> int:
+    from flowfile_core.run_flow_cli import run_flow_cli
+
+    return run_flow_cli(flow_path, int(RUN_ID))
+
+
+def _dev_runner(flow_path: str) -> int:
+    from flowfile.__main__ import run_flow
+
+    return run_flow(flow_path)
+
+
+@pytest.mark.parametrize("runner", [_frozen_runner, _dev_runner], ids=["frozen-verb", "dev-cli"])
+def test_a_headless_run_defaults_to_core_s_own_backend_and_leaves_the_offload_flag_alone(tmp_path, runner):
+    from flowfile_core.configs import settings
+    from flowfile_core.flowfile.execution import registry
+
+    flag_before = (settings.OFFLOAD_TO_WORKER, bool(settings.OFFLOAD_TO_WORKER))
+    default_before = registry.default_backend_id()
+    previous = registry.default_override()
+    try:
+        assert runner(str(tmp_path / "missing.yaml")) == 1
+        assert registry.default_override() == registry.LOCAL_BACKEND_ID
+        assert registry.default_backend_id() == registry.LOCAL_BACKEND_ID
+    finally:
+        registry.set_default_override(previous)
+
+    assert (settings.OFFLOAD_TO_WORKER, bool(settings.OFFLOAD_TO_WORKER)) == flag_before
+    assert registry.default_backend_id() == default_before

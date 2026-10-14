@@ -148,13 +148,6 @@ viz_logger = logger.getChild("viz")
 _OWNER_ACCESS = AccessInfo(is_owner=True, access_level="owner")
 
 
-def _should_offload() -> bool:
-    """Return True when heavy I/O should be delegated to the worker process."""
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-
-    return OFFLOAD_TO_WORKER.value
-
-
 # polars-gw workflow that returns rows un-aggregated (raw select-all).
 _GW_RAW_SELECT_ALL_PAYLOAD: dict = {"workflow": [{"type": "view", "query": [{"op": "raw", "fields": ["*"]}]}]}
 
@@ -1648,9 +1641,9 @@ class CatalogService:
         self._require_manage_dashboard(dashboard_id)
         if payload.namespace_id is not None:
             self._require_namespace_writable(payload.namespace_id)
-        return self._stamp_access(
-            [self._visualizations.update_dashboard(dashboard_id, payload, user_id)], "dashboard"
-        )[0]
+        return self._stamp_access([self._visualizations.update_dashboard(dashboard_id, payload, user_id)], "dashboard")[
+            0
+        ]
 
     def delete_dashboard(self, dashboard_id: int, user_id: int) -> None:
         """Delete a dashboard by ID."""

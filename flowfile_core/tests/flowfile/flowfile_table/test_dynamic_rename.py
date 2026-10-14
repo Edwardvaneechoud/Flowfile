@@ -212,7 +212,7 @@ def test_formula_with_no_targets_returns_empty_map():
     assert FlowDataEngine.resolve_dynamic_rename_map(columns, settings) == {}
 
 
-def test_first_row_promotes_and_drops():
+def test_first_row_promotes_and_drops(context_backend):
     engine = FlowDataEngine(pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]}))
     settings = transform_schema.DynamicRenameInput(rename_mode="first_row")
     result = engine.apply_dynamic_rename(settings)
@@ -221,7 +221,7 @@ def test_first_row_promotes_and_drops():
     assert df.rows() == [(2, "y"), (3, "z")]
 
 
-def test_first_row_coerces_non_string_values():
+def test_first_row_coerces_non_string_values(context_backend):
     engine = FlowDataEngine(pl.DataFrame({"a": [10, 20], "b": [1.5, 2.5]}))
     settings = transform_schema.DynamicRenameInput(rename_mode="first_row")
     result = engine.apply_dynamic_rename(settings)
@@ -229,7 +229,7 @@ def test_first_row_coerces_non_string_values():
     assert names == ["10", "1.5"]
 
 
-def test_first_row_selection_list_only_renames_targets():
+def test_first_row_selection_list_only_renames_targets(context_backend):
     engine = FlowDataEngine(pl.DataFrame({"a": ["new_a", "v1", "v2"], "b": ["keep_me", "q", "r"]}))
     settings = transform_schema.DynamicRenameInput(
         rename_mode="first_row",
@@ -242,7 +242,7 @@ def test_first_row_selection_list_only_renames_targets():
     assert df.rows() == [("v1", "q"), ("v2", "r")]
 
 
-def test_first_row_selection_data_type():
+def test_first_row_selection_data_type(context_backend):
     engine = FlowDataEngine(pl.DataFrame({"name": ["renamed_name", "n1"], "age": [99, 1]}))
     settings = transform_schema.DynamicRenameInput(
         rename_mode="first_row",
@@ -255,35 +255,35 @@ def test_first_row_selection_data_type():
     assert df.rows() == [("n1", 1)]
 
 
-def test_first_row_raises_on_null():
+def test_first_row_raises_on_null(context_backend):
     engine = FlowDataEngine(pl.DataFrame({"a": [None, "x"], "b": ["y", "z"]}))
     settings = transform_schema.DynamicRenameInput(rename_mode="first_row")
     with pytest.raises(ValueError, match="null/empty"):
         engine.apply_dynamic_rename(settings)
 
 
-def test_first_row_raises_on_empty_string():
+def test_first_row_raises_on_empty_string(context_backend):
     engine = FlowDataEngine(pl.DataFrame({"a": ["", "x"], "b": ["y", "z"]}))
     settings = transform_schema.DynamicRenameInput(rename_mode="first_row")
     with pytest.raises(ValueError, match="null/empty"):
         engine.apply_dynamic_rename(settings)
 
 
-def test_first_row_raises_on_duplicate_values():
+def test_first_row_raises_on_duplicate_values(context_backend):
     engine = FlowDataEngine(pl.DataFrame({"a": ["x", "1"], "b": ["x", "2"]}))
     settings = transform_schema.DynamicRenameInput(rename_mode="first_row")
     with pytest.raises(ValueError, match="duplicate column name"):
         engine.apply_dynamic_rename(settings)
 
 
-def test_first_row_raises_on_empty_input():
+def test_first_row_raises_on_empty_input(context_backend):
     engine = FlowDataEngine(pl.DataFrame({"a": [], "b": []}, schema={"a": pl.Utf8, "b": pl.Utf8}))
     settings = transform_schema.DynamicRenameInput(rename_mode="first_row")
     with pytest.raises(ValueError, match="at least one row"):
         engine.apply_dynamic_rename(settings)
 
 
-def test_first_row_works_on_lazy_frame():
+def test_first_row_works_on_lazy_frame(context_backend):
     engine = FlowDataEngine(pl.LazyFrame({"a": ["H1", "v1"], "b": ["H2", "v2"]}))
     settings = transform_schema.DynamicRenameInput(rename_mode="first_row")
     result = engine.apply_dynamic_rename(settings)

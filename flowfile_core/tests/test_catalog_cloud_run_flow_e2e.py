@@ -34,9 +34,9 @@ import pytest
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.storage_backend import resolve_for_namespace
-from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.flowfile import flow_graph as fg
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.schemas import input_schema
 from tests.flowfile.conftest import (
     CATALOG_SAMPLE_DATA as SAMPLE_DATA,
@@ -79,16 +79,16 @@ def _clean(monkeypatch):
 
 
 def _run_saved_flow(resolved_path: str) -> int:
-    """Run a saved flow via the manual/scheduled-run CLI entry point, restoring the
-    process-global offload flag + env afterwards (run_flow mutates them)."""
-    prev_offload = OFFLOAD_TO_WORKER.value
+    """Run a saved flow via the manual/scheduled-run CLI entry point, undoing the
+    process-wide default backend override and the env afterwards (run_flow sets them)."""
+    prev_override = registry.default_override()
     prev_env = {k: os.environ.get(k) for k in ("FLOWFILE_SINGLE_FILE_MODE", "FLOWFILE_WORKER_PORT")}
     try:
         from flowfile.__main__ import run_flow
 
         return run_flow(resolved_path, run_id=None)
     finally:
-        OFFLOAD_TO_WORKER.set(prev_offload)
+        registry.set_default_override(prev_override)
         for key, value in prev_env.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -107,7 +107,7 @@ def _assert_delta_objects_in_s3(file_path: str) -> None:
 
 
 def _offload_forbidden(*args, **kwargs):
-    """Sentinel for ``_write_catalog_delta_remote``: a local-execution run must write a cloud
+    """Sentinel for ``WorkerBackend.run_op``: a local-execution run must write a cloud
     catalog in-core, never offloading to a worker (which a standalone CLI/scheduler run lacks)."""
     raise AssertionError("cloud catalog write offloaded to the worker during local execution")
 
@@ -217,7 +217,9 @@ class TestCloudCatalogCliRunE2E:
         # Seed a physical source table in S3 and register it in the catalog.
         source_dest = f"{uri}/source_physical"
         assert (
-            write_delta(pl.DataFrame(SAMPLE_DATA), source_dest, mode="overwrite", storage_options=target.storage_options)
+            write_delta(
+                pl.DataFrame(SAMPLE_DATA), source_dest, mode="overwrite", storage_options=target.storage_options
+            )
             is True
         )
         with get_db_context() as db:
@@ -240,9 +242,7 @@ class TestCloudCatalogCliRunE2E:
             phys_id = phys.id
 
         graph = _create_graph(execution_location="local")
-        graph.add_node_promise(
-            input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
-        )
+        graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader"))
         graph.add_catalog_reader(
             input_schema.NodeCatalogReader(flow_id=graph.flow_id, node_id=1, catalog_table_id=phys_id)
         )
@@ -292,7 +292,7 @@ class TestCloudCatalogCliRunE2E:
         schema_id = _create_cloud_schema(uri)
         assert resolve_for_namespace(schema_id).is_cloud is True
 
-        monkeypatch.setattr(fg, "_write_catalog_delta_remote", _offload_forbidden)
+        monkeypatch.setattr(WorkerBackend, "run_op", _offload_forbidden)
 
         graph = _create_graph(execution_location="local")
         _add_manual_input(graph, SAMPLE_DATA, node_id=1)
@@ -336,7 +336,7 @@ class TestCloudCatalogCliRunE2E:
         target = resolve_for_namespace(schema_id)
         assert target.is_cloud is True
 
-        monkeypatch.setattr(fg, "_write_catalog_delta_remote", _offload_forbidden)
+        monkeypatch.setattr(WorkerBackend, "run_op", _offload_forbidden)
 
         seed = _create_graph(execution_location="local")
         _add_manual_input(seed, SAMPLE_DATA, node_id=1)
@@ -393,7 +393,7 @@ class TestCloudCatalogCliRunE2E:
         target = resolve_for_namespace(schema_id)
         assert target.is_cloud is True
 
-        monkeypatch.setattr(fg, "_write_catalog_delta_remote", _offload_forbidden)
+        monkeypatch.setattr(WorkerBackend, "run_op", _offload_forbidden)
 
         seed = _create_graph(execution_location="local")
         _add_manual_input(seed, SAMPLE_DATA, node_id=1)

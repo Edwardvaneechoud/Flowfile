@@ -2328,7 +2328,7 @@ class TestCrossNamespaceResolution:
 
             captured: dict = {}
 
-            def fake_trigger(query, tables, max_rows, virtual_refs=None):
+            def fake_trigger(query, tables, max_rows, virtual_refs=None, *, worker_url):
                 captured["query"] = query
                 return {
                     "columns": [],
@@ -2505,7 +2505,7 @@ class TestCrossNamespaceResolution:
 
             captured: dict = {}
 
-            def fake_trigger(query, tables, max_rows, virtual_refs=None):
+            def fake_trigger(query, tables, max_rows, virtual_refs=None, *, worker_url):
                 captured["query"] = query
                 captured["tables"] = tables
                 return {
@@ -2703,7 +2703,7 @@ class TestCrossNamespaceResolution:
         with get_db_context() as db:
             self._seed_demo_market_delta(db)  # a queryable table so we reach the worker call
 
-            def fake_trigger(query, tables, max_rows, virtual_refs=None):
+            def fake_trigger(query, tables, max_rows, virtual_refs=None, *, worker_url):
                 return {
                     "columns": [],
                     "dtypes": [],

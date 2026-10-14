@@ -4,7 +4,11 @@ Executes a candidate custom node against bounded sample inputs in the worker
 (never in core), returning a per-output preview, buffered logs, and a typed
 error kind. Core ast-parses first so syntax errors never reach the worker;
 sample inputs come from the request or the node's ``example_inputs``; secrets
-resolve for real via the author's own/shared secrets.
+resolve for real via the author's own/shared secrets. The run is submitted with
+``trigger_custom_node_operation`` on the worker backend's ``url`` and followed
+through that backend (``status``, ``task_result``, ``cancel``); the task is
+cleared afterwards with ``clear_task_from_worker``, the helper the backend's
+``release`` uses, since the protocol has no call that clears a task by id.
 """
 
 import ast
@@ -16,14 +20,15 @@ import uuid
 from typing import Annotated, Any, Literal
 
 import polars as pl
-import requests
 from pydantic import BaseModel, Field, model_validator
 
 from flowfile_core.configs import logger
-from flowfile_core.configs.settings import WORKER_URL
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable
+from flowfile_core.flowfile.execution.protocol import JobHandle
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import CustomNodeExecuteInput
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-    _worker_session,
+    clear_task_from_worker,
     trigger_custom_node_operation,
 )
 from flowfile_core.flowfile.node_designer.codegen import CodegenError, generate_source
@@ -242,34 +247,35 @@ def _resolve_secrets(request: DryRunRequest, user_id: int | None) -> tuple[dict[
     return payload, None
 
 
-def _poll_worker(task_id: str, deadline: float) -> tuple[dict | None, DryRunResponse | None]:
-    """Poll ``/status/{task}`` until completion or the monotonic *deadline*.
+def _poll_worker(task_id: str, deadline: float) -> tuple[Any, DryRunResponse | None]:
+    """Follow the task through the worker backend's ``status`` until it ends or the monotonic *deadline* passes.
 
-    On deadline the task is cancelled and a ``timeout`` error is returned. A
-    connection error becomes a ``load`` error ("worker unavailable") — user code
-    is never run in core for dry runs.
+    Returns the result the task reported (``task_result``) once it is done. On deadline the task is cancelled and
+    a ``timeout`` error is returned. A worker that cannot be reached (``ComputeUnavailable``) becomes a ``load``
+    error ("worker unavailable") — user code is never run in core for dry runs; a status the worker cannot give
+    (the task is gone) becomes an ``execution`` error. Any other ``ComputeError`` (the worker failed core's
+    handshake on versions) propagates for the route to answer.
     """
+    worker = registry.backend(registry.WORKER_BACKEND_ID)
+    handle = JobHandle(worker.id, task_id)
     while True:
         if time.monotonic() >= deadline:
             _cancel(task_id)
             return None, _fail("timeout", "Dry run exceeded the time limit and was cancelled.")
         try:
-            resp = _worker_session.get(f"{WORKER_URL}/status/{task_id}", timeout=10)
-        except requests.RequestException as e:
+            job = worker.status(handle)
+            if job.state == "done":
+                return worker.task_result(handle), None
+        except ComputeUnavailable as e:
             return None, _fail("load", f"The compute worker is unavailable: {e}")
-        if resp.status_code == 404:
-            return None, _fail("execution", "The dry-run task disappeared from the worker before completing.")
-        if resp.status_code != 200:
-            return None, _fail("execution", f"Worker returned HTTP {resp.status_code}: {resp.text[:300]}")
-        status = resp.json()
-        state = status.get("status")
-        if state == "Completed":
-            return status, None
-        if state in ("Error", "Unknown Error"):
-            message = status.get("error_message") or "Unknown execution error"
-            error, tb = _split_traceback(message)
+        except ComputeError:
+            raise
+        except Exception as e:
+            return None, _fail("execution", f"The worker has no status for the dry-run task: {e}")
+        if job.state == "failed":
+            error, tb = _split_traceback(job.error or "Unknown execution error")
             return None, _fail("execution", error, traceback=tb)
-        if state == "Cancelled":
+        if job.state == "cancelled":
             return None, _fail("timeout", "Dry run was cancelled.")
         time.sleep(_POLL_INTERVAL)
 
@@ -283,17 +289,17 @@ def _split_traceback(message: str) -> tuple[str, str | None]:
 
 
 def _cancel(task_id: str) -> None:
+    """Cancel the task through the worker backend; best effort, a failure is only logged."""
+    worker = registry.backend(registry.WORKER_BACKEND_ID)
     try:
-        _worker_session.post(f"{WORKER_URL}/cancel_task/{task_id}", timeout=10)
-    except requests.RequestException:
-        logger.debug("Dry-run cancel for task %s failed (worker unreachable)", task_id)
+        worker.cancel(JobHandle(worker.id, task_id))
+    except Exception as e:
+        logger.debug("Dry-run cancel for task %s failed: %s", task_id, e)
 
 
 def _clear(task_id: str) -> None:
-    try:
-        _worker_session.delete(f"{WORKER_URL}/clear_task/{task_id}", timeout=10)
-    except requests.RequestException:
-        logger.debug("Dry-run clear for task %s failed (worker unreachable)", task_id)
+    """Clear the task and its output files from the worker; best effort, ``clear_task_from_worker`` logs a failure."""
+    clear_task_from_worker(task_id, worker_url=registry.worker_url())
 
 
 def _map_payload(payload: dict, output_names: list[str]) -> DryRunResponse:
@@ -384,18 +390,17 @@ def run_dry_run(request: DryRunRequest, user_id: int | None) -> DryRunResponse:
     )
 
     try:
-        start_status = trigger_custom_node_operation(execute_input)
+        start_status = trigger_custom_node_operation(execute_input, worker_url=registry.worker_url())
     except Exception as e:
         return _fail("load", f"The compute worker is unavailable: {e}")
 
     task_id = start_status.background_task_id
     deadline = time.monotonic() + request.timeout_seconds
     try:
-        status, err = _poll_worker(task_id, deadline)
+        raw, err = _poll_worker(task_id, deadline)
         if err is not None:
             return err
         try:
-            raw = status.get("results")
             payload = json.loads(raw) if isinstance(raw, str) else raw
         except (TypeError, ValueError) as e:
             return _fail("execution", f"Could not read the dry-run result payload: {e}")

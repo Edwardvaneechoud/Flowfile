@@ -55,43 +55,43 @@ def test_remove_null_rows_off_by_default():
 # Stage B - remove null columns
 
 
-def test_remove_null_columns_drops_all_null_column():
+def test_remove_null_columns_drops_all_null_column(context_backend):
     engine = _engine({"keep": ["x", "y"], "drop": [None, None]}, schema={"keep": pl.String, "drop": pl.String})
     result = _clean(engine, remove_null_columns=True)
     assert result.columns == ["keep"]
 
 
-def test_remove_null_columns_keeps_empty_string_column():
+def test_remove_null_columns_keeps_empty_string_column(context_backend):
     engine = _engine({"keep": ["", ""], "drop": [None, None]}, schema={"keep": pl.String, "drop": pl.String})
     result = _clean(engine, remove_null_columns=True)
     assert result.columns == ["keep"]
 
 
-def test_remove_null_columns_keeps_partially_null_column():
+def test_remove_null_columns_keeps_partially_null_column(context_backend):
     engine = _engine({"a": ["x", None]})
     result = _clean(engine, remove_null_columns=True, replace_nulls_with_blank=False)
     assert result.columns == ["a"]
 
 
-def test_remove_null_columns_drops_nothing_on_zero_record_frame():
+def test_remove_null_columns_drops_nothing_on_zero_record_frame(context_backend):
     engine = _engine({"a": [], "b": []}, schema={"a": pl.String, "b": pl.String})
     result = _clean(engine, remove_null_columns=True)
     assert result.columns == ["a", "b"]
 
 
-def test_remove_null_columns_drops_nothing_on_zero_height_lazy_frame():
+def test_remove_null_columns_drops_nothing_on_zero_height_lazy_frame(context_backend):
     engine = FlowDataEngine(pl.LazyFrame(schema={"a": pl.String, "b": pl.Int64}))
     result = _clean(engine, remove_null_columns=True)
     assert result.columns == ["a", "b"]
 
 
-def test_remove_null_columns_ignores_column_selection():
+def test_remove_null_columns_ignores_column_selection(context_backend):
     engine = _engine({"sel": ["x", "y"], "other": [None, None]}, schema={"sel": pl.String, "other": pl.String})
     result = _clean(engine, remove_null_columns=True, selection_mode="list", selected_columns=["sel"])
     assert result.columns == ["sel"]
 
 
-def test_remove_null_rows_and_columns_together():
+def test_remove_null_rows_and_columns_together(context_backend):
     engine = _engine(
         {"a": ["x", None, None], "b": [None, None, None], "c": [1, None, 2]},
         schema={"a": pl.String, "b": pl.String, "c": pl.Int64},

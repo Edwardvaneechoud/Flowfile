@@ -13,7 +13,7 @@ from pydantic import (
     model_serializer,
 )
 
-from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+from flowfile_core.flowfile.execution.registry import LOCAL_BACKEND_ID, default_backend_id
 from flowfile_core.flowfile.node_designer.state import ArtifactDecl
 from flowfile_core.flowfile.param_types import FlowParameter  # noqa: F401 - re-exported; historical home
 from flowfile_core.flowfile.utils import create_unique_id
@@ -85,15 +85,12 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
 
 
 def get_global_execution_location() -> ExecutionLocationsLiteral:
+    """The execution location a flow gets by default.
+
+    ``"local"`` when the default compute backend (``registry.default_backend_id()``) is core's own process, else
+    ``"remote"``.
     """
-    Calculates the default execution location based on the global settings
-    Returns
-    -------
-    ExecutionLocationsLiteral where the current
-    """
-    if OFFLOAD_TO_WORKER:
-        return "remote"
-    return "local"
+    return "local" if default_backend_id() == LOCAL_BACKEND_ID else "remote"
 
 
 def _get_custom_node_store():

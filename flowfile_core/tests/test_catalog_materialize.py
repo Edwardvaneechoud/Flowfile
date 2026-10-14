@@ -105,7 +105,7 @@ def fake_worker(monkeypatch) -> list[dict]:
     """Replace the worker trigger with a fake that records args and writes real IPC."""
     calls: list[dict] = []
 
-    def fake_trigger(table_id, plan_bytes, source_versions_hash, target="virtual_results"):
+    def fake_trigger(table_id, plan_bytes, source_versions_hash, target="virtual_results", *, worker_url):
         calls.append(
             {
                 "table_id": table_id,
