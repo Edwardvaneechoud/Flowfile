@@ -113,7 +113,7 @@ def test_every_v1_operation_route_is_among_the_operations(route_client, path):
 @pytest.mark.worker
 @both_routes
 @pytest.mark.parametrize("value", [None, "0", ""], ids=["unset", "0", "empty"])
-def test_without_local_files_the_worker_reads_and_writes_object_storage_and_https_only(
+def test_without_local_files_the_worker_reads_object_storage_and_urls_and_writes_object_storage_and_https(
     monkeypatch, route_client, path, value
 ):
     if value is None:
@@ -123,7 +123,8 @@ def test_without_local_files_the_worker_reads_and_writes_object_storage_and_http
 
     caps = declared(route_client, path)
 
-    assert caps.read_schemes == caps.write_schemes == {"s3", "az", "gs", "https"}
+    assert caps.read_schemes == {"s3", "az", "gs", "http", "https"}
+    assert caps.write_schemes == {"s3", "az", "gs", "https"}
 
 
 @pytest.mark.worker
@@ -135,7 +136,8 @@ def test_local_files_add_the_file_scheme_on_the_next_request(monkeypatch, route_
     monkeypatch.setenv("FLOWFILE_WORKER_LOCAL_FILES", "1")
     caps = declared(route_client, path)
 
-    assert caps.read_schemes == caps.write_schemes == {"file", "s3", "az", "gs", "https"}
+    assert caps.read_schemes == {"file", "s3", "az", "gs", "http", "https"}
+    assert caps.write_schemes == {"file", "s3", "az", "gs", "https"}
 
 
 @pytest.mark.worker
