@@ -37,7 +37,7 @@ from flowfile_core.schemas.schemas import GroupColor
 from flowfile_frame.callable_utils import _get_function_source, process_callable_args
 from flowfile_frame.cloud_storage.frame_helpers import add_write_ff_to_cloud_storage
 from flowfile_frame.config import logger
-from flowfile_frame.expr import Column, Expr, col, lit
+from flowfile_frame.expr import Column, Expr, _polars_argument, col, lit
 from flowfile_frame.flow_group import FlowGroup
 from flowfile_frame.group_frame import GroupByFrame
 from flowfile_frame.join import _create_join_mappings, _normalize_columns_to_list
@@ -212,22 +212,6 @@ def can_be_expr(param: inspect.Parameter) -> bool:
 
 def _contains_lambda_pattern(text: str) -> bool:
     return "<lambda> at" in text
-
-
-def _polars_argument(value: Any) -> Any:
-    """``value`` with every frame expression in it, at any depth, replaced by its Polars expression.
-
-    Raises ``TypeError`` for a selector or an expression without a Polars expression.
-    """
-    if isinstance(value, Expr) and value.expr is not None:
-        return value.expr
-    if isinstance(value, Expr | Selector):
-        raise TypeError("an argument has no Polars expression")
-    if isinstance(value, list | tuple):
-        return type(value)(_polars_argument(item) for item in value)
-    if isinstance(value, dict):
-        return {key: _polars_argument(item) for key, item in value.items()}
-    return value
 
 
 def _formula_parses(formula: str, params: dict[str, ParamValue] | None = None) -> bool:

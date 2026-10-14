@@ -80,6 +80,8 @@ def _get_alembic_config() -> Config:
     cfg = Config(str(base / "alembic.ini"))
     cfg.set_main_option("script_location", str(base / "alembic"))
     cfg.set_main_option("sqlalchemy.url", _storage_config.get_database_url().replace("%", "%%"))
+    # The process importing core owns its logging; alembic.ini's logging section is for the alembic CLI.
+    cfg.attributes["configure_logger"] = False
     return cfg
 
 

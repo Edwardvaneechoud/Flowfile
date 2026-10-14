@@ -2,6 +2,7 @@
 
 import codecs
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -27,6 +28,7 @@ def run_flow(
     Returns:
         Exit code (0 for success, 1 for failure)
     """
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     from flowfile_core.flowfile.execution import registry
 
     backend_id = backend or registry.LOCAL_BACKEND_ID

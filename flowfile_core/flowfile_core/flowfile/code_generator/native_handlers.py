@@ -17,6 +17,7 @@ import re
 import types
 
 from flowfile_core.flowfile.code_generator.base import ConverterMixinBase
+from flowfile_core.flowfile.code_generator.literals import python_literal
 from flowfile_core.flowfile.code_generator.param_codegen import _SENTINEL_RE
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import safe_eval_pl_type
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
@@ -365,13 +366,10 @@ class NativeHandlersMixin(ConverterMixinBase):
             if not raw.data or not any(raw.data[0]):
                 args.append(f"schema={schema}")
             else:
-                columns = []
-                for column, values in zip(raw.columns, raw.data, strict=False):
-                    literal = value_literal(list(values))
-                    if literal is None:
-                        reason = f"sample column {column.name!r} holds values with no literal form"
-                        return self._refuse(settings.node_id, "flow_input", reason)
-                    columns.append(f"{self._py_str(column.name)}: {literal}")
+                columns = [
+                    f"{self._py_str(column.name)}: {python_literal(list(values), self.imports)}"
+                    for column, values in zip(raw.columns, raw.data, strict=False)
+                ]
                 self.imports.add("import polars as pl")
                 args.append(f"sample=pl.DataFrame({{{', '.join(columns)}}}, schema={schema}, strict=False)")
         args.append(f"flow_graph={FLOW_VAR}")
