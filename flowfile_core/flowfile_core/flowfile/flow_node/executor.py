@@ -27,8 +27,9 @@ if TYPE_CHECKING:
 
 IN_CORE_NODE_TYPES = frozenset({"output", "api_response", "flow_output", "run_flow"})
 """Node types whose result is already computed when their function returns: a sink's result is the input it
-wrote, a ``run_flow`` node's the output of the child flow it ran. They are submitted never materialised, never
-wide and without an inline preview, so no backend computes or samples their rows during the run."""
+wrote, a ``run_flow`` node's the output of the child flow it ran. They are submitted never wide and without an inline
+preview, and materialised only when they read an input that crossed from another backend, so otherwise no backend
+computes or samples their rows during the run."""
 
 
 def is_narrow_transform(node: FlowNode) -> bool:
@@ -45,7 +46,8 @@ def hints_for(node: FlowNode, context: ExecutionContext, performance_mode: bool)
     """The hints ``node`` submits its plan with; the backend's materialisation policy reads them.
 
     - ``must_materialise``: the node caches its results (``cache_results``) and is not one of
-      ``IN_CORE_NODE_TYPES``.
+      ``IN_CORE_NODE_TYPES``; or it reads an input that crossed from another backend (``_boundary_inputs``), whatever
+      its type, so no result refers to the exchange store's prefix once the run removes it.
     - ``wide``: the node is not a narrow transform (``is_narrow_transform``) and not one of ``IN_CORE_NODE_TYPES``.
     - ``fanout``: how many distinct downstream nodes read the result. No backend's policy reads it yet.
     - ``preview_rows``: the context's ``preview_rows``, or ``DEFAULT_PREVIEW_ROWS`` when the context keeps none
@@ -63,7 +65,7 @@ def hints_for(node: FlowNode, context: ExecutionContext, performance_mode: bool)
     if not in_core and (caches or not performance_mode):
         preview_rows = context.preview_rows if context.preview_rows is not None else DEFAULT_PREVIEW_ROWS
     return SubmitHints(
-        must_materialise=caches and not in_core,
+        must_materialise=(caches and not in_core) or bool(node._boundary_inputs),
         wide=not in_core and not is_narrow_transform(node),
         fanout=len({consumer.node_id for consumer in node.leads_to_nodes}),
         preview_rows=preview_rows,

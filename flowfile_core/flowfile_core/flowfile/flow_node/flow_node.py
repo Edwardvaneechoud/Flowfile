@@ -241,6 +241,8 @@ class FlowNode:
     # at assembly — per-handle so a two-output gate feeding the union is
     # judged per edge
     _skipped_input_ids_this_run: frozenset
+    # set per run by the graph: (source id, source handle) -> the BoundaryEdge an input crosses from another backend by
+    _boundary_inputs: dict[tuple[int, str], Any]
 
     user_provided_schema_callback: Callable | None
     _schema_callback: SingleExecutionFuture | None
@@ -339,6 +341,7 @@ class FlowNode:
         self._state_needs_reset = False
         self._on_flow_complete = None
         self._skipped_input_ids_this_run = frozenset()
+        self._boundary_inputs = {}
 
         self.user_provided_schema_callback = None
         self._schema_callback = None
@@ -1384,7 +1387,11 @@ class FlowNode:
                                 # locks in per-input slot order used to deadlock a parallel stage
                                 # when two sibling nodes consumed the same two upstreams in
                                 # opposite left/right order (AB-BA).
-                                input_result = self._resolve_input_result_for_handle(v, src_handle)
+                                edge = self._boundary_inputs.get((v.node_id, src_handle))
+                                if edge is not None:
+                                    input_result = edge.cross()
+                                else:
+                                    input_result = self._resolve_input_result_for_handle(v, src_handle)
                                 if input_result is not None:
                                     # De-alias: hand the node function a private view. Some node
                                     # functions mutate their input (df.lazy = True in the writers,
@@ -1817,10 +1824,13 @@ class FlowNode:
             self._submit_in_flight = None
 
     def _input_refs(self, backend_id: str) -> list[ResultRef]:
-        """The results this node's upstream nodes hold on backend ``backend_id``; one holding none is left out."""
+        """The results this node's upstream nodes hold on backend ``backend_id``; one holding none is left out.
+
+        An input that crossed to this node from another backend (``_boundary_inputs``) counts by its import.
+        """
         refs: dict[str, ResultRef] = {}
-        for node in self.all_inputs:
-            ref = node.results.result_ref
+        held = [node.results.result_ref for node in self.all_inputs]
+        for ref in [*held, *(edge.ref for edge in self._boundary_inputs.values())]:
             if ref is not None and ref.backend_id == backend_id:
                 refs[ref.result_id] = ref
         return list(refs.values())
