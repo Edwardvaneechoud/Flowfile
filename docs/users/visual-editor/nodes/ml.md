@@ -141,6 +141,8 @@ The same actions are `FlowFrame` methods, wired identically: `train_model` retur
 --8<-- "docs/examples/ml_pipeline.py:example"
 ```
 
+`train_model` returns the training rows passed through, not the model itself. `read_model()` on that frame gives the fitted model: its `model_type`, `target`, `features` and `params`, plus `coefficients` (feature to value) and `intercept` for linear and logistic models. `to_dict()` gives the stored model as is, including the k and training rows of a KNN model.
+
 `random_split` takes a mapping of split name to percentage, which must sum to 100. `evaluate_model`'s first argument is the actual column; the prediction column and task type are keyword-only. The catalog path works too — pass `model_name=` (and optionally `version=`) to `apply_model` instead of `upstream=`.
 
 ---
