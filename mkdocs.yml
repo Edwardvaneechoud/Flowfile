@@ -222,6 +222,7 @@ nav:
     - Desktop App: users/deployment/desktop.md
     - Python Package: users/deployment/python.md
     - Docker: users/deployment/docker.md
+    - Remote Workers: users/deployment/remote-worker.md
     - Users, Groups & Sharing: users/deployment/sharing.md
     - Headless Runs & CLI: users/deployment/cli.md
     - Privacy & Telemetry: users/telemetry.md
