@@ -61,19 +61,28 @@ _ON_KERNEL = NodeRequirements(operation=OperationKind.file_write, write_schemes=
 
 
 def requirements_for(
-    template: NodeTemplate, settings: Any, *, catalog_target: CatalogStorageTarget | None = None
+    template: NodeTemplate,
+    settings: Any,
+    *,
+    catalog_target: CatalogStorageTarget | None = None,
+    artifact_scheme: str | None = None,
 ) -> NodeRequirements:
     """What the node with *template* and *settings* needs from the backend that runs it.
 
     A caller passes a ``FlowNode``'s ``node_template`` and ``setting_input``. A catalog reader's or writer's
     storage is its namespace's, which the caller resolves (``catalog.storage_backend.locate_for_namespace``) and
-    passes as *catalog_target*; without one such a node claims no scheme and no connection. A ``NodePromise``,
-    a node not set up yet, answers only what its template says: whether it runs on a kernel.
+    passes as *catalog_target*; without one such a node claims no scheme and no connection. A Train Model node runs
+    ``ml_train`` and an Apply Model node ``ml_apply``; the one that publishes its model to the catalog writes the
+    artifact store and the one that takes its model from the catalog reads it, by the scheme the caller resolves from
+    the store and passes as *artifact_scheme*, and neither claims a scheme otherwise or without one. A
+    ``NodePromise``, a node not set up yet, answers only what its template says: whether it runs on a kernel.
 
     Args:
         template: The node's template.
         settings: The node's settings model, of the class its builder takes.
         catalog_target: Where a catalog node's table data lives, for a catalog reader or writer.
+        artifact_scheme: The scheme the artifact store's bytes travel by, for a Train or Apply Model node: ``file``
+            for the filesystem store, ``https`` for the S3 store's presigned URLs.
     """
     if isinstance(settings, input_schema.NodePromise):
         return NodeRequirements(needs_kernel=_kernel_by_template(template))
@@ -83,6 +92,16 @@ def requirements_for(
         return _catalog_storage(catalog_target, write=False)
     if template.item == "catalog_writer":
         return _catalog_writer(settings, catalog_target)
+    if template.item == "train_model":
+        publishes = settings.train_input.publish_to_catalog and artifact_scheme is not None
+        return NodeRequirements(
+            operation=OperationKind.ml_train, write_schemes=frozenset({artifact_scheme}) if publishes else frozenset()
+        )
+    if template.item == "apply_model":
+        fetches = settings.apply_input.source == "catalog" and artifact_scheme is not None
+        return NodeRequirements(
+            operation=OperationKind.ml_apply, read_schemes=frozenset({artifact_scheme}) if fetches else frozenset()
+        )
     fixed = _BY_TEMPLATE.get(template.item)
     if fixed is not None:
         return fixed
@@ -252,8 +271,6 @@ _BY_TEMPLATE: dict[str, NodeRequirements] = {
     "fuzzy_match": NodeRequirements(operation=OperationKind.fuzzy_join, plugins=frozenset({"polars_simed"})),
     "random_split": NodeRequirements(operation=OperationKind.random_split),
     "rest_api_reader": NodeRequirements(operation=OperationKind.rest_api_read),
-    "train_model": NodeRequirements(operation=OperationKind.ml_train, write_schemes=_FILE),
-    "apply_model": NodeRequirements(operation=OperationKind.ml_apply, read_schemes=_FILE),
     "graph_solver": NodeRequirements(plugins=_POLARS_GROUPER),
     "explode_hierarchy": NodeRequirements(plugins=_POLARS_GROUPER),
     "formula": NodeRequirements(plugins=_POLARS_DS),

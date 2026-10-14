@@ -1,11 +1,12 @@
 """A run whose node needs what its backend does not declare is refused before any node starts.
 
-With the compute protocol flag on, ``run_graph`` places the nodes it will run: each on the run's backend, the model
-nodes on the worker their builders run them on, and compares what each needs with the ``Capabilities`` that backend
-declares. A refused node is a failed row on the run report naming the backend and the reason; no node runs and the
-backend is sent no work. A backend that cannot be asked for its capabilities is not in the map placement is given: its
-nodes are not refused and meet its typed error when they run. The backends here are core's own under another id,
-declaring what each test hands them, so no worker is needed. With the flag off nothing is placed.
+With the compute protocol flag on, ``run_graph`` places the nodes it will run, each on the run's backend, the model
+nodes included, and compares what each needs with the ``Capabilities`` that backend declares; a model that crosses the
+artifact store needs the store's scheme. A refused node is a failed row on the run report naming the backend and the
+reason; no node runs and the backend is sent no work. A backend that cannot be asked for its capabilities is not in
+the map placement is given: its nodes are not refused and meet its typed error when they run. The backends here are
+core's own under another id, declaring what each test hands them, so no worker is needed. With the flag off nothing
+is placed.
 
 A row's ``compute_error`` says what kind of failure it is: ``"Refusal"`` on a refused row, the class name of the typed
 compute error that failed a node on that node's row, in both flag states, and ``None`` for any other failure.
@@ -16,11 +17,12 @@ import threading
 import polars as pl
 import pytest
 
+from flowfile_core.artifacts import reset_storage_backend
 from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, VersionMismatch
-from flowfile_core.flowfile.execution.placement import Placement, SingleBackendPolicy, place
+from flowfile_core.flowfile.execution.placement import Placement, Refusal, SingleBackendPolicy, place
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema, schemas
@@ -32,7 +34,7 @@ LOCAL_DISK = 'namespace "TestCat.TestSch" is on local disk; remote execution nee
 
 
 def everything() -> Capabilities:
-    """What core's own backend declares: its thirteen operations, ``file`` and object storage, every plugin."""
+    """What core's own backend declares: its fifteen operations, ``file`` and object storage, every plugin."""
     return LocalBackend().capabilities()
 
 
@@ -169,20 +171,32 @@ def fuzzy_flow(flow_id: int) -> FlowGraph:
     return graph
 
 
-def train_flow(flow_id: int) -> FlowGraph:
-    """A local flow: manual input 1 → train model 2, which its builder runs on the worker."""
-    graph = make_graph(flow_id, execution_location="local")
+def model_flow(
+    flow_id: int, execution_location: str = "local", *, publish: str | None = None, catalog: str | None = None
+) -> FlowGraph:
+    """Manual input 1 → Train Model 2 → Apply Model 3, scoring with node 2's model into ``pred``.
+
+    With ``publish`` Train Model publishes its model under that name; with ``catalog`` Apply Model scores with the
+    catalog model of that name instead.
+    """
+    graph = make_graph(flow_id, execution_location=execution_location)
     add_manual_input(graph, 1, [{"x": float(i), "y": 2.0 * i} for i in range(10)])
     add_promise(graph, 2, "train_model")
+    train_input = input_schema.TrainModelSettings(target_column="y", feature_columns=["x"])
+    if publish is not None:
+        train_input = train_input.model_copy(update={"publish_to_catalog": True, "model_name": publish})
     graph.add_train_model(
-        input_schema.NodeTrainModel(
-            flow_id=flow_id,
-            node_id=2,
-            depending_on_id=1,
-            train_input=input_schema.TrainModelSettings(target_column="y", feature_columns=["x"]),
-        )
+        input_schema.NodeTrainModel(flow_id=flow_id, node_id=2, depending_on_id=1, train_input=train_input)
     )
     connect(graph, 1, 2)
+    add_promise(graph, 3, "apply_model")
+    apply_input = input_schema.ApplyModelSettings(source="upstream", upstream_node_id=2, output_column="pred")
+    if catalog is not None:
+        apply_input = apply_input.model_copy(update={"source": "catalog", "model_name": catalog})
+    graph.add_apply_model(
+        input_schema.NodeApplyModel(flow_id=flow_id, node_id=3, depending_on_id=2, apply_input=apply_input)
+    )
+    connect(graph, 2, 3)
     return graph
 
 
@@ -290,11 +304,11 @@ def test_with_the_flag_off_nothing_is_placed(protocol_off, declare):
 
 
 def test_a_backend_missing_from_the_map_leaves_its_nodes_unplaced_and_unrefused():
-    graph = train_flow(8408)
+    graph = model_flow(8408)
 
-    placement = place(graph, {registry.LOCAL_BACKEND_ID: everything()}, SingleBackendPolicy(registry.LOCAL_BACKEND_ID))
+    placement = place(graph, {registry.LOCAL_BACKEND_ID: everything()}, SingleBackendPolicy(registry.WORKER_BACKEND_ID))
 
-    assert placement == Placement(assignment={1: registry.LOCAL_BACKEND_ID}, boundaries=[], refusals=[])
+    assert placement == Placement(assignment={}, boundaries=[], refusals=[])
 
 
 def test_the_nodes_of_a_backend_that_cannot_be_asked_meet_its_error_when_they_run(protocol_on, declare):
@@ -373,29 +387,74 @@ def test_a_node_the_run_skips_is_not_placed(protocol_on, declare):
     assert run_info.number_of_nodes == 3
 
 
-def test_the_model_nodes_are_placed_on_the_worker_their_builder_runs_them_on():
-    graph = train_flow(8410)
+def test_the_model_nodes_are_placed_on_the_run_s_backend():
+    graph = model_flow(8410)
     worker = everything().model_copy(update={"operations": frozenset(kind.value for kind in OperationKind)})
     backends = {registry.LOCAL_BACKEND_ID: everything(), registry.WORKER_BACKEND_ID: worker}
 
     placement = place(graph, backends, SingleBackendPolicy(registry.LOCAL_BACKEND_ID))
 
     assert placement == Placement(
-        assignment={1: registry.LOCAL_BACKEND_ID, 2: registry.WORKER_BACKEND_ID}, boundaries=[], refusals=[]
+        assignment={1: registry.LOCAL_BACKEND_ID, 2: registry.LOCAL_BACKEND_ID, 3: registry.LOCAL_BACKEND_ID},
+        boundaries=[],
+        refusals=[],
     )
 
 
-def test_a_local_flow_with_a_model_node_is_refused_on_a_worker_off_cores_host(protocol_on, declare):
-    worker = without(everything(), scheme="file").model_copy(
-        update={"operations": frozenset(kind.value for kind in OperationKind)}
-    )
-    backend = declare(worker, registry.WORKER_BACKEND_ID)
-    graph = train_flow(8411)
+def test_a_model_published_to_or_fetched_from_a_filesystem_store_is_refused_off_cores_host(protocol_on, declare):
+    backend = declare(without(everything(), scheme="file"))
+    graph = model_flow(8411, "remote", publish="m", catalog="m")
 
     run_info = graph.run_graph()
 
     assert_refused_before_any_node(
-        graph, run_info, backend, {2: ["it writes storage this backend does not write: file"]}
+        graph,
+        run_info,
+        backend,
+        {
+            2: ["it writes storage this backend does not write: file"],
+            3: ["it reads storage this backend does not read: file"],
+        },
     )
-    assert "operation" not in run_info.node_step_result[0].error
+    assert not any("operation" in result.error for result in run_info.node_step_result)
     assert backend.asked == 1
+
+
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+def test_a_flow_scoped_model_runs_on_a_backend_off_cores_host(declare, monkeypatch, flag):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    backend = declare(without(everything(), scheme="file"))
+    graph = model_flow(8419 if flag else 8418, "remote")
+
+    run_info = graph.run_graph()
+
+    assert run_info.success is True, [result.error for result in run_info.node_step_result]
+    assert {"run_op ml_train", "run_op ml_apply"} <= set(backend.work)
+    assert backend.asked == (1 if flag else 0)
+    scored = graph.get_node(3).get_resulting_data().collect()
+    assert scored["pred"].to_list() == pytest.approx(scored["y"].to_list())
+    backend.release(graph.get_node(2).results.model_ref)
+
+
+@pytest.fixture
+def s3_artifact_store(monkeypatch):
+    """The S3 artifact store, made for the test and dropped after it."""
+    monkeypatch.setenv("FLOWFILE_ARTIFACT_STORAGE", "s3")
+    monkeypatch.setenv("FLOWFILE_S3_BUCKET", "models")
+    reset_storage_backend()
+    yield
+    reset_storage_backend()
+
+
+def test_an_s3_artifact_store_needs_https_where_a_model_crosses_it(s3_artifact_store):
+    graph = model_flow(8420, "remote", publish="m", catalog="m")
+    policy = SingleBackendPolicy(BACKEND_ID)
+
+    without_https = place(graph, {BACKEND_ID: without(everything(), scheme="https")}, policy)
+    without_file = place(graph, {BACKEND_ID: without(everything(), scheme="file")}, policy)
+
+    assert without_https.refusals == [
+        Refusal(2, BACKEND_ID, "it writes storage this backend does not write: https"),
+        Refusal(3, BACKEND_ID, "it reads storage this backend does not read: https"),
+    ]
+    assert without_file.refusals == []

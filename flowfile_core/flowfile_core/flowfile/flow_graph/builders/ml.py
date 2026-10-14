@@ -6,6 +6,7 @@ from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.execution.errors import ResultMissing
 from flowfile_core.flowfile.execution.payloads import MlApplyPayload, MlTrainPayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
@@ -33,16 +34,16 @@ class MlBuildersMixin(GraphMixinBase):
     def add_train_model(self, train_settings: input_schema.NodeTrainModel) -> "FlowGraph":
         """Adds a Train Model node.
 
-        Fits a model with the ``ml_train`` operation on the worker backend,
-        whatever the flow's execution location (core's own backend fits no
-        models), and passes the input data through unchanged so downstream
-        nodes can keep transforming. The backend holds the fitted model as a
-        blob, which the node keeps as ``results.model_ref`` for an Apply Model
-        node to score with by reference; a refit under another id releases the
-        model it replaces. With ``publish_to_catalog`` the held model is
-        published to the global catalog with ``publish_result``, which has the
-        backend copy it to the artifact store; the flow must be registered and
-        the namespace writable, both checked before the fit.
+        Fits a model with the ``ml_train`` operation on the backend the flow
+        runs on (core's own process for a local flow), and passes the input
+        data through unchanged so downstream nodes can keep transforming. The
+        backend holds the fitted model as a blob, which the node keeps as
+        ``results.model_ref`` for an Apply Model node to score with by
+        reference; a refit under another id releases the model it replaces,
+        on the backend that holds it. With ``publish_to_catalog`` the held
+        model is published to the global catalog with ``publish_result``,
+        which has the backend copy it to the artifact store; the flow must be
+        registered and the namespace writable, both checked before the fit.
 
         Args:
             train_settings: Settings (model name, target/features, model_type, params).
@@ -131,14 +132,14 @@ class MlBuildersMixin(GraphMixinBase):
                 node_id=train_settings.node_id,
                 job_id=node.hash,
             )
-            worker = registry.backend(registry.WORKER_BACKEND_ID)
-            trained = node.run_op(worker, OperationKind.ml_train, op_payload(train), job_id=train.job_id)
+            backend = current_context(self).backend
+            trained = node.run_op(backend, OperationKind.ml_train, op_payload(train), job_id=train.job_id)
             result = trained.metadata
             model = trained.refs.get("model")
             if model is None or "sha256" not in result or "size_bytes" not in result:
                 raise RuntimeError(
-                    f"Worker did not return the model with its sha256/size_bytes payload, got the outputs "
-                    f"{sorted(trained.refs)} and {result!r}"
+                    f"The {backend.id!r} backend did not return the model with its sha256/size_bytes payload, got "
+                    f"the outputs {sorted(trained.refs)} and {result!r}"
                 )
             replaced = node.results.model_ref
             same = replaced is None or (replaced.backend_id, replaced.result_id) == (model.backend_id, model.result_id)
@@ -148,7 +149,7 @@ class MlBuildersMixin(GraphMixinBase):
 
             if prepare_request is not None:
                 published = publish_result(
-                    worker,
+                    backend,
                     model,
                     prepare_request,
                     owner_id=owner_id,
@@ -200,14 +201,16 @@ class MlBuildersMixin(GraphMixinBase):
     def add_apply_model(self, apply_settings: input_schema.NodeApplyModel) -> "FlowGraph":
         """Adds an Apply Model node.
 
-        Scores the input data with the ``ml_apply`` operation on the worker
-        backend, whatever the flow's execution location, returning a
+        Scores the input data with the ``ml_apply`` operation on the backend
+        the flow runs on (core's own process for a local flow), returning a
         LazyFrame with one extra prediction column. The model is sent by
         reference: the one the upstream Train Model node holds, or a catalog
-        artifact fetched onto the worker with ``fetch_artifact`` for this call
-        and released after it. A model the upstream node fitted that is no longer
-        held fails the node, asking for that Train Model node to run again.
-        The scored rows stay on the worker as the node's result.
+        artifact fetched onto that backend with ``fetch_artifact`` for this
+        call and released after it. A model the upstream node fitted that is
+        no longer held fails the node, asking for that Train Model node to run
+        again. The scored rows are the node's result where they were scored: a
+        stored result stays held, and a deferred one is released once the node
+        holds its plan.
 
         Args:
             apply_settings: Settings (model_name, optional version, output_column).
@@ -223,7 +226,7 @@ class MlBuildersMixin(GraphMixinBase):
             if not settings.output_column:
                 raise ValueError("Apply Model requires an 'output_column'.")
 
-            worker = registry.backend(registry.WORKER_BACKEND_ID)
+            backend = current_context(self).backend
             fetched = None
             if settings.source == "upstream":
                 if settings.upstream_node_id is None:
@@ -252,7 +255,7 @@ class MlBuildersMixin(GraphMixinBase):
                         CatalogService(SQLAlchemyCatalogRepository(db)), settings
                     )
                 model = fetched = fetch_artifact(
-                    worker, settings.model_name, settings.model_version, effective_namespace_id
+                    backend, settings.model_name, settings.model_version, effective_namespace_id
                 )
                 version = "latest" if settings.model_version is None else f"v{settings.model_version}"
                 origin_label = f"catalog '{settings.model_name}' ({version})"
@@ -267,7 +270,8 @@ class MlBuildersMixin(GraphMixinBase):
                 job_id=node.hash,
             )
             try:
-                ref = node.run_op(worker, OperationKind.ml_apply, op_payload(apply), job_id=apply.job_id).refs["result"]
+                applied = node.run_op(backend, OperationKind.ml_apply, op_payload(apply), job_id=apply.job_id)
+                ref = applied.refs["result"]
             except ResultMissing as e:
                 if fetched is not None:
                     raise
@@ -277,9 +281,12 @@ class MlBuildersMixin(GraphMixinBase):
                 ) from e
             finally:
                 if fetched is not None:
-                    worker.release(fetched)
+                    backend.release(fetched)
             self.flow_logger.info(f"Apply Model: scored using {origin_label} -> column '{settings.output_column}'")
-            return FlowDataEngine(worker.plan_for(ref), schema=ref.schema, number_of_records=ref.row_count)
+            scored = FlowDataEngine(backend.plan_for(ref), schema=ref.schema, number_of_records=ref.row_count)
+            if ref.state == "deferred":
+                backend.release(ref)
+            return scored
 
         def schema_callback():
             input_node: FlowNode = self.get_node(apply_settings.node_id).node_inputs.main_inputs[0]

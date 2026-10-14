@@ -3,7 +3,9 @@
 ``place`` compares what each node needs from its compute (``flow_node.requirements.requirements_for``) with what the
 backend the policy assigns it declares (``Capabilities``): the operation the node runs there, the schemes it reads and
 writes, the plugins its work loads and, for a node on a notebook kernel, ``file`` among the backend's write schemes,
-because the kernel shared volume is a local-disk location on core's host. A node whose backend falls short is a
+because the kernel shared volume is a local-disk location on core's host. A Train Model node that publishes its model
+and an Apply Model node that takes one from the catalog also need the scheme the artifact store's bytes travel by:
+``file`` for the filesystem store, ``https`` for the S3 store's presigned URLs. A node whose backend falls short is a
 ``Refusal`` with the reasons in words. Stored connections are not compared: every backend resolves one with the master
 key it holds.
 
@@ -31,13 +33,10 @@ if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 
 _PINNED_BACKENDS: dict[str, str] = {
-    "train_model": registry.WORKER_BACKEND_ID,
-    "apply_model": registry.WORKER_BACKEND_ID,
     "google_analytics_reader": registry.WORKER_BACKEND_ID,
 }
-"""Node type -> the backend its builder runs it on whatever the flow's: the model nodes (``builders/ml.py``) and the
-Google Analytics reader (``builders/connectors.py``) run on the worker, since core's backend fits no models and reads no
-Google Analytics."""
+"""Node type -> the backend its builder runs it on whatever the flow's: the Google Analytics reader
+(``builders/connectors.py``) runs on the worker, since core's backend reads no Google Analytics."""
 
 
 @dataclass(frozen=True)
@@ -95,9 +94,11 @@ def place(
 
     ``backends`` holds the capabilities in hand of the backends the policy names for them. A node whose backend is not
     among them (one that could not be asked) is neither assigned nor refused: reaching a backend is the handshake's
-    concern, and the node meets that backend's typed error when it runs. Nothing is asked of a backend; the one lookup
-    is where a catalog reader's or writer's namespace keeps its tables (``locate_for_namespace``, which reads the
-    namespace row and no credential).
+    concern, and the node meets that backend's typed error when it runs. Nothing is asked of a backend; the two lookups
+    are where a catalog reader's or writer's namespace keeps its tables (``locate_for_namespace``, which reads the
+    namespace row and no credential) and, for a Train or Apply Model node, the kind of the artifact store
+    (``artifacts.get_storage_backend``, whose only side effect is making the store the first time: the filesystem store
+    makes its two folders, the S3 store a client).
     """
     assignment: dict[int, str] = {}
     refusals: list[Refusal] = []
@@ -108,7 +109,9 @@ def place(
             continue
         assignment[node.node_id] = backend_id
         target, namespace = _catalog_target(node)
-        requirements = requirements_for(node.node_template, node.setting_input, catalog_target=target)
+        requirements = requirements_for(
+            node.node_template, node.setting_input, catalog_target=target, artifact_scheme=_artifact_scheme(node)
+        )
         reasons = _unmet(requirements, capabilities, namespace)
         if reasons:
             refusals.append(Refusal(node_id=node.node_id, backend_id=backend_id, reason="; ".join(reasons)))
@@ -144,6 +147,26 @@ def _unmet(requirements: NodeRequirements, capabilities: Capabilities, namespace
             "where this backend does not write"
         )
     return reasons
+
+
+def _artifact_scheme(node: FlowNode) -> str | None:
+    """The scheme a Train or Apply Model node moves the artifact store's bytes by; ``None`` for every other node.
+
+    ``https`` for the S3 store, whose upload targets and download sources are presigned URLs, else ``file`` for the
+    filesystem store. A store that cannot be made (an S3 store without a bucket) answers ``None``, so the node fails
+    when it runs, as it would unplaced.
+    """
+    if node.node_type not in ("train_model", "apply_model"):
+        return None
+    # Function-local, as the model builders import it: only a model node needs the artifact store.
+    from flowfile_core.artifacts import get_storage_backend
+    from shared.artifact_storage import S3Storage
+
+    try:
+        store = get_storage_backend()
+    except ValueError:
+        return None
+    return "https" if isinstance(store, S3Storage) else "file"
 
 
 def _catalog_target(node: FlowNode) -> tuple[CatalogStorageTarget | None, str | None]:
