@@ -200,7 +200,10 @@ poetry run pytest tests/cloud_e2e -m cloud_e2e
 FLOWFILE_COMPUTE_PROTOCOL=1 poetry run pytest tests/cloud_e2e -m cloud_e2e
 
 # Core and a worker on storage dirs of their own (no Docker): with the protocol flag on, core opens no file the worker wrote
-poetry run pytest tests/remote_worker
+poetry run pytest tests/remote_worker -m "not docker_integration"
+
+# Core and a worker in containers that share no volume (docker-compose.remote-worker.yml): database read to catalog write
+poetry run pytest tests/remote_worker -m docker_integration
 ```
 
 **Markers** (registered in `pyproject.toml` `[tool.pytest.ini_options]`):
@@ -362,6 +365,7 @@ npm run lint          # eslint --fix ./src/**/*.{ts,vue} (renderer TS/Vue only)
 | `e2e-tests.yml` | Push/PR to `main` (`flowfile_frontend/**`, `flowfile_core/**`, `flowfile_worker/**`, `shared/**`, `test_utils/s3/**`) | Build frontend, start and seed MinIO, start core + worker from empty working dirs with a MinIO-only AWS profile (`AWS_ENDPOINT_URL` exported, so nothing reaches AWS), run Playwright web E2E incl. `cloud-storage-flow.spec.ts`; fails if a server wrote into its working dir |
 | `test-docker-auth.yml` | Push/PR to `main` (auth code + core Dockerfile) | Docker-based auth E2E tests |
 | `test-docker-kernel-e2e.yml` | Push/PR to `main` (kernel_runtime, kernel code, Dockerfiles, compose) | Docker kernel E2E tests |
+| `test-remote-worker.yml` | Push/PR to `main` (no path filter) | Builds core and worker and runs a flow on a worker that shares no volume with core (`docker-compose.remote-worker.yml`) |
 | `test-kernel-integration.yml` | Push/PR to `main` (kernel_runtime, kernel/artifacts code + tests) | Kernel integration tests |
 | `test-notebook-kernel.yml` | Push/PR to `main` (`flowfile_frame/**`, notebook + kernel code and tests, `kernel_runtime/**`, `shared/**`, the lock) | Builds `flowfile-kernel-lite:local` + `flowfile-kernel-notebook:local` from the checkout's wheel and runs `tests/notebook/test_kernel_notebook_docker.py` (`FLOWFILE_REQUIRE_NOTEBOOK_KERNEL` makes a skip a failure) |
 | `test-kafka-integration.yml` | Push/PR to `main` (kafka code + tests) | Kafka integration tests |
@@ -459,6 +463,7 @@ environment in local/desktop runs.
 - `flowfile_frontend/src/renderer/app/App.vue` - Vue root component
 - `Makefile` - Build/test orchestration (all `make` targets)
 - `docker-compose.yml` - Full-stack service definitions (core 63578, worker 63579, frontend 8080)
+- `docker-compose.remote-worker.yml` - Core, a worker, Postgres and MinIO with no shared volume, for `tests/remote_worker/test_zero_volumes.py`
 - `CONTRIBUTING.md` - Contributor guide (dev setup, style, tests, PR process)
 - `docs/community.md` - Community hub (Discussions, Issues, release feedback)
 
