@@ -19,9 +19,9 @@ A typical ML flow chains five nodes end to end — here, a customer-churn classi
 ![A customer-churn classification flow on the canvas: Read → Random Split (train / test) → Train Model and Wait For → Apply Model → Evaluate Model, wired end-to-end.](../../../assets/images/guides/ml/ml-pipeline-flow.png){ .ff-wide }
 
 - **Random Split** carves the input into a `train` and a `test` slice.
-- **Train Model** fits an algorithm on the `train` slice and keeps the fitted model with its result, on the worker that fitted it.
-- **[Wait For](combine.md#wait-for)** lets the `test` slice through unchanged but blocks until the trainer has finished writing. It is a general-purpose synchronization action, documented with the other [Combine Operations](combine.md).
-- **Apply Model** reads the model the upstream Train Model wrote and adds a prediction column to the `test` slice.
+- **Train Model** fits an algorithm on the `train` slice and keeps the fitted model with its result, where the flow runs.
+- **[Wait For](combine.md#wait-for)** lets the `test` slice through unchanged but blocks until the trainer has fitted its model. It is a general-purpose synchronization action, documented with the other [Combine Operations](combine.md).
+- **Apply Model** takes the model the upstream Train Model holds and adds a prediction column to the `test` slice.
 - **Evaluate Model** compares the actual and predicted columns and emits a `(metric, value)` table.
 
 !!! tip "Skipping Wait For"
@@ -65,7 +65,7 @@ Fits a model on the input rows and stores the artifact for downstream use. The d
 | `logistic_regression` | classification | `Int64` | Binary classifier. The target column must contain `0`/`1` integer labels. |
 | `knn_classifier` | classification | `Int64` | Binary KNN with kd-tree lookup. Stores the training set in the artifact — fine for demos, heavy for large data. |
 
-Hyperparameters are validated up front, so an invalid combination fails on the Train Model node rather than later inside the worker. The Train Model node keeps the fitted model with its result on the worker that fitted it, and an Apply Model further down the same flow uses that model by reference, without publishing. When that model is no longer held, Apply Model asks for the Train Model node to run again. Publishing is opt-in: turn it on to reuse the model from another flow or to pin a specific version.
+Hyperparameters are validated up front, so an invalid combination fails on the Train Model node before the fit starts. The model is fitted and held where the flow runs, set by its [execution location](../building-flows.md#flow-settings): on the worker for a Remote flow, in the core process for a Local one. An Apply Model further down the same flow uses that model by reference, without publishing. An unpublished model is an intermediate result, like the node's data: running the Train Model node again replaces it, and when it is no longer held (after the worker restarts, for example) Apply Model asks for the Train Model node to run again. Publishing is opt-in: turn it on to reuse the model from another flow or to pin a specific version.
 
 ## ![Apply Model](../../../assets/images/nodes/apply_model.svg){ width="44" height="44" } Apply Model
 
