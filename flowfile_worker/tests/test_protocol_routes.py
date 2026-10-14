@@ -276,6 +276,30 @@ def test_no_sample_comes_back_without_preview_rows(held, must_materialise):
     assert result.sample is None
 
 
+def test_a_deferred_submit_without_a_preview_runs_no_child(held, monkeypatch):
+    result_id = held()
+    plan = _typed_plan()
+    plan_bytes = plan.serialize()
+
+    def spawn(*args, **kwargs):
+        raise AssertionError("A deferred submit without a preview spawned a child")
+
+    monkeypatch.setattr(protocol_routes, "start_process", spawn)
+
+    response = _post(plan_bytes, _meta(result_id, wide=True, preview_rows=None))
+
+    assert response.status_code == 200, response.text
+    result = SubmitResult.model_validate_json(response.text)
+    assert result.ref.state == "deferred"
+    assert result.ref.row_count is None
+    assert result.ref.columns == schema_to_wire(plan.collect_schema())
+    assert result.ref.columns[3].data_type == "Extension('geoarrow.wkb', Binary, '{}')"
+    assert result.sample is None
+    assert _location(result).plan == plan_bytes
+    assert not result_path(FLOW_ID, result_id).exists()
+    assert client.get(f"/v1/jobs/{result_id}").json()["status"] == "Completed"
+
+
 def test_a_plan_over_a_megabyte_submits_as_a_file_part(held):
     plan = pl.LazyFrame({"x": list(range(200_000))})
     plan_bytes = plan.serialize()
@@ -733,10 +757,13 @@ def test_a_failed_blob_transfer_is_500_and_names_no_signature(held, presign, tmp
         assert "X-Amz-Signature" not in said
 
 
-def test_a_plan_that_fails_on_its_data_is_a_task_failure_and_holds_nothing(held):
+@pytest.mark.parametrize("must_materialise", [True, False], ids=["materialised", "deferred-without-a-preview"])
+def test_a_plan_that_fails_on_its_data_is_a_task_failure_and_holds_nothing(held, must_materialise):
     result_id = held()
 
-    response = _post(pl.LazyFrame({"a": [1]}).select("missing").serialize(), _meta(result_id, must_materialise=True))
+    response = _post(
+        pl.LazyFrame({"a": [1]}).select("missing").serialize(), _meta(result_id, must_materialise=must_materialise)
+    )
 
     assert response.status_code == 500
     detail = response.json()["detail"]
@@ -754,8 +781,9 @@ def test_a_plan_this_worker_cannot_load_is_an_environment_failure(held, unloadab
     assert response.json()["detail"]["error_kind"] == "environment"
 
 
-def test_bytes_that_are_not_a_plan_are_an_environment_failure(held):
-    response = _post(b"not a plan", _meta(held(), preview_rows=10))
+@pytest.mark.parametrize("preview_rows", [10, None], ids=["sampled", "deferred-without-a-preview"])
+def test_bytes_that_are_not_a_plan_are_an_environment_failure(held, preview_rows):
+    response = _post(b"not a plan", _meta(held(), preview_rows=preview_rows))
 
     assert response.status_code == 500
     assert response.json()["detail"]["error_kind"] == "environment"
