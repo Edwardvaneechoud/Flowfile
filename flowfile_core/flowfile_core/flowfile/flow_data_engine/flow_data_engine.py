@@ -2994,6 +2994,7 @@ class FlowDataEngine:
         return FlowDataEngine(
             apply_formula_entries(lf, entries, schema=self._cached_polars_schema()),
             number_of_records=self.number_of_records,
+            schema=_derived_schema(lambda frame: apply_formula_entries(frame, entries), self),
         )
 
     def output(
