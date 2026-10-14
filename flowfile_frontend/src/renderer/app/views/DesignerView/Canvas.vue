@@ -53,7 +53,7 @@ import {
 } from "../../composables/useDragAndDrop";
 import type { AutoConnectMatch } from "../../utils/autoConnect";
 import { useStaleModifierGuard } from "../../composables/useStaleModifierGuard";
-import { MULTI_SELECTION_KEYS, isMultiSelectClick } from "./multiSelect";
+import { isMultiSelectClick } from "./multiSelect";
 import NodeList from "./NodeList.vue";
 import { useAiStore } from "../../stores/ai-store";
 import { useNodeStore } from "../../stores/column-store";
@@ -1229,7 +1229,7 @@ let lastPointerPosition: CursorPosition | null = null;
 const trackPointerMove = (event: PointerEvent) => {
   lastPointerPosition = { x: event.clientX, y: event.clientY };
 };
-// Multi-select follows the click's own modifiers, so a missed Alt keydown/keyup can't drop or latch it.
+// The only writer of multi-select (VueFlow's key listener is off): a lost keyup can't latch it, no keydown is swallowed.
 const syncMultiSelection = (event: PointerEvent) => {
   instance.multiSelectionActive.value = isMultiSelectClick(event);
 };
@@ -1496,7 +1496,7 @@ defineExpose({
         :edge-updater-radius="15"
         :default-viewport="{ zoom: 1 }"
         :zoom-on-double-click="false"
-        :multi-selection-key-code="MULTI_SELECTION_KEYS"
+        :multi-selection-key-code="null"
         :is-valid-connection="isValidConnection"
         @edge-update="onEdgeUpdate"
         @edge-mouse-enter="onEdgeMouseEnter"

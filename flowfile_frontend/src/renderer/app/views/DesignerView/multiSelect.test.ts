@@ -1,12 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isMultiSelectClick, multiSelectionKeys } from "./multiSelect";
-
-describe("multiSelectionKeys", () => {
-  it("adds Alt to the platform's own multi-select key", () => {
-    expect(multiSelectionKeys(true)).toEqual(["Alt", "Meta"]);
-    expect(multiSelectionKeys(false)).toEqual(["Alt", "Control"]);
-  });
-});
+import { isMultiSelectClick } from "./multiSelect";
 
 describe("isMultiSelectClick", () => {
   it("treats an Alt click as multi-select on every platform", () => {
