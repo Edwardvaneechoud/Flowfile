@@ -163,6 +163,45 @@ def test_a_cloud_write_runs_the_delta_operations_only_for_a_merge_or_a_tracked_w
     )
 
 
+def _cloud_nodes(resource_path: str) -> tuple[NodeRequirements, NodeRequirements]:
+    read = cloud_storage_schemas.CloudStorageReadSettings(resource_path=resource_path, connection_name="minio")
+    write = cloud_storage_schemas.CloudStorageWriteSettings(resource_path=resource_path, connection_name="minio")
+    reader = input_schema.NodeCloudStorageReader(**_ids(cloud_storage_settings=read))
+    writer = input_schema.NodeCloudStorageWriter(**_ids(cloud_storage_settings=write))
+    return _requirements("cloud_storage_reader", reader), _requirements("cloud_storage_writer", writer)
+
+
+@pytest.mark.parametrize(
+    "resource_path",
+    ["", "   ", "output/table", "https://example.com/data.parquet"],
+    ids=["empty", "blank", "relative", "url"],
+)
+def test_a_cloud_read_or_write_claims_no_scheme_for_a_path_it_refuses_itself(resource_path):
+    reader, writer = _cloud_nodes(resource_path)
+
+    assert reader == NodeRequirements(credentials=frozenset({"minio"}))
+    assert writer == NodeRequirements(operation=OperationKind.cloud_write, credentials=frozenset({"minio"}))
+
+
+def test_a_cloud_read_or_write_on_an_absolute_local_path_claims_file(tmp_path):
+    reader, writer = _cloud_nodes(str(tmp_path / "table"))
+
+    assert reader.read_schemes == frozenset({"file"})
+    assert writer.write_schemes == frozenset({"file"})
+
+
+@pytest.mark.parametrize(
+    ("resource_path", "scheme"),
+    [("${root}/table", "file"), ("s3://${bucket}/table", "s3")],
+    ids=["local", "object_storage"],
+)
+def test_a_cloud_read_or_write_on_a_parameterised_path_claims_the_scheme_of_its_text(resource_path, scheme):
+    reader, writer = _cloud_nodes(resource_path)
+
+    assert reader.read_schemes == frozenset({scheme})
+    assert writer.write_schemes == frozenset({scheme})
+
+
 @pytest.mark.parametrize(
     ("target", "expected"),
     [
