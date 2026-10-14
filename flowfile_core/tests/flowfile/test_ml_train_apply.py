@@ -3,8 +3,12 @@
 These tests focus on the orchestration logic (settings validation, schema
 callbacks, artifact lifecycle) rather than the worker compute path — the
 actual training runs in :mod:`flowfile_worker.tests.test_train_apply_model`.
-Both nodes reach the worker only through ``WorkerBackend.run_op``, which the
-tests replace with a stand-in that sees the payload each node sends.
+Both nodes run on the flow's backend. On the worker they reach it only through
+``WorkerBackend.run_op``, which the tests replace with a stand-in that sees the
+payload each node sends; a training's stand-in answers the model as a blob
+reference and writes nothing. A local flow fits and scores in core's own
+process. The two nodes on a running worker are in
+``test_ml_nodes_on_the_worker``.
 """
 
 from typing import Literal
@@ -13,11 +17,15 @@ import polars as pl
 import pytest
 
 from flowfile_core.auth.models import User
+from flowfile_core.configs import settings
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+from flowfile_core.flowfile.execution.errors import ResultMissing
 from flowfile_core.flowfile.execution.payloads import PAYLOAD_KEY, MlApplyPayload, MlTrainPayload
 from flowfile_core.flowfile.execution.protocol import OperationKind, OpResult, ResultRef
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
-from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection, ml_flow_model_path
+from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas
 
@@ -77,14 +85,36 @@ def _refuse_worker_ops(monkeypatch, error: Exception) -> None:
     monkeypatch.setattr(WorkerBackend, "run_op", run_op)
 
 
-def _trained(model: str = '{"stub": true}', sha256: str = "deadbeef" * 8):
-    """A stand-in training run: writes ``model`` to the payload's staging path and reports it."""
-    from pathlib import Path
+def _model(job_id: str) -> ResultRef:
+    """The model a training under ``job_id`` holds on the worker backend, as a blob reference."""
+    return ResultRef("worker", f"{job_id}_0", [], None, "materialised", b"held-on-the-worker", kind="blob")
+
+
+def _trained(size_bytes: int = 14, sha256: str = "deadbeef" * 8):
+    """A stand-in training run: answers the model as a blob the worker holds, with its digest; writes nothing."""
 
     def handle(op, train: MlTrainPayload) -> OpResult:
-        Path(train.staging_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(train.staging_path).write_text(model)
-        return OpResult(refs={}, metadata={"sha256": sha256, "size_bytes": len(model), "model_type": train.model_type})
+        report = {"sha256": sha256, "size_bytes": size_bytes, "model_type": train.model_type}
+        return OpResult(refs={"model": _model(train.job_id)}, metadata=report)
+
+    return handle
+
+
+def _record_releases(monkeypatch) -> list[ResultRef]:
+    """Have the worker backend's ``release`` keep what it is given instead of calling the worker."""
+    released: list[ResultRef] = []
+    monkeypatch.setattr(WorkerBackend, "release", lambda self, ref: released.append(ref))
+    return released
+
+
+def _scored(tmp_path, rows: pl.DataFrame):
+    """A stand-in apply: holds ``rows`` in a file as the stored result a task-route apply answers."""
+    scored_file = tmp_path / "scored.arrow"
+    rows.write_ipc(scored_file)
+
+    def handle(op, apply: MlApplyPayload) -> OpResult:
+        ref = ResultRef("worker", apply.job_id, [], rows.height, "materialised", str(scored_file).encode())
+        return OpResult(refs={"result": ref})
 
     return handle
 
@@ -305,7 +335,10 @@ def test_train_model_requires_target_column():
 
 
 def test_train_model_forwards_namespace_id_to_prepare_upload(monkeypatch):
-    """A namespace_id set on the train settings must reach PrepareUploadRequest (when publishing)."""
+    """A namespace_id set on the train settings must reach PrepareUploadRequest (when publishing).
+
+    The fit runs first; the copy to the store then fails, which deletes the pending row.
+    """
     graph = _make_graph(source_registration_id=1)
     _seed_manual_input(graph, node_id=1)
     _wire_ml_node(graph, "train_model", node_id=2, upstream_id=1)
@@ -314,13 +347,20 @@ def test_train_model_forwards_namespace_id_to_prepare_upload(monkeypatch):
     from flowfile_core.schemas.artifact_schema import PrepareUploadResponse
 
     captured: dict = {}
+    deleted: list[int] = []
 
     def _fake_prepare_upload(self, request, owner_id, _max_retries=3):
         captured["namespace_id"] = request.namespace_id
         captured["name"] = request.name
         return PrepareUploadResponse(artifact_id=1, version=1, method="file", path="/tmp/x", storage_key="1/x")
 
+    def _refuse_export(self, ref, uri, credential):
+        raise RuntimeError("expected")
+
     monkeypatch.setattr(artifact_service_mod.ArtifactService, "prepare_upload", _fake_prepare_upload)
+    monkeypatch.setattr(artifact_service_mod.ArtifactService, "delete_artifact", lambda self, i: deleted.append(i))
+    monkeypatch.setattr(WorkerBackend, "export", _refuse_export)
+    calls = _route_worker_ops(monkeypatch, _trained())
 
     settings = input_schema.NodeTrainModel(
         flow_id=graph.flow_id,
@@ -337,17 +377,21 @@ def test_train_model_forwards_namespace_id_to_prepare_upload(monkeypatch):
         ),
     )
     graph.add_train_model(settings)
-    _refuse_worker_ops(monkeypatch, RuntimeError("expected"))
 
     with pytest.raises(RuntimeError, match="expected"):
         graph.get_node(2).get_resulting_data()
 
+    assert [op for op, _ in calls] == [OperationKind.ml_train]
     assert captured["namespace_id"] == 42
     assert captured["name"] == "m"
+    assert deleted == [1]
 
 
 def test_apply_model_forwards_namespace_id_to_lookup(monkeypatch):
-    """A namespace_id on the apply settings must reach get_artifact_by_name (catalog mode)."""
+    """A namespace_id on the apply settings must reach get_artifact_by_name (catalog mode).
+
+    The lookup is ``fetch_artifact``'s: a store method it cannot hand a backend is its ``ValueError``, and nothing runs.
+    """
     graph = _make_graph(source_registration_id=1)
     _seed_manual_input(graph, node_id=1)
     _wire_ml_node(graph, "apply_model", node_id=2, upstream_id=1)
@@ -370,6 +414,9 @@ def test_apply_model_forwards_namespace_id_to_lookup(monkeypatch):
         )
 
     monkeypatch.setattr(artifact_service_mod.ArtifactService, "get_artifact_by_name", _fake_get_by_name)
+    imports = []
+    monkeypatch.setattr(WorkerBackend, "import_uri", lambda self, *args, **kwargs: imports.append(args))
+    calls = _route_worker_ops(monkeypatch, lambda op, payload: pytest.fail("nothing runs"))
 
     settings = input_schema.NodeApplyModel(
         flow_id=graph.flow_id,
@@ -385,10 +432,11 @@ def test_apply_model_forwards_namespace_id_to_lookup(monkeypatch):
     )
     graph.add_apply_model(settings)
 
-    with pytest.raises(ValueError, match="filesystem artifact backend"):
+    with pytest.raises(ValueError, match="'not-file' is neither 'file' nor 's3_presigned'"):
         graph.get_node(2).get_resulting_data()
 
     assert captured == {"name": "m", "namespace_id": 42, "version": 3}
+    assert (imports, calls) == ([], [])
 
 
 def test_apply_model_upstream_mode_requires_existing_train_node():
@@ -411,81 +459,116 @@ def test_apply_model_upstream_mode_requires_existing_train_node():
         graph.get_node(2).get_resulting_data()
 
 
-def test_apply_model_upstream_mode_reads_train_node_flow_path(tmp_path, monkeypatch):
-    """Apply with source='upstream' reads the model from the train node's flow path."""
-    import json
-
-    graph = _make_graph()
-    _seed_manual_input(graph, node_id=1)
-
+def _upstream_flow(graph: FlowGraph) -> None:
+    """Train Model 10 on the seeded rows, and Apply Model 20 below it scoring with node 10's model into ``pred``."""
     _wire_ml_node(graph, "train_model", node_id=10, upstream_id=1)
-    train_settings = input_schema.NodeTrainModel(
-        flow_id=graph.flow_id,
-        node_id=10,
-        depending_on_id=1,
-        train_input=input_schema.TrainModelSettings(
-            target_column="y",
-            feature_columns=["x1"],
-            model_type="linear_regression",
-            params={"add_bias": True},
-        ),
+    graph.add_train_model(
+        input_schema.NodeTrainModel(
+            flow_id=graph.flow_id,
+            node_id=10,
+            depending_on_id=1,
+            train_input=input_schema.TrainModelSettings(
+                target_column="y",
+                feature_columns=["x1"],
+                model_type="linear_regression",
+                params={"add_bias": True},
+            ),
+        )
     )
-    graph.add_train_model(train_settings)
-
-    from flowfile_core.flowfile.flow_graph import ml_flow_model_path
-
-    model_path = ml_flow_model_path(graph.flow_id, 10)
-    model_path.parent.mkdir(parents=True, exist_ok=True)
-    model_path.write_text(
-        json.dumps(
-            {
-                "model_type": "linear_regression",
-                "target": "y",
-                "features": ["x1"],
-                "coefficients": [2.0],
-                "intercept": 1.0,
-                "output_dtype": "Float64",
-            }
+    _wire_ml_node(graph, "apply_model", node_id=20, upstream_id=10)
+    graph.add_apply_model(
+        input_schema.NodeApplyModel(
+            flow_id=graph.flow_id,
+            node_id=20,
+            depending_on_id=10,
+            apply_input=input_schema.ApplyModelSettings(
+                source="upstream",
+                upstream_node_id=10,
+                output_column="pred",
+            ),
         )
     )
 
+
+def test_an_upstream_apply_sends_the_model_its_train_node_holds(tmp_path, monkeypatch):
+    """Apply with source='upstream' scores with the blob the train node holds, by reference."""
+    graph = _make_graph()
+    _seed_manual_input(graph, node_id=1)
     scored = pl.DataFrame({"x1": [1.0, 3.0], "x2": [2.0, 4.0], "y": [5.0, 13.0], "pred": [3.0, 7.0]})
-    scored_file = tmp_path / "scored.arrow"
-    scored.write_ipc(scored_file)
-
-    def train_then_score(op, payload) -> OpResult:
-        if op is OperationKind.ml_train:
-            # The model file is already where the train node writes it.
-            report = {"sha256": "0" * 64, "size_bytes": model_path.stat().st_size, "model_type": "linear_regression"}
-            return OpResult(refs={}, metadata=report)
-        ref = ResultRef("worker", payload.job_id, [], scored.height, "materialised", str(scored_file).encode())
-        return OpResult(refs={"result": ref})
-
-    calls = _route_worker_ops(monkeypatch, train_then_score)
-
-    _wire_ml_node(graph, "apply_model", node_id=20, upstream_id=10)
-    apply_settings = input_schema.NodeApplyModel(
-        flow_id=graph.flow_id,
-        node_id=20,
-        depending_on_id=10,
-        apply_input=input_schema.ApplyModelSettings(
-            source="upstream",
-            upstream_node_id=10,
-            output_column="pred",
-        ),
+    score = _scored(tmp_path, scored)
+    train = _trained()
+    calls = _route_worker_ops(
+        monkeypatch, lambda op, job: train(op, job) if op is OperationKind.ml_train else score(op, job)
     )
-    graph.add_apply_model(apply_settings)
+    _upstream_flow(graph)
 
     result = graph.get_node(20).get_resulting_data()
 
     assert [op for op, _ in calls] == [OperationKind.ml_train, OperationKind.ml_apply]
     apply = calls[-1][1]
     assert isinstance(apply, MlApplyPayload)
-    assert (apply.model_path, apply.output_column) == (str(model_path), "pred")
+    held = graph.get_node(10).results.model_ref
+    assert held == _model(graph.get_node(10).hash)
+    assert apply.model is held
+    assert apply.output_column == "pred"
     assert (apply.flow_id, apply.node_id, apply.job_id) == (graph.flow_id, 20, graph.get_node(20).hash)
     assert apply.plan.collect().columns == ["x1", "x2", "y"]
     assert result.collect()["pred"].to_list() == [3.0, 7.0]
     assert result.number_of_records == 2
+
+
+def test_an_upstream_apply_whose_model_is_gone_asks_for_the_train_node_again(monkeypatch):
+    graph = _make_graph()
+    _seed_manual_input(graph, node_id=1)
+    train = _trained()
+
+    def train_then_miss(op, job) -> OpResult:
+        if op is OperationKind.ml_train:
+            return train(op, job)
+        raise ResultMissing(f"No result {job.model.result_id} is held by this worker")
+
+    _route_worker_ops(monkeypatch, train_then_miss)
+    _upstream_flow(graph)
+
+    with pytest.raises(ValueError, match=r"Train Model \(node 10\) fitted is no longer held\. Run .* node 10 again"):
+        graph.get_node(20).get_resulting_data()
+
+
+def test_a_catalog_apply_scores_with_the_fetched_model_and_releases_it(tmp_path, monkeypatch):
+    from flowfile_core.artifacts import publish
+
+    graph = _make_graph()
+    _seed_manual_input(graph, node_id=1)
+    _wire_ml_node(graph, "apply_model", node_id=2, upstream_id=1)
+    fetched = ResultRef("worker", "fetched-model", [], None, "materialised", b"held-on-the-worker", kind="blob")
+    fetches = []
+
+    def fake_fetch(backend, name, version, namespace_id):
+        fetches.append((backend, name, version, namespace_id))
+        return fetched
+
+    monkeypatch.setattr(publish, "fetch_artifact", fake_fetch)
+    released = _record_releases(monkeypatch)
+    calls = _route_worker_ops(monkeypatch, _scored(tmp_path, pl.DataFrame({"x1": [1.0, 3.0], "pred": [3.0, 7.0]})))
+    graph.add_apply_model(
+        input_schema.NodeApplyModel(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            apply_input=input_schema.ApplyModelSettings(
+                source="catalog", model_name="m", model_version=3, namespace_id=42, output_column="pred"
+            ),
+        )
+    )
+
+    result = graph.get_node(2).get_resulting_data()
+
+    ((backend, *looked_up),) = fetches
+    assert isinstance(backend, WorkerBackend) and looked_up == ["m", 3, 42]
+    ((op, apply),) = calls
+    assert (op, apply.model) == (OperationKind.ml_apply, fetched)
+    assert released == [fetched]
+    assert result.collect()["pred"].to_list() == [3.0, 7.0]
 
 
 def test_train_model_rejects_unknown_model_type():
@@ -506,8 +589,8 @@ def test_train_model_rejects_unknown_model_type():
         _run_train_func(graph, settings)
 
 
-def test_train_model_rolls_back_pending_artifact_on_worker_failure(monkeypatch):
-    """If the worker reports an error, the pending artifact row must be deleted."""
+def test_train_model_rolls_back_pending_artifact_when_the_copy_fails(monkeypatch):
+    """A fit that fails prepares no artifact; a copy to the store that fails deletes the pending row."""
     graph = _make_graph(source_registration_id=1)
     _seed_manual_input(graph, node_id=1)
     _wire_ml_node(graph, "train_model", node_id=2, upstream_id=1)
@@ -515,7 +598,10 @@ def test_train_model_rolls_back_pending_artifact_on_worker_failure(monkeypatch):
     from flowfile_core.artifacts import service as artifact_service_mod
     from flowfile_core.schemas.artifact_schema import PrepareUploadResponse
 
+    prepared: list[str] = []
+
     def _fake_prepare_upload(self, request, owner_id, _max_retries=3):
+        prepared.append(request.name)
         return PrepareUploadResponse(
             artifact_id=999,
             version=1,
@@ -541,6 +627,10 @@ def test_train_model_rolls_back_pending_artifact_on_worker_failure(monkeypatch):
         _fake_delete_artifact,
     )
 
+    def _refuse_export(self, ref, uri, credential):
+        raise OSError("copy failed")
+
+    monkeypatch.setattr(WorkerBackend, "export", _refuse_export)
     _refuse_worker_ops(monkeypatch, RuntimeError("worker exploded"))
     settings = input_schema.NodeTrainModel(
         flow_id=graph.flow_id,
@@ -559,6 +649,14 @@ def test_train_model_rolls_back_pending_artifact_on_worker_failure(monkeypatch):
     with pytest.raises(RuntimeError, match="worker exploded"):
         graph.get_node(2).get_resulting_data()
 
+    assert (prepared, delete_calls) == ([], []), "a failed fit prepares nothing"
+
+    _route_worker_ops(monkeypatch, _trained())
+    graph.get_node(2).reset(deep=True)
+    with pytest.raises(OSError, match="copy failed"):
+        graph.get_node(2).get_resulting_data()
+
+    assert prepared == ["m"]
     assert delete_calls == [999], "pending artifact must be deleted on failure"
 
 
@@ -638,8 +736,8 @@ def test_train_model_records_artifact_in_node_summary(monkeypatch):
         {"add_bias": True},
     )
     assert (train.flow_id, train.node_id, train.job_id) == (graph.flow_id, 2, graph.get_node(2).hash)
-    assert train.staging_path == str(ml_flow_model_path(graph.flow_id, 2))
     assert train.plan.collect().columns == ["x1", "x2", "y"]
+    assert graph.get_node(2).results.model_ref == _model(train.job_id)
     summaries = graph.artifact_context.get_node_summaries()
     assert "2" in summaries
     s = summaries["2"]
@@ -693,20 +791,34 @@ def _flow_only_train_settings(graph: FlowGraph) -> input_schema.NodeTrainModel:
     )
 
 
-def test_a_local_flow_still_trains_on_the_worker_backend(monkeypatch):
-    """Core's own backend fits no models, so the fit goes to the worker backend whatever the flow's location."""
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+def test_a_local_flow_trains_and_scores_in_core(monkeypatch, flag):
+    """Core's own backend fits and holds the model, and Apply Model releases the deferred rows it scored there."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
     graph = _make_graph()
     graph._flow_settings.path = ""
     graph.flow_settings.execution_location = "local"
     _seed_manual_input(graph, node_id=1)
-    _wire_ml_node(graph, "train_model", node_id=2, upstream_id=1)
-    calls = _route_worker_ops(monkeypatch, _trained())
+    _refuse_worker_ops(monkeypatch, AssertionError("the worker backend was sent an operation"))
+    released = []
+    release = LocalBackend.release
 
-    graph.add_train_model(_flow_only_train_settings(graph))
-    result = graph.get_node(2).get_resulting_data()
+    def record_release(self, ref):
+        released.append((ref.kind, ref.state))
+        release(self, ref)
 
-    assert [op for op, _ in calls] == [OperationKind.ml_train]
-    assert result.collect().columns == ["x1", "x2", "y"], "the node passes its input through"
+    monkeypatch.setattr(LocalBackend, "release", record_release)
+    _upstream_flow(graph)
+
+    run_info = graph.run_graph()
+
+    assert run_info.success is True, [result.error for result in run_info.node_step_result]
+    assert released == [("table", "deferred")]
+    model = graph.get_node(10).results.model_ref
+    assert (model.backend_id, model.kind) == (registry.LOCAL_BACKEND_ID, "blob")
+    assert registry.backend(registry.LOCAL_BACKEND_ID).exists(model)
+    assert graph.get_node(20).get_resulting_data().collect()["pred"].to_list() == pytest.approx([5.0, 13.0])
+    registry.backend(registry.LOCAL_BACKEND_ID).release(model)
 
 
 def test_a_train_result_without_the_model_digest_fails_the_node(monkeypatch):
@@ -719,6 +831,82 @@ def test_a_train_result_without_the_model_digest_fails_the_node(monkeypatch):
     graph.add_train_model(_flow_only_train_settings(graph))
     with pytest.raises(RuntimeError, match="sha256/size_bytes"):
         graph.get_node(2).get_resulting_data()
+
+
+def test_a_train_result_without_its_model_fails_the_node(monkeypatch):
+    graph = _make_graph()
+    graph._flow_settings.path = ""
+    _seed_manual_input(graph, node_id=1)
+    _wire_ml_node(graph, "train_model", node_id=2, upstream_id=1)
+    report = {"sha256": "0" * 64, "size_bytes": 14, "model_type": "linear_regression"}
+    _route_worker_ops(monkeypatch, lambda op, train: OpResult(refs={}, metadata=report))
+
+    graph.add_train_model(_flow_only_train_settings(graph))
+    with pytest.raises(RuntimeError, match="did not return the model"):
+        graph.get_node(2).get_resulting_data()
+    assert graph.get_node(2).results.model_ref is None
+
+
+def test_a_retrain_releases_the_model_it_replaces(monkeypatch):
+    """A refit under the same id replaced the model where it is held; one under another id releases the old one."""
+    graph = _make_graph()
+    graph._flow_settings.path = ""
+    _seed_manual_input(graph, node_id=1)
+    _wire_ml_node(graph, "train_model", node_id=2, upstream_id=1)
+    _route_worker_ops(monkeypatch, _trained())
+    released = _record_releases(monkeypatch)
+    graph.add_train_model(_flow_only_train_settings(graph))
+    graph.get_node(2).get_resulting_data()
+    first = graph.get_node(2).results.model_ref
+
+    graph.get_node(2).reset(deep=True)
+    graph.get_node(2).get_resulting_data()
+
+    assert graph.get_node(2).results.model_ref == first
+    assert released == []
+
+    retrained = _flow_only_train_settings(graph)
+    retrained.train_input.params = {"add_bias": False}
+    graph.add_train_model(retrained)
+    graph.get_node(2).get_resulting_data()
+
+    second = graph.get_node(2).results.model_ref
+    assert second == _model(graph.get_node(2).hash)
+    assert second.result_id != first.result_id
+    assert released == [first]
+
+
+def test_a_published_model_is_the_held_model_exported_to_the_store(monkeypatch):
+    from flowfile_core.artifacts import publish
+    from flowfile_core.schemas.artifact_schema import FinalizeUploadResponse
+
+    graph = _make_graph(source_registration_id=1)
+    _seed_manual_input(graph, node_id=1)
+    _wire_ml_node(graph, "train_model", node_id=2, upstream_id=1)
+    _route_worker_ops(monkeypatch, _trained(size_bytes=21, sha256="ab" * 32))
+    published = []
+
+    def fake_publish(backend, ref, request, *, owner_id, sha256, size_bytes):
+        published.append((backend, ref, request, sha256, size_bytes))
+        return FinalizeUploadResponse(artifact_id=5, version=3)
+
+    monkeypatch.setattr(publish, "publish_result", fake_publish)
+    settings = _flow_only_train_settings(graph)
+    settings.train_input.publish_to_catalog = True
+    settings.train_input.model_name = "m"
+    settings.train_input.namespace_id = 42
+    graph.add_train_model(settings)
+
+    graph.get_node(2).get_resulting_data()
+
+    ((backend, ref, request, sha256, size_bytes),) = published
+    assert isinstance(backend, WorkerBackend)
+    assert ref is graph.get_node(2).results.model_ref
+    assert (request.name, request.namespace_id, request.source_registration_id) == ("m", 42, 1)
+    assert (request.source_flow_id, request.source_node_id) == (graph.flow_id, 2)
+    assert (sha256, size_bytes) == ("ab" * 32, 21)
+    (artifact,) = graph.artifact_context.get_node_summaries()["2"]["published"]
+    assert artifact["name"] == "m v3"
 
 
 # Wait For node

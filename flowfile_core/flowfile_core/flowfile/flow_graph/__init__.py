@@ -6,7 +6,6 @@ from flowfile_core.catalog import CatalogService
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_graph.builders.io import list_files_schema, scan_directory_to_frame
-from flowfile_core.flowfile.flow_graph.builders.ml import ml_flow_model_path
 from flowfile_core.flowfile.flow_graph.catalog_resolution import (
     _CDF_COLUMN_DTYPES,
     _accessible_catalog_table_ids,
@@ -58,7 +57,6 @@ __all__ = [
     "get_cloud_connection_settings",
     "list_files_schema",
     "scan_directory_to_frame",
-    "ml_flow_model_path",
     "_CDF_COLUMN_DTYPES",
     "_accessible_catalog_table_ids",
     "_authorize_catalog_write",

@@ -5,22 +5,30 @@ path under the worker's storage names, in core, a file that is not there, as it 
 the catalog database and the secure store, as a deployment's core and worker do. The worker reads the flow's CSV files
 on this host, so it declares local files (``FLOWFILE_WORKER_LOCAL_FILES``). With the compute protocol flag on,
 every node's preview, schema and record count comes from the worker and core's cache directory stays empty; with it
-off, core opens the worker's files and the flow fails, which shows the services share no storage. Nothing here imports
-flowfile_core; the services start as in ``tests/cloud_e2e``.
+off, core opens the worker's files and the flow fails, which shows the services share no storage. A Train Model node
+and an Apply Model node run the same way with the flag on: the model stays on the worker and Apply Model scores with it
+by reference, and a model published to MinIO as the artifact store, behind a self-signed TLS forwarder, is applied from
+the catalog. Nothing here imports flowfile_core; the services start as in ``tests/cloud_e2e``.
 """
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import ipaddress
 import json
 import os
 import signal
 import socket
+import ssl
 import subprocess
 import sys
+import threading
 import time
+import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import polars as pl
@@ -32,12 +40,15 @@ pytestmark = pytest.mark.skipif(os.name == "nt", reason="the services are manage
 _STRIPPED_ENV = ("TESTING", "TEST_MODE", "SKIP_WORKER_TESTS", "JWT_SECRET_KEY", "CORE_PORT", "CORE_HOST", "WORKER_HOST")
 _BOOT = "from {package}.{module} import run; run()"
 FLOW_ID = 7381
+ML_FLOW_ID = 7382
+MINIO_BUCKET = "worker-test-bucket"
 
 CUSTOMERS = [{"id": i, "name": f"n{i}", "region": "eu" if i % 2 else "us", "amount": i * 10} for i in range(1, 7)]
 SEGMENTS = [{"id": i, "segment": f"s{i % 3}"} for i in range(1, 7)]
 KEPT = [row for row in CUSTOMERS if row["amount"] > 10]
 JOINED = [{**row, "segment": f"s{row['id'] % 3}", "id_right": row["id"]} for row in KEPT]
 TOTALS = [{"region": "eu", "total": 80}, {"region": "us", "total": 120}]
+TRAIN_ROWS = [{"x1": float(i), "x2": float(i % 3), "y": 2.0 * i + 3.0 * (i % 3) + 1.0} for i in range(1, 9)]
 CUSTOMER_COLUMNS = [("id", "Int64"), ("name", "String"), ("region", "String"), ("amount", "Int64")]
 EXPECTED = {
     1: (CUSTOMER_COLUMNS, CUSTOMERS),
@@ -107,14 +118,15 @@ class Services:
 
 
 @contextlib.contextmanager
-def _running(root: Path, protocol: str) -> Iterator[Services]:
+def _running(root: Path, protocol: str, **env: str) -> Iterator[Services]:
+    """Core and a worker in working directories of their own under ``root``; ``env`` goes to both, after the rest."""
     core_port, worker_port = _free_port(), _free_port()
-    env = {
+    service_env = {
         key: value
         for key, value in os.environ.items()
         if not key.startswith(("AWS_", "FLOWFILE_")) and key not in _STRIPPED_ENV
     }
-    env.update(
+    service_env.update(
         HOME=str(root / "home"),
         FLOWFILE_MODE="electron",
         FLOWFILE_DB_PATH=str(root / "catalog.db"),
@@ -129,6 +141,7 @@ def _running(root: Path, protocol: str) -> Iterator[Services]:
         CORE_PORT=str(core_port),
         FLOWFILE_WORKER_PORT=str(worker_port),
     )
+    service_env.update(env)
     (root / "home").mkdir()
     commands = {
         "worker": ("flowfile_worker", "cli", ["--port", worker_port, "--core-port", core_port]),
@@ -143,7 +156,7 @@ def _running(root: Path, protocol: str) -> Iterator[Services]:
                 procs[name] = subprocess.Popen(
                     [sys.executable, "-c", _BOOT.format(package=package, module=module), *map(str, args)],
                     cwd=root / name,
-                    env={**env, "FLOWFILE_STORAGE_DIR": f"{name}_storage"},
+                    env={**service_env, "FLOWFILE_STORAGE_DIR": f"{name}_storage"},
                     stdout=log,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
@@ -226,6 +239,54 @@ def _flow_file(root: Path) -> Path:
     return path
 
 
+def _ml_flow_file(root: Path, flow_id: int, *, published: str | None = None) -> Path:
+    """Read 1 → Train Model 2 → Apply Model 3 into ``pred``, in Development mode on the worker.
+
+    Apply Model scores with the model Train Model holds; with ``published`` Train Model publishes it to the catalog
+    under that name and Apply Model reads it from there.
+    """
+    data = root / "data"
+    data.mkdir()
+    pl.DataFrame(TRAIN_ROWS).write_csv(data / "train.csv")
+    train_input = {
+        "target_column": "y",
+        "feature_columns": ["x1", "x2"],
+        "model_type": "linear_regression",
+        "params": {"add_bias": True},
+    }
+    apply_input = {"source": "upstream", "upstream_node_id": 2, "output_column": "pred"}
+    if published is not None:
+        train_input.update(publish_to_catalog=True, model_name=published)
+        apply_input = {"source": "catalog", "model_name": published, "output_column": "pred"}
+    flow = {
+        "flowfile_version": "0.23.0",
+        "flowfile_id": flow_id,
+        "flowfile_name": "ml two storage dirs",
+        "flowfile_settings": {"execution_mode": "Development", "execution_location": "remote"},
+        "nodes": [
+            _read(1, data / "train.csv", [2]),
+            {
+                "id": 2,
+                "type": "train_model",
+                "input_ids": [1],
+                "outputs": [3],
+                "setting_input": {"train_input": train_input},
+            },
+            {"id": 3, "type": "apply_model", "input_ids": [2], "setting_input": {"apply_input": apply_input}},
+        ],
+    }
+    path = root / "flow.json"
+    path.write_text(json.dumps(flow))
+    return path
+
+
+def _predictions(services: Services, flow_id: int) -> list[float]:
+    """Apply Model's ``pred`` in its preview, rounded, in the order of ``TRAIN_ROWS``."""
+    preview = services.get("/node/data", flow_id=flow_id, node_id=3)
+    by_x1 = {row["x1"]: row["pred"] for row in preview["data"]}
+    return [round(by_x1[row["x1"]], 6) for row in TRAIN_ROWS]
+
+
 def _failures(run: dict) -> dict[int, str]:
     return {result["node_id"]: result["error"] for result in run["node_step_result"] if not result["success"]}
 
@@ -256,3 +317,119 @@ def test_with_the_flag_off_core_opens_the_workers_files_and_the_flow_fails(tmp_p
 
         assert run["success"] is False
         assert any("No such file or directory" in error for error in _failures(run).values()), _failures(run)
+
+
+def test_a_model_trained_on_the_worker_scores_the_next_node_with_no_shared_disk(tmp_path):
+    with _running(tmp_path, protocol="1") as services:
+        flow_id = services.get("/import_flow/", flow_path=str(_ml_flow_file(tmp_path, ML_FLOW_ID)))
+        run = services.run(flow_id)
+
+        assert run["success"] is True and not _failures(run), _failures(run)
+        assert _predictions(services, flow_id) == [row["y"] for row in TRAIN_ROWS]
+        assert list((services.storage["core"] / "cache").iterdir()) == []
+        assert list((services.storage["worker"] / "cache").rglob("*.blob"))
+
+
+@pytest.fixture(scope="module")
+def minio_over_tls(tmp_path_factory):
+    """MinIO behind an HTTPS forwarder with a self-signed certificate: the forwarder's URL and the certificate's path.
+
+    MinIO is had as the cloud end-to-end suite has it, and the test skips when Docker cannot give one. A URL the S3
+    artifact store presigns on the forwarder's endpoint is an ``https://`` one that MinIO accepts: the Host header passes
+    through.
+    """
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    from test_utils.s3 import fixtures as s3
+
+    available = s3.is_docker_available() and (
+        s3.is_container_running(s3.MINIO_CONTAINER_NAME) or s3.start_minio_container()
+    )
+    if not (available and s3.wait_for_minio(max_retries=10)):
+        pytest.skip("MinIO (Docker) is not available")
+    folder = tmp_path_factory.mktemp("tls")
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    now = datetime.now(timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5))
+        .not_valid_after(now + timedelta(hours=1))
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+    )
+    (folder / "cert.pem").write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    (folder / "key.pem").write_bytes(
+        key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    )
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(folder / "cert.pem", folder / "key.pem")
+    upstream_host, upstream_port = s3.MINIO_ENDPOINT_URL.removeprefix("http://").split(":")
+
+    async def pipe(reader, writer):
+        try:
+            while data := await reader.read(65536):
+                writer.write(data)
+                await writer.drain()
+        except (ConnectionError, OSError):
+            pass
+        finally:
+            writer.close()
+
+    async def forward(client_reader, client_writer):
+        upstream_reader, upstream_writer = await asyncio.open_connection(upstream_host, int(upstream_port))
+        await asyncio.gather(pipe(client_reader, upstream_writer), pipe(upstream_reader, client_writer))
+
+    loop = asyncio.new_event_loop()
+    loop.set_exception_handler(lambda _loop, _context: None)
+    server = loop.run_until_complete(asyncio.start_server(forward, "127.0.0.1", 0, ssl=context))
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"https://localhost:{server.sockets[0].getsockname()[1]}", folder / "cert.pem"
+    finally:
+        loop.call_soon_threadsafe(server.close)
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=5)
+
+
+def test_a_model_published_to_minio_is_applied_from_the_catalog_with_no_shared_disk(tmp_path, minio_over_tls):
+    """Both services trust the forwarder's certificate: core's boto3 finalises the version, the worker moves the bytes."""
+    from test_utils.s3 import fixtures as s3
+
+    endpoint, certificate = minio_over_tls
+    prefix = f"two-dirs-{uuid.uuid4().hex}/"
+    store = {
+        "FLOWFILE_ARTIFACT_STORAGE": "s3",
+        "FLOWFILE_S3_BUCKET": MINIO_BUCKET,
+        "FLOWFILE_S3_PREFIX": prefix,
+        "FLOWFILE_S3_ENDPOINT_URL": endpoint,
+        "AWS_ACCESS_KEY_ID": s3.MINIO_ACCESS_KEY,
+        "AWS_SECRET_ACCESS_KEY": s3.MINIO_SECRET_KEY,
+        "AWS_CA_BUNDLE": str(certificate),
+        "REQUESTS_CA_BUNDLE": str(certificate),
+    }
+    minio = s3.get_minio_client()
+    flow_file = _ml_flow_file(tmp_path, ML_FLOW_ID, published=f"model_{uuid.uuid4().hex[:12]}")
+    try:
+        with _running(tmp_path, protocol="1", **store) as services:
+            flow_id = services.get("/import_flow/", flow_path=str(flow_file))
+            run = services.run(flow_id)
+
+            assert run["success"] is True and not _failures(run), _failures(run)
+            assert _predictions(services, flow_id) == [row["y"] for row in TRAIN_ROWS]
+            assert len(minio.list_objects_v2(Bucket=MINIO_BUCKET, Prefix=prefix).get("Contents", [])) == 1
+            assert list((services.storage["core"] / "cache").iterdir()) == []
+    finally:
+        for listed in minio.list_objects_v2(Bucket=MINIO_BUCKET, Prefix=prefix).get("Contents", []):
+            minio.delete_object(Bucket=MINIO_BUCKET, Key=listed["Key"])

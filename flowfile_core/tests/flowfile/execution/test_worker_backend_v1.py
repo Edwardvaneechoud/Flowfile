@@ -5,11 +5,13 @@ Every test here turns ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on and runs over bo
 so each submit falls back to ``POST /v1/submit``. The socket-only tests at the end play the worker's frames from a fake
 socket. The dispatch tests turn the flag off again mid-test to show that a result is read over the routes that minted
 it. The operation tests run the reads, the fuzzy join, the random split and a custom node over
-``POST /v1/ops/{kind}`` (socket only: the transport is a submit's concern) and read every output over the wire. The
-export and import tests write a result to a URI on the worker and hold a URI there as a result, and hold a blob there,
-which no call reads as rows.
+``POST /v1/ops/{kind}`` (socket only: the transport is a submit's concern) and read every output over the wire; the
+model tests train a model there, which the worker holds as a blob, and score with it by reference. The export and
+import tests write a result to a URI on the worker and hold a URI there as a result, and hold a blob there, which no
+call reads as rows.
 """
 
+import hashlib
 import io
 import json
 import logging
@@ -39,6 +41,7 @@ from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import TOKEN_RULE, WorkerBackend, _flowfile_schema
 from flowfile_core.flowfile.execution.errors import (
     ComputeUnavailable,
+    ForeignRef,
     OperationUnsupported,
     PlanRejected,
     ResultMissing,
@@ -51,6 +54,8 @@ from flowfile_core.flowfile.execution.payloads import (
     FileReadPayload,
     FuzzyJoinPayload,
     GoogleAnalyticsReadPayload,
+    MlApplyPayload,
+    MlTrainPayload,
     RandomSplitPayload,
     RestApiReadPayload,
     op_payload,
@@ -1081,6 +1086,97 @@ def test_a_cancelled_operation_fails_and_its_job_is_cancelled(backend):
     canceller.join(timeout=30)
 
     assert backend.status(handle).state == "cancelled"
+
+
+def ml_train_payload() -> MlTrainPayload:
+    """A linear fit of ``y = 2x + 1`` on four rows."""
+    return MlTrainPayload(
+        plan=pl.LazyFrame({"x": [1.0, 2.0, 3.0, 4.0], "y": [3.0, 5.0, 7.0, 9.0]}),
+        model_type="linear_regression",
+        target_column="y",
+        feature_columns=["x"],
+        params={"add_bias": True},
+        flow_id=1,
+        node_id=5,
+        job_id=new_result_id(),
+    )
+
+
+def ml_apply_payload(model: ResultRef) -> MlApplyPayload:
+    """A score of ``x = 10`` with ``model`` into ``pred``."""
+    return MlApplyPayload(
+        plan=pl.LazyFrame({"x": [10.0]}),
+        model=model,
+        output_column="pred",
+        flow_id=1,
+        node_id=6,
+        job_id=new_result_id(),
+    )
+
+
+def test_a_model_is_trained_and_applied_over_the_v1_operations(backend, kept, sent, no_file_read_in_core, tmp_path):
+    train = ml_train_payload()
+    sent.clear()
+
+    trained = backend.run_op(OperationKind.ml_train, op_payload(train))
+
+    model = trained.refs["model"]
+    kept.append(model)
+    assert list(trained.refs) == ["model"]
+    assert (model.result_id, model.kind, model.state, model.schema, model.row_count) == (
+        f"{train.job_id}_0",
+        "blob",
+        "materialised",
+        [],
+        None,
+    )
+    assert location(model).kind == "blob"
+    assert trained.metadata["model_type"] == "linear_regression"
+    target = tmp_path / "model.json"
+    backend.export(model, f"file://{target}", None)
+    exported = target.read_bytes()
+    assert (len(exported), hashlib.sha256(exported).hexdigest()) == (
+        trained.metadata["size_bytes"],
+        trained.metadata["sha256"],
+    )
+
+    apply = ml_apply_payload(model)
+    scored = backend.run_op(OperationKind.ml_apply, op_payload(apply)).refs["result"]
+    kept.append(scored)
+
+    assert (scored.result_id, scored.state, scored.row_count) == (f"{apply.job_id}_0", "materialised", 1)
+    assert [column.column_name for column in scored.schema] == ["x", "pred"]
+    assert sampled(backend, scored)["pred"].round(6).to_list() == [21.0]
+    assert backend.exists(model) is True, "scoring leaves the model held"
+    assert [(method, path.partition("?")[0]) for method, path, _ in sent] == [
+        ("POST", "/v1/ops/ml_train"),
+        ("POST", f"/v1/results/{model.result_id}/export"),
+        ("POST", "/v1/ops/ml_apply"),
+        ("GET", f"/v1/results/{scored.result_id}/sample"),
+        ("HEAD", f"/v1/results/{model.result_id}"),
+    ]
+
+
+def test_an_apply_whose_model_the_worker_no_longer_holds_is_missing(backend):
+    model = backend.run_op(OperationKind.ml_train, op_payload(ml_train_payload())).refs["model"]
+    backend.release(model)
+    apply = ml_apply_payload(model)
+
+    with pytest.raises(ResultMissing, match=model.result_id):
+        backend.run_op(OperationKind.ml_apply, op_payload(apply))
+
+    with pytest.raises(LookupError):
+        backend.status(JobHandle("worker", apply.job_id))
+
+
+def test_an_apply_with_another_backends_model_is_refused_before_any_call(backend, sent):
+    foreign = ResultRef("local", "elsewhere", [], None, "materialised", b"/elsewhere.blob", kind="blob")
+    sent.clear()
+
+    with pytest.raises(ForeignRef, match="elsewhere"):
+        backend.run_op(OperationKind.ml_apply, op_payload(ml_apply_payload(foreign)))
+
+    assert sent == []
 
 
 class FakeClock:

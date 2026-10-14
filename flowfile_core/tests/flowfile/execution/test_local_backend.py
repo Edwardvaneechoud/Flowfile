@@ -6,7 +6,9 @@ imported as a scan held deferred. A blob is copied into core's storage directory
 """
 
 import datetime
+import hashlib
 import io
+import json
 
 import polars as pl
 import pytest
@@ -26,6 +28,8 @@ from flowfile_core.flowfile.execution.payloads import (
     FileReadPayload,
     FileWritePayload,
     FuzzyJoinPayload,
+    MlApplyPayload,
+    MlTrainPayload,
     RandomSplitPayload,
     op_payload,
 )
@@ -42,12 +46,11 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.schemas import input_schema
 from shared.compute_protocol import PROTOCOL_VERSION, local_capabilities
 from shared.delta_utils import get_delta_size_bytes
+from shared.ml.trainers import get_trainer
 from shared.storage_config import storage
 
 UNSUPPORTED_KINDS = (
     OperationKind.google_analytics_read,
-    OperationKind.ml_train,
-    OperationKind.ml_apply,
     OperationKind.viz_session,
 )
 UTC = datetime.timezone.utc
@@ -472,6 +475,86 @@ def test_fuzzy_join_holds_the_matches(backend):
         ("edward", "eduward"),
         ("edward", "edward"),
     ]
+
+
+@pytest.fixture
+def training_rows(monkeypatch, tmp_path) -> pl.LazyFrame:
+    """Eight rows of ``y = 2·x1 + 3·x2 + 1``, with core's storage directory in ``tmp_path / "storage"``."""
+    monkeypatch.setattr(storage, "_base_dir", tmp_path / "storage")
+    x1 = [float(i) for i in range(8)]
+    x2 = [float(i % 3) for i in range(8)]
+    return pl.LazyFrame({"x1": x1, "x2": x2, "y": [2 * a + 3 * b + 1 for a, b in zip(x1, x2, strict=True)]})
+
+
+def training(rows: pl.LazyFrame) -> MlTrainPayload:
+    return MlTrainPayload(
+        plan=rows,
+        model_type="linear_regression",
+        target_column="y",
+        feature_columns=["x1", "x2"],
+        params={"add_bias": True},
+        flow_id=1,
+        node_id=1,
+    )
+
+
+def scoring(rows: pl.LazyFrame, model: ResultRef) -> MlApplyPayload:
+    return MlApplyPayload(plan=rows, model=model, output_column="pred", flow_id=1, node_id=2)
+
+
+def test_a_training_holds_the_model_as_a_blob_with_its_digest(backend, training_rows, tmp_path):
+    trained = backend.run_op(OperationKind.ml_train, op_payload(training(training_rows)))
+
+    assert list(trained.refs) == ["model"]
+    model = trained.refs["model"]
+    assert (model.backend_id, model.kind, model.state, model.schema, model.row_count) == (
+        "local",
+        "blob",
+        "materialised",
+        [],
+        None,
+    )
+    assert backend.exists(model)
+    (held,) = storage.cache_directory.rglob("*.blob")
+    target = tmp_path / "model.json"
+    assert backend.export(model, f"file://{target}", None) == f"file://{target}"
+    exported = target.read_bytes()
+    assert trained.metadata == {
+        "sha256": hashlib.sha256(exported).hexdigest(),
+        "size_bytes": len(exported),
+        "model_type": "linear_regression",
+    }
+    backend.release(model)
+    assert not backend.exists(model)
+    assert not held.exists()
+
+
+def test_an_apply_scores_with_a_held_model_and_holds_the_rows_deferred(backend, training_rows, tmp_path):
+    model = backend.run_op(OperationKind.ml_train, op_payload(training(training_rows))).refs["model"]
+    backend.export(model, f"file://{tmp_path}/model.json", None)
+    fitted = json.loads((tmp_path / "model.json").read_bytes())
+
+    scored = backend.run_op(OperationKind.ml_apply, op_payload(scoring(training_rows, model)))
+
+    assert list(scored.refs) == ["result"]
+    result = scored.refs["result"]
+    assert (result.kind, result.state) == ("table", "deferred")
+    assert [c.column_name for c in result.schema] == ["x1", "x2", "y", "pred"]
+    expected = get_trainer("linear_regression").apply(training_rows, fitted, "pred").collect()
+    assert backend.plan_for(result).collect().equals(expected)
+    assert backend.exists(model)
+    backend.release(model)
+
+
+def test_an_apply_with_a_model_this_backend_does_not_hold_is_refused(backend, training_rows):
+    foreign = ResultRef("worker", "abc_0", [], None, "materialised", b"abc_0", kind="blob")
+    released = backend.run_op(OperationKind.ml_train, op_payload(training(training_rows))).refs["model"]
+    backend.release(released)
+
+    for model, error in ((foreign, ForeignRef), (released, ResultMissing)):
+        with pytest.raises(error):
+            backend.run_op(OperationKind.ml_apply, op_payload(scoring(training_rows, model)))
+    assert backend._results == {}
 
 
 def test_a_write_holds_no_result_and_reports_no_metadata(backend, tmp_path):

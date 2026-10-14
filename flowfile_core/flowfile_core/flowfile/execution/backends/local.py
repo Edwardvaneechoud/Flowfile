@@ -10,13 +10,15 @@ A read holds what it read as a deferred plan, so the reader keeps the frame thro
 ref at once. A result crosses to another backend only through ``export``, a streaming sink of its plan to a URI, and
 ``import_uri``, a scan of a URI held deferred. A blob, a file of bytes that is not rows, is held beside the store as a
 copy under core's storage directory, which ``import_uri(kind="blob")`` makes from a ``file://`` URI or a presigned
-``https://`` URL and ``export`` copies out the same way. Nothing runs asynchronously: every job has ended when its call
-returns, so ``cancel`` has nothing to stop.
+``https://`` URL, or a training writes for the model it fitted here, and ``export`` copies out the same way. Nothing
+runs asynchronously: every job has ended when its call returns, so ``cancel`` has nothing to stop.
 """
 
 from __future__ import annotations
 
+import hashlib
 import io
+import json
 import os
 import tempfile
 import threading
@@ -47,6 +49,8 @@ from flowfile_core.flowfile.execution.payloads import (
     FileWritePayload,
     FuzzyJoinPayload,
     KafkaReadPayload,
+    MlApplyPayload,
+    MlTrainPayload,
     RandomSplitPayload,
     RestApiReadPayload,
     unpack,
@@ -95,6 +99,7 @@ from shared.delta_utils import (
     validate_catalog_uri,
     write_delta,
 )
+from shared.ml.trainers import get_trainer
 from shared.storage_config import storage
 
 _CLOUD_SECRET_FIELDS = tuple(
@@ -113,10 +118,10 @@ class LocalBackend:
     ``preview_rows`` asks for one, because ``sample`` serves it when something reads it. Apart from a stored result,
     nothing in core computes a node's rows before a consumer, a write or an opened preview needs them.
 
-    A blob (``ResultRef.kind == "blob"``) is held as a copy of its bytes at ``cache/local/-1/<result_id>.blob`` under
-    core's storage directory, beside the store, in both flag states. It has no rows: ``plan_for``, ``sample`` and
-    ``count`` raise ``OperationUnsupported`` for one, as ``submit`` does for one among its inputs, while ``exists``
-    and ``export`` take it, and ``release`` removes the copy.
+    A blob (``ResultRef.kind == "blob"``), an imported one or a model a training fitted here, is held as a copy of its
+    bytes at ``cache/local/-1/<result_id>.blob`` under core's storage directory, beside the store, in both flag states.
+    It has no rows: ``plan_for``, ``sample`` and ``count`` raise ``OperationUnsupported`` for one, as ``submit`` does
+    for one among its inputs, while ``exists``, ``export`` and an apply take it, and ``release`` removes the copy.
     """
 
     id = LOCAL_BACKEND_ID
@@ -181,12 +186,13 @@ class LocalBackend:
     def run_op(self, op: OperationKind, payload: OpPayload) -> OpResult:
         """Run ``op`` in this process with the payload its method documents.
 
-        The refs name the results the operation holds here. Only the Kafka read (the offsets to commit) and the
-        Delta writes (what they wrote, in the keys the ``payloads`` module docstring lists) report metadata.
+        The refs name the results the operation holds here. Only the Kafka read (the offsets to commit), the Delta
+        writes (what they wrote, in the keys the ``payloads`` module docstring lists) and a training (its model's
+        ``sha256``, ``size_bytes`` and ``model_type``) report metadata.
 
         Raises:
-            OperationUnsupported: This backend does not implement ``op``: ``google_analytics_read``, the model kinds
-                ``ml_train`` and ``ml_apply``, and ``viz_session``, whose visualisation sessions live on the worker.
+            OperationUnsupported: This backend does not implement ``op``: ``google_analytics_read`` and
+                ``viz_session``, whose visualisation sessions live on the worker.
         """
         method = self._OPERATIONS.get(op)
         if method is None:
@@ -685,6 +691,52 @@ class LocalBackend:
             },
         )
 
+    def _ml_train(self, payload: OpPayload) -> OpResult:
+        """Fit the model of the ``MlTrainPayload`` under ``"payload"`` to its rows in this process, and hold it.
+
+        The trainer is the one the worker runs (``shared.ml.trainers``). Its bytes are written under a fresh id to
+        ``cache/local/-1/<result_id>.blob`` under core's storage directory and held as a blob, as an imported one is,
+        so each fit is a model of its own. Returns the refs ``{"model": ref}`` and, as ``metadata``, the model's
+        ``sha256``, ``size_bytes`` and ``model_type``.
+        """
+        train = unpack(payload, MlTrainPayload)
+        model = get_trainer(train.model_type).train(
+            train.plan, target=train.target_column, features=train.feature_columns, params=train.params or {}
+        )
+        result_id = _new_result_id()
+        path = _result_path(-1, result_id).with_suffix(".blob")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(model)
+        with self._lock:
+            self._blobs[result_id] = path
+        ref = ResultRef(
+            backend_id=self.id,
+            result_id=result_id,
+            schema=[],
+            row_count=None,
+            state="materialised",
+            location=result_id.encode("utf-8"),
+            kind="blob",
+        )
+        report = {"sha256": hashlib.sha256(model).hexdigest(), "size_bytes": len(model), "model_type": train.model_type}
+        return OpResult(refs={"model": ref}, metadata=report)
+
+    def _ml_apply(self, payload: OpPayload) -> OpResult:
+        """Score the rows of the ``MlApplyPayload`` under ``"payload"`` with the model blob this backend holds.
+
+        The model's copy is read as the JSON its trainer wrote, and the trainer adds the prediction as the payload's
+        output column. Returns the refs ``{"result": ref}``, the scored plan held deferred.
+
+        Raises:
+            ForeignRef: Another backend holds the model.
+            ResultMissing: This backend no longer holds the model.
+        """
+        apply = unpack(payload, MlApplyPayload)
+        self._check_backend(apply.model.backend_id)
+        model = json.loads(self._blob(apply.model).read_bytes())
+        scored = get_trainer(model["model_type"]).apply(apply.plan, model, apply.output_column)
+        return OpResult(refs={"result": self._hold(scored)})
+
     _OPERATIONS: ClassVar[dict[OperationKind, Callable[[LocalBackend, OpPayload], OpResult]]] = {
         OperationKind.database_read: _read_database,
         OperationKind.kafka_read: _read_kafka,
@@ -699,6 +751,8 @@ class LocalBackend:
         OperationKind.delta_write: _write_delta,
         OperationKind.delta_merge: _merge_delta,
         OperationKind.delta_scd2: _scd2_delta,
+        OperationKind.ml_train: _ml_train,
+        OperationKind.ml_apply: _ml_apply,
     }
 
 
