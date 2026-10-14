@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from multiprocessing import Queue
 from pathlib import Path
 
 import polars as pl
@@ -23,8 +24,9 @@ from fastapi.testclient import TestClient
 from polars.testing import assert_frame_equal
 from starlette.testclient import WebSocketDenialResponse
 
-from flowfile_worker import main, models, protocol_routes, status_dict, status_dict_lock, streaming
+from flowfile_worker import funcs, main, models, mp_context, protocol_routes, status_dict, status_dict_lock, streaming
 from flowfile_worker.results import result_path
+from flowfile_worker.task_errors import WorkerEnvironmentError, split_failure
 from shared.compute_protocol import (
     PROTOCOL_VERSION,
     PROTOCOL_VERSION_HEADER,
@@ -274,6 +276,30 @@ def test_no_sample_comes_back_without_preview_rows(held, must_materialise):
     result = _submit(held(), _plan(), must_materialise=must_materialise, preview_rows=None)
 
     assert result.sample is None
+
+
+def test_a_deferred_submit_without_a_preview_runs_no_child(held, monkeypatch):
+    result_id = held()
+    plan = _typed_plan()
+    plan_bytes = plan.serialize()
+
+    def spawn(*args, **kwargs):
+        raise AssertionError("A deferred submit without a preview spawned a child")
+
+    monkeypatch.setattr(protocol_routes, "start_process", spawn)
+
+    response = _post(plan_bytes, _meta(result_id, wide=True, preview_rows=None))
+
+    assert response.status_code == 200, response.text
+    result = SubmitResult.model_validate_json(response.text)
+    assert result.ref.state == "deferred"
+    assert result.ref.row_count is None
+    assert result.ref.columns == schema_to_wire(plan.collect_schema())
+    assert result.ref.columns[3].data_type == "Extension('geoarrow.wkb', Binary, '{}')"
+    assert result.sample is None
+    assert _location(result).plan == plan_bytes
+    assert not result_path(FLOW_ID, result_id).exists()
+    assert client.get(f"/v1/jobs/{result_id}").json()["status"] == "Completed"
 
 
 def test_a_plan_over_a_megabyte_submits_as_a_file_part(held):
@@ -733,10 +759,13 @@ def test_a_failed_blob_transfer_is_500_and_names_no_signature(held, presign, tmp
         assert "X-Amz-Signature" not in said
 
 
-def test_a_plan_that_fails_on_its_data_is_a_task_failure_and_holds_nothing(held):
+@pytest.mark.parametrize("must_materialise", [True, False], ids=["materialised", "deferred-without-a-preview"])
+def test_a_plan_that_fails_on_its_data_is_a_task_failure_and_holds_nothing(held, must_materialise):
     result_id = held()
 
-    response = _post(pl.LazyFrame({"a": [1]}).select("missing").serialize(), _meta(result_id, must_materialise=True))
+    response = _post(
+        pl.LazyFrame({"a": [1]}).select("missing").serialize(), _meta(result_id, must_materialise=must_materialise)
+    )
 
     assert response.status_code == 500
     detail = response.json()["detail"]
@@ -754,8 +783,9 @@ def test_a_plan_this_worker_cannot_load_is_an_environment_failure(held, unloadab
     assert response.json()["detail"]["error_kind"] == "environment"
 
 
-def test_bytes_that_are_not_a_plan_are_an_environment_failure(held):
-    response = _post(b"not a plan", _meta(held(), preview_rows=10))
+@pytest.mark.parametrize("preview_rows", [10, None], ids=["sampled", "deferred-without-a-preview"])
+def test_bytes_that_are_not_a_plan_are_an_environment_failure(held, preview_rows):
+    response = _post(b"not a plan", _meta(held(), preview_rows=preview_rows))
 
     assert response.status_code == 500
     assert response.json()["detail"]["error_kind"] == "environment"
@@ -831,6 +861,31 @@ def test_a_failed_submits_job_carries_the_error(held):
 
     assert job["status"] == "Error"
     assert job["error_message"].startswith("ColumnNotFoundError")
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [pl.exceptions.ColumnNotFoundError("x" * 3000), WorkerEnvironmentError(ImportError("y" * 3000))],
+    ids=["task", "environment"],
+)
+def test_a_deferred_submit_without_a_preview_fails_as_its_child_would(held, monkeypatch, failure):
+    def load(plan):
+        raise failure
+
+    monkeypatch.setattr(funcs, "_load_plan", load)
+    monkeypatch.setattr(protocol_routes, "_load_plan", load)
+    plan = _plan().serialize()
+    progress, error_message = mp_context.Value("i", 0), mp_context.Array("c", 1024)
+    funcs.submit_result(plan, progress, error_message, Queue(maxsize=1), "", FLOW_ID, NODE_ID, False, None)
+    kind, message = split_failure(error_message.value.decode(errors="replace"))
+    result_id = held()
+
+    response = _post(plan, _meta(result_id))
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == {"status": "Error", "error_message": message, "error_kind": kind}
+    assert len(message.encode()) <= 1024
+    assert client.get(f"/v1/jobs/{result_id}").json()["progress"] == progress.value == -1
 
 
 def test_an_unknown_job_is_404():
