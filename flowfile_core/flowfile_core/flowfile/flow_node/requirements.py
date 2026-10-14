@@ -76,7 +76,8 @@ def requirements_for(
     ``ml_train`` and an Apply Model node ``ml_apply``; the one that publishes its model to the catalog writes the
     artifact store and the one that takes its model from the catalog reads it, by the scheme the caller resolves from
     the store and passes as *artifact_scheme*, and neither claims a scheme otherwise or without one. A cloud reader
-    or writer claims no scheme for a path it refuses itself when it runs (empty, or neither a URI nor absolute). A
+    or writer claims no scheme for a path it refuses itself when it runs (empty, or neither a URI nor absolute); a
+    path that still holds a ``${…}`` parameter claims the scheme of its text, ``file`` for ``${root}/table``. A
     ``NodePromise``, a node not set up yet, answers only what its template says: whether it runs on a kernel.
 
     Args:
@@ -191,11 +192,16 @@ def _output(settings: input_schema.NodeOutput) -> NodeRequirements:
 
 
 def _cloud_scheme(path: str, role: Literal["reader", "writer"]) -> frozenset[str]:
-    """The scheme of a cloud node's path; none for one the node's own guard refuses, so it fails with that message."""
-    try:
-        validate_cloud_resource_path(path, role=role)
-    except ValueError:
-        return frozenset()
+    """The scheme of a cloud node's path; none for one the node's own guard refuses, so it fails with that message.
+
+    A path that still holds a ``${…}`` parameter is read before the parameter resolves, and may resolve to a local
+    path the guard accepts, so it is not put to the guard and claims the scheme of its text.
+    """
+    if "${" not in path:
+        try:
+            validate_cloud_resource_path(path, role=role)
+        except ValueError:
+            return frozenset()
     return frozenset({_scheme(path)})
 
 

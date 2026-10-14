@@ -191,6 +191,18 @@ def test_a_cloud_read_or_write_on_an_absolute_local_path_claims_file(tmp_path):
 
 
 @pytest.mark.parametrize(
+    ("resource_path", "scheme"),
+    [("${root}/table", "file"), ("s3://${bucket}/table", "s3")],
+    ids=["local", "object_storage"],
+)
+def test_a_cloud_read_or_write_on_a_parameterised_path_claims_the_scheme_of_its_text(resource_path, scheme):
+    reader, writer = _cloud_nodes(resource_path)
+
+    assert reader.read_schemes == frozenset({scheme})
+    assert writer.write_schemes == frozenset({scheme})
+
+
+@pytest.mark.parametrize(
     ("target", "expected"),
     [
         (LOCAL_CATALOG, NodeRequirements(read_schemes=frozenset({"file"}))),
