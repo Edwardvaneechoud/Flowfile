@@ -16,6 +16,10 @@ trained = train.train_model(
     params={"l2_reg": 0.1},
 )
 
+# Look at the fitted model: its type, features, intercept and coefficients.
+model = trained.read_model()
+print(model)
+
 # Score the held-out rows. wait_for blocks the apply until the model exists.
 scored = test.wait_for(trained).apply_model(
     upstream=trained,
@@ -32,6 +36,9 @@ metrics = scored.evaluate_model(
 
 result = metrics.collect()
 # --8<-- [end:example]
+
+assert model.model_type == "logistic_regression"
+assert set(model.coefficients) == {"tenure_months", "monthly_charges", "support_calls", "has_contract"}
 
 assert result.columns == ["metric", "value"]
 assert result.schema["metric"] == ff.String

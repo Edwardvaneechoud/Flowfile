@@ -693,8 +693,8 @@ def _flow_only_train_settings(graph: FlowGraph) -> input_schema.NodeTrainModel:
     )
 
 
-def test_a_local_flow_still_trains_on_the_worker_backend(monkeypatch):
-    """Core's own backend fits no models, so the fit goes to the worker backend whatever the flow's location."""
+def test_a_local_flow_trains_in_core_not_on_the_worker_backend(monkeypatch):
+    """A local flow fits in core's own process, so no ``ml_train`` reaches the worker backend."""
     graph = _make_graph()
     graph._flow_settings.path = ""
     graph.flow_settings.execution_location = "local"
@@ -705,7 +705,7 @@ def test_a_local_flow_still_trains_on_the_worker_backend(monkeypatch):
     graph.add_train_model(_flow_only_train_settings(graph))
     result = graph.get_node(2).get_resulting_data()
 
-    assert [op for op, _ in calls] == [OperationKind.ml_train]
+    assert calls == []
     assert result.collect().columns == ["x1", "x2", "y"], "the node passes its input through"
 
 

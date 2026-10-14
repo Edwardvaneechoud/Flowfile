@@ -10,7 +10,10 @@ protocol with ``serialization_format="joblib"``.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+from pathlib import Path
 from typing import Any, ClassVar, Protocol
 
 import polars as pl
@@ -455,9 +458,9 @@ class KNNClassifierTrainer:
         concatenated under the test rows, ``query_knn_ptwise`` produces a list
         of neighbour row-indices per test row, that list is exploded and
         self-joined back to the labels, and a group-by + majority vote yields
-        the prediction. The result is left-joined onto the original input via a
-        ``__test_pos`` row index so we never collect the user's data here —
-        downstream nodes can keep streaming.
+        the prediction. The input is collected once with its ``__test_pos`` row
+        index, and both the query and the final join read that one frame, so a
+        prediction stays on its row even when the input's row order is not stable.
 
         Tie-break (e.g. k=2 with split labels) goes to class 1, matching the
         previous eager implementation.
@@ -487,9 +490,8 @@ class KNNClassifierTrainer:
             pl.lit(None, dtype=pl.UInt32).alias("__test_pos"),
         )
 
-        # Tag input rows with their position so we can re-attach predictions
-        # to the original LazyFrame without collecting.
-        test_lf = lf.with_row_index("__test_pos")
+        # One evaluation of the input: a second one could order its rows differently from the neighbour query.
+        test_lf = lf.with_row_index("__test_pos").collect().lazy()
         test_features = test_lf.select(
             *[pl.col(f).cast(pl.Float64) for f in features],
             pl.lit(None, dtype=pl.Int64).alias("__label"),
@@ -575,3 +577,31 @@ def get_trainer(model_type: str) -> Trainer:
         raise ValueError(
             f"Unknown model_type {model_type!r}. Supported: {supported}."
         ) from exc
+
+
+def fit_to_path(
+    lf: pl.LazyFrame,
+    staging_path: str | Path,
+    model_type: str,
+    target: str,
+    features: list[str],
+    params: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Fit a *model_type* model on *lf*, write its bytes to *staging_path* (fsynced) and report it.
+
+    The one fit-and-write step the worker's ``train_model_task`` and core's in-process Train Model share.
+    Returns ``{sha256, size_bytes, model_type}``, the report ``finalize_upload`` takes.
+    """
+    model_bytes = get_trainer(model_type).train(lf, target=target, features=features, params=params or {})
+    os.makedirs(os.path.dirname(staging_path), exist_ok=True)
+    with open(staging_path, "wb") as f:
+        f.write(model_bytes)
+        f.flush()
+        os.fsync(f.fileno())
+    return {"sha256": hashlib.sha256(model_bytes).hexdigest(), "size_bytes": len(model_bytes), "model_type": model_type}
+
+
+def load_model(model_path: str | Path) -> dict[str, Any]:
+    """The stored model (the trainer's JSON) at *model_path*."""
+    with open(model_path, "rb") as f:
+        return json.loads(f.read())
