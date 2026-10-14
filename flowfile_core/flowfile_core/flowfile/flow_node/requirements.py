@@ -39,7 +39,7 @@ class NodeRequirements:
         operation: The operation the node runs on its backend, or ``None`` for a node that submits a plan or
             works in core.
         read_schemes: The schemes of the storage the backend reads for the node: ``file`` for a local path,
-            ``s3``, ``az`` or ``gs`` for object storage, ``http`` for a URL, any other URI's own scheme.
+            ``s3``, ``az`` or ``gs`` for object storage, a URL's own ``http`` or ``https``, any other URI's own scheme.
         write_schemes: The schemes of the storage the backend writes for the node, spelled the same way.
         plugins: The plugin packages the node's work imports, as ``shared.compute_protocol.PLUGIN_PACKAGES``
             names them.
@@ -110,9 +110,12 @@ def requirements_for(
 
 
 def _scheme(location: str) -> str:
-    """The scheme a backend reads or writes *location* by; a path without a scheme is ``file``."""
+    """The scheme a backend reads or writes *location* by.
+
+    A URL answers its own, ``http`` or ``https``; a path without a scheme is ``file``.
+    """
     if is_url(location):
-        return "http"
+        return location.split("://", 1)[0]
     storage_type = storage_type_for_uri(location)
     if storage_type is not None:
         return _OBJECT_STORAGE_SCHEMES[storage_type]
