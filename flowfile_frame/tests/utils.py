@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from flowfile_frame._console_source import install_hook
+from test_utils.exec_script import run_exported  # noqa: F401  (re-exported for the frame suites)
 
 
 def is_docker_available():

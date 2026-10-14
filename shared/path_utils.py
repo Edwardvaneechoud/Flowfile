@@ -10,6 +10,7 @@ import gzip
 import io
 import os
 import re
+from pathlib import PureWindowsPath
 
 
 class DirectoryScanUnsupportedError(ValueError):
@@ -41,6 +42,11 @@ _DEFAULT_SCAN_EXTENSIONS = {
     "avro": "avro",
     "ipc_stream": "arrows",
 }
+
+
+def file_name(path: str | os.PathLike) -> str:
+    """The last component of ``path`` under either separator, so a Windows path named on Linux names its file."""
+    return PureWindowsPath(path).name
 
 
 def is_url(path: str | None) -> bool:
