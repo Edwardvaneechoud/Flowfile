@@ -204,7 +204,7 @@ WORKER_PORT = (
 )
 WORKER_HOST = os.getenv("WORKER_HOST", "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1")
 
-config = Config(".env")
+config = Config(".env" if os.path.isfile(".env") else None)
 DEBUG: bool = config("DEBUG", cast=bool, default=False)
 FILE_LOCATION = config("FILE_LOCATION", cast=str, default=".\\files\\")
 AVAILABLE_RAM = config("AVAILABLE_RAM", cast=int, default=8)

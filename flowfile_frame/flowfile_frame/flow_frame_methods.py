@@ -21,6 +21,7 @@ from flowfile_frame.utils import _expand_user, _implicit_graph, generate_node_id
 from shared.path_utils import (
     default_scan_extension,
     ensure_glob_pattern,
+    file_name,
     is_cloud_path,
     is_glob_pattern,
     is_url,
@@ -247,7 +248,7 @@ def read_csv(
         received_table = input_schema.ReceivedTable(
             file_type="csv",
             path=current_source_path_for_native,
-            name=Path(current_source_path_for_native).name,
+            name=file_name(current_source_path_for_native),
             scan_mode=scan_mode or "single_file",
             include_file_paths=include_file_paths,
             table_settings=input_schema.InputCsvTable(
@@ -515,7 +516,7 @@ def _read_simple_file(
     received_table = input_schema.ReceivedTable(
         file_type=file_type,
         path=source,
-        name=Path(source).name,
+        name=file_name(source),
         scan_mode=scan_mode or "single_file",
         include_file_paths=include_file_paths,
         table_settings=table_settings,

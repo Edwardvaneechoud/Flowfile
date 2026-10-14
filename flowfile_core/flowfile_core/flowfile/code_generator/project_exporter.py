@@ -61,6 +61,7 @@ def _param_arg(parameter: FlowParameter) -> str:
     annotation = _PARAM_TYPE_TO_ANNOTATION.get(parameter.type, "str")
     return f"{parameter.name}: {annotation} = {parameter_default_repr(parameter)}"
 
+
 # flowfile_ctx APIs that talk to a running Flowfile server; the exported shim
 # raises NotImplementedError for these, so flag them in the manifest warnings.
 _SERVER_ONLY_CTX_APIS = (
@@ -226,9 +227,7 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
         node = self.flow_graph.get_node(settings.node_id)
         module_stem = self._notebook_module_stem(settings)
         bindings, main_items = self._notebook_input_bindings(node)
-        self.module_files[f"notebooks/{module_stem}.py"] = self._build_notebook_module(
-            settings, bindings, main_items
-        )
+        self.module_files[f"notebooks/{module_stem}.py"] = self._build_notebook_module(settings, bindings, main_items)
         self.has_notebooks = True
         self.imports.add(f"from notebooks import {module_stem}")
         self._collect_notebook_warnings(settings)
@@ -291,8 +290,7 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
             edge_refs.append((entry, len(entry["args"])))
             entry["args"].append(f"{upstream_var}.data")
         main_items = [
-            entry["param"] if len(entry["args"]) == 1 else f"{entry['param']}[{index}]"
-            for entry, index in edge_refs
+            entry["param"] if len(entry["args"]) == 1 else f"{entry['param']}[{index}]" for entry, index in edge_refs
         ]
         return bindings, main_items
 
@@ -377,9 +375,7 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
 
     # --- run_flow (subflow) nodes ---------------------------------------------------------
 
-    def _handle_run_flow(
-        self, settings: input_schema.NodeRunFlow, var_name: str, input_vars: dict[str, str]
-    ) -> None:
+    def _handle_run_flow(self, settings: input_schema.NodeRunFlow, var_name: str, input_vars: dict[str, str]) -> None:
         """Emit the referenced flow as a subflows/ module exposing run(), plus the call site."""
         from flowfile_core.flowfile.subflow import SubflowResolutionError, resolve_subflow_path
 
@@ -423,9 +419,7 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
                 continue
             if binding.source == "constant":
                 constant_bindings.append(binding)
-                call_kwargs.append(
-                    f"{binding.parameter_name}={self._constant_literal(binding, specs_by_name)}"
-                )
+                call_kwargs.append(f"{binding.parameter_name}={self._constant_literal(binding, specs_by_name)}")
             elif binding.source == "column":
                 column_bindings.append(binding)
 
@@ -444,17 +438,22 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
 
         if settings.iteration_mode == "iterate" and column_bindings:
             self._emit_iterate_call(
-                settings, module_stem, prefix, var_name, call_kwargs, column_bindings,
-                metadata_bindings, specs_by_name, param_frame_var,
+                settings,
+                module_stem,
+                prefix,
+                var_name,
+                call_kwargs,
+                column_bindings,
+                metadata_bindings,
+                specs_by_name,
+                param_frame_var,
             )
             return
 
         if column_bindings:  # first_value
             self._add_code(f"{prefix}_params = {param_frame_var}.head(1).collect()")
             for binding in column_bindings:
-                call_kwargs.append(
-                    f"{binding.parameter_name}={prefix}_params[{binding.column_name!r}][0]"
-                )
+                call_kwargs.append(f"{binding.parameter_name}={prefix}_params[{binding.column_name!r}][0]")
 
         outputs_var = f"{prefix}_outputs"
         self._add_code(f"{outputs_var} = {module_stem}.run({', '.join(call_kwargs)})")
@@ -507,6 +506,7 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
         out_var_ref = f"{prefix}_out"
         index_var = f"{prefix}_i"
         if metadata_bindings:
+
             def value_expr(binding) -> str:
                 if binding.source == "column":
                     return f"{row_var}[{binding.column_name!r}]"
@@ -516,8 +516,7 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
             exprs.append(f'ff.lit({index_var}).cast(ff.UInt32).alias("run_index")')
             item_template = f'{out_var_ref}["{{name}}"].with_columns([{", ".join(exprs)}])'
             iterator = (
-                f"for {index_var}, ({row_var}, {out_var_ref}) in "
-                f"enumerate(zip({rows_var}, {runs_var}), start=1)"
+                f"for {index_var}, ({row_var}, {out_var_ref}) in " f"enumerate(zip({rows_var}, {runs_var}), start=1)"
             )
         else:
             item_template = f'{out_var_ref}["{{name}}"]'
@@ -540,9 +539,7 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
         for binding in bindings:
             spec = specs_by_name.get(binding.parameter_name)
             dtype = _PARAM_TYPE_TO_FF_EXPR.get(spec.type if spec else "string", "ff.String")
-            exprs.append(
-                f'ff.lit({value_expr(binding)}).cast({dtype}).alias("param_{binding.parameter_name}")'
-            )
+            exprs.append(f'ff.lit({value_expr(binding)}).cast({dtype}).alias("param_{binding.parameter_name}")')
         return exprs
 
     def _constant_literal(self, binding, specs_by_name: dict) -> str:
@@ -617,8 +614,8 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
             source = self._read_custom_node_source_file(custom_node_class)
             if source is None:
                 try:
-                    source = _CUSTOM_NODE_FALLBACK_IMPORTS + "\n\n" + textwrap.dedent(
-                        inspect.getsource(custom_node_class)
+                    source = (
+                        _CUSTOM_NODE_FALLBACK_IMPORTS + "\n\n" + textwrap.dedent(inspect.getsource(custom_node_class))
                     )
                 except (OSError, TypeError) as e:
                     self.unsupported_nodes.append(
@@ -860,8 +857,7 @@ class SubflowModuleConverter(FlowGraphToProjectConverter):
 
     def _sample_expression(self, settings: input_schema.NodeFlowInput) -> str:
         if settings.raw_data_format is not None and settings.raw_data_format.columns:
-            # Public API only: from_raw_data coerces the dict into RawData via pydantic.
-            return f"ff.from_raw_data({settings.raw_data_format.model_dump()})"
+            return self._raw_data_expression(settings.raw_data_format)
         return "ff.LazyFrame()"
 
     def _handle_flow_output(
