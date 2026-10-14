@@ -395,7 +395,7 @@ The [Technical Architecture page](architecture.md#execution-modes) describes wha
 | Setting | Context |
 |---|---|
 | `execution_location = "local"` | backend `local` (`LocalBackend`, core's own process), one node of a stage at a time |
-| `execution_location = "auto"` (or the legacy `"remote"`) | the registry's default backend (`default_backend_id()`), up to `max_parallel_workers` nodes of a stage at once |
+| `execution_location = "auto"` (or the legacy `"remote"`) | the registry's default backend (`default_backend_id()`), up to `max_parallel_workers` nodes of a stage at once, one at a time when that backend is `local` |
 | `execution_location = "worker"` or `"worker:<name>"` | that backend, up to `max_parallel_workers` nodes of a stage at once |
 | `execution_mode = "Development"` | `preview_rows = 100` (`DEFAULT_PREVIEW_ROWS`) |
 | `execution_mode = "Performance"` | `preview_rows = None` |
