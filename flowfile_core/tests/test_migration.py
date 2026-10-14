@@ -10,6 +10,7 @@ Also tests dynamic column mapping, failure handling, and idempotency.
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 
@@ -486,7 +487,7 @@ class TestTopologicalSort:
 
 
 class TestUnknownRevisionRollback:
-    def test_unknown_revision_rolled_back_to_head(self, tmp_path, monkeypatch, capsys):
+    def test_unknown_revision_rolled_back_to_head(self, tmp_path, monkeypatch, caplog):
         """DB stamped at a revision unknown to local scripts should be re-stamped to head."""
         db_path = tmp_path / "catalog.db"
         _run_migration(db_path, monkeypatch)
@@ -497,8 +498,8 @@ class TestUnknownRevisionRollback:
             conn.commit()
         engine.dispose()
 
-        _run_migration(db_path, monkeypatch)
-        captured = capsys.readouterr()
+        with caplog.at_level(logging.WARNING, logger="flowfile_core.database.migration"):
+            _run_migration(db_path, monkeypatch)
 
         from alembic.script import ScriptDirectory
 
@@ -512,7 +513,7 @@ class TestUnknownRevisionRollback:
         engine.dispose()
 
         assert ver == head
-        assert "999fakeXYZ" in captured.err
+        assert "999fakeXYZ" in caplog.text
 
     def test_no_alembic_version_table_is_noop(self, tmp_path, monkeypatch):
         """DB file exists but lacks alembic_version → upgrade runs from base, no crash."""
@@ -878,7 +879,7 @@ class TestPreMigrationSnapshot:
         engine.dispose()
         assert snap_rev == "999fakeXYZ"
 
-    def test_migration_failure_logs_snapshot_path(self, tmp_path, monkeypatch, capsys):
+    def test_migration_failure_logs_snapshot_path(self, tmp_path, monkeypatch, caplog):
         """A failing upgrade must leave the snapshot in place and log its path."""
         from types import SimpleNamespace
 
@@ -897,13 +898,15 @@ class TestPreMigrationSnapshot:
 
         monkeypatch.setattr(migration_mod, "command", SimpleNamespace(upgrade=_boom, stamp=command.stamp))
 
-        with pytest.raises(RuntimeError, match="upgrade exploded"):
+        with (
+            caplog.at_level(logging.ERROR, logger="flowfile_core.database.migration"),
+            pytest.raises(RuntimeError, match="upgrade exploded"),
+        ):
             _run_migration(db_path, monkeypatch)
-        captured = capsys.readouterr()
 
         backups = self._backups(tmp_path)
         assert len(backups) == 1
-        assert str(backups[0]) in captured.err
+        assert str(backups[0]) in caplog.text
 
     def test_snapshot_disabled_by_env(self, tmp_path, monkeypatch):
         from alembic import command

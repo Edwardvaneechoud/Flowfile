@@ -2,6 +2,7 @@
 
 import codecs
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -18,6 +19,7 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
     Returns:
         Exit code (0 for success, 1 for failure)
     """
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     from flowfile_core.flowfile.execution import registry
 
     registry.set_default_override(registry.LOCAL_BACKEND_ID)

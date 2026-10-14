@@ -27,7 +27,6 @@ from flowfile_core.database.connection import SessionLocal
 from flowfile_core.database.models import CatalogTable
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 
 def migrate_table(table: CatalogTable, *, dry_run: bool = False) -> bool:
@@ -111,6 +110,7 @@ def main(dry_run: bool = False) -> int:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description="Migrate catalog tables from Parquet to Delta Lake")
     parser.add_argument("--dry-run", action="store_true", help="Preview changes without modifying anything")
     args = parser.parse_args()
