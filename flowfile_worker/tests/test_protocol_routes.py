@@ -34,6 +34,7 @@ from shared.compute_protocol import (
     ResultRef,
     SubmitResult,
     WorkerLocation,
+    file_uri,
     schema_to_wire,
 )
 from tests.conftest import INTERNAL_AUTH_HEADERS
@@ -431,14 +432,14 @@ def test_export_writes_the_result_as_parquet_at_the_uri_in_a_child(held, monkeyp
     _submit(result_id, plan, must_materialise=must_materialise)
     jobs_before = set(status_dict)
     children = _record_children(monkeypatch)
-    uri = f"file://{tmp_path}/out.parquet"
+    uri = file_uri(tmp_path / "out.parquet")
 
     response = client.post(f"/v1/results/{result_id}/export", json={"uri": uri})
 
     assert response.status_code == 200, response.text
     assert response.json() == {"uri": uri}
     assert children == ["export_result"]
-    assert_frame_equal(pl.read_parquet(uri), plan.collect())
+    assert_frame_equal(pl.read_parquet(tmp_path / "out.parquet"), plan.collect())
     assert set(status_dict) == jobs_before
     assert client.head(f"/v1/results/{result_id}").status_code == 200
 
@@ -446,7 +447,7 @@ def test_export_writes_the_result_as_parquet_at_the_uri_in_a_child(held, monkeyp
 def test_export_of_an_unknown_result_is_404(monkeypatch, tmp_path):
     children = _record_children(monkeypatch)
 
-    response = client.post("/v1/results/unknown/export", json={"uri": f"file://{tmp_path}/out.parquet"})
+    response = client.post("/v1/results/unknown/export", json={"uri": file_uri(tmp_path / "out.parquet")})
 
     assert response.status_code == 404
     assert children == []
@@ -473,7 +474,7 @@ def test_import_holds_a_deferred_result_over_the_uri_with_the_given_columns_and_
     path = tmp_path / "in.parquet"
     columns = schema_to_wire(plan.collect_schema())
     children = _record_children(monkeypatch)
-    body = {"uri": f"file://{path}", "columns": [column.model_dump() for column in columns], "row_count": 5}
+    body = {"uri": file_uri(path), "columns": [column.model_dump() for column in columns], "row_count": 5}
 
     response = client.post(f"/v1/results/{result_id}/import", json=body)
 
@@ -499,7 +500,7 @@ def test_import_holds_a_deferred_result_over_the_uri_with_the_given_columns_and_
 def test_import_under_a_held_id_replaces_it(held, tmp_path):
     result_id = held()
     stored_file = _location(_submit(result_id, _plan(), must_materialise=True)).path
-    body = {"uri": f"file://{tmp_path}/in.parquet", "columns": [], "row_count": 0}
+    body = {"uri": file_uri(tmp_path / "in.parquet"), "columns": [], "row_count": 0}
 
     response = client.post(f"/v1/results/{result_id}/import", json=body)
 
@@ -549,7 +550,7 @@ def test_a_blob_import_holds_a_copy_of_the_file(held, monkeypatch, tmp_path):
     source.write_bytes(BLOB)
     children = _record_children(monkeypatch)
 
-    response = client.post(f"/v1/results/{result_id}/import", json=_blob_body(f"file://{source}"))
+    response = client.post(f"/v1/results/{result_id}/import", json=_blob_body(file_uri(source)))
 
     assert response.status_code == 200, response.text
     ref = ResultRef.model_validate_json(response.text)
@@ -567,9 +568,9 @@ def test_a_blob_import_holds_a_copy_of_the_file(held, monkeypatch, tmp_path):
     source.unlink()
     assert client.head(f"/v1/results/{result_id}").status_code == 200
     target = tmp_path / "out.bin"
-    exported = client.post(f"/v1/results/{result_id}/export", json={"uri": f"file://{target}"})
+    exported = client.post(f"/v1/results/{result_id}/export", json={"uri": file_uri(target)})
     assert exported.status_code == 200, exported.text
-    assert exported.json() == {"uri": f"file://{target}"}
+    assert exported.json() == {"uri": file_uri(target)}
     assert target.read_bytes() == BLOB
     assert children == []
     assert client.delete(f"/v1/results/{result_id}").status_code == 204
@@ -589,10 +590,10 @@ def test_a_blob_uri_of_another_scheme_or_with_a_credential_is_422(held, tmp_path
     assert client.head(f"/v1/results/{refused}").status_code == 404
     assert not result_path(-1, refused).with_suffix(".blob").exists()
     fitted = held()
-    assert client.post(f"/v1/results/{fitted}/import", json=_blob_body(f"file://{source}")).status_code == 200
+    assert client.post(f"/v1/results/{fitted}/import", json=_blob_body(file_uri(source))).status_code == 200
     credential = {"connection_id": 1, "user_id": 1}
     with_credential = client.post(
-        f"/v1/results/{fitted}/export", json={"uri": f"file://{tmp_path}/out.bin", "credential": credential}
+        f"/v1/results/{fitted}/export", json={"uri": file_uri(tmp_path / "out.bin"), "credential": credential}
     )
     to_s3 = client.post(f"/v1/results/{fitted}/export", json={"uri": "s3://bucket/out.bin"})
     assert (with_credential.status_code, to_s3.status_code) == (422, 422)
@@ -715,7 +716,7 @@ def test_a_blob_crosses_to_a_presigned_https_url_and_back(held, presign, tmp_pat
     source = tmp_path / "model.bin"
     source.write_bytes(model)
     fitted = held()
-    assert client.post(f"/v1/results/{fitted}/import", json=_blob_body(f"file://{source}")).status_code == 200
+    assert client.post(f"/v1/results/{fitted}/import", json=_blob_body(file_uri(source))).status_code == 200
     put_url = url("put_object", "model.bin")
     assert put_url.startswith("https://")
 
@@ -730,7 +731,7 @@ def test_a_blob_crosses_to_a_presigned_https_url_and_back(held, presign, tmp_pat
     ref = ResultRef.model_validate_json(imported.text)
     assert (ref.result_id, ref.kind, ref.state) == (fetched, "blob", "materialised")
     copy = tmp_path / "copy.bin"
-    assert client.post(f"/v1/results/{fetched}/export", json={"uri": f"file://{copy}"}).status_code == 200
+    assert client.post(f"/v1/results/{fetched}/export", json={"uri": file_uri(copy)}).status_code == 200
     assert copy.read_bytes() == model
 
 
@@ -739,7 +740,7 @@ def test_a_failed_blob_transfer_is_500_and_names_no_signature(held, presign, tmp
     source = tmp_path / "model.bin"
     source.write_bytes(BLOB)
     fitted = held()
-    assert client.post(f"/v1/results/{fitted}/import", json=_blob_body(f"file://{source}")).status_code == 200
+    assert client.post(f"/v1/results/{fitted}/import", json=_blob_body(file_uri(source))).status_code == 200
     tampered = url("put_object", "model.bin").replace("X-Amz-Signature=", "X-Amz-Signature=00")
     missing = held()
 
