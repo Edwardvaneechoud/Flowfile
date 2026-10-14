@@ -6,9 +6,9 @@ host, but any read of that leaf from core raises ``FileNotFoundError``. A touch 
 instead of being counted, so these flows pass only while core takes a stored result's schema from its reference.
 They run with the protocol flag off and on: with it on, core asks the backend that holds a result whether it still
 does, and reads rows of those results through the backend: the formula editor's preview row, a formula gate's probe,
-column statistics and the CSV export; and a filter, a select, a join or a group_by over a stored result takes its
-input's columns from the input engine's cached schema. The tests named for ``v1`` results check the same over the
-session worker's ``/v1`` routes.
+column statistics and the CSV export; and a filter, a select, a join, a group_by or a formula over a stored result
+takes its input's columns from the input engine's cached schema. The tests named for ``v1`` results check the same
+over the session worker's ``/v1`` routes.
 """
 
 import dataclasses
@@ -542,6 +542,43 @@ def test_filter_select_join_and_group_by_run_over_stored_results_core_cannot_rea
             "s1",
             "s2",
         ]
+    finally:
+        graph.close_flow()
+
+
+def test_a_formula_runs_over_a_stored_result_core_cannot_read(unreadable, protocol_on):
+    graph = make_graph(9350)
+    try:
+        add_manual_input(graph, 1, [{"x1": i, "x2": i * 10} for i in range(1, 5)])
+        graph.get_node(1).node_settings.cache_results = True
+        add_promise(graph, 2, "formula")
+        graph.add_formula(
+            input_schema.NodeFormula(
+                flow_id=graph.flow_id,
+                node_id=2,
+                depending_on_id=1,
+                functions=[
+                    transform_schema.FunctionInput(
+                        transform_schema.FieldInput(name="y", data_type="Float64"), "[x1] * 2 + [x2]"
+                    ),
+                    transform_schema.FunctionInput(transform_schema.FieldInput(name="z"), "[y] + 1"),
+                ],
+            )
+        )
+        connect(graph, 1, 2)
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        ref = graph.get_node(1).results.result_ref
+        assert ref.state == "materialised"
+        assert not os.path.exists(ref.location.decode("utf-8"))
+        assert columns(graph.get_node(2).schema) == [
+            ("x1", "Int64"),
+            ("x2", "Int64"),
+            ("y", "Float64"),
+            ("z", "Float64"),
+        ]
+        assert len(graph.get_node(2).get_table_example(True).data) == 4
     finally:
         graph.close_flow()
 
