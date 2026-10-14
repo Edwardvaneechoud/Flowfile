@@ -28,11 +28,15 @@ import requests
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
+from flowfile_core.configs import settings
+from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.routes.routes import flow_file_handler
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.transform_schema import SelectInput
+from shared.compute_protocol import WorkerLocation
 
 # Windows has no 0.0.0.0 loopback alias for connects; the worker binds 127.0.0.1 there.
 WORKER_HOST = os.environ.get(
@@ -452,4 +456,76 @@ def test_sample_route_failed_fetch_returns_422(api_client, local_api_server):
     ).model_dump()
     resp = api_client.post("/rest_api/sample", json=payload)
     assert resp.status_code == 422
+    flow_file_handler.delete_flow(flow_id)
+
+
+@pytest.fixture(params=[False, True], ids=["flag_off", "flag_on"])
+def protocol_flag(request, monkeypatch) -> bool:
+    """The protocol flag in each state, back to what it was when the test ends."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", request.param)
+    return request.param
+
+
+def test_sample_route_fetches_one_page(api_client, api_server, protocol_flag):
+    flow_id, node_id = 7003, 1
+    url = f"{api_server.base_url}/offset"
+    pagination = input_schema.RestApiPaginationSettings(pagination_type="offset", page_size=2)
+    _register_rest_node_in_global_handler(flow_id, node_id, url, pagination=pagination)
+    payload = input_schema.NodeRestApiReader(
+        flow_id=flow_id,
+        node_id=node_id,
+        user_id=1,
+        rest_api_settings=input_schema.RestApiSettings(url=url, pagination=pagination),
+    ).model_dump()
+    api_server.request_count = 0
+
+    resp = api_client.post("/rest_api/sample", json=payload, params={"sample_size": 3})
+
+    assert resp.status_code == 200, resp.text
+    assert {f["name"] for f in resp.json()["fields"]} == {"id"}
+    assert api_server.request_count == 1
+    flow_file_handler.delete_flow(flow_id)
+
+
+def test_with_the_protocol_flag_the_sample_route_reads_over_v1_and_releases_the_read(
+    api_client, local_api_server, monkeypatch
+):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
+
+    def _no_fetcher(*_args, **_kwargs):
+        pytest.fail("the sample was read through the task routes' fetcher")
+
+    monkeypatch.setattr("flowfile_core.routes.routes.ExternalRestApiFetcher", _no_fetcher)
+    reads, samples = [], []
+    real_run_op, real_sample = WorkerBackend.run_op, WorkerBackend.sample
+
+    def _recording_run_op(self, op, payload):
+        result = real_run_op(self, op, payload)
+        reads.append((self, op, result))
+        return result
+
+    def _recording_sample(self, ref, n):
+        samples.append((ref, n))
+        return real_sample(self, ref, n)
+
+    monkeypatch.setattr(WorkerBackend, "run_op", _recording_run_op)
+    monkeypatch.setattr(WorkerBackend, "sample", _recording_sample)
+    flow_id, node_id = 7004, 1
+    url = f"{local_api_server}/items"
+    _register_rest_node_in_global_handler(flow_id, node_id, url)
+    payload = input_schema.NodeRestApiReader(
+        flow_id=flow_id, node_id=node_id, user_id=1, rest_api_settings=input_schema.RestApiSettings(url=url)
+    ).model_dump()
+
+    resp = api_client.post("/rest_api/sample", json=payload, params={"sample_size": 2})
+
+    assert resp.status_code == 200, resp.text
+    assert {f["name"] for f in resp.json()["fields"]} == {"id", "name"}
+    [(backend, op, result)] = reads
+    assert op is OperationKind.rest_api_read
+    ref = result.refs["result"]
+    assert WorkerLocation.model_validate_json(ref.location).kind == "file"
+    assert ref.row_count == 2
+    assert samples == [(ref, 2)]
+    assert not backend.exists(ref)
     flow_file_handler.delete_flow(flow_id)

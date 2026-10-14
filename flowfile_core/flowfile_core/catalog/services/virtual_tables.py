@@ -7,7 +7,8 @@ import io
 import json
 import logging
 import re
-from contextlib import ExitStack
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -43,7 +44,6 @@ from flowfile_core.database.models import CatalogTable
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
 from flowfile_core.flowfile.execution.errors import ComputeError
-from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_resolve_virtual_table,
 )
@@ -54,6 +54,7 @@ from shared.storage_config import storage
 
 if TYPE_CHECKING:
     from flowfile_core.catalog.services.sql import SqlService
+    from flowfile_core.flowfile.execution.protocol import ResultRef
 
 logger = logging.getLogger(__name__)
 
@@ -408,11 +409,8 @@ class VirtualTableService:
                 )
             return None
         if t.file_path and _is_cloud_uri(t.file_path):
-            target = resolve_for_namespace(t.namespace_id)
             # The resolved frame is shipped to the worker, so the credentials must not sit in the plan.
-            return pl.scan_delta(
-                t.file_path, **CloudStorageReader.get_secure_scan_kwargs(target.storage_options, user_id)
-            )
+            return pl.scan_delta(t.file_path, **resolve_for_namespace(t.namespace_id).scan_kwargs(user_id))
         if t.file_path and is_delta_table(Path(t.file_path)):
             return pl.scan_delta(t.file_path)
         return None
@@ -432,6 +430,24 @@ class VirtualTableService:
         with ``run_location`` as its location; with none given it is ``"remote"`` when catalog I/O goes to the worker
         (``catalog.compute.uses_worker``), else ``"local"``.
         """
+        with self.held_virtual_flow_table(table_id, user_id, run_location, node_logger) as (plan, _):
+            return plan
+
+    @contextmanager
+    def held_virtual_flow_table(
+        self,
+        table_id: int,
+        user_id: int | None = None,
+        run_location: Literal["remote", "local"] | None = None,
+        node_logger: NodeLogger | None = None,
+    ) -> Iterator[tuple[pl.LazyFrame, ResultRef | None]]:
+        """Resolve a virtual flow table as ``resolve_virtual_flow_table`` does; its plan and its producer run's ref.
+
+        A table that resolves without a run (a query table, an optimized table whose sources are current) has no
+        reference (``None``). For one whose producer flow's writer node runs, the reference is that node's result,
+        held for the block: a deferred one is released when the block ends, a stored one stays, since the plan scans
+        it.
+        """
         if run_location is None:
             run_location = "remote" if uses_worker() else "local"
         if node_logger is None:
@@ -442,7 +458,8 @@ class VirtualTableService:
         if table is None or table.table_type != "virtual":
             raise TableNotFoundError(table_id=table_id)
         if table.sql_query:
-            return self.resolve_query_virtual_table(table_id, user_id=user_id)
+            yield self.resolve_query_virtual_table(table_id, user_id=user_id), None
+            return
 
         if (
             table.is_optimized
@@ -450,7 +467,8 @@ class VirtualTableService:
             and not serialized_frame_uses_cloud(table.serialized_lazy_frame)
         ):
             if check_source_versions_current(table.source_table_versions):
-                return pl.LazyFrame.deserialize(io.BytesIO(table.serialized_lazy_frame))
+                yield pl.LazyFrame.deserialize(io.BytesIO(table.serialized_lazy_frame)), None
+                return
             logger.info(
                 "Source table versions changed for virtual table %r, falling back to flow execution", table.name
             )
@@ -486,14 +504,15 @@ class VirtualTableService:
             raise ValueError(f"Flow errors for table '{table.name}': {selected_node.results.errors}")
 
         flowframe = selected_node.get_resulting_data()
-        # The producer graph is dropped after this call; the returned plan keeps what it reads.
-        selected_node.release_deferred_result()
-        if flowframe is None or flowframe.data_frame is None:
-            raise ValueError(f"No data produced for table '{table.name}'")
-
-        # Do not mutate the shared memoized engine; .lazy() is an identity on
-        # LazyFrames and a cheap wrap on eager frames.
-        return flowframe.data_frame.lazy()
+        try:
+            if flowframe is None or flowframe.data_frame is None:
+                raise ValueError(f"No data produced for table '{table.name}'")
+            # Do not mutate the shared memoized engine; .lazy() is an identity on
+            # LazyFrames and a cheap wrap on eager frames.
+            yield flowframe.data_frame.lazy(), selected_node.results.result_ref
+        finally:
+            # The producer graph is dropped after the block; the yielded plan keeps what it reads.
+            selected_node.release_deferred_result()
 
     def fresh_versions_hash(self, table_id: int) -> str:
         """Cache key for a virtual table's worker IPC snapshot, read post-resolution.

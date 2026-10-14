@@ -1,9 +1,12 @@
 """Cloud reads never put decrypted credentials into a serialized query plan.
 
 Every test captures each plan core serializes and asserts MinIO's root secret is absent while the data still reads.
+With the compute protocol flag on, a read of a stored connection names it instead, and the executing process
+resolves it.
 """
 
 import io
+import json
 import os
 import subprocess
 import sys
@@ -14,25 +17,31 @@ from pathlib import Path
 import polars as pl
 import pytest
 from pydantic import SecretStr
+from sqlalchemy import create_engine
 
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.storage_backend import resolve_for_namespace
+from flowfile_core.configs import settings as core_settings
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.database.models import Base, CatalogTable
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     delete_cloud_connection,
     store_cloud_connection,
 )
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.cloud_storage_schemas import (
     CloudStorageReadSettings,
+    CloudStorageReadSettingsInternal,
     CloudStorageWriteSettings,
     FullCloudStorageConnection,
 )
+from shared import cloud_credential_provider as cp
 from shared.delta_utils import write_delta
-from tests.flowfile.conftest import add_test_manual_input, catalog_cleanup, create_test_graph
+from tests.flowfile.conftest import add_test_catalog_writer, add_test_manual_input, catalog_cleanup, create_test_graph
 from tests.test_catalog_cloud_virtual import _create_cloud_schema, _ensure_connection, requires_minio
 
 try:
@@ -54,6 +63,52 @@ _ROOT_OPTIONS = {
     "aws_secret_access_key": MINIO_SECRET_KEY,
 }
 _ROWS = [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}, {"id": 3, "name": "c"}]
+_SENTINELS = {name: f"SENTINEL-{name}-{uuid.uuid4().hex}" for name in ("aws", "token", "key", "sas", "client", "gcs")}
+_CONNECTION_TYPES = {
+    "s3-access_key": dict(
+        storage_type="s3",
+        auth_method="access_key",
+        aws_access_key_id="AKIDSENTINEL",
+        aws_secret_access_key=SecretStr(_SENTINELS["aws"]),
+        aws_session_token=SecretStr(_SENTINELS["token"]),
+        aws_region="us-east-1",
+    ),
+    "s3-iam_role": dict(storage_type="s3", auth_method="iam_role", aws_role_arn="arn:aws:iam::123456789012:role/x"),
+    "s3-aws-cli": dict(storage_type="s3", auth_method="aws-cli", aws_profile="analytics"),
+    "s3-env_vars": dict(storage_type="s3", auth_method="env_vars"),
+    "adls-access_key": dict(
+        storage_type="adls",
+        auth_method="access_key",
+        azure_account_name="acct",
+        azure_account_key=SecretStr(_SENTINELS["key"]),
+    ),
+    "adls-sas_token": dict(
+        storage_type="adls",
+        auth_method="sas_token",
+        azure_account_name="acct",
+        azure_sas_token=SecretStr(_SENTINELS["sas"]),
+    ),
+    "adls-service_principal": dict(
+        storage_type="adls",
+        auth_method="service_principal",
+        azure_tenant_id="tenant",
+        azure_client_id="client",
+        azure_client_secret=SecretStr(_SENTINELS["client"]),
+    ),
+    "adls-managed_identity": dict(storage_type="adls", auth_method="managed_identity", azure_account_name="acct"),
+    "gcs-service_account": dict(
+        storage_type="gcs",
+        auth_method="service_account",
+        gcs_service_account_key=SecretStr(json.dumps({"private_key": _SENTINELS["gcs"]})),
+        gcs_project_id="proj",
+    ),
+}
+_PATHS = {
+    "s3": "s3://bucket/data",
+    "adls": "abfss://container@acct.dfs.core.windows.net/data",
+    "gcs": "gs://bucket/data",
+}
+_SUFFIXES = {"parquet": ".parquet", "csv": ".csv", "json": ".json", "delta": ""}
 
 
 def _connection(name: str, auth_method: str, **fields) -> FullCloudStorageConnection:
@@ -108,6 +163,12 @@ def stored_connection():
     with get_db_context() as db:
         for name in names:
             delete_cloud_connection(db, name, user_id=1)
+
+
+@pytest.fixture(params=[False, True], ids=["protocol-off", "protocol-on"])
+def protocol(request, monkeypatch) -> bool:
+    monkeypatch.setattr(core_settings.FLOWFILE_COMPUTE_PROTOCOL, "value", request.param)
+    return request.param
 
 
 @pytest.fixture
@@ -197,6 +258,12 @@ def _assert_no_secret(plans: list[bytes], *secrets: bytes) -> None:
     assert leaked == [], f"{len(leaked)} of {len(plans)} serialized plans carry a plaintext secret"
 
 
+def _no_encrypted_provider(plans: list[bytes]) -> None:
+    """No plan carries credentials core resolved: no encrypted provider, whatever its ciphertext, and no ``$ffsec$``."""
+    carrying = [i for i, plan in enumerate(plans) if b"EncryptedCredentialProvider" in plan or b"$ffsec$" in plan]
+    assert carrying == [], f"{len(carrying)} of {len(plans)} serialized plans carry core-resolved credentials"
+
+
 class TestSecureScanKwargs:
     """The helper every serialized cloud scan goes through; no I/O."""
 
@@ -228,8 +295,74 @@ class TestSecureScanKwargs:
         assert kwargs.get("storage_options") == (options or None)
 
 
+class TestReadPlansNameTheirConnection:
+    """With the protocol flag on, a stored connection's read plan holds a reference and nothing to decrypt; no I/O."""
+
+    @pytest.mark.parametrize(
+        ("file_format", "scan_mode"),
+        [
+            ("parquet", "single_file"),
+            ("parquet", "directory"),
+            ("csv", "single_file"),
+            ("csv", "directory"),
+            ("json", "single_file"),
+            ("delta", "single_file"),
+        ],
+    )
+    @pytest.mark.parametrize("connection_type", list(_CONNECTION_TYPES))
+    def test_every_connection_types_read_plan_carries_only_its_reference(
+        self, monkeypatch, connection_type, file_format, scan_mode
+    ):
+        monkeypatch.setattr(core_settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
+        monkeypatch.setattr(pl.LazyFrame, "collect_schema", lambda self: pl.Schema({"id": pl.Int64}))
+        resolved, made, probed = [], [], []
+        monkeypatch.setattr(CloudStorageReader, "get_storage_options", staticmethod(lambda c: resolved.append(c) or {}))
+        original_init = cp.CredentialRefProvider.__init__
+
+        def _record(provider, connection_id, user_id):
+            made.append((connection_id, user_id))
+            original_init(provider, connection_id, user_id)
+
+        monkeypatch.setattr(cp.CredentialRefProvider, "__init__", _record)
+        monkeypatch.setattr(
+            FlowDataEngine, "_get_schema_from_first_file_in_dir", staticmethod(lambda *a, **k: probed.append(a))
+        )
+        fields = _CONNECTION_TYPES[connection_type]
+        name = f"leak {connection_type} {uuid.uuid4().hex[:6]}"
+        connection = FullCloudStorageConnection(connection_name=name, **fields)
+        with get_db_context() as db:
+            connection_id = store_cloud_connection(db, connection, user_id=1).id
+        suffix = "/" if scan_mode == "directory" else _SUFFIXES[file_format]
+        read = CloudStorageReadSettingsInternal(
+            connection=connection,
+            read_settings=CloudStorageReadSettings(
+                connection_name=name,
+                resource_path=_PATHS[fields["storage_type"]] + suffix,
+                file_format=file_format,
+                scan_mode=scan_mode,
+            ),
+        )
+        try:
+            plan = FlowDataEngine.from_cloud_storage_obj(read, user_id=1).data_frame.serialize()
+        finally:
+            with get_db_context() as db:
+                delete_cloud_connection(db, name, user_id=1)
+
+        assert resolved == []
+        _assert_no_secret([plan], *(s.encode() for s in _SENTINELS.values()), b"$ffsec$", b"AKIDSENTINEL")
+        if fields["auth_method"] in ("env_vars", "managed_identity"):
+            assert made == []
+            assert b"CredentialRefProvider" not in plan
+        else:
+            assert made == [(connection_id, 1)]
+            assert b"CredentialRefProvider" in plan
+            assert probed == []
+
+
 @requires_minio
-def test_cloud_reader_plans_carry_no_secret(execution_location, stored_connection, minio_prefix, serialized_plans):
+def test_cloud_reader_plans_carry_no_secret(
+    execution_location, protocol, stored_connection, minio_prefix, serialized_plans
+):
     paths = _seed_files(minio_prefix)
     connection_name = stored_connection(
         "access_key", aws_access_key_id=MINIO_ACCESS_KEY, aws_secret_access_key=SecretStr(MINIO_SECRET_KEY)
@@ -261,13 +394,38 @@ def test_cloud_reader_plans_carry_no_secret(execution_location, stored_connectio
     if execution_location == "remote":
         assert len(serialized_plans) > len(reader_plans), "the run shipped no plan to the worker"
     _assert_no_secret(serialized_plans, SECRET)
+    if protocol:
+        _no_encrypted_provider(serialized_plans)
+        assert any(b"CredentialRefProvider" in plan for plan in serialized_plans)
 
 
 @requires_minio
 def test_iam_role_reader_plan_carries_no_temporary_credentials(
-    execution_location, stored_connection, minio_prefix, minio_sts, storage_options_spy, serialized_plans
+    execution_location,
+    protocol,
+    stored_connection,
+    minio_prefix,
+    minio_sts,
+    storage_options_spy,
+    serialized_plans,
+    monkeypatch,
 ):
-    """iam_role assumes the role in core; the temporary key, secret and session token stay encrypted."""
+    """iam_role assumes the role where it is resolved; the temporary key, secret and session token never enter a plan.
+
+    Flag off, core assumes it and the plan carries them encrypted; flag on, the plan names the connection.
+    """
+    if protocol and execution_location == "remote":
+        pytest.skip(
+            "with the protocol flag a worker assumes the role with its own identity: see the worker-child tests"
+        )
+    resolved = []
+    original = cp.resolve_credential_ref
+
+    def _record(connection_id, user_id):
+        resolved.append(original(connection_id, user_id))
+        return resolved[-1]
+
+    monkeypatch.setattr(cp, "resolve_credential_ref", _record)
     paths = _seed_files(minio_prefix)
     connection_name = stored_connection("iam_role", aws_role_arn="arn:aws:iam::123456789012:role/flowfile-test")
     graph = create_test_graph(flow_id=7402, execution_location=execution_location)
@@ -280,7 +438,9 @@ def test_iam_role_reader_plan_carries_no_temporary_credentials(
     assert _count(graph, 2) == 3
     graph.get_node(1).get_resulting_data().data_frame.serialize()
     sts_options = [options for options in storage_options_spy if options.get("aws_session_token")]
+    sts_options += [credentials for credentials, _ in resolved]
     assert sts_options, "the iam_role connection never assumed a role"
+    assert bool(resolved) == protocol
     temporary = [
         options[key].encode()
         for options in sts_options
@@ -327,7 +487,7 @@ def azurite_container():
     client.delete_container(name)
 
 
-def test_adls_reader_plan_carries_no_account_key(execution_location, azurite_container, serialized_plans):
+def test_adls_reader_plan_carries_no_account_key(execution_location, protocol, azurite_container, serialized_plans):
     from test_utils.azurite.fixtures import AZURITE_ACCOUNT_KEY, AZURITE_ACCOUNT_NAME, AZURITE_BLOB_PORT, AZURITE_HOST
 
     buffer = io.BytesIO()
@@ -373,7 +533,9 @@ class TestCatalogReadersOnObjectStorage:
         yield
         catalog_cleanup()
 
-    def test_table_sql_and_change_reads_carry_no_secret(self, execution_location, minio_prefix, serialized_plans):
+    def test_table_sql_virtual_and_change_reads_carry_no_secret(
+        self, execution_location, protocol, minio_prefix, serialized_plans
+    ):
         _ensure_connection()
         schema_id = _create_cloud_schema(f"s3://{_BUCKET}/{minio_prefix}/catalog")
         target = resolve_for_namespace(schema_id)
@@ -394,6 +556,20 @@ class TestCatalogReadersOnObjectStorage:
                 size_bytes=100,
             ).id
             svc.enable_table_cdc(table_id)
+            # The SQL editor refuses cloud tables, so the query virtual table is put in the catalog directly.
+            virtual_id = (
+                SQLAlchemyCatalogRepository(db)
+                .create_table(
+                    CatalogTable(
+                        name=f"{table_name}_query",
+                        namespace_id=schema_id,
+                        owner_id=1,
+                        table_type="virtual",
+                        sql_query=f"SELECT * FROM {table_name} WHERE id > 1",
+                    )
+                )
+                .id
+            )
         write_delta(pl.DataFrame(_ROWS[:1]), dest, mode="append", storage_options=target.storage_options)
 
         graph = create_test_graph(flow_id=7404, execution_location=execution_location)
@@ -409,6 +585,7 @@ class TestCatalogReadersOnObjectStorage:
                 cdc_mode="since_version",
                 cdc_from_version=0,
             ),
+            7: input_schema.NodeCatalogReader(flow_id=graph.flow_id, node_id=7, catalog_table_id=virtual_id),
         }
         for node_id, settings in readers.items():
             graph.add_node_promise(
@@ -420,10 +597,39 @@ class TestCatalogReadersOnObjectStorage:
         run_info = graph.run_graph()
 
         _assert_run_succeeded(run_info)
-        assert {node_id + 1: _count(graph, node_id + 1) for node_id in readers} == {2: 4, 4: 2, 6: 1}
+        assert {node_id + 1: _count(graph, node_id + 1) for node_id in readers} == {2: 4, 4: 2, 6: 1, 8: 2}
         for node_id in readers:
             graph.get_node(node_id).get_resulting_data().data_frame.serialize()
         _assert_no_secret(serialized_plans, SECRET)
+        if protocol:
+            _no_encrypted_provider(serialized_plans)
+            assert any(b"CredentialRefProvider" in plan for plan in serialized_plans)
+
+    def test_scd2_writer_output_carries_no_secret(self, execution_location, protocol, minio_prefix, serialized_plans):
+        _ensure_connection()
+        schema_id = _create_cloud_schema(f"s3://{_BUCKET}/{minio_prefix}/catalog")
+        graph = create_test_graph(flow_id=7408, execution_location=execution_location)
+        add_test_manual_input(graph, _ROWS, node_id=1)
+        add_test_catalog_writer(
+            graph,
+            node_id=2,
+            depending_on_id=1,
+            table_name=f"scd2_probe_{uuid.uuid4().hex[:6]}",
+            namespace_id=schema_id,
+            write_mode="scd2",
+            merge_keys=["id"],
+            scd2=input_schema.Scd2Settings(),
+        )
+        _add_record_count(graph, 3, 2)
+
+        _assert_run_succeeded(graph.run_graph())
+
+        assert _count(graph, 3) == 3
+        graph.get_node(2).get_resulting_data().data_frame.serialize()
+        _assert_no_secret(serialized_plans, SECRET)
+        if protocol:
+            _no_encrypted_provider(serialized_plans)
+            assert any(b"CredentialRefProvider" in plan for plan in serialized_plans)
 
 
 @requires_minio
@@ -431,7 +637,7 @@ class TestPlanExecutesWhereItIsDecrypted:
     """A core-built plan run in a fresh worker-shaped process, the way a spawned worker child runs it."""
 
     @pytest.fixture
-    def reader_plan(self, stored_connection, minio_prefix) -> bytes:
+    def reader_plan(self, protocol, stored_connection, minio_prefix) -> bytes:
         paths = _seed_files(minio_prefix)
         connection_name = stored_connection(
             "access_key", aws_access_key_id=MINIO_ACCESS_KEY, aws_secret_access_key=SecretStr(MINIO_SECRET_KEY)
@@ -470,13 +676,56 @@ class TestPlanExecutesWhereItIsDecrypted:
         assert ran.returncode == 0, ran.stderr
         assert ran.stdout.strip().splitlines()[-1] == "3"
 
-    def test_a_worker_without_the_master_key_fails_with_a_clear_error(self, reader_plan, tmp_path):
+    def test_a_worker_without_the_master_key_fails_with_a_clear_error(self, protocol, reader_plan, tmp_path):
         empty_store = tmp_path / "other_secure_store"
         empty_store.mkdir()
 
         ran = self._run_in_worker_child(reader_plan, tmp_path, FLOWFILE_SECURE_STORAGE_PATH=str(empty_store))
 
         assert ran.returncode != 0
-        assert "Could not decrypt the cloud storage credentials embedded in this query plan" in ran.stderr
+        if protocol:
+            assert "Could not decrypt the secrets of cloud connection" in ran.stderr
+        else:
+            assert "Could not decrypt the cloud storage credentials embedded in this query plan" in ran.stderr
         assert "Master key not found" in ran.stderr
         assert MINIO_SECRET_KEY not in ran.stderr
+
+    @pytest.mark.parametrize("protocol", [True], indirect=True, ids=["protocol-on"])
+    def test_a_worker_on_another_catalog_cannot_resolve_the_reference(self, protocol, reader_plan, tmp_path):
+        other = tmp_path / "other_catalog.db"
+        engine = create_engine(f"sqlite:///{other}")
+        Base.metadata.create_all(engine)
+        engine.dispose()
+
+        ran = self._run_in_worker_child(reader_plan, tmp_path, FLOWFILE_DATABASE_URL=f"sqlite:///{other}")
+
+        assert ran.returncode != 0
+        assert "The catalog database this process reads has no cloud connection" in ran.stderr
+        assert MINIO_SECRET_KEY not in ran.stderr
+
+    @pytest.mark.parametrize("protocol", [True], indirect=True, ids=["protocol-on"])
+    def test_iam_role_is_assumed_with_the_executing_worker_identity(
+        self, protocol, stored_connection, minio_prefix, minio_sts, tmp_path
+    ):
+        paths = _seed_files(minio_prefix)
+        connection_name = stored_connection("iam_role", aws_role_arn="arn:aws:iam::123456789012:role/flowfile-test")
+        graph = create_test_graph(flow_id=7407, execution_location="local")
+        _add_reader(graph, 1, connection_name, resource_path=paths["single"], file_format="parquet")
+        _assert_run_succeeded(graph.run_graph())
+        plan = graph.get_node(1).get_resulting_data().data_frame.serialize()
+        no_profile = {"AWS_CONFIG_FILE": os.devnull, "AWS_SHARED_CREDENTIALS_FILE": os.devnull}
+
+        with_role = self._run_in_worker_child(
+            plan,
+            tmp_path,
+            AWS_ACCESS_KEY_ID=MINIO_ACCESS_KEY,
+            AWS_SECRET_ACCESS_KEY=MINIO_SECRET_KEY,
+            AWS_ENDPOINT_URL_STS=MINIO_ENDPOINT_URL,
+            **no_profile,
+        )
+        without = self._run_in_worker_child(plan, tmp_path, **no_profile)
+
+        assert with_role.returncode == 0, with_role.stderr
+        assert with_role.stdout.strip().splitlines()[-1] == "3"
+        assert without.returncode != 0
+        assert "NoCredentialsError" in without.stderr

@@ -1,8 +1,9 @@
 """Core's own process as a compute: plans stay lazy in core and operations run in process.
 
 Results live in an in-process store that maps a result id to its ``pl.LazyFrame`` (a materialised result as its
-DataFrame turned ``.lazy()``); a ``ResultRef``'s ``location`` is that id as UTF-8 bytes. ``submit`` holds every plan
-lazily under the result id it is given (the class docstring has the policy). ``run_op`` runs the operations a
+DataFrame turned ``.lazy()``, a stored result as a scan of its file); a ``ResultRef``'s ``location`` is that id as UTF-8
+bytes. ``submit`` holds a plan lazily under the result id it is given, or stores it (the class docstring has the
+policy). ``run_op`` runs the operations a
 flow's nodes run whole when they execute in core, one method per ``OperationKind``; each method's docstring names
 the payload keys it reads; every other kind takes its dataclass from ``execution/payloads.py`` under ``"payload"``.
 A read holds what it read as a deferred plan, so the reader keeps the frame through ``plan_for`` and can release the
@@ -18,12 +19,13 @@ import threading
 import uuid
 from collections.abc import Callable
 from copy import deepcopy
+from pathlib import Path
 from typing import Any, ClassVar, get_args
 
 import polars as pl
 from pydantic import SecretStr
 
-from flowfile_core.configs import logger
+from flowfile_core.configs import logger, settings
 from flowfile_core.flowfile.execution.errors import (
     ForeignRef,
     OperationUnsupported,
@@ -92,10 +94,12 @@ _CLOUD_SECRET_FIELDS = tuple(
 class LocalBackend:
     """The compute backend for core's own process.
 
-    Materialisation policy: this backend holds plans lazily. ``submit`` keeps every plan deferred, whatever the
-    hints say: ``must_materialise`` does not collect, and no sample is returned inline even when
-    ``preview_rows`` asks for one, because ``sample`` serves it when something reads it. Nothing in core computes
-    a node's rows before a consumer, a write or an opened preview needs them.
+    Materialisation policy: with ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on, a submit whose hints say
+    ``must_materialise`` is stored: a streaming sink writes its rows to a file under core's own storage directory and
+    the store holds a scan of that file, so nothing is collected into memory. Every other plan, and every plan with
+    the flag off, is held deferred as the object submitted. No sample is returned inline either way, even when
+    ``preview_rows`` asks for one, because ``sample`` serves it when something reads it. Apart from a stored result,
+    nothing in core computes a node's rows before a consumer, a write or an opened preview needs them.
     """
 
     id = LOCAL_BACKEND_ID
@@ -104,6 +108,7 @@ class LocalBackend:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._results: dict[str, pl.LazyFrame] = {}
+        self._files: dict[str, Path] = {}
 
     def capabilities(self) -> Capabilities:
         """The capabilities of this process, with the operations ``run_op`` runs here."""
@@ -119,13 +124,16 @@ class LocalBackend:
         flow_id: int,
         node_id: int | str,
     ) -> SubmitResult:
-        """Hold ``plan`` lazily under ``result_id``, replacing what that id held.
+        """Hold ``plan`` under ``result_id``, or store it when it must be materialised, replacing what that id held.
 
-        The plan object itself is held, never serialised or copied, so a chain of deferred results composes
-        lazily over the frames the first plan read. ``inputs`` are only validated: a plan over results of this
-        backend already reads them through its own leaves (``plan_for``). ``hints`` are not read (see the class
-        docstring), nor are ``flow_id`` and ``node_id``: a job here has no log or file of its own. The returned
-        sample is always ``None``.
+        A deferred plan is the object itself, never serialised or copied, so a chain of deferred results composes
+        lazily over the frames the first plan read. With the protocol flag on, a plan whose hints say
+        ``must_materialise`` is streamed to ``cache/local/<flow_id>/<result_id>.arrow`` under core's storage
+        directory and held as a scan of that file; a sink that fails leaves no file at that path and nothing held, and
+        its Polars error propagates, while what it wrote beside the path goes with the id's next ``release`` or
+        ``submit``. The other hints are not read (see the class docstring), nor is ``node_id``. What the id held is
+        dropped first, its files included. ``inputs`` are only validated: a plan over results of this backend already
+        reads them through its own leaves (``plan_for``). The returned sample is always ``None``.
 
         Raises:
             ForeignRef: An input was minted by another backend.
@@ -133,7 +141,11 @@ class LocalBackend:
         """
         for ref in inputs:
             self._plan(ref)
-        ref = self._hold(plan, result_id=result_id)
+        self._drop(result_id)
+        if hints.must_materialise and settings.FLOWFILE_COMPUTE_PROTOCOL:
+            ref = self._store(plan, result_id=result_id, flow_id=flow_id)
+        else:
+            ref = self._hold(plan, result_id=result_id)
         return SubmitResult(ref=ref, sample=None, handle=JobHandle(backend_id=self.id, job_id=result_id))
 
     def run_op(self, op: OperationKind, payload: OpPayload) -> OpResult:
@@ -169,10 +181,9 @@ class LocalBackend:
             return _store_key(ref) in self._results
 
     def release(self, ref: ResultRef) -> None:
-        """Drop ``ref`` from the store; releasing it again does nothing."""
+        """Drop ``ref`` from the store, and a stored result's file; releasing it again does nothing."""
         self._check_backend(ref.backend_id)
-        with self._lock:
-            self._results.pop(_store_key(ref), None)
+        self._drop(_store_key(ref))
 
     def plan_for(self, ref: ResultRef) -> pl.LazyFrame:
         """The LazyFrame the store holds for ``ref``."""
@@ -234,6 +245,43 @@ class LocalBackend:
         with self._lock:
             self._results[result_id] = frame.lazy() if materialised else frame
         return ref
+
+    def _store(self, plan: pl.LazyFrame, *, result_id: str, flow_id: int) -> ResultRef:
+        """Stream ``plan`` to its file under core's storage directory and hold a scan of that file.
+
+        The sink writes to a partial file beside the result's, which is moved into place only once the sink has
+        returned, so a sink that fails never leaves a file at the result's path. Polars can still write the partial
+        file after its error is raised; the result's path is registered under the id before the sink runs, so the
+        id's next ``release`` or ``submit`` removes that file, as does the startup sweep of the cache directory. The
+        schema is the plan's, never read back from the file; the row count is left to ``count``.
+        """
+        schema = _flowfile_schema(plan.collect_schema())
+        path = _result_path(flow_id, result_id)
+        partial = _partial_path(path)
+        with self._lock:
+            self._files[result_id] = path
+        plan.sink_ipc(partial, mkdir=True)
+        partial.replace(path)
+        ref = ResultRef(
+            backend_id=self.id,
+            result_id=result_id,
+            schema=schema,
+            row_count=None,
+            state="materialised",
+            location=result_id.encode("utf-8"),
+        )
+        with self._lock:
+            self._results[result_id] = pl.scan_ipc(path)
+        return ref
+
+    def _drop(self, key: str) -> None:
+        """Forget what the store holds under ``key`` and remove the files a store under it wrote."""
+        with self._lock:
+            self._results.pop(key, None)
+            path = self._files.pop(key, None)
+        if path is not None:
+            path.unlink(missing_ok=True)
+            _partial_path(path).unlink(missing_ok=True)
 
     def _hold_engine(self, engine: FlowDataEngine) -> ResultRef:
         """Store an engine's frame with the schema and the row count the engine already has."""
@@ -555,6 +603,16 @@ def _new_result_id() -> str:
 
 def _store_key(ref: ResultRef) -> str:
     return ref.location.decode("utf-8")
+
+
+def _result_path(flow_id: int, result_id: str) -> Path:
+    """Where a stored result's file is written: ``cache/local/<flow_id>/<result_id>.arrow`` in core's storage."""
+    return storage.cache_directory / "local" / str(flow_id) / f"{result_id}.arrow"
+
+
+def _partial_path(path: Path) -> Path:
+    """The file a stored result's sink writes beside ``path`` before the result is moved there."""
+    return path.with_name(f"{path.name}.part")
 
 
 def _flowfile_schema(schema: pl.Schema) -> Schema:

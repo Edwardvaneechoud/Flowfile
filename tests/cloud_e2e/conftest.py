@@ -3,6 +3,8 @@
 Each stack gets a private DB, storage dir, secure store, HOME, AWS profile, free ports and an empty working
 directory (checked by ``no_local_writes``); nothing here imports flowfile_core. ``stack`` reaches MinIO only
 through a connection's own endpoint, allow-HTTP flag and profile; ``ambient_stack`` reaches it ambiently.
+``FLOWFILE_COMPUTE_PROTOCOL`` is passed on from the test process, so the suite runs with the compute protocol flag in
+either state; the test process's other ``FLOWFILE_*`` and ``AWS_*`` variables are dropped.
 """
 
 from __future__ import annotations
@@ -162,7 +164,7 @@ def _running_stack(root: Path, mode: str, extra_env: dict[str, str], login: dict
     env = {
         key: value
         for key, value in os.environ.items()
-        if not key.startswith(("AWS_", "FLOWFILE_")) and key not in _STRIPPED_ENV
+        if key == "FLOWFILE_COMPUTE_PROTOCOL" or not (key.startswith(("AWS_", "FLOWFILE_")) or key in _STRIPPED_ENV)
     }
     env.update(
         HOME=str(root / "home"),

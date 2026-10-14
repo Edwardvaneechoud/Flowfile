@@ -9,8 +9,10 @@ wire. ``submit`` stores a plan or keeps it deferred in this process; the class d
 With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on, ``submit``, ``status``, ``cancel`` and ``capabilities`` speak the
 worker's versioned ``/v1`` routes instead, and the worker holds what ``submit`` returns, whether stored or deferred:
 its schema, row count and samples come over the wire, never from a file core opens. ``submit`` goes over
-``WS /v1/ws/submit``, and to ``POST /v1/submit`` only when that socket cannot be opened or the plan not sent. A result
-is read over the routes that minted it, whatever the flag says when it is read; ``run_op`` stays on the task routes.
+``WS /v1/ws/submit``, and to ``POST /v1/submit`` only when that socket cannot be opened or the plan not sent. ``run_op``
+runs the reads, ``fuzzy_join``, ``random_split`` and ``custom_node`` over ``POST /v1/ops/{kind}``, whose outputs the
+worker holds as it holds a stored submit; the writes, the ML kinds and ``viz_session`` stay on the task routes. A result
+is read over the routes that minted it, whatever the flag says when it is read.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from typing import Any, Literal
 import polars as pl
 import pyarrow as pa
 import requests
+from pl_fuzzy_frame_match.models import FuzzyMapping
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 from websockets.sync.client import ClientConnection, connect
 
@@ -84,7 +87,12 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import conver
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import safe_eval_pl_type
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import ensure_handshake, reset_handshake
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import CustomNodeExecuteInput, Status
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
+    CustomNodeExecuteInput,
+    FuzzyJoinInput,
+    PolarsOperation,
+    Status,
+)
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.streaming import (
     _WS_INACTIVITY_TIMEOUT,
     _WS_RECV_POLL_SECONDS,
@@ -130,6 +138,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
     CloudStorageWriteSettingsWorkerInterface,
     FullCloudStorageConnectionWorkerInterface,
 )
+from flowfile_core.schemas.input_schema import ReceivedTable
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from shared import compute_protocol as wire
@@ -143,6 +152,18 @@ WORKER_BACKEND_ID = "worker"
 _OUTPUT_SEPARATOR = "#"
 _SPLIT_RANK = "__split_rank__"
 _NO_FLOW = -1
+_V1_OPERATIONS = frozenset(
+    {
+        OperationKind.database_read,
+        OperationKind.kafka_read,
+        OperationKind.google_analytics_read,
+        OperationKind.rest_api_read,
+        OperationKind.file_read,
+        OperationKind.fuzzy_join,
+        OperationKind.random_split,
+        OperationKind.custom_node,
+    }
+)
 _JOB_STATES: dict[str, Literal["running", "done", "failed", "cancelled"]] = {
     "Starting": "running",
     "Processing": "running",
@@ -207,10 +228,12 @@ class WorkerBackend:
     ``exists`` and ``release`` go to ``/v1/results/{id}``, ``plan_for`` decodes the location without a call (a
     ``pl.scan_ipc`` of the worker's path, or the deferred plan) and ``result_file`` names no file. A reference is read
     over the routes that minted it, whatever the flag says when it is read, and only ``/v1`` references go as a submit's
-    ``inputs``; ``run_op`` and its results stay on the task routes. ``status`` and ``cancel`` of a job no fetcher waits
-    on use ``/v1/jobs/{id}``. Every ``/v1`` request and the socket's upgrade carry ``X-Protocol-Version``. A REST
-    answer, a refused upgrade and an ``error`` frame map alike (``_v1_error``): 426 is ``VersionMismatch``, a 404
-    ``ResultMissing``, and a failed child's 500 goes through ``worker_failure``.
+    ``inputs``. ``run_op`` runs the reads, ``fuzzy_join``, ``random_split`` and ``custom_node`` over
+    ``POST /v1/ops/{kind}`` (``run_op`` has the details), whose refs are ``/v1`` references like a stored
+    submit's; every other operation and its results stay on the task routes. ``status`` and ``cancel`` of a job no
+    fetcher waits on use ``/v1/jobs/{id}``. Every ``/v1`` request and the socket's upgrade carry
+    ``X-Protocol-Version``. A REST answer, a refused upgrade and an ``error`` frame map alike (``_v1_error``): 426 is
+    ``VersionMismatch``, a 404 ``ResultMissing``, and a failed child's 500 goes through ``worker_failure``.
     """
 
     id = WORKER_BACKEND_ID
@@ -353,6 +376,17 @@ class WorkerBackend:
         holds the plan lazily in a child and answers each Graphic Walker request over it (``trigger_visualize_fields``
         or ``trigger_visualize_query``), and returns the session's answer as ``metadata`` with no refs.
 
+        With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on, the five reads, ``fuzzy_join``, ``random_split`` and
+        ``custom_node`` go to the worker's ``POST /v1/ops/{kind}`` instead: the body is the request the kind's fetcher
+        sends (the read settings, the file to read with the flow and node as query parameters, the fuzzy join's
+        prepared sides, the custom node's request, a random split's shuffled rows with its splits), the payload's
+        ``job_id`` the query parameter the job runs under, so ``cancel(JobHandle("worker", job_id))`` reaches it
+        through ``POST /v1/jobs/{job_id}/cancel`` and ``status`` follows it. The refs are keyed as on the task routes,
+        but every one is a stored ``/v1`` result ``<job_id>_<i>``, read over ``/v1/results/{id}`` like a stored
+        submit's, its columns and row count as the worker answered them: a random split's splits are each a file of
+        their own, and releasing one output of a custom node or a split leaves the others. A ``kafka_read`` takes its
+        offsets from the answer's ``metadata``. A failure maps as every ``/v1`` answer does.
+
         Raises:
             ComputeUnavailable: The worker could not be reached for a ``viz_session`` request.
             OperationUnsupported: A custom node without a node file.
@@ -364,6 +398,8 @@ class WorkerBackend:
         operation = self._operations.get(op)
         if operation is None:
             raise OperationUnsupported(f"The worker backend does not run the {op.value} operation")
+        if settings.FLOWFILE_COMPUTE_PROTOCOL and op in _V1_OPERATIONS:
+            return self._v1_op(op, payload)
         return operation(payload)
 
     def sample(self, ref: ResultRef, n: int) -> bytes:
@@ -660,21 +696,86 @@ class WorkerBackend:
         return wire.WorkerLocation.model_validate_json(ref.location)
 
     def _from_wire(self, answer: wire.SubmitResult) -> SubmitResult:
-        """Core's ``SubmitResult`` for the worker's answer: this backend's id stamped, the columns read as dtypes."""
-        ref = answer.ref
-        columns = pl.Schema([(column.name, safe_eval_pl_type(column.data_type)) for column in ref.columns])
+        """Core's ``SubmitResult`` for the worker's answer, its reference through ``_ref_from_wire``."""
         return SubmitResult(
-            ref=ResultRef(
-                backend_id=self.id,
-                result_id=ref.result_id,
-                schema=_flowfile_schema(columns),
-                row_count=ref.row_count,
-                state=ref.state,
-                location=ref.location,
-            ),
+            ref=self._ref_from_wire(answer.ref),
             sample=answer.sample,
             handle=JobHandle(self.id, answer.job_id),
         )
+
+    def _ref_from_wire(self, ref: wire.ResultRef) -> ResultRef:
+        """Core's ``ResultRef`` for a worker's reference: this backend's id stamped, the columns read as dtypes."""
+        columns = pl.Schema([(column.name, safe_eval_pl_type(column.data_type)) for column in ref.columns])
+        return ResultRef(
+            backend_id=self.id,
+            result_id=ref.result_id,
+            schema=_flowfile_schema(columns),
+            row_count=ref.row_count,
+            state=ref.state,
+            location=ref.location,
+        )
+
+    def _v1_op(self, op: OperationKind, payload: OpPayload) -> OpResult:
+        """Run ``op`` over the worker's ``POST /v1/ops/{kind}`` and key its refs as the task-route method does.
+
+        The payload is unpacked before anything is sent, so an empty one is a ``ValueError`` here too.
+
+        Raises:
+            OperationUnsupported: A custom node without a node file.
+            ValueError: The worker did not return one of a custom node's declared outputs.
+        """
+        params: dict[str, Any] = {}
+        match op:
+            case OperationKind.database_read:
+                job = unpack(payload, DatabaseReadPayload)
+                body = _database_read_settings(job).model_dump(mode="json")
+            case OperationKind.kafka_read:
+                job = unpack(payload, KafkaReadPayload)
+                body = _kafka_read_settings(job).model_dump(mode="json")
+            case OperationKind.google_analytics_read:
+                job = unpack(payload, GoogleAnalyticsReadPayload)
+                body = _google_analytics_read_settings(job).model_dump(mode="json")
+            case OperationKind.rest_api_read:
+                job = unpack(payload, RestApiReadPayload)
+                body = _rest_api_read_settings(job).model_dump(mode="json")
+            case OperationKind.file_read:
+                job = unpack(payload, FileReadPayload)
+                body = _file_to_read(job).model_dump(mode="json")
+                params = {"flowfile_flow_id": job.flow_id, "flowfile_node_id": job.node_id}
+            case OperationKind.fuzzy_join:
+                job = unpack(payload, FuzzyJoinPayload)
+                left, right, fuzzy_maps = _fuzzy_sides(job)
+                body = FuzzyJoinInput(
+                    left_df_operation=PolarsOperation(operation=left.serialize()),
+                    right_df_operation=PolarsOperation(operation=right.serialize()),
+                    fuzzy_maps=fuzzy_maps,
+                    task_id=job.job_id,
+                    flowfile_flow_id=job.flow_id,
+                    flowfile_node_id=job.node_id,
+                ).model_dump(mode="json")
+            case OperationKind.custom_node:
+                job = unpack(payload, CustomNodePayload)
+                body = _custom_node_request(job).model_dump(mode="json")
+            case _:
+                job = unpack(payload, RandomSplitPayload)
+                body = {
+                    "operation": base64.b64encode(_shuffled_rows(job).serialize()).decode("ascii"),
+                    "flowfile_flow_id": job.flow_id,
+                    "flowfile_node_id": job.node_id,
+                    "splits": [[group.name, group.percentage] for group in job.settings.splits],
+                }
+        answer = self._v1(
+            "POST", f"/ops/{op.value}", waits=True, params={"job_id": job.job_id, **params}, json=body
+        ).json()
+        refs = {
+            name: self._ref_from_wire(wire.ResultRef.model_validate(raw)) for name, raw in answer["outputs"].items()
+        }
+        if op is OperationKind.custom_node:
+            refs = _declared_outputs(refs, job.output_names)
+        elif op is OperationKind.random_split:
+            refs = {group.name: refs[group.name] for group in job.settings.splits}
+        metadata = _kafka_offsets(answer["metadata"]) if op is OperationKind.kafka_read else {}
+        return OpResult(refs=refs, metadata=metadata)
 
     def _store(self, plan: pl.LazyFrame, result_id: str, flow_id: int, node_id: int | str) -> ResultRef:
         """Run ``plan`` as worker store task ``result_id`` and return the result it wrote."""
@@ -793,9 +894,7 @@ class WorkerBackend:
             read.job_id, lambda: ExternalKafkaFetcher(settings, wait_on_completion=False, worker_url=self.url)
         )
         consumed = fetch_kafka_offsets(fetcher.file_ref, worker_url=self.url)
-        if consumed and consumed.get("messages_consumed", 0) > 0:
-            return OpResult(refs={"result": ref}, metadata={"offsets": consumed["new_offsets"]})
-        return OpResult(refs={"result": ref})
+        return OpResult(refs={"result": ref}, metadata=_kafka_offsets(consumed))
 
     def _google_analytics_read(self, payload: OpPayload) -> OpResult:
         read = unpack(payload, GoogleAnalyticsReadPayload)
@@ -815,10 +914,7 @@ class WorkerBackend:
 
     def _file_read(self, payload: OpPayload) -> OpResult:
         read = unpack(payload, FileReadPayload)
-        received_table = read.settings.received_file
-        refuse_cloud_path(received_table.path, received_table.file_type)
-        if received_table.scan_mode == "directory":
-            raise DirectoryScanUnsupportedError("Directory scan mode cannot be executed by the worker file reader.")
+        received_table = _file_to_read(read)
         _, ref = self._read_tracked(
             read.job_id,
             lambda: ExternalCreateFetcher(
@@ -834,15 +930,12 @@ class WorkerBackend:
 
     def _fuzzy_join(self, payload: OpPayload) -> OpResult:
         join = unpack(payload, FuzzyJoinPayload)
-        manager = FuzzyMatchInputManager(deepcopy(join.settings.join_input))
-        left, right = prepare_for_fuzzy_match(
-            left=FlowDataEngine(join.left), right=FlowDataEngine(join.right), fuzzy_match_input_manager=manager
-        )
+        left, right, fuzzy_maps = _fuzzy_sides(join)
         return self._read(
             lambda: ExternalFuzzyMatchFetcher(
                 left_df=left,
                 right_df=right,
-                fuzzy_maps=manager.fuzzy_maps,
+                fuzzy_maps=fuzzy_maps,
                 flow_id=join.flow_id,
                 node_id=join.node_id,
                 file_ref=join.job_id,
@@ -854,13 +947,7 @@ class WorkerBackend:
 
     def _random_split(self, payload: OpPayload) -> OpResult:
         split = unpack(payload, RandomSplitPayload)
-        seed = split.settings.seed if split.settings.seed is not None else random.randint(0, 2**31 - 1)
-        shuffled = (
-            split.plan.with_columns(pl.int_range(0, pl.len()).shuffle(seed=seed).alias(_SPLIT_RANK))
-            .sort(_SPLIT_RANK)
-            .drop(_SPLIT_RANK)
-        )
-        stored = self._store(shuffled, split.job_id, split.flow_id, split.node_id)
+        stored = self._store(_shuffled_rows(split), split.job_id, split.flow_id, split.node_id)
         total = stored.row_count
         rows = self.plan_for(stored)
         groups = split.settings.splits
@@ -899,22 +986,7 @@ class WorkerBackend:
 
     def _custom_node(self, payload: OpPayload) -> OpResult:
         job = unpack(payload, CustomNodePayload)
-        if job.node_source is None:
-            raise OperationUnsupported(
-                f"The {self.id} backend runs a custom node from its node file; node {job.node_id} has none"
-            )
-        request = CustomNodeExecuteInput(
-            task_id=job.job_id,
-            node_source=job.node_source,
-            class_name=job.class_name,
-            settings_values=job.settings_values,
-            secrets=resolve_secret_payload(job.custom_node, job.user_id),
-            inputs=[plan.serialize() for plan in job.inputs],
-            output_names=job.output_names,
-            user_id=job.user_id,
-            flowfile_flow_id=job.flow_id,
-            flowfile_node_id=job.node_id,
-        )
+        request = _custom_node_request(job)
         fetcher = self._run_tracked(job.job_id, lambda: ExternalCustomNodeFetcher(request, worker_url=self.url))
         outputs = fetcher.get_payload()["outputs"]
         refs: dict[str, ResultRef] = {}
@@ -1294,3 +1366,77 @@ def _google_analytics_read_settings(read: GoogleAnalyticsReadPayload) -> GoogleA
 
 def _rest_api_read_settings(read: RestApiReadPayload) -> RestApiReadSettings:
     return build_rest_api_worker_settings(read.settings, read.encrypted_secret).model_copy(update=_filed_under(read))
+
+
+def _file_to_read(read: FileReadPayload) -> ReceivedTable:
+    """The file a file read names, refused here when it is a cloud path or a directory, which no worker reader reads."""
+    received_table = read.settings.received_file
+    refuse_cloud_path(received_table.path, received_table.file_type)
+    if received_table.scan_mode == "directory":
+        raise DirectoryScanUnsupportedError("Directory scan mode cannot be executed by the worker file reader.")
+    return received_table
+
+
+def _fuzzy_sides(join: FuzzyJoinPayload) -> tuple[pl.LazyFrame, pl.LazyFrame, list[FuzzyMapping]]:
+    """Both sides of a fuzzy join selected and renamed as the in-process join does, and the mappings to match on."""
+    manager = FuzzyMatchInputManager(deepcopy(join.settings.join_input))
+    left, right = prepare_for_fuzzy_match(
+        left=FlowDataEngine(join.left), right=FlowDataEngine(join.right), fuzzy_match_input_manager=manager
+    )
+    return left, right, manager.fuzzy_maps
+
+
+def _shuffled_rows(split: RandomSplitPayload) -> pl.LazyFrame:
+    """A random split's rows in random order, by its seed or a fresh one; every split slices this one order."""
+    seed = split.settings.seed if split.settings.seed is not None else random.randint(0, 2**31 - 1)
+    return (
+        split.plan.with_columns(pl.int_range(0, pl.len()).shuffle(seed=seed).alias(_SPLIT_RANK))
+        .sort(_SPLIT_RANK)
+        .drop(_SPLIT_RANK)
+    )
+
+
+def _custom_node_request(job: CustomNodePayload) -> CustomNodeExecuteInput:
+    """What the worker runs a custom node from: its source, settings, selected secrets as ciphertext and inputs.
+
+    Raises:
+        OperationUnsupported: The node has no node file, so the worker has no source to run.
+    """
+    if job.node_source is None:
+        raise OperationUnsupported(
+            f"The {WORKER_BACKEND_ID} backend runs a custom node from its node file; node {job.node_id} has none"
+        )
+    return CustomNodeExecuteInput(
+        task_id=job.job_id,
+        node_source=job.node_source,
+        class_name=job.class_name,
+        settings_values=job.settings_values,
+        secrets=resolve_secret_payload(job.custom_node, job.user_id),
+        inputs=[plan.serialize() for plan in job.inputs],
+        output_names=job.output_names,
+        user_id=job.user_id,
+        flowfile_flow_id=job.flow_id,
+        flowfile_node_id=job.node_id,
+    )
+
+
+def _kafka_offsets(consumed: dict[str, Any] | None) -> dict[str, Any]:
+    """A Kafka read's ``metadata``: the offsets to commit when it consumed messages, else nothing."""
+    if consumed and consumed.get("messages_consumed", 0) > 0:
+        return {"offsets": consumed["new_offsets"]}
+    return {}
+
+
+def _declared_outputs(refs: dict[str, ResultRef], output_names: list[str]) -> dict[str, ResultRef]:
+    """A custom node's refs by declared output name, keyed by output handle in declaration order.
+
+    Raises:
+        ValueError: The worker did not return one of the declared outputs.
+    """
+    handles: dict[str, ResultRef] = {}
+    for i, name in enumerate(output_names):
+        ref = refs.get(name)
+        if ref is None:
+            raise ValueError(f"Worker did not return declared output '{name}'")
+        handles[output_handle(i)] = ref
+    return handles

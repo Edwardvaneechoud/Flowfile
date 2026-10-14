@@ -9,7 +9,6 @@ from flowfile_core.flowfile.catalog_cdc import (
 from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.execution.payloads import CloudWritePayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
-from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
@@ -18,6 +17,7 @@ from flowfile_core.flowfile.flow_graph._base import GraphMixinBase
 from flowfile_core.flowfile.flow_graph.catalog_resolution import _CDF_COLUMN_DTYPES
 from flowfile_core.flowfile.flow_graph.cloud import (
     _cloud_change_read_target,
+    _cloud_change_scan_kwargs,
     _cloud_write_uses_delta_ops,
     _is_cloud_change_read,
     _resolve_cloud_node_connection,
@@ -135,7 +135,9 @@ class CloudStorageBuildersMixin(GraphMixinBase):
                     path,
                     starting_version,
                     head,
-                    **CloudStorageReader.get_secure_scan_kwargs(storage_options, node_cloud_storage_reader.user_id),
+                    **_cloud_change_scan_kwargs(
+                        cloud_storage_read_settings, node_cloud_storage_reader.user_id, storage_options
+                    ),
                     include_preimage=cloud_storage_read_settings.cdc_include_preimage,
                 )
             )
