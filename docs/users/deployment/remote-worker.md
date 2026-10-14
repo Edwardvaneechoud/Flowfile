@@ -13,7 +13,7 @@ The `flowfile-worker` image starts `python -m flowfile_worker --host 0.0.0.0` an
 | Variable | Value |
 |---|---|
 | `FLOWFILE_MODE` | `docker`. The image sets it. Only in this mode does the worker read the master key from its environment (or the `flowfile_master_key` Docker secret). |
-| `FLOWFILE_INTERNAL_TOKEN` | Core's value. The worker refuses every request that does not carry it; see [Add the worker to core](#add-the-worker-to-core). |
+| `FLOWFILE_INTERNAL_TOKEN` | Core's value. The worker refuses a request without it on every route except its API docs (`/docs`, which the image's health check calls, `/redoc` and `/openapi.json`) and `POST /shutdown`, which it accepts only from a loopback address; see [Add the worker to core](#add-the-worker-to-core). |
 | `FLOWFILE_MASTER_KEY` | Core's value. |
 | `FLOWFILE_DATABASE_URL` | The PostgreSQL catalog core uses, for example `postgresql://flowfile:<password>@<catalog host>:5432/flowfile`. |
 | `CORE_HOST`, `CORE_PORT` | Where the worker posts node log lines to core (`/raw_logs`, signed with its token). `CORE_PORT` defaults to `63578`. |

@@ -168,7 +168,7 @@ Core separates what it needs from what it knows:
 | Operation | Task route | Returns |
 |---|---|---|
 | `database_read`, `kafka_read`, `google_analytics_read`, `rest_api_read` | `/store_*_read_result` | one reference |
-| `database_write`, `cloud_write`, `file_write` | `/store_database_write_result`, `/write_data_to_cloud/`, `/write_results/` | none |
+| `database_write`, `cloud_write`, `file_write` | `/store_database_write_result/`, `/write_data_to_cloud/`, `/write_results/` | none |
 | `file_read` | `/create_table/{type}` (Excel, JSON, Avro, non-UTF-8 CSV) | one reference |
 | `fuzzy_join` | `/add_fuzzy_join` | one reference |
 | `custom_node` | `/execute_custom_node` | named references |
