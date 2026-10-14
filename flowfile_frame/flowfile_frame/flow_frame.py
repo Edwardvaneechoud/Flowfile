@@ -1785,8 +1785,10 @@ class FlowFrame:
         """
         Fit an ML model (regression or classification) and optionally publish it to the catalog.
 
-        Compute runs on the worker. Catalog publishing requires the flow to be
-        registered (so the artifact has a ``source_registration_id``); see
+        The model is fitted and held where the flow runs: in the core process
+        for a local flow (a new graph is local), or on the worker for a remote
+        one. Catalog publishing requires the flow to be registered (so the
+        artifact has a ``source_registration_id``); see
         :class:`flowfile_core.flowfile.flow_graph.FlowGraph.add_train_model`.
 
         Parameters
@@ -1817,8 +1819,9 @@ class FlowFrame:
         Returns
         -------
         FlowFrame
-            A new FlowFrame whose data is the input pass-through. The model
-            is recorded in the catalog as a side effect.
+            A new FlowFrame whose data is the input pass-through. Its node
+            holds the model for :meth:`apply_model`, and publishes it to the
+            catalog when *publish_to_catalog* is set.
         """
         from flowfile_frame.catalog_reference import _resolve_namespace_id
 
@@ -1915,8 +1918,8 @@ class FlowFrame:
         Two model sources are supported:
 
         - Pass an *upstream* :class:`FlowFrame` whose backing node is a
-          ``train_model`` — the trained model is read from the flow's local
-          cache, no catalog round-trip required. This is the natural way to
+          ``train_model`` — the model that node holds is used by reference,
+          no catalog round-trip required. This is the natural way to
           chain Train Model → Apply Model in the same flow.
         - Or pass *model_name* (and optionally *version* / *schema*) to
           look the model up from the catalog.
@@ -1925,7 +1928,7 @@ class FlowFrame:
         ----------
         upstream:
             FlowFrame returned by :meth:`train_model`. When provided, the apply
-            node reads from that train node's flow-scoped output.
+            node scores with the model that train node holds.
         model_name:
             Catalog name of the trained model. Used only when *upstream* is None.
         output_column:
