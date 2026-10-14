@@ -84,15 +84,17 @@ def _compute_error(node: FlowNode) -> str | None:
     return error_class if error_class in _COMPUTE_ERRORS else None
 
 
-def _gate_formula_matches(source: FlowDataEngine, formula: str) -> bool:
+def _gate_formula_matches(source: FlowDataEngine, formula: str, graph: GraphMixinBase | None = None) -> bool:
     """True when at least one row of *source* satisfies the gate's formula.
 
     The formula is the Filter node's flowfile expression language applied as
     a row predicate; matching is existence — ``filter(pred).head(1)``. With
     ``FLOWFILE_COMPUTE_PROTOCOL`` off that one row is collected in core; with
-    it on it is read through ``bounded.head_rows`` on the current execution
-    context's backend, the run's, so core never opens a result that backend
-    stored and a formula error comes back as its ``ComputeError``. An empty
+    it on it is read through ``bounded.head_rows`` on the backend of
+    ``current_context(graph)``: the run's during a run and, outside one (a
+    FlowFrame's ``Gate.is_open``), the graph's own, so core never opens a
+    result that backend stored and a formula error comes back as its
+    ``ComputeError``. An empty
     formula, a formula that does not parse, or one referencing unknown
     columns raises, failing the gate visibly instead of silently picking a
     branch. An empty input (zero rows) is simply "no match": the gate closes.
@@ -103,7 +105,7 @@ def _gate_formula_matches(source: FlowDataEngine, formula: str) -> bool:
     data_frame = source.data_frame
     lazy_frame = data_frame.lazy() if isinstance(data_frame, pl.DataFrame) else data_frame
     if settings.FLOWFILE_COMPUTE_PROTOCOL:
-        return head_rows(current_context().backend, lazy_frame.filter(predicate), 1).num_rows > 0
+        return head_rows(current_context(graph).backend, lazy_frame.filter(predicate), 1).num_rows > 0
     return lazy_frame.filter(predicate).head(1).collect().height > 0
 
 
@@ -790,7 +792,7 @@ class ExecutionMixin(GraphMixinBase):
         if source_result is None:
             raise ValueError("gate input produced no result to evaluate its formula against")
         formula = resolve_expression_parameters(gate_input.formula, params or {})
-        return not _gate_formula_matches(source_result, formula)
+        return not _gate_formula_matches(source_result, formula, self)
 
     def _evaluate_gate_conditions(self, nodes: list[FlowNode] | None = None) -> dict[str | int, frozenset[str]]:
         """Evaluate parameter-mode gates (of ``nodes``, default all) before the run; returns per-gate dead handles.
