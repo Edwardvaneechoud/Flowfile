@@ -44,6 +44,7 @@ from flowfile_core.flowfile.execution.protocol import (
 )
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from shared.compute_protocol import file_uri
 
 PEOPLE = pl.DataFrame({"id": list(range(10)), "name": [f"n{i}" for i in range(10)]})
 
@@ -192,7 +193,7 @@ def test_a_blob_is_held_as_bytes_crosses_as_bytes_and_is_never_read_as_rows(back
     source.write_bytes(BLOB)
     target = tmp_path / "copy.bin"
 
-    ref = backend.import_uri(f"file://{source}", None, None, None, kind="blob")
+    ref = backend.import_uri(file_uri(source), None, None, None, kind="blob")
 
     try:
         assert (ref.backend_id, ref.kind, ref.state, ref.schema, ref.row_count) == (
@@ -207,7 +208,7 @@ def test_a_blob_is_held_as_bytes_crosses_as_bytes_and_is_never_read_as_rows(back
         for read in (backend.plan_for, backend.count, lambda blob: backend.sample(blob, 1)):
             with pytest.raises(OperationUnsupported):
                 read(ref)
-        assert backend.export(ref, f"file://{target}", None) == f"file://{target}"
+        assert backend.export(ref, file_uri(target), None) == file_uri(target)
         assert target.read_bytes() == BLOB
     finally:
         backend.release(ref)
@@ -242,12 +243,12 @@ def test_a_stored_result_is_known_by_its_reference_where_core_cannot_open_it(unr
 @STATES
 def test_a_result_crosses_a_boundary_only_through_export_and_import_uri(backend, submitted, must_materialise, tmp_path):
     ref = submitted(frame=MIXED, must_materialise=must_materialise).ref
-    target = f"file://{tmp_path}/out.parquet"
+    target = file_uri(tmp_path / "out.parquet")
 
     uri = backend.export(ref, target, None)
 
     assert isinstance(uri, str) and uri == target
-    assert pl.read_parquet(uri).equals(MIXED)
+    assert pl.read_parquet(tmp_path / "out.parquet").equals(MIXED)
     imported = backend.import_uri(uri, ref.schema, MIXED.height, None)
     try:
         assert (imported.backend_id, imported.state) == (backend.id, "deferred")

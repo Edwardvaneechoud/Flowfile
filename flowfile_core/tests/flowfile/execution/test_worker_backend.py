@@ -65,7 +65,7 @@ from flowfile_core.schemas.input_schema import (
     ReceivedTable,
 )
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
-from shared.compute_protocol import WorkerLocation, local_capabilities
+from shared.compute_protocol import WorkerLocation, file_uri, local_capabilities
 from shared.storage_config import storage
 
 PEOPLE = pl.DataFrame(
@@ -436,7 +436,7 @@ def test_export_of_a_task_route_result_is_a_worker_task_that_sinks_it(
 
     monkeypatch.setattr(pl.LazyFrame, "sink_parquet", recording_sink)
     monkeypatch.setattr(worker_module, "ExternalDfFetcher", recording_fetcher)
-    from_file, from_plan = f"file://{tmp_path}/stored.parquet", f"file://{tmp_path}/deferred.parquet"
+    from_file, from_plan = file_uri(tmp_path / "stored.parquet"), file_uri(tmp_path / "deferred.parquet")
 
     assert backend.export(stored, from_file, CredentialRef(connection_id=7, user_id=3)) == from_file
     assert backend.export(deferred, from_plan, None) == from_plan
@@ -447,8 +447,8 @@ def test_export_of_a_task_route_result_is_a_worker_task_that_sinks_it(
         ("export_result", {"uri": from_file, "credential": {"connection_id": 7, "user_id": 3}}),
         ("export_result", {"uri": from_plan, "credential": None}),
     ]
-    assert pl.read_parquet(from_file).equals(PEOPLE)
-    assert pl.read_parquet(from_plan).equals(PEOPLE)
+    assert pl.read_parquet(tmp_path / "stored.parquet").equals(PEOPLE)
+    assert pl.read_parquet(tmp_path / "deferred.parquet").equals(PEOPLE)
 
 
 def test_an_export_of_a_task_route_result_writes_nothing_when_the_worker_is_unreachable(
@@ -460,7 +460,7 @@ def test_an_export_of_a_task_route_result_writes_nothing_when_the_worker_is_unre
 
     try:
         with pytest.raises(ComputeUnavailable):
-            dead.export(deferred, f"file://{target}", None)
+            dead.export(deferred, file_uri(target), None)
     finally:
         dead.release(deferred)
 
@@ -470,7 +470,7 @@ def test_an_export_of_a_task_route_result_writes_nothing_when_the_worker_is_unre
 def test_import_uri_holds_a_deferred_plan_in_process(backend, task_routes, tmp_path):
     path = tmp_path / "in.parquet"
 
-    ref = backend.import_uri(f"file://{path}", worker_module._flowfile_schema(PEOPLE.schema), PEOPLE.height, None)
+    ref = backend.import_uri(file_uri(path), worker_module._flowfile_schema(PEOPLE.schema), PEOPLE.height, None)
 
     try:
         assert (ref.backend_id, ref.state, ref.row_count) == ("worker", "deferred", PEOPLE.height)
@@ -509,7 +509,7 @@ def test_a_file_blob_over_the_task_routes_is_a_reference_to_its_path(backend, ta
     monkeypatch.setattr(requests.Session, "send", recording_send)
     monkeypatch.setattr(worker_module, "ExternalDfFetcher", lambda *args, **kwargs: sent.append(kwargs))
 
-    ref = backend.import_uri(f"file://{source}", None, None, None, kind="blob")
+    ref = backend.import_uri(file_uri(source), None, None, None, kind="blob")
 
     assert (ref.backend_id, ref.kind, ref.state, ref.schema, ref.row_count) == (
         "worker",
@@ -713,7 +713,7 @@ def test_a_model_trained_on_the_worker_scores_on_the_worker(backend, kept, task_
         assert (ref.result_id, ref.state, ref.row_count) == (apply.job_id, "materialised", 1)
         assert backend.plan_for(ref).collect()["pred"].round(6).to_list() == [21.0]
         target = tmp_path / "exported.json"
-        assert backend.export(model, f"file://{target}", None) == f"file://{target}"
+        assert backend.export(model, file_uri(target), None) == file_uri(target)
         assert target.read_bytes() == staged.read_bytes()
     finally:
         backend.release(model)

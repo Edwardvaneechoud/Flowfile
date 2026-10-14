@@ -31,6 +31,7 @@ from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ResultMissing
 from flowfile_core.schemas.artifact_schema import PrepareUploadRequest
 from shared.artifact_storage import S3Storage, SharedFilesystemStorage
+from shared.compute_protocol import file_uri
 from tests.flowfile.conftest import create_test_flow_registration, create_test_namespace
 
 OWNER_ID = 1
@@ -81,7 +82,7 @@ def _storage_key(artifact_id: int) -> str:
 
 def _exported(backend, ref, tmp_path) -> bytes:
     target = tmp_path / f"{uuid.uuid4().hex}.bin"
-    assert backend.export(ref, f"file://{target}", None) == f"file://{target}"
+    assert backend.export(ref, file_uri(target), None) == file_uri(target)
     return target.read_bytes()
 
 
@@ -118,7 +119,7 @@ def hold(tmp_path):
     def _hold(backend, data: bytes):
         source = tmp_path / f"{uuid.uuid4().hex}.bin"
         source.write_bytes(data)
-        ref = backend.import_uri(f"file://{source}", None, None, None, kind="blob")
+        ref = backend.import_uri(file_uri(source), None, None, None, kind="blob")
         source.unlink()
         held.append((backend, ref))
         return ref

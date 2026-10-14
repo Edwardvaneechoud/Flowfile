@@ -670,14 +670,14 @@ class WorkerBackend:
         Nothing is read: the schema and the count are the caller's. With the protocol flag on the worker builds and
         holds the scan under a fresh id (``POST /v1/results/{id}/import``), ``credential`` crossing as the
         connection's id and its user's, and the answer is a ``/v1`` reference whose ``plan_for`` decodes the scan
-        without a call. With it off the scan is held in this process like every deferred plan. ``release`` forgets
-        the scan and leaves the file.
+        without a call. With it off the scan is held in this process like every deferred plan, a ``file:`` URI
+        scanned as the local path it names. ``release`` forgets the scan and leaves the file.
 
         With ``kind="blob"`` and the flag on, the same route has the worker copy the bytes at a ``file://`` URI or
         fetch a presigned ``https://`` URL into a blob it holds, before it answers; the reference is a materialised
         blob with no columns and no row count, and ``release`` removes the worker's copy. With the flag off a
-        ``file://`` URI answers such a reference over the path it names, the text after ``file://`` as ``put_blob``
-        reads it: nothing is copied and no call is made, and ``release`` leaves the file.
+        ``file://`` URI answers such a reference over the local path it names, as ``file_uri_path`` reads it:
+        nothing is copied and no call is made, and ``release`` leaves the file.
 
         Raises:
             ComputeUnavailable: Over ``/v1``, the worker could not be reached.
@@ -702,7 +702,7 @@ class WorkerBackend:
                     schema=[],
                     row_count=None,
                     state="materialised",
-                    location=uri.removeprefix("file://").encode(),
+                    location=wire.file_uri_path(uri).encode(),
                     kind="blob",
                 )
             body = {"uri": uri, "credential": None, "columns": [], "row_count": None, "kind": "blob"}
@@ -719,7 +719,7 @@ class WorkerBackend:
             }
             response = self._v1("POST", f"/results/{result_id}/import", json=body)
             return self._ref_from_wire(wire.ResultRef.model_validate_json(response.content))
-        scan = pl.scan_parquet(uri, **_credential_kwargs(credential))
+        scan = pl.scan_parquet(wire.file_uri_path(uri), **_credential_kwargs(credential))
         ref, _ = self._defer(scan, result_id, _NO_FLOW, _NO_FLOW, None, schema=schema, row_count=row_count)
         return ref
 

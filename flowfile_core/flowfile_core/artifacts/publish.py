@@ -14,6 +14,7 @@ from flowfile_core.artifacts.service import ArtifactService
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.execution.protocol import ComputeBackend, ResultRef
 from flowfile_core.schemas.artifact_schema import FinalizeUploadResponse, PrepareUploadRequest
+from shared.compute_protocol import file_uri
 
 logger = logging.getLogger(__name__)
 
@@ -85,10 +86,11 @@ def fetch_artifact(backend: ComputeBackend, name: str, version: int | None, name
 def _uri(method: str, path: str) -> str:
     """The URI a backend copies an artifact's bytes to or from: the store's path as ``file://``, or its presigned URL.
 
-    The path is not quoted, as ``put_blob`` and ``get_blob`` read the text after ``file://`` as the path.
+    The path is percent-encoded as ``Path.as_uri()`` writes it (``file_uri``), which ``put_blob`` and ``get_blob``
+    read back.
     """
     if method == "file":
-        return "file://" + path
+        return file_uri(path)
     if method == "s3_presigned":
         return path
     raise ValueError(f"Artifact storage method {method!r} is neither 'file' nor 's3_presigned'")
