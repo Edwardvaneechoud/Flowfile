@@ -324,6 +324,7 @@ def test_a_headless_run_on_backend_worker_runs_on_the_worker(tmp_path, session_w
         "FLOWFILE_COMPUTE_PROTOCOL": flag,
         "FLOWFILE_TELEMETRY": "0",
         "FLOWFILE_WORKER_URL": session_worker,
+        "PYTHONIOENCODING": "utf-8",
     }
 
     on_worker = subprocess.run(
