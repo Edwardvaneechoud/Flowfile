@@ -334,7 +334,7 @@ def test_train_model_requires_target_column():
         _run_train_func(graph, settings)
 
 
-def test_train_model_forwards_namespace_id_to_prepare_upload(monkeypatch):
+def test_train_model_forwards_namespace_id_to_prepare_upload(monkeypatch, tmp_path):
     """A namespace_id set on the train settings must reach PrepareUploadRequest (when publishing).
 
     The fit runs first; the copy to the store then fails, which deletes the pending row.
@@ -352,7 +352,9 @@ def test_train_model_forwards_namespace_id_to_prepare_upload(monkeypatch):
     def _fake_prepare_upload(self, request, owner_id, _max_retries=3):
         captured["namespace_id"] = request.namespace_id
         captured["name"] = request.name
-        return PrepareUploadResponse(artifact_id=1, version=1, method="file", path="/tmp/x", storage_key="1/x")
+        return PrepareUploadResponse(
+            artifact_id=1, version=1, method="file", path=str(tmp_path / "x"), storage_key="1/x"
+        )
 
     def _refuse_export(self, ref, uri, credential):
         raise RuntimeError("expected")
@@ -589,7 +591,7 @@ def test_train_model_rejects_unknown_model_type():
         _run_train_func(graph, settings)
 
 
-def test_train_model_rolls_back_pending_artifact_when_the_copy_fails(monkeypatch):
+def test_train_model_rolls_back_pending_artifact_when_the_copy_fails(monkeypatch, tmp_path):
     """A fit that fails prepares no artifact; a copy to the store that fails deletes the pending row."""
     graph = _make_graph(source_registration_id=1)
     _seed_manual_input(graph, node_id=1)
@@ -606,7 +608,7 @@ def test_train_model_rolls_back_pending_artifact_when_the_copy_fails(monkeypatch
             artifact_id=999,
             version=1,
             method="file",
-            path="/tmp/whatever_999_m.json",
+            path=str(tmp_path / "whatever_999_m.json"),
             storage_key="999/m.json",
         )
 
