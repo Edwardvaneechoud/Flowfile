@@ -32,6 +32,8 @@ services:
       - FLOWFILE_SCHEDULER_ENABLED=true
       # Git project tracking (admin-only in docker; 404s when off). See .env.example.
       - FLOWFILE_ENABLE_PROJECTS=${FLOWFILE_ENABLE_PROJECTS:-true}
+      # Compute protocol: core reaches the worker over its versioned /v1 routes (on by default). See .env.example.
+      - FLOWFILE_COMPUTE_PROTOCOL=${FLOWFILE_COMPUTE_PROTOCOL:-1}
       - WORKER_HOST=flowfile-worker
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data

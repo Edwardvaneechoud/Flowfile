@@ -55,9 +55,9 @@ FLOWFILE_CUSTOM_NODE_HOT_RELOAD: MutableBool = MutableBool(
     os.environ.get("FLOWFILE_CUSTOM_NODE_HOT_RELOAD", "1").strip().lower() in ("true", "1", "yes", "on")
 )
 
-# When True, the worker backend submits plans and reads results over the worker's versioned /v1 routes.
+# Unset or true/1/yes/on: the worker backend uses the worker's versioned /v1 routes; anything else, its task routes.
 FLOWFILE_COMPUTE_PROTOCOL: MutableBool = MutableBool(
-    os.environ.get("FLOWFILE_COMPUTE_PROTOCOL", "0").strip().lower() in ("true", "1", "yes", "on")
+    os.environ.get("FLOWFILE_COMPUTE_PROTOCOL", "1").strip().lower() in ("true", "1", "yes", "on")
 )
 
 
