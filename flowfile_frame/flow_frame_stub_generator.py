@@ -560,7 +560,7 @@ def generate_improved_type_stub(
                 if (
                     not name.startswith("_")
                     and name not in PASSTHROUGH_METHODS
-                    and name not in {"__init__", "__new__", "group_by", "with_columns"}
+                    and name not in {"__init__", "__new__", "group_by", "with_columns", "help", "read_model"}
                     and not any(p.startswith("description:") for p in processed_params)
                     and not description_param_str
                 ):

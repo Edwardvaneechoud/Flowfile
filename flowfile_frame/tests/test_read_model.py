@@ -92,3 +92,12 @@ def test_a_model_below_a_gate_is_fitted_when_read_and_refused_once_gated_away():
     ff.set_flow_parameter(source, env, "dev")
     with pytest.raises(NativeNodeError, match="did not run"):
         trained.read_model()
+
+
+def test_a_model_survives_a_merge_of_its_frame_onto_another_graph():
+    trained = ff.from_dict(LINE).train_model(target="y", features=["x"])
+
+    ff.from_dict({"x": [5.0, 6.0]}).wait_for(trained)
+
+    assert trained.read_model().coefficients == {"x": pytest.approx(2.0)}
+    assert "Coefficients: x=2" in repr(trained)

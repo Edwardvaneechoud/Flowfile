@@ -1,8 +1,8 @@
 """Machine-learning nodes: train, apply and evaluate a model."""
 
-import hashlib
-import json
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -39,7 +39,24 @@ def ml_flow_model_path(flow_id: int, train_node_id: int | str) -> Path:
     Stable across runs (keyed off the train node's id), so an Apply Model node
     elsewhere in the flow can read the model without a catalog round-trip.
     """
-    return storage.get_flow_cache_directory(flow_id) / "ml_models" / f"{train_node_id}.json"
+    return storage.cache_directory / str(flow_id) / "ml_models" / f"{train_node_id}.json"
+
+
+@contextmanager
+def _panics_as_errors() -> Iterator[None]:
+    """Re-raise a Rust panic (pyo3 ``PanicException``, a ``BaseException``) as a ``RuntimeError``.
+
+    The worker's ML tasks catch ``BaseException``; in this process the node executor catches only
+    ``Exception``, so an uncaught panic would abort the whole run instead of failing the node.
+    """
+    try:
+        yield
+    except Exception:
+        raise
+    except BaseException as e:
+        if type(e).__name__ != "PanicException":
+            raise
+        raise RuntimeError(f"PanicException: {e}") from e
 
 
 def _train_in_process(data: FlowDataEngine, staging_path: Path, settings: input_schema.TrainModelSettings) -> dict:
@@ -49,28 +66,29 @@ def _train_in_process(data: FlowDataEngine, staging_path: Path, settings: input_
     local, so a script that never started a worker can still train. Returns the report the worker would:
     ``sha256``, ``size_bytes`` and ``model_type``.
     """
-    from shared.ml.trainers import get_trainer
+    from shared.ml.trainers import fit_to_path
 
-    model = get_trainer(settings.model_type).train(
-        data.data_frame.lazy(),
-        target=settings.target_column,
-        features=settings.feature_columns,
-        params=settings.params or {},
-    )
-    staging_path.parent.mkdir(parents=True, exist_ok=True)
-    staging_path.write_bytes(model)
-    return {"sha256": hashlib.sha256(model).hexdigest(), "size_bytes": len(model), "model_type": settings.model_type}
+    with _panics_as_errors():
+        return fit_to_path(
+            data.data_frame.lazy(),
+            staging_path,
+            settings.model_type,
+            settings.target_column,
+            settings.feature_columns,
+            settings.params,
+        )
 
 
 def _apply_in_process(data: FlowDataEngine, model_path: str, output_column: str) -> pl.LazyFrame:
     """Score *data* in this process with the model JSON at *model_path*, as the worker's ``apply_model_task`` does.
 
-    The scored plan stays lazy: nothing is collected until a downstream node or the caller reads it.
+    A linear or logistic model returns a lazy plan; a KNN model collects the input once here to query neighbours.
     """
-    from shared.ml.trainers import get_trainer
+    from shared.ml.trainers import get_trainer, load_model
 
-    model = json.loads(Path(model_path).read_bytes())
-    return get_trainer(model["model_type"]).apply(data.data_frame.lazy(), model, output_column)
+    model = load_model(model_path)
+    with _panics_as_errors():
+        return get_trainer(model["model_type"]).apply(data.data_frame.lazy(), model, output_column)
 
 
 class MlBuildersMixin(GraphMixinBase):
@@ -185,6 +203,8 @@ class MlBuildersMixin(GraphMixinBase):
             try:
                 if self.execution_location == "local":
                     result = _train_in_process(data, staging_path, settings)
+                    if self.flow_settings.is_canceled:
+                        raise RuntimeError("Train Model: the run was cancelled before the model was stored.")
                 else:
                     fetcher = root().MLTrainFetcher(
                         lf=data.data_frame,
@@ -201,7 +221,7 @@ class MlBuildersMixin(GraphMixinBase):
                     node._fetch_cached_df = fetcher
                     result = fetcher.get_result()
                 if not isinstance(result, dict) or "sha256" not in result or "size_bytes" not in result:
-                    raise RuntimeError(f"Worker did not return expected sha256/size_bytes payload, got: {result!r}")
+                    raise RuntimeError(f"Train Model did not get the expected sha256/size_bytes report: {result!r}")
 
                 if prepared is not None:
                     # Atomically replace flow_path (.tmp + os.replace) before finalize_upload moves the staging file.

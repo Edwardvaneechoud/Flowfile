@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import functools
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -93,3 +94,20 @@ def _read_trained_model(flow_id: int, node_id: int) -> TrainedModel | None:
     """
     path = ml_flow_model_path(flow_id, node_id)
     return _from_stored(json.loads(path.read_text())) if path.exists() else None
+
+
+def _trained_model_summary(flow_id: int, node_id: int) -> str | None:
+    """``repr`` of the model :func:`_read_trained_model` would return, parsed once per version of its file."""
+    path = ml_flow_model_path(flow_id, node_id)
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return None
+    return _summary_of_file(str(path), stat.st_mtime_ns, stat.st_size)
+
+
+@functools.lru_cache(maxsize=16)
+def _summary_of_file(path: str, mtime_ns: int, size: int) -> str:
+    """The model summary of the file at *path*; *mtime_ns* and *size* key the cache to this version of it."""
+    with open(path, encoding="utf-8") as f:
+        return repr(_from_stored(json.load(f)))

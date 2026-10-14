@@ -145,9 +145,7 @@ def train_model_task(
     Pushes ``{sha256, size_bytes, model_type}`` onto the queue so core can call
     ``ArtifactService.finalize_upload``. Core never sees the bytes.
     """
-    import hashlib
-
-    from shared.ml.trainers import get_trainer
+    from shared.ml.trainers import fit_to_path
 
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info(
@@ -156,22 +154,9 @@ def train_model_task(
     )
     try:
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
-        trainer = get_trainer(model_type)
-        model_bytes = trainer.train(
-            lf,
-            target=target_column,
-            features=feature_columns,
-            params=params or {},
-        )
-        os.makedirs(os.path.dirname(staging_path), exist_ok=True)
-        with open(staging_path, "wb") as f:
-            f.write(model_bytes)
-            f.flush()
-            os.fsync(f.fileno())
-        sha256 = hashlib.sha256(model_bytes).hexdigest()
-        size_bytes = len(model_bytes)
-        flowfile_logger.info(f"train_model_task wrote {size_bytes} bytes (sha256={sha256[:12]}...)")
-        queue.put({"sha256": sha256, "size_bytes": size_bytes, "model_type": model_type})
+        report = fit_to_path(lf, staging_path, model_type, target_column, feature_columns, params)
+        flowfile_logger.info(f"train_model_task wrote {report['size_bytes']} bytes (sha256={report['sha256'][:12]}...)")
+        queue.put(report)
         with progress.get_lock():
             progress.value = 100
     except BaseException as e:
@@ -197,15 +182,12 @@ def apply_model_task(
     Writes the resulting LazyFrame to *file_path* as IPC and pushes the
     serialised LazyFrame bytes on the queue (matches ``store``/``fuzzy_join_task``).
     """
-    import json as _json
-
-    from shared.ml.trainers import get_trainer
+    from shared.ml.trainers import get_trainer, load_model
 
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info(f"Starting apply_model_task, output_column={output_column}")
     try:
-        with open(model_path, "rb") as f:
-            model = _json.loads(f.read())
+        model = load_model(model_path)
         trainer = get_trainer(model["model_type"])
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
         scored_lf = trainer.apply(lf, model, output_column)
