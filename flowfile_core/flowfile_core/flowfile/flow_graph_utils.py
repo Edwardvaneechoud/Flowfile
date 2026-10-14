@@ -392,3 +392,5 @@ def _carry_node_outputs(
                 node.node_schema.predicted_schema = source_node.node_schema.predicted_schema
                 node.deferred_until_run = source_node.deferred_until_run
                 node.placed_deferred = source_node.placed_deferred
+                # a fitted model is held by reference, where Apply Model and read_model look for it
+                node.results.model_ref = source_node.results.model_ref

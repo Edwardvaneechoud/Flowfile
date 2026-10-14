@@ -1107,6 +1107,12 @@
       "doc_first_line": ""
     },
     {
+      "name": "help",
+      "kind": "method",
+      "signature": "()",
+      "doc_first_line": "Print a short guide to transforming, inspecting, and saving this frame."
+    },
+    {
       "name": "inspect",
       "kind": "method",
       "signature": "(fmt='{}')",
@@ -1261,6 +1267,12 @@
       "kind": "method",
       "signature": "(splits, seed=None, description=None)",
       "doc_first_line": "Randomly partition rows into N labeled FlowFrames."
+    },
+    {
+      "name": "read_model",
+      "kind": "method",
+      "signature": "()",
+      "doc_first_line": "Read the model the Train Model node behind this frame fitted."
     },
     {
       "name": "remote",

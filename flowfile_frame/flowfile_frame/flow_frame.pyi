@@ -31,6 +31,7 @@ from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_frame import group_frame
 from flowfile_frame.expr import Expr
 from flowfile_frame.run_flow import FlowOutput
+from flowfile_frame.trained_model import TrainedModel
 from flowfile_core.schemas import transform_schema
 
 # Conditional imports
@@ -94,7 +95,8 @@ class FlowFrame:
     # Unified constructor for FlowFrame.
     def __new__(cls, data: pl.LazyFrame | FrameInitTypes = None, schema: SchemaDefinition | None = None, *, schema_overrides: SchemaDict | None = None, strict: bool = True, orient: Orientation | None = None, infer_schema_length: int | None = 100, nan_to_null: bool = False, flow_graph: FlowGraph | None = None, node_id: int | None = None, parent_node_id: int | None = None, output_handle: str = 'output-0', deferred: bool = False, **kwargs) -> Self: ...
 
-    def __repr__(self) -> Any: ...
+    # Show the frame's node, flow, data object and a Train Model node's model, without executing data.
+    def __repr__(self) -> str: ...
 
     # Helper method to add a connection between nodes
     def _add_connection(self, from_id, to_id, input_type: input_schema.InputType = 'main', output_handle: str = 'output-0') -> Any: ...
@@ -147,6 +149,9 @@ class FlowFrame:
     # The LazyFrame to materialise: ``self.data``, or a deferred frame's real output.
     def _materialised_lazyframe(self) -> pl.LazyFrame: ...
 
+    # The fitted model for ``__repr__``, read only where building the frame fitted it, so nothing runs.
+    def _model_display(self) -> str: ...
+
     # The flow's current parameter values, typed the way a node's ``_params_getter`` serves them.
     def _param_values(self) -> dict[str, ParamValue]: ...
 
@@ -158,6 +163,9 @@ class FlowFrame:
 
     # Refuse the Polars-code writer fallback on a deferred frame or below a gate.
     def _refuse_polars_code_writer_if_deferred(self, method_name: str) -> None: ...
+
+    # Whether *run_info*'s run routed this frame away: its node deliberately skipped, or this a dead exit.
+    def _routed_away(self, run_info: RunInformation | None) -> bool: ...
 
     # Determine if we should use Polars code instead of native join.
     def _should_use_polars_code_for_join(self, maintain_order, coalesce, nulls_equal, validate, suffix) -> bool: ...
@@ -300,6 +308,9 @@ class FlowFrame:
 
     def head(self, n: int, description: str = None) -> Any: ...
 
+    # Print a short guide to transforming, inspecting, and saving this frame.
+    def help(self) -> None: ...
+
     # Inspect a node in the computation graph.
     def inspect(self, fmt: str = '{}', description: Optional[str] = None) -> 'FlowFrame': ...
 
@@ -379,6 +390,9 @@ class FlowFrame:
 
     # Randomly partition rows into N labeled FlowFrames.
     def random_split(self, splits: Mapping[str, float] | list[input_schema.RandomSplitGroup], seed: int | None = None, description: str | None = None) -> tuple[FlowFrame, ...]: ...
+
+    # Read the model the Train Model node behind this frame fitted.
+    def read_model(self) -> TrainedModel: ...
 
     # Run a query remotely on Polars Cloud.
     def remote(self, context: pc.ClientContext | None = None, *, plan_type: pc._typing.PlanTypePreference = 'dot', n_retries: int = 0, engine: pc._typing.Engine = 'auto', scaling_mode: pc._typing.ScalingMode = 'auto', description: Optional[str] = None) -> pc.LazyFrameRemote: ...

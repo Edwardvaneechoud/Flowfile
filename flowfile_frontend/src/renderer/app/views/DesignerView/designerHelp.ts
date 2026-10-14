@@ -47,6 +47,12 @@ export const designerHelp: PageHelpContent = {
         },
         {
           type: "success",
+          title: "Alt+click to select several nodes",
+          description:
+            "Alt+click nodes (or Shift+drag a box) to select several at once, then drag them together or group them from the right-click menu.",
+        },
+        {
+          type: "success",
           title: "Use Ctrl+S to save and Ctrl+E to run",
           description: "Keyboard shortcuts help you work faster without reaching for buttons.",
         },

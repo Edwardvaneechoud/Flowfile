@@ -15,9 +15,11 @@ from polars._typing import CsvEncoding, FrameInitTypes, Orientation, SchemaDefin
 from polars_expr_transformer import simple_function_to_expr
 
 if TYPE_CHECKING:
+    from flowfile_core.schemas.output_model import RunInformation
     from flowfile_frame.catalog_reference import SchemaReference
     from flowfile_frame.run_flow import FlowOutput
 
+from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import (
@@ -57,6 +59,7 @@ from flowfile_frame.native import (
 from flowfile_frame.notebook import current
 from flowfile_frame.parameters import refuse_parameter_as_column, refuse_parameter_column_in_formula
 from flowfile_frame.selectors import Selector
+from flowfile_frame.trained_model import TrainedModel, _read_trained_model, _train_model_note, _trained_model_summary
 from flowfile_frame.utils import (
     _check_if_convertible_to_code,
     _expand_user,
@@ -603,8 +606,34 @@ class FlowFrame:
         """
         pass
 
-    def __repr__(self):
-        return str(self.data)
+    def __repr__(self) -> str:
+        """Show the frame's node, flow, data object and a Train Model node's model, without executing data."""
+        node = self.get_node_settings()
+        node_label = repr(node) if node is not None else f"Node id: {self.node_id} (unavailable)"
+        display = f"FlowFrame (lazy)\n  {node_label}\n  Flow id: {self.flow_graph.flow_id}\n  Data: {self.data!r}"
+        if node is not None and node.node_type == "train_model":
+            display += f"\n  Model: {self._model_display()}"
+        return display
+
+    def _model_display(self) -> str:
+        """The fitted model for ``__repr__``, read only where building the frame fitted it, so nothing runs."""
+        if self._deferred or self._below_a_gate():
+            return "fitted when the flow runs" + ("" if current() is not None else "; read_model() runs it")
+        try:
+            summary = _trained_model_summary(self.flow_graph, self.node_id)
+        except (OSError, ValueError, KeyError, TypeError, ComputeError) as exc:
+            return f"unreadable ({type(exc).__name__})"
+        return "not fitted yet" if summary is None else summary.replace("\n", "\n  ")
+
+    def help(self) -> None:
+        """Print a short guide to transforming, inspecting, and saving this frame."""
+        print(
+            "FlowFrame usage:\n"
+            "  .select(...), .filter(...), .with_columns(...)  Transform data\n"
+            "  .get_node_settings()                          Inspect node settings\n"
+            "  .explain()                                    View the query plan\n"
+            '  .save_graph("flow.yaml")                      Save the flow'
+        )
 
     def _add_connection(
         self,
@@ -1804,8 +1833,8 @@ class FlowFrame:
         -------
         FlowFrame
             A new FlowFrame whose data is the input pass-through. Its node
-            holds the model for :meth:`apply_model`, and publishes it to the
-            catalog when *publish_to_catalog* is set.
+            holds the model for :meth:`apply_model` and :meth:`read_model`, and
+            publishes it to the catalog when *publish_to_catalog* is set.
         """
         from flowfile_frame.catalog_reference import _resolve_namespace_id
 
@@ -1841,6 +1870,49 @@ class FlowFrame:
         )
         self.flow_graph.add_train_model(train_settings)
         return self._create_child_frame(new_node_id)
+
+    def read_model(self) -> TrainedModel:
+        """
+        Read the model the Train Model node behind this frame fitted.
+
+        Call it on the frame :meth:`train_model` returns. A frame built on
+        ready data was trained when it was built; a deferred frame, or one
+        below a gate, runs its lineage first, as :meth:`collect` does.
+
+        Returns
+        -------
+        TrainedModel
+            The model's type, target, features and parameters, with
+            ``coefficients`` and ``intercept`` for a linear or logistic model;
+            ``to_dict()`` gives the stored model as is.
+
+        Raises
+        ------
+        NativeNodeError
+            The frame is not a Train Model node's, the node has not fitted
+            a model (a gate routed it away), or it is called in a notebook,
+            which does not run the flow.
+        """
+        node = self.flow_graph.get_node(self.node_id)
+        if node is None or node.node_type != "train_model":
+            found = f"a {node.node_type}" if node is not None else "no"
+            raise NativeNodeError(
+                f"read_model reads the frame train_model returns; node {self.node_id} is {found} node. "
+                f"{_train_model_note(self.flow_graph)}"
+            )
+        if current() is not None:
+            raise NativeNodeError(
+                "read_model reads the model a run fitted, and a notebook does not run the flow: run it on the canvas, "
+                "or call read_model() in a script"
+            )
+        if self._deferred or self._below_a_gate():
+            self._materialised_lazyframe()
+            if self._routed_away(self.flow_graph.latest_run_info):
+                raise NativeNodeError(f"Train Model node {self.node_id} did not run (a gate routed it away)")
+        model = _read_trained_model(self.flow_graph, self.node_id)
+        if model is None:
+            raise NativeNodeError(f"Train Model node {self.node_id} has not fitted a model yet")
+        return model
 
     def wait_for(
         self,
@@ -2996,6 +3068,12 @@ class FlowFrame:
             return self.data.collect(*args, **kwargs)
         return self.data
 
+    def _routed_away(self, run_info: RunInformation | None) -> bool:
+        """Whether *run_info*'s run routed this frame away: its node deliberately skipped, or this a dead exit."""
+        results = run_info.node_step_result if run_info is not None else ()
+        skipped = any(r.node_id == self.node_id and r.skipped for r in results)
+        return skipped or self.output_handle in self.flow_graph.last_closed_gate_handles.get(self.node_id, ())
+
     def _below_a_gate(self) -> bool:
         """Whether this node or any ancestor is a gate (a gate exit's frame points at the gate node)."""
         return any(n.node_type == "gate" for n in ancestors(self.flow_graph.get_node(self.node_id)).values())
@@ -3040,9 +3118,7 @@ class FlowFrame:
         if problems:
             errors = "\n".join(problems)
             raise NativeNodeError(f"Running the flow failed for node {self.node_id}:\n{errors}")
-        own_result = results.get(self.node_id)
-        closed_handles = self.flow_graph.last_closed_gate_handles.get(self.node_id, ())
-        if (own_result is not None and own_result.skipped) or self.output_handle in closed_handles:
+        if self._routed_away(run_info):
             # self.data holds real rows when the frame was built after an earlier run; the routing wins.
             return self.data.clear()
         frame = node.get_output(self.output_handle).data_frame
