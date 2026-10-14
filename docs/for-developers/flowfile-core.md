@@ -57,7 +57,7 @@ Settings:                                #<-- The FlowSettings object you provid
   -name: My First Pipeline               #<-- The name of our flow.
   -path:                                 #<-- Path to the flow file.
   -execution_mode: Development           #<-- 'Development' for debugging or 'Performance' for speed.
-  -execution_location: local             #<-- Where the flow runs ('local' or 'remote').
+  -execution_location: auto              #<-- Where the flow runs: 'auto' (the default backend) or a backend id.
   -auto_save: False                      #<-- Auto-save changes (feature in development).
   -modified_on: None                     #<-- Last modified timestamp (feature in development).
   -show_detailed_progress: True          #<-- If True, shows detailed logs in the UI.
@@ -384,7 +384,7 @@ When a node executes, two questions are answered in turn. **Whether** it runs is
 Two flow settings, both visible in the frontend, shape the answers:
 
 - **Execution mode**: *Development* or *Performance*
-- **Execution location**: *local* or *remote*; a new flow gets *remote* unless the default backend is core's own
+- **Execution location**: *auto* or a backend id (`local`, `worker`, `worker:<name>`); the frontend offers *auto* and the configured `worker:<name>` ids. A new flow gets *auto*, and a flow file saved with *local* or *remote* opens as *auto*. With `FLOWFILE_COMPUTE_PROTOCOL=0` a flow keeps *local* or *remote*, and a new one gets *remote* unless the default backend is core's own
 
 The [Technical Architecture page](architecture.md#execution-modes) describes what each mode is for; this section describes how a node runs under them.
 
@@ -395,7 +395,8 @@ The [Technical Architecture page](architecture.md#execution-modes) describes wha
 | Setting | Context |
 |---|---|
 | `execution_location = "local"` | backend `local` (`LocalBackend`, core's own process), one node of a stage at a time |
-| `execution_location = "remote"` | the registry's default backend (`default_backend_id()`), up to `max_parallel_workers` nodes of a stage at once |
+| `execution_location = "auto"` (or the legacy `"remote"`) | the registry's default backend (`default_backend_id()`), up to `max_parallel_workers` nodes of a stage at once |
+| `execution_location = "worker"` or `"worker:<name>"` | that backend, up to `max_parallel_workers` nodes of a stage at once |
 | `execution_mode = "Development"` | `preview_rows = 100` (`DEFAULT_PREVIEW_ROWS`) |
 | `execution_mode = "Performance"` | `preview_rows = None` |
 
