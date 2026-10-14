@@ -57,6 +57,7 @@ from flowfile_frame.native import (
 from flowfile_frame.notebook import current
 from flowfile_frame.parameters import refuse_parameter_as_column, refuse_parameter_column_in_formula
 from flowfile_frame.selectors import Selector
+from flowfile_frame.trained_model import TrainedModel, _read_trained_model, _train_model_note
 from flowfile_frame.utils import (
     _check_if_convertible_to_code,
     _expand_user,
@@ -604,10 +605,20 @@ class FlowFrame:
         pass
 
     def __repr__(self) -> str:
-        """Show the frame's node, flow, and data object without resolving or executing data."""
+        """Show the frame's node, flow, data object and a Train Model node's model, without executing data."""
         node = self.get_node_settings()
         node_label = repr(node) if node is not None else f"Node id: {self.node_id} (unavailable)"
-        return f"FlowFrame (lazy)\n  {node_label}\n  Flow id: {self.flow_graph.flow_id}\n  Data object: {self.data!r}"
+        display = f"FlowFrame (lazy)\n  {node_label}\n  Flow id: {self.flow_graph.flow_id}\n  Data: {self.data!r}"
+        if node is not None and node.node_type == "train_model":
+            display += f"\n  Model: {self._model_display()}"
+        return display
+
+    def _model_display(self) -> str:
+        """The fitted model for ``__repr__``, read only where building the frame fitted it, so nothing runs."""
+        if self._deferred or self._below_a_gate():
+            return "fitted when the flow runs; read_model() runs it"
+        model = _read_trained_model(self.flow_graph.flow_id, self.node_id)
+        return "not fitted yet" if model is None else repr(model).replace("\n", "\n  ")
 
     def help(self) -> None:
         """Print a short guide to transforming, inspecting, and saving this frame."""
@@ -1816,8 +1827,9 @@ class FlowFrame:
         Returns
         -------
         FlowFrame
-            A new FlowFrame whose data is the input pass-through. The model
-            is recorded in the catalog as a side effect.
+            A new FlowFrame whose data is the input pass-through. Read the
+            fitted model with :meth:`read_model`; with ``publish_to_catalog``
+            it is also recorded in the catalog.
         """
         from flowfile_frame.catalog_reference import _resolve_namespace_id
 
@@ -1853,6 +1865,44 @@ class FlowFrame:
         )
         self.flow_graph.add_train_model(train_settings)
         return self._create_child_frame(new_node_id)
+
+    def read_model(self) -> TrainedModel:
+        """
+        Read the model the Train Model node behind this frame fitted.
+
+        Call it on the frame :meth:`train_model` returns. A frame built on
+        ready data was trained when it was built; a deferred frame, or one
+        below a gate, runs its lineage first, as :meth:`collect` does.
+
+        Returns
+        -------
+        TrainedModel
+            The model's type, target, features and parameters, with
+            ``coefficients`` and ``intercept`` for a linear or logistic model;
+            ``to_dict()`` gives the stored model as is.
+
+        Raises
+        ------
+        NativeNodeError
+            The frame is not a Train Model node's, or the node has not fitted
+            a model (a gate routed it away).
+        """
+        node = self.flow_graph.get_node(self.node_id)
+        if node is None or node.node_type != "train_model":
+            found = f"a {node.node_type}" if node is not None else "no"
+            raise NativeNodeError(
+                f"read_model reads the frame train_model returns; node {self.node_id} is {found} node. "
+                f"{_train_model_note(self.flow_graph)}"
+            )
+        if self._deferred or self._below_a_gate():
+            self._materialised_lazyframe()
+            run = self.flow_graph.latest_run_info
+            if run is not None and any(r.node_id == self.node_id and r.skipped for r in run.node_step_result):
+                raise NativeNodeError(f"Train Model node {self.node_id} did not run (a gate routed it away)")
+        model = _read_trained_model(self.flow_graph.flow_id, self.node_id)
+        if model is None:
+            raise NativeNodeError(f"Train Model node {self.node_id} has not fitted a model yet")
+        return model
 
     def wait_for(
         self,

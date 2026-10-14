@@ -335,6 +335,7 @@ def generate_improved_type_stub(
         "from flowfile_frame import group_frame",
         "from flowfile_frame.expr import Expr",
         "from flowfile_frame.run_flow import FlowOutput",
+        "from flowfile_frame.trained_model import TrainedModel",
         "from flowfile_core.schemas import transform_schema",
         "",
         "# Conditional imports",
