@@ -324,16 +324,23 @@ def test_a_headless_run_on_backend_worker_runs_on_the_worker(tmp_path, session_w
         "FLOWFILE_COMPUTE_PROTOCOL": flag,
         "FLOWFILE_TELEMETRY": "0",
         "FLOWFILE_WORKER_URL": session_worker,
+        "PYTHONIOENCODING": "utf-8",
     }
 
     on_worker = subprocess.run(
-        command(flow_path, "--backend", "worker"), env=env, capture_output=True, text=True, timeout=300
+        command(flow_path, "--backend", "worker"),
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=300,
     )
     unreachable = subprocess.run(
         command(flow_path, "--backend", "worker"),
         env={**env, "FLOWFILE_WORKER_URL": _closed_port_url()},
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=300,
     )
 
@@ -343,13 +350,23 @@ def test_a_headless_run_on_backend_worker_runs_on_the_worker(tmp_path, session_w
     assert "Could not reach the worker" in output, output
 
 
-def _finished_run(flow_path: Path, backend: str | None) -> tuple[bool | None, int]:
-    """Spawns a scheduled run of ``flow_path`` through the run service, waits for its child, and reads its record."""
+def _finished_run(flow_path: Path, backend: str | None, monkeypatch) -> tuple[bool | None, int]:
+    """Spawns a scheduled run of ``flow_path`` through the run service, waits for its child, and reads its record.
+
+    The wait goes through the child's ``Popen``: on Windows ``os.waitpid`` takes a process handle, not a pid."""
     from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
     from flowfile_core.catalog.services.runs import FlowRunService
     from flowfile_core.database import models as db_models
     from flowfile_core.database.connection import get_db_context
+    from shared import subprocess_utils
 
+    children: list[subprocess.Popen] = []
+
+    def popen(cmd, **kwargs):
+        children.append(subprocess.Popen(cmd, **kwargs))
+        return children[-1]
+
+    monkeypatch.setattr(subprocess_utils, "subprocess", SimpleNamespace(Popen=popen))
     with get_db_context() as db:
         registration = db_models.FlowRegistration(
             flow_uuid=str(uuid.uuid4()), name="headless_backend", flow_path=str(flow_path), owner_id=1
@@ -361,11 +378,8 @@ def _finished_run(flow_path: Path, backend: str | None) -> tuple[bool | None, in
             registration, user_id=1, run_type="scheduled", suppress_telemetry=True, backend=backend
         )
         run_id, pid = run.id, run.pid
-    assert pid is not None
-    try:
-        os.waitpid(pid, 0)
-    except ChildProcessError:
-        pass
+    assert [child.pid for child in children] == [pid]
+    children[0].wait(timeout=300)
     with get_db_context() as db:
         finished = db.get(db_models.FlowRun, run_id)
         return finished.success, finished.nodes_completed
@@ -379,8 +393,8 @@ def test_a_scheduled_run_runs_on_the_backend_its_request_names_and_in_its_own_pr
     monkeypatch.setenv("FLOWFILE_WORKER_URL", session_worker)
     flow_path = _save_group_by_flow(tmp_path / "flow.yaml")
 
-    assert _finished_run(flow_path, backend="worker") == (True, 2)
+    assert _finished_run(flow_path, backend="worker", monkeypatch=monkeypatch) == (True, 2)
 
     monkeypatch.setenv("FLOWFILE_WORKER_URL", _closed_port_url())
-    assert _finished_run(flow_path, backend="worker")[0] is False
-    assert _finished_run(flow_path, backend=None) == (True, 2)
+    assert _finished_run(flow_path, backend="worker", monkeypatch=monkeypatch)[0] is False
+    assert _finished_run(flow_path, backend=None, monkeypatch=monkeypatch) == (True, 2)
