@@ -170,8 +170,9 @@ class BoundaryEdge:
 
         The first call exports the output and imports it, with the output's schema and the exported reference's row
         count, else the count the output's engine knows. The default output is exported as the reference ``source``
-        holds; another output (a filter's second side), held as an engine and never as a reference, is submitted on
-        ``source_backend_id`` under ``<source hash>#<handle>`` as a deferred plan for the export, and released after it.
+        holds; another output (a filter's second side), which ``source`` holds as an engine, is submitted on
+        ``source_backend_id`` as a deferred plan for the export, under ``<source hash>_<handle>_<target id>``, an id of
+        this edge's own, and released after it.
 
         Raises:
             ValueError: ``source`` holds no result on ``source_backend_id`` for its default output.
@@ -201,7 +202,7 @@ class BoundaryEdge:
                 )
             source.export(ref, self.uri, self.credential)
             return ref.row_count
-        plan, result_id = output.data_frame.lazy(), f"{self.source.hash}#{self.handle}"
+        plan, result_id = output.data_frame.lazy(), f"{self.source.hash}_{self.handle}_{self.target.node_id}"
         ref = source.submit(
             plan, [], DEFERRED_HINTS, result_id, flow_id=self.node_logger.flow_id, node_id=self.source.node_id
         ).ref
@@ -961,9 +962,10 @@ class ExecutionMixin(GraphMixinBase):
         message.
 
         Every boundary crosses through the run's prefix in the exchange store (``exchange_run``), for the upstream
-        node's user, to ``<prefix><from>-<to>.parquet``: a ``BoundaryEdge`` the importing node reads that input
-        through. A store that cannot be used for that user (no connection named, a scheme other than ``s3``, no such
-        connection for the user) refuses the importing node with the store's message, so the run starts no node.
+        node's user: one ``BoundaryEdge`` per output of the upstream node that the importing node reads, to
+        ``<prefix><from>-<handle>-<to>.parquet``, keyed by the handle the node looks that input up by. A store that
+        cannot be used for that user (no connection named, a scheme other than ``s3``, no such connection for the user)
+        refuses the importing node with the store's message, so the run starts no node.
         """
         if not settings.FLOWFILE_COMPUTE_PROTOCOL:
             return None, []
@@ -1006,17 +1008,19 @@ class ExecutionMixin(GraphMixinBase):
             if crossing is None:
                 continue
             prefix, credential = crossing
-            edges.append(
+            handles = dict.fromkeys(handle for node, handle in target._slot_input_pairs() if node is source)
+            edges.extend(
                 BoundaryEdge(
                     source=source,
-                    handle=target._input_output_handles.get(source_id, DEFAULT_OUTPUT_HANDLE),
+                    handle=handle,
                     target=target,
                     source_backend_id=placement.assignment[source_id],
                     target_backend_id=placement.assignment[target_id],
-                    uri=f"{prefix}{source_id}-{target_id}.parquet",
+                    uri=f"{prefix}{source_id}-{handle}-{target_id}.parquet",
                     credential=credential,
                     node_logger=self.flow_logger.get_node_logger(target_id),
                 )
+                for handle in handles
             )
         if crossing_refusals:
             placement = replace(placement, refusals=[*placement.refusals, *crossing_refusals])

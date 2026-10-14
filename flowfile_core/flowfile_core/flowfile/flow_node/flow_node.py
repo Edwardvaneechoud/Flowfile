@@ -4,6 +4,7 @@ import threading
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import replace
 from time import sleep
 from typing import Any, Literal, Optional
 
@@ -243,6 +244,8 @@ class FlowNode:
     _skipped_input_ids_this_run: frozenset
     # set per run by the graph: (source id, source handle) -> the BoundaryEdge an input crosses from another backend by
     _boundary_inputs: dict[tuple[int, str], Any]
+    # handle -> the result a node that read such an input stored for that output beside its own (_store_other_outputs)
+    _stored_outputs: dict[str, ResultRef]
 
     user_provided_schema_callback: Callable | None
     _schema_callback: SingleExecutionFuture | None
@@ -342,6 +345,7 @@ class FlowNode:
         self._on_flow_complete = None
         self._skipped_input_ids_this_run = frozenset()
         self._boundary_inputs = {}
+        self._stored_outputs = {}
 
         self.user_provided_schema_callback = None
         self._schema_callback = None
@@ -1605,12 +1609,17 @@ class FlowNode:
         self.release_result()
 
     def release_result(self) -> None:
-        """Releases the result this node holds on the backend that minted it and forgets the reference."""
+        """Releases the result this node holds on the backend that minted it and forgets the reference.
+
+        The other outputs it stored beside that result (``_store_other_outputs``) are released and forgotten with it.
+        """
         ref = self.results.result_ref
         self.results.result_ref = None
         self.results.job_handle = None
-        if ref is not None:
-            registry.backend(ref.backend_id).release(ref)
+        stored, self._stored_outputs = list(self._stored_outputs.values()), {}
+        for held in [ref, *stored]:
+            if held is not None:
+                registry.backend(held.backend_id).release(held)
 
     def release_deferred_result(self) -> None:
         """Releases the held result when it is a deferred plan; a stored one is left to whatever scans its file.
@@ -1721,7 +1730,9 @@ class FlowNode:
         reference and job handle on ``results``. A ``cache_results`` node whose stored result the backend still
         holds reads it back instead (a rerun past the cache after a failed run); if that fails, it builds and
         submits again. The preview is the backend's inline sample when it returned one, else, outside
-        Performance mode, a sample read from the backend the first time the preview is opened.
+        Performance mode, a sample read from the backend the first time the preview is opened. A node that read an
+        input which crossed from another backend stores its other outputs beside its result
+        (``_store_other_outputs``).
 
         A CSV read whose type inference fails on submit is submitted again at a higher ``infer_schema_length``
         (configured, then 10k, then 100k rows) under ``<hash>_infer<rows>``, without changing the saved setting.
@@ -1749,6 +1760,39 @@ class FlowNode:
             raise RemoteExecutionError("get_resulting_data returned None")
         result = self._submit(backend, engine, hints, node_logger)
         self._take_result(backend, result, engine, hints.preview_rows, performance_mode)
+        if self._boundary_inputs:
+            self._store_other_outputs(backend, hints, node_logger)
+
+    def _store_other_outputs(self, backend: ComputeBackend, hints: SubmitHints, node_logger: NodeLogger) -> None:
+        """Stores each of this node's outputs but the default on ``backend`` beside its result.
+
+        For a node that read an input which crossed from another backend: each other output is submitted with
+        ``hints`` and no preview under ``<hash>_<handle>`` and read through the stored result from then on, and the
+        default handle reads the node's result, so no output refers to the import, whose object the run's prefix in
+        the exchange store holds only while the run lasts.
+        """
+        if DEFAULT_OUTPUT_HANDLE in self._named_outputs:
+            self._named_outputs[DEFAULT_OUTPUT_HANDLE] = self.results.resulting_data
+        for handle, output in list(self._named_outputs.items()):
+            if handle == DEFAULT_OUTPUT_HANDLE:
+                continue
+            result_id = f"{self.hash}_{handle}"
+            self._submit_in_flight = JobHandle(backend.id, result_id)
+            try:
+                ref = backend.submit(
+                    output.data_frame.lazy(),
+                    self._input_refs(backend.id),
+                    replace(hints, preview_rows=None),
+                    result_id,
+                    flow_id=node_logger.flow_id,
+                    node_id=self.node_id,
+                ).ref
+            finally:
+                self._submit_in_flight = None
+            self._stored_outputs[handle] = ref
+            self._named_outputs[handle] = FlowDataEngine(
+                backend.plan_for(ref), schema=ref.schema, number_of_records=ref.row_count
+            )
 
     def _read_stored_result(
         self, backend: ComputeBackend, ref: ResultRef, performance_mode: bool, node_logger: NodeLogger

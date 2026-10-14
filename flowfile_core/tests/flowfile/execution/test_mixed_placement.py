@@ -1,11 +1,11 @@
 """The nodes of one run on different backends, their data crossing between them through the exchange store.
 
 With an exchange store configured (``FLOWFILE_EXCHANGE_URI``), a run places each node on the backend its own
-``execution_location`` names, ``"auto"`` on the run's, and every edge between two backends crosses through the run's
-prefix in the store: the upstream result exported there and imported on the other backend, whose node that reads it is
-materialised, so no result refers to the prefix once the run removes it. Without a store a node's own setting is not
-read. The protocol flag comes from the environment, as for the exchange-store and two-backend chain tests whose fixtures
-and frames these reuse; the cases over a declaring backend set it on themselves.
+``execution_location`` names, ``"auto"`` on the run's, and every output a node reads from another backend crosses
+through the run's prefix in the store: exported there and imported on the node's backend, where the node that reads it
+is materialised with its other outputs, so no result refers to the prefix once the run removes it. Without a store a
+node's own setting is not read. The protocol flag comes from the environment, as for the exchange-store, two-backend
+chain and run-flow tests whose fixtures and frames these reuse; the cases over a declaring backend set it on themselves.
 """
 
 import re
@@ -19,10 +19,11 @@ from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution import exchange, registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.placement import MixedPlacementPolicy, Placement, SingleBackendPolicy, place
-from flowfile_core.flowfile.flow_graph import FlowGraph
+from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_node.executor import hints_for
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.schemas import input_schema, transform_schema
+from tests import test_run_flow_node
 from tests.flowfile.conftest import create_test_graph
 from tests.flowfile.execution import test_exchange_store, test_placement
 from tests.flowfile.execution.test_exchange_store import _BUCKET, _key, _keys
@@ -30,12 +31,14 @@ from tests.flowfile.execution.test_placement import add_manual_input, add_promis
 from tests.flowfile.execution.test_two_backend_chain import A_ROWS, CUSTOMERS, EXPECTED
 from tests.test_catalog_cloud_virtual import requires_minio
 
-# The fixtures these tests share with the placement and exchange-store tests, bound here so pytest finds them.
+# The fixtures these tests share with the placement, exchange-store and run-flow tests, bound here so pytest finds them.
 declare = test_placement.declare
 connection_name = test_exchange_store.connection_name
 root = test_exchange_store.root
+two_port_subflow = test_run_flow_node.two_port_subflow
 
 LOCAL, WORKER = registry.LOCAL_BACKEND_ID, registry.WORKER_BACKEND_ID
+FAIL_ROWS = CUSTOMERS.filter(pl.col("amount") <= 10)
 
 
 @pytest.fixture(autouse=True)
@@ -102,6 +105,47 @@ def chain(graph: FlowGraph, filter_on: str, user_id: int | None = None) -> FlowG
     )
     connect(graph, 2, 3)
     return graph
+
+
+def split(graph: FlowGraph, split_on: str, user_id: int = 1) -> FlowGraph:
+    """Manual input 1 (``CUSTOMERS``) → filter 2 on ``split_on`` in split mode, ``amount > 10``.
+
+    Node 1 keeps ``"auto"``; both nodes are stamped ``user_id``.
+    """
+    add_manual_input(graph, 1, CUSTOMERS.to_dicts())
+    graph.get_node(1).setting_input.user_id = user_id
+    add_promise(graph, 2, "filter")
+    graph.add_filter(
+        input_schema.NodeFilter(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            user_id=user_id,
+            split_mode=True,
+            execution_location=split_on,
+            filter_input=transform_schema.FilterInput(mode="advanced", advanced_filter="[amount] > 10"),
+        )
+    )
+    connect(graph, 1, 2)
+    return graph
+
+
+def listing(root: str, seen: dict):
+    """A ``flow_run_finished`` handler recording in ``seen`` the run's prefix under ``root`` and the keys under it."""
+
+    def list_the_prefix(graph, **_):
+        try:
+            prefix = f"s3://{_BUCKET}/{root}/{graph.flow_id}/{graph.exchange_run.run_id}/"
+            seen.update(prefix=prefix, listed=_keys(prefix))
+        except Exception as e:
+            seen["error"] = e
+
+    return list_the_prefix
+
+
+def sorted_rows(backend, ref, n: int = 10) -> pl.DataFrame:
+    """The first ``n`` rows ``backend`` holds for ``ref``, in ``CUSTOMERS``'s columns, sorted by ``id``."""
+    return pl.read_ipc_stream(backend.sample(ref, n)).select(CUSTOMERS.columns).sort("id")
 
 
 def test_the_mixed_policy_places_each_node_where_its_setting_says_and_lists_the_crossings():
@@ -190,14 +234,7 @@ def test_a_node_on_the_worker_takes_its_input_from_core_and_hands_its_rows_back_
     local = registry.backend(LOCAL)
     graph = chain(create_test_graph(flow_id=8505, execution_location=LOCAL), filter_on=WORKER, user_id=1)
     seen: dict = {}
-
-    def list_the_prefix(graph, **_):
-        try:
-            prefix = f"s3://{_BUCKET}/{root}/{graph.flow_id}/{graph.exchange_run.run_id}/"
-            seen.update(prefix=prefix, listed=_keys(prefix))
-        except Exception as e:
-            seen["error"] = e
-
+    list_the_prefix = listing(root, seen)
     events.subscribe("flow_run_finished", list_the_prefix)
     try:
         run_info = graph.run_graph()
@@ -212,11 +249,119 @@ def test_a_node_on_the_worker_takes_its_input_from_core_and_hands_its_rows_back_
             assert seen["listed"] == []
             assert (ref_2.backend_id, ref_3.backend_id) == (LOCAL, LOCAL)
             return
-        assert seen["listed"] == [f"{_key(seen['prefix'])}1-2.parquet", f"{_key(seen['prefix'])}2-3.parquet"]
+        assert seen["listed"] == [
+            f"{_key(seen['prefix'])}1-{DEFAULT_OUTPUT_HANDLE}-2.parquet",
+            f"{_key(seen['prefix'])}2-{DEFAULT_OUTPUT_HANDLE}-3.parquet",
+        ]
         assert (ref_2.backend_id, ref_2.state) == (WORKER, "materialised")
         assert (ref_3.backend_id, ref_3.state) == (LOCAL, "materialised")
         assert pl.read_ipc_stream(local.sample(ref_3, 10)).sort("region").equals(EXPECTED)
         assert pl.read_ipc_stream(worker.sample(ref_2, 100)).sort("id").equals(A_ROWS)
+    finally:
+        events._handlers["flow_run_finished"].remove(list_the_prefix)
+        graph.close_flow()
+
+
+@requires_minio
+@pytest.mark.parametrize(
+    "flow_id, split_on, other", [(8506, WORKER, LOCAL), (8507, LOCAL, WORKER)], ids=["from-the-worker", "from-core"]
+)
+def test_a_second_output_crosses_and_every_output_reads_its_own_backends_copy_after_the_run(
+    root, worker, flow_id, split_on, other
+):
+    """Manual input 1 on ``other`` → split filter 2 on ``split_on``, whose fail side feeds filter 3 on ``split_on``
+    and filter 4 on ``other``: node 2 imports its input, and its second output crosses to node 4."""
+    graph = split(create_test_graph(flow_id=flow_id, execution_location=LOCAL), split_on)
+    graph.get_node(1).setting_input.execution_location = other
+    for node_id, location in ((3, split_on), (4, other)):
+        add_promise(graph, node_id, "filter")
+        graph.add_filter(
+            input_schema.NodeFilter(
+                flow_id=graph.flow_id,
+                node_id=node_id,
+                depending_on_id=2,
+                user_id=1,
+                execution_location=location,
+                filter_input=transform_schema.FilterInput(mode="advanced", advanced_filter="[amount] >= 0"),
+            )
+        )
+        add_connection(
+            graph, input_schema.NodeConnection.create_from_simple_input(2, node_id, output_handle="output-1")
+        )
+    seen: dict = {}
+    list_the_prefix = listing(root, seen)
+    events.subscribe("flow_run_finished", list_the_prefix)
+    try:
+        run_info = graph.run_graph()
+
+        assert "error" not in seen, seen.get("error")
+        assert run_info.success is True, [result.error for result in run_info.node_step_result]
+        assert run_info.nodes_completed == 4
+        assert _keys(seen["prefix"]) == []
+        ref_3, ref_4 = graph.get_node(3).results.result_ref, graph.get_node(4).results.result_ref
+        if not settings.FLOWFILE_COMPUTE_PROTOCOL:
+            assert seen["listed"] == []
+            assert (ref_3.backend_id, ref_4.backend_id) == (LOCAL, LOCAL)
+            return
+        assert seen["listed"] == [
+            f"{_key(seen['prefix'])}1-{DEFAULT_OUTPUT_HANDLE}-2.parquet",
+            f"{_key(seen['prefix'])}2-output-1-4.parquet",
+        ]
+        assert (ref_3.backend_id, ref_4.backend_id, ref_4.state) == (split_on, other, "materialised")
+        assert sorted_rows(registry.backend(split_on), ref_3).equals(FAIL_ROWS)
+        assert sorted_rows(registry.backend(other), ref_4).equals(FAIL_ROWS)
+        fail_side = graph.get_node(2)._stored_outputs["output-1"]
+        assert (fail_side.backend_id, fail_side.state) == (split_on, "materialised")
+        assert sorted_rows(registry.backend(split_on), fail_side).equals(FAIL_ROWS)
+    finally:
+        events._handlers["flow_run_finished"].remove(list_the_prefix)
+        graph.close_flow()
+
+
+@requires_minio
+def test_a_node_reading_two_outputs_of_one_source_on_another_backend_takes_each_through_its_own_crossing(
+    root, worker, two_port_subflow
+):
+    """Manual input 1 → split filter 2 on the worker, whose pass and fail sides feed the two slots of run flow 9."""
+    local = registry.backend(LOCAL)
+    graph = split(create_test_graph(flow_id=8508, execution_location=LOCAL), WORKER)
+    add_promise(graph, 9, "run_flow")
+    graph.add_run_flow(
+        input_schema.NodeRunFlow(
+            flow_id=graph.flow_id,
+            node_id=9,
+            user_id=1,
+            flow_reference=input_schema.SubflowReference(registration_id=two_port_subflow["registration_id"]),
+            input_slots=["a", "b"],
+            output_slots=["out_a", "out_b"],
+        )
+    )
+    test_run_flow_node.connect(graph, 2, 9, "input-1", DEFAULT_OUTPUT_HANDLE)
+    test_run_flow_node.connect(graph, 2, 9, "input-2", "output-1")
+    seen: dict = {}
+    list_the_prefix = listing(root, seen)
+    events.subscribe("flow_run_finished", list_the_prefix)
+    try:
+        run_info = graph.run_graph()
+
+        assert "error" not in seen, seen.get("error")
+        assert run_info.success is True, [result.error for result in run_info.node_step_result]
+        assert run_info.nodes_completed == 3
+        assert _keys(seen["prefix"]) == []
+        node = graph.get_node(9)
+        if not settings.FLOWFILE_COMPUTE_PROTOCOL:
+            assert seen["listed"] == []
+            assert node.results.result_ref.backend_id == LOCAL
+            return
+        assert seen["listed"] == [
+            f"{_key(seen['prefix'])}1-{DEFAULT_OUTPUT_HANDLE}-2.parquet",
+            f"{_key(seen['prefix'])}2-{DEFAULT_OUTPUT_HANDLE}-9.parquet",
+            f"{_key(seen['prefix'])}2-output-1-9.parquet",
+        ]
+        out_a, out_b = node.results.result_ref, node._stored_outputs["output-1"]
+        assert [(ref.backend_id, ref.state) for ref in (out_a, out_b)] == [(LOCAL, "materialised")] * 2
+        assert sorted_rows(local, out_a).equals(A_ROWS)
+        assert sorted_rows(local, out_b).equals(FAIL_ROWS)
     finally:
         events._handlers["flow_run_finished"].remove(list_the_prefix)
         graph.close_flow()
