@@ -2,9 +2,11 @@ import __future__
 
 import ast
 import base64
+import decimal
 import re
 import textwrap
 import time
+import zoneinfo
 from collections.abc import Callable
 from io import BytesIO
 from typing import Any
@@ -264,6 +266,8 @@ class PolarsCodeParser:
             "BytesIO": BytesIO,
             "base64": base64,
             "datetime": datetime,
+            "decimal": decimal,
+            "zoneinfo": zoneinfo,
         }
 
     @staticmethod

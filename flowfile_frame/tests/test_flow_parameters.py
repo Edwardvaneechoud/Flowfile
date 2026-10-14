@@ -341,7 +341,8 @@ def test_set_flow_parameter_refuses_another_parameter_as_the_value():
         (lambda p: ff.col("amount").clip(p), "clip", "ff.lit(parameter)"),
         (lambda p: ff.col("amount").clip(upper_bound=[p]), "clip", "ff.lit(parameter)"),
         (lambda p: ff.col("amount").shift(fill_value={"v": (p,)}), "shift", "ff.lit(parameter)"),
-        (lambda p: ff.col("amount").fill_null(p), "fill_null", "ff.when"),
+        (lambda p: ff.col("amount").fill_null(p), "fill_null", "ff.lit(parameter)"),
+        (lambda p: ff.col("amount").fill_nan(p), "fill_nan", "ff.lit(parameter)"),
         (lambda p: ff.col("amount").is_in([p]), "is_in", "compare with =="),
     ],
 )
@@ -360,3 +361,12 @@ def test_parameter_through_lit_works_as_an_expr_method_argument():
     ceiling = ff.add_flow_parameter(child, ff.Parameter("ceiling", default=50, type="integer"))
     clipped = raw.select(ff.col("amount").clip(upper_bound=ff.lit(ceiling)))
     assert clipped.collect()["amount"].to_list() == [10.0, 25.0, 50.0, 50.0]
+
+
+def test_a_fill_takes_a_parameter_through_lit():
+    child = ff.create_flow_graph()
+    raw = ff.FlowInput("orders", sample={"amount": [10.0, None, 70.0]}, flow_graph=child)
+    floor = ff.add_flow_parameter(child, ff.Parameter("floor", default=5.0, type="float"))
+    filled = raw.with_columns(ff.col("amount").fill_null(ff.lit(floor)))
+    assert core_node(filled).setting_input.function.function == "coalesce([amount], ${floor})"
+    assert filled.collect()["amount"].to_list() == [10.0, 5.0, 70.0]

@@ -3,7 +3,7 @@ import os
 import re
 from contextvars import ContextVar
 from datetime import datetime
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, get_args
 
 import polars as pl
@@ -37,7 +37,7 @@ from flowfile_core.schemas.yaml_types import (
 )
 from flowfile_core.types import DataTypeStr
 from flowfile_core.utils.utils import ensure_similarity_dicts, standardize_col_dtype
-from shared.path_utils import default_scan_extension, ensure_glob_pattern, is_cloud_path, is_url
+from shared.path_utils import default_scan_extension, ensure_glob_pattern, file_name, is_cloud_path, is_url
 
 keep_paths_as_written: ContextVar[bool] = ContextVar("keep_paths_as_written", default=False)
 """While set in a context, ``set_absolute_filepath`` keeps a path as written: no ``~``, working directory or links.
@@ -45,6 +45,17 @@ keep_paths_as_written: ContextVar[bool] = ContextVar("keep_paths_as_written", de
 A canvas notebook session in a kernel sets it: the kernel mounts no host folder and opens none of these paths
 (core reads the file for it), and core recomputes the absolute path on the host when it checks a push.
 """
+
+
+def _already_named(path: str, name: str | None) -> bool:
+    """Whether ``path`` already names the file ``name``, so the name is not appended to it: the name is the tail of
+    the path's parts, or text inside its last part. A join appends ``file_name(name)``, since a name written by a
+    Linux kernel for a Windows path may be that whole path."""
+    if not name:
+        return True
+    tail = Path(name).parts
+    return name in Path(path).name or Path(path).parts[-len(tail) :] == tail
+
 
 SecretRef = Annotated[
     str, StringConstraints(min_length=1, max_length=100), Field(description="An ID referencing an encrypted secret.")
@@ -303,10 +314,8 @@ class ReceivedTable(BaseModel):
             return
         if keep_paths_as_written.get():
             resolved = self.path
-            # In the Linux kernel the frame's name of a Windows path is the whole path.
-            name = PureWindowsPath(self.name).name if self.name else None
-            if self.scan_mode == "single_file" and name and name not in Path(resolved).name:
-                resolved = os.path.join(resolved, name)
+            if self.scan_mode == "single_file" and not _already_named(resolved, self.name):
+                resolved = os.path.join(resolved, file_name(self.name))
             if self.scan_mode == "directory":
                 resolved = ensure_glob_pattern(resolved, default_scan_extension(self.file_type))
             self.abs_file_path = resolved
@@ -315,8 +324,8 @@ class ReceivedTable(BaseModel):
         if not base_path.is_absolute():
             base_path = Path.cwd() / base_path
         # In directory mode the name is a node label, not a filename to append.
-        if self.scan_mode == "single_file" and self.name and self.name not in base_path.name:
-            base_path = base_path / self.name
+        if self.scan_mode == "single_file" and not _already_named(str(base_path), self.name):
+            base_path = base_path / file_name(self.name)
         resolved = str(base_path.resolve())
         if self.scan_mode == "directory":
             resolved = ensure_glob_pattern(resolved, default_scan_extension(self.file_type))
@@ -475,14 +484,14 @@ class OutputSettings(BaseModel):
     def set_absolute_filepath(self):
         """Resolves the output directory and name into an absolute path."""
         if keep_paths_as_written.get():
-            written = self.name and self.name not in Path(self.directory).name
-            self.abs_file_path = os.path.join(self.directory, self.name) if written else self.directory
+            named = _already_named(self.directory, self.name)
+            self.abs_file_path = self.directory if named else os.path.join(self.directory, file_name(self.name))
             return
         base_path = Path(self.directory)
         if not base_path.is_absolute():
             base_path = Path.cwd() / base_path
-        if self.name and self.name not in base_path.name:
-            base_path = base_path / self.name
+        if not _already_named(str(base_path), self.name):
+            base_path = base_path / file_name(self.name)
         self.abs_file_path = str(base_path.resolve())
 
     @model_validator(mode="after")

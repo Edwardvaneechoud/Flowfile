@@ -55,6 +55,62 @@ class Trainer(Protocol):
     ) -> pl.LazyFrame: ...
 
 
+def _float_features(features: list[str]) -> list[pl.Expr]:
+    # polars_ds panics on Int8/Int16/Decimal inputs; apply() casts the same way.
+    return [pl.col(f).cast(pl.Float64) for f in features]
+
+
+def _fit_coefficients(coefs_frame: pl.DataFrame, features: list[str], add_bias: bool, label: str) -> tuple[list, float]:
+    """The coefficients and intercept a polars_ds fit returned (one row holding one list), or an actionable error."""
+    coeffs = coefs_frame.row(0)[0] if coefs_frame.height else None
+    if coeffs is None:
+        raise ValueError(
+            f"{label} could not be fitted: a feature column is constant, or a linear combination of "
+            f"other features (e.g. a total next to its parts). Features: {features!r}. Remove the redundant "
+            "column(s), or use Ridge Regression."
+        )
+    if add_bias:
+        *coefficients, intercept = coeffs
+    else:
+        coefficients, intercept = list(coeffs), 0.0
+    if len(coefficients) != len(features):
+        raise ValueError(
+            f"Coefficient count ({len(coefficients)}) does not match feature count ({len(features)}). "
+            "The polars_ds fit returned an unexpected shape."
+        )
+    return list(coefficients), float(intercept)
+
+
+def _linear_model(trainer, target: str, features: list[str], coefficients: list, intercept: float, params) -> bytes:
+    """The JSON wire form of a fitted linear model (coefficients + intercept), shared by every coefficient trainer."""
+    model = {
+        "model_type": trainer.model_type,
+        "task_type": trainer.task_type,
+        "target": target,
+        "features": list(features),
+        "coefficients": [float(c) for c in coefficients],
+        "intercept": intercept,
+        "params": params.model_dump(),
+        "output_dtype": trainer.output_dtype,
+    }
+    return json.dumps(model).encode("utf-8")
+
+
+def _linear_combination(lf: pl.LazyFrame, model: dict[str, Any]) -> pl.Expr:
+    """``intercept + sum(coef * feature)`` over Float64 casts, after checking every feature is present."""
+    features, coefficients = model["features"], model["coefficients"]
+    missing = [f for f in features if f not in lf.collect_schema().names()]
+    if missing:
+        raise ValueError(
+            f"Apply Model: input is missing required feature column(s) {missing!r}. "
+            f"Model was trained on {features!r}."
+        )
+    expr = pl.lit(float(model.get("intercept", 0.0)), dtype=pl.Float64)
+    for feature_name, coef in zip(features, coefficients, strict=True):
+        expr = expr + pl.col(feature_name).cast(pl.Float64) * pl.lit(float(coef))
+    return expr
+
+
 class _LinearFamilyTrainer:
     """Shared implementation for linear-coefficient trainers (linear/ridge/lasso).
 
@@ -107,33 +163,9 @@ class _LinearFamilyTrainer:
 
         validated = self.params_class(**params)
         kwargs = self._lin_reg_kwargs(validated)
-        coefs_frame = lf.select(pds.lin_reg(*features, target=target, **kwargs)).collect()
-        if coefs_frame.height == 0:
-            raise ValueError("Training data is empty; cannot fit a regression model.")
-        coeffs = coefs_frame.row(0)[0]
-        if validated.add_bias:
-            *coefficients, intercept = coeffs
-        else:
-            coefficients = list(coeffs)
-            intercept = 0.0
-
-        if len(coefficients) != len(features):
-            raise ValueError(
-                f"Coefficient count ({len(coefficients)}) does not match feature count ({len(features)}). "
-                "polars_ds.lin_reg returned an unexpected shape."
-            )
-
-        model = {
-            "model_type": self.model_type,
-            "task_type": self.task_type,
-            "target": target,
-            "features": list(features),
-            "coefficients": list(coefficients),
-            "intercept": float(intercept),
-            "params": validated.model_dump(),
-            "output_dtype": self.output_dtype,
-        }
-        return json.dumps(model).encode("utf-8")
+        coefs_frame = lf.select(pds.lin_reg(*_float_features(features), target=target, **kwargs)).collect()
+        coefficients, intercept = _fit_coefficients(coefs_frame, features, validated.add_bias, self.label)
+        return _linear_model(self, target, features, coefficients, intercept, validated)
 
     def apply(
         self,
@@ -141,19 +173,7 @@ class _LinearFamilyTrainer:
         model: dict[str, Any],
         output_column: str,
     ) -> pl.LazyFrame:
-        features = model["features"]
-        coefficients = model["coefficients"]
-        intercept = float(model.get("intercept", 0.0))
-        missing = [f for f in features if f not in lf.collect_schema().names()]
-        if missing:
-            raise ValueError(
-                f"Apply Model: input is missing required feature column(s) {missing!r}. "
-                f"Model was trained on {features!r}."
-            )
-        expr = pl.lit(intercept, dtype=pl.Float64)
-        for feature_name, coef in zip(features, coefficients, strict=True):
-            expr = expr + pl.col(feature_name).cast(pl.Float64) * pl.lit(float(coef))
-        return lf.with_columns(expr.alias(output_column))
+        return lf.with_columns(_linear_combination(lf, model).alias(output_column))
 
 
 class LinearRegressionTrainer(_LinearFamilyTrainer):
@@ -308,7 +328,7 @@ class LogisticRegressionTrainer:
         validated = self.params_class(**params)
         coefs_frame = lf.select(
             pds.logistic_reg(
-                *features,
+                *_float_features(features),
                 target=target,
                 add_bias=validated.add_bias,
                 l1_reg=validated.l1_reg,
@@ -316,34 +336,8 @@ class LogisticRegressionTrainer:
                 max_iter=validated.max_iter,
             )
         ).collect()
-        if coefs_frame.height == 0:
-            raise ValueError(
-                "Training data is empty; cannot fit a logistic regression model."
-            )
-        coeffs = coefs_frame.row(0)[0]
-        if validated.add_bias:
-            *coefficients, intercept = coeffs
-        else:
-            coefficients = list(coeffs)
-            intercept = 0.0
-
-        if len(coefficients) != len(features):
-            raise ValueError(
-                f"Coefficient count ({len(coefficients)}) does not match feature count ({len(features)}). "
-                "polars_ds.logistic_reg returned an unexpected shape."
-            )
-
-        model = {
-            "model_type": self.model_type,
-            "task_type": self.task_type,
-            "target": target,
-            "features": list(features),
-            "coefficients": list(coefficients),
-            "intercept": float(intercept),
-            "params": validated.model_dump(),
-            "output_dtype": self.output_dtype,
-        }
-        return json.dumps(model).encode("utf-8")
+        coefficients, intercept = _fit_coefficients(coefs_frame, features, validated.add_bias, self.label)
+        return _linear_model(self, target, features, coefficients, intercept, validated)
 
     def apply(
         self,
@@ -351,20 +345,8 @@ class LogisticRegressionTrainer:
         model: dict[str, Any],
         output_column: str,
     ) -> pl.LazyFrame:
-        features = model["features"]
-        coefficients = model["coefficients"]
-        intercept = float(model.get("intercept", 0.0))
-        missing = [f for f in features if f not in lf.collect_schema().names()]
-        if missing:
-            raise ValueError(
-                f"Apply Model: input is missing required feature column(s) {missing!r}. "
-                f"Model was trained on {features!r}."
-            )
-        # Decision boundary: sigmoid(logit) > 0.5  <=>  logit > 0; skip the
-        # exp/log roundtrip and threshold the linear combination directly.
-        logit = pl.lit(intercept, dtype=pl.Float64)
-        for feature_name, coef in zip(features, coefficients, strict=True):
-            logit = logit + pl.col(feature_name).cast(pl.Float64) * pl.lit(float(coef))
+        # Decision boundary: sigmoid(logit) > 0.5  <=>  logit > 0; threshold the linear combination directly.
+        logit = _linear_combination(lf, model)
         return lf.with_columns((logit > 0).cast(pl.Int64).alias(output_column))
 
 

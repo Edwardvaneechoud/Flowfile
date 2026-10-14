@@ -2,6 +2,8 @@ import ast
 import builtins
 import functools
 import heapq
+import importlib
+import inspect
 import io
 import json
 import keyword
@@ -21,6 +23,7 @@ from flowfile_core.flowfile.code_generator.connector_handlers import ConnectorHa
 from flowfile_core.flowfile.code_generator.custom_node_handlers import CustomNodeHandlersMixin
 from flowfile_core.flowfile.code_generator.expression_helpers import ExpressionHelpersMixin
 from flowfile_core.flowfile.code_generator.join_handlers import JoinHandlersMixin
+from flowfile_core.flowfile.code_generator.literals import python_literal
 from flowfile_core.flowfile.code_generator.native_handlers import FLOW_VAR, NativeHandlersMixin, literal_lines
 from flowfile_core.flowfile.code_generator.param_codegen import (
     SENTINEL_PREFIX,
@@ -42,7 +45,7 @@ from flowfile_core.flowfile.flow_data_engine.hierarchy import (
     hierarchy_function_name,
     hierarchy_node_id_casts,
 )
-from flowfile_core.flowfile.flow_data_engine.polars_code_parser import function_form
+from flowfile_core.flowfile.flow_data_engine.polars_code_parser import PolarsCodeParser, function_form
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.param_types import coerce_param_value
@@ -256,6 +259,41 @@ def _annotation_roots(entry: ast.FunctionDef) -> set[str]:
         for node in ast.walk(annotation)
         if isinstance(node, ast.Name)
     }
+
+
+def _sandbox_import(name: str, value) -> str:
+    """The import binding ``name`` to ``value`` as ``PolarsCodeParser.safe_globals`` does: a module by its name, a
+    Polars export from ``polars``, anything else from the public module that defines it."""
+    if inspect.ismodule(value):
+        return f"import {value.__name__}" + ("" if value.__name__ == name else f" as {name}")
+    if getattr(pl, name, None) is value:
+        return f"from polars import {name}"
+    module = value.__module__
+    public = module.lstrip("_")
+    if public != module and getattr(importlib.import_module(public), value.__name__, None) is value:
+        module = public
+    return f"from {module} import {value.__name__}" + ("" if value.__name__ == name else f" as {name}")
+
+
+@functools.cache
+def _sandbox_import_table() -> dict[str, str]:
+    """An import statement per sandbox name besides ``pl`` and the builtins, derived from the sandbox itself."""
+    return {
+        name: _sandbox_import(name, value)
+        for name, value in PolarsCodeParser().safe_globals.items()
+        if name not in ("__builtins__", "pl") and not hasattr(builtins, name)
+    }
+
+
+def _sandbox_imports(code: str) -> set[str]:
+    """Imports binding the names Polars Code reads from its sandbox besides ``pl`` (``col``, ``BytesIO``, a bare
+    dtype such as ``Int64``), which a node gets from ``PolarsCodeParser`` and an exported script must import."""
+    try:
+        tree = ast.parse("def _f():\n" + textwrap.indent(textwrap.dedent(code).strip(), "    "))
+    except SyntaxError:
+        return set()
+    table = _sandbox_import_table()
+    return {table[node.id] for node in ast.walk(tree) if isinstance(node, ast.Name) and node.id in table}
 
 
 def _legacy_polars_code_body(code: str) -> tuple[list[str], str | None]:
@@ -1265,7 +1303,8 @@ class FlowGraphCodeConverter(
             FlowfileColumn.create_from_minimal_field_info(c) for c in settings.raw_data_format.columns
         )
         schema = self.get_manual_schema_input(flowfile_schema)
-        self._add_code(f"{var_name} = {self.framework}.LazyFrame({data}, schema={schema}, strict=False)")
+        rows = python_literal(data, self.imports)
+        self._add_code(f"{var_name} = {self.framework}.LazyFrame({rows}, schema={schema}, strict=False)")
         self._add_code("")
 
     def _handle_flow_input(
@@ -1705,6 +1744,7 @@ class FlowGraphCodeConverter(
     ) -> None:
         """Handle custom Polars code nodes."""
         code = textwrap.dedent(settings.polars_code_input.polars_code).strip()
+        self.imports.update(_sandbox_imports(code))
         if len(input_vars) == 0:
             params = ""
             args = ""
@@ -2682,10 +2722,12 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
     def _handle_manual_input(
         self, settings: input_schema.NodeManualInput, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        # Public API only: ff.from_raw_data coerces the dict into RawData via pydantic.
-        raw_data = settings.raw_data_format
-        self._add_code(f"{var_name} = ff.from_raw_data({raw_data.model_dump()})")
+        self._add_code(f"{var_name} = {self._raw_data_expression(settings.raw_data_format)}")
         self._add_code("")
+
+    def _raw_data_expression(self, raw_data: input_schema.RawData) -> str:
+        """``ff.from_raw_data({...})`` over the stored rows (public API only: pydantic coerces the dict)."""
+        return f"ff.from_raw_data({python_literal(raw_data.model_dump(), self.imports)})"
 
     def _scan_callable(self, file_type: str) -> str:
         return self._frame_reader(f"scan_{file_type}")
