@@ -10,6 +10,7 @@ import tempfile
 import polars as pl
 import pytest
 
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.context import use_context
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
@@ -846,7 +847,9 @@ def test_retry_upstream_resolves_parameters(execution_location):
     run_and_assert_ok(graph)
 
     upstream, node = graph.get_node(2), graph.get_node(3)
+    ref = upstream.results.result_ref
     with use_context(graph.execution_context):
+        registry.backend(ref.backend_id).release(ref)
         node.executor._handle_error(
             node._execution_state,
             Exception("No such file or directory (os error 2)"),

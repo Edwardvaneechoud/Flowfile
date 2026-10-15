@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
+from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution.context import DEFAULT_PREVIEW_ROWS, ExecutionContext, current_context
 from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.execution.protocol import SubmitHints
@@ -412,7 +413,14 @@ class NodeExecutor:
         retry: bool,
         node_logger: NodeLogger,
     ) -> None:
-        """Handle execution errors with retry logic."""
+        """Handle execution errors with retry logic.
+
+        A missing-file error from Polars reruns the node's inputs and then the node once, when ``retry`` is set. With
+        ``settings.FLOWFILE_COMPUTE_PROTOCOL`` off the message alone counts as an input's file gone, as the results are
+        core's own files. With it on an input must also hold a result that is gone (``NodeResults.artifact_is_missing``,
+        which asks the backend that minted it); otherwise the error is the node's own and it fails with it, the inputs'
+        results kept.
+        """
         error_str = str(error)
         state.mark_failed(error_str)
         self._sync_state_to_legacy(state)
@@ -421,7 +429,16 @@ class NodeExecutor:
         self.node._last_exception_class = getattr(error, "original_class", None) or type(error).__name__
 
         # Retry on missing file errors (upstream cache was cleared)
-        if "No such file or directory (os error" in error_str and retry:
+        if (
+            "No such file or directory (os error" in error_str
+            and retry
+            and (
+                not settings.FLOWFILE_COMPUTE_PROTOCOL
+                or any(
+                    node_input.results.artifact_is_missing() for node_input in self.node.node_inputs.get_all_inputs()
+                )
+            )
+        ):
             node_logger.warning("Input file missing, retrying upstream nodes...")
             for node_input in self.node.node_inputs.get_all_inputs():
                 # The run loop substitutes only into the node it is about to run.
