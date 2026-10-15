@@ -973,7 +973,9 @@ class ExecutionMixin(GraphMixinBase):
                 continue
         return closed
 
-    def _place_run(self, execution_plan: ExecutionPlan) -> tuple[Placement | None, list[BoundaryEdge]]:
+    def _place_run(
+        self, execution_plan: ExecutionPlan, exchange_run: ExchangeRun
+    ) -> tuple[Placement | None, list[BoundaryEdge]]:
         """Place the nodes ``execution_plan`` runs and resolve its crossings; ``(None, [])`` with the protocol flag off.
 
         With an exchange store configured (``FLOWFILE_EXCHANGE_URI``) each node goes to the backend its own
@@ -984,14 +986,14 @@ class ExecutionMixin(GraphMixinBase):
         error when they run; an id the registry does not know refuses every node assigned to it with the registry's
         message.
 
-        Every boundary crosses through the run's prefix in the exchange store (``exchange_run``), for the upstream
-        node's user: one ``BoundaryEdge`` per output of the upstream node that the importing node reads, to
+        Every boundary crosses through the run's prefix in the exchange store (the ``exchange_run`` given), for the
+        upstream node's user: one ``BoundaryEdge`` per output of the upstream node that the importing node reads, to
         ``<prefix><from>-<handle>-<to>.parquet``, keyed by the handle the node looks that input up by. A store that
         cannot be used for that user (no connection named, a scheme other than ``s3``, no such connection for the user)
         refuses the importing node with the store's message, so the run starts no node. So does an edge whose output
         core knows before the run to hold more rows than ``FLOWFILE_EXCHANGE_MAX_ROWS`` (``BoundaryEdge.cost``), the
         message naming the rows, the columns and the limit, and a limit that is not a whole number; an edge whose count
-        core does not know crosses whatever its size.
+        core does not know crosses whatever its size. A node is refused once, for the first of its crossings refused.
         """
         if not settings.FLOWFILE_COMPUTE_PROTOCOL:
             return None, []
@@ -1023,14 +1025,14 @@ class ExecutionMixin(GraphMixinBase):
                 refusals=[*refusals, *placement.refusals],
             )
         edges: list[BoundaryEdge] = []
-        crossing_refusals: list[Refusal] = []
+        crossing_refusals: dict[int, Refusal] = {}
         for source_id, target_id in placement.boundaries:
             source, target = self.get_node(source_id), self.get_node(target_id)
             try:
-                crossing = self.exchange_run.prefix(source.setting_input.user_id)
+                crossing = exchange_run.prefix(source.setting_input.user_id)
                 max_rows = settings.get_exchange_max_rows() if crossing is not None else None
             except ValueError as e:
-                crossing_refusals.append(Refusal(target_id, placement.assignment[target_id], str(e)))
+                crossing_refusals.setdefault(target_id, Refusal(target_id, placement.assignment[target_id], str(e)))
                 continue
             if crossing is None:
                 continue
@@ -1054,11 +1056,11 @@ class ExecutionMixin(GraphMixinBase):
                         f'the input from node {source_id} would cross from backend "{edge.source_backend_id}" with '
                         f"{rows} rows of {columns} columns, above FLOWFILE_EXCHANGE_MAX_ROWS={max_rows}"
                     )
-                    crossing_refusals.append(Refusal(target_id, edge.target_backend_id, reason))
+                    crossing_refusals.setdefault(target_id, Refusal(target_id, edge.target_backend_id, reason))
                 else:
                     edges.append(edge)
         if crossing_refusals:
-            placement = replace(placement, refusals=[*placement.refusals, *crossing_refusals])
+            placement = replace(placement, refusals=[*placement.refusals, *crossing_refusals.values()])
         return placement, edges
 
     def _record_refusals(self, refusals: list[Refusal]) -> None:
@@ -1376,7 +1378,7 @@ class ExecutionMixin(GraphMixinBase):
                     closed_gate_handles=closed_gate_handles,
                 )
 
-                placement, edges = self._place_run(execution_plan)
+                placement, edges = self._place_run(execution_plan, exchange_run)
                 if placement is not None and placement.refusals:
                     # Refused before any node starts: nothing is prepared, executed, skipped or committed.
                     self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")

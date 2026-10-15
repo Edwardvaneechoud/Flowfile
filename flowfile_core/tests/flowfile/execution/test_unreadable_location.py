@@ -10,8 +10,9 @@ column statistics and the CSV export; and a filter, a select, a join, a group_by
 a union, an unpivot, window functions, text to rows, a multi-field formula, a graph solver, an explode hierarchy, a
 pivot, a dynamic rename, a data cleansing, a cross join or a Polars code node over a stored result, a node's output
 field config, a Run Flow node's outputs over its child's stored results, or the REST API reader's alignment of a read
-it stored, takes its input's columns from the input engine's cached schema. The tests named for ``v1`` results check
-the same over the session worker's ``/v1`` routes.
+it stored, takes its input's columns from the input engine's cached schema; and a node that fails on a missing file in
+core keeps its stored input rather than rerunning it. The tests named for ``v1`` results check the same over the
+session worker's ``/v1`` routes.
 """
 
 import dataclasses
@@ -464,6 +465,54 @@ def test_a_result_its_backend_dropped_is_run_again(unreadable, protocol):
             assert not decision.should_run
         run_info = graph.run_graph()
         assert run_info.success, failures(run_info)
+    finally:
+        graph.close_flow()
+
+
+def test_a_missing_file_in_core_reruns_a_held_input_only_with_the_flag_off(unreadable, protocol, monkeypatch, tmp_path):
+    submits, releases = [], []
+    submit, release = UnreadableBackend.submit, UnreadableBackend.release
+
+    def recording_submit(self, plan, inputs, hints, result_id, *, flow_id, node_id):
+        submits.append((node_id, result_id))
+        return submit(self, plan, inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
+
+    def recording_release(self, ref):
+        releases.append(ref.result_id)
+        return release(self, ref)
+
+    monkeypatch.setattr(UnreadableBackend, "submit", recording_submit)
+    monkeypatch.setattr(UnreadableBackend, "release", recording_release)
+    missing = tmp_path / "missing.parquet"
+    graph = make_graph(9380, max_parallel_workers=1)
+    add_manual_input(graph, 1, [{"id": i, "amount": i * 10} for i in range(1, 4)])
+    graph.get_node(1).node_settings.cache_results = True
+    add_promise(graph, 2, "polars_code")
+    graph.add_polars_code(
+        input_schema.NodePolarsCode(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_ids=[1],
+            polars_code_input=transform_schema.PolarsCodeInput(
+                polars_code=f'input_df.join(pl.read_parquet("{missing}").lazy(), how="cross")'
+            ),
+        )
+    )
+    connect(graph, 1, 2)
+    try:
+        run_info = graph.run_graph()
+
+        ref = graph.get_node(1).results.result_ref
+        assert [node_id for node_id, _ in failures(run_info)] == [2]
+        assert "No such file or directory (os error 2)" in failures(run_info)[0][1]
+        assert unreadable[0].exists(ref)
+        input_submits = [result_id for node_id, result_id in submits if node_id == 1]
+        if protocol:
+            assert releases == []
+            assert input_submits == [ref.result_id]
+        else:
+            assert releases == [ref.result_id]
+            assert input_submits == [ref.result_id, ref.result_id]
     finally:
         graph.close_flow()
 

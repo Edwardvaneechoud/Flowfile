@@ -23,6 +23,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
 from flowfile_core.schemas import input_schema, transform_schema
+from tests import test_run_flow_node
 from tests.flowfile.execution import test_exchange_store, test_placement
 from tests.flowfile.execution.test_mixed_placement import LOCAL, chain
 from tests.flowfile.execution.test_placement import (
@@ -40,6 +41,7 @@ declare = test_placement.declare
 protocol_on = test_placement.protocol_on
 protocol_off = test_placement.protocol_off
 connection_name = test_exchange_store.connection_name
+two_port_subflow = test_run_flow_node.two_port_subflow
 
 STORE = "s3://test-bucket/exchange"
 OUT = DEFAULT_OUTPUT_HANDLE
@@ -94,13 +96,10 @@ def empty_store(monkeypatch) -> EmptyBucket:
 
 
 def placed(graph: FlowGraph):
-    """``_place_run`` over every node of ``graph``, a run's prefix in the exchange store held while it places."""
-    graph.exchange_run = ExchangeRun(graph.flow_id, uuid.uuid4().hex)
-    try:
-        flow_starts = graph._flow_starts + graph.get_implicit_starter_nodes()
-        return graph._place_run(compute_execution_plan(nodes=graph.nodes, flow_starts=flow_starts))
-    finally:
-        graph.exchange_run = None
+    """``_place_run`` over every node of ``graph``, given a fresh run's prefix in the exchange store."""
+    flow_starts = graph._flow_starts + graph.get_implicit_starter_nodes()
+    plan = compute_execution_plan(nodes=graph.nodes, flow_starts=flow_starts)
+    return graph._place_run(plan, ExchangeRun(graph.flow_id, uuid.uuid4().hex))
 
 
 def crossings(edges) -> list[tuple]:
@@ -236,6 +235,54 @@ def test_a_split_whose_input_changed_after_it_ran_is_not_priced_by_that_run(
     assert ran.refusals == [Refusal(3, LOCAL, above(2, BACKEND_ID, 80, 1, 50))]
     assert changed.refusals == []
     assert crossings(edges) == [(2, OUT, 3)]
+
+
+def test_a_node_reading_two_outputs_of_one_source_above_the_limit_is_refused_once(
+    protocol_on, declare, connection_name, two_port_subflow, monkeypatch
+):
+    """Random split 2 (80/20 of 100 rows) on the declaring backend feeds both slots of run flow 9 on core."""
+    backend = CountedSplits(BACKEND_ID, everything())
+    registry.register_backend(BACKEND_ID, lambda: backend)
+    graph = make_graph(8537)
+    add_manual_input(graph, 1, [{"id": i} for i in range(100)])
+    add_promise(graph, 2, "random_split")
+    connect(graph, 1, 2)
+    graph.add_random_split(
+        input_schema.NodeRandomSplit(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            user_id=1,
+            seed=42,
+            splits=[
+                input_schema.RandomSplitGroup(name="train", percentage=80.0),
+                input_schema.RandomSplitGroup(name="test", percentage=20.0),
+            ],
+        )
+    )
+    add_promise(graph, 9, "run_flow")
+    graph.add_run_flow(
+        input_schema.NodeRunFlow(
+            flow_id=graph.flow_id,
+            node_id=9,
+            user_id=1,
+            execution_location=LOCAL,
+            flow_reference=input_schema.SubflowReference(registration_id=two_port_subflow["registration_id"]),
+            input_slots=["a", "b"],
+            output_slots=["out_a", "out_b"],
+        )
+    )
+    test_run_flow_node.connect(graph, 2, 9, "input-1", OUT)
+    test_run_flow_node.connect(graph, 2, 9, "input-2", "output-1")
+    assert graph.run_graph(node_ids={1, 2}).success
+    monkeypatch.setenv("FLOWFILE_EXCHANGE_URI", STORE)
+    monkeypatch.setenv("FLOWFILE_EXCHANGE_CONNECTION", connection_name)
+    monkeypatch.setenv("FLOWFILE_EXCHANGE_MAX_ROWS", "10")
+
+    placement, edges = placed(graph)
+
+    assert placement.refusals == [Refusal(9, LOCAL, above(2, BACKEND_ID, 80, 1, 10))]
+    assert edges == []
 
 
 def test_a_limit_that_is_not_a_whole_number_refuses_each_crossing_naming_it(protocol_on, declare, store, monkeypatch):
