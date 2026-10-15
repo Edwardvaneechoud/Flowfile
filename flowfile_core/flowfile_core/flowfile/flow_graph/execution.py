@@ -1275,7 +1275,8 @@ class ExecutionMixin(GraphMixinBase):
         With ``FLOWFILE_COMPUTE_PROTOCOL`` on, the nodes the execution plan runs are placed first (``_place_run``): a
         node its backend cannot run ends the run before any node starts, each refused node a failed result. Each node
         then runs on the backend placement assigned it, an input from another backend crossing through the exchange
-        store (``BoundaryEdge``).
+        store (``BoundaryEdge``). The run report lists the edges placement put between two backends
+        (``RunInformation.boundaries``), a refused run's included.
 
         The run holds ``exchange_run``, its prefix ``<uri>/<flow id>/<run id>/`` in the exchange store, from before
         ``flow_run_started`` is published; when the run ends, however it ends, what was written under the prefix is
@@ -1344,6 +1345,7 @@ class ExecutionMixin(GraphMixinBase):
                 if placement is not None and placement.refusals:
                     # Refused before any node starts: nothing is prepared, executed, skipped or committed.
                     self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")
+                    self.latest_run_info.boundaries = list(placement.boundaries)
                     self._record_refusals(placement.refusals)
                 else:
                     plan_skip_ids: set[str | int] = {n.node_id for n in execution_plan.skip_nodes}
@@ -1352,6 +1354,8 @@ class ExecutionMixin(GraphMixinBase):
                     self._prepare_rerun_artifacts(plan_skip_ids | deliberate_skip_ids | not_selected_ids)
 
                     self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")
+                    if placement is not None:
+                        self.latest_run_info.boundaries = list(placement.boundaries)
                     skip_node_message(self.flow_logger, execution_plan.skip_nodes)
                     execution_order_message(self.flow_logger, execution_plan.stages)
 
