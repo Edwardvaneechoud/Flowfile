@@ -1017,8 +1017,10 @@ def test_a_plan_that_fails_on_its_data_is_an_error_frame_500_and_holds_nothing(h
 
 def test_an_unchanged_progress_is_sent_again_as_a_heartbeat(held, monkeypatch):
     monkeypatch.setattr(streaming, "_HEARTBEAT_INTERVAL", 0)
+    # Long enough for several polls even when a warm pool member starts it at once
+    slow = _plan().with_columns(pl.col("id").map_batches(lambda s: (time.sleep(0.5), s)[1], return_dtype=pl.Int64))
 
-    progress, final, _ = _ws_submit(_plan().serialize(), _meta(held(), must_materialise=True))
+    progress, final, _ = _ws_submit(slow.serialize(), _meta(held(), must_materialise=True))
 
     assert final["type"] == "complete"
     values = [frame["progress"] for frame in progress]
