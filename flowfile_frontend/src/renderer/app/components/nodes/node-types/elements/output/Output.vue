@@ -1,155 +1,161 @@
 <template>
   <div v-if="dataLoaded && nodeOutput && nodeOutput.output_settings" class="listbox-wrapper">
-    <div class="main-part">
-      <div class="file-upload-row">
-        <label class="file-upload-label" @click="showFileSelectionModal = true">
-          <i class="file-icon fas fa-upload"></i>
-          <span class="file-label-text">Folder</span>
-        </label>
-        <el-input
-          v-if="nodeOutput.output_settings"
-          v-model="nodeOutput.output_settings.directory"
-          size="small"
-          @change="handleFolderChange"
-        />
-        <span v-if="selectedDirectoryExists === false" class="warning-message">
-          <el-icon><WarningFilled /></el-icon>
-        </span>
-      </div>
-      <div
-        v-if="relativeHint && nodeOutput.output_settings.directory === relativeHint.directory"
-        class="directory-hint"
-      >
-        <span>Writes to {{ relativeHint.location }}</span>
-        <el-button
-          v-if="relativeHint.suggestion"
-          link
-          type="primary"
-          size="small"
-          @click="useSuggestedDirectory"
+    <generic-node-settings
+      v-model="nodeOutput"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
+      <div class="main-part">
+        <div class="file-upload-row">
+          <label class="file-upload-label" @click="showFileSelectionModal = true">
+            <i class="file-icon fas fa-upload"></i>
+            <span class="file-label-text">Folder</span>
+          </label>
+          <el-input
+            v-if="nodeOutput.output_settings"
+            v-model="nodeOutput.output_settings.directory"
+            size="small"
+            @change="handleFolderChange"
+          />
+          <span v-if="selectedDirectoryExists === false" class="warning-message">
+            <el-icon><WarningFilled /></el-icon>
+          </span>
+        </div>
+        <div
+          v-if="relativeHint && nodeOutput.output_settings.directory === relativeHint.directory"
+          class="directory-hint"
         >
-          Use {{ relativeHint.suggestion }}
-        </el-button>
+          <span>Writes to {{ relativeHint.location }}</span>
+          <el-button
+            v-if="relativeHint.suggestion"
+            link
+            type="primary"
+            size="small"
+            @click="useSuggestedDirectory"
+          >
+            Use {{ relativeHint.suggestion }}
+          </el-button>
+        </div>
+
+        <el-autocomplete
+          v-model="nodeOutput.output_settings.name"
+          :fetch-suggestions="querySearch"
+          clearable
+          class="inline-input w-50"
+          placeholder="Select file or create file"
+          :trigger-on-focus="false"
+          @change="handleFileNameChange"
+          @select="handleFileNameChange"
+        />
       </div>
 
-      <el-autocomplete
-        v-model="nodeOutput.output_settings.name"
-        :fetch-suggestions="querySearch"
-        clearable
-        class="inline-input w-50"
-        placeholder="Select file or create file"
-        :trigger-on-focus="false"
-        @change="handleFileNameChange"
-        @select="handleFileNameChange"
-      />
-    </div>
+      <div class="main-part">
+        <div class="file-type-row">
+          File type:
+          <el-select
+            v-model="nodeOutput.output_settings.file_type"
+            class="m-2"
+            placeholder="Select"
+            size="small"
+            @change="handleFileTypeChange"
+          >
+            <el-option
+              v-for="type in ['csv', 'excel', 'parquet', 'ipc', 'ndjson', 'avro']"
+              :key="type"
+              :label="type"
+              :value="type"
+            />
+          </el-select>
+        </div>
 
-    <div class="main-part">
-      <div class="file-type-row">
-        File type:
+        Writing option:
         <el-select
-          v-model="nodeOutput.output_settings.file_type"
+          v-model="nodeOutput.output_settings.write_mode"
           class="m-2"
-          placeholder="Select"
+          placeholder="Select output option"
           size="small"
-          @change="handleFileTypeChange"
+          :disabled="!nodeOutput.output_settings.file_type"
         >
           <el-option
-            v-for="type in ['csv', 'excel', 'parquet', 'ipc', 'ndjson', 'avro']"
-            :key="type"
-            :label="type"
-            :value="type"
+            v-for="option in getWriteOptions(nodeOutput.output_settings.file_type)"
+            :key="option"
+            :label="option"
+            :value="option"
           />
         </el-select>
-      </div>
 
-      Writing option:
-      <el-select
-        v-model="nodeOutput.output_settings.write_mode"
-        class="m-2"
-        placeholder="Select output option"
-        size="small"
-        :disabled="!nodeOutput.output_settings.file_type"
-      >
-        <el-option
-          v-for="option in getWriteOptions(nodeOutput.output_settings.file_type)"
-          :key="option"
-          :label="option"
-          :value="option"
-        />
-      </el-select>
-
-      <div
-        v-if="
-          nodeOutput.output_settings.file_type === 'excel' &&
-          nodeOutput.output_settings.write_mode === 'update'
-        "
-        class="info-box"
-      >
-        <i class="fa-solid fa-info-circle"></i>
-        <div>
-          <p>Writes only this sheet; every other sheet in the workbook is kept.</p>
-          <p class="info-caveat">
-            Embedded images are dropped and formula results refresh when the file is next opened in
-            Excel.
-          </p>
+        <div
+          v-if="
+            nodeOutput.output_settings.file_type === 'excel' &&
+            nodeOutput.output_settings.write_mode === 'update'
+          "
+          class="info-box"
+        >
+          <i class="fa-solid fa-info-circle"></i>
+          <div>
+            <p>Writes only this sheet; every other sheet in the workbook is kept.</p>
+            <p class="info-caveat">
+              Embedded images are dropped and formula results refresh when the file is next opened
+              in Excel.
+            </p>
+          </div>
         </div>
+
+        <CsvTableConfig
+          v-if="isOutputCsvTable(nodeOutput.output_settings.table_settings)"
+          v-model="nodeOutput.output_settings.table_settings"
+        />
+        <ExcelTableConfig
+          v-if="isOutputExcelTable(nodeOutput.output_settings.table_settings)"
+          v-model="nodeOutput.output_settings.table_settings"
+        />
+        <ParquetTableConfig
+          v-if="isOutputParquetTable(nodeOutput.output_settings.table_settings)"
+          v-model="nodeOutput.output_settings.table_settings"
+        />
+        <IpcTableConfig
+          v-if="isOutputIpcTable(nodeOutput.output_settings.table_settings)"
+          v-model="nodeOutput.output_settings.table_settings"
+        />
+        <NdjsonTableConfig
+          v-if="isOutputNdjsonTable(nodeOutput.output_settings.table_settings)"
+          v-model="nodeOutput.output_settings.table_settings"
+        />
+        <AvroTableConfig
+          v-if="isOutputAvroTable(nodeOutput.output_settings.table_settings)"
+          v-model="nodeOutput.output_settings.table_settings"
+        />
       </div>
 
-      <CsvTableConfig
-        v-if="isOutputCsvTable(nodeOutput.output_settings.table_settings)"
-        v-model="nodeOutput.output_settings.table_settings"
-      />
-      <ExcelTableConfig
-        v-if="isOutputExcelTable(nodeOutput.output_settings.table_settings)"
-        v-model="nodeOutput.output_settings.table_settings"
-      />
-      <ParquetTableConfig
-        v-if="isOutputParquetTable(nodeOutput.output_settings.table_settings)"
-        v-model="nodeOutput.output_settings.table_settings"
-      />
-      <IpcTableConfig
-        v-if="isOutputIpcTable(nodeOutput.output_settings.table_settings)"
-        v-model="nodeOutput.output_settings.table_settings"
-      />
-      <NdjsonTableConfig
-        v-if="isOutputNdjsonTable(nodeOutput.output_settings.table_settings)"
-        v-model="nodeOutput.output_settings.table_settings"
-      />
-      <AvroTableConfig
-        v-if="isOutputAvroTable(nodeOutput.output_settings.table_settings)"
-        v-model="nodeOutput.output_settings.table_settings"
-      />
-    </div>
-
-    <el-dialog
-      v-model="showFileSelectionModal"
-      title="Select directory or file to write to"
-      width="70%"
-      append-to-body
-      :close-on-click-modal="false"
-    >
-      <file-browser
-        :allowed-file-types="[
-          'csv',
-          'xlsx',
-          'parquet',
-          'ipc',
-          'arrow',
-          'feather',
-          'ndjson',
-          'jsonl',
-          'avro',
-        ]"
-        :allow-directory-selection="true"
-        mode="create"
-        context="output"
-        :is-visible="showFileSelectionModal"
-        @directory-selected="handleDirectorySelected"
-        @overwrite-file="handleFileSelected"
-        @create-file="handleFileSelected"
-      />
-    </el-dialog>
+      <el-dialog
+        v-model="showFileSelectionModal"
+        title="Select directory or file to write to"
+        width="70%"
+        append-to-body
+        :close-on-click-modal="false"
+      >
+        <file-browser
+          :allowed-file-types="[
+            'csv',
+            'xlsx',
+            'parquet',
+            'ipc',
+            'arrow',
+            'feather',
+            'ndjson',
+            'jsonl',
+            'avro',
+          ]"
+          :allow-directory-selection="true"
+          mode="create"
+          context="output"
+          :is-visible="showFileSelectionModal"
+          @directory-selected="handleDirectorySelected"
+          @overwrite-file="handleFileSelected"
+          @create-file="handleFileSelected"
+        />
+      </el-dialog>
+    </generic-node-settings>
   </div>
 </template>
 <script lang="ts" setup>
@@ -176,6 +182,7 @@ import {
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useFileBrowserStore } from "../../../../../stores/fileBrowserStore";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { getDefaultPath } from "@/api/file.api";
 import axios, { AxiosError } from "axios";
 import CsvTableConfig from "./outputCsv.vue";
@@ -210,7 +217,7 @@ function rememberOutputDirectory(directory: string | undefined) {
 // The default-folder lookup of a never-configured node; a save waits for it.
 let directoryLookup: Promise<void> | null = null;
 
-const { saveSettings, pushNodeData } = useNodeSettings({
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeOutput,
   onBeforeSave: async () => {
     await directoryLookup;

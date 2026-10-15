@@ -1,121 +1,90 @@
 <template>
   <div v-if="dataLoaded && nodeData" class="listbox-wrapper">
-    <div class="main-part">
-      <!-- Mode toggle -->
-      <div class="mode-toggle">
-        <button class="mode-btn" :class="{ active: mode === 'table' }" @click="switchMode('table')">
-          <i class="fa-solid fa-table"></i> Table
-        </button>
-        <button class="mode-btn" :class="{ active: mode === 'sql' }" @click="switchMode('sql')">
-          <i class="fa-solid fa-code"></i> SQL
-        </button>
-      </div>
-
-      <!-- Table mode -->
-      <template v-if="mode === 'table'">
-        <div class="catalog-field">
-          <label class="catalog-label">Catalog / Schema</label>
-          <el-select
-            v-model="nodeData.catalog_namespace_id"
-            size="small"
-            placeholder="Select namespace"
-            clearable
-            @change="handleNamespaceChange"
+    <generic-node-settings
+      v-model="nodeData"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
+      <div class="main-part">
+        <!-- Mode toggle -->
+        <div class="mode-toggle">
+          <button
+            class="mode-btn"
+            :class="{ active: mode === 'table' }"
+            @click="switchMode('table')"
           >
-            <el-option
-              v-for="ns in catalogNamespaces"
-              :key="ns.id"
-              :label="ns.label"
-              :value="ns.id"
-            />
-          </el-select>
+            <i class="fa-solid fa-table"></i> Table
+          </button>
+          <button class="mode-btn" :class="{ active: mode === 'sql' }" @click="switchMode('sql')">
+            <i class="fa-solid fa-code"></i> SQL
+          </button>
         </div>
 
-        <div class="catalog-field">
-          <label class="catalog-label">Table</label>
-          <el-select
-            v-model="nodeData.catalog_table_id"
-            size="small"
-            placeholder="Select table"
-            filterable
-            @change="handleTableChange"
-          >
-            <el-option
-              v-for="table in filteredTables"
-              :key="table.id"
-              :label="tableOptionLabel(table)"
-              :value="table.id"
-            >
-              <i
-                :class="
-                  table.table_type === 'virtual'
-                    ? 'fa-solid fa-bolt catalog-option-icon virtual-option-icon'
-                    : 'fa-solid fa-table catalog-option-icon'
-                "
-              ></i>
-              {{ tableOptionLabel(table) }}
-            </el-option>
-          </el-select>
-        </div>
-
-        <ChangeFeedReadSection
-          :model-value="cdcSettings"
-          :node-id="nodeData.node_id"
-          :status="cdcSectionStatus"
-          :version-options="versionOptions"
-          :disabled-reason="readDisabledReason"
-          :can-enable="canEnableTracking"
-          :enabling="enablingCdc"
-          :resetting="resettingCursor"
-          allow-last-run
-          persist-key="catalogReader.cdc"
-          @update:model-value="onCdcSettingsChange"
-          @enable="enableTracking"
-          @reset-cursor="handleResetCursor"
-        />
-
-        <div v-if="versionOptions.length > 0 && !selectedScd2" class="catalog-field">
-          <label class="catalog-label">Version</label>
-          <el-select v-model="nodeData.delta_version" size="small" placeholder="Latest" clearable>
-            <el-option
-              v-for="v in versionOptions"
-              :key="v.version"
-              :label="v.label"
-              :value="v.version"
-            />
-          </el-select>
-        </div>
-
-        <div v-if="selectedScd2" class="catalog-field">
-          <label class="catalog-label">History</label>
-          <el-select v-model="scd2View" size="small">
-            <el-option label="Active records" value="active" />
-            <el-option label="All records (default)" value="all" />
-            <el-option label="Active at a point in time" value="active_at" />
-          </el-select>
-          <p class="section-hint">
-            SCD2 table — versioned by {{ selectedScd2.business_keys.join(", ") }}, using
-            {{ selectedScd2.valid_from_column }} / {{ selectedScd2.valid_to_column }}.
-          </p>
-        </div>
-        <div v-if="selectedScd2 && scd2View === 'active_at'" class="catalog-field">
-          <label class="catalog-label">Active at</label>
-          <DateTimePicker
-            v-model="nodeData.scd2_as_of"
-            placeholder="Pick a date and time"
-            show-seconds
-          />
-          <p v-if="scd2AsOfError" class="field-error">{{ scd2AsOfError }}</p>
-        </div>
-        <!-- On SCD2 tables, Delta time travel is an escape hatch, not the history mechanism -->
-        <CollapsibleSection
-          v-if="selectedScd2 && versionOptions.length > 0"
-          title="Table version (time travel)"
-          :default-open="false"
-          nested
-          persist-key="catalogReader.deltaVersion"
-        >
+        <!-- Table mode -->
+        <template v-if="mode === 'table'">
           <div class="catalog-field">
+            <label class="catalog-label">Catalog / Schema</label>
+            <el-select
+              v-model="nodeData.catalog_namespace_id"
+              size="small"
+              placeholder="Select namespace"
+              clearable
+              @change="handleNamespaceChange"
+            >
+              <el-option
+                v-for="ns in catalogNamespaces"
+                :key="ns.id"
+                :label="ns.label"
+                :value="ns.id"
+              />
+            </el-select>
+          </div>
+
+          <div class="catalog-field">
+            <label class="catalog-label">Table</label>
+            <el-select
+              v-model="nodeData.catalog_table_id"
+              size="small"
+              placeholder="Select table"
+              filterable
+              @change="handleTableChange"
+            >
+              <el-option
+                v-for="table in filteredTables"
+                :key="table.id"
+                :label="tableOptionLabel(table)"
+                :value="table.id"
+              >
+                <i
+                  :class="
+                    table.table_type === 'virtual'
+                      ? 'fa-solid fa-bolt catalog-option-icon virtual-option-icon'
+                      : 'fa-solid fa-table catalog-option-icon'
+                  "
+                ></i>
+                {{ tableOptionLabel(table) }}
+              </el-option>
+            </el-select>
+          </div>
+
+          <ChangeFeedReadSection
+            :model-value="cdcSettings"
+            :node-id="nodeData.node_id"
+            :status="cdcSectionStatus"
+            :version-options="versionOptions"
+            :disabled-reason="readDisabledReason"
+            :can-enable="canEnableTracking"
+            :enabling="enablingCdc"
+            :resetting="resettingCursor"
+            allow-last-run
+            persist-key="catalogReader.cdc"
+            @update:model-value="onCdcSettingsChange"
+            @enable="enableTracking"
+            @reset-cursor="handleResetCursor"
+          />
+
+          <div v-if="versionOptions.length > 0 && !selectedScd2" class="catalog-field">
+            <label class="catalog-label">Version</label>
             <el-select v-model="nodeData.delta_version" size="small" placeholder="Latest" clearable>
               <el-option
                 v-for="v in versionOptions"
@@ -124,74 +93,120 @@
                 :value="v.version"
               />
             </el-select>
+          </div>
+
+          <div v-if="selectedScd2" class="catalog-field">
+            <label class="catalog-label">History</label>
+            <el-select v-model="scd2View" size="small">
+              <el-option label="Active records" value="active" />
+              <el-option label="All records (default)" value="all" />
+              <el-option label="Active at a point in time" value="active_at" />
+            </el-select>
             <p class="section-hint">
-              Snapshots the whole table at a past Delta commit — unrelated to the SCD2 row history
-              above.
+              SCD2 table — versioned by {{ selectedScd2.business_keys.join(", ") }}, using
+              {{ selectedScd2.valid_from_column }} / {{ selectedScd2.valid_to_column }}.
             </p>
           </div>
-        </CollapsibleSection>
+          <div v-if="selectedScd2 && scd2View === 'active_at'" class="catalog-field">
+            <label class="catalog-label">Active at</label>
+            <DateTimePicker
+              v-model="nodeData.scd2_as_of"
+              placeholder="Pick a date and time"
+              show-seconds
+            />
+            <p v-if="scd2AsOfError" class="field-error">{{ scd2AsOfError }}</p>
+          </div>
+          <!-- On SCD2 tables, Delta time travel is an escape hatch, not the history mechanism -->
+          <CollapsibleSection
+            v-if="selectedScd2 && versionOptions.length > 0"
+            title="Table version (time travel)"
+            :default-open="false"
+            nested
+            persist-key="catalogReader.deltaVersion"
+          >
+            <div class="catalog-field">
+              <el-select
+                v-model="nodeData.delta_version"
+                size="small"
+                placeholder="Latest"
+                clearable
+              >
+                <el-option
+                  v-for="v in versionOptions"
+                  :key="v.version"
+                  :label="v.label"
+                  :value="v.version"
+                />
+              </el-select>
+              <p class="section-hint">
+                Snapshots the whole table at a past Delta commit — unrelated to the SCD2 row history
+                above.
+              </p>
+            </div>
+          </CollapsibleSection>
 
-        <div v-if="selectedTableMeta" class="table-meta">
-          Latest stats:
-          <div class="meta-row">
-            <span class="meta-label">Rows</span>
-            <span class="meta-value">{{ formatNumber(selectedTableMeta.row_count) }}</span>
-          </div>
-          <div class="meta-row">
-            <span class="meta-label">Columns</span>
-            <span class="meta-value">{{ selectedTableMeta.column_count }}</span>
-          </div>
-          <div v-if="schemaPreviewColumns.length > 0" class="schema-preview">
-            <label class="catalog-label">Schema</label>
-            <div class="schema-list">
-              <div v-for="col in schemaPreviewColumns" :key="col.name" class="schema-col">
-                <span class="col-name">
-                  {{ col.name }}
-                  <span v-if="col.generated" class="col-generated-tag">changes</span>
-                </span>
-                <span class="col-type">{{ col.dtype }}</span>
+          <div v-if="selectedTableMeta" class="table-meta">
+            Latest stats:
+            <div class="meta-row">
+              <span class="meta-label">Rows</span>
+              <span class="meta-value">{{ formatNumber(selectedTableMeta.row_count) }}</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Columns</span>
+              <span class="meta-value">{{ selectedTableMeta.column_count }}</span>
+            </div>
+            <div v-if="schemaPreviewColumns.length > 0" class="schema-preview">
+              <label class="catalog-label">Schema</label>
+              <div class="schema-list">
+                <div v-for="col in schemaPreviewColumns" :key="col.name" class="schema-col">
+                  <span class="col-name">
+                    {{ col.name }}
+                    <span v-if="col.generated" class="col-generated-tag">changes</span>
+                  </span>
+                  <span class="col-type">{{ col.dtype }}</span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      </template>
+        </template>
 
-      <!-- SQL mode -->
-      <template v-else>
-        <div class="sql-editor-wrapper">
-          <p class="section-hint">
-            Write a SQL query against catalog tables. Tables are available by name.
-          </p>
-          <div class="editor-container">
-            <codemirror
-              v-model="sqlCode"
-              placeholder="SELECT * FROM my_table LIMIT 100"
-              :style="{ height: '200px' }"
-              :autofocus="true"
-              :indent-with-tab="false"
-              :tab-size="2"
-              :extensions="extensions"
-            />
+        <!-- SQL mode -->
+        <template v-else>
+          <div class="sql-editor-wrapper">
+            <p class="section-hint">
+              Write a SQL query against catalog tables. Tables are available by name.
+            </p>
+            <div class="editor-container">
+              <codemirror
+                v-model="sqlCode"
+                placeholder="SELECT * FROM my_table LIMIT 100"
+                :style="{ height: '200px' }"
+                :autofocus="true"
+                :indent-with-tab="false"
+                :tab-size="2"
+                :extensions="extensions"
+              />
+            </div>
           </div>
-        </div>
 
-        <!-- Available tables reference -->
-        <div v-if="allTables.length > 0" class="available-tables">
-          <label class="catalog-label">Available tables</label>
-          <div class="table-chips">
-            <span
-              v-for="t in allTables"
-              :key="t.id"
-              class="table-chip"
-              :title="t.full_table_name ?? t.name"
-              @click="insertTableName(t.full_table_name ?? t.name)"
-            >
-              {{ t.full_table_name ?? t.name }}
-            </span>
+          <!-- Available tables reference -->
+          <div v-if="allTables.length > 0" class="available-tables">
+            <label class="catalog-label">Available tables</label>
+            <div class="table-chips">
+              <span
+                v-for="t in allTables"
+                :key="t.id"
+                class="table-chip"
+                :title="t.full_table_name ?? t.name"
+                @click="insertTableName(t.full_table_name ?? t.name)"
+              >
+                {{ t.full_table_name ?? t.name }}
+              </span>
+            </div>
           </div>
-        </div>
-      </template>
-    </div>
+        </template>
+      </div>
+    </generic-node-settings>
   </div>
 </template>
 
@@ -203,6 +218,7 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { Codemirror } from "vue-codemirror";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { useResourceSharing } from "../../../../../composables/useResourceSharing";
 import { CatalogApi } from "../../../../../api/catalog.api";
 import { ChangeFeedReadSection, CollapsibleSection, DateTimePicker } from "../../../../common";
@@ -246,7 +262,7 @@ const cachedTableState = ref<{
 } | null>(null);
 const cachedSqlCode = ref<string | null>(null);
 
-const { saveSettings, pushNodeData } = useNodeSettings({
+const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeData,
   onBeforeSave: () => {
     if (scd2AsOfError.value) {
