@@ -47,6 +47,7 @@ const openDrawerWithSave = (save: () => Promise<unknown>) => {
 describe("useFlowExecution.runFlow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.get.mockReset();
     vi.useFakeTimers();
     setActivePinia(createPinia());
     mocks.calls.length = 0;
@@ -160,5 +161,76 @@ describe("useFlowExecution.runFlow", () => {
 
     expect(save).not.toHaveBeenCalled();
     expect(mocks.calls).toEqual(["settings", "/flow/run/"]);
+  });
+
+  it("keeps running until cancellation returns the terminal node results", async () => {
+    const running = { flow_id: 1, node_step_result: [{ node_id: 3, is_running: true }] };
+    const cancelled = {
+      flow_id: 1,
+      success: false,
+      node_step_result: [{ node_id: 3, is_running: false, success: null }],
+    };
+    mocks.get
+      .mockResolvedValueOnce({ status: 202, data: running })
+      .mockResolvedValueOnce({ status: 200, data: cancelled });
+    const editor = useEditorStore();
+    editor.isRunning = true;
+    const execution = useFlowExecution(1);
+
+    await execution.cancelFlow();
+
+    expect(mocks.post).toHaveBeenCalledWith("/flow/cancel/", null, {
+      params: { flow_id: 1 },
+      headers: { accept: "application/json" },
+    });
+    expect(editor.isRunning).toBe(true);
+    expect(execution.isPollingActive()).toBe(true);
+    expect(execution.isCancelling.value).toBe(true);
+    expect(mocks.nodeState.insertRunResult).toHaveBeenCalledWith(running);
+
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(mocks.nodeState.insertRunResult).toHaveBeenLastCalledWith(cancelled);
+    expect(editor.isRunning).toBe(false);
+    expect(execution.isCancelling.value).toBe(false);
+    expect(execution.isPollingActive()).toBe(false);
+  });
+
+  it("does not send another cancel request while one is pending", async () => {
+    let finishRequest!: () => void;
+    mocks.post.mockImplementationOnce(
+      () => new Promise((resolve) => (finishRequest = () => resolve({ status: 200 }))),
+    );
+    mocks.get.mockResolvedValue({
+      status: 200,
+      data: { flow_id: 1, success: false, node_step_result: [] },
+    });
+    const execution = useFlowExecution(1);
+
+    const first = execution.cancelFlow();
+    const second = execution.cancelFlow();
+    expect(mocks.post).toHaveBeenCalledTimes(1);
+    expect(execution.isCancelling.value).toBe(true);
+
+    finishRequest();
+    await Promise.all([first, second]);
+    expect(execution.isCancelling.value).toBe(false);
+  });
+
+  it("keeps the run active if the cancellation request fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.post.mockRejectedValueOnce(new Error("server unavailable"));
+    const editor = useEditorStore();
+    editor.isRunning = true;
+    const execution = useFlowExecution(1);
+
+    await execution.cancelFlow();
+
+    expect(editor.isRunning).toBe(true);
+    expect(execution.isCancelling.value).toBe(false);
+    expect(mocks.get).not.toHaveBeenCalled();
+    expect(mocks.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Error", type: "error" }),
+    );
   });
 });

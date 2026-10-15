@@ -1,10 +1,15 @@
 <template>
   <div class="button-group">
-    <el-button size="small" :disabled="nodeStore.isRunning" round @click="runFlow()">
-      <span class="material-icons run-icon">play_arrow</span>
-      Run
+    <el-button
+      size="small"
+      :disabled="nodeStore.isRunning || isCancelling"
+      round
+      @click="runFlow()"
+    >
+      <span v-if="!isCancelling" class="material-icons run-icon">play_arrow</span>
+      {{ isCancelling ? "Cancelling…" : "Run" }}
     </el-button>
-    <el-button v-if="nodeStore.isRunning" size="small" round @click="cancelFlow()">
+    <el-button v-if="nodeStore.isRunning && !isCancelling" size="small" round @click="cancelFlow()">
       Cancel
     </el-button>
   </div>
@@ -35,11 +40,18 @@ const props = defineProps({
 // Pass a getter so the composable always reads the *current* prop value.
 // Without this, Save As re-keys nodeStore.flow_id but the run button keeps
 // firing /flow/run/ and getFlowSettings against the old (template) id.
-const { runFlow, cancelFlow, showNotification, startPolling, stopPolling, checkRunStatus } =
-  useFlowExecution(() => props.flowId, props.pollingConfig, {
-    persistPolling: props.persistPolling,
-    pollingKey: `run_button_${props.flowId}`,
-  });
+const {
+  runFlow,
+  cancelFlow,
+  isCancelling,
+  showNotification,
+  startPolling,
+  stopPolling,
+  checkRunStatus,
+} = useFlowExecution(() => props.flowId, props.pollingConfig, {
+  persistPolling: props.persistPolling,
+  pollingKey: `run_button_${props.flowId}`,
+});
 
 defineEmits(["logs-start", "logs-stop"]);
 
