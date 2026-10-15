@@ -1101,14 +1101,19 @@ class FlowDataEngine:
         if not settings.window_functions:
             return self
 
-        df = self.data_frame
-        if settings.order_by:
-            descending = [s.descending for s in settings.order_by]
-            df = df.sort([s.column for s in settings.order_by], descending=descending)
-
         exprs = [_build_window_expr(w, settings.partition_by) for w in settings.window_functions]
-        df = df.with_columns(exprs)
-        return FlowDataEngine(df, calculate_schema_stats=calculate_schema_stats)
+
+        def windowed(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+            if settings.order_by:
+                descending = [s.descending for s in settings.order_by]
+                frame = frame.sort([s.column for s in settings.order_by], descending=descending)
+            return frame.with_columns(exprs)
+
+        return FlowDataEngine(
+            windowed(self.data_frame),
+            calculate_schema_stats=calculate_schema_stats,
+            schema=_derived_schema(windowed, self),
+        )
 
     def do_sort(self, sorts: list[transform_schemas.SortByInput]) -> FlowDataEngine:
         """Sorts the DataFrame by one or more columns.
@@ -1426,11 +1431,12 @@ class FlowDataEngine:
             split_input.split_fixed_value if split_input.split_by_fixed_value else pl.col(split_input.split_by_column)
         )
 
-        df = self.data_frame.with_columns(
-            pl.col(split_input.column_to_split).str.split(by=split_value).alias(output_column_name)
-        ).explode(output_column_name)
+        def exploded(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+            return frame.with_columns(
+                pl.col(split_input.column_to_split).str.split(by=split_value).alias(output_column_name)
+            ).explode(output_column_name)
 
-        return FlowDataEngine(df)
+        return FlowDataEngine(exploded(self.data_frame), schema=_derived_schema(exploded, self))
 
     def unpivot(self, unpivot_input: transform_schemas.UnpivotInput) -> FlowDataEngine:
         """Converts the DataFrame from a wide to a long format.
@@ -1445,16 +1451,15 @@ class FlowDataEngine:
         Returns:
             A new, unpivoted `FlowDataEngine` instance.
         """
-        lf = self.data_frame
 
-        if unpivot_input.data_type_selector_expr is not None:
-            result = lf.unpivot(on=unpivot_input.data_type_selector_expr(), index=unpivot_input.index_columns)
-        elif unpivot_input.value_columns is not None:
-            result = lf.unpivot(on=unpivot_input.value_columns, index=unpivot_input.index_columns)
-        else:
-            result = lf.unpivot()
+        def unpivoted(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+            if unpivot_input.data_type_selector_expr is not None:
+                return frame.unpivot(on=unpivot_input.data_type_selector_expr(), index=unpivot_input.index_columns)
+            if unpivot_input.value_columns is not None:
+                return frame.unpivot(on=unpivot_input.value_columns, index=unpivot_input.index_columns)
+            return frame.unpivot()
 
-        return FlowDataEngine(result)
+        return FlowDataEngine(unpivoted(self.data_frame), schema=_derived_schema(unpivoted, self))
 
     def do_pivot(self, pivot_input: transform_schemas.PivotInput, node_logger: NodeLogger = None) -> FlowDataEngine:
         """Converts the DataFrame from a long to a wide format, aggregating values.
@@ -2130,12 +2135,13 @@ class FlowDataEngine:
         Returns:
             A new `FlowDataEngine` instance with the solved graph data.
         """
-        lf = self.data_frame.with_columns(
-            graph_solver(graph_solver_input.col_from, graph_solver_input.col_to).alias(
-                graph_solver_input.output_column_name
-            )
+        solved = graph_solver(graph_solver_input.col_from, graph_solver_input.col_to).alias(
+            graph_solver_input.output_column_name
         )
-        return FlowDataEngine(lf)
+        return FlowDataEngine(
+            self.data_frame.with_columns(solved),
+            schema=_derived_schema(lambda frame: frame.with_columns(solved), self),
+        )
 
     def explode_hierarchy(self, settings: transform_schemas.ExplodeHierarchyInput) -> FlowDataEngine:
         """Explodes a parent -> child edge list into its transitive closure.
@@ -2150,7 +2156,11 @@ class FlowDataEngine:
             A new, lazy `FlowDataEngine` with an unknown row count.
         """
         lf = explode_hierarchy_frame(self.data_frame.lazy(), settings, schema=self._cached_polars_schema())
-        return FlowDataEngine(lf, number_of_records=-1)
+        return FlowDataEngine(
+            lf,
+            number_of_records=-1,
+            schema=_derived_schema(lambda frame: explode_hierarchy_frame(frame, settings), self),
+        )
 
     def add_new_values(self, values: Iterable, col_name: str = None) -> FlowDataEngine:
         """Adds a new column with the provided values.
@@ -2173,7 +2183,10 @@ class FlowDataEngine:
         Returns:
             A new `FlowDataEngine` instance.
         """
-        return FlowDataEngine(self.data_frame.select(pl.len().alias("number_of_records")))
+        count = pl.len().alias("number_of_records")
+        return FlowDataEngine(
+            self.data_frame.select(count), schema=_derived_schema(lambda frame: frame.select(count), self)
+        )
 
     def assert_equal(self, other: FlowDataEngine, ordered: bool = True, strict_schema: bool = False):
         """Asserts that this DataFrame is equal to another.
@@ -2615,7 +2628,11 @@ class FlowDataEngine:
         expressions = self.build_multi_field_formula_expressions(columns, settings)
         if not expressions:
             return FlowDataEngine(self.data_frame, number_of_records=self.number_of_records, schema=self.schema)
-        return FlowDataEngine(self.data_frame.with_columns(expressions), number_of_records=self.number_of_records)
+        return FlowDataEngine(
+            self.data_frame.with_columns(expressions),
+            number_of_records=self.number_of_records,
+            schema=_derived_schema(lambda frame: frame.with_columns(expressions), self),
+        )
 
     @staticmethod
     def _compute_renamed_names(
@@ -3040,11 +3057,15 @@ class FlowDataEngine:
         Returns:
             A new `FlowDataEngine` instance with unique rows.
         """
-        if unique_input is None:
-            return FlowDataEngine(self.data_frame.unique())
-        if not unique_input.columns:
-            return FlowDataEngine(self.data_frame.unique(keep=unique_input.strategy))
-        return FlowDataEngine(self.data_frame.unique(unique_input.columns, keep=unique_input.strategy))
+
+        def deduplicated(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+            if unique_input is None:
+                return frame.unique()
+            if not unique_input.columns:
+                return frame.unique(keep=unique_input.strategy)
+            return frame.unique(unique_input.columns, keep=unique_input.strategy)
+
+        return FlowDataEngine(deduplicated(self.data_frame), schema=_derived_schema(deduplicated, self))
 
     def concat(self, other: Iterable[FlowDataEngine] | FlowDataEngine) -> FlowDataEngine:
         """Concatenates this DataFrame with one or more other DataFrames.

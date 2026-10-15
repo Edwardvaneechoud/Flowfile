@@ -6,9 +6,10 @@ host, but any read of that leaf from core raises ``FileNotFoundError``. A touch 
 instead of being counted, so these flows pass only while core takes a stored result's schema from its reference.
 They run with the protocol flag off and on: with it on, core asks the backend that holds a result whether it still
 does, and reads rows of those results through the backend: the formula editor's preview row, a formula gate's probe,
-column statistics and the CSV export; and a filter, a select, a join, a group_by or a formula over a stored result
-takes its input's columns from the input engine's cached schema. The tests named for ``v1`` results check the same
-over the session worker's ``/v1`` routes.
+column statistics and the CSV export; and a filter, a select, a join, a group_by, a formula, a record count, a unique,
+a union, an unpivot, window functions, text to rows, a multi-field formula, a graph solver or an explode hierarchy
+over a stored result takes its input's columns from the input engine's cached schema. The tests named for ``v1``
+results check the same over the session worker's ``/v1`` routes.
 """
 
 import dataclasses
@@ -579,6 +580,156 @@ def test_a_formula_runs_over_a_stored_result_core_cannot_read(unreadable, protoc
             ("z", "Float64"),
         ]
         assert len(graph.get_node(2).get_table_example(True).data) == 4
+    finally:
+        graph.close_flow()
+
+
+TRANSFORM_ROWS = [
+    {
+        "id": i,
+        "region": "eu" if i % 2 else "us",
+        "amount": i * 10,
+        "parent": f"p{i // 3}",
+        "child": f"c{i}",
+        "tags": "x,y" if i % 2 else "z",
+    }
+    for i in range(1, 7)
+]
+TRANSFORM_COLUMNS = [
+    ("id", "Int64"),
+    ("region", "String"),
+    ("amount", "Int64"),
+    ("parent", "String"),
+    ("child", "String"),
+    ("tags", "String"),
+]
+UNION_ROWS = [{"id": 7, "region": "eu", "amount": 70.5}, {"id": 8, "region": "us", "amount": 80.5}]
+
+TRANSFORMS = [
+    (9351, "record_count", input_schema.NodeRecordCount, {}, [("number_of_records", "UInt32")], 1),
+    (
+        9352,
+        "unique",
+        input_schema.NodeUnique,
+        {"unique_input": transform_schema.UniqueInput(columns=["region"], strategy="first")},
+        TRANSFORM_COLUMNS,
+        2,
+    ),
+    (
+        9353,
+        "union",
+        input_schema.NodeUnion,
+        {},
+        [("id", "Int64"), ("region", "String"), ("amount", "Float64")] + TRANSFORM_COLUMNS[3:],
+        8,
+    ),
+    (
+        9354,
+        "unpivot",
+        input_schema.NodeUnpivot,
+        {"unpivot_input": transform_schema.UnpivotInput(index_columns=["id"], value_columns=["region", "tags"])},
+        [("id", "Int64"), ("variable", "String"), ("value", "String")],
+        12,
+    ),
+    (
+        9355,
+        "window_functions",
+        input_schema.NodeWindowFunctions,
+        {
+            "window_input": transform_schema.WindowFunctionsInput(
+                partition_by=["region"],
+                order_by=[transform_schema.SortByInput(column="id")],
+                window_functions=[
+                    transform_schema.WindowFunctionInput(column="amount", function="cum_sum", new_column_name="running")
+                ],
+            )
+        },
+        TRANSFORM_COLUMNS + [("running", "Int64")],
+        6,
+    ),
+    (
+        9356,
+        "text_to_rows",
+        input_schema.NodeTextToRows,
+        {"text_to_rows_input": transform_schema.TextToRowsInput(column_to_split="tags", output_column_name="tag")},
+        TRANSFORM_COLUMNS + [("tag", "String")],
+        9,
+    ),
+    (
+        9357,
+        "multi_field_formula",
+        input_schema.NodeMultiFieldFormula,
+        {
+            "multi_field_formula_input": transform_schema.MultiFieldFormulaInput(
+                formula="[_CurrentField_] * 2",
+                selection_mode="list",
+                selected_columns=["amount"],
+                output_mode="new",
+                output_suffix="_x2",
+            )
+        },
+        TRANSFORM_COLUMNS + [("amount_x2", "Int64")],
+        6,
+    ),
+    (
+        9358,
+        "graph_solver",
+        input_schema.NodeGraphSolver,
+        {"graph_solver_input": transform_schema.GraphSolverInput(col_from="parent", col_to="child")},
+        TRANSFORM_COLUMNS + [("graph_group", "UInt64")],
+        6,
+    ),
+    (
+        9359,
+        "explode_hierarchy",
+        input_schema.NodeExplodeHierarchy,
+        {
+            "explode_hierarchy_input": transform_schema.ExplodeHierarchyInput(
+                parent_column="parent", child_column="child"
+            )
+        },
+        [
+            ("ancestor", "String"),
+            ("descendant", "String"),
+            ("level", "UInt32"),
+            ("quantity", "Float64"),
+            ("is_leaf", "Boolean"),
+        ],
+        6,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "flow_id, node_type, settings_class, fields, expected_columns, rows",
+    TRANSFORMS,
+    ids=[case[1] for case in TRANSFORMS],
+)
+def test_a_transform_runs_over_a_stored_result_core_cannot_read(
+    unreadable, protocol_on, flow_id, node_type, settings_class, fields, expected_columns, rows
+):
+    graph = make_graph(flow_id, max_parallel_workers=1)
+    try:
+        inputs = [1, 3] if node_type == "union" else [1]
+        add_manual_input(graph, 1, TRANSFORM_ROWS)
+        if node_type == "union":
+            add_manual_input(graph, 3, UNION_ROWS)
+        for node_id in inputs:
+            graph.get_node(node_id).node_settings.cache_results = True
+        add_promise(graph, 2, node_type)
+        sources = {"depending_on_ids": inputs} if node_type == "union" else {"depending_on_id": 1}
+        getattr(graph, f"add_{node_type}")(settings_class(flow_id=graph.flow_id, node_id=2, **sources, **fields))
+        for node_id in inputs:
+            connect(graph, node_id, 2)
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        for node_id in inputs:
+            ref = graph.get_node(node_id).results.result_ref
+            assert ref.state == "materialised"
+            assert not os.path.exists(ref.location.decode("utf-8"))
+        assert columns(graph.get_node(2).schema) == expected_columns
+        assert len(graph.get_node(2).get_table_example(True).data) == rows
     finally:
         graph.close_flow()
 
