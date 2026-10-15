@@ -96,7 +96,8 @@ def remove_prefix(store: ExchangeStore, prefix: str) -> None:
     """Delete every object under *prefix*, an ``s3://`` URI in *store*, with core's own resolution of its connection.
 
     The objects are listed a page at a time and each page is deleted in one request, so an empty prefix costs only the
-    listing.
+    listing. ``build_s3_client`` addresses the store path-style when the connection names its own endpoint (MinIO and
+    other S3-compatible stores) and by boto3's default, virtual-hosted, when it names none (a bucket on AWS).
 
     Raises:
         OSError: The store refused to delete an object; the message names how many and the first reason.

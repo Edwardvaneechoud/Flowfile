@@ -21,7 +21,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 from flowfile_core.flowfile.execution import exchange, registry
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
-from flowfile_core.flowfile.execution.exchange import ExchangeRun, exchange_store
+from flowfile_core.flowfile.execution.exchange import ExchangeRun, exchange_store, remove_prefix
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 from test_utils.s3.fixtures import MINIO_ACCESS_KEY, MINIO_ENDPOINT_URL, MINIO_SECRET_KEY, get_minio_client
 from tests.flowfile.conftest import add_test_manual_input, create_test_graph
@@ -211,3 +211,37 @@ def test_run_graph_removes_its_runs_prefix_when_the_run_ends(root, local, kept):
     assert seen["listed"] == [f"{_key(seen['prefix'])}edge.parquet"]
     assert _keys(seen["prefix"]) == []
     assert graph.exchange_run is None
+
+
+class RefusingBucket:
+    """An S3 client whose one page lists *keys* and which refuses every delete, recording each request."""
+
+    def __init__(self, keys: list[str]):
+        self.keys = keys
+        self.deleted: list[dict] = []
+
+    def get_paginator(self, operation: str) -> "RefusingBucket":
+        return self
+
+    def paginate(self, *, Bucket: str, Prefix: str) -> list[dict]:
+        return [{"Contents": [{"Key": key} for key in self.keys]}]
+
+    def delete_objects(self, **request) -> dict:
+        self.deleted.append(request)
+        objects = request["Delete"]["Objects"]
+        return {"Errors": [{"Key": o["Key"], "Code": "AccessDenied", "Message": "Access Denied"} for o in objects]}
+
+
+def test_a_delete_the_store_refuses_fails_the_removal_naming_how_many_and_why(monkeypatch, connection_name):
+    monkeypatch.setenv("FLOWFILE_EXCHANGE_URI", f"s3://{_BUCKET}/exchange")
+    monkeypatch.setenv("FLOWFILE_EXCHANGE_CONNECTION", connection_name)
+    prefix = f"s3://{_BUCKET}/exchange/7/{uuid.uuid4().hex}/"
+    keys = [f"{_key(prefix)}1-output-0-2.parquet", f"{_key(prefix)}2-output-0-3.parquet"]
+    client = RefusingBucket(keys)
+    monkeypatch.setattr(exchange, "build_s3_client", lambda *args, **kwargs: client)
+
+    with pytest.raises(OSError) as raised:
+        remove_prefix(exchange_store(1), prefix)
+
+    assert str(raised.value) == f"Could not delete 2 object(s) under {prefix}: Access Denied"
+    assert client.deleted == [{"Bucket": _BUCKET, "Delete": {"Objects": [{"Key": key} for key in keys], "Quiet": True}}]
