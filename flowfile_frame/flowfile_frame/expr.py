@@ -59,13 +59,12 @@ FF_OPERATOR_MAP = {
     "&": "and", "|": "or",
 }
 
-CAST_FF_MAP = {
-    "Int8": "to_integer", "Int16": "to_integer", "Int32": "to_integer", "Int64": "to_integer",
-    "UInt8": "to_integer", "UInt16": "to_integer", "UInt32": "to_integer", "UInt64": "to_integer",
-    "Float32": "to_float", "Float64": "to_float",
-    "Boolean": "to_boolean",
-    "Utf8": "to_string", "String": "to_string",
-    "Date": "to_date", "Datetime": "to_datetime",
+# Formula functions whose result is exactly the cast's dtype: to_integer is a strict Int64 cast, to_date parses text.
+CAST_FF_MAP: dict[pl.DataType, str] = {
+    pl.Int64(): "to_integer",
+    pl.Float64(): "to_float",
+    pl.Boolean(): "to_boolean",
+    pl.String(): "to_string",
 }
 
 STRING_METHOD_FF_MAP: dict[str, tuple[str, int]] = {
@@ -119,18 +118,14 @@ def _membership_ff_repr(ff_repr: str | None, values: Any) -> str | None:
     return f"{ff_repr} in ({', '.join(_get_ff_repr(v) for v in values)})"
 
 
-def _compute_cast_ff_repr(ff_repr: str | None, pl_dtype: pl.DataType | type) -> str | None:
-    """Compute ff_repr for a cast operation. Shared by Expr.cast() and Column.cast()."""
-    if ff_repr is None:
+def _compute_cast_ff_repr(ff_repr: str | None, pl_dtype: pl.DataType | type, strict: bool = True) -> str | None:
+    """Compute ff_repr for a cast operation. Shared by Expr.cast() and Column.cast().
+
+    Other casts (Int8, Float32, Date, non-strict, ...) keep the Polars-code path: the formula would change the result.
+    """
+    if ff_repr is None or not strict:
         return None
-    dtype_name = None
-    if isinstance(pl_dtype, pl.DataType):
-        dtype_name = type(pl_dtype).__name__
-    elif isinstance(pl_dtype, type) and issubclass(pl_dtype, pl.DataType):
-        dtype_name = pl_dtype.__name__
-    if dtype_name and dtype_name in CAST_FF_MAP:
-        return f"{CAST_FF_MAP[dtype_name]}({ff_repr})"
-    return None
+    return next((f"{function}({ff_repr})" for dtype, function in CAST_FF_MAP.items() if pl_dtype == dtype), None)
 
 
 _PYTHON_FUNCTION_MARKERS = ('"AnonymousFunction":', '"callback":', '"RenameAlias":{"function":{"Map":')
@@ -929,41 +924,41 @@ class Expr:
         result.agg_func = "var"
         return result
 
-    def __add__(self, other):
+    def __add__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr + other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr("+", other, res_expr)
 
-    def __sub__(self, other):
+    def __sub__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr - other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr("-", other, res_expr)
 
-    def __mul__(self, other):
+    def __mul__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr * other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr("*", other, res_expr)
 
-    def __truediv__(self, other):
+    def __truediv__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr / other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr("/", other, res_expr)
 
-    def __floordiv__(self, other):
+    def __floordiv__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr // other_expr if self.expr is not None and other_expr is not None else None
         other_ff = _get_ff_repr(other)
         ff = f"floor(({self._ff_repr} / {other_ff}))" if self._ff_repr is not None and other_ff is not None else None
         return self._create_binary_op_expr("//", other, res_expr, ff_repr=ff)
 
-    def __pow__(self, exponent):
+    def __pow__(self, exponent) -> Expr:
         exp_expr, _ = _get_expr_and_repr(exponent)
         res_expr = self.expr.pow(exp_expr) if self.expr is not None and exp_expr is not None else None
         exp_ff = _get_ff_repr(exponent)
         ff = f"power({self._ff_repr}, {exp_ff})" if self._ff_repr is not None and exp_ff is not None else None
         return self._create_binary_op_expr("**", exponent, res_expr, ff_repr=ff)
 
-    def __mod__(self, other):
+    def __mod__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr % other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr("%", other, res_expr)
@@ -977,7 +972,7 @@ class Expr:
             return f"({other_ff} {ff_op} {self._ff_repr})"
         return None
 
-    def __radd__(self, other):
+    def __radd__(self, other) -> Expr:
         other_expr, other_repr = _get_expr_and_repr(other)
         new_repr = f"({other_repr} + {self._repr_str})"
         res_expr = other_expr + self.expr if other_expr is not None and self.expr is not None else None
@@ -986,7 +981,7 @@ class Expr:
                     convertable_to_code=convertable_to_code, _function_sources=function_sources,
                     ff_repr=self._create_reverse_binary_ff_repr("+", other))
 
-    def __rsub__(self, other):
+    def __rsub__(self, other) -> Expr:
         other_expr, other_repr = _get_expr_and_repr(other)
         new_repr = f"({other_repr} - {self._repr_str})"
         res_expr = other_expr - self.expr if other_expr is not None and self.expr is not None else None
@@ -995,7 +990,7 @@ class Expr:
                     convertable_to_code=convertable_to_code, _function_sources=function_sources,
                     ff_repr=self._create_reverse_binary_ff_repr("-", other))
 
-    def __rmul__(self, other):
+    def __rmul__(self, other) -> Expr:
         other_expr, other_repr = _get_expr_and_repr(other)
         new_repr = f"({other_repr} * {self._repr_str})"
         res_expr = other_expr * self.expr if other_expr is not None and self.expr is not None else None
@@ -1004,7 +999,7 @@ class Expr:
                     convertable_to_code=convertable_to_code, _function_sources=function_sources,
                     ff_repr=self._create_reverse_binary_ff_repr("*", other))
 
-    def __rtruediv__(self, other):
+    def __rtruediv__(self, other) -> Expr:
         other_expr, other_repr = _get_expr_and_repr(other)
         new_repr = f"({other_repr} / {self._repr_str})"
         res_expr = other_expr / self.expr if other_expr is not None and self.expr is not None else None
@@ -1013,7 +1008,7 @@ class Expr:
                     convertable_to_code=convertable_to_code, _function_sources=function_sources,
                     ff_repr=self._create_reverse_binary_ff_repr("/", other))
 
-    def __rfloordiv__(self, other):
+    def __rfloordiv__(self, other) -> Expr:
         other_expr, other_repr = _get_expr_and_repr(other)
         new_repr = f"({other_repr} // {self._repr_str})"
         res_expr = other_expr // self.expr if other_expr is not None and self.expr is not None else None
@@ -1023,7 +1018,7 @@ class Expr:
         return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True,
                     convertable_to_code=convertable_to_code, _function_sources=function_sources, ff_repr=ff)
 
-    def __rmod__(self, other):
+    def __rmod__(self, other) -> Expr:
         other_expr, other_repr = _get_expr_and_repr(other)
         new_repr = f"({other_repr} % {self._repr_str})"
         res_expr = other_expr % self.expr if other_expr is not None and self.expr is not None else None
@@ -1032,7 +1027,7 @@ class Expr:
                     convertable_to_code=convertable_to_code, _function_sources=function_sources,
                     ff_repr=self._create_reverse_binary_ff_repr("%", other))
 
-    def __rpow__(self, other):
+    def __rpow__(self, other) -> Expr:
         other_expr, other_repr = _get_expr_and_repr(other)
         new_repr = f"({other_repr} ** {self._repr_str})"
         base_expr = pl.lit(other) if not isinstance(other, Expr | pl.Expr) else other_expr
@@ -1044,22 +1039,22 @@ class Expr:
                     convertable_to_code=convertable_to_code, _function_sources=function_sources, ff_repr=ff)
 
     # --- Comparison operations ---
-    def __eq__(self, other):
+    def __eq__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr == other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr("==", other, res_expr)
 
-    def __ne__(self, other):
+    def __ne__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr != other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr("!=", other, res_expr)
 
-    def __gt__(self, other):
+    def __gt__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr > other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr(">", other, res_expr)
 
-    def __lt__(self, other):
+    def __lt__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr < other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr("<", other, res_expr)
@@ -1464,7 +1459,7 @@ class Expr:
             dtype_repr = f"pl.{dtype!s}"
 
         res_expr = self.expr.cast(pl_dtype, strict=strict) if self.expr is not None else None
-        cast_ff = _compute_cast_ff_repr(self._ff_repr, pl_dtype)
+        cast_ff = _compute_cast_ff_repr(self._ff_repr, pl_dtype, strict)
 
         # Cast preserves aggregation status (e.g., cast(col('a').sum()))
         new_expr = Expr(
@@ -1563,7 +1558,7 @@ class Column(Expr):
         new_repr = f"{self._repr_str}.cast({dtype_repr}, strict={strict})"
         display_name = self._select_input.new_name or self._select_input.old_name
 
-        cast_ff = _compute_cast_ff_repr(self._ff_repr, pl_dtype)
+        cast_ff = _compute_cast_ff_repr(self._ff_repr, pl_dtype, strict)
 
         new_column = Column(display_name, new_select)
         new_column.expr = new_pl_expr
