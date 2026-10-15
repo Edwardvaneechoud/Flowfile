@@ -9,10 +9,13 @@ catalog. The artifact store reaches MinIO through an HTTPS forwarder with a cert
 it presigns for the worker are ``https`` ones. The secrets and the certificate reach the services through the
 environment only. A second flow runs one node on the worker and the rest in core, its data crossing through an exchange
 store on MinIO, with the protocol flag on and then off; its flag-off case recreates core, which is why it comes last.
+The elaborate integration flow (``complex_flow.json``, its outputs written to MinIO) runs whole on the worker, and
+with its nodes alternating between the worker and core, so that its edges cross through the exchange store.
 """
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
@@ -28,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 import boto3
+import polars as pl
 import pytest
 import requests
 from botocore.client import Config
@@ -455,6 +459,130 @@ def _listed(minio, prefix: str) -> list[str]:
     return [
         listed["Key"] for listed in minio.list_objects_v2(Bucket=EXCHANGE_BUCKET, Prefix=prefix).get("Contents", [])
     ]
+
+
+COMPLEX_FLOW = Path(__file__).with_name("complex_flow.json")
+COMPLEX_BUCKET = "flowfile-complex"
+COMPLEX_ROWS = {
+    "customer_sales_analysis.csv": 31,
+    "fuzzy_matched_customers.parquet": 3,
+    "network_components.csv": 5,
+    "combined_aggregations.csv": 52,
+}
+COMPLEX_FLOW_IDS = {"worker": 7404, "alternating": 7405}
+ALTERNATING = {
+    **dict.fromkeys((1, 2, 4, 5, 12, 14, 17, 26, 27, 30, 41, 72, 73, 74, 9999), "worker"),
+    **dict.fromkeys((3, 11, 13, 15, 16, 28, 29, 31, 32, 42, 43, 51, 52, 61, 71), "local"),
+}
+ALTERNATING_BOUNDARIES = [
+    [1, 11],
+    [1, 43],
+    [2, 16],
+    [3, 30],
+    [4, 43],
+    [5, 31],
+    [11, 12],
+    [12, 13],
+    [13, 14],
+    [14, 15],
+    [15, 41],
+    [16, 17],
+    [16, 26],
+    [16, 41],
+    [17, 42],
+    [26, 32],
+    [26, 61],
+    [27, 28],
+    [28, 9999],
+    [30, 42],
+    [31, 73],
+    [41, 51],
+    [41, 52],
+    [41, 71],
+    [43, 72],
+    [61, 74],
+    [9999, 29],
+]
+
+
+@pytest.fixture(scope="module")
+def complex_outputs(stack: Stack, exchange: None) -> None:
+    """The bucket the elaborate flow's writers put their outputs in."""
+    stack.minio.create_bucket(Bucket=COMPLEX_BUCKET)
+
+
+def _complex_flow(flow_id: int, locations: dict[int, str] | None = None) -> dict:
+    """The elaborate flow from its file, its writers under ``<bucket>/<flow id>/``, each node placed per ``locations``."""
+    flow = json.loads(COMPLEX_FLOW.read_text())
+    flow["flowfile_id"] = flow_id
+    for node in flow["nodes"]:
+        if node["type"] == "cloud_storage_writer":
+            storage = node["setting_input"]["cloud_storage_settings"]
+            storage["resource_path"] = storage["resource_path"].replace("/out/", f"/{flow_id}/")
+        if locations is not None:
+            node["setting_input"]["execution_location"] = locations[node["id"]]
+    return flow
+
+
+def _written(stack: Stack, flow_id: int) -> dict[str, int]:
+    """The rows of each output the elaborate flow wrote under ``<bucket>/<flow id>/``, by file name."""
+    rows = {}
+    for name in COMPLEX_ROWS:
+        body = io.BytesIO(stack.minio.get_object(Bucket=COMPLEX_BUCKET, Key=f"{flow_id}/{name}")["Body"].read())
+        rows[name] = (pl.read_parquet(body) if name.endswith(".parquet") else pl.read_csv(body)).height
+    return rows
+
+
+def test_the_elaborate_flow_runs_on_a_worker_that_shares_no_volume_with_core(stack, exchange, complex_outputs):
+    stack = _core_with_protocol(stack, "1")
+    flow_id = _import_flow(stack, _complex_flow(COMPLEX_FLOW_IDS["worker"]))
+    assert flow_id == COMPLEX_FLOW_IDS["worker"]
+
+    run = _run(stack, flow_id)
+
+    failures = {result["node_id"]: result["error"] for result in run["node_step_result"] if not result["success"]}
+    assert run["success"] is True and not failures, f"{failures}\n{_logs()}"
+    assert run["nodes_completed"] == 30
+    assert _written(stack, flow_id) == COMPLEX_ROWS
+    assert run["boundaries"] == []
+    versions = stack.minio.list_object_versions(Bucket=EXCHANGE_BUCKET, Prefix=f"runs/{flow_id}/")
+    assert "Versions" not in versions and "DeleteMarkers" not in versions, versions
+    core_cache = f"/app/internal_storage/cache/local/{flow_id}/"
+    assert [path for path in _cache_files("flowfile-core") if path.startswith(core_cache)] == []
+
+
+def test_the_elaborate_flow_with_its_nodes_alternating_between_worker_and_core_crosses_the_exchange_store(
+    stack, exchange, complex_outputs
+):
+    stack = _core_with_protocol(stack, "1")
+    flow_id = _import_flow(stack, _complex_flow(COMPLEX_FLOW_IDS["alternating"], ALTERNATING))
+    assert flow_id == COMPLEX_FLOW_IDS["alternating"]
+
+    run = _run(stack, flow_id)
+
+    failures = {result["node_id"]: result["error"] for result in run["node_step_result"] if not result["success"]}
+    assert run["success"] is True and not failures, f"{failures}\n{_logs()}"
+    assert run["nodes_completed"] == 30
+    assert _written(stack, flow_id) == COMPLEX_ROWS
+    assert sorted(run["boundaries"]) == ALTERNATING_BOUNDARIES
+    prefix = f"runs/{flow_id}/"
+    _wait_until(lambda: _listed(stack.minio, prefix) == [], f"the run's prefix {prefix} emptied", timeout=60)
+    versions = stack.minio.list_object_versions(Bucket=EXCHANGE_BUCKET, Prefix=prefix)
+    written = sorted(version["Key"] for version in versions.get("Versions", []))
+    run_ids = sorted({key.split("/")[2] for key in written})
+    assert len(run_ids) == 1 and re.fullmatch(r"[0-9a-f]{32}", run_ids[0]), written
+    crossings = sorted(
+        f"{prefix}{run_ids[0]}/{source}-output-0-{target}.parquet" for source, target in ALTERNATING_BOUNDARIES
+    )
+    assert written == crossings
+    removed = sorted(marker["Key"] for marker in versions.get("DeleteMarkers", []) if marker["IsLatest"])
+    assert removed == written and not any(version["IsLatest"] for version in versions["Versions"]), versions
+    worker_cache = f"/app/internal_storage/cache/{flow_id}/"
+    worker_files = [path for path in _cache_files("flowfile-worker") if path.startswith(worker_cache)]
+    assert any(path.endswith(".arrow") for path in worker_files), worker_files
+    core_cache = f"/app/internal_storage/cache/local/{flow_id}/"
+    core_files = [path for path in _cache_files("flowfile-core") if path.startswith(core_cache)]
+    assert any(path.endswith(".arrow") for path in core_files), core_files
 
 
 @pytest.mark.parametrize("protocol", ["1", "0"], ids=["flag-on", "flag-off"])
