@@ -29,7 +29,7 @@ This page covers the canvas mechanics: creating a flow, adding and connecting no
 
 1. Drag a node from the left sidebar onto the canvas.
 2. Drag from a node's output handle to the next node's input to connect them.
-3. Click a node to configure it in the right sidebar — alongside each node's own settings there is a shared **General Settings** tab with the node's description, its reference name (used for edge labels, see below), and a toggle to cache its result between runs. Clicking the canvas or another node, or minimizing the panel, saves it first; if the settings cannot be saved, the panel stays open with a warning, and clicking away again discards the unsaved changes.
+3. Click a node to configure it in the right sidebar — alongside each node's own settings there is a shared **General Settings** tab with the node's description, its reference name (used for edge labels, see below), a toggle to cache its result between runs, and the backend it runs on. Clicking the canvas or another node, or minimizing the panel, saves it first; if the settings cannot be saved, the panel stays open with a warning, and clicking away again discards the unsaved changes.
 
 ![Node settings panel for a Formula node](../../assets/images/ui/node_settings_formula.gif)
 
@@ -63,6 +63,12 @@ The **gear icon** in the top toolbar opens the flow-level settings:
 **Parallel workers** sets how many independent steps the worker runs at the same time, so a flow with independent branches finishes in a few *rounds* instead of one step after another. At 1 every step waits its turn.
 
 ![The same flow — four Read data inputs, a Group by and a Formula transforming two of them, all merged by Union data — at two Parallel workers settings. With one worker the seven steps run one after another (numbered 1 to 7) and the total-time bar is long; with four workers the four reads run together as round 1, the two transforms as round 2, and Union data as round 3, so the flow finishes in three rounds instead of seven and the total-time bar is far shorter, the rest marked time saved.](../../assets/images/concepts/parallel-workers.svg)
+
+### A node's own backend
+
+A node's **General Settings** tab has a **Compute backend** setting: **Auto (the flow's backend)**, the default, **Default worker**, and for an administrator the workers added under **Settings → Execution → Backends**, which **Manage backends** next to it opens. It never offers Local. A node's own backend is used only where the deployment has an exchange store ([Remote workers](../deployment/remote-worker.md#nodes-on-several-backends)); otherwise every node runs on the flow's **Execution location**. Write data, Read from Catalog, Write to Catalog, API response and Explore data have no such setting and run on the flow's backend.
+
+After a run, a refused one included, a connection whose two nodes were placed on different backends shows a round badge with two arrows. The badge is for the last run, so a change of backend shows after the next one. When a crossing is refused, because the exchange store could not be used or the input was above the row limit, the reading node's row on the run report says why.
 
 ### Settings warnings
 
