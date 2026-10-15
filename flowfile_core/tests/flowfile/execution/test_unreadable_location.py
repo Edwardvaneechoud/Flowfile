@@ -8,10 +8,11 @@ They run with the protocol flag off and on: with it on, core asks the backend th
 does, and reads rows of those results through the backend: the formula editor's preview row, a formula gate's probe,
 column statistics and the CSV export; and a filter, a select, a join, a group_by, a formula, a record count, a unique,
 a union, an unpivot, window functions, text to rows, a multi-field formula, a graph solver, an explode hierarchy, a
-pivot, a dynamic rename, a data cleansing or a cross join over a stored result, or the REST API reader's alignment of
-a read it stored, takes its input's columns from the input engine's cached schema; and a node that fails on a missing
-file in core keeps its stored input rather than rerunning it. The tests named for ``v1`` results check the same over
-the session worker's ``/v1`` routes.
+pivot, a dynamic rename, a data cleansing, a cross join or a Polars code node over a stored result, a node's output
+field config, a Run Flow node's outputs over its child's stored results, or the REST API reader's alignment of a read
+it stored, takes its input's columns from the input engine's cached schema; and a node that fails on a missing file in
+core keeps its stored input rather than rerunning it. The tests named for ``v1`` results check the same over the
+session worker's ``/v1`` routes.
 """
 
 import dataclasses
@@ -19,6 +20,7 @@ import io
 import json
 import os
 import threading
+import uuid
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -29,6 +31,8 @@ import pytest
 
 from flowfile_core import flow_file_handler
 from flowfile_core.configs import settings
+from flowfile_core.database import models as db_models
+from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
@@ -869,6 +873,76 @@ TRANSFORM_VARIANTS = [
         TRANSFORM_COLUMNS + [("id_right", "Int64"), ("segment", "String")],
         12,
     ),
+    (
+        9370,
+        "polars_code",
+        "polars_code",
+        input_schema.NodePolarsCode,
+        {
+            "polars_code_input": transform_schema.PolarsCodeInput(
+                polars_code="output_df = input_df.filter(pl.col('amount') > 20).select('id', 'region', 'amount')"
+            )
+        },
+        [("id", "Int64"), ("region", "String"), ("amount", "Int64")],
+        4,
+    ),
+    (
+        9372,
+        "output_fields_raise_on_missing",
+        "filter",
+        input_schema.NodeFilter,
+        {
+            "filter_input": transform_schema.FilterInput(mode="advanced", advanced_filter="[amount] > 20"),
+            "output_field_config": input_schema.OutputFieldConfig(
+                enabled=True,
+                validation_mode_behavior="raise_on_missing",
+                fields=[
+                    input_schema.OutputFieldInfo(name="amount", data_type="Int64"),
+                    input_schema.OutputFieldInfo(name="id", data_type="Int64"),
+                ],
+            ),
+        },
+        [("amount", "Int64"), ("id", "Int64")],
+        4,
+    ),
+    (
+        9373,
+        "output_fields_add_missing",
+        "filter",
+        input_schema.NodeFilter,
+        {
+            "filter_input": transform_schema.FilterInput(mode="advanced", advanced_filter="[amount] > 20"),
+            "output_field_config": input_schema.OutputFieldConfig(
+                enabled=True,
+                validation_mode_behavior="add_missing",
+                fields=[
+                    input_schema.OutputFieldInfo(name="id", data_type="Int64"),
+                    input_schema.OutputFieldInfo(name="status", data_type="String", default_value="new"),
+                ],
+            ),
+        },
+        [("id", "Int64"), ("status", "String")],
+        4,
+    ),
+    (
+        9374,
+        "output_fields_add_missing_keep_extra",
+        "filter",
+        input_schema.NodeFilter,
+        {
+            "filter_input": transform_schema.FilterInput(mode="advanced", advanced_filter="[amount] > 20"),
+            "output_field_config": input_schema.OutputFieldConfig(
+                enabled=True,
+                validation_mode_behavior="add_missing_keep_extra",
+                fields=[
+                    input_schema.OutputFieldInfo(name="status", data_type="String", default_value="new"),
+                    input_schema.OutputFieldInfo(name="id", data_type="Int64"),
+                ],
+            ),
+        },
+        [("status", "String"), ("id", "Int64")] + TRANSFORM_COLUMNS[1:],
+        4,
+    ),
 ]
 
 
@@ -889,7 +963,8 @@ def test_a_transform_variant_runs_over_stored_results_core_cannot_read(
         for node_id in inputs:
             graph.get_node(node_id).node_settings.cache_results = True
         add_promise(graph, 2, node_type)
-        sources = {"depending_on_ids": list(inputs)} if node_type == "cross_join" else {"depending_on_id": 1}
+        multi_input = issubclass(settings_class, input_schema.NodeMultiInput)
+        sources = {"depending_on_ids": list(inputs)} if multi_input else {"depending_on_id": 1}
         getattr(graph, f"add_{node_type}")(settings_class(flow_id=graph.flow_id, node_id=2, **sources, **fields))
         for node_id, input_type in inputs.items():
             connect(graph, node_id, 2, input_type=input_type)
@@ -902,6 +977,78 @@ def test_a_transform_variant_runs_over_stored_results_core_cannot_read(
             assert not os.path.exists(ref.location.decode("utf-8"))
         assert columns(graph.get_node(2).schema) == expected_columns
         assert len(graph.get_node(2).get_table_example(True).data) == rows
+    finally:
+        graph.close_flow()
+
+
+@pytest.mark.parametrize(
+    "flow_id, iteration_mode, rows", [(9375, "first_value", 6), (9376, "iterate", 12)], ids=["first_value", "iterate"]
+)
+def test_a_run_flow_reads_its_child_output_stored_where_core_cannot_read(
+    unreadable, protocol_on, tmp_path, flow_id, iteration_mode, rows
+):
+    child = make_graph(9379)
+    child.flow_settings.parameters = [schemas.FlowParameter(name="limit", default_value="10", type="integer")]
+    add_promise(child, 1, "flow_input")
+    child.add_flow_input(
+        input_schema.NodeFlowInput(
+            flow_id=child.flow_id,
+            node_id=1,
+            input_name="a",
+            raw_data_format=input_schema.RawData.from_pylist(TRANSFORM_ROWS),
+            cache_results=True,
+        )
+    )
+    add_promise(child, 2, "flow_output")
+    child.add_flow_output(
+        input_schema.NodeFlowOutput(flow_id=child.flow_id, node_id=2, output_name="out_a", depending_on_id=1)
+    )
+    connect(child, 1, 2)
+    path = tmp_path / "child_out_a.yaml"
+    child.save_flow(str(path))
+    child.close_flow()
+    with get_db_context() as db:
+        registration = db_models.FlowRegistration(
+            flow_uuid=str(uuid.uuid4()), name=path.stem, flow_path=str(path), owner_id=1
+        )
+        db.add(registration)
+        db.commit()
+        db.refresh(registration)
+        registration_id = registration.id
+
+    iterate = iteration_mode == "iterate"
+    graph = make_graph(flow_id, max_parallel_workers=1)
+    try:
+        if iterate:
+            add_manual_input(graph, 1, [{"limit": 1}, {"limit": 2}])
+        add_promise(graph, 2, "run_flow")
+        bindings = [input_schema.RunFlowParameterBinding(parameter_name="limit", source="column", column_name="limit")]
+        graph.add_run_flow(
+            input_schema.NodeRunFlow(
+                flow_id=graph.flow_id,
+                node_id=2,
+                user_id=1,
+                flow_reference=input_schema.SubflowReference(registration_id=registration_id),
+                input_slots=["a"],
+                output_slots=["out_a"],
+                parameter_bindings=bindings if iterate else [],
+                iteration_mode=iteration_mode,
+                append_run_metadata=False,
+            )
+        )
+        if iterate:
+            add_connection(
+                graph,
+                input_schema.NodeConnection(
+                    input_connection=input_schema.NodeInputConnection(node_id=2, connection_class="input-0"),
+                    output_connection=input_schema.NodeOutputConnection(node_id=1, connection_class="output-0"),
+                ),
+            )
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        assert columns(graph.get_node(2).schema) == TRANSFORM_COLUMNS
+        assert unreadable[0].count(graph.get_node(2).results.result_ref) == rows
     finally:
         graph.close_flow()
 

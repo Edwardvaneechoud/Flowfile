@@ -3273,4 +3273,4 @@ def execute_polars_code(*flowfile_tables: FlowDataEngine, code: str) -> FlowData
     df = polars_executable(*(flowfile_table.data_frame for flowfile_table in flowfile_tables))
     if isinstance(df, pl.DataFrame):
         logger.warning("Got a non lazy DataFrame, possibly harming performance, if possible, try to use a lazy method")
-    return FlowDataEngine(df)
+    return FlowDataEngine(df, schema=_derived_schema(polars_executable, *flowfile_tables))
