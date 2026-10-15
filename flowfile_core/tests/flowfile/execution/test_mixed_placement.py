@@ -18,6 +18,7 @@ from flowfile_core import events
 from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution import exchange, registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+from flowfile_core.flowfile.execution.errors import PlanRejected
 from flowfile_core.flowfile.execution.placement import MixedPlacementPolicy, Placement, SingleBackendPolicy, place
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_node.executor import hints_for
@@ -27,7 +28,15 @@ from tests import test_run_flow_node
 from tests.flowfile.conftest import create_test_graph
 from tests.flowfile.execution import test_exchange_store, test_placement
 from tests.flowfile.execution.test_exchange_store import _BUCKET, _key, _keys
-from tests.flowfile.execution.test_placement import add_manual_input, add_promise, connect, everything, make_graph
+from tests.flowfile.execution.test_placement import (
+    BACKEND_ID,
+    DeclaringBackend,
+    add_manual_input,
+    add_promise,
+    connect,
+    everything,
+    make_graph,
+)
 from tests.flowfile.execution.test_two_backend_chain import A_ROWS, CUSTOMERS, EXPECTED
 from tests.test_catalog_cloud_virtual import requires_minio
 
@@ -232,6 +241,33 @@ def test_a_store_that_cannot_be_used_refuses_the_importing_node_before_any_node_
     assert no_s3_client == []
 
 
+def test_a_store_the_upstream_nodes_user_has_no_connection_for_refuses_the_importing_node(
+    protocol_on, declare, no_s3_client, connection_name, monkeypatch
+):
+    """Node 1, stamped user 2, crosses to node 2 on core: the edge opens the store for user 2, who has no connection."""
+    backend = declare(everything())
+    monkeypatch.setenv("FLOWFILE_EXCHANGE_URI", f"s3://{_BUCKET}/exchange")
+    monkeypatch.setenv("FLOWFILE_EXCHANGE_CONNECTION", connection_name)
+    graph = chain(make_graph(8509), filter_on=LOCAL, user_id=1)
+    graph.get_node(1).setting_input.user_id = 2
+    graph.get_node(3).setting_input.execution_location = LOCAL
+
+    run_info = graph.run_graph()
+
+    errors = {result.node_id: result.error for result in run_info.node_step_result}
+    assert errors == {
+        2: (
+            f'cannot run on backend "{LOCAL}": User 2 has no cloud connection named {connection_name!r}, '
+            "which FLOWFILE_EXCHANGE_CONNECTION names"
+        )
+    }
+    assert all(result.compute_error == "Refusal" for result in run_info.node_step_result)
+    assert (run_info.success, run_info.nodes_completed) == (False, 0)
+    assert run_info.boundaries == [(1, 2)]
+    assert backend.work == []
+    assert no_s3_client == []
+
+
 @requires_minio
 def test_a_node_on_the_worker_takes_its_input_from_core_and_hands_its_rows_back_through_the_store(root, worker):
     local = registry.backend(LOCAL)
@@ -367,6 +403,74 @@ def test_a_node_reading_two_outputs_of_one_source_on_another_backend_takes_each_
         assert [(ref.backend_id, ref.state) for ref in (out_a, out_b)] == [(LOCAL, "materialised")] * 2
         assert sorted_rows(local, out_a).equals(A_ROWS)
         assert sorted_rows(local, out_b).equals(FAIL_ROWS)
+    finally:
+        events._handlers["flow_run_finished"].remove(list_the_prefix)
+        graph.close_flow()
+
+
+class RefusesTheThirdOutput(DeclaringBackend):
+    """Core's own backend under the declaring id, refusing the plan a node submits for its output ``output-2``."""
+
+    def submit(self, plan, inputs, hints, result_id, *, flow_id, node_id):
+        if result_id.endswith("_output-2"):
+            raise PlanRejected("the backend refused output-2")
+        return super().submit(plan, inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
+
+
+@requires_minio
+def test_a_second_output_that_fails_to_store_fails_the_node_and_what_it_stored_is_released_with_it(
+    protocol_on, declare, root
+):
+    """Manual input 1 on core → random split 2 on the declaring backend, three groups: node 2 imports its input, so it
+    stores ``output-1`` and then ``output-2`` beside its result, and the second of those is refused."""
+    backend = RefusesTheThirdOutput(BACKEND_ID, everything())
+    registry.register_backend(BACKEND_ID, lambda: backend)
+    graph = make_graph(8510)
+    add_manual_input(graph, 1, [{"id": i} for i in range(100)])
+    graph.get_node(1).setting_input.user_id = 1
+    graph.get_node(1).setting_input.execution_location = LOCAL
+    add_promise(graph, 2, "random_split")
+    graph.add_random_split(
+        input_schema.NodeRandomSplit(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            user_id=1,
+            seed=42,
+            splits=[
+                input_schema.RandomSplitGroup(name="a", percentage=50.0),
+                input_schema.RandomSplitGroup(name="b", percentage=30.0),
+                input_schema.RandomSplitGroup(name="c", percentage=20.0),
+            ],
+        )
+    )
+    connect(graph, 1, 2)
+    seen: dict = {}
+    list_the_prefix = listing(root, seen)
+    events.subscribe("flow_run_finished", list_the_prefix)
+    try:
+        run_info = graph.run_graph()
+
+        assert "error" not in seen, seen.get("error")
+        errors = {result.node_id: result.error for result in run_info.node_step_result if not result.success}
+        assert errors.keys() == {2}, errors
+        assert "the backend refused output-2" in errors[2], errors[2]
+        assert run_info.success is False
+        node = graph.get_node(2)
+        assert node._stored_outputs.keys() == {"output-1"}
+        stored = node._stored_outputs["output-1"]
+        assert stored.backend_id == BACKEND_ID
+        assert node._submit_in_flight is None
+        assert node._boundary_inputs == {}
+        assert seen["listed"] == [f"{_key(seen['prefix'])}1-{DEFAULT_OUTPUT_HANDLE}-2.parquet"]
+        assert _keys(seen["prefix"]) == []
+        assert graph.exchange_run is None
+        result = node.results.result_ref
+        assert result is not None and result.backend_id == BACKEND_ID
+
+        node.release_result()
+
+        assert (backend.exists(result), backend.exists(stored)) == (False, False)
     finally:
         events._handlers["flow_run_finished"].remove(list_the_prefix)
         graph.close_flow()
