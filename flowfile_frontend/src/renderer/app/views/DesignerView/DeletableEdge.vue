@@ -2,10 +2,15 @@
 import { computed, inject, type Ref } from "vue";
 import { BaseEdge, EdgeLabelRenderer, getBezierPath, useVueFlow } from "@vue-flow/core";
 import type { EdgeProps } from "@vue-flow/core";
+import { useFlowStore } from "../../stores/flow-store";
+import { useResultsStore } from "../../stores/results-store";
+import { crossesBackends } from "../../utils/boundaryEdges";
 
 const props = defineProps<EdgeProps>();
 
 const { removeEdges } = useVueFlow();
+const flowStore = useFlowStore();
+const resultsStore = useResultsStore();
 const hoveredEdgeId = inject<Ref<string | null>>("hoveredEdgeId");
 const cancelEdgeLeave = inject<() => void>("cancelEdgeLeave");
 const scheduleEdgeLeave = inject<(id: string) => void>("scheduleEdgeLeave");
@@ -26,6 +31,9 @@ const labelX = computed(() => pathData.value[1]);
 const labelY = computed(() => pathData.value[2]);
 
 const isHovered = computed(() => hoveredEdgeId?.value === props.id);
+const crosses = computed(() =>
+  crossesBackends(resultsStore.runResults[flowStore.flowId], props.source, props.target),
+);
 
 function onDelete() {
   removeEdges([props.id]);
@@ -57,6 +65,16 @@ function onButtonLeave() {
     :interaction-width="props.interactionWidth"
   />
   <EdgeLabelRenderer>
+    <span
+      v-if="crosses"
+      class="edge-boundary-badge"
+      data-testid="boundary-badge"
+      :data-edge="`${props.source}-${props.target}`"
+      :style="{ transform: `translate(-50%, -100%) translate(${labelX}px, ${labelY - 14}px)` }"
+      title="This connection crossed between two compute backends in the last run"
+    >
+      <span class="material-icons">swap_horiz</span>
+    </span>
     <button
       v-show="isHovered"
       class="edge-delete-btn"
@@ -97,5 +115,24 @@ function onButtonLeave() {
   background: #f56c6c;
   color: #fff;
   border-color: #f56c6c;
+}
+
+.edge-boundary-badge {
+  position: absolute;
+  pointer-events: all;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--el-color-primary);
+  border-radius: 50%;
+  background: var(--color-background-primary);
+  color: var(--el-color-primary);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
+.edge-boundary-badge .material-icons {
+  font-size: 14px;
 }
 </style>

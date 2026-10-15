@@ -199,6 +199,7 @@ def test_without_a_store_a_nodes_own_setting_is_not_read(protocol_on, declare, n
     assert "submit 2" in backend.work
     assert backend.asked == 1
     assert graph.get_node(2).results.result_ref.backend_id == backend.id
+    assert run_info.boundaries == []
     assert no_s3_client == []
 
 
@@ -225,6 +226,8 @@ def test_a_store_that_cannot_be_used_refuses_the_importing_node_before_any_node_
     assert errors[3].startswith(f'cannot run on backend "{backend.id}": '), errors[3]
     assert all(result.compute_error == "Refusal" for result in run_info.node_step_result)
     assert (run_info.success, run_info.nodes_completed) == (False, 0)
+    assert run_info.boundaries == [(1, 2), (2, 3)]
+    assert run_info.model_dump(mode="json")["boundaries"] == [[1, 2], [2, 3]]
     assert backend.work == []
     assert no_s3_client == []
 
@@ -248,7 +251,9 @@ def test_a_node_on_the_worker_takes_its_input_from_core_and_hands_its_rows_back_
         if not settings.FLOWFILE_COMPUTE_PROTOCOL:
             assert seen["listed"] == []
             assert (ref_2.backend_id, ref_3.backend_id) == (LOCAL, LOCAL)
+            assert run_info.boundaries == []
             return
+        assert run_info.boundaries == [(1, 2), (2, 3)]
         assert seen["listed"] == [
             f"{_key(seen['prefix'])}1-{DEFAULT_OUTPUT_HANDLE}-2.parquet",
             f"{_key(seen['prefix'])}2-{DEFAULT_OUTPUT_HANDLE}-3.parquet",

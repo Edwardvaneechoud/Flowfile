@@ -252,6 +252,9 @@ export function useNodeSettings<T extends NodeBase>(
     nodeRef.value.cache_results = updatedNode.cache_results;
     nodeRef.value.description = updatedNode.description;
     nodeRef.value.output_field_config = updatedNode.output_field_config;
+    if (updatedNode.execution_location !== undefined) {
+      nodeRef.value.execution_location = updatedNode.execution_location;
+    }
 
     // Position is managed by the store during save, but sync if provided
     if (updatedNode.pos_x !== undefined) {
@@ -267,6 +270,7 @@ export function useNodeSettings<T extends NodeBase>(
         key !== "cache_results" &&
         key !== "description" &&
         key !== "output_field_config" &&
+        key !== "execution_location" &&
         key !== "pos_x" &&
         key !== "pos_y"
       ) {

@@ -966,6 +966,7 @@ export interface NodeBase {
   node_reference?: string; // Unique reference identifier for code generation (lowercase, no spaces)
   is_user_defined?: boolean;
   output_field_config?: OutputFieldConfig | null;
+  execution_location?: string; // "auto" (the flow's backend) or a backend id; saved with the node
 }
 
 export interface NodeSingleInput extends NodeBase {
