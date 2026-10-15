@@ -4,7 +4,7 @@ This page covers running `flowfile_worker` on a host other than core's: what the
 
 ## How it works
 
-Core sends each node's plan to the worker and takes back a bounded sample of the rows, the schema and the row count. It never opens a file the worker wrote: results stay in the worker's own storage. The worker reads sources and writes destinations itself, and resolves a stored connection from the catalog database with the master key, so a plan carries no credentials. All of this needs `FLOWFILE_COMPUTE_PROTOCOL` on, which is core's default.
+Core sends each node's plan to the worker and takes back a bounded sample of the rows, the schema and the row count. It never opens a file the worker wrote: results stay in the worker's own storage, except a result that crosses to another backend through an [exchange store](#nodes-on-several-backends). The worker reads sources and writes destinations itself, and resolves a stored connection from the catalog database with the master key, so a plan carries no credentials. All of this needs `FLOWFILE_COMPUTE_PROTOCOL` on, which is core's default.
 
 ## The worker's environment
 
@@ -22,6 +22,8 @@ The `flowfile-worker` image starts `python -m flowfile_worker --host 0.0.0.0` an
 
 The worker reaches the catalog database and every database, Kafka broker, REST endpoint and storage endpoint the flows use, by the names their connections use. For an Azure service principal or a GCS service account it also reaches the provider's token endpoint, since it exchanges the stored secret for a bearer token itself. Core reaches the worker's port.
 
+A connection names one endpoint for every process that opens it, so the name must lead to the service from where each process runs: core's container and the worker's. A connection whose endpoint is the worker host's own LAN address, for example, times out from the worker's container when that host's firewall drops traffic from Docker's bridge network to the host, which is ufw's default, while core on another host reaches it. When the storage service runs in a container on the worker's host, give it a network alias on the worker's Docker network, add the same name to core's `extra_hosts` with the worker host's address, and use that name in the connection. Until then a read through the connection retries for about a minute before its node fails.
+
 ## Core's environment
 
 | Variable | Value |
@@ -30,6 +32,9 @@ The worker reaches the catalog database and every database, Kafka broker, REST e
 | `FLOWFILE_WORKER_URL` | The default worker's URL, for example `http://<worker host>:63579`. Without it core uses `http://<WORKER_HOST>:<FLOWFILE_WORKER_PORT>`, the port defaulting to `63579`. |
 | `FLOWFILE_COMPUTE_BACKEND` | Optional: a `worker:<name>` id (see [Add the worker to core](#add-the-worker-to-core)) that becomes the default backend. |
 | `FLOWFILE_COMPUTE_PROTOCOL` | Leave unset. Switched off, core opens the worker's result files itself, and a worker on another host does not share them. |
+| `FLOWFILE_EXCHANGE_URI` | Optional: an `s3://` root where results cross between backends, for example `s3://flowfile-exchange/runs`. Set, each node runs on the backend its own **Compute backend** names; see [Nodes on several backends](#nodes-on-several-backends). |
+| `FLOWFILE_EXCHANGE_CONNECTION` | With `FLOWFILE_EXCHANGE_URI`: the name of the stored S3 cloud connection that core and every worker open the store with, for example `exchange`. |
+| `FLOWFILE_EXCHANGE_MAX_ROWS` | Optional: the most rows an input may cross between backends with, for example `50000000`. Core checks it before the run from the row counts it already has, so an edge whose size core cannot know before the run crosses at any size. Unset, there is no limit. |
 
 ## The shared catalog and the master key
 
@@ -67,11 +72,24 @@ To change a worker's URL or token, **Remove** it and add it again. A row changed
 !!! warning "The token is core's internal token"
     Enter core's `FLOWFILE_INTERNAL_TOKEN` as the **Token**, and start the worker with that same value. The worker accepts one token, and core signs some of its calls to every worker with its own internal token: the writes, the Delta operations, the visualisation sessions and the version check.
 
+## Nodes on several backends
+
+With an exchange store configured (`FLOWFILE_EXCHANGE_URI` and `FLOWFILE_EXCHANGE_CONNECTION` in [core's environment](#cores-environment)), each node runs on the backend its own **Compute backend** names ([A node's own backend](../visual-editor/building-flows.md#a-nodes-own-backend)), and a node left on **Auto** runs on the flow's. Without one, every node of a flow runs on the flow's backend.
+
+Where an edge joins two nodes on different backends, the upstream result is exported to `<uri>/<flow id>/<run id>/`, and the node that reads it imports it on its own backend and stores its own result there, so nothing refers to the exported file after the run. Core removes the run's prefix when the run ends, whether the run succeeded or failed. A store core cannot use (the URI without a connection, a scheme other than `s3`, a connection name it cannot find) refuses the reading node before any node starts, and its row on the run report says `cannot run on backend "<id>": <reason>`.
+
+`FLOWFILE_EXCHANGE_MAX_ROWS` is a best-effort limit. Core checks it before the run against the row counts it already has: from an earlier run of the open flow while the upstream node's settings are unchanged, or a **Manual input**'s own rows. An edge whose size core cannot know before the run, as on a flow's first run after it is opened, crosses at any size. Above the limit the reading node is refused before any node starts with `the input from node <n> would cross from backend "<id>" with <rows> rows of <columns> columns, above FLOWFILE_EXCHANGE_MAX_ROWS=<limit>`. In **Development** mode it can also refuse a node whose input has not changed since the last run, when nothing would cross.
+
+A core that stops in the middle of a run leaves that run's prefix in the bucket, and so does a removal that fails, which is a warning in the flow log. Give the bucket a lifecycle rule that expires objects under the URI's prefix after longer than the longest run takes, a day for example.
+
+Core and every worker open the store at its connection's endpoint, so that endpoint must lead to the store from each of them; see [The worker's environment](#the-workers-environment).
+
 ## Limitations
 
 - **Kernel nodes.** A **Python Script** node, or a custom node that runs on a kernel, is refused on a remote worker: `it runs on a notebook kernel, which reads its inputs from the kernel shared volume on core's host, where this backend does not write`. A flow with such a node runs on a worker on core's host.
 - **Plugin layout.** A worker whose plugins sit at other library paths than core's is refused as a whole by the version check above, not only for the nodes that use a plugin.
 - **Headless runs.** `flowfile run flow` computes in its own process unless the run passes `--backend <id>` or the flow's **Execution location** is a backend id. A scheduled run follows the flow's setting the same way.
 - **Node logs.** A node's log lines reach core's flow log only when the worker reaches `CORE_HOST` on `CORE_PORT` with core's token; otherwise they stay in the worker's own output.
+- **Polars code.** A **Polars code** node whose code collects an input or reads its schema reads that input in core, so with the worker on another host it fails; see [Polars code](../visual-editor/nodes/transform.md#polars-code).
 
 The worker serves plain HTTP on its port; its URL may be `https://` when something in front of it terminates TLS. Hosting a worker on Kubernetes or behind an ingress, and running and scaling several workers, are outside this page.
