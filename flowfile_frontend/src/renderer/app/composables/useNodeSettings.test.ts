@@ -102,6 +102,16 @@ describe("useNodeSettings.saveSettings", () => {
     );
     expect(mocks.disarmRefusedSave).not.toHaveBeenCalled();
   });
+
+  it("saves the compute backend picked in the drawer on a node loaded without one", async () => {
+    const nodeRef = ref<NodeBase | null>(loadedNode());
+    const { handleGenericSettingsUpdate, saveSettings } = useNodeSettings({ nodeRef });
+
+    handleGenericSettingsUpdate({ ...loadedNode(), execution_location: "worker" });
+
+    expect(await saveSettings()).toBe(true);
+    expect(mocks.updateSettings.mock.calls[0][0].value.execution_location).toBe("worker");
+  });
 });
 
 describe("useNodeSettings conflicts", () => {
