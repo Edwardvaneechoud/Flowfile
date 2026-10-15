@@ -170,15 +170,17 @@ class BoundaryEdge:
         """The rows and columns the output holds when core knows them before ``target`` reads it, else ``None``.
 
         For the default output, the reference ``source`` holds on ``source_backend_id`` under its current hash, when it
-        carries a row count; otherwise the engine core holds for the output without running ``source``: the last run's,
-        or for the default output the node's own frame (a manual input's rows), when it knows its count. Nothing is
-        counted, sampled or collected to price an edge.
+        carries a row count; otherwise the engine core holds for the output without running ``source``: the last run's
+        while ``source`` has run with its current setup, or for the default output the node's own frame (a manual
+        input's rows), when it knows its count. Nothing is counted, sampled or collected to price an edge.
         """
         if self.handle == DEFAULT_OUTPUT_HANDLE:
             ref = self.source.held_result(self.source_backend_id)
             if ref is not None and ref.row_count is not None:
                 return ref.row_count, len(ref.schema)
-        engines = [self.source.peek_output_engine(self.handle)]
+        engines = []
+        if self.source.node_stats.has_run_with_current_setup:
+            engines.append(self.source.peek_output_engine(self.handle))
         if self.handle == DEFAULT_OUTPUT_HANDLE and isinstance(self.source.function, FlowDataEngine):
             engines.append(self.source.function)
         for engine in engines:

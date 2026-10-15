@@ -3,26 +3,37 @@
 With an exchange store configured and ``FLOWFILE_EXCHANGE_MAX_ROWS`` set, an edge whose output core knows before the run
 to hold more rows than the limit refuses the node that would read it, naming the rows, the columns and the limit. Core
 prices an edge from what it already holds, running nothing: the row count of the result the upstream node holds on its
-backend, else the count of the engine it holds for that output, a manual input's own rows among them; an edge whose
-count is unknown crosses. No MinIO and no worker: the store's connection is a row in the catalog database, and the run's
-removal of its prefix lists through a client over an empty bucket.
+backend, else the count of the engine it holds for that output, its last run's only while it has run with its current
+setup, a manual input's own rows among them; an edge whose count is unknown crosses. No MinIO and no worker: the store's
+connection is a row in the catalog database, and the run's removal of its prefix lists through a client over an empty
+bucket.
 """
 
 import re
 import uuid
+from dataclasses import replace
 
 import pytest
 
-from flowfile_core.flowfile.execution import exchange
+from flowfile_core.flowfile.execution import exchange, registry
 from flowfile_core.flowfile.execution.exchange import ExchangeRun
 from flowfile_core.flowfile.execution.placement import Refusal
-from flowfile_core.flowfile.execution.protocol import ResultRef
+from flowfile_core.flowfile.execution.protocol import OperationKind, ResultRef
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
+from flowfile_core.schemas import input_schema, transform_schema
 from tests.flowfile.execution import test_exchange_store, test_placement
 from tests.flowfile.execution.test_mixed_placement import LOCAL, chain
-from tests.flowfile.execution.test_placement import BACKEND_ID, everything, make_graph
+from tests.flowfile.execution.test_placement import (
+    BACKEND_ID,
+    DeclaringBackend,
+    add_manual_input,
+    add_promise,
+    connect,
+    everything,
+    make_graph,
+)
 
 # The fixtures these tests share with the placement and exchange-store tests, bound here so pytest finds them.
 declare = test_placement.declare
@@ -166,6 +177,65 @@ def test_the_row_count_of_a_held_result_prices_the_edge_it_crosses(
 
     assert placement.refusals == refusals
     assert crossings(edges) == crossed
+
+
+class CountedSplits(DeclaringBackend):
+    """Core's own backend under the declaring id, whose random split knows each split's rows, as a worker's does."""
+
+    def run_op(self, op, payload):
+        result = super().run_op(op, payload)
+        if op is not OperationKind.random_split:
+            return result
+        counted = {name: replace(ref, row_count=self.count(ref)) for name, ref in result.refs.items()}
+        return replace(result, refs=counted)
+
+
+def test_a_split_whose_input_changed_after_it_ran_is_not_priced_by_that_run(
+    protocol_on, declare, connection_name, monkeypatch
+):
+    backend = CountedSplits(BACKEND_ID, everything())
+    registry.register_backend(BACKEND_ID, lambda: backend)
+    graph = make_graph(8536)
+    add_manual_input(graph, 1, [{"id": i} for i in range(100)])
+    add_promise(graph, 2, "random_split")
+    connect(graph, 1, 2)
+    graph.add_random_split(
+        input_schema.NodeRandomSplit(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            user_id=1,
+            seed=42,
+            splits=[
+                input_schema.RandomSplitGroup(name="train", percentage=80.0),
+                input_schema.RandomSplitGroup(name="test", percentage=20.0),
+            ],
+        )
+    )
+    add_promise(graph, 3, "filter")
+    graph.add_filter(
+        input_schema.NodeFilter(
+            flow_id=graph.flow_id,
+            node_id=3,
+            depending_on_id=2,
+            user_id=1,
+            execution_location=LOCAL,
+            filter_input=transform_schema.FilterInput(mode="advanced", advanced_filter="[id] >= 0"),
+        )
+    )
+    connect(graph, 2, 3)
+    assert graph.run_graph().success
+    monkeypatch.setenv("FLOWFILE_EXCHANGE_URI", STORE)
+    monkeypatch.setenv("FLOWFILE_EXCHANGE_CONNECTION", connection_name)
+    monkeypatch.setenv("FLOWFILE_EXCHANGE_MAX_ROWS", "50")
+
+    ran, _ = placed(graph)
+    add_manual_input(graph, 1, [{"id": i} for i in range(10)])
+    changed, edges = placed(graph)
+
+    assert ran.refusals == [Refusal(3, LOCAL, above(2, BACKEND_ID, 80, 1, 50))]
+    assert changed.refusals == []
+    assert crossings(edges) == [(2, OUT, 3)]
 
 
 def test_a_limit_that_is_not_a_whole_number_refuses_each_crossing_naming_it(protocol_on, declare, store, monkeypatch):
