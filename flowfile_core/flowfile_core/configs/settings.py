@@ -94,6 +94,22 @@ def get_exchange_connection() -> str | None:
     return os.environ.get("FLOWFILE_EXCHANGE_CONNECTION") or None
 
 
+def get_exchange_max_rows() -> int | None:
+    """The most rows a result may cross between backends with through the exchange store; ``None`` ⇒ no limit.
+
+    Read per call, as ``get_exchange_uri`` is.
+
+    Raises:
+        ValueError: ``FLOWFILE_EXCHANGE_MAX_ROWS`` is set to something other than a whole number.
+    """
+    value = os.environ.get("FLOWFILE_EXCHANGE_MAX_ROWS") or None
+    if value is None:
+        return None
+    if not value.isdecimal():
+        raise ValueError(f"FLOWFILE_EXCHANGE_MAX_ROWS must be a whole number of rows, not {value!r}")
+    return int(value)
+
+
 COMMUNITY_DEFAULT_REPO = "edwardvaneechoud/flowfile-community-nodes"
 
 
