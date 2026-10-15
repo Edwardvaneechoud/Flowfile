@@ -24,7 +24,7 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, _derived_schema
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs, output_handle
 from flowfile_core.flowfile.param_types import (
@@ -521,7 +521,9 @@ def execute_run_flow_node(
     # Must match predict_run_flow_named_schemas (_appends_metadata): appending is
     # driven by the settings alone, even for a single run without parameter data.
     append_metadata = _appends_metadata(settings)
-    collected: dict[str, list[pl.LazyFrame]] = {name: [] for name in settings.output_slots}
+    collected: dict[str, list[tuple[FlowDataEngine, pl.LazyFrame, list[pl.Expr] | None]]] = {
+        name: [] for name in settings.output_slots
+    }
 
     for run_index, run_params in enumerate(runs, start=1):
         if parent_graph.flow_settings.is_canceled:
@@ -603,10 +605,11 @@ def execute_run_flow_node(
             lf = result.data_frame if result is not None else pl.DataFrame().lazy()
             if not isinstance(lf, pl.LazyFrame):
                 lf = lf.lazy()
+            literals = None
             if append_metadata:
                 existing = list(lf.collect_schema().names())
-                lf = lf.with_columns(_metadata_literals(settings, interface, run_params, run_index, existing))
-            collected[slot_name].append(lf)
+                literals = _metadata_literals(settings, interface, run_params, run_index, existing)
+            collected[slot_name].append((result if result is not None else FlowDataEngine(), lf, literals))
         node_logger.info(f"Subflow '{resolved.name}' run {run_index}/{len(runs)} completed")
 
     if not settings.output_slots:
@@ -614,11 +617,22 @@ def execute_run_flow_node(
 
     engines: dict[str, FlowDataEngine] = {}
     for slot_name in settings.output_slots:
-        frames = collected[slot_name]
-        if len(frames) == 1:
-            engines[slot_name] = FlowDataEngine(frames[0])
-        else:
+        outputs = collected[slot_name]
+        steps = tuple(literals for _, _, literals in outputs)
+
+        def combined(*frames: pl.LazyFrame, steps=steps) -> pl.LazyFrame:
+            stepped = [
+                frame if literals is None else frame.with_columns(literals)
+                for frame, literals in zip(frames, steps, strict=True)
+            ]
+            if len(stepped) == 1:
+                return stepped[0]
             # Iterated runs may legitimately drift schema (parameter-driven selects);
             # relaxed diagonal concat fills gaps with nulls and unifies supertypes.
-            engines[slot_name] = FlowDataEngine(pl.concat(frames, how="diagonal_relaxed"))
+            return pl.concat(stepped, how="diagonal_relaxed")
+
+        engines[slot_name] = FlowDataEngine(
+            combined(*(lf for _, lf, _ in outputs)),
+            schema=_derived_schema(combined, *(engine for engine, _, _ in outputs)),
+        )
     return NamedOutputs(engines)
