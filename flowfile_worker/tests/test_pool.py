@@ -138,6 +138,45 @@ class TestMemberReuse:
         assert pl.read_ipc(tmp_path / "sample.arrow").height == 10
         assert warm_pool.stats()["idle"] == 1, "member must return to the pool"
 
+    def test_v1_submit_export_and_split_reuse_one_member(self, warm_pool, tmp_path):
+        lf = pl.LazyFrame({"a": [1, 2, 3]})
+        submitted = _run_task(
+            "pool-v1-submit",
+            "submit_result",
+            lf.serialize(),
+            str(tmp_path / "v1.arrow"),
+            materialise=True,
+            preview_rows=2,
+        )
+        assert submitted.status == "Completed", submitted.error_message
+        assert submitted.results["row_count"] == 3
+        assert pl.read_ipc(tmp_path / "v1.arrow").height == 3
+        pid = _idle_pid(warm_pool)
+
+        exported = _run_task(
+            "pool-v1-export",
+            "export_result",
+            pl.scan_ipc(tmp_path / "v1.arrow").serialize(),
+            "",
+            uri=(tmp_path / "v1.parquet").as_uri(),
+            credential=None,
+        )
+        assert exported.status == "Completed", exported.error_message
+        assert pl.read_parquet(tmp_path / "v1.parquet").height == 3
+        assert _idle_pid(warm_pool) == pid
+
+        split = _run_task(
+            "pool-v1-split",
+            "split_result",
+            lf.serialize(),
+            "",
+            paths=[str(tmp_path / "part0.arrow"), str(tmp_path / "part1.arrow")],
+            percentages=[50.0, 50.0],
+        )
+        assert split.status == "Completed", split.error_message
+        assert sum(pl.read_ipc(tmp_path / f"part{i}.arrow").height for i in range(2)) == 3
+        assert _idle_pid(warm_pool) == pid, "every /v1 operation must reuse the warm member"
+
 
 class TestErrorHandling:
     def test_failed_task_keeps_member_and_resets_error_state(self, warm_pool, tmp_path):
@@ -509,15 +548,10 @@ class TestPoolAdminEndpoints:
 
 
 class TestPlatformDefault:
-    def test_windows_defaults_on(self, monkeypatch):
-        monkeypatch.setattr("sys.platform", "win32")
-        assert pool.default_pool_size() == 4
-
-    def test_other_platforms_default_off(self, monkeypatch):
-        monkeypatch.setattr("sys.platform", "linux")
-        assert pool.default_pool_size() == 0
-        monkeypatch.setattr("sys.platform", "darwin")
-        assert pool.default_pool_size() == 0
+    def test_on_by_default_on_every_platform(self, monkeypatch):
+        for platform in ("win32", "linux", "darwin"):
+            monkeypatch.setattr("sys.platform", platform)
+            assert pool.default_pool_size() == 4
 
 
 class TestPersistence:
