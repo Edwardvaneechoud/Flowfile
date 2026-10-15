@@ -39,11 +39,11 @@ class CombineBuildersMixin(GraphMixinBase):
         """
 
         def _func(*flowfile_tables: FlowDataEngine):
+            def unioned(*frames: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+                return pl.concat(frames, how="diagonal_relaxed")
+
             dfs: list[pl.LazyFrame] | list[pl.DataFrame] = [flt.data_frame for flt in flowfile_tables]
-            return FlowDataEngine(
-                pl.concat(dfs, how="diagonal_relaxed"),
-                schema=_derived_schema(lambda *frames: pl.concat(frames, how="diagonal_relaxed"), *flowfile_tables),
-            )
+            return FlowDataEngine(unioned(*dfs), schema=_derived_schema(unioned, *flowfile_tables))
 
         self.add_node_step(
             node_id=union_settings.node_id,
