@@ -152,7 +152,8 @@ class BoundaryEdge:
 
     ``source``'s output on ``handle``, held on ``source_backend_id``, is exported to ``uri`` and imported on
     ``target_backend_id``, both with ``credential``, the first time ``target`` reads that input (``cross``); the import
-    is held as ``ref`` until ``release``. ``node_logger`` is the importing node's.
+    is held as ``ref`` until ``release``. ``node_logger`` is the importing node's. ``cost`` is what core knows of the
+    output's size before the run.
     """
 
     source: FlowNode
@@ -164,6 +165,26 @@ class BoundaryEdge:
     credential: CredentialRef
     node_logger: NodeLogger
     ref: ResultRef | None = None
+
+    def cost(self) -> tuple[int, int] | None:
+        """The rows and columns the output holds when core knows them before ``target`` reads it, else ``None``.
+
+        For the default output, the reference ``source`` holds on ``source_backend_id`` under its current hash, when it
+        carries a row count; otherwise the engine core holds for the output without running ``source``: the last run's,
+        or for the default output the node's own frame (a manual input's rows), when it knows its count. Nothing is
+        counted, sampled or collected to price an edge.
+        """
+        if self.handle == DEFAULT_OUTPUT_HANDLE:
+            ref = self.source.held_result(self.source_backend_id)
+            if ref is not None and ref.row_count is not None:
+                return ref.row_count, len(ref.schema)
+        engines = [self.source.peek_output_engine(self.handle)]
+        if self.handle == DEFAULT_OUTPUT_HANDLE and isinstance(self.source.function, FlowDataEngine):
+            engines.append(self.source.function)
+        for engine in engines:
+            if engine is not None and (rows := engine.known_record_count()) is not None:
+                return rows, len(engine.schema)
+        return None
 
     def cross(self) -> FlowDataEngine:
         """The engine ``target`` composes on for this input: the plan of its import on ``target_backend_id``.
@@ -965,7 +986,10 @@ class ExecutionMixin(GraphMixinBase):
         node's user: one ``BoundaryEdge`` per output of the upstream node that the importing node reads, to
         ``<prefix><from>-<handle>-<to>.parquet``, keyed by the handle the node looks that input up by. A store that
         cannot be used for that user (no connection named, a scheme other than ``s3``, no such connection for the user)
-        refuses the importing node with the store's message, so the run starts no node.
+        refuses the importing node with the store's message, so the run starts no node. So does an edge whose output
+        core knows before the run to hold more rows than ``FLOWFILE_EXCHANGE_MAX_ROWS`` (``BoundaryEdge.cost``), the
+        message naming the rows, the columns and the limit, and a limit that is not a whole number; an edge whose count
+        core does not know crosses whatever its size.
         """
         if not settings.FLOWFILE_COMPUTE_PROTOCOL:
             return None, []
@@ -1002,6 +1026,7 @@ class ExecutionMixin(GraphMixinBase):
             source, target = self.get_node(source_id), self.get_node(target_id)
             try:
                 crossing = self.exchange_run.prefix(source.setting_input.user_id)
+                max_rows = settings.get_exchange_max_rows() if crossing is not None else None
             except ValueError as e:
                 crossing_refusals.append(Refusal(target_id, placement.assignment[target_id], str(e)))
                 continue
@@ -1009,8 +1034,8 @@ class ExecutionMixin(GraphMixinBase):
                 continue
             prefix, credential = crossing
             handles = dict.fromkeys(handle for node, handle in target._slot_input_pairs() if node is source)
-            edges.extend(
-                BoundaryEdge(
+            for handle in handles:
+                edge = BoundaryEdge(
                     source=source,
                     handle=handle,
                     target=target,
@@ -1020,8 +1045,16 @@ class ExecutionMixin(GraphMixinBase):
                     credential=credential,
                     node_logger=self.flow_logger.get_node_logger(target_id),
                 )
-                for handle in handles
-            )
+                cost = edge.cost() if max_rows is not None else None
+                if cost is not None and cost[0] > max_rows:
+                    rows, columns = cost
+                    reason = (
+                        f'the input from node {source_id} would cross from backend "{edge.source_backend_id}" with '
+                        f"{rows} rows of {columns} columns, above FLOWFILE_EXCHANGE_MAX_ROWS={max_rows}"
+                    )
+                    crossing_refusals.append(Refusal(target_id, edge.target_backend_id, reason))
+                else:
+                    edges.append(edge)
         if crossing_refusals:
             placement = replace(placement, refusals=[*placement.refusals, *crossing_refusals])
         return placement, edges
