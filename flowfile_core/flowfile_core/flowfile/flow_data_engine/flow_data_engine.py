@@ -1494,7 +1494,7 @@ class FlowDataEngine:
 
         if len(pivot_input.index_columns) == 0:
             no_index_cols = True
-            pivot_input.index_columns = ["__temp__"]
+            pivot_input = pivot_input.model_copy(update={"index_columns": ["__temp__"]})
             ff = self.apply_flowfile_formula("1", col_name="__temp__")
         else:
             no_index_cols = False
@@ -1534,7 +1534,6 @@ class FlowDataEngine:
 
         if no_index_cols:
             df = df.drop("__temp__")
-            pivot_input.index_columns = []
 
         return FlowDataEngine(df, calculate_schema_stats=False)
 

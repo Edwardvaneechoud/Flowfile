@@ -29,6 +29,7 @@ from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.extensions import get_instant_func_results
 from flowfile_core.flowfile.flow_data_engine.bounded import unique_values
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.formula_entries import (
     FormulaEntry,
     FormulaEntryError,
@@ -732,6 +733,16 @@ def test_a_transform_runs_over_a_stored_result_core_cannot_read(
         assert len(graph.get_node(2).get_table_example(True).data) == rows
     finally:
         graph.close_flow()
+
+
+def test_a_pivot_without_index_columns_never_writes_to_its_settings(unreadable, protocol):
+    pivot_input = transform_schema.PivotInput(
+        index_columns=[], pivot_column="region", value_col="missing", aggregations=["sum"]
+    )
+    with pytest.raises(pl.exceptions.ColumnNotFoundError):
+        FlowDataEngine(pl.LazyFrame(TRANSFORM_ROWS)).do_pivot(pivot_input)
+
+    assert pivot_input.index_columns == []
 
 
 def test_a_stored_results_columns_are_read_from_its_cached_schema(unreadable, protocol_on):
