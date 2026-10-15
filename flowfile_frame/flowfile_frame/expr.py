@@ -59,11 +59,10 @@ FF_OPERATOR_MAP = {
     "&": "and", "|": "or",
 }
 
-# Formula functions whose result is exactly the cast's dtype: to_integer is a strict Int64 cast, to_date parses text.
+# Formula functions that are exactly Polars' strict cast (to_boolean parses text and turns null into false).
 CAST_FF_MAP: dict[pl.DataType, str] = {
     pl.Int64(): "to_integer",
     pl.Float64(): "to_float",
-    pl.Boolean(): "to_boolean",
     pl.String(): "to_string",
 }
 

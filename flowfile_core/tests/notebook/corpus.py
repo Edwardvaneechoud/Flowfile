@@ -61,6 +61,7 @@ CODEGEN_TESTS = (
     "test_sql_query_flow_parameter_becomes_a_pipeline_argument",
     "test_sql_query_multiple_inputs_keep_their_order",
     "test_text_to_rows_operation",
+    "test_to_boolean_formula_exports_as_formula",
     "test_train_apply_evaluate_full_chain_round_trip",
     "test_union_multiple_dataframes",
     "test_unpivot_operation",

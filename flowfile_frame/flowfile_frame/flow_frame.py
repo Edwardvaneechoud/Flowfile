@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from flowfile_frame.catalog_reference import SchemaReference
     from flowfile_frame.run_flow import FlowOutput
 
+from flowfile_core.flowfile.code_generator.expression_helpers import translates_faithfully
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import (
@@ -302,6 +303,8 @@ def _try_translate_flowfile_formulas(
 
     expressions: list[Expr] = []
     for formula, output_name in zip(flowfile_formulas, output_column_names, strict=False):
+        if not translates_faithfully(formula):
+            return None
         try:
             generated = to_flowframe_code(formula)
         except Exception:
