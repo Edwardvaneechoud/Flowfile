@@ -1,266 +1,274 @@
 <template>
   <div v-if="dataLoaded && nodeData" class="listbox-wrapper">
-    <div class="main-part">
-      <!-- Shared fields: table name, namespace, description -->
-      <div class="catalog-field">
-        <label class="catalog-label">Table name</label>
-        <el-input
-          v-model="nodeData.catalog_write_settings.table_name"
-          size="small"
-          placeholder="Enter table name"
-        />
-        <p v-if="tableNameError" class="field-error">{{ tableNameError }}</p>
-      </div>
-
-      <div class="catalog-field">
-        <label class="catalog-label">Catalog / Schema</label>
-        <el-select
-          v-model="nodeData.catalog_write_settings.namespace_id"
-          size="small"
-          placeholder="Select namespace"
-          clearable
-          @change="onNamespaceChange"
-        >
-          <el-option
-            v-for="ns in catalogNamespaces"
-            :key="ns.id"
-            :label="ns.label"
-            :value="ns.id"
+    <generic-node-settings
+      v-model="nodeData"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveSettings"
+    >
+      <div class="main-part">
+        <!-- Shared fields: table name, namespace, description -->
+        <div class="catalog-field">
+          <label class="catalog-label">Table name</label>
+          <el-input
+            v-model="nodeData.catalog_write_settings.table_name"
+            size="small"
+            placeholder="Enter table name"
           />
-        </el-select>
-      </div>
-
-      <!-- Target table status: exists vs new -->
-      <DeltaTableStatusLine
-        v-if="nodeData.catalog_write_settings.table_name && tableLookupDone"
-        :exists="!!existingTable"
-        :row-count="existingTable?.row_count ?? 0"
-        :verb="existingModeVerb"
-        :partition-columns="existingPartitionColumns"
-      >
-        <template #before>
-          <div v-if="scd2TargetWarning" class="status-line status-warn">
-            <i class="fa-solid fa-triangle-exclamation"></i>
-            <span>{{ scd2TargetWarning }}</span>
-          </div>
-        </template>
-        <div
-          v-if="existingTable?.scd2 && physicalWriteMode === 'scd2'"
-          class="status-line status-exists"
-        >
-          <i class="fa-solid fa-clock-rotate-left"></i>
-          <span>SCD2 table - versioned by {{ existingTable.scd2.business_keys.join(", ") }}.</span>
+          <p v-if="tableNameError" class="field-error">{{ tableNameError }}</p>
         </div>
-      </DeltaTableStatusLine>
 
-      <!-- Tabs: Physical Write vs Virtual Table -->
-      <el-tabs v-model="activeTab" class="writer-tabs" @tab-change="handleTabChange">
-        <el-tab-pane label="Write to Catalog" name="physical">
-          <div class="tab-content">
-            <div class="catalog-field">
-              <label class="catalog-label">Write mode</label>
-              <el-select v-model="physicalWriteMode" size="small" @change="handleWriteModeChange">
-                <el-option label="Overwrite" value="overwrite" />
-                <el-option label="Error if exists" value="error" />
-                <el-option label="Append" value="append" />
-                <el-option label="Upsert" value="upsert" />
-                <el-option label="Update" value="update" />
-                <el-option label="Delete" value="delete" />
-                <el-option label="SCD2 (slowly changing dimension)" value="scd2" />
-              </el-select>
+        <div class="catalog-field">
+          <label class="catalog-label">Catalog / Schema</label>
+          <el-select
+            v-model="nodeData.catalog_write_settings.namespace_id"
+            size="small"
+            placeholder="Select namespace"
+            clearable
+            @change="onNamespaceChange"
+          >
+            <el-option
+              v-for="ns in catalogNamespaces"
+              :key="ns.id"
+              :label="ns.label"
+              :value="ns.id"
+            />
+          </el-select>
+        </div>
+
+        <!-- Target table status: exists vs new -->
+        <DeltaTableStatusLine
+          v-if="nodeData.catalog_write_settings.table_name && tableLookupDone"
+          :exists="!!existingTable"
+          :row-count="existingTable?.row_count ?? 0"
+          :verb="existingModeVerb"
+          :partition-columns="existingPartitionColumns"
+        >
+          <template #before>
+            <div v-if="scd2TargetWarning" class="status-line status-warn">
+              <i class="fa-solid fa-triangle-exclamation"></i>
+              <span>{{ scd2TargetWarning }}</span>
             </div>
+          </template>
+          <div
+            v-if="existingTable?.scd2 && physicalWriteMode === 'scd2'"
+            class="status-line status-exists"
+          >
+            <i class="fa-solid fa-clock-rotate-left"></i>
+            <span
+              >SCD2 table - versioned by {{ existingTable.scd2.business_keys.join(", ") }}.</span
+            >
+          </div>
+        </DeltaTableStatusLine>
 
-            <div v-if="needsMergeKeys" class="catalog-field">
-              <label class="catalog-label">{{ keyColumnsLabel }}</label>
-              <MergeKeysSelect
-                v-model="nodeData.catalog_write_settings.merge_keys"
-                :columns="keyColumnOptions"
-                :error="scd2KeyClashError"
-              />
-            </div>
-
-            <div v-if="canPartition" class="catalog-field">
-              <label class="catalog-label">Partition by (optional)</label>
-              <el-select
-                v-model="nodeData.catalog_write_settings.partition_by"
-                size="small"
-                multiple
-                filterable
-                placeholder="Select partition columns"
-              >
-                <el-option
-                  v-for="col in partitionColumnOptions"
-                  :key="col"
-                  :label="col"
-                  :value="col"
-                />
-              </el-select>
-              <p v-if="existingPartitionColumns.length" class="partition-hint">
-                This table is partitioned by {{ existingPartitionColumns.join(", ") }} — leave empty
-                to inherit, or select the same columns.
-              </p>
-              <p v-else class="partition-hint">
-                Set at table creation; appends must match the existing partitioning. Use
-                low-cardinality columns.
-              </p>
-            </div>
-
-            <template v-if="physicalWriteMode === 'scd2' && nodeData.catalog_write_settings.scd2">
-              <div class="catalog-field catalog-field-inline">
-                <el-switch
-                  v-model="nodeData.catalog_write_settings.scd2.partition_on_current"
-                  size="small"
-                />
-                <label class="catalog-label">
-                  Partition on {{ nodeData.catalog_write_settings.scd2.is_current_column }}
-                </label>
-                <p class="partition-hint">
-                  Speeds up "Active records" reads. Applied at table creation.
-                </p>
-              </div>
+        <!-- Tabs: Physical Write vs Virtual Table -->
+        <el-tabs v-model="activeTab" class="writer-tabs" @tab-change="handleTabChange">
+          <el-tab-pane label="Write to Catalog" name="physical">
+            <div class="tab-content">
               <div class="catalog-field">
-                <label class="catalog-label">Compare columns</label>
+                <label class="catalog-label">Write mode</label>
+                <el-select v-model="physicalWriteMode" size="small" @change="handleWriteModeChange">
+                  <el-option label="Overwrite" value="overwrite" />
+                  <el-option label="Error if exists" value="error" />
+                  <el-option label="Append" value="append" />
+                  <el-option label="Upsert" value="upsert" />
+                  <el-option label="Update" value="update" />
+                  <el-option label="Delete" value="delete" />
+                  <el-option label="SCD2 (slowly changing dimension)" value="scd2" />
+                </el-select>
+              </div>
+
+              <div v-if="needsMergeKeys" class="catalog-field">
+                <label class="catalog-label">{{ keyColumnsLabel }}</label>
+                <MergeKeysSelect
+                  v-model="nodeData.catalog_write_settings.merge_keys"
+                  :columns="keyColumnOptions"
+                  :error="scd2KeyClashError"
+                />
+              </div>
+
+              <div v-if="canPartition" class="catalog-field">
+                <label class="catalog-label">Partition by (optional)</label>
                 <el-select
-                  v-model="nodeData.catalog_write_settings.scd2.compare_columns"
+                  v-model="nodeData.catalog_write_settings.partition_by"
                   size="small"
                   multiple
                   filterable
-                  clearable
-                  placeholder="All non-key columns"
+                  placeholder="Select partition columns"
                 >
                   <el-option
-                    v-for="col in comparableColumns"
+                    v-for="col in partitionColumnOptions"
                     :key="col"
                     :label="col"
                     :value="col"
                   />
                 </el-select>
-                <p class="partition-hint">
-                  Leave empty to detect a change on every non-key column.
+                <p v-if="existingPartitionColumns.length" class="partition-hint">
+                  This table is partitioned by {{ existingPartitionColumns.join(", ") }} — leave
+                  empty to inherit, or select the same columns.
+                </p>
+                <p v-else class="partition-hint">
+                  Set at table creation; appends must match the existing partitioning. Use
+                  low-cardinality columns.
                 </p>
               </div>
-              <div class="catalog-field catalog-field-inline">
-                <el-switch
-                  v-model="nodeData.catalog_write_settings.scd2.full_snapshot"
-                  size="small"
-                />
-                <label class="catalog-label">Input is a full snapshot</label>
-                <p class="partition-hint">
-                  End-date current rows whose business key is absent from this run's input.
-                </p>
-              </div>
-              <div class="catalog-field">
-                <label class="catalog-label">Output</label>
-                <el-select
-                  v-model="nodeData.catalog_write_settings.scd2.output_mode"
-                  size="small"
-                  placeholder="All records that are inputted"
-                >
-                  <el-option label="All records that are inputted" value="input" />
-                  <el-option label="All changed records" value="changed" />
-                  <el-option label="All active records" value="current" />
-                </el-select>
-                <p class="partition-hint">{{ scd2OutputModeHint }}</p>
-              </div>
-              <CollapsibleSection
-                title="Generated columns"
-                :default-open="false"
-                nested
-                persist-key="catalogWriter.scd2.columns"
-              >
-                <div v-for="f in scd2ColumnFields" :key="f.key" class="catalog-field">
-                  <label class="catalog-label">{{ f.label }}</label>
-                  <el-input
-                    v-model="nodeData.catalog_write_settings.scd2[f.key]"
+
+              <template v-if="physicalWriteMode === 'scd2' && nodeData.catalog_write_settings.scd2">
+                <div class="catalog-field catalog-field-inline">
+                  <el-switch
+                    v-model="nodeData.catalog_write_settings.scd2.partition_on_current"
                     size="small"
-                    :placeholder="f.def"
                   />
-                  <p v-if="scd2ColumnErrors[f.key]" class="field-error">
-                    {{ scd2ColumnErrors[f.key] }}
+                  <label class="catalog-label">
+                    Partition on {{ nodeData.catalog_write_settings.scd2.is_current_column }}
+                  </label>
+                  <p class="partition-hint">
+                    Speeds up "Active records" reads. Applied at table creation.
                   </p>
                 </div>
-              </CollapsibleSection>
-            </template>
-
-            <div class="catalog-field">
-              <el-tooltip
-                :disabled="trackChangesDisabledReason === null"
-                :content="trackChangesDisabledReason ?? ''"
-                placement="top"
-              >
-                <span>
-                  <el-checkbox
-                    v-model="nodeData.catalog_write_settings.track_changes"
+                <div class="catalog-field">
+                  <label class="catalog-label">Compare columns</label>
+                  <el-select
+                    v-model="nodeData.catalog_write_settings.scd2.compare_columns"
                     size="small"
-                    :disabled="trackChangesDisabledReason !== null"
+                    multiple
+                    filterable
+                    clearable
+                    placeholder="All non-key columns"
                   >
-                    Track changes
-                  </el-checkbox>
-                </span>
-              </el-tooltip>
-              <p class="partition-hint">
-                Records every insert, update and delete so a catalog reader can read only what
-                changed. Turning it on never turns it off again.
-              </p>
-            </div>
+                    <el-option
+                      v-for="col in comparableColumns"
+                      :key="col"
+                      :label="col"
+                      :value="col"
+                    />
+                  </el-select>
+                  <p class="partition-hint">
+                    Leave empty to detect a change on every non-key column.
+                  </p>
+                </div>
+                <div class="catalog-field catalog-field-inline">
+                  <el-switch
+                    v-model="nodeData.catalog_write_settings.scd2.full_snapshot"
+                    size="small"
+                  />
+                  <label class="catalog-label">Input is a full snapshot</label>
+                  <p class="partition-hint">
+                    End-date current rows whose business key is absent from this run's input.
+                  </p>
+                </div>
+                <div class="catalog-field">
+                  <label class="catalog-label">Output</label>
+                  <el-select
+                    v-model="nodeData.catalog_write_settings.scd2.output_mode"
+                    size="small"
+                    placeholder="All records that are inputted"
+                  >
+                    <el-option label="All records that are inputted" value="input" />
+                    <el-option label="All changed records" value="changed" />
+                    <el-option label="All active records" value="current" />
+                  </el-select>
+                  <p class="partition-hint">{{ scd2OutputModeHint }}</p>
+                </div>
+                <CollapsibleSection
+                  title="Generated columns"
+                  :default-open="false"
+                  nested
+                  persist-key="catalogWriter.scd2.columns"
+                >
+                  <div v-for="f in scd2ColumnFields" :key="f.key" class="catalog-field">
+                    <label class="catalog-label">{{ f.label }}</label>
+                    <el-input
+                      v-model="nodeData.catalog_write_settings.scd2[f.key]"
+                      size="small"
+                      :placeholder="f.def"
+                    />
+                    <p v-if="scd2ColumnErrors[f.key]" class="field-error">
+                      {{ scd2ColumnErrors[f.key] }}
+                    </p>
+                  </div>
+                </CollapsibleSection>
+              </template>
 
-            <div v-if="physicalModeDescription" class="mode-description">
-              {{ physicalModeDescription }}
-            </div>
-          </div>
-        </el-tab-pane>
+              <div class="catalog-field">
+                <el-tooltip
+                  :disabled="trackChangesDisabledReason === null"
+                  :content="trackChangesDisabledReason ?? ''"
+                  placement="top"
+                >
+                  <span>
+                    <el-checkbox
+                      v-model="nodeData.catalog_write_settings.track_changes"
+                      size="small"
+                      :disabled="trackChangesDisabledReason !== null"
+                    >
+                      Track changes
+                    </el-checkbox>
+                  </span>
+                </el-tooltip>
+                <p class="partition-hint">
+                  Records every insert, update and delete so a catalog reader can read only what
+                  changed. Turning it on never turns it off again.
+                </p>
+              </div>
 
-        <el-tab-pane label="Virtual Table" name="virtual">
-          <div class="tab-content">
-            <div class="virtual-info">
-              <i class="fa-solid fa-bolt"></i>
-              <span
-                >No data is written to disk. When this table is queried, the flow will be
-                re-executed on demand to produce results.</span
-              >
+              <div v-if="physicalModeDescription" class="mode-description">
+                {{ physicalModeDescription }}
+              </div>
             </div>
+          </el-tab-pane>
 
-            <!-- Laziness check results -->
-            <div v-if="lazinessLoading" class="laziness-loading">
-              <i class="fa-solid fa-spinner fa-spin"></i>
-              <span>Checking flow optimization...</span>
-            </div>
-            <div v-else-if="lazinessCheck" class="laziness-result">
-              <div v-if="lazinessCheck.is_optimizable" class="laziness-ok">
-                <i class="fa-solid fa-circle-check"></i>
+          <el-tab-pane label="Virtual Table" name="virtual">
+            <div class="tab-content">
+              <div class="virtual-info">
+                <i class="fa-solid fa-bolt"></i>
                 <span
-                  >This flow is fully lazy — the virtual table will be
-                  <strong>optimized</strong> with predicate and projection pushdown.</span
+                  >No data is written to disk. When this table is queried, the flow will be
+                  re-executed on demand to produce results.</span
                 >
               </div>
-              <div v-else class="laziness-warn">
-                <div class="laziness-warn-header">
-                  <i class="fa-solid fa-triangle-exclamation"></i>
+
+              <!-- Laziness check results -->
+              <div v-if="lazinessLoading" class="laziness-loading">
+                <i class="fa-solid fa-spinner fa-spin"></i>
+                <span>Checking flow optimization...</span>
+              </div>
+              <div v-else-if="lazinessCheck" class="laziness-result">
+                <div v-if="lazinessCheck.is_optimizable" class="laziness-ok">
+                  <i class="fa-solid fa-circle-check"></i>
                   <span
-                    >This flow has nodes that prevent full lazy execution. The virtual table will
-                    use <strong>standard</strong> (non-optimized) resolution.</span
+                    >This flow is fully lazy — the virtual table will be
+                    <strong>optimized</strong> with predicate and projection pushdown.</span
                   >
                 </div>
-                <ul class="blocker-list">
-                  <li v-for="(reason, i) in lazinessCheck.blockers" :key="i">{{ reason }}</li>
-                </ul>
+                <div v-else class="laziness-warn">
+                  <div class="laziness-warn-header">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    <span
+                      >This flow has nodes that prevent full lazy execution. The virtual table will
+                      use <strong>standard</strong> (non-optimized) resolution.</span
+                    >
+                  </div>
+                  <ul class="blocker-list">
+                    <li v-for="(reason, i) in lazinessCheck.blockers" :key="i">{{ reason }}</li>
+                  </ul>
+                </div>
               </div>
             </div>
-          </div>
-        </el-tab-pane>
-      </el-tabs>
+          </el-tab-pane>
+        </el-tabs>
 
-      <div class="catalog-field">
-        <label class="catalog-label">Description (optional)</label>
-        <el-input
-          v-model="nodeData.catalog_write_settings.description"
-          size="small"
-          type="textarea"
-          :rows="2"
-          placeholder="Table description"
-        />
+        <div class="catalog-field">
+          <label class="catalog-label">Description (optional)</label>
+          <el-input
+            v-model="nodeData.catalog_write_settings.description"
+            size="small"
+            type="textarea"
+            :rows="2"
+            placeholder="Table description"
+          />
+        </div>
       </div>
-    </div>
+    </generic-node-settings>
   </div>
 </template>
 
@@ -270,6 +278,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useFlowStore } from "../../../../../stores/flow-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { useWritableNamespaces } from "../../../../../composables/useWritableNamespaces";
 import { validateCatalogName } from "../../../../../composables/catalogNameValidation";
 import { CatalogApi } from "../../../../../api/catalog.api";
@@ -298,29 +307,30 @@ const tableNameError = computed(() =>
   validateCatalogName(nodeData.value?.catalog_write_settings.table_name ?? "", "Table"),
 );
 
-const { saveSettings, saveSettingsDroppingEdges, pushNodeData } = useNodeSettings({
-  nodeRef: nodeData,
-  onBeforeSave: () => {
-    if (tableNameError.value) {
-      ElMessage.error(tableNameError.value);
-      return false;
-    }
-    if (physicalWriteMode.value === "scd2") {
-      const firstError = Object.values(scd2ColumnErrors.value).find((e) => e != null);
-      if (firstError) {
-        ElMessage.error(`Generated columns: ${firstError}`);
+const { saveSettings, saveSettingsDroppingEdges, pushNodeData, handleGenericSettingsUpdate } =
+  useNodeSettings({
+    nodeRef: nodeData,
+    onBeforeSave: () => {
+      if (tableNameError.value) {
+        ElMessage.error(tableNameError.value);
         return false;
       }
-      if (scd2KeyClashError.value) {
-        ElMessage.error(`${keyColumnsLabel.value}: ${scd2KeyClashError.value}`);
-        return false;
+      if (physicalWriteMode.value === "scd2") {
+        const firstError = Object.values(scd2ColumnErrors.value).find((e) => e != null);
+        if (firstError) {
+          ElMessage.error(`Generated columns: ${firstError}`);
+          return false;
+        }
+        if (scd2KeyClashError.value) {
+          ElMessage.error(`${keyColumnsLabel.value}: ${scd2KeyClashError.value}`);
+          return false;
+        }
       }
-    }
-  },
-  onAfterSave: () => {
-    if (nodeData.value) updateNodeOutputHandles(nodeData.value.catalog_write_settings.write_mode);
-  },
-});
+    },
+    onAfterSave: () => {
+      if (nodeData.value) updateNodeOutputHandles(nodeData.value.catalog_write_settings.write_mode);
+    },
+  });
 
 const catalogNamespaces = ref<{ id: number; label: string; full: string }[]>([]);
 // System-stripped but unpruned — for restoring a configured target the pruned list hides.
