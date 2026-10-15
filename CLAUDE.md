@@ -202,7 +202,7 @@ FLOWFILE_COMPUTE_PROTOCOL=0 poetry run pytest tests/cloud_e2e -m cloud_e2e
 # Core and a worker on storage dirs of their own (no Docker): with the protocol flag on, core opens no file the worker wrote
 poetry run pytest tests/remote_worker -m "not docker_integration"
 
-# Core and a worker in containers that share no volume (docker-compose.remote-worker.yml): database read to catalog write, and one node on the worker with the rest in core through an exchange store on MinIO, protocol flag on and off
+# Core and a worker in containers that share no volume (docker-compose.remote-worker.yml): database read to catalog write, the elaborate integration flow on the worker (its fuzzy match in core) and with its nodes alternating between the worker and core, and one node on the worker with the rest in core through an exchange store on MinIO, protocol flag on and off
 poetry run pytest tests/remote_worker -m docker_integration
 ```
 
@@ -365,7 +365,7 @@ npm run lint          # eslint --fix ./src/**/*.{ts,vue} (renderer TS/Vue only)
 | `e2e-tests.yml` | Push/PR to `main` (`flowfile_frontend/**`, `flowfile_core/**`, `flowfile_worker/**`, `shared/**`, `test_utils/s3/**`) | Build frontend, start and seed MinIO, start core + worker from empty working dirs with a MinIO-only AWS profile (`AWS_ENDPOINT_URL` exported, so nothing reaches AWS), run Playwright web E2E incl. `cloud-storage-flow.spec.ts`; fails if a server wrote into its working dir |
 | `test-docker-auth.yml` | Push/PR to `main` (auth code + core Dockerfile) | Docker-based auth E2E tests |
 | `test-docker-kernel-e2e.yml` | Push/PR to `main` (kernel_runtime, kernel code, Dockerfiles, compose) | Docker kernel E2E tests |
-| `test-remote-worker.yml` | Push/PR to `main` (no path filter) | Builds core and worker and runs a flow on a worker that shares no volume with core (`docker-compose.remote-worker.yml`), and a flow with one node on the worker and the rest in core, crossing through an exchange store on MinIO, with the protocol flag on and off |
+| `test-remote-worker.yml` | Push/PR to `main` (no path filter) | Builds core and worker and runs a flow on a worker that shares no volume with core (`docker-compose.remote-worker.yml`), the elaborate integration flow on the worker (its fuzzy match in core) and with its nodes alternating between the worker and core, its edges crossing through an exchange store on MinIO, and a flow with one node on the worker and the rest in core, crossing through the same store, with the protocol flag on and off |
 | `test-kernel-integration.yml` | Push/PR to `main` (kernel_runtime, kernel/artifacts code + tests) | Kernel integration tests |
 | `test-notebook-kernel.yml` | Push/PR to `main` (`flowfile_frame/**`, notebook + kernel code and tests, `kernel_runtime/**`, `shared/**`, the lock) | Builds `flowfile-kernel-lite:local` + `flowfile-kernel-notebook:local` from the checkout's wheel and runs `tests/notebook/test_kernel_notebook_docker.py` (`FLOWFILE_REQUIRE_NOTEBOOK_KERNEL` makes a skip a failure) |
 | `test-kafka-integration.yml` | Push/PR to `main` (kafka code + tests) | Kafka integration tests |

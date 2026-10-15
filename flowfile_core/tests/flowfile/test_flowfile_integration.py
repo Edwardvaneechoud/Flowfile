@@ -24,8 +24,7 @@ def find_parent_directory(target_dir_name,):
     raise FileNotFoundError(f"Directory '{target_dir_name}' not found")
 
 
-@pytest.fixture
-def complex_elaborate_flow(tmp_path) -> FlowGraph:
+def build_complex_elaborate_flow(output_directory: Path) -> FlowGraph:
     """
     Creates a super complex elaborate flow using all available node types.
 
@@ -424,7 +423,7 @@ output_df = input_df.with_columns([
         node_id=71,
         output_settings=input_schema.OutputSettings(
             name='customer_sales_analysis.csv',
-            directory=str(tmp_path),
+            directory=str(output_directory),
             file_type='csv',
             write_mode='overwrite',
             table_settings=input_schema.OutputCsvTable(
@@ -442,7 +441,7 @@ output_df = input_df.with_columns([
         node_id=72,
         output_settings=input_schema.OutputSettings(
             name='fuzzy_matched_customers.parquet',
-            directory=str(tmp_path),
+            directory=str(output_directory),
             file_type='parquet',
             write_mode='overwrite',
             table_settings=input_schema.OutputParquetTable()
@@ -456,7 +455,7 @@ output_df = input_df.with_columns([
         node_id=73,
         output_settings=input_schema.OutputSettings(
             name='network_components.csv',
-            directory=str(tmp_path),
+            directory=str(output_directory),
             file_type='csv',
             write_mode='overwrite',
             table_settings=input_schema.OutputCsvTable(
@@ -474,7 +473,7 @@ output_df = input_df.with_columns([
         node_id=74,
         output_settings=input_schema.OutputSettings(
             name='combined_aggregations.csv',
-            directory=str(tmp_path),
+            directory=str(output_directory),
             file_type='csv',
             write_mode='overwrite',
             table_settings=input_schema.OutputCsvTable(
@@ -485,6 +484,11 @@ output_df = input_df.with_columns([
     ))
 
     return graph
+
+
+@pytest.fixture
+def complex_elaborate_flow(tmp_path) -> FlowGraph:
+    return build_complex_elaborate_flow(tmp_path)
 
 
 @pytest.fixture
