@@ -1,0 +1,2713 @@
+{
+  "flowfile_version": "0.23.2",
+  "flowfile_id": 1,
+  "flowfile_name": "complex_flow",
+  "flowfile_settings": {
+    "description": null,
+    "execution_mode": "Development",
+    "execution_location": "remote",
+    "auto_save": false,
+    "show_detailed_progress": true,
+    "validate_settings": true,
+    "max_parallel_workers": 4,
+    "source_registration_id": null,
+    "parameters": []
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "type": "manual_input",
+      "is_start_node": true,
+      "description": "4 cols, 5 rows: customer_id, name, city, segment",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": null,
+      "outputs": [
+        11,
+        43
+      ],
+      "output_handles": [
+        "output-0",
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "output_field_config": null,
+        "raw_data_format": {
+          "columns": [
+            {
+              "name": "customer_id",
+              "data_type": "String"
+            },
+            {
+              "name": "name",
+              "data_type": "String"
+            },
+            {
+              "name": "city",
+              "data_type": "String"
+            },
+            {
+              "name": "segment",
+              "data_type": "String"
+            }
+          ],
+          "data": [
+            [
+              "C001",
+              "C002",
+              "C003",
+              "C004",
+              "C005"
+            ],
+            [
+              "John Smith",
+              "Jane Doe",
+              "Edward Jones",
+              "Courtney Brown",
+              "Michael Davis"
+            ],
+            [
+              "New York",
+              "Los Angeles",
+              "Chicago",
+              "Chicago",
+              "Houston"
+            ],
+            [
+              "Premium",
+              "Standard",
+              "Premium",
+              "Standard",
+              "Premium"
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "manual_input",
+      "is_start_node": true,
+      "description": "11 cols, 100 rows: sales_data, Address, ID, Name, DOB (+6 more)",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": null,
+      "outputs": [
+        16
+      ],
+      "output_handles": [
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "output_field_config": null,
+        "raw_data_format": {
+          "columns": [
+            {
+              "name": "sales_data",
+              "data_type": "Int64"
+            },
+            {
+              "name": "Address",
+              "data_type": "String"
+            },
+            {
+              "name": "ID",
+              "data_type": "Int64"
+            },
+            {
+              "name": "Name",
+              "data_type": "String"
+            },
+            {
+              "name": "DOB",
+              "data_type": "Date"
+            },
+            {
+              "name": "Country",
+              "data_type": "String"
+            },
+            {
+              "name": "Email",
+              "data_type": "String"
+            },
+            {
+              "name": "Phone",
+              "data_type": "String"
+            },
+            {
+              "name": "Zipcode",
+              "data_type": "String"
+            },
+            {
+              "name": "Work",
+              "data_type": "String"
+            },
+            {
+              "name": "City",
+              "data_type": "String"
+            }
+          ],
+          "data": [
+            [
+              916,
+              128,
+              480,
+              143,
+              28,
+              522,
+              522,
+              150,
+              554,
+              907,
+              518,
+              384,
+              54,
+              220,
+              126,
+              386,
+              550,
+              105,
+              978,
+              568,
+              169,
+              461,
+              706,
+              976,
+              249,
+              752,
+              218,
+              144,
+              754,
+              165,
+              754,
+              554,
+              660,
+              72,
+              554,
+              143,
+              274,
+              638,
+              392,
+              684,
+              245,
+              480,
+              358,
+              105,
+              445,
+              198,
+              72,
+              826,
+              609,
+              338,
+              568,
+              245,
+              518,
+              554,
+              386,
+              981,
+              126,
+              420,
+              649,
+              270,
+              384,
+              391,
+              608,
+              582,
+              386,
+              358,
+              37,
+              72,
+              680,
+              309,
+              386,
+              360,
+              48,
+              249,
+              611,
+              360,
+              165,
+              186,
+              72,
+              511,
+              218,
+              702,
+              74,
+              300,
+              376,
+              93,
+              582,
+              72,
+              338,
+              940,
+              702,
+              480,
+              178,
+              609,
+              489,
+              144,
+              28,
+              186,
+              984,
+              752
+            ],
+            [
+              "895 Powell Alley",
+              "790 Harrison Fields",
+              "803 Nixon Harbors",
+              "915 Lauren Green",
+              "113 Samuel Passage",
+              "329 Gregory Island",
+              "607 Julie Lodge",
+              "216 Davidson Forges",
+              "673 Scott Common",
+              "405 Ernest Tunnel",
+              "764 Amanda Mount",
+              "118 Cantrell Mission",
+              "141 Matthew Bridge",
+              "720 Matthew Landing",
+              "907 Shaffer Walk",
+              "677 Matthew Shoal",
+              "719 Philip Port",
+              "482 Mcgee Circle",
+              "935 Ralph Stravenue",
+              "115 Wyatt Island",
+              "527 Harrison Fields",
+              "357 Philip Port",
+              "552 Linda Hill",
+              "783 James Roads",
+              "953 Scott Trail",
+              "605 Philip Port",
+              "465 Matthew Landing",
+              "769 Kylie Prairie",
+              "290 Davidson Forges",
+              "675 Cathy Avenue",
+              "926 Wyatt Island",
+              "849 Johnson Extensions",
+              "734 Abigail Hollow",
+              "424 Dustin Walks",
+              "893 Theresa Throughway",
+              "913 Rivas Run",
+              "605 Gonzalez Lakes",
+              "104 Margaret Lake",
+              "798 David Track",
+              "692 Delacruz Shores",
+              "134 Jennifer Underpass",
+              "850 John Lock",
+              "771 Delacruz Shores",
+              "261 Carmen Ford",
+              "353 Andre Walk",
+              "319 Castillo Wells",
+              "864 Vickie Mission",
+              "480 Shaffer Walk",
+              "413 Powell Alley",
+              "905 Wyatt Island",
+              "713 Olson Forges",
+              "641 Ruben Junctions",
+              "123 Combs Garden",
+              "285 Terry Prairie",
+              "945 Caroline Via",
+              "407 Gregory Island",
+              "918 Harrison Fields",
+              "713 Kylie Prairie",
+              "244 Ball Summit",
+              "362 James Roads",
+              "489 Victoria Creek",
+              "235 Terri Square",
+              "786 Caroline Via",
+              "417 Nancy Hills",
+              "397 David Place",
+              "773 Rivas Run",
+              "217 Lauren Green",
+              "538 Misty Hill",
+              "242 Amanda Mount",
+              "350 Alvarez Port",
+              "638 Scott Common",
+              "681 Nancy Hills",
+              "771 Nixon Harbors",
+              "853 Olson Forges",
+              "824 Victoria Creek",
+              "411 Webster Shores",
+              "917 Rosales Lodge",
+              "967 Jennifer Underpass",
+              "290 Rosales Lodge",
+              "695 Ashley Spurs",
+              "382 Gonzalez Lakes",
+              "684 Linda Hill",
+              "509 Rita Plains",
+              "349 John Lock",
+              "763 Wyatt Island",
+              "730 Gregory Island",
+              "496 Castillo Wells",
+              "505 Webster Shores",
+              "468 Paula Branch",
+              "525 Scott Trail",
+              "306 Powell Alley",
+              "498 Gonzalez Divide",
+              "853 Daniel Bridge",
+              "645 Scott Trail",
+              "956 Ball Summit",
+              "113 Julie Lodge",
+              "981 Jeffrey Mountain",
+              "190 Jimenez Crossroad",
+              "178 Nancy Hills",
+              "897 Bass Mills"
+            ],
+            [
+              94652,
+              718243,
+              821698,
+              102069,
+              88529,
+              797296,
+              582889,
+              468970,
+              304092,
+              951542,
+              509856,
+              680889,
+              898055,
+              704667,
+              988606,
+              165329,
+              576634,
+              994984,
+              619172,
+              462421,
+              837569,
+              150,
+              484552,
+              597567,
+              701622,
+              822861,
+              951582,
+              346727,
+              112874,
+              250554,
+              638532,
+              791228,
+              121522,
+              869108,
+              404703,
+              730432,
+              639465,
+              962530,
+              227793,
+              641617,
+              969913,
+              150450,
+              195301,
+              647805,
+              781779,
+              745240,
+              911517,
+              233247,
+              293601,
+              87231,
+              326496,
+              486666,
+              761026,
+              428573,
+              131949,
+              808012,
+              195709,
+              169932,
+              940704,
+              510452,
+              336714,
+              110233,
+              482902,
+              295507,
+              66644,
+              78957,
+              792729,
+              303700,
+              858239,
+              313047,
+              316969,
+              594337,
+              759462,
+              470216,
+              573668,
+              9907,
+              685922,
+              889267,
+              327838,
+              894398,
+              978081,
+              357093,
+              404635,
+              979016,
+              395874,
+              998953,
+              550022,
+              166152,
+              686311,
+              895929,
+              645951,
+              378148,
+              950246,
+              987720,
+              636231,
+              449615,
+              509993,
+              272682,
+              98405,
+              800970
+            ],
+            [
+              "Kara Macdonald",
+              "Susan Mathis",
+              "Michael Hobbs",
+              "Angela Morales",
+              "Heather Butler",
+              "Robert King",
+              "Cristian Young",
+              "Darius Rojas",
+              "Katherine Ferguson",
+              "Elizabeth Quinn",
+              "Oscar Juarez",
+              "Steven Dudley",
+              "Morgan Dawson",
+              "Oscar Butler",
+              "Stephanie Hahn",
+              "Jeremy Phillips",
+              "Danielle Davis",
+              "Kathy Christensen",
+              "Jillian Juarez",
+              "Deborah Hobbs",
+              "Danielle Weaver",
+              "Melanie Sanchez",
+              "Michael Vega",
+              "Melissa Vega",
+              "Kimberly Vega",
+              "Roger Pugh",
+              "David Patterson",
+              "Nicole Jones",
+              "Billy Mathis",
+              "Christopher Acosta",
+              "Aaron Castaneda",
+              "Tammy Quinn",
+              "Tabitha Castaneda",
+              "Wesley Ward",
+              "David Carey",
+              "Larry Garcia",
+              "Tina Lee",
+              "Deborah Vega",
+              "Amy Townsend",
+              "Tammy Pena",
+              "William Pruitt",
+              "Cristian Pruitt",
+              "Catherine Johnson",
+              "Steven Juarez",
+              "Steven Hayes",
+              "Joe Hill",
+              "Austin Allen",
+              "Katherine Mathis",
+              "Michael Burke",
+              "Chase Fleming",
+              "Steven Mays",
+              "Kara Velez",
+              "Wesley Lowery",
+              "Christopher Chung",
+              "Christopher Gonzalez",
+              "Tammy Reynolds",
+              "Emily Townsend",
+              "Justin Sanchez",
+              "Joe Lowery",
+              "Heather Dawson",
+              "Zachary Smith",
+              "Susan Fleming",
+              "Jacob Carey",
+              "Kara Gardner",
+              "Daniel Morales",
+              "Robert Moreno",
+              "Mark Acosta",
+              "Aaron Gonzalez",
+              "Ralph Wilson",
+              "Catherine Burgess",
+              "Christopher Chung",
+              "Benjamin Patterson",
+              "Ralph Jones",
+              "Christina Townsend",
+              "Austin Rodriguez",
+              "Victoria Atkins",
+              "Jennifer Brown",
+              "Michael Young",
+              "Mario Jarvis",
+              "Christopher Quinn",
+              "Nicole Cohen",
+              "Mario Sullivan",
+              "Michelle Edwards",
+              "Sarah Brown",
+              "Justin Burke",
+              "Billy Gonzalez",
+              "Daniel Hill",
+              "Wesley Gonzalez",
+              "Benjamin Dawson",
+              "Samantha Hayes",
+              "Susan Mays",
+              "Amy Moore",
+              "Nicole Weaver",
+              "Austin Downs",
+              "Devin Smith",
+              "Mark Gardner",
+              "Aaron Townsend",
+              "Kathy Schwartz",
+              "Melanie Jarvis",
+              "Kevin Martinez"
+            ],
+            [
+              "1925-05-31",
+              "1968-01-15",
+              "1969-03-09",
+              "2013-01-22",
+              "2023-09-16",
+              "1932-01-01",
+              "1987-04-09",
+              "1956-05-18",
+              "2003-04-30",
+              "2004-07-14",
+              "1946-02-24",
+              "2007-07-27",
+              "1979-08-31",
+              "1986-09-15",
+              "1974-07-21",
+              "2015-06-06",
+              "2011-03-20",
+              "2025-03-13",
+              "1983-11-27",
+              "1998-02-08",
+              "1961-01-08",
+              "2012-11-21",
+              "1925-04-22",
+              "1955-05-16",
+              "1925-05-31",
+              "1968-01-15",
+              "1995-03-09",
+              "2014-11-13",
+              "1925-04-22",
+              "1939-10-15",
+              "1979-01-29",
+              "1925-04-22",
+              "1942-08-26",
+              "1934-11-26",
+              "1965-04-16",
+              "1969-03-09",
+              "1985-05-30",
+              "1914-12-31",
+              "1961-01-08",
+              "1966-11-18",
+              "1990-07-18",
+              "2014-03-15",
+              "1987-04-09",
+              "1992-01-08",
+              "2004-07-14",
+              "1979-08-31",
+              "1970-01-21",
+              "1963-02-27",
+              "1991-02-28",
+              "1914-12-31",
+              "1979-08-06",
+              "2014-11-13",
+              "2013-04-13",
+              "2000-03-30",
+              "1925-04-22",
+              "1946-02-19",
+              "1986-09-15",
+              "1968-01-15",
+              "1925-05-31",
+              "1992-01-08",
+              "1990-06-06",
+              "1968-01-15",
+              "1944-09-12",
+              "1920-02-28",
+              "1980-07-22",
+              "1969-03-09",
+              "2011-08-16",
+              "2017-07-19",
+              "2008-04-26",
+              "1979-08-06",
+              "1974-07-21",
+              "1979-08-31",
+              "1971-07-30",
+              "1979-01-29",
+              "1961-01-08",
+              "1990-06-06",
+              "2006-10-05",
+              "1976-07-18",
+              "2011-08-16",
+              "1967-06-24",
+              "1987-04-09",
+              "1963-02-27",
+              "1911-01-22",
+              "2014-11-13",
+              "2024-03-11",
+              "1983-11-27",
+              "1967-06-24",
+              "1967-06-24",
+              "1976-07-18",
+              "1979-01-29",
+              "1922-06-20",
+              "1942-08-26",
+              "1957-07-07",
+              "1990-07-18",
+              "1992-03-30",
+              "1925-05-31",
+              "1911-09-18",
+              "1944-01-07",
+              "2011-03-20",
+              "1914-12-31"
+            ],
+            [
+              "Cote d'Ivoire",
+              "Liberia",
+              "Congo",
+              "Cameroon",
+              "Western Sahara",
+              "Saint Kitts and Nevis",
+              "Ethiopia",
+              "Armenia",
+              "Micronesia",
+              "Cote d'Ivoire",
+              "Ethiopia",
+              "Armenia",
+              "Cote d'Ivoire",
+              "Honduras",
+              "Guinea-Bissau",
+              "Western Sahara",
+              "Lebanon",
+              "Saint Kitts and Nevis",
+              "Armenia",
+              "Guinea",
+              "South Africa",
+              "Malaysia",
+              "Armenia",
+              "South Africa",
+              "Ukraine",
+              "Armenia",
+              "Guinea",
+              "Congo",
+              "Armenia",
+              "Zambia",
+              "Saint Kitts and Nevis",
+              "Ukraine",
+              "Pitcairn Islands",
+              "Taiwan",
+              "Suriname",
+              "Armenia",
+              "South Africa",
+              "Greenland",
+              "Congo",
+              "Serbia",
+              "Mongolia",
+              "Palestinian Territory",
+              "Micronesia",
+              "Cote d'Ivoire",
+              "Micronesia",
+              "Saint Kitts and Nevis",
+              "Kuwait",
+              "Tonga",
+              "Kuwait",
+              "Armenia",
+              "North Macedonia",
+              "Estonia",
+              "Malaysia",
+              "Taiwan",
+              "Palestinian Territory",
+              "Guinea",
+              "Armenia",
+              "Kuwait",
+              "Paraguay",
+              "Cocos (Keeling) Islands",
+              "Pitcairn Islands",
+              "Senegal",
+              "Western Sahara",
+              "Micronesia",
+              "Austria",
+              "Western Sahara",
+              "Cote d'Ivoire",
+              "Suriname",
+              "Mongolia",
+              "Armenia",
+              "Djibouti",
+              "Mongolia",
+              "Armenia",
+              "Serbia",
+              "Liberia",
+              "South Africa",
+              "Malaysia",
+              "Estonia",
+              "Cote d'Ivoire",
+              "Liberia",
+              "Taiwan",
+              "Liberia",
+              "Panama",
+              "Mauritania",
+              "Honduras",
+              "Cameroon",
+              "Armenia",
+              "Djibouti",
+              "Senegal",
+              "Armenia",
+              "Armenia",
+              "Egypt",
+              "Tokelau",
+              "Austria",
+              "Micronesia",
+              "Mongolia",
+              "Antarctica (the territory South of 60 deg S)",
+              "Armenia",
+              "Panama",
+              "Heard Island and McDonald Islands"
+            ],
+            [
+              "kara_macdonald.71@adams-hill.info",
+              "susan_mathis.80@freeman.info",
+              "michael_hobbs.40@wilson-watson.com",
+              "angela_morales.44@benton-elliott.com",
+              "heather_butler.39@haynes-moon.com",
+              "robert_king.93@austin.com",
+              "cristian_young.49@vargas.com",
+              "darius_rojas.48@wilson-watson.com",
+              "katherine_ferguson.48@austin.com",
+              "elizabeth_quinn.94@haynes-moon.com",
+              "oscar_juarez.84@guzman.biz",
+              "steven_dudley.53@haynes-moon.com",
+              "morgan_dawson.74@adams-hill.info",
+              "oscar_butler.49@haynes-moon.com",
+              "stephanie_hahn.16@benton-elliott.com",
+              "jeremy_phillips.28@haynes-moon.com",
+              "danielle_davis.30@richards-clay.biz",
+              "kathy_christensen.10@richards-clay.biz",
+              "jillian_juarez.81@adams-hill.info",
+              "deborah_hobbs.82@freeman.info",
+              "danielle_weaver.55@freeman.info",
+              "melanie_sanchez.76@benton-elliott.com",
+              "michael_vega.39@adams-hill.info",
+              "melissa_vega.72@haynes-moon.com",
+              "kimberly_vega.17@austin.com",
+              "roger_pugh.85@richards-clay.biz",
+              "david_patterson.20@adams-hill.info",
+              "nicole_jones.35@adams-hill.info",
+              "billy_mathis.45@freeman.info",
+              "christopher_acosta.2@benton-elliott.com",
+              "aaron_castaneda.5@richards-clay.biz",
+              "tammy_quinn.9@guzman.biz",
+              "tabitha_castaneda.6@vargas.com",
+              "wesley_ward.65@williamson.com",
+              "david_carey.62@wilson-watson.com",
+              "larry_garcia.91@richards-clay.biz",
+              "tina_lee.7@vargas.com",
+              "deborah_vega.77@haynes-moon.com",
+              "amy_townsend.93@guzman.biz",
+              "tammy_pena.23@benton-elliott.com",
+              "william_pruitt.49@vargas.com",
+              "cristian_pruitt.17@freeman.info",
+              "catherine_johnson.85@benton-elliott.com",
+              "steven_juarez.92@adams-hill.info",
+              "steven_hayes.10@freeman.info",
+              "joe_hill.60@williamson.com",
+              "austin_allen.88@adams-hill.info",
+              "katherine_mathis.70@haynes-moon.com",
+              "michael_burke.22@wilson-watson.com",
+              "chase_fleming.33@freeman.info",
+              "steven_mays.64@vargas.com",
+              "kara_velez.79@williamson.com",
+              "wesley_lowery.37@guzman.biz",
+              "christopher_chung.45@benton-elliott.com",
+              "christopher_gonzalez.1@vargas.com",
+              "tammy_reynolds.84@williamson.com",
+              "emily_townsend.97@benton-elliott.com",
+              "justin_sanchez.86@austin.com",
+              "joe_lowery.99@wilson-watson.com",
+              "heather_dawson.75@vargas.com",
+              "zachary_smith.33@wilson-watson.com",
+              "susan_fleming.47@benton-elliott.com",
+              "jacob_carey.10@vargas.com",
+              "kara_gardner.80@guzman.biz",
+              "daniel_morales.76@benton-elliott.com",
+              "robert_moreno.28@vargas.com",
+              "mark_acosta.33@freeman.info",
+              "aaron_gonzalez.63@adams-hill.info",
+              "ralph_wilson.27@williamson.com",
+              "catherine_burgess.76@richards-clay.biz",
+              "christopher_chung.11@richards-clay.biz",
+              "benjamin_patterson.8@guzman.biz",
+              "ralph_jones.74@austin.com",
+              "christina_townsend.26@guzman.biz",
+              "austin_rodriguez.12@williamson.com",
+              "victoria_atkins.78@guzman.biz",
+              "jennifer_brown.28@vargas.com",
+              "michael_young.98@adams-hill.info",
+              "mario_jarvis.5@austin.com",
+              "christopher_quinn.72@haynes-moon.com",
+              "nicole_cohen.44@haynes-moon.com",
+              "mario_sullivan.41@williamson.com",
+              "michelle_edwards.61@wilson-watson.com",
+              "sarah_brown.59@haynes-moon.com",
+              "justin_burke.77@williamson.com",
+              "billy_gonzalez.97@freeman.info",
+              "daniel_hill.90@guzman.biz",
+              "wesley_gonzalez.47@benton-elliott.com",
+              "benjamin_dawson.85@williamson.com",
+              "samantha_hayes.63@adams-hill.info",
+              "susan_mays.84@richards-clay.biz",
+              "amy_moore.15@haynes-moon.com",
+              "nicole_weaver.42@williamson.com",
+              "austin_downs.28@adams-hill.info",
+              "devin_smith.69@williamson.com",
+              "mark_gardner.67@richards-clay.biz",
+              "aaron_townsend.48@adams-hill.info",
+              "kathy_schwartz.28@williamson.com",
+              "melanie_jarvis.58@benton-elliott.com",
+              "kevin_martinez.7@benton-elliott.com"
+            ],
+            [
+              "(671)809-7970",
+              "927-512-3937",
+              "764.712.0325x6747",
+              "+1-438-449-3855",
+              "(293)238-6478",
+              "(777)335-2637",
+              "+1-959-811-4264x5920",
+              "(281)398-9627x467",
+              "(782)652-2833",
+              "301.646.3572",
+              "888-830-4530",
+              "001-803-768-0188x476",
+              "339-564-7311x09821",
+              "645.720.7788x4614",
+              "322-630-9558x35584",
+              "(339)931-9253x203",
+              "001-688-993-9991x76658",
+              "690-883-3045x8080",
+              "(200)406-8538x473",
+              "677.569.6983x21870",
+              "865.337.6269x615",
+              "+1-371-953-5818x88846",
+              "001-654-242-7333",
+              "001-716-295-8332x3235",
+              "(442)744-2088x5125",
+              "405.792.0099x229",
+              "2239832049",
+              "001-890-334-5886x20785",
+              "+1-996-883-5118x1195",
+              "892-708-6409",
+              "+1-552-516-9827x183",
+              "+1-868-504-7237x097",
+              "484-276-5494x2877",
+              "631-936-5031",
+              "795.605.6579x84168",
+              "627-496-6912x78045",
+              "(729)940-3061x8954",
+              "(846)439-7310x2821",
+              "(707)941-9168x540",
+              "(637)637-0693x42179",
+              "001-604-261-1587",
+              "(687)830-7432x25928",
+              "+1-578-606-0699x3315",
+              "+1-496-710-2719x20771",
+              "882.435.1769x715",
+              "001-482-898-7944x3954",
+              "(354)756-3061",
+              "5026614448",
+              "(707)207-6893x54610",
+              "810.793.5368x2474",
+              "+1-762-916-0098x125",
+              "(507)891-8774x2035",
+              "606-813-4820x2504",
+              "001-956-355-5291x713",
+              "562.339.2575x54319",
+              "343-754-0330",
+              "(419)718-5937",
+              "893-630-8650",
+              "001-388-737-2399x98144",
+              "+1-828-630-3051x083",
+              "(641)967-1384",
+              "765-386-6756x9845",
+              "(470)972-8654x58042",
+              "658.266.1852",
+              "+1-977-200-2276x849",
+              "565.841.8951",
+              "8385148903",
+              "001-502-692-8228",
+              "+1-466-945-1845x306",
+              "895.222.7777",
+              "382-989-0837",
+              "001-603-636-2293x88171",
+              "625.399.8156x642",
+              "866-599-3328",
+              "336-629-2332",
+              "+1-790-325-5598x62681",
+              "001-860-839-6792x903",
+              "293-874-4145x09853",
+              "9175605140",
+              "+1-461-867-5573x43574",
+              "(676)784-8513x52357",
+              "4498435003",
+              "329.859.5314x03205",
+              "660.787.1901",
+              "220-492-4879x057",
+              "842-593-9486x85931",
+              "5292669147",
+              "+1-981-945-2842",
+              "965.992.2173x35178",
+              "(240)906-3057",
+              "001-607-643-4395x2468",
+              "4508867090",
+              "+1-731-939-9601x58158",
+              "(210)820-8575x278",
+              "378.227.4577x56450",
+              "7513039522",
+              "3118715920",
+              "673-979-4780x8297",
+              "+1-548-486-9681x17150",
+              "9736147686"
+            ],
+            [
+              "60743",
+              "19292",
+              "62717",
+              "61023",
+              "51717",
+              "08966",
+              "47684",
+              "95910",
+              "91364",
+              "15278",
+              "14646",
+              "49219",
+              "49037",
+              "09838",
+              "15691",
+              "33986",
+              "11383",
+              "50163",
+              "86591",
+              "96119",
+              "80272",
+              "06936",
+              "08295",
+              "33279",
+              "58854",
+              "36656",
+              "21800",
+              "06139",
+              "59912",
+              "02150",
+              "03681",
+              "06262",
+              "60743",
+              "48129",
+              "46747",
+              "62717",
+              "49820",
+              "75633",
+              "90746",
+              "47684",
+              "95910",
+              "11383",
+              "73237",
+              "62717",
+              "03681",
+              "19117",
+              "14044",
+              "75937",
+              "19292",
+              "06977",
+              "49219",
+              "06139",
+              "35096",
+              "16997",
+              "19292",
+              "54386",
+              "80605",
+              "65545",
+              "91364",
+              "86591",
+              "47684",
+              "08295",
+              "59912",
+              "91364",
+              "33986",
+              "35096",
+              "68908",
+              "52366",
+              "87157",
+              "90550",
+              "94161",
+              "57996",
+              "21800",
+              "75633",
+              "46747",
+              "62717",
+              "17413",
+              "07827",
+              "44342",
+              "43117",
+              "50163",
+              "06653",
+              "19117",
+              "73237",
+              "42309",
+              "80605",
+              "55765",
+              "09838",
+              "73237",
+              "89684",
+              "02683",
+              "17413",
+              "37128",
+              "94376",
+              "19592",
+              "15691",
+              "44342",
+              "21800",
+              "21255",
+              "52366"
+            ],
+            [
+              "Rodriguez, Evans and Suarez",
+              "Chambers, Molina and Carlson",
+              "Clark, Pearson and Howard",
+              "Sherman, Hoover and Watkins",
+              "Mccoy, Farley and Coleman",
+              "Chambers, Molina and Carlson",
+              "Lopez, Livingston and Ramsey",
+              "Mitchell-Martinez",
+              "Jenkins, Chang and Barnes",
+              "Flores and Sons",
+              "Perry-Wall",
+              "Mcmillan-Stuart",
+              "Davis, Fernandez and Bishop",
+              "Cuevas-Watson",
+              "Lopez PLC",
+              "Mooney, Williams and Nguyen",
+              "Williams-Johnson",
+              "Mcfarland LLC",
+              "Lee, Gallegos and Day",
+              "Taylor PLC",
+              "Williams-Johnson",
+              "Shelton, Mitchell and Olson",
+              "Lee, Gallegos and Day",
+              "Wilson-Harris",
+              "Norton Inc",
+              "Moore Ltd",
+              "Brown, Rodriguez and Young",
+              "Lopez, Livingston and Ramsey",
+              "Aguilar-Hunter",
+              "Hernandez-Rodriguez",
+              "Wilson-Harris",
+              "Stewart, Delacruz and Fox",
+              "Rodriguez-Robertson",
+              "Patterson Ltd",
+              "Stewart, Delacruz and Fox",
+              "Cole-Hall",
+              "Benton, Brown and Thomas",
+              "Lopez, Livingston and Ramsey",
+              "Brown, Rodriguez and Young",
+              "Brown PLC",
+              "Hale, Curtis and Lewis",
+              "Williams, Cisneros and Leonard",
+              "Barton and Sons",
+              "Stewart-Medina",
+              "Miller-Mullen",
+              "Barton and Sons",
+              "Woods-Wilson",
+              "Sanchez-Gonzalez",
+              "Sherman, Hoover and Watkins",
+              "Sullivan and Sons",
+              "Lee, Gallegos and Day",
+              "Gallagher, Phillips and Valencia",
+              "Jenkins, Chang and Barnes",
+              "Harris-Hernandez",
+              "Patterson Ltd",
+              "Barrett-Robinson",
+              "Davis, Fernandez and Bishop",
+              "Malone-Ray",
+              "Aguilar-Hunter",
+              "Erickson Ltd",
+              "Butler, Nelson and Avery",
+              "Miller-Mullen",
+              "Clark, Pearson and Howard",
+              "Mooney, Williams and Nguyen",
+              "Moore Ltd",
+              "Lee, Gallegos and Day",
+              "Sanchez-Gonzalez",
+              "Moore Ltd",
+              "Jones, Vega and Holt",
+              "Lamb, Ewing and Williams",
+              "Ortiz and Sons",
+              "Rodriguez-Robertson",
+              "Little LLC",
+              "Lawson Group",
+              "Jones, Vega and Holt",
+              "Evans, Lynch and Moran",
+              "Robertson-Jackson",
+              "Harris-Hernandez",
+              "Mcdonald, Moore and Fitzpatrick",
+              "Mcdaniel-Bush",
+              "Love-Soto",
+              "Smith, Jordan and Atkins",
+              "Woods-Wilson",
+              "Dunlap, Powers and Levine",
+              "Rice-Cole",
+              "Buckley, Roman and Morton",
+              "Sanchez-Gonzalez",
+              "Patterson Ltd",
+              "Rodriguez-Robertson",
+              "Woods-Wilson",
+              "Stevens, Nelson and Coleman",
+              "Hansen Ltd",
+              "Li-Floyd",
+              "Johnson-Hudson",
+              "Mitchell-Martinez",
+              "Johnson-Hudson",
+              "Berger, Oneal and Sanders",
+              "Li-Floyd",
+              "Lopez, Livingston and Ramsey",
+              "Anderson Group"
+            ],
+            [
+              "New York",
+              "Chicago",
+              "Chicago",
+              "Chicago",
+              "Los Angeles",
+              "New York",
+              "New York",
+              "Los Angeles",
+              "New York",
+              "Chicago",
+              "Los Angeles",
+              "Los Angeles",
+              "Chicago",
+              "New York",
+              "Los Angeles",
+              "Los Angeles",
+              "New York",
+              "New York",
+              "Los Angeles",
+              "Los Angeles",
+              "Los Angeles",
+              "Chicago",
+              "Los Angeles",
+              "Los Angeles",
+              "New York",
+              "Chicago",
+              "Los Angeles",
+              "New York",
+              "New York",
+              "New York",
+              "New York",
+              "Los Angeles",
+              "New York",
+              "Los Angeles",
+              "Chicago",
+              "Los Angeles",
+              "Chicago",
+              "Chicago",
+              "New York",
+              "New York",
+              "Los Angeles",
+              "Los Angeles",
+              "Los Angeles",
+              "Los Angeles",
+              "Chicago",
+              "New York",
+              "New York",
+              "New York",
+              "New York",
+              "Chicago",
+              "Los Angeles",
+              "New York",
+              "Los Angeles",
+              "Los Angeles",
+              "Los Angeles",
+              "Los Angeles",
+              "Los Angeles",
+              "Los Angeles",
+              "Chicago",
+              "New York",
+              "New York",
+              "Los Angeles",
+              "Chicago",
+              "Chicago",
+              "Los Angeles",
+              "Los Angeles",
+              "Los Angeles",
+              "Chicago",
+              "New York",
+              "New York",
+              "New York",
+              "New York",
+              "Los Angeles",
+              "Los Angeles",
+              "Chicago",
+              "New York",
+              "Chicago",
+              "New York",
+              "Los Angeles",
+              "Los Angeles",
+              "Chicago",
+              "Los Angeles",
+              "Chicago",
+              "New York",
+              "Los Angeles",
+              "Los Angeles",
+              "New York",
+              "New York",
+              "New York",
+              "Los Angeles",
+              "Los Angeles",
+              "New York",
+              "New York",
+              "Chicago",
+              "Chicago",
+              "Los Angeles",
+              "New York",
+              "Chicago",
+              "Chicago",
+              "Los Angeles"
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "manual_input",
+      "is_start_node": true,
+      "description": "4 cols, 4 rows: product_id, category, price, tags",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": null,
+      "outputs": [
+        30
+      ],
+      "output_handles": [
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "output_field_config": null,
+        "raw_data_format": {
+          "columns": [
+            {
+              "name": "product_id",
+              "data_type": "String"
+            },
+            {
+              "name": "category",
+              "data_type": "String"
+            },
+            {
+              "name": "price",
+              "data_type": "Float64"
+            },
+            {
+              "name": "tags",
+              "data_type": "String"
+            }
+          ],
+          "data": [
+            [
+              "P001",
+              "P002",
+              "P003",
+              "P004"
+            ],
+            [
+              "Electronics",
+              "Electronics",
+              "Furniture",
+              "Furniture"
+            ],
+            [
+              299.99,
+              599.99,
+              899.99,
+              399.99
+            ],
+            [
+              "laptop,computer,portable",
+              "phone,mobile,smart",
+              "desk,office,wood",
+              "chair,office,ergonomic"
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "manual_input",
+      "is_start_node": true,
+      "description": "2 cols, 3 rows: name, address",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": null,
+      "outputs": [
+        43
+      ],
+      "output_handles": [
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "output_field_config": null,
+        "raw_data_format": {
+          "columns": [
+            {
+              "name": "name",
+              "data_type": "String"
+            },
+            {
+              "name": "address",
+              "data_type": "String"
+            }
+          ],
+          "data": [
+            [
+              "Jon Smith",
+              "Jane Do",
+              "Eduard Jones"
+            ],
+            [
+              "123 Main St",
+              "456 Oak Ave",
+              "789 Elm St"
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "manual_input",
+      "is_start_node": true,
+      "description": "2 cols, 5 rows: from, to",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": null,
+      "outputs": [
+        31
+      ],
+      "output_handles": [
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "output_field_config": null,
+        "raw_data_format": {
+          "columns": [
+            {
+              "name": "from",
+              "data_type": "String"
+            },
+            {
+              "name": "to",
+              "data_type": "String"
+            }
+          ],
+          "data": [
+            [
+              "A",
+              "B",
+              "C",
+              "X",
+              "Y"
+            ],
+            [
+              "B",
+              "C",
+              "D",
+              "Y",
+              "Z"
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "filter",
+      "is_start_node": false,
+      "description": "[segment] = \"Premium\"",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        1
+      ],
+      "outputs": [
+        12
+      ],
+      "output_handles": [
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "output_field_config": null,
+        "filter_input": {
+          "mode": "advanced",
+          "basic_filter": null,
+          "advanced_filter": "[segment] = \"Premium\"",
+          "filter_type": null
+        },
+        "split_mode": false
+      }
+    },
+    {
+      "id": 12,
+      "type": "formula",
+      "is_start_node": false,
+      "description": "full_name_upper = uppercase([name])",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        11
+      ],
+      "outputs": [
+        13
+      ],
+      "output_handles": [
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "output_field_config": null,
+        "function": {
+          "field": {
+            "name": "full_name_upper",
+            "data_type": "Auto"
+          },
+          "function": "uppercase([name])"
+        },
+        "functions": [
+          {
+            "field": {
+              "name": "full_name_upper",
+              "data_type": "Auto"
+            },
+            "function": "uppercase([name])"
+          }
+        ]
+      }
+    },
+    {
+      "id": 13,
+      "type": "select",
+      "is_start_node": false,
+      "description": "Rename: customer_id -> id, full_name_upper -> customer_name",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        12
+      ],
+      "outputs": [
+        14
+      ],
+      "output_handles": [
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "keep_missing": false,
+        "select_input": [
+          {
+            "old_name": "customer_id",
+            "new_name": "id"
+          },
+          {
+            "old_name": "full_name_upper",
+            "new_name": "customer_name"
+          },
+          {
+            "old_name": "city"
+          }
+        ],
+        "sorted_by": "none"
+      }
+    },
+    {
+      "id": 14,
+      "type": "sort",
+      "is_start_node": false,
+      "description": "Sort by city ascending, customer_name ascending",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        13
+      ],
+      "outputs": [
+        15
+      ],
+      "output_handles": [
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "output_field_config": null,
+        "sort_input": [
+          {
+            "column": "city",
+            "how": "ascending"
+          },
+          {
+            "column": "customer_name",
+            "how": "ascending"
+          }
+        ]
+      }
+    },
+    {
+      "id": 15,
+      "type": "record_id",
+      "is_start_node": false,
+      "description": "Add column 'row_number'",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        14
+      ],
+      "outputs": [
+        41
+      ],
+      "output_handles": [
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "output_field_config": null,
+        "record_id_input": {
+          "output_column_name": "row_number",
+          "offset": 1,
+          "group_by": false,
+          "group_by_columns": []
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "sample",
+      "is_start_node": false,
+      "description": "First 50 rows",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        2
+      ],
+      "outputs": [
+        17,
+        26,
+        41
+      ],
+      "output_handles": [
+        "output-0",
+        "output-0",
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "output_field_config": null,
+        "sample_method": "first",
+        "sample_size": 50,
+        "fraction": 10.0,
+        "seed": null
+      }
+    },
+    {
+      "id": 17,
+      "type": "unique",
+      "is_start_node": false,
+      "description": "Unique by Country (keep any)",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        16
+      ],
+      "outputs": [
+        42
+      ],
+      "output_handles": [
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "output_field_config": null,
+        "unique_input": {
+          "columns": [
+            "Country"
+          ],
+          "strategy": "any"
+        }
+      }
+    },
+    {
+      "id": 26,
+      "type": "group_by",
+      "is_start_node": false,
+      "description": "By Country: sum(sales_data), mean(sales_data), count(sales_data)",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        16
+      ],
+      "outputs": [
+        32,
+        61
+      ],
+      "output_handles": [
+        "output-0",
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "output_field_config": null,
+        "groupby_input": {
+          "agg_cols": [
+            {
+              "old_name": "Country",
+              "agg": "groupby",
+              "new_name": "Country",
+              "output_type": null
+            },
+            {
+              "old_name": "sales_data",
+              "agg": "sum",
+              "new_name": "total_sales",
+              "output_type": null
+            },
+            {
+              "old_name": "sales_data",
+              "agg": "mean",
+              "new_name": "avg_sales",
+              "output_type": "Float64"
+            },
+            {
+              "old_name": "sales_data",
+              "agg": "count",
+              "new_name": "num_transactions",
+              "output_type": "Int64"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": 27,
+      "type": "manual_input",
+      "is_start_node": true,
+      "description": "3 cols, 100 rows: quarter, Country, sales_data",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": null,
+      "outputs": [
+        28
+      ],
+      "output_handles": [
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "output_field_config": null,
+        "raw_data_format": {
+          "columns": [
+            {
+              "name": "quarter",
+              "data_type": "Int64"
+            },
+            {
+              "name": "Country",
+              "data_type": "String"
+            },
+            {
+              "name": "sales_data",
+              "data_type": "Int64"
+            }
+          ],
+          "data": [
+            [
+              2,
+              0,
+              1,
+              0,
+              2,
+              1,
+              0,
+              1,
+              0,
+              0,
+              2,
+              2,
+              2,
+              2,
+              2,
+              2,
+              1,
+              0,
+              1,
+              0,
+              2,
+              0,
+              1,
+              2,
+              1,
+              1,
+              2,
+              0,
+              0,
+              0,
+              0,
+              1,
+              2,
+              1,
+              0,
+              0,
+              2,
+              0,
+              0,
+              1,
+              2,
+              0,
+              1,
+              1,
+              0,
+              1,
+              2,
+              1,
+              1,
+              2,
+              0,
+              1,
+              0,
+              0,
+              2,
+              2,
+              2,
+              2,
+              0,
+              2,
+              1,
+              0,
+              0,
+              0,
+              2,
+              2,
+              0,
+              1,
+              0,
+              0,
+              0,
+              0,
+              2,
+              0,
+              2,
+              0,
+              1,
+              1,
+              1,
+              2,
+              2,
+              2,
+              0,
+              0,
+              0,
+              2,
+              1,
+              1,
+              2,
+              0,
+              1,
+              2,
+              2,
+              2,
+              1,
+              2,
+              2,
+              1,
+              0,
+              1
+            ],
+            [
+              "United States Minor Outlying Islands",
+              "Papua New Guinea",
+              "Solomon Islands",
+              "Haiti",
+              "Rwanda",
+              "Hong Kong",
+              "Haiti",
+              "Belize",
+              "Rwanda",
+              "Tuvalu",
+              "Bosnia and Herzegovina",
+              "Saudi Arabia",
+              "Brazil",
+              "Saudi Arabia",
+              "Australia",
+              "Peru",
+              "Solomon Islands",
+              "Jersey",
+              "Tuvalu",
+              "Lao People's Democratic Republic",
+              "Sudan",
+              "Rwanda",
+              "Swaziland",
+              "Latvia",
+              "Lao People's Democratic Republic",
+              "Haiti",
+              "Sudan",
+              "Brunei Darussalam",
+              "Micronesia",
+              "Rwanda",
+              "Papua New Guinea",
+              "Russian Federation",
+              "Tuvalu",
+              "Micronesia",
+              "Tokelau",
+              "Brunei Darussalam",
+              "Chile",
+              "Belize",
+              "Haiti",
+              "Haiti",
+              "Papua New Guinea",
+              "Saint Barthelemy",
+              "Tokelau",
+              "Tuvalu",
+              "Papua New Guinea",
+              "Sudan",
+              "United States Minor Outlying Islands",
+              "Latvia",
+              "Solomon Islands",
+              "Swaziland",
+              "Rwanda",
+              "Latvia",
+              "Rwanda",
+              "Tuvalu",
+              "Brunei Darussalam",
+              "India",
+              "Tuvalu",
+              "Brunei Darussalam",
+              "Liechtenstein",
+              "Heard Island and McDonald Islands",
+              "Brazil",
+              "Bosnia and Herzegovina",
+              "Latvia",
+              "Aruba",
+              "Hong Kong",
+              "Chile",
+              "Sudan",
+              "Haiti",
+              "Brazil",
+              "Ukraine",
+              "Heard Island and McDonald Islands",
+              "India",
+              "Brunei Darussalam",
+              "Poland",
+              "Jersey",
+              "Haiti",
+              "Brunei Darussalam",
+              "Liechtenstein",
+              "Brunei Darussalam",
+              "Rwanda",
+              "Bosnia and Herzegovina",
+              "Papua New Guinea",
+              "Tuvalu",
+              "Algeria",
+              "Sudan",
+              "Peru",
+              "Aruba",
+              "Bosnia and Herzegovina",
+              "Micronesia",
+              "Bosnia and Herzegovina",
+              "Brazil",
+              "Iran",
+              "Swaziland",
+              "Saint Barthelemy",
+              "Uganda",
+              "Algeria",
+              "Liechtenstein",
+              "Sudan",
+              "Venezuela",
+              "United Arab Emirates"
+            ],
+            [
+              118,
+              931,
+              31,
+              361,
+              73,
+              424,
+              792,
+              523,
+              61,
+              687,
+              141,
+              244,
+              612,
+              931,
+              190,
+              387,
+              780,
+              101,
+              935,
+              673,
+              751,
+              127,
+              194,
+              232,
+              404,
+              792,
+              251,
+              873,
+              582,
+              636,
+              146,
+              809,
+              335,
+              687,
+              141,
+              472,
+              424,
+              357,
+              609,
+              825,
+              335,
+              523,
+              867,
+              523,
+              706,
+              547,
+              127,
+              254,
+              846,
+              666,
+              225,
+              728,
+              127,
+              486,
+              18,
+              361,
+              3,
+              638,
+              404,
+              141,
+              424,
+              210,
+              472,
+              666,
+              479,
+              226,
+              472,
+              17,
+              357,
+              931,
+              636,
+              127,
+              867,
+              127,
+              66,
+              190,
+              357,
+              435,
+              935,
+              127,
+              366,
+              244,
+              434,
+              73,
+              134,
+              194,
+              31,
+              403,
+              703,
+              420,
+              547,
+              582,
+              420,
+              999,
+              636,
+              728,
+              134,
+              673,
+              332,
+              998
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "id": 28,
+      "type": "pivot",
+      "is_start_node": false,
+      "description": "Pivot sales_data by quarter (sum)",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        27
+      ],
+      "outputs": [
+        9999
+      ],
+      "output_handles": [
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "output_field_config": null,
+        "pivot_input": {
+          "index_columns": [
+            "Country"
+          ],
+          "pivot_column": "quarter",
+          "value_col": "sales_data",
+          "aggregations": [
+            "sum"
+          ]
+        },
+        "output_fields": null
+      }
+    },
+    {
+      "id": 9999,
+      "type": "select",
+      "is_start_node": false,
+      "description": "Rename: 0 -> first_quarter, 1 -> second_quarter, 2 -> third_quarter",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        28
+      ],
+      "outputs": [
+        29
+      ],
+      "output_handles": [
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "keep_missing": true,
+        "select_input": [
+          {
+            "old_name": "0",
+            "new_name": "first_quarter"
+          },
+          {
+            "old_name": "1",
+            "new_name": "second_quarter"
+          },
+          {
+            "old_name": "2",
+            "new_name": "third_quarter"
+          }
+        ],
+        "sorted_by": "none"
+      }
+    },
+    {
+      "id": 29,
+      "type": "unpivot",
+      "is_start_node": false,
+      "description": "Unpivot first_quarter, second_quarter, third_quarter",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        9999
+      ],
+      "outputs": [],
+      "output_handles": [],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "output_field_config": null,
+        "unpivot_input": {
+          "index_columns": [
+            "Country"
+          ],
+          "value_columns": [
+            "first_quarter",
+            "second_quarter",
+            "third_quarter"
+          ],
+          "data_type_selector": null,
+          "data_type_selector_mode": "column"
+        }
+      }
+    },
+    {
+      "id": 30,
+      "type": "text_to_rows",
+      "is_start_node": false,
+      "description": "Split tags by ','",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        3
+      ],
+      "outputs": [
+        42
+      ],
+      "output_handles": [
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "output_field_config": null,
+        "text_to_rows_input": {
+          "column_to_split": "tags",
+          "output_column_name": null,
+          "split_by_fixed_value": true,
+          "split_fixed_value": ",",
+          "split_by_column": null
+        }
+      }
+    },
+    {
+      "id": 31,
+      "type": "graph_solver",
+      "is_start_node": false,
+      "description": "from -> to as 'component_id'",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        5
+      ],
+      "outputs": [
+        73
+      ],
+      "output_handles": [
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "output_field_config": null,
+        "graph_solver_input": {
+          "col_from": "from",
+          "col_to": "to",
+          "output_column_name": "component_id"
+        }
+      }
+    },
+    {
+      "id": 32,
+      "type": "polars_code",
+      "is_start_node": false,
+      "description": "# Custom Polars code to add derived columns",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        26
+      ],
+      "outputs": [
+        61
+      ],
+      "output_handles": [
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "output_field_config": null,
+        "polars_code_input": {
+          "polars_code": "\n# Custom Polars code to add derived columns\noutput_df = input_df.with_columns([\n    (pl.col('total_sales') / pl.col('num_transactions')).alias('sales_per_transaction'),\n    (pl.col('total_sales') * 1.1).alias('total_sales_with_tax')\n])\n"
+        }
+      }
+    },
+    {
+      "id": 41,
+      "type": "join",
+      "is_start_node": false,
+      "description": "inner join on city = City",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": 16,
+      "input_ids": [
+        15
+      ],
+      "outputs": [
+        51,
+        52,
+        71
+      ],
+      "output_handles": [
+        "output-0",
+        "output-0",
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "auto_generate_selection": true,
+        "verify_integrity": true,
+        "join_input": {
+          "join_mapping": [
+            {
+              "left_col": "city",
+              "right_col": "City"
+            }
+          ],
+          "left_select": {
+            "select": [
+              {
+                "old_name": "id",
+                "new_name": "customer_id"
+              },
+              {
+                "old_name": "customer_name"
+              },
+              {
+                "old_name": "city"
+              }
+            ]
+          },
+          "right_select": {
+            "select": [
+              {
+                "old_name": "sales_data",
+                "new_name": "sale_amount"
+              },
+              {
+                "old_name": "Work",
+                "new_name": "work_type"
+              }
+            ]
+          },
+          "how": "inner"
+        },
+        "auto_keep_all": true,
+        "auto_keep_right": true,
+        "auto_keep_left": true
+      }
+    },
+    {
+      "id": 42,
+      "type": "cross_join",
+      "is_start_node": false,
+      "description": "Cross join",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": 30,
+      "input_ids": [
+        17
+      ],
+      "outputs": [],
+      "output_handles": [],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "auto_generate_selection": true,
+        "verify_integrity": true,
+        "cross_join_input": {
+          "left_select": {
+            "select": [
+              {
+                "old_name": "Country",
+                "new_name": "country"
+              }
+            ]
+          },
+          "right_select": {
+            "select": [
+              {
+                "old_name": "tags",
+                "new_name": "product_tag"
+              }
+            ]
+          }
+        },
+        "auto_keep_all": true,
+        "auto_keep_right": true,
+        "auto_keep_left": true
+      }
+    },
+    {
+      "id": 43,
+      "type": "fuzzy_match",
+      "is_start_node": false,
+      "description": "Fuzzy inner join on name",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": 4,
+      "input_ids": [
+        1
+      ],
+      "outputs": [
+        72
+      ],
+      "output_handles": [
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "auto_generate_selection": true,
+        "verify_integrity": true,
+        "join_input": {
+          "join_mapping": [
+            {
+              "left_col": "name",
+              "right_col": "name",
+              "threshold_score": 75,
+              "fuzzy_type": "levenshtein",
+              "perc_unique": 0,
+              "output_column_name": "fuzzy_score_name_name",
+              "valid": true
+            }
+          ],
+          "left_select": {
+            "select": [
+              {
+                "old_name": "customer_id"
+              },
+              {
+                "old_name": "name",
+                "new_name": "customer_name"
+              }
+            ]
+          },
+          "right_select": {
+            "select": [
+              {
+                "old_name": "name",
+                "new_name": "address_name"
+              },
+              {
+                "old_name": "address"
+              }
+            ]
+          },
+          "how": "inner",
+          "aggregate_output": false
+        },
+        "auto_keep_all": true,
+        "auto_keep_right": true,
+        "auto_keep_left": true
+      }
+    },
+    {
+      "id": 51,
+      "type": "record_count",
+      "is_start_node": false,
+      "description": "",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        41
+      ],
+      "outputs": [],
+      "output_handles": [],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "output_field_config": null
+      }
+    },
+    {
+      "id": 52,
+      "type": "explore_data",
+      "is_start_node": false,
+      "description": "",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        41
+      ],
+      "outputs": [],
+      "output_handles": [],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "output_field_config": null,
+        "graphic_walker_input": null
+      }
+    },
+    {
+      "id": 61,
+      "type": "union",
+      "is_start_node": false,
+      "description": "Union (relaxed)",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        26,
+        32
+      ],
+      "outputs": [
+        74
+      ],
+      "output_handles": [
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "output_field_config": null,
+        "union_input": {
+          "mode": "relaxed"
+        }
+      }
+    },
+    {
+      "id": 71,
+      "type": "cloud_storage_writer",
+      "is_start_node": false,
+      "description": "customer_sales_analysis.csv (csv)",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        41
+      ],
+      "outputs": [],
+      "output_handles": [],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "cloud_storage_settings": {
+          "resource_path": "s3://flowfile-complex/out/customer_sales_analysis.csv",
+          "connection_name": "exchange_minio",
+          "file_format": "csv",
+          "write_mode": "overwrite"
+        }
+      }
+    },
+    {
+      "id": 72,
+      "type": "cloud_storage_writer",
+      "is_start_node": false,
+      "description": "fuzzy_matched_customers.parquet (parquet)",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        43
+      ],
+      "outputs": [],
+      "output_handles": [],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "cloud_storage_settings": {
+          "resource_path": "s3://flowfile-complex/out/fuzzy_matched_customers.parquet",
+          "connection_name": "exchange_minio",
+          "file_format": "parquet",
+          "write_mode": "overwrite"
+        }
+      }
+    },
+    {
+      "id": 73,
+      "type": "cloud_storage_writer",
+      "is_start_node": false,
+      "description": "network_components.csv (csv)",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        31
+      ],
+      "outputs": [],
+      "output_handles": [],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "cloud_storage_settings": {
+          "resource_path": "s3://flowfile-complex/out/network_components.csv",
+          "connection_name": "exchange_minio",
+          "file_format": "csv",
+          "write_mode": "overwrite"
+        }
+      }
+    },
+    {
+      "id": 74,
+      "type": "cloud_storage_writer",
+      "is_start_node": false,
+      "description": "combined_aggregations.csv (csv)",
+      "node_reference": null,
+      "x_position": 0,
+      "y_position": 0,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        61
+      ],
+      "outputs": [],
+      "output_handles": [],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "execution_location": "auto",
+        "cloud_storage_settings": {
+          "resource_path": "s3://flowfile-complex/out/combined_aggregations.csv",
+          "connection_name": "exchange_minio",
+          "file_format": "csv",
+          "write_mode": "overwrite"
+        }
+      }
+    }
+  ],
+  "groups": [],
+  "comments": []
+}

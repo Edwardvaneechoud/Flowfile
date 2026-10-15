@@ -415,19 +415,20 @@ def export_result(
     The task routes run it too, as the operation ``export_result`` with *uri* and *credential* as kwargs, when core
     exports a result it minted over them. Nothing is collected: the rows stream from the plan's source to the target.
     *credential*, a stored connection's ``connection_id`` and ``user_id``, becomes a ``CredentialRefProvider`` that
-    this child resolves against its catalog with its master key when the sink opens the target. A ``file:`` URI is
-    sunk to the local path it names (``file_uri_path``), whose folder is the caller's. The URI written is queued.
-    *file_path* is not read.
+    this child resolves against its catalog with its master key when the sink opens the target, beside the
+    connection's endpoint and region read from that catalog (``credential_ref_kwargs``). A ``file:`` URI is sunk to
+    the local path it names (``file_uri_path``), whose folder is the caller's. The URI written is queued. *file_path*
+    is not read.
     """
-    from shared.cloud_credential_provider import CredentialRefProvider
+    from shared.cloud_credential_provider import credential_ref_kwargs
     from shared.compute_protocol import file_uri_path
 
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info("Starting export to parquet")
     try:
         lf = _load_plan(polars_serializable_object)
-        provider = {} if credential is None else {"credential_provider": CredentialRefProvider(**credential)}
-        lf.sink_parquet(file_uri_path(uri), **provider)
+        credential_kwargs = {} if credential is None else credential_ref_kwargs(**credential)
+        lf.sink_parquet(file_uri_path(uri), **credential_kwargs)
     except BaseException as e:
         flowfile_logger.error(f"Error during export: {str(e)}")
         record_task_failure(error_message, progress, e, limit=1024)

@@ -308,6 +308,8 @@ A snippet does the same in fewer lines:
 input_df.filter(pl.col('Age') > 30)
 ```
 
+Code that collects an input (`collect()`) or reads its schema (`collect_schema()`, `.columns`, `.schema`) reads that input in Flowfile's own process instead of on the worker: on one machine `collect()` loads the rows there and a schema read opens the file there, and with a [worker on another host](../../deployment/remote-worker.md) either fails. Keep the code lazy.
+
 ## ![Python Script](../../../assets/images/nodes/python_code.svg){ width="44" height="44" } Python Script
 
 Executes Python in an isolated Docker [kernel](../kernels.md) container, with a notebook-style editor of multiple cells, named inputs and outputs, variables that persist across executions within a flow, and the `flowfile` API for data I/O, artifacts, display and logging.

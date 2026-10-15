@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
+from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution.context import DEFAULT_PREVIEW_ROWS, ExecutionContext, current_context
 from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.execution.protocol import SubmitHints
@@ -27,8 +28,9 @@ if TYPE_CHECKING:
 
 IN_CORE_NODE_TYPES = frozenset({"output", "api_response", "flow_output", "run_flow"})
 """Node types whose result is already computed when their function returns: a sink's result is the input it
-wrote, a ``run_flow`` node's the output of the child flow it ran. They are submitted never materialised, never
-wide and without an inline preview, so no backend computes or samples their rows during the run."""
+wrote, a ``run_flow`` node's the output of the child flow it ran. They are submitted never wide and without an inline
+preview, and materialised only when they read an input that crossed from another backend, so otherwise no backend
+computes or samples their rows during the run."""
 
 
 def is_narrow_transform(node: FlowNode) -> bool:
@@ -45,7 +47,8 @@ def hints_for(node: FlowNode, context: ExecutionContext, performance_mode: bool)
     """The hints ``node`` submits its plan with; the backend's materialisation policy reads them.
 
     - ``must_materialise``: the node caches its results (``cache_results``) and is not one of
-      ``IN_CORE_NODE_TYPES``.
+      ``IN_CORE_NODE_TYPES``; or it reads an input that crossed from another backend (``_boundary_inputs``), whatever
+      its type, so no result refers to the exchange store's prefix once the run removes it.
     - ``wide``: the node is not a narrow transform (``is_narrow_transform``) and not one of ``IN_CORE_NODE_TYPES``.
     - ``fanout``: how many distinct downstream nodes read the result. No backend's policy reads it yet.
     - ``preview_rows``: the context's ``preview_rows``, or ``DEFAULT_PREVIEW_ROWS`` when the context keeps none
@@ -63,7 +66,7 @@ def hints_for(node: FlowNode, context: ExecutionContext, performance_mode: bool)
     if not in_core and (caches or not performance_mode):
         preview_rows = context.preview_rows if context.preview_rows is not None else DEFAULT_PREVIEW_ROWS
     return SubmitHints(
-        must_materialise=caches and not in_core,
+        must_materialise=(caches and not in_core) or bool(node._boundary_inputs),
         wide=not in_core and not is_narrow_transform(node),
         fanout=len({consumer.node_id for consumer in node.leads_to_nodes}),
         preview_rows=preview_rows,
@@ -410,7 +413,14 @@ class NodeExecutor:
         retry: bool,
         node_logger: NodeLogger,
     ) -> None:
-        """Handle execution errors with retry logic."""
+        """Handle execution errors with retry logic.
+
+        A missing-file error from Polars reruns the node's inputs and then the node once, when ``retry`` is set. With
+        ``settings.FLOWFILE_COMPUTE_PROTOCOL`` off the message alone counts as an input's file gone, as the results are
+        core's own files. With it on an input must also hold a result that is gone (``NodeResults.artifact_is_missing``,
+        which asks the backend that minted it); otherwise the error is the node's own and it fails with it, the inputs'
+        results kept.
+        """
         error_str = str(error)
         state.mark_failed(error_str)
         self._sync_state_to_legacy(state)
@@ -419,7 +429,16 @@ class NodeExecutor:
         self.node._last_exception_class = getattr(error, "original_class", None) or type(error).__name__
 
         # Retry on missing file errors (upstream cache was cleared)
-        if "No such file or directory (os error" in error_str and retry:
+        if (
+            "No such file or directory (os error" in error_str
+            and retry
+            and (
+                not settings.FLOWFILE_COMPUTE_PROTOCOL
+                or any(
+                    node_input.results.artifact_is_missing() for node_input in self.node.node_inputs.get_all_inputs()
+                )
+            )
+        ):
             node_logger.warning("Input file missing, retrying upstream nodes...")
             for node_input in self.node.node_inputs.get_all_inputs():
                 # The run loop substitutes only into the node it is about to run.

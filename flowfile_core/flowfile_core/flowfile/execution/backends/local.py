@@ -82,7 +82,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
     FullCloudStorageConnectionWorkerInterface,
 )
 from flowfile_core.secret_manager.secret_manager import decrypt_secret
-from shared.cloud_credential_provider import CredentialRefProvider
+from shared.cloud_credential_provider import credential_ref_kwargs
 from shared.compute_protocol import (
     CLOUD_SCHEMES,
     PROTOCOL_VERSION,
@@ -231,7 +231,8 @@ class LocalBackend:
         """Write ``ref``'s rows to ``uri`` as parquet by a streaming sink of its plan, and return ``uri``.
 
         Nothing is collected into memory. ``credential`` names the stored connection the target needs; this process
-        resolves it with its own catalog and master key when the sink opens the target. A ``file:`` URI is sunk to
+        reads its endpoint and region from its own catalog here and resolves its credentials with its master key when
+        the sink opens the target. A ``file:`` URI is sunk to
         the local path it names, whose folder is the caller's. The target is the caller's, so a sink that fails
         leaves it to the caller and its Polars error propagates.
 
@@ -265,8 +266,9 @@ class LocalBackend:
 
         Nothing is read here: the schema and the count are the caller's, so ``count`` answers the given count (and
         counts the rows only when it is ``None``) and the file need not exist until something reads the rows.
-        ``credential`` is resolved in this process when the scan runs. A ``file:`` URI is scanned as the local path it
-        names. ``release`` forgets the scan and leaves the file, which is not this backend's.
+        ``credential``'s endpoint and region are read from this process's catalog here and its credentials resolved
+        in this process when the scan runs. A ``file:`` URI is scanned as the local path it names. ``release`` forgets
+        the scan and leaves the file, which is not this backend's.
 
         With ``kind="blob"`` the bytes at a ``file://`` URI or a presigned ``https://`` URL are copied now
         (``get_blob``) to ``cache/local/-1/<result_id>.blob`` under core's storage directory and held under a fresh id
@@ -779,14 +781,15 @@ def _partial_path(path: Path) -> Path:
 
 
 def _credential_kwargs(credential: CredentialRef | None) -> dict[str, Any]:
-    """The ``credential_provider`` a sink or scan of a URI takes for ``credential``; nothing without one.
+    """What a sink or scan of a URI takes for ``credential``: its provider and its connection's plain options.
 
-    The provider carries the stored connection's id and user only, and resolves it where the plan runs. Without a
-    credential Polars resolves the target as it does for any scan.
+    The provider carries the stored connection's id and user only, and resolves it where the plan runs; the options
+    (``credential_ref_kwargs``) carry the connection's endpoint and region, so an S3-compatible store is reached.
+    Without a credential Polars resolves the target as it does for any scan.
     """
     if credential is None:
         return {}
-    return {"credential_provider": CredentialRefProvider(credential.connection_id, credential.user_id)}
+    return credential_ref_kwargs(credential.connection_id, credential.user_id)
 
 
 def _flowfile_schema(schema: pl.Schema) -> Schema:

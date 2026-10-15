@@ -1101,14 +1101,19 @@ class FlowDataEngine:
         if not settings.window_functions:
             return self
 
-        df = self.data_frame
-        if settings.order_by:
-            descending = [s.descending for s in settings.order_by]
-            df = df.sort([s.column for s in settings.order_by], descending=descending)
-
         exprs = [_build_window_expr(w, settings.partition_by) for w in settings.window_functions]
-        df = df.with_columns(exprs)
-        return FlowDataEngine(df, calculate_schema_stats=calculate_schema_stats)
+
+        def windowed(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+            if settings.order_by:
+                descending = [s.descending for s in settings.order_by]
+                frame = frame.sort([s.column for s in settings.order_by], descending=descending)
+            return frame.with_columns(exprs)
+
+        return FlowDataEngine(
+            windowed(self.data_frame),
+            calculate_schema_stats=calculate_schema_stats,
+            schema=_derived_schema(windowed, self),
+        )
 
     def do_sort(self, sorts: list[transform_schemas.SortByInput]) -> FlowDataEngine:
         """Sorts the DataFrame by one or more columns.
@@ -1426,11 +1431,12 @@ class FlowDataEngine:
             split_input.split_fixed_value if split_input.split_by_fixed_value else pl.col(split_input.split_by_column)
         )
 
-        df = self.data_frame.with_columns(
-            pl.col(split_input.column_to_split).str.split(by=split_value).alias(output_column_name)
-        ).explode(output_column_name)
+        def exploded(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+            return frame.with_columns(
+                pl.col(split_input.column_to_split).str.split(by=split_value).alias(output_column_name)
+            ).explode(output_column_name)
 
-        return FlowDataEngine(df)
+        return FlowDataEngine(exploded(self.data_frame), schema=_derived_schema(exploded, self))
 
     def unpivot(self, unpivot_input: transform_schemas.UnpivotInput) -> FlowDataEngine:
         """Converts the DataFrame from a wide to a long format.
@@ -1445,16 +1451,15 @@ class FlowDataEngine:
         Returns:
             A new, unpivoted `FlowDataEngine` instance.
         """
-        lf = self.data_frame
 
-        if unpivot_input.data_type_selector_expr is not None:
-            result = lf.unpivot(on=unpivot_input.data_type_selector_expr(), index=unpivot_input.index_columns)
-        elif unpivot_input.value_columns is not None:
-            result = lf.unpivot(on=unpivot_input.value_columns, index=unpivot_input.index_columns)
-        else:
-            result = lf.unpivot()
+        def unpivoted(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+            if unpivot_input.data_type_selector_expr is not None:
+                return frame.unpivot(on=unpivot_input.data_type_selector_expr(), index=unpivot_input.index_columns)
+            if unpivot_input.value_columns is not None:
+                return frame.unpivot(on=unpivot_input.value_columns, index=unpivot_input.index_columns)
+            return frame.unpivot()
 
-        return FlowDataEngine(result)
+        return FlowDataEngine(unpivoted(self.data_frame), schema=_derived_schema(unpivoted, self))
 
     def do_pivot(self, pivot_input: transform_schemas.PivotInput, node_logger: NodeLogger = None) -> FlowDataEngine:
         """Converts the DataFrame from a long to a wide format, aggregating values.
@@ -1489,7 +1494,7 @@ class FlowDataEngine:
 
         if len(pivot_input.index_columns) == 0:
             no_index_cols = True
-            pivot_input.index_columns = ["__temp__"]
+            pivot_input = pivot_input.model_copy(update={"index_columns": ["__temp__"]})
             ff = self.apply_flowfile_formula("1", col_name="__temp__")
         else:
             no_index_cols = False
@@ -1499,39 +1504,42 @@ class FlowDataEngine:
         grouped_ff = ff.do_group_by(pivot_input.get_group_by_input(), False)
         pivot_column = pivot_input.get_pivot_column()
 
-        input_df = grouped_ff.data_frame.with_columns(pivot_column.cast(pl.String).alias(pivot_input.pivot_column))
         number_of_aggregations = len(pivot_input.aggregations)
         # Aggregations where missing combinations should be filled with 0 to match
         # native polars pivot behavior (polars >= 1.32)
         _zero_fill_aggs = {"sum", "count", "len"}
-        df = (
-            input_df.select(*index_columns, pivot_column, pivot_input.get_values_expr())
-            .group_by(*index_columns)
-            .agg(
-                [
-                    (pl.col("vals").filter(pivot_column == new_col_value)).first().alias(new_col_value)
-                    for new_col_value in new_cols_unique
-                ]
+
+        def pivoted(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+            input_df = frame.with_columns(pivot_column.cast(pl.String).alias(pivot_input.pivot_column))
+            df = (
+                input_df.select(*index_columns, pivot_column, pivot_input.get_values_expr())
+                .group_by(*index_columns)
+                .agg(
+                    [
+                        (pl.col("vals").filter(pivot_column == new_col_value)).first().alias(new_col_value)
+                        for new_col_value in new_cols_unique
+                    ]
+                )
+                .select(
+                    *index_columns,
+                    *[
+                        (
+                            pl.col(new_col).struct.field(agg).fill_null(0)
+                            if agg in _zero_fill_aggs
+                            else pl.col(new_col).struct.field(agg)
+                        ).alias(f'{new_col + "_" + agg if number_of_aggregations > 1 else new_col}')
+                        for new_col in new_cols_unique
+                        for agg in pivot_input.aggregations
+                    ],
+                )
             )
-            .select(
-                *index_columns,
-                *[
-                    (
-                        pl.col(new_col).struct.field(agg).fill_null(0)
-                        if agg in _zero_fill_aggs
-                        else pl.col(new_col).struct.field(agg)
-                    ).alias(f'{new_col + "_" + agg if number_of_aggregations > 1 else new_col}')
-                    for new_col in new_cols_unique
-                    for agg in pivot_input.aggregations
-                ],
-            )
+            if no_index_cols:
+                df = df.drop("__temp__")
+            return df
+
+        return FlowDataEngine(
+            pivoted(grouped_ff.data_frame), calculate_schema_stats=False, schema=_derived_schema(pivoted, grouped_ff)
         )
-
-        if no_index_cols:
-            df = df.drop("__temp__")
-            pivot_input.index_columns = []
-
-        return FlowDataEngine(df, calculate_schema_stats=False)
 
     def do_filter(self, predicate: str) -> FlowDataEngine:
         """Filters rows based on a predicate expression.
@@ -1995,19 +2003,23 @@ class FlowDataEngine:
         duplicate_problems = get_duplicate_output_problems(cross_join_input_manager)
         if duplicate_problems:
             raise ValueError("Cross join is not valid: " + "; ".join(duplicate_problems))
-        left = self.data_frame.select(left_select).rename(cross_join_input_manager.left_select.rename_table)
-        right = other.data_frame.select(right_select).rename(cross_join_input_manager.right_select.rename_table)
-
-        joined_df = left.join(right, how="cross")
-
         cols_to_delete_after = [
             col.new_name
             for col in cross_join_input_manager.left_select.renames + cross_join_input_manager.right_select.renames
             if col.join_key and not col.keep and col.is_available
         ]
 
-        fl = FlowDataEngine(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False, streamable=False)
-        return fl
+        def crossed(left_lf: pl.LazyFrame, right_lf: pl.LazyFrame) -> pl.LazyFrame:
+            left = left_lf.select(left_select).rename(cross_join_input_manager.left_select.rename_table)
+            right = right_lf.select(right_select).rename(cross_join_input_manager.right_select.rename_table)
+            return left.join(right, how="cross").drop(cols_to_delete_after)
+
+        return FlowDataEngine(
+            crossed(self.data_frame, other.data_frame),
+            calculate_schema_stats=False,
+            streamable=False,
+            schema=_derived_schema(crossed, self, other),
+        )
 
     def join(
         self,
@@ -2130,12 +2142,13 @@ class FlowDataEngine:
         Returns:
             A new `FlowDataEngine` instance with the solved graph data.
         """
-        lf = self.data_frame.with_columns(
-            graph_solver(graph_solver_input.col_from, graph_solver_input.col_to).alias(
-                graph_solver_input.output_column_name
-            )
+        solved = graph_solver(graph_solver_input.col_from, graph_solver_input.col_to).alias(
+            graph_solver_input.output_column_name
         )
-        return FlowDataEngine(lf)
+        return FlowDataEngine(
+            self.data_frame.with_columns(solved),
+            schema=_derived_schema(lambda frame: frame.with_columns(solved), self),
+        )
 
     def explode_hierarchy(self, settings: transform_schemas.ExplodeHierarchyInput) -> FlowDataEngine:
         """Explodes a parent -> child edge list into its transitive closure.
@@ -2150,7 +2163,11 @@ class FlowDataEngine:
             A new, lazy `FlowDataEngine` with an unknown row count.
         """
         lf = explode_hierarchy_frame(self.data_frame.lazy(), settings, schema=self._cached_polars_schema())
-        return FlowDataEngine(lf, number_of_records=-1)
+        return FlowDataEngine(
+            lf,
+            number_of_records=-1,
+            schema=_derived_schema(lambda frame: explode_hierarchy_frame(frame, settings), self),
+        )
 
     def add_new_values(self, values: Iterable, col_name: str = None) -> FlowDataEngine:
         """Adds a new column with the provided values.
@@ -2173,7 +2190,10 @@ class FlowDataEngine:
         Returns:
             A new `FlowDataEngine` instance.
         """
-        return FlowDataEngine(self.data_frame.select(pl.len().alias("number_of_records")))
+        count = pl.len().alias("number_of_records")
+        return FlowDataEngine(
+            self.data_frame.select(count), schema=_derived_schema(lambda frame: frame.select(count), self)
+        )
 
     def assert_equal(self, other: FlowDataEngine, ordered: bool = True, strict_schema: bool = False):
         """Asserts that this DataFrame is equal to another.
@@ -2416,18 +2436,20 @@ class FlowDataEngine:
                 pl_type = cast_str_to_polars_type(col.data_type)
                 missing_exprs.append(pl.lit(None).cast(pl_type).alias(col.column_name))
 
-        df = self.data_frame
-        if missing_exprs:
-            df = df.with_columns(missing_exprs)
-
         expected_set = set(expected_names)
         extra_names = [c for c in self.columns if c not in expected_set]
         final_order = expected_names + extra_names
 
+        def aligned(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+            if missing_exprs:
+                frame = frame.with_columns(missing_exprs)
+            return frame.select(final_order)
+
         return FlowDataEngine(
-            df.select(final_order),
+            aligned(self.data_frame),
             number_of_records=self.number_of_records,
             streamable=self._streamable,
+            schema=_derived_schema(aligned, self),
         )
 
     def reorganize_order(self, column_order: list[str]) -> FlowDataEngine:
@@ -2456,11 +2478,15 @@ class FlowDataEngine:
         """
         parsed_func = to_expr(func)
         if output_data_type is not None:
-            df2 = self.data_frame.with_columns(parsed_func.cast(output_data_type).alias(col_name))
+            column = parsed_func.cast(output_data_type).alias(col_name)
         else:
-            df2 = self.data_frame.with_columns(parsed_func.alias(col_name))
+            column = parsed_func.alias(col_name)
 
-        return FlowDataEngine(df2, number_of_records=self.number_of_records)
+        return FlowDataEngine(
+            self.data_frame.with_columns(column),
+            number_of_records=self.number_of_records,
+            schema=_derived_schema(lambda frame: frame.with_columns(column), self),
+        )
 
     @staticmethod
     def _select_target_columns(
@@ -2615,7 +2641,11 @@ class FlowDataEngine:
         expressions = self.build_multi_field_formula_expressions(columns, settings)
         if not expressions:
             return FlowDataEngine(self.data_frame, number_of_records=self.number_of_records, schema=self.schema)
-        return FlowDataEngine(self.data_frame.with_columns(expressions), number_of_records=self.number_of_records)
+        return FlowDataEngine(
+            self.data_frame.with_columns(expressions),
+            number_of_records=self.number_of_records,
+            schema=_derived_schema(lambda frame: frame.with_columns(expressions), self),
+        )
 
     @staticmethod
     def _compute_renamed_names(
@@ -2787,18 +2817,25 @@ class FlowDataEngine:
         if settings.rename_mode == "first_row":
             first_row_values = self._peek_first_row_as_dict()
         rename_map = self.resolve_dynamic_rename_map(columns, settings, first_row_values=first_row_values)
-        new_df = self.data_frame.rename(rename_map) if rename_map else self.data_frame
+
+        def renamed(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+            frame = frame.rename(rename_map) if rename_map else frame
+            return frame.slice(1) if settings.rename_mode == "first_row" else frame
+
         if settings.rename_mode == "first_row":
-            new_df = new_df.slice(1)
             new_records = max(0, self.number_of_records - 1)
-            return FlowDataEngine(new_df, number_of_records=new_records)
+            return FlowDataEngine(
+                renamed(self.data_frame), number_of_records=new_records, schema=_derived_schema(renamed, self)
+            )
         if not rename_map:
             return FlowDataEngine(
                 self.data_frame,
                 number_of_records=self.number_of_records,
                 schema=self.schema,
             )
-        return FlowDataEngine(new_df, number_of_records=self.number_of_records)
+        return FlowDataEngine(
+            renamed(self.data_frame), number_of_records=self.number_of_records, schema=_derived_schema(renamed, self)
+        )
 
     @staticmethod
     def _select_cleansing_targets(
@@ -2958,26 +2995,34 @@ class FlowDataEngine:
         Returns:
             A new `FlowDataEngine` with the cleansing rules applied.
         """
-        new_df = self.data_frame
-        if cleansing_input.remove_null_rows:
-            new_df = new_df.filter(~pl.all_horizontal(pl.all().is_null()))
-
         dropped: set[str] = set()
+        drop_order: list[str] = []
         if cleansing_input.remove_null_columns and self.number_of_records != 0:
             height, null_counts = self._fetch_null_profile()
             if height > 0:
                 dropped = {name for name, null_count in null_counts.items() if null_count == height}
-            if dropped:
-                new_df = new_df.drop([name for name in null_counts if name in dropped])
+            drop_order = [name for name in null_counts if name in dropped]
 
         columns = [(c.column_name, c.data_type_group) for c in self.schema if c.column_name not in dropped]
         exprs = self.build_data_cleansing_expressions(columns, cleansing_input)
-        if exprs:
-            new_df = new_df.with_columns(exprs)
+
+        def cleansed(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+            if cleansing_input.remove_null_rows:
+                frame = frame.filter(~pl.all_horizontal(pl.all().is_null()))
+            if drop_order:
+                frame = frame.drop(drop_order)
+            return frame.with_columns(exprs) if exprs else frame
 
         if cleansing_input.remove_null_rows:
-            return FlowDataEngine(new_df, streamable=self._streamable)
-        return FlowDataEngine(new_df, number_of_records=self.number_of_records, streamable=self._streamable)
+            return FlowDataEngine(
+                cleansed(self.data_frame), streamable=self._streamable, schema=_derived_schema(cleansed, self)
+            )
+        return FlowDataEngine(
+            cleansed(self.data_frame),
+            number_of_records=self.number_of_records,
+            streamable=self._streamable,
+            schema=_derived_schema(cleansed, self),
+        )
 
     def apply_sql_formulas(self, entries: list[FormulaEntry]) -> FlowDataEngine:
         """Applies the formula node's entries, chained (see `apply_formula_entries`).
@@ -3040,11 +3085,15 @@ class FlowDataEngine:
         Returns:
             A new `FlowDataEngine` instance with unique rows.
         """
-        if unique_input is None:
-            return FlowDataEngine(self.data_frame.unique())
-        if not unique_input.columns:
-            return FlowDataEngine(self.data_frame.unique(keep=unique_input.strategy))
-        return FlowDataEngine(self.data_frame.unique(unique_input.columns, keep=unique_input.strategy))
+
+        def deduplicated(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+            if unique_input is None:
+                return frame.unique()
+            if not unique_input.columns:
+                return frame.unique(keep=unique_input.strategy)
+            return frame.unique(unique_input.columns, keep=unique_input.strategy)
+
+        return FlowDataEngine(deduplicated(self.data_frame), schema=_derived_schema(deduplicated, self))
 
     def concat(self, other: Iterable[FlowDataEngine] | FlowDataEngine) -> FlowDataEngine:
         """Concatenates this DataFrame with one or more other DataFrames.
@@ -3224,4 +3273,4 @@ def execute_polars_code(*flowfile_tables: FlowDataEngine, code: str) -> FlowData
     df = polars_executable(*(flowfile_table.data_frame for flowfile_table in flowfile_tables))
     if isinstance(df, pl.DataFrame):
         logger.warning("Got a non lazy DataFrame, possibly harming performance, if possible, try to use a lazy method")
-    return FlowDataEngine(df)
+    return FlowDataEngine(df, schema=_derived_schema(polars_executable, *flowfile_tables))

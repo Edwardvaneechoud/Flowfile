@@ -10,7 +10,8 @@ and an Apply Model node that takes one from the catalog also need the scheme the
 key it holds.
 
 ``SingleBackendPolicy`` puts a whole run on one backend, except the node types whose builders always run on a backend
-of their own.
+of their own. ``MixedPlacementPolicy`` puts each node on the backend its own ``execution_location`` names, and ``place``
+lists the edges between two nodes on different backends, whose data crosses through the exchange store.
 """
 
 from __future__ import annotations
@@ -60,7 +61,7 @@ class Placement:
 
     Attributes:
         assignment: Node id -> the id of the backend that runs it.
-        boundaries: The edges whose data crosses from one backend to another; empty while one backend runs a flow.
+        boundaries: The edges whose data crosses from one backend to another, as (source node id, target node id).
         refusals: The nodes their backend cannot run.
     """
 
@@ -83,10 +84,32 @@ class SingleBackendPolicy:
         return _PINNED_BACKENDS.get(node.node_type, self.backend_id)
 
 
+@dataclass(frozen=True)
+class MixedPlacementPolicy:
+    """Each node on the backend its own ``execution_location`` names, ``backend_id`` (the run's) for ``"auto"``.
+
+    A node type its builder pins to a backend (``_PINNED_BACKENDS``) is placed there whatever its setting says. A saved
+    id is taken as it is, ``local`` included; one the registry does not know is refused when the run is placed.
+    """
+
+    backend_id: str
+
+    def backend_for(self, node: FlowNode) -> str:
+        """The id of the backend ``node`` runs on."""
+        pinned = _PINNED_BACKENDS.get(node.node_type)
+        if pinned is not None:
+            return pinned
+        location = node.setting_input.execution_location
+        return self.backend_id if location == "auto" else location
+
+
+PlacementPolicy = SingleBackendPolicy | MixedPlacementPolicy
+
+
 def place(
     flow: FlowGraph,
     backends: Mapping[str, Capabilities],
-    policy: SingleBackendPolicy,
+    policy: PlacementPolicy,
     *,
     nodes: list[FlowNode] | None = None,
 ) -> Placement:
@@ -99,10 +122,14 @@ def place(
     namespace row and no credential) and, for a Train or Apply Model node, the kind of the artifact store
     (``artifacts.get_storage_backend``, whose only side effect is making the store the first time: the filesystem store
     makes its two folders, the S3 store a client).
+
+    ``boundaries`` lists, in the order of ``nodes``, each pair of a node and an input of it assigned to another backend,
+    once; an edge with an end that is not assigned is none.
     """
+    placed = flow.nodes if nodes is None else nodes
     assignment: dict[int, str] = {}
     refusals: list[Refusal] = []
-    for node in flow.nodes if nodes is None else nodes:
+    for node in placed:
         backend_id = policy.backend_for(node)
         capabilities = backends.get(backend_id)
         if capabilities is None:
@@ -115,7 +142,17 @@ def place(
         reasons = _unmet(requirements, capabilities, namespace)
         if reasons:
             refusals.append(Refusal(node_id=node.node_id, backend_id=backend_id, reason="; ".join(reasons)))
-    return Placement(assignment=assignment, boundaries=[], refusals=refusals)
+    boundaries: list[tuple[int, int]] = []
+    for node in placed:
+        backend_id = assignment.get(node.node_id)
+        for source, _ in node._slot_input_pairs():
+            if backend_id is None or source is None:
+                continue
+            source_backend_id = assignment.get(source.node_id)
+            edge = (source.node_id, node.node_id)
+            if source_backend_id is not None and source_backend_id != backend_id and edge not in boundaries:
+                boundaries.append(edge)
+    return Placement(assignment=assignment, boundaries=boundaries, refusals=refusals)
 
 
 def _unmet(requirements: NodeRequirements, capabilities: Capabilities, namespace: str | None) -> list[str]:

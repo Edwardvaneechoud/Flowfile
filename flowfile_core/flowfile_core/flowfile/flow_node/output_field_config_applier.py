@@ -3,7 +3,7 @@
 import polars as pl
 
 from flowfile_core.configs import logger
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, _derived_schema
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.schemas.input_schema import OutputFieldConfig, OutputFieldInfo
@@ -58,7 +58,10 @@ def _apply_raise_on_missing(
     if missing_columns:
         raise ValueError(f"Missing required columns: {', '.join(sorted(missing_columns))}")
     if flowfile_engine.columns != cols:
-        return FlowDataEngine(_select_columns_in_order(flowfile_engine.data_frame, fields))
+        return FlowDataEngine(
+            _select_columns_in_order(flowfile_engine.data_frame, fields),
+            schema=_derived_schema(lambda frame: _select_columns_in_order(frame, fields), flowfile_engine),
+        )
     else:
         return flowfile_engine
 
@@ -83,11 +86,13 @@ def _apply_add_missing(
     expressions = [
         _parse_default_value(field).alias(field.name) for field in fields if field.name not in current_columns
     ]
-    if expressions:
-        new_df = engine.data_frame.with_columns(expressions)
-    else:
-        new_df = engine.data_frame
-    return FlowDataEngine(_select_columns_in_order(new_df, fields))
+
+    def completed(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+        if expressions:
+            frame = frame.with_columns(expressions)
+        return _select_columns_in_order(frame, fields)
+
+    return FlowDataEngine(completed(engine.data_frame), schema=_derived_schema(completed, engine))
 
 
 def _apply_add_missing_keep_extra(
@@ -113,16 +118,18 @@ def _apply_add_missing_keep_extra(
     expressions = [
         _parse_default_value(field).alias(field.name) for field in fields if field.name not in current_columns
     ]
-    if expressions:
-        new_df = engine.data_frame.with_columns(expressions)
-    else:
-        new_df = engine.data_frame
 
     configured_column_order = [field.name for field in fields]
     extra_columns = [col for col in engine.columns if col not in configured_names]
 
     final_column_order = configured_column_order + extra_columns
-    return FlowDataEngine(new_df.select(final_column_order))
+
+    def kept(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+        if expressions:
+            frame = frame.with_columns(expressions)
+        return frame.select(final_column_order)
+
+    return FlowDataEngine(kept(engine.data_frame), schema=_derived_schema(kept, engine))
 
 
 def _validate_data_types(df: FlowDataEngine, fields: list[OutputFieldInfo]) -> None:

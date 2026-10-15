@@ -6,15 +6,24 @@ host, but any read of that leaf from core raises ``FileNotFoundError``. A touch 
 instead of being counted, so these flows pass only while core takes a stored result's schema from its reference.
 They run with the protocol flag off and on: with it on, core asks the backend that holds a result whether it still
 does, and reads rows of those results through the backend: the formula editor's preview row, a formula gate's probe,
-column statistics and the CSV export; and a filter, a select, a join, a group_by or a formula over a stored result
-takes its input's columns from the input engine's cached schema. The tests named for ``v1`` results check the same
-over the session worker's ``/v1`` routes.
+column statistics and the CSV export; and a filter, a select, a join, a group_by, a formula, a record count, a unique,
+a union, an unpivot, window functions, text to rows, a multi-field formula, a graph solver, an explode hierarchy, a
+pivot, a dynamic rename, a data cleansing, a cross join or a Polars code node over a stored result, a node's output
+field config, a Run Flow node's outputs over its child's stored results, or the REST API reader's alignment of a read
+it stored, takes its input's columns from the input engine's cached schema; and a node that fails on a missing file in
+core keeps its stored input rather than rerunning it. The elaborate integration flow runs whole over stored inputs with
+the flag on, and with it off fails at the nodes that read them in core. The tests named for ``v1`` results check the
+same over the session worker's ``/v1`` routes.
 """
 
 import dataclasses
 import io
+import json
 import os
+import threading
+import uuid
 from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,11 +32,14 @@ import pytest
 
 from flowfile_core import flow_file_handler
 from flowfile_core.configs import settings
+from flowfile_core.database import models as db_models
+from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.extensions import get_instant_func_results
 from flowfile_core.flowfile.flow_data_engine.bounded import unique_values
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.formula_entries import (
     FormulaEntry,
     FormulaEntryError,
@@ -42,6 +54,7 @@ from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.routes.routes import export_node_data
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from shared.compute_protocol import WorkerLocation
+from tests.flowfile.test_flowfile_integration import build_complex_elaborate_flow
 
 BACKEND_ID = "unreadable"
 
@@ -458,6 +471,54 @@ def test_a_result_its_backend_dropped_is_run_again(unreadable, protocol):
         graph.close_flow()
 
 
+def test_a_missing_file_in_core_reruns_a_held_input_only_with_the_flag_off(unreadable, protocol, monkeypatch, tmp_path):
+    submits, releases = [], []
+    submit, release = UnreadableBackend.submit, UnreadableBackend.release
+
+    def recording_submit(self, plan, inputs, hints, result_id, *, flow_id, node_id):
+        submits.append((node_id, result_id))
+        return submit(self, plan, inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
+
+    def recording_release(self, ref):
+        releases.append(ref.result_id)
+        return release(self, ref)
+
+    monkeypatch.setattr(UnreadableBackend, "submit", recording_submit)
+    monkeypatch.setattr(UnreadableBackend, "release", recording_release)
+    missing = tmp_path / "missing.parquet"
+    graph = make_graph(9380, max_parallel_workers=1)
+    add_manual_input(graph, 1, [{"id": i, "amount": i * 10} for i in range(1, 4)])
+    graph.get_node(1).node_settings.cache_results = True
+    add_promise(graph, 2, "polars_code")
+    graph.add_polars_code(
+        input_schema.NodePolarsCode(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_ids=[1],
+            polars_code_input=transform_schema.PolarsCodeInput(
+                polars_code=f'input_df.join(pl.read_parquet("{missing}").lazy(), how="cross")'
+            ),
+        )
+    )
+    connect(graph, 1, 2)
+    try:
+        run_info = graph.run_graph()
+
+        ref = graph.get_node(1).results.result_ref
+        assert [node_id for node_id, _ in failures(run_info)] == [2]
+        assert "No such file or directory (os error 2)" in failures(run_info)[0][1]
+        assert unreadable[0].exists(ref)
+        input_submits = [result_id for node_id, result_id in submits if node_id == 1]
+        if protocol:
+            assert releases == []
+            assert input_submits == [ref.result_id]
+        else:
+            assert releases == [ref.result_id]
+            assert input_submits == [ref.result_id, ref.result_id]
+    finally:
+        graph.close_flow()
+
+
 def test_a_stored_v1_result_keeps_the_columns_the_worker_sent(remote_worker, protocol_on):
     graph = geometry_flow(9343)
     try:
@@ -581,6 +642,527 @@ def test_a_formula_runs_over_a_stored_result_core_cannot_read(unreadable, protoc
         assert len(graph.get_node(2).get_table_example(True).data) == 4
     finally:
         graph.close_flow()
+
+
+TRANSFORM_ROWS = [
+    {
+        "id": i,
+        "region": "eu" if i % 2 else "us",
+        "amount": i * 10,
+        "parent": f"p{i // 3}",
+        "child": f"c{i}",
+        "tags": "x,y" if i % 2 else "z",
+    }
+    for i in range(1, 7)
+]
+TRANSFORM_COLUMNS = [
+    ("id", "Int64"),
+    ("region", "String"),
+    ("amount", "Int64"),
+    ("parent", "String"),
+    ("child", "String"),
+    ("tags", "String"),
+]
+UNION_ROWS = [{"id": 7, "region": "eu", "amount": 70.5}, {"id": 8, "region": "us", "amount": 80.5}]
+
+TRANSFORMS = [
+    (9351, "record_count", input_schema.NodeRecordCount, {}, [("number_of_records", "UInt32")], 1),
+    (
+        9352,
+        "unique",
+        input_schema.NodeUnique,
+        {"unique_input": transform_schema.UniqueInput(columns=["region"], strategy="first")},
+        TRANSFORM_COLUMNS,
+        2,
+    ),
+    (
+        9353,
+        "union",
+        input_schema.NodeUnion,
+        {},
+        [("id", "Int64"), ("region", "String"), ("amount", "Float64")] + TRANSFORM_COLUMNS[3:],
+        8,
+    ),
+    (
+        9354,
+        "unpivot",
+        input_schema.NodeUnpivot,
+        {"unpivot_input": transform_schema.UnpivotInput(index_columns=["id"], value_columns=["region", "tags"])},
+        [("id", "Int64"), ("variable", "String"), ("value", "String")],
+        12,
+    ),
+    (
+        9355,
+        "window_functions",
+        input_schema.NodeWindowFunctions,
+        {
+            "window_input": transform_schema.WindowFunctionsInput(
+                partition_by=["region"],
+                order_by=[transform_schema.SortByInput(column="id")],
+                window_functions=[
+                    transform_schema.WindowFunctionInput(column="amount", function="cum_sum", new_column_name="running")
+                ],
+            )
+        },
+        TRANSFORM_COLUMNS + [("running", "Int64")],
+        6,
+    ),
+    (
+        9356,
+        "text_to_rows",
+        input_schema.NodeTextToRows,
+        {"text_to_rows_input": transform_schema.TextToRowsInput(column_to_split="tags", output_column_name="tag")},
+        TRANSFORM_COLUMNS + [("tag", "String")],
+        9,
+    ),
+    (
+        9357,
+        "multi_field_formula",
+        input_schema.NodeMultiFieldFormula,
+        {
+            "multi_field_formula_input": transform_schema.MultiFieldFormulaInput(
+                formula="[_CurrentField_] * 2",
+                selection_mode="list",
+                selected_columns=["amount"],
+                output_mode="new",
+                output_suffix="_x2",
+            )
+        },
+        TRANSFORM_COLUMNS + [("amount_x2", "Int64")],
+        6,
+    ),
+    (
+        9358,
+        "graph_solver",
+        input_schema.NodeGraphSolver,
+        {"graph_solver_input": transform_schema.GraphSolverInput(col_from="parent", col_to="child")},
+        TRANSFORM_COLUMNS + [("graph_group", "UInt64")],
+        6,
+    ),
+    (
+        9359,
+        "explode_hierarchy",
+        input_schema.NodeExplodeHierarchy,
+        {
+            "explode_hierarchy_input": transform_schema.ExplodeHierarchyInput(
+                parent_column="parent", child_column="child"
+            )
+        },
+        [
+            ("ancestor", "String"),
+            ("descendant", "String"),
+            ("level", "UInt32"),
+            ("quantity", "Float64"),
+            ("is_leaf", "Boolean"),
+        ],
+        6,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "flow_id, node_type, settings_class, fields, expected_columns, rows",
+    TRANSFORMS,
+    ids=[case[1] for case in TRANSFORMS],
+)
+def test_a_transform_runs_over_a_stored_result_core_cannot_read(
+    unreadable, protocol_on, flow_id, node_type, settings_class, fields, expected_columns, rows
+):
+    graph = make_graph(flow_id, max_parallel_workers=1)
+    try:
+        inputs = [1, 3] if node_type == "union" else [1]
+        add_manual_input(graph, 1, TRANSFORM_ROWS)
+        if node_type == "union":
+            add_manual_input(graph, 3, UNION_ROWS)
+        for node_id in inputs:
+            graph.get_node(node_id).node_settings.cache_results = True
+        add_promise(graph, 2, node_type)
+        sources = {"depending_on_ids": inputs} if node_type == "union" else {"depending_on_id": 1}
+        getattr(graph, f"add_{node_type}")(settings_class(flow_id=graph.flow_id, node_id=2, **sources, **fields))
+        for node_id in inputs:
+            connect(graph, node_id, 2)
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        for node_id in inputs:
+            ref = graph.get_node(node_id).results.result_ref
+            assert ref.state == "materialised"
+            assert not os.path.exists(ref.location.decode("utf-8"))
+        assert columns(graph.get_node(2).schema) == expected_columns
+        assert len(graph.get_node(2).get_table_example(True).data) == rows
+    finally:
+        graph.close_flow()
+
+
+CLEANSING_ROWS = [{**row, "note": None} for row in TRANSFORM_ROWS] + [dict.fromkeys([*TRANSFORM_ROWS[0], "note"])]
+SEGMENT_ROWS = [{"id": 1, "segment": "s1"}, {"id": 2, "segment": "s2"}]
+
+TRANSFORM_VARIANTS = [
+    (
+        9360,
+        "pivot",
+        "pivot",
+        input_schema.NodePivot,
+        {
+            "pivot_input": transform_schema.PivotInput(
+                index_columns=["region"], pivot_column="parent", value_col="amount", aggregations=["sum"]
+            )
+        },
+        [("region", "String"), ("p0", "Int64"), ("p1", "Int64"), ("p2", "Int64")],
+        2,
+    ),
+    (
+        9361,
+        "pivot_without_index_columns",
+        "pivot",
+        input_schema.NodePivot,
+        {
+            "pivot_input": transform_schema.PivotInput(
+                index_columns=[], pivot_column="region", value_col="amount", aggregations=["sum", "count"]
+            )
+        },
+        [("eu_sum", "Int64"), ("eu_count", "UInt32"), ("us_sum", "Int64"), ("us_count", "UInt32")],
+        1,
+    ),
+    (
+        9362,
+        "dynamic_rename_prefix",
+        "dynamic_rename",
+        input_schema.NodeDynamicRename,
+        {"dynamic_rename_input": transform_schema.DynamicRenameInput(rename_mode="prefix", prefix="p_")},
+        [(f"p_{name}", dtype) for name, dtype in TRANSFORM_COLUMNS],
+        6,
+    ),
+    (
+        9363,
+        "dynamic_rename_first_row",
+        "dynamic_rename",
+        input_schema.NodeDynamicRename,
+        {
+            "dynamic_rename_input": transform_schema.DynamicRenameInput(
+                rename_mode="first_row", selection_mode="list", selected_columns=["region", "child"]
+            )
+        },
+        [
+            ("id", "Int64"),
+            ("eu", "String"),
+            ("amount", "Int64"),
+            ("parent", "String"),
+            ("c1", "String"),
+            ("tags", "String"),
+        ],
+        5,
+    ),
+    (
+        9364,
+        "data_cleansing",
+        "data_cleansing",
+        input_schema.NodeDataCleansing,
+        {
+            "cleansing_input": transform_schema.DataCleansingInput(
+                remove_null_rows=True, remove_null_columns=True, case_mode="uppercase"
+            )
+        },
+        TRANSFORM_COLUMNS,
+        6,
+    ),
+    (
+        9365,
+        "cross_join",
+        "cross_join",
+        input_schema.NodeCrossJoin,
+        {"cross_join_input": transform_schema.CrossJoinInput(left_select=[], right_select=[])},
+        TRANSFORM_COLUMNS + [("id_right", "Int64"), ("segment", "String")],
+        12,
+    ),
+    (
+        9370,
+        "polars_code",
+        "polars_code",
+        input_schema.NodePolarsCode,
+        {
+            "polars_code_input": transform_schema.PolarsCodeInput(
+                polars_code="output_df = input_df.filter(pl.col('amount') > 20).select('id', 'region', 'amount')"
+            )
+        },
+        [("id", "Int64"), ("region", "String"), ("amount", "Int64")],
+        4,
+    ),
+    (
+        9372,
+        "output_fields_raise_on_missing",
+        "filter",
+        input_schema.NodeFilter,
+        {
+            "filter_input": transform_schema.FilterInput(mode="advanced", advanced_filter="[amount] > 20"),
+            "output_field_config": input_schema.OutputFieldConfig(
+                enabled=True,
+                validation_mode_behavior="raise_on_missing",
+                fields=[
+                    input_schema.OutputFieldInfo(name="amount", data_type="Int64"),
+                    input_schema.OutputFieldInfo(name="id", data_type="Int64"),
+                ],
+            ),
+        },
+        [("amount", "Int64"), ("id", "Int64")],
+        4,
+    ),
+    (
+        9373,
+        "output_fields_add_missing",
+        "filter",
+        input_schema.NodeFilter,
+        {
+            "filter_input": transform_schema.FilterInput(mode="advanced", advanced_filter="[amount] > 20"),
+            "output_field_config": input_schema.OutputFieldConfig(
+                enabled=True,
+                validation_mode_behavior="add_missing",
+                fields=[
+                    input_schema.OutputFieldInfo(name="id", data_type="Int64"),
+                    input_schema.OutputFieldInfo(name="status", data_type="String", default_value="new"),
+                ],
+            ),
+        },
+        [("id", "Int64"), ("status", "String")],
+        4,
+    ),
+    (
+        9374,
+        "output_fields_add_missing_keep_extra",
+        "filter",
+        input_schema.NodeFilter,
+        {
+            "filter_input": transform_schema.FilterInput(mode="advanced", advanced_filter="[amount] > 20"),
+            "output_field_config": input_schema.OutputFieldConfig(
+                enabled=True,
+                validation_mode_behavior="add_missing_keep_extra",
+                fields=[
+                    input_schema.OutputFieldInfo(name="status", data_type="String", default_value="new"),
+                    input_schema.OutputFieldInfo(name="id", data_type="Int64"),
+                ],
+            ),
+        },
+        [("status", "String"), ("id", "Int64")] + TRANSFORM_COLUMNS[1:],
+        4,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "flow_id, node_type, settings_class, fields, expected_columns, rows",
+    [case[:1] + case[2:] for case in TRANSFORM_VARIANTS],
+    ids=[case[1] for case in TRANSFORM_VARIANTS],
+)
+def test_a_transform_variant_runs_over_stored_results_core_cannot_read(
+    unreadable, protocol_on, flow_id, node_type, settings_class, fields, expected_columns, rows
+):
+    graph = make_graph(flow_id, max_parallel_workers=1)
+    try:
+        inputs = {1: "main", 3: "right"} if node_type == "cross_join" else {1: "main"}
+        add_manual_input(graph, 1, CLEANSING_ROWS if node_type == "data_cleansing" else TRANSFORM_ROWS)
+        if node_type == "cross_join":
+            add_manual_input(graph, 3, SEGMENT_ROWS)
+        for node_id in inputs:
+            graph.get_node(node_id).node_settings.cache_results = True
+        add_promise(graph, 2, node_type)
+        multi_input = issubclass(settings_class, input_schema.NodeMultiInput)
+        sources = {"depending_on_ids": list(inputs)} if multi_input else {"depending_on_id": 1}
+        getattr(graph, f"add_{node_type}")(settings_class(flow_id=graph.flow_id, node_id=2, **sources, **fields))
+        for node_id, input_type in inputs.items():
+            connect(graph, node_id, 2, input_type=input_type)
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        for node_id in inputs:
+            ref = graph.get_node(node_id).results.result_ref
+            assert ref.state == "materialised"
+            assert not os.path.exists(ref.location.decode("utf-8"))
+        assert columns(graph.get_node(2).schema) == expected_columns
+        assert len(graph.get_node(2).get_table_example(True).data) == rows
+    finally:
+        graph.close_flow()
+
+
+@pytest.mark.parametrize(
+    "flow_id, iteration_mode, rows", [(9375, "first_value", 6), (9376, "iterate", 12)], ids=["first_value", "iterate"]
+)
+def test_a_run_flow_reads_its_child_output_stored_where_core_cannot_read(
+    unreadable, protocol_on, tmp_path, flow_id, iteration_mode, rows
+):
+    child = make_graph(9379)
+    child.flow_settings.parameters = [schemas.FlowParameter(name="limit", default_value="10", type="integer")]
+    add_promise(child, 1, "flow_input")
+    child.add_flow_input(
+        input_schema.NodeFlowInput(
+            flow_id=child.flow_id,
+            node_id=1,
+            input_name="a",
+            raw_data_format=input_schema.RawData.from_pylist(TRANSFORM_ROWS),
+            cache_results=True,
+        )
+    )
+    add_promise(child, 2, "flow_output")
+    child.add_flow_output(
+        input_schema.NodeFlowOutput(flow_id=child.flow_id, node_id=2, output_name="out_a", depending_on_id=1)
+    )
+    connect(child, 1, 2)
+    path = tmp_path / "child_out_a.yaml"
+    child.save_flow(str(path))
+    child.close_flow()
+    with get_db_context() as db:
+        registration = db_models.FlowRegistration(
+            flow_uuid=str(uuid.uuid4()), name=path.stem, flow_path=str(path), owner_id=1
+        )
+        db.add(registration)
+        db.commit()
+        db.refresh(registration)
+        registration_id = registration.id
+
+    iterate = iteration_mode == "iterate"
+    graph = make_graph(flow_id, max_parallel_workers=1)
+    try:
+        if iterate:
+            add_manual_input(graph, 1, [{"limit": 1}, {"limit": 2}])
+        add_promise(graph, 2, "run_flow")
+        bindings = [input_schema.RunFlowParameterBinding(parameter_name="limit", source="column", column_name="limit")]
+        graph.add_run_flow(
+            input_schema.NodeRunFlow(
+                flow_id=graph.flow_id,
+                node_id=2,
+                user_id=1,
+                flow_reference=input_schema.SubflowReference(registration_id=registration_id),
+                input_slots=["a"],
+                output_slots=["out_a"],
+                parameter_bindings=bindings if iterate else [],
+                iteration_mode=iteration_mode,
+                append_run_metadata=False,
+            )
+        )
+        if iterate:
+            add_connection(
+                graph,
+                input_schema.NodeConnection(
+                    input_connection=input_schema.NodeInputConnection(node_id=2, connection_class="input-0"),
+                    output_connection=input_schema.NodeOutputConnection(node_id=1, connection_class="output-0"),
+                ),
+            )
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        assert columns(graph.get_node(2).schema) == TRANSFORM_COLUMNS
+        assert unreadable[0].count(graph.get_node(2).results.result_ref) == rows
+    finally:
+        graph.close_flow()
+
+
+ELABORATE_INPUTS = (1, 2, 3, 4, 5, 27)
+ELABORATE_OUTPUTS = {
+    71: "customer_sales_analysis.csv",
+    72: "fuzzy_matched_customers.parquet",
+    73: "network_components.csv",
+    74: "combined_aggregations.csv",
+}
+
+
+def test_the_elaborate_integration_flow_runs_over_stored_inputs_core_cannot_read(unreadable, protocol, tmp_path):
+    graph = build_complex_elaborate_flow(tmp_path)
+    graph.flow_settings.execution_location = "remote"
+    graph.flow_settings.max_parallel_workers = 1
+    for node_id in ELABORATE_INPUTS:
+        graph.get_node(node_id).node_settings.cache_results = True
+    try:
+        run_info = graph.run_graph()
+
+        for node_id in ELABORATE_INPUTS:
+            ref = graph.get_node(node_id).results.result_ref
+            assert ref.state == "materialised"
+            assert not os.path.exists(ref.location.decode("utf-8"))
+        if protocol:
+            assert run_info.success, failures(run_info)
+            assert run_info.nodes_completed == len(graph.nodes) == 30
+            rows = {}
+            for node_id, name in ELABORATE_OUTPUTS.items():
+                path = tmp_path / name
+                frame = pl.read_parquet(path) if path.suffix == ".parquet" else pl.read_csv(path)
+                assert frame.columns == [column.column_name for column in graph.get_node(node_id).schema]
+                rows[name] = frame.height
+            assert rows["fuzzy_matched_customers.parquet"] == 3
+            assert rows["network_components.csv"] == 5
+            assert rows["customer_sales_analysis.csv"] > 0 and rows["combined_aggregations.csv"] > 0
+        else:
+            assert not run_info.success
+            assert {node_id for node_id, _ in failures(run_info)} == {11, 17, 26, 28, 30, 31}
+            assert all("No such file or directory (os error 2)" in error for _, error in failures(run_info))
+    finally:
+        graph.close_flow()
+
+
+API_ROWS = [{"id": 1, "name": "a", "city": "ams"}, {"id": 2, "name": "b", "city": "rtm"}]
+
+
+class _Api(BaseHTTPRequestHandler):
+    def log_message(self, *_args):
+        pass
+
+    def do_GET(self):  # noqa: N802
+        body = json.dumps(API_ROWS).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(body)
+
+
+@pytest.fixture
+def api_url():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Api)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/items"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_a_rest_api_reader_aligns_a_read_stored_where_core_cannot_read_it(unreadable, protocol_on, api_url):
+    graph = make_graph(9366, max_parallel_workers=1)
+    try:
+        add_promise(graph, 1, "rest_api_reader")
+        graph.add_rest_api_reader(
+            input_schema.NodeRestApiReader(
+                flow_id=graph.flow_id,
+                node_id=1,
+                user_id=1,
+                rest_api_settings=input_schema.RestApiSettings(url=api_url),
+                fields=[
+                    input_schema.MinimalFieldInfo(name="name", data_type="String"),
+                    input_schema.MinimalFieldInfo(name="id", data_type="Int64"),
+                    input_schema.MinimalFieldInfo(name="missing", data_type="String"),
+                ],
+            )
+        )
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        assert columns(graph.get_node(1).schema) == [
+            ("name", "String"),
+            ("id", "Int64"),
+            ("missing", "String"),
+            ("city", "String"),
+        ]
+        assert len(graph.get_node(1).get_table_example(True).data) == 2
+    finally:
+        graph.close_flow()
+
+
+def test_a_pivot_without_index_columns_never_writes_to_its_settings(unreadable, protocol):
+    pivot_input = transform_schema.PivotInput(
+        index_columns=[], pivot_column="region", value_col="missing", aggregations=["sum"]
+    )
+    with pytest.raises(pl.exceptions.ColumnNotFoundError):
+        FlowDataEngine(pl.LazyFrame(TRANSFORM_ROWS)).do_pivot(pivot_input)
+
+    assert pivot_input.index_columns == []
 
 
 def test_a_stored_results_columns_are_read_from_its_cached_schema(unreadable, protocol_on):

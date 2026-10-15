@@ -3,10 +3,12 @@
 import contextvars
 import datetime
 import threading
-from collections.abc import Collection, Mapping
+import uuid
+from collections.abc import Collection, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import ExitStack
 from contextvars import ContextVar
+from dataclasses import dataclass, replace
 from time import time
 from typing import Any, Literal
 
@@ -14,7 +16,7 @@ import polars as pl
 from polars_expr_transformer import simple_function_to_expr as to_expr
 
 from flowfile_core.configs import logger, settings
-from flowfile_core.configs.flow_logger import FlowLogger
+from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.events import publish
 from flowfile_core.flowfile.catalog_cdc import (
@@ -24,8 +26,16 @@ from flowfile_core.flowfile.catalog_cdc import (
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.context import ExecutionContext, current_context, use_context
 from flowfile_core.flowfile.execution.errors import ComputeError
-from flowfile_core.flowfile.execution.placement import Placement, Refusal, SingleBackendPolicy, place
-from flowfile_core.flowfile.flow_data_engine.bounded import head_rows
+from flowfile_core.flowfile.execution.exchange import ExchangeRun
+from flowfile_core.flowfile.execution.placement import (
+    MixedPlacementPolicy,
+    Placement,
+    Refusal,
+    SingleBackendPolicy,
+    place,
+)
+from flowfile_core.flowfile.execution.protocol import CredentialRef, ResultRef
+from flowfile_core.flowfile.flow_data_engine.bounded import DEFERRED_HINTS, head_rows
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
@@ -136,7 +146,118 @@ def execution_order_message(flow_logger: FlowLogger, stages: list[ExecutionStage
     flow_logger.info("execution order:\n" + "\n".join(lines))
 
 
+@dataclass
+class BoundaryEdge:
+    """An input of ``target`` that crosses from another backend through the exchange store during one run.
+
+    ``source``'s output on ``handle``, held on ``source_backend_id``, is exported to ``uri`` and imported on
+    ``target_backend_id``, both with ``credential``, the first time ``target`` reads that input (``cross``); the import
+    is held as ``ref`` until ``release``. ``node_logger`` is the importing node's. ``cost`` is what core knows of the
+    output's size before the run.
+    """
+
+    source: FlowNode
+    handle: str
+    target: FlowNode
+    source_backend_id: str
+    target_backend_id: str
+    uri: str
+    credential: CredentialRef
+    node_logger: NodeLogger
+    ref: ResultRef | None = None
+
+    def cost(self) -> tuple[int, int] | None:
+        """The rows and columns the output holds when core knows them before ``target`` reads it, else ``None``.
+
+        For the default output, the reference ``source`` holds on ``source_backend_id`` under its current hash, when it
+        carries a row count; otherwise the engine core holds for the output without running ``source``: the last run's
+        while ``source`` has run with its current setup, or for the default output the node's own frame (a manual
+        input's rows), when it knows its count. Nothing is counted, sampled or collected to price an edge.
+        """
+        if self.handle == DEFAULT_OUTPUT_HANDLE:
+            ref = self.source.held_result(self.source_backend_id)
+            if ref is not None and ref.row_count is not None:
+                return ref.row_count, len(ref.schema)
+        engines = []
+        if self.source.node_stats.has_run_with_current_setup:
+            engines.append(self.source.peek_output_engine(self.handle))
+        if self.handle == DEFAULT_OUTPUT_HANDLE and isinstance(self.source.function, FlowDataEngine):
+            engines.append(self.source.function)
+        for engine in engines:
+            if engine is not None and (rows := engine.known_record_count()) is not None:
+                return rows, len(engine.schema)
+        return None
+
+    def cross(self) -> FlowDataEngine:
+        """The engine ``target`` composes on for this input: the plan of its import on ``target_backend_id``.
+
+        The first call exports the output and imports it, with the output's schema and the exported reference's row
+        count, else the count the output's engine knows. The default output is exported as the reference ``source``
+        holds; another output (a filter's second side), which ``source`` holds as an engine, is submitted on
+        ``source_backend_id`` as a deferred plan for the export, under ``<source hash>_<handle>_<target id>``, an id of
+        this edge's own, and released after it.
+
+        Raises:
+            ValueError: ``source`` holds no result on ``source_backend_id`` for its default output.
+            ComputeError: The export or the import failed.
+        """
+        output = FlowNode._resolve_input_result_for_handle(self.source, self.handle)
+        target = registry.backend(self.target_backend_id)
+        if self.ref is None:
+            exported_rows = self._export(output)
+            row_count = exported_rows if exported_rows is not None else output.known_record_count()
+            self.ref = target.import_uri(self.uri, output.schema, row_count, self.credential)
+            self.node_logger.info(
+                f'Input from node {self.source.node_id} crossed from backend "{self.source_backend_id}" to '
+                f'"{self.target_backend_id}" through {self.uri}'
+            )
+        return FlowDataEngine(target.plan_for(self.ref), schema=output.schema, number_of_records=self.ref.row_count)
+
+    def _export(self, output: FlowDataEngine) -> int | None:
+        """Export ``source``'s output on ``handle`` to ``uri``; the exported reference's row count."""
+        source = registry.backend(self.source_backend_id)
+        if self.handle == DEFAULT_OUTPUT_HANDLE:
+            ref = self.source.results.result_ref
+            if ref is None or ref.backend_id != self.source_backend_id:
+                raise ValueError(
+                    f'Node {self.source.node_id} holds no result on backend "{self.source_backend_id}" for node '
+                    f"{self.target.node_id} to read"
+                )
+            source.export(ref, self.uri, self.credential)
+            return ref.row_count
+        plan, result_id = output.data_frame.lazy(), f"{self.source.hash}_{self.handle}_{self.target.node_id}"
+        ref = source.submit(
+            plan, [], DEFERRED_HINTS, result_id, flow_id=self.node_logger.flow_id, node_id=self.source.node_id
+        ).ref
+        try:
+            source.export(ref, self.uri, self.credential)
+        finally:
+            source.release(ref)
+        return ref.row_count
+
+    def release(self) -> None:
+        """Release the import on ``target_backend_id`` and forget it; nothing when the input never crossed."""
+        ref, self.ref = self.ref, None
+        if ref is not None:
+            registry.backend(self.target_backend_id).release(ref)
+
+
+def _release_boundary_inputs(node: FlowNode, edges: Sequence[BoundaryEdge]) -> None:
+    """Forget ``node``'s boundary inputs and release each import; a failed release is a warning on the node's log."""
+    node._boundary_inputs = {}
+    for edge in edges:
+        try:
+            edge.release()
+        except Exception as e:
+            edge.node_logger.warning(
+                f"Could not release the import of node {edge.source.node_id}'s result: {type(e).__name__}: {e}"
+            )
+
+
 class ExecutionMixin(GraphMixinBase):
+    # The running run's prefix in the exchange store; None between runs.
+    exchange_run: ExchangeRun | None = None
+
     @property
     def last_closed_gate_handles(self) -> Mapping[str | int, frozenset[str]]:
         """Gate id -> the output handles the last ``run_graph`` routed dead (parameter and formula gates)."""
@@ -460,6 +581,8 @@ class ExecutionMixin(GraphMixinBase):
         node: FlowNode,
         performance_mode: bool,
         run_info_lock: threading.Lock,
+        backend_id: str | None,
+        edges: Sequence[BoundaryEdge],
     ) -> tuple[NodeResult, FlowNode]:
         """Executes a single node, records its result, and returns both.
 
@@ -469,6 +592,10 @@ class ExecutionMixin(GraphMixinBase):
             node: The node to execute.
             performance_mode: Whether to run in performance mode.
             run_info_lock: Lock protecting shared RunInformation state.
+            backend_id: The backend placement assigned the node, ``None`` when nothing was placed. A node on another
+                backend than the run's runs under the run's context on that backend.
+            edges: The run's boundary edges into the node, which it reads those inputs through while it runs; every
+                import is released once it ran.
 
         Returns:
             A (NodeResult, FlowNode) tuple for post-stage failure propagation.
@@ -485,6 +612,11 @@ class ExecutionMixin(GraphMixinBase):
 
         with ExitStack() as params_scope:
             params_scope.callback(ambient_kernel_hold.reset, ambient_kernel_hold.set(self._kernel_hold))
+            run_context = current_context(self)
+            if backend_id is not None and backend_id != run_context.backend_id:
+                params_scope.enter_context(use_context(replace(run_context, backend_id=backend_id)))
+            node._boundary_inputs = {(edge.source.node_id, edge.handle): edge for edge in edges}
+            params_scope.callback(_release_boundary_inputs, node, edges)
             try:
                 params_scope.enter_context(node_parameters_resolved(node))
             except ValueError as e:
@@ -572,6 +704,8 @@ class ExecutionMixin(GraphMixinBase):
         skip_node_ids: set[str | int],
         deliberate_skip_ids: set[str | int] | None = None,
         closed_gate_handles: dict[str | int, frozenset[str]] | None = None,
+        placement: Placement | None = None,
+        edges: Sequence[BoundaryEdge] = (),
     ) -> set[str | int]:
         """Execute all stages in the plan, running independent nodes in parallel.
 
@@ -589,7 +723,9 @@ class ExecutionMixin(GraphMixinBase):
         ``closed_gate_handles`` (gate id -> dead output handles) holds
         parameter-mode routing decided before the run; formula gates join it —
         mutated in place, same dict the caller created — as they execute and
-        evaluate.
+        evaluate. ``placement`` (``None`` when nothing was placed) names the
+        backend each node runs on, and each of ``edges`` goes to the node that
+        reads through it.
 
         Returns:
             Set of node IDs that failed during execution.
@@ -607,6 +743,11 @@ class ExecutionMixin(GraphMixinBase):
         for node_id in deliberate_skip_ids:
             statuses[node_id] = NodeRunStatus.SKIPPED_DELIBERATE
             skip_node_ids.add(node_id)
+
+        assignment = {} if placement is None else placement.assignment
+        edges_into: dict[str | int, list[BoundaryEdge]] = {}
+        for edge in edges:
+            edges_into.setdefault(edge.target.node_id, []).append(edge)
 
         any_rule_nodes_touched: list[FlowNode] = []
         try:
@@ -651,7 +792,14 @@ class ExecutionMixin(GraphMixinBase):
                 max_workers = current_context(self).parallelism
                 if len(nodes_to_run) == 1 or max_workers == 1:
                     stage_results = [
-                        self._execute_single_node(node, performance_mode, run_info_lock) for node in nodes_to_run
+                        self._execute_single_node(
+                            node,
+                            performance_mode,
+                            run_info_lock,
+                            assignment.get(node.node_id),
+                            edges_into.get(node.node_id, []),
+                        )
+                        for node in nodes_to_run
                     ]
                 else:
                     stage_results: list[tuple[NodeResult, FlowNode]] = []
@@ -665,6 +813,8 @@ class ExecutionMixin(GraphMixinBase):
                                 node,
                                 performance_mode,
                                 run_info_lock,
+                                assignment.get(node.node_id),
+                                edges_into.get(node.node_id, []),
                             ): node
                             for node in nodes_to_run
                         }
@@ -823,18 +973,36 @@ class ExecutionMixin(GraphMixinBase):
                 continue
         return closed
 
-    def _place_run(self, execution_plan: ExecutionPlan) -> Placement | None:
-        """Place the nodes ``execution_plan`` runs; ``None`` with ``FLOWFILE_COMPUTE_PROTOCOL`` off, placing nothing.
+    def _place_run(
+        self, execution_plan: ExecutionPlan, exchange_run: ExchangeRun
+    ) -> tuple[Placement | None, list[BoundaryEdge]]:
+        """Place the nodes ``execution_plan`` runs and resolve its crossings; ``(None, [])`` with the protocol flag off.
 
-        Every node goes to the run's backend but the ones their builders pin to the worker (``SingleBackendPolicy``).
-        Each backend named is asked for its ``capabilities()`` once. One that raises a ``ComputeError`` is left out of
-        the map ``place`` is given, so its nodes are not placed and meet that typed error when they run; an id the
-        registry does not know refuses every node assigned to it with the registry's message.
+        With an exchange store configured (``FLOWFILE_EXCHANGE_URI``) each node goes to the backend its own
+        ``execution_location`` names, ``"auto"`` to the run's (``MixedPlacementPolicy``); without one every node goes
+        to the run's backend whatever its own setting says, but the ones their builders pin to the worker
+        (``SingleBackendPolicy``). Each backend named is asked for its ``capabilities()`` once. One that raises a
+        ``ComputeError`` is left out of the map ``place`` is given, so its nodes are not placed and meet that typed
+        error when they run; an id the registry does not know refuses every node assigned to it with the registry's
+        message.
+
+        Every boundary crosses through the run's prefix in the exchange store (the ``exchange_run`` given), for the
+        upstream node's user: one ``BoundaryEdge`` per output of the upstream node that the importing node reads, to
+        ``<prefix><from>-<handle>-<to>.parquet``, keyed by the handle the node looks that input up by. A store that
+        cannot be used for that user (no connection named, a scheme other than ``s3``, no such connection for the user)
+        refuses the importing node with the store's message, so the run starts no node. So does an edge whose output
+        core knows before the run to hold more rows than ``FLOWFILE_EXCHANGE_MAX_ROWS`` (``BoundaryEdge.cost``), the
+        message naming the rows, the columns and the limit, and a limit that is not a whole number; an edge whose count
+        core does not know crosses whatever its size. A node is refused once, for the first of its crossings refused.
         """
         if not settings.FLOWFILE_COMPUTE_PROTOCOL:
-            return None
+            return None, []
         nodes = execution_plan.all_nodes
-        policy = SingleBackendPolicy(current_context(self).backend_id)
+        run_backend_id = current_context(self).backend_id
+        if settings.get_exchange_uri():
+            policy = MixedPlacementPolicy(run_backend_id)
+        else:
+            policy = SingleBackendPolicy(run_backend_id)
         declared: dict[str, Capabilities] = {}
         unknown: dict[str, str] = {}
         for backend_id in dict.fromkeys(policy.backend_for(node) for node in nodes):
@@ -845,18 +1013,55 @@ class ExecutionMixin(GraphMixinBase):
             except LookupError as e:
                 unknown[backend_id] = str(e)
         placement = place(self, declared, policy, nodes=nodes)
-        if not unknown:
-            return placement
-        refusals = [
-            Refusal(node.node_id, policy.backend_for(node), unknown[policy.backend_for(node)])
-            for node in nodes
-            if policy.backend_for(node) in unknown
-        ]
-        return Placement(
-            assignment={**placement.assignment, **{refusal.node_id: refusal.backend_id for refusal in refusals}},
-            boundaries=placement.boundaries,
-            refusals=[*refusals, *placement.refusals],
-        )
+        if unknown:
+            refusals = [
+                Refusal(node.node_id, policy.backend_for(node), unknown[policy.backend_for(node)])
+                for node in nodes
+                if policy.backend_for(node) in unknown
+            ]
+            placement = Placement(
+                assignment={**placement.assignment, **{refusal.node_id: refusal.backend_id for refusal in refusals}},
+                boundaries=placement.boundaries,
+                refusals=[*refusals, *placement.refusals],
+            )
+        edges: list[BoundaryEdge] = []
+        crossing_refusals: dict[int, Refusal] = {}
+        for source_id, target_id in placement.boundaries:
+            source, target = self.get_node(source_id), self.get_node(target_id)
+            try:
+                crossing = exchange_run.prefix(source.setting_input.user_id)
+                max_rows = settings.get_exchange_max_rows() if crossing is not None else None
+            except ValueError as e:
+                crossing_refusals.setdefault(target_id, Refusal(target_id, placement.assignment[target_id], str(e)))
+                continue
+            if crossing is None:
+                continue
+            prefix, credential = crossing
+            handles = dict.fromkeys(handle for node, handle in target._slot_input_pairs() if node is source)
+            for handle in handles:
+                edge = BoundaryEdge(
+                    source=source,
+                    handle=handle,
+                    target=target,
+                    source_backend_id=placement.assignment[source_id],
+                    target_backend_id=placement.assignment[target_id],
+                    uri=f"{prefix}{source_id}-{handle}-{target_id}.parquet",
+                    credential=credential,
+                    node_logger=self.flow_logger.get_node_logger(target_id),
+                )
+                cost = edge.cost() if max_rows is not None else None
+                if cost is not None and cost[0] > max_rows:
+                    rows, columns = cost
+                    reason = (
+                        f'the input from node {source_id} would cross from backend "{edge.source_backend_id}" with '
+                        f"{rows} rows of {columns} columns, above FLOWFILE_EXCHANGE_MAX_ROWS={max_rows}"
+                    )
+                    crossing_refusals.setdefault(target_id, Refusal(target_id, edge.target_backend_id, reason))
+                else:
+                    edges.append(edge)
+        if crossing_refusals:
+            placement = replace(placement, refusals=[*placement.refusals, *crossing_refusals.values()])
+        return placement, edges
 
     def _record_refusals(self, refusals: list[Refusal]) -> None:
         """Record each refused node as a failed result of the run, which starts no node; called single-threaded."""
@@ -1105,7 +1310,14 @@ class ExecutionMixin(GraphMixinBase):
         outer run's context, so a subflow executes where the flow that runs it does.
 
         With ``FLOWFILE_COMPUTE_PROTOCOL`` on, the nodes the execution plan runs are placed first (``_place_run``): a
-        node its backend cannot run ends the run before any node starts, each refused node a failed result.
+        node its backend cannot run ends the run before any node starts, each refused node a failed result. Each node
+        then runs on the backend placement assigned it, an input from another backend crossing through the exchange
+        store (``BoundaryEdge``). The run report lists the edges placement put between two backends
+        (``RunInformation.boundaries``), a refused run's included.
+
+        The run holds ``exchange_run``, its prefix ``<uri>/<flow id>/<run id>/`` in the exchange store, from before
+        ``flow_run_started`` is published; when the run ends, however it ends, what was written under the prefix is
+        removed and ``exchange_run`` is ``None`` again (``_end_exchange_run``).
 
         Args:
             node_ids: Restrict the run to these nodes; pass a closed set (each node together with
@@ -1141,6 +1353,7 @@ class ExecutionMixin(GraphMixinBase):
             raise Exception("Flow is already running")
         ambient = ambient_kernel_hold.set(kernel_hold)
         released = False
+        exchange_run = self.exchange_run = ExchangeRun(self.flow_id, uuid.uuid4().hex)
         try:
             with use_context(current_context(self)):
                 self.flow_logger.info("Starting to run flowfile flow...")
@@ -1165,10 +1378,11 @@ class ExecutionMixin(GraphMixinBase):
                     closed_gate_handles=closed_gate_handles,
                 )
 
-                placement = self._place_run(execution_plan)
+                placement, edges = self._place_run(execution_plan, exchange_run)
                 if placement is not None and placement.refusals:
                     # Refused before any node starts: nothing is prepared, executed, skipped or committed.
                     self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")
+                    self.latest_run_info.boundaries = list(placement.boundaries)
                     self._record_refusals(placement.refusals)
                 else:
                     plan_skip_ids: set[str | int] = {n.node_id for n in execution_plan.skip_nodes}
@@ -1177,6 +1391,8 @@ class ExecutionMixin(GraphMixinBase):
                     self._prepare_rerun_artifacts(plan_skip_ids | deliberate_skip_ids | not_selected_ids)
 
                     self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")
+                    if placement is not None:
+                        self.latest_run_info.boundaries = list(placement.boundaries)
                     skip_node_message(self.flow_logger, execution_plan.skip_nodes)
                     execution_order_message(self.flow_logger, execution_plan.stages)
 
@@ -1190,6 +1406,8 @@ class ExecutionMixin(GraphMixinBase):
                         plan_skip_ids,
                         deliberate_skip_ids,
                         closed_gate_handles,
+                        placement=placement,
+                        edges=edges,
                     )
                     if commit_sources and not self.flow_settings.is_canceled:
                         self._run_post_execution_callbacks(
@@ -1215,6 +1433,20 @@ class ExecutionMixin(GraphMixinBase):
             # Released once: a second release would end a run another caller claimed meanwhile.
             if not released:
                 self.release_run()
+            self._end_exchange_run(exchange_run)
+
+    def _end_exchange_run(self, exchange_run: ExchangeRun) -> None:
+        """Remove what the run wrote to the exchange store; a failure is a warning on the flow log, never the run's.
+
+        ``exchange_run`` is reset only while it is still this run's: a run claimed once this one released its slot
+        holds its own.
+        """
+        if self.exchange_run is exchange_run:
+            self.exchange_run = None
+        try:
+            exchange_run.collect()
+        except Exception as e:
+            self.flow_logger.warning(f"Could not remove the run's exchange-store prefix: {type(e).__name__}: {e}")
 
     def get_run_info(self) -> RunInformation:
         """Gets a summary of the most recent graph execution.
