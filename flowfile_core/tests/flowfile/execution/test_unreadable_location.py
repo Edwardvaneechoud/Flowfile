@@ -11,8 +11,9 @@ a union, an unpivot, window functions, text to rows, a multi-field formula, a gr
 pivot, a dynamic rename, a data cleansing, a cross join or a Polars code node over a stored result, a node's output
 field config, a Run Flow node's outputs over its child's stored results, or the REST API reader's alignment of a read
 it stored, takes its input's columns from the input engine's cached schema; and a node that fails on a missing file in
-core keeps its stored input rather than rerunning it. The tests named for ``v1`` results check the same over the
-session worker's ``/v1`` routes.
+core keeps its stored input rather than rerunning it. The elaborate integration flow runs whole over stored inputs with
+the flag on, and with it off fails at the nodes that read them in core. The tests named for ``v1`` results check the
+same over the session worker's ``/v1`` routes.
 """
 
 import dataclasses
@@ -53,6 +54,7 @@ from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.routes.routes import export_node_data
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from shared.compute_protocol import WorkerLocation
+from tests.flowfile.test_flowfile_integration import build_complex_elaborate_flow
 
 BACKEND_ID = "unreadable"
 
@@ -1049,6 +1051,48 @@ def test_a_run_flow_reads_its_child_output_stored_where_core_cannot_read(
         assert run_info.success, failures(run_info)
         assert columns(graph.get_node(2).schema) == TRANSFORM_COLUMNS
         assert unreadable[0].count(graph.get_node(2).results.result_ref) == rows
+    finally:
+        graph.close_flow()
+
+
+ELABORATE_INPUTS = (1, 2, 3, 4, 5, 27)
+ELABORATE_OUTPUTS = {
+    71: "customer_sales_analysis.csv",
+    72: "fuzzy_matched_customers.parquet",
+    73: "network_components.csv",
+    74: "combined_aggregations.csv",
+}
+
+
+def test_the_elaborate_integration_flow_runs_over_stored_inputs_core_cannot_read(unreadable, protocol, tmp_path):
+    graph = build_complex_elaborate_flow(tmp_path)
+    graph.flow_settings.execution_location = "remote"
+    graph.flow_settings.max_parallel_workers = 1
+    for node_id in ELABORATE_INPUTS:
+        graph.get_node(node_id).node_settings.cache_results = True
+    try:
+        run_info = graph.run_graph()
+
+        for node_id in ELABORATE_INPUTS:
+            ref = graph.get_node(node_id).results.result_ref
+            assert ref.state == "materialised"
+            assert not os.path.exists(ref.location.decode("utf-8"))
+        if protocol:
+            assert run_info.success, failures(run_info)
+            assert run_info.nodes_completed == len(graph.nodes) == 30
+            rows = {}
+            for node_id, name in ELABORATE_OUTPUTS.items():
+                path = tmp_path / name
+                frame = pl.read_parquet(path) if path.suffix == ".parquet" else pl.read_csv(path)
+                assert frame.columns == [column.column_name for column in graph.get_node(node_id).schema]
+                rows[name] = frame.height
+            assert rows["fuzzy_matched_customers.parquet"] == 3
+            assert rows["network_components.csv"] == 5
+            assert rows["customer_sales_analysis.csv"] > 0 and rows["combined_aggregations.csv"] > 0
+        else:
+            assert not run_info.success
+            assert {node_id for node_id, _ in failures(run_info)} == {11, 17, 26, 28, 30, 31}
+            assert all("No such file or directory (os error 2)" in error for _, error in failures(run_info))
     finally:
         graph.close_flow()
 
