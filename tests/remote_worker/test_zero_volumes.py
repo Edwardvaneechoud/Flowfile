@@ -7,7 +7,8 @@ worker does not declare local files. The flow reads the table, adds a column wit
 worker, scores with the model the worker holds, publishes the model to the artifact store and writes the scores to the
 catalog. The artifact store reaches MinIO through an HTTPS forwarder with a certificate made per run, because the URLs
 it presigns for the worker are ``https`` ones. The secrets and the certificate reach the services through the
-environment only.
+environment only. A second flow runs one node on the worker and the rest in core, its data crossing through an exchange
+store on MinIO, with the protocol flag on and then off; its flag-off case recreates core, which is why it comes last.
 """
 
 from __future__ import annotations
@@ -168,6 +169,7 @@ def stack() -> Iterator[Stack]:
         FLOWFILE_MASTER_KEY=Fernet.generate_key().decode(),
         MINIO_TLS_CERT=cert,
         MINIO_TLS_KEY=key,
+        FLOWFILE_COMPUTE_PROTOCOL="1",
     )
     try:
         _compose("build", "flowfile-core", "flowfile-worker", timeout=1500)
@@ -362,3 +364,139 @@ def test_core_and_the_worker_have_no_mount(stack):
             ["docker", "inspect", "-f", "{{json .Mounts}}", container], capture_output=True, text=True, check=True
         )
         assert json.loads(inspected.stdout) == [], (service, inspected.stdout)
+
+
+EXCHANGE_BUCKET = "flowfile-exchange"
+CUSTOMERS = {
+    "id": [1, 2, 3, 4, 5, 6, 7],
+    "region": ["north", "south", "north", "south", "north", "east", "east"],
+    "amount": [12.5, 8.0, 30.0, 15.0, 4.5, 22.0, 9.5],
+}
+TOTALS = [("east", 22.0), ("north", 42.5), ("south", 15.0)]
+MIXED_FLOW_IDS = {"1": 7402, "0": 7403}
+
+
+@pytest.fixture(scope="module")
+def exchange(stack: Stack) -> None:
+    """The exchange store's bucket, versioned so it keeps a record of what a run wrote and removed, and its connection."""
+    stack.minio.create_bucket(Bucket=EXCHANGE_BUCKET)
+    stack.minio.put_bucket_versioning(Bucket=EXCHANGE_BUCKET, VersioningConfiguration={"Status": "Enabled"})
+    connection = {
+        "storage_type": "s3",
+        "auth_method": "access_key",
+        "connection_name": "exchange_minio",
+        "aws_region": "us-east-1",
+        "aws_access_key_id": "minioadmin",
+        "aws_secret_access_key": "minioadmin",
+        "aws_allow_unsafe_html": True,
+        "endpoint_url": "http://minio:9000",
+        "verify_ssl": True,
+    }
+    response = stack.http.post(f"{stack.core}/cloud_connections/cloud_connection", json=connection)
+    assert response.status_code == 200, response.text
+
+
+def _mixed_flow(flow_id: int) -> dict:
+    """Manual input 1 → filter 2 (``[amount] > 10``), set to run on the worker → group_by 3, ``total`` by region."""
+    columns = [
+        {"name": "id", "data_type": "Int64"},
+        {"name": "region", "data_type": "String"},
+        {"name": "amount", "data_type": "Float64"},
+    ]
+    aggregations = [
+        {"old_name": "region", "agg": "groupby"},
+        {"old_name": "amount", "agg": "sum", "new_name": "total"},
+    ]
+    return {
+        "flowfile_version": "0.23.0",
+        "flowfile_id": flow_id,
+        "flowfile_name": "one node on the worker",
+        "flowfile_settings": {"execution_mode": "Development", "execution_location": "remote"},
+        "nodes": [
+            {
+                "id": 1,
+                "type": "manual_input",
+                "is_start_node": True,
+                "outputs": [2],
+                "setting_input": {"raw_data_format": {"columns": columns, "data": list(CUSTOMERS.values())}},
+            },
+            {
+                "id": 2,
+                "type": "filter",
+                "input_ids": [1],
+                "outputs": [3],
+                "setting_input": {
+                    "execution_location": "worker",
+                    "filter_input": {"mode": "advanced", "advanced_filter": "[amount] > 10"},
+                },
+            },
+            {
+                "id": 3,
+                "type": "group_by",
+                "input_ids": [2],
+                "setting_input": {"groupby_input": {"agg_cols": aggregations}},
+            },
+        ],
+    }
+
+
+def _core_with_protocol(stack: Stack, flag: str) -> Stack:
+    """Core with ``FLOWFILE_COMPUTE_PROTOCOL`` at ``flag``, recreated in the running stack when it differs."""
+    if _ENV["FLOWFILE_COMPUTE_PROTOCOL"] == flag:
+        return stack
+    _ENV["FLOWFILE_COMPUTE_PROTOCOL"] = flag
+    _compose("up", "-d", "--no-deps", "--force-recreate", "flowfile-core")
+    core = f"http://127.0.0.1:{_port('flowfile-core', 63578)}"
+    _wait_until(lambda: _core_ready(core), "core")
+    return Stack(core=core, minio=stack.minio, http=_sign_in(core))
+
+
+def _listed(minio, prefix: str) -> list[str]:
+    return [
+        listed["Key"] for listed in minio.list_objects_v2(Bucket=EXCHANGE_BUCKET, Prefix=prefix).get("Contents", [])
+    ]
+
+
+@pytest.mark.parametrize("protocol", ["1", "0"], ids=["flag-on", "flag-off"])
+def test_a_flow_with_one_node_on_the_worker_and_the_rest_in_core_crosses_through_the_exchange_store(
+    stack, exchange, protocol
+):
+    stack = _core_with_protocol(stack, protocol)
+    flow_id = _import_flow(stack, _mixed_flow(MIXED_FLOW_IDS[protocol]))
+    assert flow_id == MIXED_FLOW_IDS[protocol]
+    settings = stack.http.get(f"{stack.core}/flow_settings", params={"flow_id": flow_id}).json()
+    response = stack.http.post(f"{stack.core}/flow_settings", json={**settings, "execution_location": "local"})
+    assert response.status_code == 200, response.text
+
+    run = _run(stack, flow_id)
+
+    failures = {result["node_id"]: result["error"] for result in run["node_step_result"] if not result["success"]}
+    assert run["success"] is True and not failures, f"{failures}\n{_logs()}"
+    assert run["nodes_completed"] == 3
+    filtered = stack.http.get(f"{stack.core}/node/data", params={"flow_id": flow_id, "node_id": 2}).json()
+    assert len(filtered["data"]) == 4, filtered
+    grouped = stack.http.get(f"{stack.core}/node/data", params={"flow_id": flow_id, "node_id": 3}).json()
+    assert sorted((row["region"], row["total"]) for row in grouped["data"]) == TOTALS, grouped
+    prefix = f"runs/{flow_id}/"
+    worker_cache = f"/app/internal_storage/cache/{flow_id}/"
+    worker_files = [path for path in _cache_files("flowfile-worker") if path.startswith(worker_cache)]
+    if protocol == "0":
+        assert run["boundaries"] == []
+        versions = stack.minio.list_object_versions(Bucket=EXCHANGE_BUCKET, Prefix=prefix)
+        assert "Versions" not in versions and "DeleteMarkers" not in versions, versions
+        assert worker_files == []
+        return
+    assert run["boundaries"] == [[1, 2], [2, 3]]
+    _wait_until(lambda: _listed(stack.minio, prefix) == [], f"the run's prefix {prefix} emptied", timeout=60)
+    versions = stack.minio.list_object_versions(Bucket=EXCHANGE_BUCKET, Prefix=prefix)
+    written = sorted(version["Key"] for version in versions.get("Versions", []))
+    run_ids = sorted({key.split("/")[2] for key in written})
+    assert len(run_ids) == 1 and re.fullmatch(r"[0-9a-f]{32}", run_ids[0]), written
+    run_id = run_ids[0]
+    assert written == [f"{prefix}{run_id}/1-output-0-2.parquet", f"{prefix}{run_id}/2-output-0-3.parquet"]
+    removed = sorted(marker["Key"] for marker in versions.get("DeleteMarkers", []) if marker["IsLatest"])
+    assert removed == written and not any(version["IsLatest"] for version in versions["Versions"]), versions
+    assert any(path.endswith(".arrow") for path in worker_files), worker_files
+    core_cache = f"/app/internal_storage/cache/local/{flow_id}/"
+    core_files = [path for path in _cache_files("flowfile-core") if path.startswith(core_cache)]
+    assert any(path.endswith(".arrow") for path in core_files), core_files
