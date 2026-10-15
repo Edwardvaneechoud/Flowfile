@@ -7,15 +7,19 @@ instead of being counted, so these flows pass only while core takes a stored res
 They run with the protocol flag off and on: with it on, core asks the backend that holds a result whether it still
 does, and reads rows of those results through the backend: the formula editor's preview row, a formula gate's probe,
 column statistics and the CSV export; and a filter, a select, a join, a group_by, a formula, a record count, a unique,
-a union, an unpivot, window functions, text to rows, a multi-field formula, a graph solver or an explode hierarchy
-over a stored result takes its input's columns from the input engine's cached schema. The tests named for ``v1``
-results check the same over the session worker's ``/v1`` routes.
+a union, an unpivot, window functions, text to rows, a multi-field formula, a graph solver, an explode hierarchy, a
+pivot, a dynamic rename, a data cleansing or a cross join over a stored result, or the REST API reader's alignment of
+a read it stored, takes its input's columns from the input engine's cached schema. The tests named for ``v1`` results
+check the same over the session worker's ``/v1`` routes.
 """
 
 import dataclasses
 import io
+import json
 import os
+import threading
 from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -29,6 +33,7 @@ from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.extensions import get_instant_func_results
 from flowfile_core.flowfile.flow_data_engine.bounded import unique_values
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.formula_entries import (
     FormulaEntry,
     FormulaEntryError,
@@ -732,6 +737,192 @@ def test_a_transform_runs_over_a_stored_result_core_cannot_read(
         assert len(graph.get_node(2).get_table_example(True).data) == rows
     finally:
         graph.close_flow()
+
+
+CLEANSING_ROWS = [{**row, "note": None} for row in TRANSFORM_ROWS] + [dict.fromkeys([*TRANSFORM_ROWS[0], "note"])]
+SEGMENT_ROWS = [{"id": 1, "segment": "s1"}, {"id": 2, "segment": "s2"}]
+
+TRANSFORM_VARIANTS = [
+    (
+        9360,
+        "pivot",
+        "pivot",
+        input_schema.NodePivot,
+        {
+            "pivot_input": transform_schema.PivotInput(
+                index_columns=["region"], pivot_column="parent", value_col="amount", aggregations=["sum"]
+            )
+        },
+        [("region", "String"), ("p0", "Int64"), ("p1", "Int64"), ("p2", "Int64")],
+        2,
+    ),
+    (
+        9361,
+        "pivot_without_index_columns",
+        "pivot",
+        input_schema.NodePivot,
+        {
+            "pivot_input": transform_schema.PivotInput(
+                index_columns=[], pivot_column="region", value_col="amount", aggregations=["sum", "count"]
+            )
+        },
+        [("eu_sum", "Int64"), ("eu_count", "UInt32"), ("us_sum", "Int64"), ("us_count", "UInt32")],
+        1,
+    ),
+    (
+        9362,
+        "dynamic_rename_prefix",
+        "dynamic_rename",
+        input_schema.NodeDynamicRename,
+        {"dynamic_rename_input": transform_schema.DynamicRenameInput(rename_mode="prefix", prefix="p_")},
+        [(f"p_{name}", dtype) for name, dtype in TRANSFORM_COLUMNS],
+        6,
+    ),
+    (
+        9363,
+        "dynamic_rename_first_row",
+        "dynamic_rename",
+        input_schema.NodeDynamicRename,
+        {
+            "dynamic_rename_input": transform_schema.DynamicRenameInput(
+                rename_mode="first_row", selection_mode="list", selected_columns=["region", "child"]
+            )
+        },
+        [
+            ("id", "Int64"),
+            ("eu", "String"),
+            ("amount", "Int64"),
+            ("parent", "String"),
+            ("c1", "String"),
+            ("tags", "String"),
+        ],
+        5,
+    ),
+    (
+        9364,
+        "data_cleansing",
+        "data_cleansing",
+        input_schema.NodeDataCleansing,
+        {
+            "cleansing_input": transform_schema.DataCleansingInput(
+                remove_null_rows=True, remove_null_columns=True, case_mode="uppercase"
+            )
+        },
+        TRANSFORM_COLUMNS,
+        6,
+    ),
+    (
+        9365,
+        "cross_join",
+        "cross_join",
+        input_schema.NodeCrossJoin,
+        {"cross_join_input": transform_schema.CrossJoinInput(left_select=[], right_select=[])},
+        TRANSFORM_COLUMNS + [("id_right", "Int64"), ("segment", "String")],
+        12,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "flow_id, node_type, settings_class, fields, expected_columns, rows",
+    [case[:1] + case[2:] for case in TRANSFORM_VARIANTS],
+    ids=[case[1] for case in TRANSFORM_VARIANTS],
+)
+def test_a_transform_variant_runs_over_stored_results_core_cannot_read(
+    unreadable, protocol_on, flow_id, node_type, settings_class, fields, expected_columns, rows
+):
+    graph = make_graph(flow_id, max_parallel_workers=1)
+    try:
+        inputs = {1: "main", 3: "right"} if node_type == "cross_join" else {1: "main"}
+        add_manual_input(graph, 1, CLEANSING_ROWS if node_type == "data_cleansing" else TRANSFORM_ROWS)
+        if node_type == "cross_join":
+            add_manual_input(graph, 3, SEGMENT_ROWS)
+        for node_id in inputs:
+            graph.get_node(node_id).node_settings.cache_results = True
+        add_promise(graph, 2, node_type)
+        sources = {"depending_on_ids": list(inputs)} if node_type == "cross_join" else {"depending_on_id": 1}
+        getattr(graph, f"add_{node_type}")(settings_class(flow_id=graph.flow_id, node_id=2, **sources, **fields))
+        for node_id, input_type in inputs.items():
+            connect(graph, node_id, 2, input_type=input_type)
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        for node_id in inputs:
+            ref = graph.get_node(node_id).results.result_ref
+            assert ref.state == "materialised"
+            assert not os.path.exists(ref.location.decode("utf-8"))
+        assert columns(graph.get_node(2).schema) == expected_columns
+        assert len(graph.get_node(2).get_table_example(True).data) == rows
+    finally:
+        graph.close_flow()
+
+
+API_ROWS = [{"id": 1, "name": "a", "city": "ams"}, {"id": 2, "name": "b", "city": "rtm"}]
+
+
+class _Api(BaseHTTPRequestHandler):
+    def log_message(self, *_args):
+        pass
+
+    def do_GET(self):  # noqa: N802
+        body = json.dumps(API_ROWS).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(body)
+
+
+@pytest.fixture
+def api_url():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Api)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/items"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_a_rest_api_reader_aligns_a_read_stored_where_core_cannot_read_it(unreadable, protocol_on, api_url):
+    graph = make_graph(9366, max_parallel_workers=1)
+    try:
+        add_promise(graph, 1, "rest_api_reader")
+        graph.add_rest_api_reader(
+            input_schema.NodeRestApiReader(
+                flow_id=graph.flow_id,
+                node_id=1,
+                user_id=1,
+                rest_api_settings=input_schema.RestApiSettings(url=api_url),
+                fields=[
+                    input_schema.MinimalFieldInfo(name="name", data_type="String"),
+                    input_schema.MinimalFieldInfo(name="id", data_type="Int64"),
+                    input_schema.MinimalFieldInfo(name="missing", data_type="String"),
+                ],
+            )
+        )
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        assert columns(graph.get_node(1).schema) == [
+            ("name", "String"),
+            ("id", "Int64"),
+            ("missing", "String"),
+            ("city", "String"),
+        ]
+        assert len(graph.get_node(1).get_table_example(True).data) == 2
+    finally:
+        graph.close_flow()
+
+
+def test_a_pivot_without_index_columns_never_writes_to_its_settings(unreadable, protocol):
+    pivot_input = transform_schema.PivotInput(
+        index_columns=[], pivot_column="region", value_col="missing", aggregations=["sum"]
+    )
+    with pytest.raises(pl.exceptions.ColumnNotFoundError):
+        FlowDataEngine(pl.LazyFrame(TRANSFORM_ROWS)).do_pivot(pivot_input)
+
+    assert pivot_input.index_columns == []
 
 
 def test_a_stored_results_columns_are_read_from_its_cached_schema(unreadable, protocol_on):
