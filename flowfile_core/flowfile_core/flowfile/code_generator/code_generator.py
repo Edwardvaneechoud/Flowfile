@@ -21,7 +21,7 @@ from flowfile_core.configs import logger
 from flowfile_core.flowfile.code_generator.chain_fusion import NodeEmission, render_pipeline
 from flowfile_core.flowfile.code_generator.connector_handlers import ConnectorHandlersMixin
 from flowfile_core.flowfile.code_generator.custom_node_handlers import CustomNodeHandlersMixin
-from flowfile_core.flowfile.code_generator.expression_helpers import ExpressionHelpersMixin
+from flowfile_core.flowfile.code_generator.expression_helpers import ExpressionHelpersMixin, translates_faithfully
 from flowfile_core.flowfile.code_generator.join_handlers import JoinHandlersMixin
 from flowfile_core.flowfile.code_generator.literals import python_literal
 from flowfile_core.flowfile.code_generator.native_handlers import FLOW_VAR, NativeHandlersMixin, literal_lines
@@ -170,6 +170,8 @@ def _try_translate_to_ff_code(formula: str) -> str | None:
     Memoised on the formula text: translation takes no schema and the validation
     namespace is constant, so the result depends on nothing else.
     """
+    if not translates_faithfully(formula):
+        return None
     try:
         generated = to_flowframe_code(formula)
     except PolarsCodeGenError:
@@ -214,6 +216,8 @@ def _try_translate_to_polars_code(formula: str) -> str | None:
     the snippet with the modules a generated expression may reference. Memoised
     on the formula text, the only input the result depends on.
     """
+    if not translates_faithfully(formula):
+        return None
     try:
         generated = to_polars_code(formula)
     except PolarsCodeGenError:

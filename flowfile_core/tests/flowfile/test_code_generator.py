@@ -2,6 +2,7 @@ import ast
 import json
 import re
 import string
+from datetime import date, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -11,6 +12,7 @@ from pl_fuzzy_frame_match.models import FuzzyMapping
 from polars.testing import assert_frame_equal
 
 from flowfile_core.flowfile.code_generator.code_generator import export_flow_to_flowframe, export_flow_to_polars, UnsupportedNodeError
+from flowfile_core.flowfile.code_generator.expression_helpers import translates_faithfully
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
@@ -1708,6 +1710,102 @@ def _add_multi_entry_formula_node(flow: FlowGraph, specs: list[tuple[str, str, s
     ))
     add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
     return flow
+
+
+@pytest.mark.parametrize("export_func", [
+    export_flow_to_polars,
+    export_flow_to_flowframe,
+], ids=["polars", "flowframe"])
+def test_to_boolean_formula_exports_as_formula(export_func):
+    """to_boolean is not Polars' Boolean cast (null becomes false, "yes" parses), so its export keeps the formula."""
+    flow = create_basic_flow()
+    flow.add_manual_input(input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=1,
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="n", data_type="Integer"),
+                input_schema.MinimalFieldInfo(name="answer", data_type="String"),
+            ],
+            data=[[0, 2, None], ["yes", "no", None]],
+        ),
+    ))
+    for node_id, (name, formula) in enumerate([("n_flag", "to_boolean([n])"), ("answer_flag", "to_boolean([answer])")], 2):
+        flow.add_formula(input_schema.NodeFormula(
+            flow_id=1,
+            node_id=node_id,
+            depending_on_id=node_id - 1,
+            function=transform_schema.FunctionInput(
+                field=transform_schema.FieldInput(name=name, data_type="Auto"), function=formula
+            ),
+        ))
+        add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(node_id - 1, node_id))
+
+    code = export_func(flow)
+    assert ".cast(pl.Boolean)" not in code and ".cast(ff.Boolean)" not in code
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
+    assert expected_df["n_flag"].to_list() == [False, True, False]
+    assert expected_df["answer_flag"].to_list() == [True, False, False]
+    assert_frame_equal(result_df, expected_df)
+
+
+@pytest.mark.parametrize("export_func", [
+    export_flow_to_polars,
+    export_flow_to_flowframe,
+], ids=["polars", "flowframe"])
+def test_to_date_and_to_datetime_formulas_export_as_formulas(export_func):
+    """to_date/to_datetime parse only the default format and give null where that fails; a strict inferred parse does not."""
+    flow = create_basic_flow()
+    flow.add_manual_input(input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=1,
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="d_text", data_type="String"),
+                input_schema.MinimalFieldInfo(name="t_text", data_type="String"),
+            ],
+            data=[
+                ["2024-01-02", "2024/01/03", "bad", None],
+                ["2024-01-02 03:04:05", "2024-01-02T03:04:05", "bad", None],
+            ],
+        ),
+    ))
+    for node_id, (name, formula) in enumerate([("d", "to_date([d_text])"), ("t", "to_datetime([t_text])")], 2):
+        flow.add_formula(input_schema.NodeFormula(
+            flow_id=1,
+            node_id=node_id,
+            depending_on_id=node_id - 1,
+            function=transform_schema.FunctionInput(
+                field=transform_schema.FieldInput(name=name, data_type="Auto"), function=formula
+            ),
+        ))
+        add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(node_id - 1, node_id))
+
+    code = export_func(flow)
+    assert ".str.to_date(" not in code and ".str.to_datetime(" not in code
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
+    assert expected_df["d"].to_list() == [date(2024, 1, 2), None, None, None]
+    assert expected_df["t"].to_list() == [datetime(2024, 1, 2, 3, 4, 5), None, None, None]
+    assert_frame_equal(result_df, expected_df)
+
+
+@pytest.mark.parametrize(("formula", "faithful"), [
+    ("to_boolean([n])", False),
+    ("if to_boolean([n]) then 1 else 0 endif", False),
+    ("[a] > 1 and to_boolean([b])", False),
+    ("to_date([s])", False),
+    ('to_datetime([s], "%Y/%m/%d %H:%M")', False),
+    ("year(to_date([s])) > 2020", False),
+    ('concat("to_boolean(", [answer])', True),
+    ("[price] * [quantity]", True),
+    ("to_integer([n])", True),
+])
+def test_translates_faithfully(formula, faithful):
+    assert translates_faithfully(formula) is faithful
 
 
 INDEPENDENT_ENTRIES = [

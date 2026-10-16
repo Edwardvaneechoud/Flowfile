@@ -38,6 +38,34 @@ def _temporal_literal(value: str, base: str) -> str | None:
         return None
 
 
+# The translators write to_boolean as a strict Boolean cast and to_date/to_datetime as a strict parse with an
+# inferred format, where the formula turns null into false and parses only "%Y-%m-%d" text, as null when it fails.
+_UNFAITHFUL_TRANSLATIONS = frozenset({"to_boolean", "to_date", "to_datetime"})
+
+
+def _calls_unfaithful_function(node) -> bool:
+    if getattr(getattr(node, "func_ref", None), "val", None) in _UNFAITHFUL_TRANSLATIONS:
+        return True
+    children = [*(getattr(node, "args", None) or []), getattr(node, "else_val", None)]
+    for condition_val in getattr(node, "conditions", None) or []:
+        children += [condition_val.condition, condition_val.val]
+    return any(_calls_unfaithful_function(child) for child in children if child is not None)
+
+
+def translates_faithfully(formula: str) -> bool:
+    """Whether the expression translators (``to_flowframe_code``, ``to_polars_code``) keep ``formula``'s meaning.
+
+    An unparseable formula answers True: the translator rejects it on its own.
+    """
+    from polars_expr_transformer.process.polars_expr_transformer import build_func
+
+    try:
+        tree = build_func(formula)
+    except Exception:
+        return True
+    return not _calls_unfaithful_function(tree)
+
+
 class ExpressionHelpersMixin(ConverterMixinBase):
     """Filter-expression parsing and Polars dtype / aggregation helpers."""
 
