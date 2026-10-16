@@ -5,7 +5,10 @@ flow_id, never registered in the FlowfileHandler, per-graph execution settings â
 the global worker-offload flag is untouched). With ``FLOWFILE_COMPUTE_PROTOCOL``
 on, the child takes the parent's ``execution_location``, so a local parent's
 subflow stays local; off, the child is set ``local``. Outputs stay lazy; only the
-small parameter frame is bounded-collected in core.
+small parameter frame is read, at most ``MAX_SUBFLOW_RUNS + 1`` rows: with the flag
+on through ``bounded.head_rows`` on the run's backend, off collected in core. With
+the flag on a data input reaches the child with the input engine's cached schema,
+and the metadata columns are named from the child output engine's cached columns.
 """
 
 import threading
@@ -24,6 +27,8 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.flow_data_engine.bounded import head_rows
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, _derived_schema
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs, output_handle
@@ -363,7 +368,10 @@ def _build_run_params(
         return [base]
 
     n_records = 1 if settings.iteration_mode == "first_value" else MAX_SUBFLOW_RUNS + 1
-    param_df = param_input.collect(n_records=n_records)
+    if FLOWFILE_COMPUTE_PROTOCOL:
+        param_df = pl.from_arrow(head_rows(current_context().backend, param_input.data_frame, n_records))
+    else:
+        param_df = param_input.collect(n_records=n_records)
     missing = sorted({b.column_name for b in column_bindings} - set(param_df.columns))
     if missing:
         raise ValueError(f"Parameter input is missing mapped column(s): {', '.join(missing)}")
@@ -556,7 +564,9 @@ def execute_run_flow_node(
             child_node = child.get_node(input_ports[slot_name].node_id)
             if child_node is None:
                 raise ValueError(f"Subflow input node for '{slot_name}' could not be loaded")
-            child_node.function = FlowDataEngine(engine.data_frame)
+            child_node.function = FlowDataEngine(
+                engine.data_frame, schema=engine.schema if FLOWFILE_COMPUTE_PROTOCOL else None
+            )
 
         if node is not None:
             node._subflow_cancel_context = child
@@ -602,14 +612,15 @@ def execute_run_flow_node(
                 )
             else:
                 result = out_node.get_resulting_data()
+            kept = result if result is not None else FlowDataEngine()
             lf = result.data_frame if result is not None else pl.DataFrame().lazy()
             if not isinstance(lf, pl.LazyFrame):
                 lf = lf.lazy()
             literals = None
             if append_metadata:
-                existing = list(lf.collect_schema().names())
+                existing = list(kept.polars_schema().names())
                 literals = _metadata_literals(settings, interface, run_params, run_index, existing)
-            collected[slot_name].append((result if result is not None else FlowDataEngine(), lf, literals))
+            collected[slot_name].append((kept, lf, literals))
         node_logger.info(f"Subflow '{resolved.name}' run {run_index}/{len(runs)} completed")
 
     if not settings.output_slots:
