@@ -1057,7 +1057,7 @@ def test_a_run_flow_reads_its_child_output_stored_where_core_cannot_read(
 
 
 def registered_child(tmp_path: Path, flow_id: int, cached: bool) -> int:
-    """The registration id of a saved child: parameter ``limit``, flow_input ``a`` over ``TRANSFORM_ROWS``, ``out_a``."""
+    """The registration id of a saved child: parameter ``limit``, flow_input ``a`` of ``TRANSFORM_ROWS``, ``out_a``."""
     child = make_graph(flow_id)
     child.flow_settings.parameters = [schemas.FlowParameter(name="limit", default_value="10", type="integer")]
     add_promise(child, 1, "flow_input")
