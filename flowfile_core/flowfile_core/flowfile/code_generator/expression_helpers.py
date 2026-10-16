@@ -38,8 +38,9 @@ def _temporal_literal(value: str, base: str) -> str | None:
         return None
 
 
-# polars_expr_transformer translates to_boolean into a strict Boolean cast, which keeps nulls and refuses text.
-_UNFAITHFUL_TRANSLATIONS = frozenset({"to_boolean"})
+# The translators write to_boolean as a strict Boolean cast and to_date/to_datetime as a strict parse with an
+# inferred format, where the formula turns null into false and parses only "%Y-%m-%d" text, as null when it fails.
+_UNFAITHFUL_TRANSLATIONS = frozenset({"to_boolean", "to_date", "to_datetime"})
 
 
 def _calls_unfaithful_function(node) -> bool:

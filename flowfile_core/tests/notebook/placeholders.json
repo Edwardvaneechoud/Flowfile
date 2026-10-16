@@ -34,6 +34,7 @@
   "sql_query_multiple_inputs_keep_their_order": [],
   "text_to_rows_operation": [],
   "to_boolean_formula_exports_as_formula": [],
+  "to_date_and_to_datetime_formulas_export_as_formulas": [],
   "train_apply_evaluate_full_chain_round_trip": [],
   "union_multiple_dataframes": [],
   "unpivot_operation": [],

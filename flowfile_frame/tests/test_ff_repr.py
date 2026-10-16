@@ -1,7 +1,7 @@
 """Tests for _ff_repr (flowfile function representation) tracking on Expr
 and NodeFormula conversion in with_columns."""
 
-from datetime import datetime
+from datetime import date, datetime
 
 import polars as pl
 import pytest
@@ -560,6 +560,26 @@ class TestWithColumnsFormulaConversion:
         assert _is_formula_node(node)
         assert _get_formula(node) == "to_boolean([nullable])"
         assert result.collect()["flag"].to_list() == [True, False, True]
+
+    @pytest.mark.parametrize(
+        ("formula", "text", "parsed"),
+        [
+            ("to_date([s])", ["2024-01-02", "2024/01/03", "bad", None], [date(2024, 1, 2), None, None, None]),
+            (
+                "to_datetime([s])",
+                ["2024-01-02 03:04:05", "2024-01-02T03:04:05", "bad", None],
+                [datetime(2024, 1, 2, 3, 4, 5), None, None, None],
+            ),
+        ],
+        ids=["to_date", "to_datetime"],
+    )
+    def test_flowfile_formulas_date_parse_stays_formula(self, formula, text, parsed):
+        """The translator writes a strict parse with an inferred format; the formula parses "%Y-%m-%d" text, else null."""
+        result = FlowFrame({"s": text}).with_columns(flowfile_formulas=[formula], output_column_names=["out"])
+        node = result.get_node_settings()
+        assert _is_formula_node(node)
+        assert _get_formula(node) == formula
+        assert result.collect()["out"].to_list() == parsed
 
     def test_flowfile_formulas_explicit_datatypes_skip_translation(self, sample_ff):
         """Explicit output_column_datatypes disables translation so the user's
