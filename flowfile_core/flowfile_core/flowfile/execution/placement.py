@@ -7,8 +7,8 @@ because the kernel shared volume is a local-disk location on core's host. A Trai
 and an Apply Model node that takes one from the catalog also need the scheme the artifact store's bytes travel by:
 ``file`` for the filesystem store, ``https`` for the S3 store's presigned URLs. A node whose backend falls short is a
 ``Refusal`` with the reasons in words. Stored connections are not compared: every backend resolves one with the master
-key it holds. A Run Flow node is placed with the flow it runs: that flow is built for the call and placed on the node's
-backend by the same policy, and each of its nodes refused there refuses the Run Flow node.
+key it holds. A Run Flow node is placed with the flow it runs: that flow is built for the call, the nodes its run would
+run are placed on the node's backend by the same policy, and each of them refused there refuses the Run Flow node.
 
 ``SingleBackendPolicy`` puts a whole run on one backend, except the node types whose builders always run on a backend
 of their own. ``MixedPlacementPolicy`` puts each node on the backend its own ``execution_location`` names, and ``place``
@@ -25,9 +25,11 @@ from typing import TYPE_CHECKING
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.storage_backend import CatalogStorageTarget, locate_for_namespace
+from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_node.requirements import NodeRequirements, requirements_for
+from flowfile_core.flowfile.param_types import coerce_param_value, stringify_param_value
 from flowfile_core.schemas import input_schema
 from shared.compute_protocol import Capabilities
 
@@ -194,12 +196,13 @@ def _unmet(requirements: NodeRequirements, capabilities: Capabilities, namespace
 def _child_refusals(
     flow: FlowGraph, node: FlowNode, backend_id: str, backends: Mapping[str, Capabilities], policy: PlacementPolicy
 ) -> list[str]:
-    """One reason per node of the flow a Run Flow node runs that its placement on ``backend_id`` refuses.
+    """One reason per node the flow a Run Flow node runs would run that its placement on ``backend_id`` refuses.
 
-    The flow is built for the call (``ephemeral_flow_graph``) at the depth its run would have and placed by ``policy``
-    with ``backend_id`` as the run's backend, as the child's own run places it, so its Run Flow nodes are walked in
-    turn. Past ``subflow.MAX_SUBFLOW_DEPTH``, for a reference that does not resolve and for a file that cannot be built
-    it claims nothing, so the node fails when it runs with the run's own message, as it would unplaced.
+    The flow is built for the call (``ephemeral_flow_graph``) at the depth its run would have, and the nodes
+    ``_child_run_nodes`` names are placed by ``policy`` with ``backend_id`` as the run's backend, as the child's own run
+    places them, so its Run Flow nodes are walked in turn. Past ``subflow.MAX_SUBFLOW_DEPTH``, and for any error while
+    the flow is resolved, built or placed (logged with the node and the flow), it claims nothing, so the node fails when
+    it runs with the run's own message, as it would unplaced.
     """
     # Function-local: flow_graph imports this module, and ephemeral_graph imports flow_graph.
     from flowfile_core.flowfile import subflow
@@ -213,14 +216,59 @@ def _child_refusals(
         resolved = subflow.resolve_subflow_path(settings.flow_reference, settings.user_id)
         with ephemeral_flow_graph(resolved.path, settings.user_id) as child:
             child._subflow_depth = depth
-            placement = place(child, backends, dataclasses.replace(policy, backend_id=backend_id))
-    except (subflow.SubflowResolutionError, ValueError, OSError):
+            child_policy = dataclasses.replace(policy, backend_id=backend_id)
+            placement = place(child, backends, child_policy, nodes=_child_run_nodes(child, settings))
+    except Exception as e:
+        logger.warning(
+            "Run Flow node %s of flow %s is placed without the flow it runs (registration %s), which could not be "
+            "resolved, built or placed: %s: %s",
+            node.node_id,
+            flow.flow_id,
+            settings.flow_reference.registration_id,
+            type(e).__name__,
+            e,
+        )
         return []
     return [
         f'node {refusal.node_id} of the flow it runs ("{resolved.name}") cannot run on backend '
         f'"{refusal.backend_id}": {refusal.reason}'
         for refusal in placement.refusals
     ]
+
+
+def _child_run_nodes(child: FlowGraph, settings: input_schema.NodeRunFlow) -> list[FlowNode]:
+    """The nodes of ``child`` that its run by a Run Flow node with ``settings`` runs, as ``run_graph`` plans a run.
+
+    The child's parameters take the node's constant bindings, as ``subflow.execute_run_flow_node`` sets them, its
+    parameter gates are decided on them (``_evaluate_gate_conditions``), and the execution plan leaves out the nodes
+    behind a closed gate and the ones the classifier error-skips (``compute_execution_plan``). A gate on a parameter
+    the node binds from a column, or whose value refers to one, is decided by each run from its row, which is not read
+    before the run: it counts here as closed on both handles, so nothing behind it is placed and the child's own run
+    places those nodes. A formula gate is decided when it runs, so the nodes behind one are placed, as the run places
+    them. A binding to a parameter the child lacks or a constant its type refuses raises, as the run does.
+    """
+    # Function-local: these import flow_node, which this module names only for type checking.
+    from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
+    from flowfile_core.flowfile.util.skip_rules import ELSE_HANDLE, THEN_HANDLE
+
+    parameters = {parameter.name: parameter for parameter in child.flow_settings.parameters}
+    from_columns: set[str] = set()
+    for binding in settings.parameter_bindings:
+        parameter = parameters[binding.parameter_name]
+        if binding.source == "constant":
+            value = coerce_param_value(parameter.type, binding.constant_value, parameter.enum_values)
+            parameter.default_value = stringify_param_value(value)
+        elif binding.source == "column":
+            from_columns.add(parameter.name)
+    closed = child._evaluate_gate_conditions()
+    for gate in child.nodes:
+        condition = getattr(gate.setting_input, "gate_input", None)
+        if gate.node_type != "gate" or condition is None or condition.condition_source != "parameter":
+            continue
+        if condition.parameter in from_columns or any(f"${{{name}}}" in condition.value for name in from_columns):
+            closed[gate.node_id] = frozenset({THEN_HANDLE, ELSE_HANDLE})
+    starts = child._flow_starts + child.get_implicit_starter_nodes()
+    return compute_execution_plan(nodes=child.nodes, flow_starts=starts, closed_gate_handles=closed).all_nodes
 
 
 def _artifact_scheme(node: FlowNode) -> str | None:
