@@ -2,7 +2,8 @@
 
 With the compute protocol flag on, ``run_graph`` places the nodes it will run, each on the run's backend, the model
 nodes included, and compares what each needs with the ``Capabilities`` that backend declares; a model that crosses the
-artifact store needs the store's scheme. A refused node is a failed row on the run report naming the backend and the
+artifact store needs the store's scheme, and a Run Flow node is refused for what a node of the flow it runs needs. A
+refused node is a failed row on the run report naming the backend and the
 reason; no node runs and the backend is sent no work. A backend that cannot be asked for its capabilities is not in
 the map placement is given: its nodes are not refused and meet its typed error when they run. The backends here are
 core's own under another id, declaring what each test hands them, so no worker is needed. With the flag off nothing
@@ -28,6 +29,7 @@ from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema, schemas
 from shared.compute_protocol import Capabilities
+from tests import test_run_flow_node
 from tests.flowfile.conftest import add_test_catalog_writer, create_test_namespace
 
 BACKEND_ID = "declaring"
@@ -273,6 +275,50 @@ def test_a_python_script_node_is_refused_on_a_backend_off_cores_host(protocol_on
     assert_refused_before_any_node(
         graph, run_info, backend, {2: ["it runs on a notebook kernel", "the kernel shared volume on core's host"]}
     )
+
+
+def test_a_run_flow_node_is_refused_for_what_a_node_of_its_child_flow_needs(protocol_on, declare, tmp_path):
+    backend = declare(without(everything(), scheme="file"))
+    child = make_graph(8422)
+    add_manual_input(child, 1, [{"id": 1}])
+    add_promise(child, 2, "python_script")
+    child.add_python_script(
+        input_schema.NodePythonScript(
+            flow_id=child.flow_id,
+            node_id=2,
+            depending_on_ids=[1],
+            python_script_input=input_schema.PythonScriptInput(code="print(1)", kernel_id="k"),
+        )
+    )
+    connect(child, 1, 2)
+    path = tmp_path / "kernel_child.yaml"
+    child.save_flow(str(path))
+    child.close_flow()
+    registration_id = test_run_flow_node.register_flow_file(path, "kernel_child")
+    graph = make_graph(8421)
+    add_manual_input(graph, 1, [{"id": 1}])
+    add_promise(graph, 2, "run_flow")
+    graph.add_run_flow(
+        input_schema.NodeRunFlow(
+            flow_id=graph.flow_id,
+            node_id=2,
+            user_id=1,
+            flow_reference=input_schema.SubflowReference(registration_id=registration_id),
+            input_slots=[],
+            output_slots=[],
+        )
+    )
+    connect(graph, 1, 2)
+
+    run_info = graph.run_graph()
+
+    assert_refused_before_any_node(
+        graph,
+        run_info,
+        backend,
+        {2: ['node 2 of the flow it runs ("kernel_child")', "it runs on a notebook kernel"]},
+    )
+    assert backend.asked == 1
 
 
 def test_a_flow_its_backend_can_run_runs_as_it_does_unplaced(declare, monkeypatch):

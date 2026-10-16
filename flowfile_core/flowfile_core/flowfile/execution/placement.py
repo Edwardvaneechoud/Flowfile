@@ -7,7 +7,8 @@ because the kernel shared volume is a local-disk location on core's host. A Trai
 and an Apply Model node that takes one from the catalog also need the scheme the artifact store's bytes travel by:
 ``file`` for the filesystem store, ``https`` for the S3 store's presigned URLs. A node whose backend falls short is a
 ``Refusal`` with the reasons in words. Stored connections are not compared: every backend resolves one with the master
-key it holds.
+key it holds. A Run Flow node is placed with the flow it runs: that flow is built for the call and placed on the node's
+backend by the same policy, and each of its nodes refused there refuses the Run Flow node.
 
 ``SingleBackendPolicy`` puts a whole run on one backend, except the node types whose builders always run on a backend
 of their own. ``MixedPlacementPolicy`` puts each node on the backend its own ``execution_location`` names, and ``place``
@@ -16,6 +17,7 @@ lists the edges between two nodes on different backends, whose data crosses thro
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -117,11 +119,12 @@ def place(
 
     ``backends`` holds the capabilities in hand of the backends the policy names for them. A node whose backend is not
     among them (one that could not be asked) is neither assigned nor refused: reaching a backend is the handshake's
-    concern, and the node meets that backend's typed error when it runs. Nothing is asked of a backend; the two lookups
-    are where a catalog reader's or writer's namespace keeps its tables (``locate_for_namespace``, which reads the
-    namespace row and no credential) and, for a Train or Apply Model node, the kind of the artifact store
+    concern, and the node meets that backend's typed error when it runs. Nothing is asked of a backend; the three
+    lookups are where a catalog reader's or writer's namespace keeps its tables (``locate_for_namespace``, which reads
+    the namespace row and no credential), for a Train or Apply Model node, the kind of the artifact store
     (``artifacts.get_storage_backend``, whose only side effect is making the store the first time: the filesystem store
-    makes its two folders, the S3 store a client).
+    makes its two folders, the S3 store a client) and, for a Run Flow node, the flow it runs (``_child_refusals``: its
+    registration and its file, built for the call).
 
     ``boundaries`` lists, in the order of ``nodes``, each pair of a node and an input of it assigned to another backend,
     once; an edge with an end that is not assigned is none.
@@ -140,6 +143,8 @@ def place(
             node.node_template, node.setting_input, catalog_target=target, artifact_scheme=_artifact_scheme(node)
         )
         reasons = _unmet(requirements, capabilities, namespace)
+        if isinstance(node.setting_input, input_schema.NodeRunFlow):
+            reasons += _child_refusals(flow, node, backend_id, backends, policy)
         if reasons:
             refusals.append(Refusal(node_id=node.node_id, backend_id=backend_id, reason="; ".join(reasons)))
     boundaries: list[tuple[int, int]] = []
@@ -184,6 +189,38 @@ def _unmet(requirements: NodeRequirements, capabilities: Capabilities, namespace
             "where this backend does not write"
         )
     return reasons
+
+
+def _child_refusals(
+    flow: FlowGraph, node: FlowNode, backend_id: str, backends: Mapping[str, Capabilities], policy: PlacementPolicy
+) -> list[str]:
+    """One reason per node of the flow a Run Flow node runs that its placement on ``backend_id`` refuses.
+
+    The flow is built for the call (``ephemeral_flow_graph``) at the depth its run would have and placed by ``policy``
+    with ``backend_id`` as the run's backend, as the child's own run places it, so its Run Flow nodes are walked in
+    turn. Past ``subflow.MAX_SUBFLOW_DEPTH``, for a reference that does not resolve and for a file that cannot be built
+    it claims nothing, so the node fails when it runs with the run's own message, as it would unplaced.
+    """
+    # Function-local: flow_graph imports this module, and ephemeral_graph imports flow_graph.
+    from flowfile_core.flowfile import subflow
+    from flowfile_core.flowfile.manage.ephemeral_graph import ephemeral_flow_graph
+
+    depth = flow._subflow_depth + 1
+    if depth > subflow.MAX_SUBFLOW_DEPTH:
+        return []
+    settings = node.setting_input
+    try:
+        resolved = subflow.resolve_subflow_path(settings.flow_reference, settings.user_id)
+        with ephemeral_flow_graph(resolved.path, settings.user_id) as child:
+            child._subflow_depth = depth
+            placement = place(child, backends, dataclasses.replace(policy, backend_id=backend_id))
+    except (subflow.SubflowResolutionError, ValueError, OSError):
+        return []
+    return [
+        f'node {refusal.node_id} of the flow it runs ("{resolved.name}") cannot run on backend '
+        f'"{refusal.backend_id}": {refusal.reason}'
+        for refusal in placement.refusals
+    ]
 
 
 def _artifact_scheme(node: FlowNode) -> str | None:
