@@ -15,12 +15,13 @@ compute error that failed a node on that node's row, in both flag states, and ``
 
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import polars as pl
 import pytest
 
 from flowfile_core.artifacts import reset_storage_backend
-from flowfile_core.configs import settings
+from flowfile_core.configs import logger, settings
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, VersionMismatch
@@ -204,10 +205,17 @@ def model_flow(
 
 
 def run_flow_graph(
-    flow_id: int, registration_id: int, bindings: list[input_schema.RunFlowParameterBinding] | None = None
+    flow_id: int,
+    registration_id: int,
+    bindings: list[input_schema.RunFlowParameterBinding] | None = None,
+    parameters: list[schemas.FlowParameter] | None = None,
 ) -> FlowGraph:
-    """Manual input 1 → Run Flow node 2 over the registered flow, no slots, its parameters bound by ``bindings``."""
+    """Manual input 1 → Run Flow node 2 over the registered flow, no slots, its parameters bound by ``bindings``.
+
+    ``parameters`` are the flow's own, which a constant binding ``${name}`` forwards.
+    """
     graph = make_graph(flow_id)
+    graph.flow_settings.parameters = parameters or []
     add_manual_input(graph, 1, [{"id": 1}])
     add_promise(graph, 2, "run_flow")
     graph.add_run_flow(
@@ -236,6 +244,31 @@ def add_python_script_on_kernel(graph: FlowGraph, node_id: int, depending_on_id:
         )
     )
     connect(graph, depending_on_id, node_id)
+
+
+def register_gated_child(tmp_path: Path, flow_id: int, name: str, saved_mode: str, operator: str, value: str) -> int:
+    """Manual input 1 → gate 2 on ``mode <operator> <value>`` → Python Script 3 on kernel ``k``, registered as ``name``.
+
+    ``mode`` is the flow's string parameter, saved as ``saved_mode``; answers the registration id.
+    """
+    child = make_graph(flow_id)
+    child.flow_settings.parameters = [schemas.FlowParameter(name="mode", default_value=saved_mode, type="string")]
+    add_manual_input(child, 1, [{"id": 1}])
+    add_promise(child, 2, "gate")
+    child.add_gate(
+        input_schema.NodeGate(
+            flow_id=child.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            gate_input=transform_schema.GateInput(parameter="mode", operator=operator, value=value),
+        )
+    )
+    connect(child, 1, 2)
+    add_python_script_on_kernel(child, 3, depending_on_id=2)
+    path = tmp_path / f"{name}.yaml"
+    child.save_flow(str(path))
+    child.close_flow()
+    return test_run_flow_node.register_flow_file(path, name)
 
 
 def assert_refused_before_any_node(
@@ -341,31 +374,19 @@ def test_a_run_flow_node_is_refused_for_what_a_node_of_its_child_flow_needs(prot
             "kernel",
             [input_schema.RunFlowParameterBinding(parameter_name="mode", source="constant", constant_value="plain")],
         ),
+        (
+            "kernel",
+            [input_schema.RunFlowParameterBinding(parameter_name="mode", source="column", column_name="id")],
+        ),
     ],
-    ids=["saved_default", "constant_binding"],
+    ids=["saved_default", "constant_binding", "column_binding"],
 )
 def test_a_run_flow_node_is_not_refused_for_a_child_node_a_parameter_gate_closes(
     protocol_on, declare, tmp_path, monkeypatch, saved_mode, bindings
 ):
     backend = declare(without(everything(), scheme="file"))
-    child = make_graph(8423)
-    child.flow_settings.parameters = [schemas.FlowParameter(name="mode", default_value=saved_mode, type="string")]
-    add_manual_input(child, 1, [{"id": 1}])
-    add_promise(child, 2, "gate")
-    child.add_gate(
-        input_schema.NodeGate(
-            flow_id=child.flow_id,
-            node_id=2,
-            depending_on_id=1,
-            gate_input=transform_schema.GateInput(parameter="mode", operator="equals", value="kernel"),
-        )
-    )
-    connect(child, 1, 2)
-    add_python_script_on_kernel(child, 3, depending_on_id=2)
-    path = tmp_path / "gated_child.yaml"
-    child.save_flow(str(path))
-    child.close_flow()
-    graph = run_flow_graph(8424, test_run_flow_node.register_flow_file(path, "gated_child"), bindings)
+    registration_id = register_gated_child(tmp_path, 8423, "gated_child", saved_mode, "equals", "kernel")
+    graph = run_flow_graph(8424, registration_id, bindings)
     child_runs = []
     run_graph = FlowGraph.run_graph
 
@@ -384,6 +405,62 @@ def test_a_run_flow_node_is_not_refused_for_a_child_node_a_parameter_gate_closes
     [child_run] = child_runs
     assert {result.node_id: result.skipped for result in child_run.node_step_result} == {1: False, 2: False, 3: True}
     assert backend.asked == 2
+
+
+def test_a_run_flow_node_decides_its_child_s_gates_on_the_parent_parameters_it_forwards(protocol_on, declare, tmp_path):
+    backend = declare(without(everything(), scheme="file"))
+    registration_id = register_gated_child(tmp_path, 8426, "forward_string_child", "kernel", "not_equals", "plain")
+    forward = [input_schema.RunFlowParameterBinding(parameter_name="mode", source="constant", constant_value="${mode}")]
+    opening = run_flow_graph(
+        8427, registration_id, forward, [schemas.FlowParameter(name="mode", default_value="kernel", type="string")]
+    )
+    closing = run_flow_graph(
+        8428, registration_id, forward, [schemas.FlowParameter(name="mode", default_value="plain", type="string")]
+    )
+
+    opened = opening.run_graph()
+
+    assert_refused_before_any_node(
+        opening,
+        opened,
+        backend,
+        {2: ['node 3 of the flow it runs ("forward_string_child")', "it runs on a notebook kernel"]},
+    )
+
+    closed = closing.run_graph()
+
+    assert closed.success is True, [result.error for result in closed.node_step_result]
+    assert [result.compute_error for result in closed.node_step_result] == [None, None]
+
+
+def test_a_run_flow_node_forwarding_an_integer_parameter_is_refused_for_what_its_child_needs(
+    protocol_on, declare, tmp_path, monkeypatch, caplog
+):
+    backend = declare(without(everything(), scheme="file"))
+    child = make_graph(8433)
+    child.flow_settings.parameters = [schemas.FlowParameter(name="n", default_value="0", type="integer")]
+    add_manual_input(child, 1, [{"id": 1}])
+    add_python_script_on_kernel(child, 2, depending_on_id=1)
+    path = tmp_path / "forward_integer_child.yaml"
+    child.save_flow(str(path))
+    child.close_flow()
+    graph = run_flow_graph(
+        8434,
+        test_run_flow_node.register_flow_file(path, "forward_integer_child"),
+        [input_schema.RunFlowParameterBinding(parameter_name="n", source="constant", constant_value="${n}")],
+        [schemas.FlowParameter(name="n", default_value="1", type="integer")],
+    )
+    monkeypatch.setattr(logger, "propagate", True)
+
+    run_info = graph.run_graph()
+
+    assert_refused_before_any_node(
+        graph,
+        run_info,
+        backend,
+        {2: ['node 2 of the flow it runs ("forward_integer_child")', "it runs on a notebook kernel"]},
+    )
+    assert [record.getMessage() for record in caplog.records if record.module == "placement"] == []
 
 
 def test_a_run_flow_node_over_a_flow_that_cannot_be_built_fails_when_it_runs(protocol_on, declare, tmp_path):

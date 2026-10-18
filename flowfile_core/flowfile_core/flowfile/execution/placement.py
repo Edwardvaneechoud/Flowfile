@@ -30,6 +30,7 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_node.requirements import NodeRequirements, requirements_for
 from flowfile_core.flowfile.param_types import coerce_param_value, stringify_param_value
+from flowfile_core.flowfile.parameter_resolver import node_parameters_resolved
 from flowfile_core.schemas import input_schema
 from shared.compute_protocol import Capabilities
 
@@ -198,11 +199,13 @@ def _child_refusals(
 ) -> list[str]:
     """One reason per node the flow a Run Flow node runs would run that its placement on ``backend_id`` refuses.
 
-    The flow is built for the call (``ephemeral_flow_graph``) at the depth its run would have, and the nodes
-    ``_child_run_nodes`` names are placed by ``policy`` with ``backend_id`` as the run's backend, as the child's own run
-    places them, so its Run Flow nodes are walked in turn. Past ``subflow.MAX_SUBFLOW_DEPTH``, and for any error while
-    the flow is resolved, built or placed (logged with the node and the flow), it claims nothing, so the node fails when
-    it runs with the run's own message, as it would unplaced.
+    The node's settings are read with ``flow``'s parameters in them, as the run puts them there before the node runs
+    (``node_parameters_resolved``), so a constant binding ``${name}`` forwards that parameter's value. The flow is built
+    for the call (``ephemeral_flow_graph``) at the depth its run would have, and the nodes ``_child_run_nodes`` names
+    are placed by ``policy`` with ``backend_id`` as the run's backend, as the child's own run places them, so its Run
+    Flow nodes are walked in turn, with the parameters given to the child here. Past ``subflow.MAX_SUBFLOW_DEPTH``, and
+    for any error while the settings or the flow are resolved, or the flow is built or placed (logged with the node and
+    the flow), it claims nothing, so the node fails when it runs with the run's own message, as it would unplaced.
     """
     # Function-local: flow_graph imports this module, and ephemeral_graph imports flow_graph.
     from flowfile_core.flowfile import subflow
@@ -213,11 +216,12 @@ def _child_refusals(
         return []
     settings = node.setting_input
     try:
-        resolved = subflow.resolve_subflow_path(settings.flow_reference, settings.user_id)
-        with ephemeral_flow_graph(resolved.path, settings.user_id) as child:
-            child._subflow_depth = depth
-            child_policy = dataclasses.replace(policy, backend_id=backend_id)
-            placement = place(child, backends, child_policy, nodes=_child_run_nodes(child, settings))
+        with node_parameters_resolved(node):
+            resolved = subflow.resolve_subflow_path(settings.flow_reference, settings.user_id)
+            with ephemeral_flow_graph(resolved.path, settings.user_id) as child:
+                child._subflow_depth = depth
+                child_policy = dataclasses.replace(policy, backend_id=backend_id)
+                placement = place(child, backends, child_policy, nodes=_child_run_nodes(child, settings))
     except Exception as e:
         logger.warning(
             "Run Flow node %s of flow %s is placed without the flow it runs (registration %s), which could not be "
