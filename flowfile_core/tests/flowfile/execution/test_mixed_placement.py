@@ -6,10 +6,11 @@ through the run's prefix in the store: exported there and imported on the node's
 is materialised with its other outputs, so no result refers to the prefix once the run removes it. A node fetched alone
 is placed with the nodes it reads from and crosses as a run's node does, through a prefix of the fetch's own; an input
 it reads that has not run is composed into its plan. A formula gate's probe reads its source on the backend that holds
-the source's result, and the missing-file retry reruns an input on the backend that holds its result, the node then
-crossing it again. Without a store a node's own setting is not read. The protocol flag comes from the environment, as
-for the exchange-store, two-backend chain and run-flow tests whose fixtures and frames these reuse; the cases over a
-declaring backend set it on themselves, but for the formula gate's.
+the source's result, and the missing-file retry reruns an input on the backend that holds its result for its current
+setup, the node then crossing it again, and any other input where the node runs. Without a store a node's own setting
+is not read. The protocol flag comes from the environment, as for the exchange-store, two-backend chain and run-flow
+tests whose fixtures and frames these reuse; the cases over a declaring backend set it on themselves, but for the
+formula gate's.
 """
 
 import re
@@ -692,6 +693,50 @@ def test_a_retry_reruns_an_input_on_the_backend_holding_its_result_and_crosses_i
         assert worker.exists(ref_1)
         assert (ref_2.backend_id, ref_2.state) == (LOCAL, "materialised")
         assert _keys(f"{root}/8515/") == []
+        assert graph.exchange_run is None
+    finally:
+        graph.close_flow()
+
+
+@requires_minio
+def test_a_retry_in_a_fetch_reruns_an_input_changed_since_it_ran_elsewhere_where_the_fetched_node_runs(
+    root, worker, monkeypatch
+):
+    """Flow 8516, the chain on core with its filter on the worker, is run; the filter is then moved to the flow's
+    backend and its last result on the worker is gone, and node 3 is fetched with its first submit failing with a
+    missing file. The filter holds no result for its current setup, so node 3 composes it and the retry reruns it on
+    core, where node 3 runs, not on the worker that held its last result."""
+    local = registry.backend(LOCAL)
+    graph = chain(create_test_graph(flow_id=8516, execution_location=LOCAL), filter_on=WORKER, user_id=1)
+    try:
+        run_info = graph.run_graph()
+        assert run_info.success is True, [result.error for result in run_info.node_step_result]
+        stale = graph.get_node(2).results.result_ref
+        assert stale.backend_id == (WORKER if settings.FLOWFILE_COMPUTE_PROTOCOL else LOCAL)
+        graph.add_filter(graph.get_node(2).setting_input.model_copy(update={"execution_location": "auto"}))
+        registry.backend(stale.backend_id).release(stale)
+        submits: list[tuple[str, int | str]] = []
+        for backend in (local, worker):
+
+            def fail_the_first(
+                plan, inputs, hints, result_id, *, flow_id, node_id, backend=backend, submit=backend.submit
+            ):
+                submits.append((backend.id, node_id))
+                if len(submits) == 1:
+                    raise TaskFailed("No such file or directory (os error 2): gone.arrow")
+                return submit(plan, inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
+
+            monkeypatch.setattr(backend, "submit", fail_the_first)
+
+        run_info = graph.trigger_fetch_node(3)
+
+        [row] = run_info.node_step_result
+        assert (row.node_id, row.success) == (3, True), row.error
+        assert submits == [(LOCAL, 3), (LOCAL, 2), (LOCAL, 3)]
+        assert run_info.boundaries == []
+        ref_2, ref_3 = graph.get_node(2).results.result_ref, graph.get_node(3).results.result_ref
+        assert (ref_2.backend_id, ref_3.backend_id) == (LOCAL, LOCAL)
+        assert pl.read_ipc_stream(local.sample(ref_3, 10)).sort("region").equals(EXPECTED)
         assert graph.exchange_run is None
     finally:
         graph.close_flow()

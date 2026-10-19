@@ -425,8 +425,9 @@ class NodeExecutor:
         ``settings.FLOWFILE_COMPUTE_PROTOCOL`` off the message alone counts as an input's file gone, as the results are
         core's own files. With it on an input must also hold a result that is gone (``NodeResults.artifact_is_missing``,
         which asks the backend that minted it); otherwise the error is the node's own and it fails with it, the inputs'
-        results kept. With it on each input reruns on the backend that holds its result, and an input the node reads
-        from another backend crosses through its edge again when the node retries.
+        results kept. With it on an input that has run with its current setup reruns on the backend that holds its
+        result, and an input the node reads from another backend crosses through its edge again when the node retries;
+        any other input reruns where the node runs, which composes it into its plan.
         """
         error_str = str(error)
         state.mark_failed(error_str)
@@ -449,7 +450,7 @@ class NodeExecutor:
             node_logger.warning("Input file missing, retrying upstream nodes...")
             for node_input in self.node.node_inputs.get_all_inputs():
                 context = current_context()
-                held = node_input.results.result_ref
+                held = node_input.results.result_ref if node_input.node_stats.has_run_with_current_setup else None
                 if settings.FLOWFILE_COMPUTE_PROTOCOL and held is not None and held.backend_id != context.backend_id:
                     context = replace(context, backend_id=held.backend_id)
                 # The run loop substitutes only into the node it is about to run.

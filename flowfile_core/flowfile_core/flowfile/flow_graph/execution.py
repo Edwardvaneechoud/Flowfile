@@ -972,8 +972,9 @@ class ExecutionMixin(GraphMixinBase):
         quoted) like every other expression field — the stage loop sees the
         restored (unsubstituted) settings. Raises on a missing/unparsable
         formula — the caller fails the gate visibly. The probe runs under the
-        current context on the backend that holds the source's result, or on
-        the current context's own backend when the source holds none.
+        current context on the backend that holds the source's result for its
+        current setup, or on the current context's own backend when the source
+        holds none.
         """
         gate_input = node.setting_input.gate_input
         source_node = node.node_inputs.right_input
@@ -987,7 +988,7 @@ class ExecutionMixin(GraphMixinBase):
             raise ValueError("gate input produced no result to evaluate its formula against")
         formula = resolve_expression_parameters(gate_input.formula, params or {})
         context = current_context(self)
-        held = source_node.results.result_ref
+        held = source_node.results.result_ref if source_node.node_stats.has_run_with_current_setup else None
         if held is not None and held.backend_id != context.backend_id:
             context = replace(context, backend_id=held.backend_id)
         with use_context(context):
