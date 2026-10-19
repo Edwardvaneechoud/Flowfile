@@ -113,8 +113,16 @@ export const useResultsStore = defineStore("results", {
     // ========== Run Results Management ==========
     /** Record a flow's run; `current` also makes it the run the Results pane shows. */
     insertRunResult(runResult: RunInformation, current = true): void {
-      if (current) this.currentRunResult = runResult;
-      this.runResults[runResult.flow_id] = runResult;
+      const previous = this.runResults[runResult.flow_id];
+      let stored = runResult;
+      // A fetch places only the node it runs: edges into other nodes keep the last report's badges.
+      if (runResult.run_type === "fetch_one" && previous) {
+        const ran = new Set(runResult.node_step_result.map((nodeResult) => nodeResult.node_id));
+        const kept = (previous.boundaries ?? []).filter(([, target]) => !ran.has(target));
+        stored = { ...runResult, boundaries: [...kept, ...(runResult.boundaries ?? [])] };
+      }
+      if (current) this.currentRunResult = stored;
+      this.runResults[runResult.flow_id] = stored;
       this.initializeResultCache(runResult.flow_id);
 
       runResult.node_step_result.forEach((nodeResult) => {

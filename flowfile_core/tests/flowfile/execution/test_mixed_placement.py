@@ -3,9 +3,11 @@
 With an exchange store configured (``FLOWFILE_EXCHANGE_URI``), a run places each node on the backend its own
 ``execution_location`` names, ``"auto"`` on the run's, and every output a node reads from another backend crosses
 through the run's prefix in the store: exported there and imported on the node's backend, where the node that reads it
-is materialised with its other outputs, so no result refers to the prefix once the run removes it. Without a store a
-node's own setting is not read. The protocol flag comes from the environment, as for the exchange-store, two-backend
-chain and run-flow tests whose fixtures and frames these reuse; the cases over a declaring backend set it on themselves.
+is materialised with its other outputs, so no result refers to the prefix once the run removes it. A node fetched alone
+is placed with the nodes it reads from and crosses as a run's node does, through a prefix of the fetch's own; an input
+it reads that has not run is composed into its plan. Without a store a node's own setting is not read. The protocol
+flag comes from the environment, as for the exchange-store, two-backend chain and run-flow tests whose fixtures and
+frames these reuse; the cases over a declaring backend set it on themselves.
 """
 
 import re
@@ -18,7 +20,7 @@ from flowfile_core import events
 from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution import exchange, registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
-from flowfile_core.flowfile.execution.errors import PlanRejected
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable, PlanRejected
 from flowfile_core.flowfile.execution.placement import MixedPlacementPolicy, Placement, SingleBackendPolicy, place
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_node.executor import hints_for
@@ -300,6 +302,131 @@ def test_a_node_on_the_worker_takes_its_input_from_core_and_hands_its_rows_back_
         assert pl.read_ipc_stream(worker.sample(ref_2, 100)).sort("id").equals(A_ROWS)
     finally:
         events._handlers["flow_run_finished"].remove(list_the_prefix)
+        graph.close_flow()
+
+
+@requires_minio
+def test_a_node_fetched_alone_runs_on_its_own_backend_and_reads_what_ran_elsewhere_through_the_store(
+    root, worker, monkeypatch
+):
+    """Flow 8511, the chain with its filter on the worker, is run and then fetched at node 3 and at node 2; flow 8512,
+    the same chain, is fetched at node 3 with nothing run, its filter composed into the group by's plan."""
+    local = registry.backend(LOCAL)
+    exports: list[tuple[str, str]] = []
+    for backend in (local, worker):
+        export = backend.export
+
+        def record(ref, uri, credential, backend_id=backend.id, export=export):
+            exports.append((backend_id, uri))
+            return export(ref, uri, credential)
+
+        monkeypatch.setattr(backend, "export", record)
+
+    def fetch(graph: FlowGraph, node_id: int):
+        exports.clear()
+        run_info = graph.trigger_fetch_node(node_id)
+        assert run_info is not None and run_info.run_type == "fetch_one"
+        [row] = run_info.node_step_result
+        assert (row.node_id, row.success) == (node_id, True), row.error
+        return run_info, list(exports)
+
+    graph = chain(create_test_graph(flow_id=8511, execution_location=LOCAL), filter_on=WORKER, user_id=1)
+    fresh = chain(create_test_graph(flow_id=8512, execution_location=LOCAL), filter_on=WORKER, user_id=1)
+    try:
+        run_info = graph.run_graph()
+        assert run_info.success is True, [result.error for result in run_info.node_step_result]
+
+        fetched_3, exported_3 = fetch(graph, 3)
+        ref_3 = graph.get_node(3).results.result_ref
+        assert pl.read_ipc_stream(local.sample(ref_3, 10)).sort("region").equals(EXPECTED)
+        fetched_2, exported_2 = fetch(graph, 2)
+        ref_2 = graph.get_node(2).results.result_ref
+        assert pl.read_ipc_stream(registry.backend(ref_2.backend_id).sample(ref_2, 100)).sort("id").equals(A_ROWS)
+        assert graph.exchange_run is None
+        fetched_fresh, exported_fresh = fetch(fresh, 3)
+        ref_fresh = fresh.get_node(3).results.result_ref
+        assert pl.read_ipc_stream(local.sample(ref_fresh, 10)).sort("region").equals(EXPECTED)
+        assert exported_fresh == []
+        assert ref_fresh.backend_id == LOCAL
+
+        if not settings.FLOWFILE_COMPUTE_PROTOCOL:
+            assert (fetched_3.boundaries, fetched_2.boundaries, fetched_fresh.boundaries) == ([], [], [])
+            assert exported_3 == exported_2 == []
+            assert (ref_2.backend_id, ref_3.backend_id) == (LOCAL, LOCAL)
+            return
+        prefix = rf"s3://{_BUCKET}/{re.escape(root)}/8511/[0-9a-f]{{32}}/"
+        assert fetched_3.boundaries == [(2, 3)]
+        [(exporter, uri)] = exported_3
+        assert exporter == WORKER
+        assert re.fullmatch(rf"{prefix}2-{DEFAULT_OUTPUT_HANDLE}-3\.parquet", uri), uri
+        assert (ref_3.backend_id, ref_3.state) == (LOCAL, "materialised")
+        assert fetched_2.boundaries == [(1, 2)]
+        [(exporter, uri)] = exported_2
+        assert exporter == LOCAL
+        assert re.fullmatch(rf"{prefix}1-{DEFAULT_OUTPUT_HANDLE}-2\.parquet", uri), uri
+        assert (ref_2.backend_id, ref_2.state) == (WORKER, "materialised")
+        assert _keys(f"{root}/8511/") == []
+        assert fetched_fresh.boundaries == [(2, 3)]
+    finally:
+        graph.close_flow()
+        fresh.close_flow()
+
+
+@pytest.mark.parametrize("cause", ["a-node-saved-without-a-location", "an-unreachable-backend"])
+def test_a_fetch_whose_placement_raises_fails_the_nodes_row_and_runs_nothing(monkeypatch, no_s3_client, cause):
+    """Flow 8513, the chain on core, is run and then fetched at node 3 while placing the fetch raises: node 3's
+    settings without ``execution_location`` (a flow pickled before it, a store configured so the mixed policy reads
+    it), or ``_place_run`` raising ``ComputeUnavailable``. With the flag off nothing is placed and the fetch runs."""
+    local = registry.backend(LOCAL)
+    exports: list[str] = []
+    export = local.export
+
+    def record(ref, uri, credential):
+        exports.append(uri)
+        return export(ref, uri, credential)
+
+    monkeypatch.setattr(local, "export", record)
+    graph = chain(make_graph(8513, LOCAL), filter_on=LOCAL, user_id=1)
+    try:
+        assert graph.run_graph().success is True
+        held = graph.get_node(3).results.result_ref
+        if cause == "a-node-saved-without-a-location":
+            monkeypatch.setenv("FLOWFILE_EXCHANGE_URI", f"s3://{_BUCKET}/exchange")
+            del graph.get_node(3).setting_input.__dict__["execution_location"]
+            raised, compute_error = AttributeError, None
+        else:
+            place_run = FlowGraph._place_run
+
+            def unreachable(self, execution_plan, exchange_run):
+                if settings.FLOWFILE_COMPUTE_PROTOCOL:
+                    raise ComputeUnavailable("Connection refused")
+                return place_run(self, execution_plan, exchange_run)
+
+            monkeypatch.setattr(FlowGraph, "_place_run", unreachable)
+            raised, compute_error = ComputeUnavailable, "ComputeUnavailable"
+
+        if settings.FLOWFILE_COMPUTE_PROTOCOL:
+            with pytest.raises(raised) as error:
+                graph.trigger_fetch_node(3)
+        else:
+            graph.trigger_fetch_node(3)
+
+        run_info = graph.get_run_info()
+        assert run_info.run_type == "fetch_one"
+        [row] = run_info.node_step_result
+        assert row.node_id == 3
+        assert run_info.boundaries == []
+        assert (exports, no_s3_client) == ([], [])
+        assert graph.flow_settings.is_running is False
+        assert graph.exchange_run is None
+        if not settings.FLOWFILE_COMPUTE_PROTOCOL:
+            assert (run_info.success, row.success, row.compute_error) == (True, True, None), row.error
+            return
+        assert (run_info.success, row.success) == (False, False)
+        assert row.error == str(error.value)
+        assert row.compute_error == compute_error
+        assert graph.get_node(3).results.result_ref is held
+    finally:
         graph.close_flow()
 
 

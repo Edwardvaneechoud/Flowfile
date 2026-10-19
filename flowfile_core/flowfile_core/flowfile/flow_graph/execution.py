@@ -431,10 +431,18 @@ class ExecutionMixin(GraphMixinBase):
         ``reset_cache=False`` so exploring doesn't evict a useful cache.
         ``claimed`` says the caller already holds the run slot (``try_claim_run``),
         as the fetch route does before it answers; the slot is released here either way.
-        The node runs under ``current_context(self)``, as a node of ``run_graph`` does.
+
+        The node and the nodes it reads from are placed as a run's nodes are (``_place_run``), under an
+        ``exchange_run`` of the fetch's own, removed when the fetch ends, and the report lists the boundaries into the
+        node. A refusal runs nothing; each refused node is a failed row of the report. A placement that raises runs
+        nothing either: the node's row fails with the error, which is raised again. Otherwise the node runs under
+        ``current_context(self)`` on the backend placement assigned it: an input that ran with its current setup on
+        another backend crosses through the exchange store as in a run, and one that has not run is composed into the
+        node's plan.
         """
         if not claimed and not self.try_claim_run():
             raise Exception("Flow is already running")
+        exchange_run = self.exchange_run = ExchangeRun(self.flow_id, uuid.uuid4().hex)
         try:
             flow_node = self.get_node(node_id)
             self.latest_run_info = self.create_initial_run_information(1, "fetch_one")
@@ -444,19 +452,51 @@ class ExecutionMixin(GraphMixinBase):
                 node_name=flow_node.name,
                 description=flow_node.get_node_information().description,
             )
+            inputs = dict.fromkeys(source for source, _ in flow_node._slot_input_pairs() if source is not None)
+            stage = ExecutionStage(nodes=[*inputs, flow_node])
+            try:
+                placement, edges = self._place_run(ExecutionPlan(skip_nodes=[], stages=[stage]), exchange_run)
+            except Exception as e:
+                node_logger.error(f"Error in node {flow_node.node_id}: {e}")
+                node_result.finish(success=False, error=str(e))
+                node_result.compute_error = type(e).__name__ if isinstance(e, ComputeError) else None
+                self.latest_run_info.node_step_result.append(node_result)
+                raise
         except BaseException:
-            # The node left between the route's check and this task: the slot must not stay claimed.
+            # The node left between the route's check and this task, or placing it failed: release the slot.
             self.release_run()
+            self._end_exchange_run(exchange_run)
             raise
-        logger.info(f"Starting to run: node {flow_node.node_id}, start time: {node_result.start_timestamp}")
-        self.latest_run_info.node_step_result.append(node_result)
         try:
-            with use_context(current_context(self)), node_parameters_resolved(flow_node):
-                flow_node.execute_node(
-                    performance_mode=performance_mode,
-                    node_logger=node_logger,
-                    reset_cache=reset_cache,
-                )
+            if placement is not None:
+                self.latest_run_info.boundaries = [
+                    pair for pair in placement.boundaries if pair[1] == flow_node.node_id
+                ]
+                if placement.refusals:
+                    self._record_refusals(placement.refusals)
+                    self.latest_run_info.end_time = datetime.datetime.now()
+                    return self.get_run_info()
+            logger.info(f"Starting to run: node {flow_node.node_id}, start time: {node_result.start_timestamp}")
+            self.latest_run_info.node_step_result.append(node_result)
+            context = current_context(self)
+            backend_id = None if placement is None else placement.assignment.get(flow_node.node_id)
+            if backend_id is not None and backend_id != context.backend_id:
+                context = replace(context, backend_id=backend_id)
+            edges_into = [
+                edge
+                for edge in edges
+                if edge.target.node_id == flow_node.node_id and edge.source.node_stats.has_run_with_current_setup
+            ]
+            flow_node._boundary_inputs = {(edge.source.node_id, edge.handle): edge for edge in edges_into}
+            try:
+                with use_context(context), node_parameters_resolved(flow_node):
+                    flow_node.execute_node(
+                        performance_mode=performance_mode,
+                        node_logger=node_logger,
+                        reset_cache=reset_cache,
+                    )
+            finally:
+                _release_boundary_inputs(flow_node, edges_into)
             errors = flow_node.results.errors
             node_result.finish(success=errors is None, error="" if errors is None else str(errors))
             if errors is not None:
@@ -472,6 +512,7 @@ class ExecutionMixin(GraphMixinBase):
             node_result.finish(success=False, error=str(e))
         finally:
             self.release_run()
+            self._end_exchange_run(exchange_run)
 
     @staticmethod
     def _resolve_input_names(node: FlowNode | None, table_count: int) -> list[str] | None:
