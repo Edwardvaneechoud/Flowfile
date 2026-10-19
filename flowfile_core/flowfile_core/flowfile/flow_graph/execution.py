@@ -101,10 +101,11 @@ def _gate_formula_matches(source: FlowDataEngine, formula: str, graph: GraphMixi
     a row predicate; matching is existence — ``filter(pred).head(1)``. With
     ``FLOWFILE_COMPUTE_PROTOCOL`` off that one row is collected in core; with
     it on it is read through ``bounded.head_rows`` on the backend of
-    ``current_context(graph)``: the run's during a run and, outside one (a
-    FlowFrame's ``Gate.is_open``), the graph's own, so core never opens a
-    result that backend stored and a formula error comes back as its
-    ``ComputeError``. An empty
+    ``current_context(graph)``, the context its caller sets: on the backend
+    that holds the gate's source's result, else the run's during a run and,
+    outside one (a FlowFrame's ``Gate.is_open``), the graph's own, so core
+    never opens a result that backend stored and a formula error comes back
+    as its ``ComputeError``. An empty
     formula, a formula that does not parse, or one referencing unknown
     columns raises, failing the gate visibly instead of silently picking a
     branch. An empty input (zero rows) is simply "no match": the gate closes.
@@ -970,7 +971,9 @@ class ExecutionMixin(GraphMixinBase):
         refs in the formula render as typed expression literals (strings
         quoted) like every other expression field — the stage loop sees the
         restored (unsubstituted) settings. Raises on a missing/unparsable
-        formula — the caller fails the gate visibly.
+        formula — the caller fails the gate visibly. The probe runs under the
+        current context on the backend that holds the source's result, or on
+        the current context's own backend when the source holds none.
         """
         gate_input = node.setting_input.gate_input
         source_node = node.node_inputs.right_input
@@ -983,7 +986,12 @@ class ExecutionMixin(GraphMixinBase):
         if source_result is None:
             raise ValueError("gate input produced no result to evaluate its formula against")
         formula = resolve_expression_parameters(gate_input.formula, params or {})
-        return not _gate_formula_matches(source_result, formula, self)
+        context = current_context(self)
+        held = source_node.results.result_ref
+        if held is not None and held.backend_id != context.backend_id:
+            context = replace(context, backend_id=held.backend_id)
+        with use_context(context):
+            return not _gate_formula_matches(source_result, formula, self)
 
     def _evaluate_gate_conditions(self, nodes: list[FlowNode] | None = None) -> dict[str | int, frozenset[str]]:
         """Evaluate parameter-mode gates (of ``nodes``, default all) before the run; returns per-gate dead handles.
