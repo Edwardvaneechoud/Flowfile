@@ -6,11 +6,12 @@ host, but any read of that leaf from core raises ``FileNotFoundError``. A touch 
 instead of being counted, so these flows pass only while core takes a stored result's schema from its reference.
 They run with the protocol flag off and on: with it on, core asks the backend that holds a result whether it still
 does, and reads rows of those results through the backend: the formula editor's preview row, a formula gate's probe,
-column statistics and the CSV export; and a filter, a select, a join, a group_by, a formula, a record count, a unique,
-a union, an unpivot, window functions, text to rows, a multi-field formula, a graph solver, an explode hierarchy, a
-pivot, a dynamic rename, a data cleansing, a cross join or a Polars code node over a stored result, a node's output
-field config, a Run Flow node's outputs over its child's stored results, or the REST API reader's alignment of a read
-it stored, takes its input's columns from the input engine's cached schema; and a node that fails on a missing file in
+column statistics, the CSV export and a Run Flow node's parameter rows; and a filter, a select, a join, a group_by, a
+formula, a record count, a unique, a union, an unpivot, window functions, text to rows, a multi-field formula, a graph
+solver, an explode hierarchy, a pivot, a dynamic rename, a data cleansing, a cross join or a Polars code node over a
+stored result, a node's output field config, a Run Flow node's outputs over its child's stored results and its data
+input and metadata columns over stored inputs, or the REST API reader's alignment of a read it stored, takes its
+input's columns from the input engine's cached schema; and a node that fails on a missing file in
 core keeps its stored input rather than rerunning it. The elaborate integration flow runs whole over stored inputs with
 the flag on, and with it off fails at the nodes that read them in core. The tests named for ``v1`` results check the
 same over the session worker's ``/v1`` routes.
@@ -1051,6 +1052,101 @@ def test_a_run_flow_reads_its_child_output_stored_where_core_cannot_read(
         assert run_info.success, failures(run_info)
         assert columns(graph.get_node(2).schema) == TRANSFORM_COLUMNS
         assert unreadable[0].count(graph.get_node(2).results.result_ref) == rows
+    finally:
+        graph.close_flow()
+
+
+def registered_child(tmp_path: Path, flow_id: int, cached: bool) -> int:
+    """The registration id of a saved child: parameter ``limit``, flow_input ``a`` of ``TRANSFORM_ROWS``, ``out_a``."""
+    child = make_graph(flow_id)
+    child.flow_settings.parameters = [schemas.FlowParameter(name="limit", default_value="10", type="integer")]
+    add_promise(child, 1, "flow_input")
+    child.add_flow_input(
+        input_schema.NodeFlowInput(
+            flow_id=child.flow_id,
+            node_id=1,
+            input_name="a",
+            raw_data_format=input_schema.RawData.from_pylist(TRANSFORM_ROWS),
+            cache_results=cached,
+        )
+    )
+    add_promise(child, 2, "flow_output")
+    child.add_flow_output(
+        input_schema.NodeFlowOutput(flow_id=child.flow_id, node_id=2, output_name="out_a", depending_on_id=1)
+    )
+    connect(child, 1, 2)
+    path = tmp_path / "child_out_a.yaml"
+    child.save_flow(str(path))
+    child.close_flow()
+    with get_db_context() as db:
+        registration = db_models.FlowRegistration(
+            flow_uuid=str(uuid.uuid4()), name=path.stem, flow_path=str(path), owner_id=1
+        )
+        db.add(registration)
+        db.commit()
+        db.refresh(registration)
+        return registration.id
+
+
+PARAMS = [{"limit": 1}, {"limit": 2}]
+METADATA_COLUMNS = [("param_limit", "Int64"), ("run_index", "UInt32")]
+
+
+@pytest.mark.parametrize(
+    "flow_id, rows_in, input_cached, handle, child_cached, iteration_mode, metadata, expected_columns, rows",
+    [
+        (9384, TRANSFORM_ROWS, True, "input-1", False, "first_value", False, TRANSFORM_COLUMNS, 6),
+        (9385, PARAMS, False, "input-0", True, "iterate", True, TRANSFORM_COLUMNS + METADATA_COLUMNS, 12),
+        (9386, PARAMS, True, "input-0", False, "iterate", False, TRANSFORM_COLUMNS, 12),
+    ],
+    ids=["stored_input", "append_run_metadata", "parameter_input"],
+)
+def test_a_run_flow_node_runs_over_inputs_stored_where_core_cannot_read(
+    unreadable,
+    protocol,
+    tmp_path,
+    flow_id,
+    rows_in,
+    input_cached,
+    handle,
+    child_cached,
+    iteration_mode,
+    metadata,
+    expected_columns,
+    rows,
+):
+    registration_id = registered_child(tmp_path, 9387, child_cached)
+    iterate = iteration_mode == "iterate"
+    graph = make_graph(flow_id, max_parallel_workers=1)
+    try:
+        add_manual_input(graph, 1, rows_in)
+        graph.get_node(1).node_settings.cache_results = input_cached
+        add_promise(graph, 2, "run_flow")
+        bindings = [input_schema.RunFlowParameterBinding(parameter_name="limit", source="column", column_name="limit")]
+        graph.add_run_flow(
+            input_schema.NodeRunFlow(
+                flow_id=graph.flow_id,
+                node_id=2,
+                user_id=1,
+                flow_reference=input_schema.SubflowReference(registration_id=registration_id),
+                input_slots=["a"],
+                output_slots=["out_a"],
+                parameter_bindings=bindings if iterate else [],
+                iteration_mode=iteration_mode,
+                append_run_metadata=metadata,
+            )
+        )
+        connect(graph, 1, 2, handle)
+
+        run_info = graph.run_graph()
+
+        if protocol:
+            assert run_info.success, failures(run_info)
+            assert columns(graph.get_node(2).schema) == expected_columns
+            assert unreadable[0].count(graph.get_node(2).results.result_ref) == rows
+        else:
+            assert [node_id for node_id, _ in failures(run_info)] == [2]
+            assert "No such file or directory (os error 2)" in failures(run_info)[0][1]
     finally:
         graph.close_flow()
 
