@@ -5,9 +5,11 @@ With an exchange store configured (``FLOWFILE_EXCHANGE_URI``), a run places each
 through the run's prefix in the store: exported there and imported on the node's backend, where the node that reads it
 is materialised with its other outputs, so no result refers to the prefix once the run removes it. A node fetched alone
 is placed with the nodes it reads from and crosses as a run's node does, through a prefix of the fetch's own; an input
-it reads that has not run is composed into its plan. Without a store a node's own setting is not read. The protocol
-flag comes from the environment, as for the exchange-store, two-backend chain and run-flow tests whose fixtures and
-frames these reuse; the cases over a declaring backend set it on themselves.
+it reads that has not run is composed into its plan. A formula gate's probe reads its source on the backend that holds
+the source's result, and the missing-file retry reruns an input on the backend that holds its result, the node then
+crossing it again. Without a store a node's own setting is not read. The protocol flag comes from the environment, as
+for the exchange-store, two-backend chain and run-flow tests whose fixtures and frames these reuse; the cases over a
+declaring backend set it on themselves, but for the formula gate's.
 """
 
 import re
@@ -20,9 +22,10 @@ from flowfile_core import events
 from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution import exchange, registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
-from flowfile_core.flowfile.execution.errors import ComputeUnavailable, PlanRejected
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable, PlanRejected, TaskFailed
 from flowfile_core.flowfile.execution.placement import MixedPlacementPolicy, Placement, SingleBackendPolicy, place
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
+from flowfile_core.flowfile.flow_graph import execution as graph_execution
 from flowfile_core.flowfile.flow_node.executor import hints_for
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.schemas import input_schema, transform_schema
@@ -600,4 +603,95 @@ def test_a_second_output_that_fails_to_store_fails_the_node_and_what_it_stored_i
         assert (backend.exists(result), backend.exists(stored)) == (False, False)
     finally:
         events._handlers["flow_run_finished"].remove(list_the_prefix)
+        graph.close_flow()
+
+
+def test_a_formula_gate_probes_its_source_on_the_backend_holding_its_result(declare, no_s3_client, monkeypatch):
+    """Flow 8514 on core: manual input 1 on the declaring backend, caching its result, → formula gate 2 on the same
+    backend. Nothing crosses, and the gate's probe reads node 1's result where it is held, not on the run's backend."""
+    declare(everything())
+    monkeypatch.setenv("FLOWFILE_EXCHANGE_URI", f"s3://{_BUCKET}/exchange")
+    probes: list[str] = []
+    head_rows = graph_execution.head_rows
+
+    def record(backend, plan, n):
+        probes.append(backend.id)
+        return head_rows(backend, plan, n)
+
+    monkeypatch.setattr(graph_execution, "head_rows", record)
+    graph = make_graph(8514, LOCAL)
+    add_manual_input(graph, 1, CUSTOMERS.to_dicts())
+    source = graph.get_node(1)
+    source.setting_input.user_id = 1
+    source.setting_input.execution_location = BACKEND_ID
+    source.node_settings.cache_results = True
+    add_promise(graph, 2, "gate")
+    graph.add_gate(
+        input_schema.NodeGate(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            execution_location=BACKEND_ID,
+            gate_input=transform_schema.GateInput(condition_source="formula", formula="[amount] > 20"),
+        )
+    )
+    connect(graph, 1, 2)
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success is True, [result.error for result in run_info.node_step_result]
+        assert run_info.nodes_completed == 2
+        assert run_info.boundaries == []
+        assert graph.last_closed_gate_handles == {}
+        assert no_s3_client == []
+        held = graph.get_node(1).results.result_ref
+        if not settings.FLOWFILE_COMPUTE_PROTOCOL:
+            assert probes == []
+            assert held.backend_id == LOCAL
+            return
+        assert probes == [BACKEND_ID]
+        assert (held.backend_id, held.state) == (BACKEND_ID, "materialised")
+    finally:
+        graph.close_flow()
+
+
+@requires_minio
+def test_a_retry_reruns_an_input_on_the_backend_holding_its_result_and_crosses_it_again(root, worker, monkeypatch):
+    """Flow 8515, the chain on core with manual input 1 on the worker: the first export of node 1's result finds it
+    gone and fails node 2 with a missing file, so the retry reruns node 1 on the worker and node 2 crosses it again."""
+    local = registry.backend(LOCAL)
+    exports: list[str] = []
+    export = worker.export
+
+    def drop_the_first(ref, uri, credential):
+        exports.append(uri)
+        if len(exports) == 1:
+            worker.release(ref)
+            raise TaskFailed(f"No such file or directory (os error 2): {ref.result_id}.arrow")
+        return export(ref, uri, credential)
+
+    monkeypatch.setattr(worker, "export", drop_the_first)
+    graph = chain(create_test_graph(flow_id=8515, execution_location=LOCAL), filter_on=LOCAL, user_id=1)
+    graph.get_node(1).setting_input.execution_location = WORKER
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success is True, [result.error for result in run_info.node_step_result]
+        ref_1, ref_2, ref_3 = (graph.get_node(node_id).results.result_ref for node_id in (1, 2, 3))
+        assert pl.read_ipc_stream(local.sample(ref_3, 10)).sort("region").equals(EXPECTED)
+        if not settings.FLOWFILE_COMPUTE_PROTOCOL:
+            assert exports == []
+            assert run_info.boundaries == []
+            assert {ref.backend_id for ref in (ref_1, ref_2, ref_3)} == {LOCAL}
+            return
+        assert run_info.boundaries == [(1, 2)]
+        assert len(exports) == 2 and exports[0] == exports[1], exports
+        prefix = rf"s3://{_BUCKET}/{re.escape(root)}/8515/[0-9a-f]{{32}}/"
+        assert re.fullmatch(rf"{prefix}1-{DEFAULT_OUTPUT_HANDLE}-2\.parquet", exports[0]), exports[0]
+        assert (ref_1.backend_id, ref_1.state) == (WORKER, "materialised")
+        assert worker.exists(ref_1)
+        assert (ref_2.backend_id, ref_2.state) == (LOCAL, "materialised")
+        assert _keys(f"{root}/8515/") == []
+        assert graph.exchange_run is None
+    finally:
         graph.close_flow()
