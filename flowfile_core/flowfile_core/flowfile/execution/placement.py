@@ -200,12 +200,15 @@ def _child_refusals(
     """One reason per node the flow a Run Flow node runs would run that its placement on ``backend_id`` refuses.
 
     The node's settings are read with ``flow``'s parameters in them, as the run puts them there before the node runs
-    (``node_parameters_resolved``), so a constant binding ``${name}`` forwards that parameter's value. The flow is built
-    for the call (``ephemeral_flow_graph``) at the depth its run would have, and the nodes ``_child_run_nodes`` names
-    are placed by ``policy`` with ``backend_id`` as the run's backend, as the child's own run places them, so its Run
-    Flow nodes are walked in turn, with the parameters given to the child here. Past ``subflow.MAX_SUBFLOW_DEPTH``, and
-    for any error while the settings or the flow are resolved, or the flow is built or placed (logged with the node and
-    the flow), it claims nothing, so the node fails when it runs with the run's own message, as it would unplaced.
+    (``node_parameters_resolved``), so a constant binding ``${name}`` forwards that parameter's value, except one that
+    refers to a parameter each run of ``flow`` takes from a column (its ``_column_bound_parameters``, kept when ``flow``
+    is itself a child walked here), whose value is not known before the run: that binding counts as a column binding.
+    The flow is built for the call (``ephemeral_flow_graph``) at the depth its run would have, and the nodes
+    ``_child_run_nodes`` names are placed by ``policy`` with ``backend_id`` as the run's backend, as the child's own run
+    places them, so its Run Flow nodes are walked in turn, with the parameters given to the child here. Past
+    ``subflow.MAX_SUBFLOW_DEPTH``, and for any error while the settings or the flow are resolved, or the flow is built
+    or placed (logged with the node and the flow), it claims nothing, so the node fails when it runs with the run's own
+    message, as it would unplaced.
     """
     # Function-local: flow_graph imports this module, and ephemeral_graph imports flow_graph.
     from flowfile_core.flowfile import subflow
@@ -215,13 +218,20 @@ def _child_refusals(
     if depth > subflow.MAX_SUBFLOW_DEPTH:
         return []
     settings = node.setting_input
+    unknown = getattr(flow, "_column_bound_parameters", frozenset())
+    forwarded = {
+        binding.parameter_name
+        for binding in settings.parameter_bindings
+        if binding.source == "constant" and any(f"${{{name}}}" in binding.constant_value for name in unknown)
+    }
     try:
         with node_parameters_resolved(node):
             resolved = subflow.resolve_subflow_path(settings.flow_reference, settings.user_id)
             with ephemeral_flow_graph(resolved.path, settings.user_id) as child:
                 child._subflow_depth = depth
                 child_policy = dataclasses.replace(policy, backend_id=backend_id)
-                placement = place(child, backends, child_policy, nodes=_child_run_nodes(child, settings))
+                nodes = _child_run_nodes(child, settings, forwarded)
+                placement = place(child, backends, child_policy, nodes=nodes)
     except Exception as e:
         logger.warning(
             "Run Flow node %s of flow %s is placed without the flow it runs (registration %s), which could not be "
@@ -240,16 +250,18 @@ def _child_refusals(
     ]
 
 
-def _child_run_nodes(child: FlowGraph, settings: input_schema.NodeRunFlow) -> list[FlowNode]:
+def _child_run_nodes(child: FlowGraph, settings: input_schema.NodeRunFlow, forwarded: set[str]) -> list[FlowNode]:
     """The nodes of ``child`` that its run by a Run Flow node with ``settings`` runs, as ``run_graph`` plans a run.
 
     The child's parameters take the node's constant bindings, as ``subflow.execute_run_flow_node`` sets them, its
     parameter gates are decided on them (``_evaluate_gate_conditions``), and the execution plan leaves out the nodes
     behind a closed gate and the ones the classifier error-skips (``compute_execution_plan``). A gate on a parameter
-    the node binds from a column, or whose value refers to one, is decided by each run from its row, which is not read
-    before the run: it counts here as closed on both handles, so nothing behind it is placed and the child's own run
-    places those nodes. A formula gate is decided when it runs, so the nodes behind one are placed, as the run places
-    them. A binding to a parameter the child lacks or a constant its type refuses raises, as the run does.
+    the node binds from a column or by a constant in ``forwarded`` (one that refers to a parameter taken from a column
+    a level up), or whose value refers to one, is decided by each run from its row, which is not read before the run:
+    it counts here as closed on both handles, so nothing behind it is placed and the child's own run places those
+    nodes. Those parameters are kept on ``child`` as ``_column_bound_parameters``, for the walk of its own Run Flow
+    nodes. A formula gate is decided when it runs, so the nodes behind one are placed, as the run places them. A
+    binding to a parameter the child lacks or a constant its type refuses raises, as the run does.
     """
     # Function-local: these import flow_node, which this module names only for type checking.
     from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
@@ -259,11 +271,12 @@ def _child_run_nodes(child: FlowGraph, settings: input_schema.NodeRunFlow) -> li
     from_columns: set[str] = set()
     for binding in settings.parameter_bindings:
         parameter = parameters[binding.parameter_name]
-        if binding.source == "constant":
+        if binding.source == "column" or parameter.name in forwarded:
+            from_columns.add(parameter.name)
+        elif binding.source == "constant":
             value = coerce_param_value(parameter.type, binding.constant_value, parameter.enum_values)
             parameter.default_value = stringify_param_value(value)
-        elif binding.source == "column":
-            from_columns.add(parameter.name)
+    child._column_bound_parameters = frozenset(from_columns)
     closed = child._evaluate_gate_conditions()
     for gate in child.nodes:
         condition = getattr(gate.setting_input, "gate_input", None)

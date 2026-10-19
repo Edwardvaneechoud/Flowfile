@@ -246,13 +246,23 @@ def add_python_script_on_kernel(graph: FlowGraph, node_id: int, depending_on_id:
     connect(graph, depending_on_id, node_id)
 
 
-def register_gated_child(tmp_path: Path, flow_id: int, name: str, saved_mode: str, operator: str, value: str) -> int:
-    """Manual input 1 → gate 2 on ``mode <operator> <value>`` → Python Script 3 on kernel ``k``, registered as ``name``.
+def register_gated_child(
+    tmp_path: Path,
+    flow_id: int,
+    name: str,
+    saved: str,
+    operator: str,
+    value: str,
+    *,
+    parameter: str = "mode",
+    parameter_type: str = "string",
+) -> int:
+    """Manual input 1 → gate 2 on ``<parameter> <operator> <value>`` → Python Script 3 on kernel ``k``, as ``name``.
 
-    ``mode`` is the flow's string parameter, saved as ``saved_mode``; answers the registration id.
+    ``parameter`` is the flow's parameter of ``parameter_type``, saved as ``saved``; answers the registration id.
     """
     child = make_graph(flow_id)
-    child.flow_settings.parameters = [schemas.FlowParameter(name="mode", default_value=saved_mode, type="string")]
+    child.flow_settings.parameters = [schemas.FlowParameter(name=parameter, default_value=saved, type=parameter_type)]
     add_manual_input(child, 1, [{"id": 1}])
     add_promise(child, 2, "gate")
     child.add_gate(
@@ -260,7 +270,7 @@ def register_gated_child(tmp_path: Path, flow_id: int, name: str, saved_mode: st
             flow_id=child.flow_id,
             node_id=2,
             depending_on_id=1,
-            gate_input=transform_schema.GateInput(parameter="mode", operator=operator, value=value),
+            gate_input=transform_schema.GateInput(parameter=parameter, operator=operator, value=value),
         )
     )
     connect(child, 1, 2)
@@ -461,6 +471,65 @@ def test_a_run_flow_node_forwarding_an_integer_parameter_is_refused_for_what_its
         {2: ['node 2 of the flow it runs ("forward_integer_child")', "it runs on a notebook kernel"]},
     )
     assert [record.getMessage() for record in caplog.records if record.module == "placement"] == []
+
+
+@pytest.mark.parametrize(
+    ("parameter", "parameter_type", "opening"),
+    [("mode", "string", "kernel"), ("n", "integer", "0")],
+    ids=["string", "integer"],
+)
+def test_a_run_flow_node_is_not_refused_for_a_nested_flow_s_gate_on_a_parameter_it_binds_from_a_column(
+    protocol_on, declare, tmp_path, monkeypatch, parameter, parameter_type, opening
+):
+    backend = declare(without(everything(), scheme="file"))
+    grandchild_id = register_gated_child(
+        tmp_path,
+        8435,
+        "nested_grandchild",
+        opening,
+        "equals",
+        opening,
+        parameter=parameter,
+        parameter_type=parameter_type,
+    )
+    forward = [
+        input_schema.RunFlowParameterBinding(
+            parameter_name=parameter, source="constant", constant_value=f"${{{parameter}}}"
+        )
+    ]
+    child = run_flow_graph(
+        8436,
+        grandchild_id,
+        forward,
+        [schemas.FlowParameter(name=parameter, default_value=opening, type=parameter_type)],
+    )
+    path = tmp_path / "nested_child.yaml"
+    child.save_flow(str(path))
+    child.close_flow()
+    bound = [input_schema.RunFlowParameterBinding(parameter_name=parameter, source="column", column_name="id")]
+    graph = run_flow_graph(8437, test_run_flow_node.register_flow_file(path, "nested_child"), bound)
+    grandchild_runs = []
+    run_graph = FlowGraph.run_graph
+
+    def recording_grandchild_runs(self, **kwargs):
+        run_info = run_graph(self, **kwargs)
+        if self._subflow_depth == 2:
+            grandchild_runs.append(run_info)
+        return run_info
+
+    monkeypatch.setattr(FlowGraph, "run_graph", recording_grandchild_runs)
+
+    run_info = graph.run_graph()
+
+    assert run_info.success is True, [result.error for result in run_info.node_step_result]
+    assert [result.compute_error for result in run_info.node_step_result] == [None, None]
+    [grandchild_run] = grandchild_runs
+    assert {result.node_id: result.skipped for result in grandchild_run.node_step_result} == {
+        1: False,
+        2: False,
+        3: True,
+    }
+    assert backend.asked == 3
 
 
 def test_a_run_flow_node_over_a_flow_that_cannot_be_built_fails_when_it_runs(protocol_on, declare, tmp_path):
