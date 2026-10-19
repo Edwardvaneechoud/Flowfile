@@ -20,7 +20,7 @@ from flowfile_core import events
 from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution import exchange, registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
-from flowfile_core.flowfile.execution.errors import PlanRejected
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable, PlanRejected
 from flowfile_core.flowfile.execution.placement import MixedPlacementPolicy, Placement, SingleBackendPolicy, place
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_node.executor import hints_for
@@ -370,6 +370,64 @@ def test_a_node_fetched_alone_runs_on_its_own_backend_and_reads_what_ran_elsewhe
     finally:
         graph.close_flow()
         fresh.close_flow()
+
+
+@pytest.mark.parametrize("cause", ["a-node-saved-without-a-location", "an-unreachable-backend"])
+def test_a_fetch_whose_placement_raises_fails_the_nodes_row_and_runs_nothing(monkeypatch, no_s3_client, cause):
+    """Flow 8513, the chain on core, is run and then fetched at node 3 while placing the fetch raises: node 3's
+    settings without ``execution_location`` (a flow pickled before it, a store configured so the mixed policy reads
+    it), or ``_place_run`` raising ``ComputeUnavailable``. With the flag off nothing is placed and the fetch runs."""
+    local = registry.backend(LOCAL)
+    exports: list[str] = []
+    export = local.export
+
+    def record(ref, uri, credential):
+        exports.append(uri)
+        return export(ref, uri, credential)
+
+    monkeypatch.setattr(local, "export", record)
+    graph = chain(make_graph(8513, LOCAL), filter_on=LOCAL, user_id=1)
+    try:
+        assert graph.run_graph().success is True
+        held = graph.get_node(3).results.result_ref
+        if cause == "a-node-saved-without-a-location":
+            monkeypatch.setenv("FLOWFILE_EXCHANGE_URI", f"s3://{_BUCKET}/exchange")
+            del graph.get_node(3).setting_input.__dict__["execution_location"]
+            raised, compute_error = AttributeError, None
+        else:
+            place_run = FlowGraph._place_run
+
+            def unreachable(self, execution_plan, exchange_run):
+                if settings.FLOWFILE_COMPUTE_PROTOCOL:
+                    raise ComputeUnavailable("Connection refused")
+                return place_run(self, execution_plan, exchange_run)
+
+            monkeypatch.setattr(FlowGraph, "_place_run", unreachable)
+            raised, compute_error = ComputeUnavailable, "ComputeUnavailable"
+
+        if settings.FLOWFILE_COMPUTE_PROTOCOL:
+            with pytest.raises(raised) as error:
+                graph.trigger_fetch_node(3)
+        else:
+            graph.trigger_fetch_node(3)
+
+        run_info = graph.get_run_info()
+        assert run_info.run_type == "fetch_one"
+        [row] = run_info.node_step_result
+        assert row.node_id == 3
+        assert run_info.boundaries == []
+        assert (exports, no_s3_client) == ([], [])
+        assert graph.flow_settings.is_running is False
+        assert graph.exchange_run is None
+        if not settings.FLOWFILE_COMPUTE_PROTOCOL:
+            assert (run_info.success, row.success, row.compute_error) == (True, True, None), row.error
+            return
+        assert (run_info.success, row.success) == (False, False)
+        assert row.error == str(error.value)
+        assert row.compute_error == compute_error
+        assert graph.get_node(3).results.result_ref is held
+    finally:
+        graph.close_flow()
 
 
 @requires_minio

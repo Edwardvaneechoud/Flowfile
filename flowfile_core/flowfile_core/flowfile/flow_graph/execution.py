@@ -434,7 +434,8 @@ class ExecutionMixin(GraphMixinBase):
 
         The node and the nodes it reads from are placed as a run's nodes are (``_place_run``), under an
         ``exchange_run`` of the fetch's own, removed when the fetch ends, and the report lists the boundaries into the
-        node. A refusal runs nothing; each refused node is a failed row of the report. Otherwise the node runs under
+        node. A refusal runs nothing; each refused node is a failed row of the report. A placement that raises runs
+        nothing either: the node's row fails with the error, which is raised again. Otherwise the node runs under
         ``current_context(self)`` on the backend placement assigned it: an input that ran with its current setup on
         another backend crosses through the exchange store as in a run, and one that has not run is composed into the
         node's plan.
@@ -453,7 +454,14 @@ class ExecutionMixin(GraphMixinBase):
             )
             inputs = dict.fromkeys(source for source, _ in flow_node._slot_input_pairs() if source is not None)
             stage = ExecutionStage(nodes=[*inputs, flow_node])
-            placement, edges = self._place_run(ExecutionPlan(skip_nodes=[], stages=[stage]), exchange_run)
+            try:
+                placement, edges = self._place_run(ExecutionPlan(skip_nodes=[], stages=[stage]), exchange_run)
+            except Exception as e:
+                node_logger.error(f"Error in node {flow_node.node_id}: {e}")
+                node_result.finish(success=False, error=str(e))
+                node_result.compute_error = type(e).__name__ if isinstance(e, ComputeError) else None
+                self.latest_run_info.node_step_result.append(node_result)
+                raise
         except BaseException:
             # The node left between the route's check and this task, or placing it failed: release the slot.
             self.release_run()
