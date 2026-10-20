@@ -21,7 +21,7 @@ from flowfile_core.flowfile.execution.context import (
     current_context,
     use_context,
 )
-from flowfile_core.flowfile.execution.errors import ComputeError, TaskFailed
+from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable, TaskFailed
 from flowfile_core.flowfile.execution.protocol import (
     ComputeBackend,
     JobHandle,
@@ -1613,6 +1613,8 @@ class FlowNode:
         """Releases the result this node holds on the backend that minted it and forgets the reference.
 
         The other outputs it stored beside that result (``_store_other_outputs``) are released and forgotten with it.
+        A release whose backend cannot be reached (``ComputeUnavailable``) is logged and the reference dropped; any
+        other release error raises.
         """
         ref = self.results.result_ref
         self.results.result_ref = None
@@ -1620,7 +1622,13 @@ class FlowNode:
         stored, self._stored_outputs = list(self._stored_outputs.values()), {}
         for held in [ref, *stored]:
             if held is not None:
-                registry.backend(held.backend_id).release(held)
+                try:
+                    registry.backend(held.backend_id).release(held)
+                except ComputeUnavailable as e:
+                    logger.warning(
+                        f"Node {self.node_id}: dropped result {held.result_id} without releasing it, "
+                        f"backend {held.backend_id!r} cannot be reached: {e}"
+                    )
 
     def release_deferred_result(self) -> None:
         """Releases the held result when it is a deferred plan; a stored one is left to whatever scans its file.

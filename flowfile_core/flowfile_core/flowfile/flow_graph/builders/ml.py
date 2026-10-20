@@ -7,7 +7,7 @@ from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.context import current_context
-from flowfile_core.flowfile.execution.errors import ResultMissing
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable, ResultMissing
 from flowfile_core.flowfile.execution.payloads import MlApplyPayload, MlTrainPayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
@@ -144,7 +144,13 @@ class MlBuildersMixin(GraphMixinBase):
             replaced = node.results.model_ref
             same = replaced is None or (replaced.backend_id, replaced.result_id) == (model.backend_id, model.result_id)
             if not same:
-                registry.backend(replaced.backend_id).release(replaced)
+                try:
+                    registry.backend(replaced.backend_id).release(replaced)
+                except ComputeUnavailable as e:
+                    self.flow_logger.warning(
+                        f"Train Model {train_settings.node_id}: dropped model {replaced.result_id} without releasing "
+                        f"it, backend {replaced.backend_id!r} cannot be reached: {e}"
+                    )
             node.results.model_ref = model
 
             if prepare_request is not None:
