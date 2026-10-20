@@ -631,6 +631,68 @@ class TestCatalogReadersOnObjectStorage:
             _no_encrypted_provider(serialized_plans)
             assert any(b"CredentialRefProvider" in plan for plan in serialized_plans)
 
+    @pytest.mark.parametrize("execution_location", ["remote"], indirect=True)
+    def test_a_catalog_table_read_on_the_worker_resolves_no_connection_in_core(
+        self, execution_location, protocol, minio_prefix, monkeypatch
+    ):
+        """Core's credential providers raise, so a table read sent to the worker passes only if the worker resolves it.
+
+        Flag on, the reader's schema comes from the worker; flag off, core decrypts the plan's ciphertext to build it.
+        """
+        _ensure_connection()
+        schema_id = _create_cloud_schema(f"s3://{_BUCKET}/{minio_prefix}/catalog")
+        target = resolve_for_namespace(schema_id)
+        dest = f"s3://{_BUCKET}/{minio_prefix}/catalog/core_probe"
+        write_delta(pl.DataFrame(_ROWS), dest, mode="overwrite", storage_options=target.storage_options)
+        with get_db_context() as db:
+            table_id = (
+                CatalogService(SQLAlchemyCatalogRepository(db))
+                .register_table_from_data(
+                    name=f"core_probe_{uuid.uuid4().hex[:6]}",
+                    table_path=dest,
+                    owner_id=1,
+                    namespace_id=schema_id,
+                    storage_format="delta",
+                    schema=[{"name": "id", "dtype": "Int64"}, {"name": "name", "dtype": "Utf8"}],
+                    row_count=3,
+                    column_count=2,
+                    size_bytes=100,
+                )
+                .id
+            )
+        write_delta(pl.DataFrame(_ROWS[:1]), dest, mode="append", storage_options=target.storage_options)
+        resolved = []
+
+        def _refuse(*args):
+            resolved.append(args)
+            raise RuntimeError("core resolved a connection for a read on the worker")
+
+        monkeypatch.setattr(cp, "resolve_credential_ref", _refuse)
+        monkeypatch.setattr(cp.EncryptedCredentialProvider, "__call__", _refuse)
+        graph = create_test_graph(flow_id=7409, execution_location=execution_location)
+        for node_id, version in ((1, None), (3, 0)):
+            graph.add_node_promise(
+                input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="catalog_reader")
+            )
+            graph.add_catalog_reader(
+                input_schema.NodeCatalogReader(
+                    flow_id=graph.flow_id, node_id=node_id, catalog_table_id=table_id, delta_version=version
+                )
+            )
+            _add_record_count(graph, node_id + 1, node_id)
+
+        run_info = graph.run_graph()
+
+        if protocol:
+            _assert_run_succeeded(run_info)
+            assert {node_id: _count(graph, node_id) for node_id in (2, 4)} == {2: 4, 4: 3}
+            assert [column.column_name for column in graph.get_node(1).get_resulting_data().schema] == ["id", "name"]
+            assert resolved == []
+        else:
+            failures = {step.node_id: step.error for step in run_info.node_step_result if not step.success}
+            assert {1, 3} <= set(failures), failures
+            assert all("core resolved a connection" in failures[node_id] for node_id in (1, 3)), failures
+
 
 @requires_minio
 class TestPlanExecutesWhereItIsDecrypted:

@@ -8,7 +8,9 @@ every node's preview, schema and record count comes from the worker and core's c
 off, core opens the worker's files and the flow fails, which shows the services share no storage. A Train Model node
 and an Apply Model node run the same way with the flag on: the model stays on the worker and Apply Model scores with it
 by reference, and a model published to MinIO as the artifact store, behind a self-signed TLS forwarder, is applied from
-the catalog. Nothing here imports flowfile_core; the services start as in ``tests/cloud_e2e``.
+the catalog. A catalog table on MinIO, under a connection that takes its keys from the environment, is read with
+the flag on by a worker that has the keys and a core that has none, so core resolves no credential to learn its schema.
+Nothing here imports flowfile_core; the services start as in ``tests/cloud_e2e``.
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ _STRIPPED_ENV = ("TESTING", "TEST_MODE", "SKIP_WORKER_TESTS", "JWT_SECRET_KEY", 
 _BOOT = "from {package}.{module} import run; run()"
 FLOW_ID = 7381
 ML_FLOW_ID = 7382
+CATALOG_FLOW_ID = 7383
 MINIO_BUCKET = "worker-test-bucket"
 
 CUSTOMERS = [{"id": i, "name": f"n{i}", "region": "eu" if i % 2 else "us", "amount": i * 10} for i in range(1, 7)]
@@ -103,6 +106,11 @@ class Services:
         assert response.status_code == 200, response.text
         return response.json()
 
+    def post(self, path: str, body: dict) -> dict:
+        response = self.http.post(f"{self.base}{path}", json=body)
+        assert response.status_code in (200, 201), response.text
+        return response.json()
+
     def run(self, flow_id: int, timeout: float = 180) -> dict:
         """Start a run like the Run button and poll until it ends."""
         response = self.http.post(f"{self.base}/flow/run/", params={"flow_id": flow_id})
@@ -118,8 +126,11 @@ class Services:
 
 
 @contextlib.contextmanager
-def _running(root: Path, protocol: str, **env: str) -> Iterator[Services]:
-    """Core and a worker in working directories of their own under ``root``; ``env`` goes to both, after the rest."""
+def _running(root: Path, protocol: str, *, worker_env: dict[str, str] | None = None, **env: str) -> Iterator[Services]:
+    """Core and a worker in working directories of their own under ``root``.
+
+    ``env`` goes to both, after the rest; ``worker_env`` goes to the worker alone, after that.
+    """
     core_port, worker_port = _free_port(), _free_port()
     service_env = {
         key: value
@@ -156,7 +167,11 @@ def _running(root: Path, protocol: str, **env: str) -> Iterator[Services]:
                 procs[name] = subprocess.Popen(
                     [sys.executable, "-c", _BOOT.format(package=package, module=module), *map(str, args)],
                     cwd=root / name,
-                    env={**service_env, "FLOWFILE_STORAGE_DIR": f"{name}_storage"},
+                    env={
+                        **service_env,
+                        "FLOWFILE_STORAGE_DIR": f"{name}_storage",
+                        **((worker_env or {}) if name == "worker" else {}),
+                    },
                     stdout=log,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
@@ -317,6 +332,97 @@ def test_with_the_flag_off_core_opens_the_workers_files_and_the_flow_fails(tmp_p
 
         assert run["success"] is False
         assert any("No such file or directory" in error for error in _failures(run).values()), _failures(run)
+
+
+@pytest.mark.parametrize("protocol", ["1", "0"])
+def test_a_catalog_table_on_object_storage_is_read_with_the_workers_credentials_only(tmp_path, protocol):
+    """Only the worker holds MinIO's keys: with the flag off core opens the table itself and the read fails."""
+    from test_utils.s3 import fixtures as s3
+
+    available = s3.is_docker_available() and (
+        s3.is_container_running(s3.MINIO_CONTAINER_NAME) or s3.start_minio_container()
+    )
+    if not (available and s3.wait_for_minio(max_retries=10)):
+        pytest.skip("MinIO (Docker) is not available")
+    prefix = f"two-dirs-catalog-{uuid.uuid4().hex}"
+    storage_uri = f"s3://{MINIO_BUCKET}/{prefix}/catalog"
+    table_path = f"{storage_uri}/customers"
+    pl.DataFrame(CUSTOMERS).write_delta(
+        table_path,
+        storage_options={
+            "aws_region": "us-east-1",
+            "endpoint_url": s3.MINIO_ENDPOINT_URL,
+            "aws_allow_http": "true",
+            "aws_access_key_id": s3.MINIO_ACCESS_KEY,
+            "aws_secret_access_key": s3.MINIO_SECRET_KEY,
+        },
+    )
+    keys = {"AWS_ACCESS_KEY_ID": s3.MINIO_ACCESS_KEY, "AWS_SECRET_ACCESS_KEY": s3.MINIO_SECRET_KEY}
+    minio = s3.get_minio_client()
+    try:
+        with _running(tmp_path, protocol=protocol, worker_env=keys, AWS_EC2_METADATA_DISABLED="true") as services:
+            connection = {
+                "connection_name": "minio from the environment",
+                "storage_type": "s3",
+                "auth_method": "env_vars",
+                "aws_region": "us-east-1",
+                "endpoint_url": s3.MINIO_ENDPOINT_URL,
+                "aws_allow_unsafe_html": True,
+            }
+            services.post("/cloud_connections/cloud_connection", connection)
+            catalog = services.post(
+                "/catalog/namespaces",
+                {
+                    "name": "minio",
+                    "storage_uri": storage_uri,
+                    "storage_connection_name": connection["connection_name"],
+                },
+            )
+            schema = services.post("/catalog/namespaces", {"name": "sales", "parent_id": catalog["id"]})
+            table = services.post(
+                "/catalog/tables/from-data",
+                {
+                    "name": "customers",
+                    "table_path": table_path,
+                    "namespace_id": schema["id"],
+                    "schema_columns": [{"name": name, "dtype": dtype} for name, dtype in CUSTOMER_COLUMNS],
+                    "row_count": len(CUSTOMERS),
+                    "column_count": len(CUSTOMER_COLUMNS),
+                    "size_bytes": 1,
+                },
+            )
+            flow = {
+                "flowfile_version": "0.23.0",
+                "flowfile_id": CATALOG_FLOW_ID,
+                "flowfile_name": "catalog read two storage dirs",
+                "flowfile_settings": {"execution_mode": "Development", "execution_location": "remote"},
+                "nodes": [
+                    {
+                        "id": 1,
+                        "type": "catalog_reader",
+                        "is_start_node": True,
+                        "setting_input": {"catalog_table_id": table["id"]},
+                    }
+                ],
+            }
+            flow_path = tmp_path / "flow.json"
+            flow_path.write_text(json.dumps(flow))
+            flow_id = services.get("/import_flow/", flow_path=str(flow_path))
+            run = services.run(flow_id)
+
+            if protocol == "1":
+                assert run["success"] is True and not _failures(run), _failures(run)
+                preview = services.get("/node/data", flow_id=flow_id, node_id=1)
+                assert [(column["name"], column["data_type"]) for column in preview["table_schema"]] == CUSTOMER_COLUMNS
+                assert sorted(preview["data"], key=_key) == sorted(CUSTOMERS, key=_key)
+                assert preview["number_of_records"] == len(CUSTOMERS)
+                assert list((services.storage["core"] / "cache").iterdir()) == []
+            else:
+                assert run["success"] is False
+                assert 1 in _failures(run), _failures(run)
+    finally:
+        for listed in minio.list_objects_v2(Bucket=MINIO_BUCKET, Prefix=prefix).get("Contents", []):
+            minio.delete_object(Bucket=MINIO_BUCKET, Key=listed["Key"])
 
 
 def test_a_model_trained_on_the_worker_scores_the_next_node_with_no_shared_disk(tmp_path):
