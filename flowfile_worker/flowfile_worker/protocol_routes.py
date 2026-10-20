@@ -15,11 +15,14 @@ model it fitted, held as a blob; an apply scores with a model held here, named b
 ``POST /v1/results/{id}/export`` writes a held result to a URI as parquet in a
 ``funcs.export_result`` child; ``POST /v1/results/{id}/import`` holds a scan of a URI as a deferred
 result, with the columns and row count core sent and nothing read. A credential crosses either as a
-stored connection's id and user, resolved where the plan runs. A blob, a held file of bytes that is not
+stored connection's id and user, resolved where the plan runs; an import whose connection cannot be read
+from the catalog answers the 500 a failed export does. A blob, a held file of bytes that is not
 rows, takes the same two routes: its export copies the file to a ``file://`` URI or ``PUT``s it to a
 presigned ``https://`` URL, and an import with ``kind="blob"`` copies or ``GET``s one into a blob of
 this worker's own, in this process; a presigned URL carries its own authorisation, so neither takes a
-credential. The legacy routes in ``routes.py`` stay as they are; the two share only ``status_dict``.
+credential. ``POST /v1/jobs/{id}/cancel`` stops a job's child, and takes a job still ``Starting`` too,
+which then ends as a cancel when it starts. The legacy routes in ``routes.py`` stay as they are; the two
+share only ``status_dict``.
 """
 
 import io
@@ -60,7 +63,7 @@ from flowfile_worker.spawner import (
     start_train_model_process,
 )
 from flowfile_worker.task_errors import DEFAULT_ERROR_LIMIT, WorkerEnvironmentError, describe_exception
-from shared.cloud_credential_provider import credential_ref_kwargs
+from shared.cloud_credential_provider import CredentialResolutionError, credential_ref_kwargs
 from shared.compute_protocol import (
     CLOUD_SCHEMES,
     PROTOCOL_VERSION,
@@ -360,7 +363,8 @@ def _resolve_columns(task_id: str, plan: bytes) -> None:
     It does what a deferred ``submit_result`` child with no preview does, and no more: deserialise the plan, which
     loads its UDF modules and plugin libraries, and resolve its schema; nothing is collected. The entry ends
     ``Completed`` with the dict that child queues, or ``Error`` with ``progress`` -1 and the kind and message its
-    recorded failure splits into, the message cut to fit that child's ``DEFAULT_ERROR_LIMIT``-byte buffer.
+    recorded failure splits into, the message cut to fit that child's ``DEFAULT_ERROR_LIMIT``-byte buffer. An entry a
+    cancel marked ``Cancelled`` meanwhile is left as it is, so what was resolved is discarded.
     """
     try:
         columns = _load_plan(plan).collect_schema()
@@ -371,16 +375,18 @@ def _resolve_columns(task_id: str, plan: bytes) -> None:
         description = describe_exception(e.original if environment else e).encode()[:limit]
         with status_dict_lock:
             status = status_dict[task_id]
-            status.status = "Error"
-            status.progress = -1
-            status.error_kind = "environment" if environment else "task"
-            status.error_message = description.decode(errors="replace")
+            if status.status != "Cancelled":
+                status.status = "Error"
+                status.progress = -1
+                status.error_kind = "environment" if environment else "task"
+                status.error_message = description.decode(errors="replace")
         return
     with status_dict_lock:
         status = status_dict[task_id]
-        status.status = "Completed"
-        status.progress = 100
-        status.results = {"columns": columns, "row_count": None, "sample": None}
+        if status.status != "Cancelled":
+            status.status = "Completed"
+            status.progress = 100
+            status.results = {"columns": columns, "row_count": None, "sample": None}
 
 
 def _run_child(record: ResultRecord, plan: bytes, operation: str, kwargs: dict | None = None) -> Any:
@@ -676,7 +682,8 @@ def import_uri(result_id: str, body: ImportBody) -> ResultRef:
 
     Nothing of the file is read: the scan is built and serialised here, never run, so the file need not exist yet,
     and the columns and row count are the ones core sent. A credential's connection is read from the catalog here for
-    its endpoint and region (``credential_ref_kwargs``); its secrets are resolved by the child that runs the scan.
+    its endpoint and region (``credential_ref_kwargs``); its secrets are resolved by the child that runs the scan. A
+    catalog that cannot be read is the 500 an export's child answers for the same error, and nothing is held.
     Expired results are swept first and a result held under the id is released; the record is stamped now, so it ages
     out with the rest. ``count`` answers the given row count without a child, ``sample`` and ``export`` run the scan
     in one, and ``DELETE`` forgets the record and leaves the file, which is not this worker's.
@@ -705,7 +712,12 @@ def import_uri(result_id: str, body: ImportBody) -> ResultRef:
         results.mark_ended(result_id)
         return record.ref()
     ref = body.credential
-    credential_kwargs = {} if ref is None else credential_ref_kwargs(ref.connection_id, ref.user_id)
+    try:
+        credential_kwargs = {} if ref is None else credential_ref_kwargs(ref.connection_id, ref.user_id)
+    except CredentialResolutionError as e:
+        raise HTTPException(
+            status_code=500, detail={"status": "Error", "error_message": describe_exception(e), "error_kind": "task"}
+        ) from None
     record = ResultRecord(
         result_id=result_id,
         state="deferred",
@@ -737,7 +749,18 @@ def job_status(job_id: str) -> models.Status:
 
 @router.post("/jobs/{job_id}/cancel")
 def cancel_job(job_id: str) -> dict[str, str]:
-    """Stop a running job's child and mark the job cancelled."""
+    """Stop a running job's child and mark the job cancelled.
+
+    A job still ``Starting`` has no child yet: its entry is marked ``Cancelled`` under ``status_dict_lock`` and the
+    job ends as a cancel when it starts, its child stopped on the monitor's first pass or, for a deferred submit with
+    no preview, its in-process resolution discarded. The check comes first because the spawner registers a job's
+    process before its monitor writes ``Processing`` under that lock, so a job seen ``Processing`` has one to stop.
+    """
+    with status_dict_lock:
+        status = status_dict.get(job_id)
+        if status is not None and status.status == "Starting":
+            status.status = "Cancelled"
+            return {"message": f"Job {job_id} has been cancelled."}
     if not process_manager.cancel_process(job_id):
         raise HTTPException(status_code=404, detail=f"No job {job_id} is running on this worker")
     with status_dict_lock:
