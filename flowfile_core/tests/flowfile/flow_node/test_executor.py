@@ -1017,6 +1017,38 @@ class TestNodeColumnStats:
 
         assert table_example.number_of_records == 1000
 
+    def test_column_stats_outside_a_run_aggregate_on_the_graph_s_backend(self, protocol, monkeypatch):
+        """Outside a run the statistics of a flow on another backend than the default aggregate on the flow's own
+        backend with the protocol on, and on the default backend with it off."""
+        from flowfile_core.flowfile.execution import registry
+        from flowfile_core.flowfile.execution.backends.local import LocalBackend
+        from flowfile_core.flowfile.flow_data_engine import column_stats as column_stats_module
+
+        class TeamBackend(LocalBackend):
+            id = "worker:team"
+
+        aggregated_on: list[str] = []
+        real_single_row = column_stats_module.single_row
+
+        def recording_single_row(backend, plan, empty_message):
+            aggregated_on.append(backend.id)
+            return real_single_row(backend, plan, empty_message=empty_message)
+
+        registry.reset()
+        registry.register_backend("worker:team", TeamBackend)
+        monkeypatch.setenv(registry.BACKEND_ENV_VAR, registry.LOCAL_BACKEND_ID)
+        try:
+            graph = create_graph_with_read_and_select(execution_location="worker:team")
+            assert graph.run_graph().success
+            monkeypatch.setattr(column_stats_module, "single_row", recording_single_row)
+
+            stats = graph.get_node(2).get_column_stats("Name")
+        finally:
+            registry.reset()
+
+        assert stats.number_of_empty_values + stats.number_of_filled_values == 1000
+        assert aggregated_on == (["worker:team"] if protocol else [registry.LOCAL_BACKEND_ID])
+
 
 class TestColumnStatsWorkerOffload:
     """Local-mode results are full upstream plans: with the worker as the backend their stats aggregate runs
