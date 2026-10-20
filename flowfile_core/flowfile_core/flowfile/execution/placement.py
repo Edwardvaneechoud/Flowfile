@@ -9,6 +9,10 @@ and an Apply Model node that takes one from the catalog also need the scheme the
 ``Refusal`` with the reasons in words. Stored connections are not compared: every backend resolves one with the master
 key it holds. A Run Flow node is placed with the flow it runs: that flow is built for the call, the nodes its run would
 run are placed on the node's backend by the same policy, and each of them refused there refuses the Run Flow node.
+Each node's needs are read from its settings with its flow's parameters in them, as the run puts them there before the
+node runs (``parameter_resolver.node_parameters_resolved``), and the settings are restored after, so a path on
+``${dir}`` is placed by where ``dir`` points; a node that refers to a ``${name}`` its flow does not define claims
+nothing, so the run fails it with the resolver's message.
 
 ``SingleBackendPolicy`` puts a whole run on one backend, except the node types whose builders always run on a backend
 of their own. ``MixedPlacementPolicy`` puts each node on the backend its own ``execution_location`` names, and ``place``
@@ -19,6 +23,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Mapping
+from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -129,6 +134,11 @@ def place(
     makes its two folders, the S3 store a client) and, for a Run Flow node, the flow it runs (``_child_refusals``: its
     registration and its file, built for the call).
 
+    Each node's needs are read with its flow's parameters in its settings, as the run puts them there before the node
+    runs (``node_parameters_resolved``), and the settings are restored once they are read. A node that refers to a
+    ``${name}`` its flow does not define is assigned and claims nothing, its needs being unknown rather than unmet, so
+    the run fails it with the resolver's message, as it would unplaced.
+
     ``boundaries`` lists, in the order of ``nodes``, each pair of a node and an input of it assigned to another backend,
     once; an edge with an end that is not assigned is none.
     """
@@ -141,11 +151,16 @@ def place(
         if capabilities is None:
             continue
         assignment[node.node_id] = backend_id
-        target, namespace = _catalog_target(node)
-        artifact_scheme = _artifact_scheme(node)
-        requirements = requirements_for(
-            node.node_template, node.setting_input, catalog_target=target, artifact_scheme=artifact_scheme
-        )
+        with ExitStack() as resolved:
+            try:
+                resolved.enter_context(node_parameters_resolved(node))
+            except ValueError:
+                continue
+            target, namespace = _catalog_target(node)
+            artifact_scheme = _artifact_scheme(node)
+            requirements = requirements_for(
+                node.node_template, node.setting_input, catalog_target=target, artifact_scheme=artifact_scheme
+            )
         reasons = _unmet(requirements, capabilities, namespace, artifact_scheme)
         if isinstance(node.setting_input, input_schema.NodeRunFlow):
             reasons += _child_refusals(flow, node, backend_id, backends, policy)

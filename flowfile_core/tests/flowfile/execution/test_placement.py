@@ -3,7 +3,9 @@
 With the compute protocol flag on, ``run_graph`` places the nodes it will run, each on the run's backend, the model
 nodes included, and compares what each needs with the ``Capabilities`` that backend declares; a model that crosses the
 artifact store needs the store's scheme, and a Run Flow node is refused for what a node the flow it runs would run
-needs, while one whose flow cannot be built fails when it runs. A refused node is a failed row on the run report
+needs, while one whose flow cannot be built fails when it runs. A node's settings are read with its flow's parameters
+in them, so a path on a parameter is placed by where it points, and a node that refers to a parameter its flow does not
+define is not refused but fails when it runs. A refused node is a failed row on the run report
 naming the backend and the reason; no node runs and the backend is sent no work. A backend that cannot be asked for
 its capabilities is not in the map placement is given: its nodes are not refused and meet its typed error when they
 run. The backends here are core's own under another id, declaring what each test hands them, so no worker is needed.
@@ -795,6 +797,16 @@ def url_read_flow(flow_id: int, url: str) -> FlowGraph:
     return graph
 
 
+def parameter_read_flow(flow_id: int, path: str, dir_value: str) -> FlowGraph:
+    """Read node 1 over the CSV at ``path``, in a flow whose string parameter ``dir`` is ``dir_value``."""
+    graph = make_graph(flow_id)
+    graph.flow_settings.parameters = [schemas.FlowParameter(name="dir", default_value=dir_value, type="string")]
+    add_promise(graph, 1, "read")
+    received = input_schema.ReceivedTable(path=path, file_type="csv", table_settings={"encoding": "utf-8"})
+    graph.add_read(input_schema.NodeRead(flow_id=flow_id, node_id=1, received_file=received))
+    return graph
+
+
 def test_a_read_from_a_url_is_refused_on_a_backend_that_does_not_read_its_scheme(protocol_on, declare, csv_url):
     backend = declare(without(everything(), scheme="http"))
     graph = url_read_flow(8432, csv_url)
@@ -815,3 +827,53 @@ def test_a_read_from_a_url_runs_on_a_backend_that_reads_its_scheme(declare, monk
     assert run_info.success is True, [result.error for result in run_info.node_step_result]
     assert graph.get_node(1).get_resulting_data().collect().rows() == [(1, "a"), (2, "b"), (3, "c")]
     assert backend.work == ["submit 1"]
+
+
+@pytest.mark.parametrize(
+    ("flow_id", "directory", "refusals"),
+    [
+        (8438, "s3://bucket/prefix", []),
+        (8439, None, [Refusal(1, BACKEND_ID, "it reads storage this backend does not read: file")]),
+    ],
+    ids=["object_storage", "local"],
+)
+def test_a_read_on_a_parameter_is_placed_by_the_path_it_resolves_to(tmp_path, flow_id, directory, refusals):
+    graph = parameter_read_flow(flow_id, "${dir}/x.csv", directory or str(tmp_path))
+
+    placement = place(graph, {BACKEND_ID: without(everything(), scheme="file")}, SingleBackendPolicy(BACKEND_ID))
+
+    assert placement == Placement(assignment={1: BACKEND_ID}, boundaries=[], refusals=refusals)
+    assert graph.get_node(1).setting_input.received_file.path == "${dir}/x.csv"
+
+
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+def test_a_read_on_a_parameter_runs_as_it_does_unplaced(declare, monkeypatch, tmp_path, flag):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    backend = declare(everything())
+    (tmp_path / "x.csv").write_text("n,label\n1,a\n2,b\n", encoding="utf-8")
+    graph = parameter_read_flow(8441 if flag else 8440, "${dir}/x.csv", str(tmp_path))
+
+    run_info = graph.run_graph()
+
+    assert run_info.success is True, [result.error for result in run_info.node_step_result]
+    assert graph.get_node(1).get_resulting_data().collect().rows() == [(1, "a"), (2, "b")]
+    assert backend.work == ["submit 1"]
+    assert graph.get_node(1).setting_input.received_file.path == "${dir}/x.csv"
+
+
+def test_a_read_on_a_parameter_its_flow_does_not_define_is_not_refused_and_fails_when_it_runs(
+    protocol_on, declare, tmp_path
+):
+    backend = declare(without(everything(), scheme="file"))
+    graph = parameter_read_flow(8442, "${other}/x.csv", str(tmp_path))
+
+    run_info = graph.run_graph()
+
+    [result] = run_info.node_step_result
+    assert result.node_id == 1
+    assert result.success is False
+    assert "Unresolved parameter references" in result.error, result.error
+    assert result.compute_error is None
+    assert run_info.success is False
+    assert backend.work == []
+    assert "no node was started" not in Path(graph.flow_logger.log_file_path).read_text()
