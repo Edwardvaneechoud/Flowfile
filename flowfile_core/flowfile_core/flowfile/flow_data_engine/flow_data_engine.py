@@ -28,8 +28,9 @@ from flowfile_core.configs.flow_logger import NodeLogger
 from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine import utils
-from flowfile_core.flowfile.flow_data_engine.bounded import count_rows, single_row, unique_values
+from flowfile_core.flowfile.flow_data_engine.bounded import _deferred, count_rows, single_row, unique_values
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import (
     CloudStorageReader,
     ensure_path_has_wildcard_pattern,
@@ -506,7 +507,11 @@ class FlowDataEngine:
 
     @classmethod
     def from_cloud_storage_obj(
-        cls, settings: cloud_storage_schemas.CloudStorageReadSettingsInternal, user_id: int | None = None
+        cls,
+        settings: cloud_storage_schemas.CloudStorageReadSettingsInternal,
+        user_id: int | None = None,
+        *,
+        backend: ComputeBackend | None = None,
     ) -> FlowDataEngine:
         """Creates a FlowDataEngine from an object in cloud storage.
 
@@ -516,12 +521,20 @@ class FlowDataEngine:
 
         The credentials ride in a credential provider, since the plan is serialized to the worker: encrypted
         (``EncryptedCredentialProvider``), or with the compute protocol flag on as a reference to the stored
-        connection that the executing process resolves (``CredentialRefProvider``).
+        connection that the executing process resolves (``CredentialRefProvider``). With the flag on, an ``aws-cli``
+        read with no saved connection carries no credential and no provider, so Polars' default provider resolves the
+        default credential chain of whichever process runs the plan.
+
+        Given a ``backend``, the scan is held there as a deferred result with no preview while the reference's schema
+        is read, then released, and the engine takes that schema: the backend resolves the read's connection, and core
+        reads no directory's first file. A GCS read through gcsfs, and a read given no backend, resolve the schema in
+        core.
 
         Args:
             settings: A `CloudStorageReadSettingsInternal` object containing connection
                 details, file format, and read options.
             user_id: The user the credentials are re-encrypted for inside the plan.
+            backend: The backend the reader runs on, which answers the read's schema.
 
         Returns:
             A new `FlowDataEngine` instance containing the data from cloud storage.
@@ -530,14 +543,19 @@ class FlowDataEngine:
             ValueError: If the storage type or file format is not supported.
             NotImplementedError: If a requested file format like "delta" or "iceberg"
                 is not yet implemented.
+            ComputeError: `backend` could not answer the read's schema, raised as the backend raised it.
             Exception: If reading from cloud storage fails.
         """
         connection = settings.connection
         read_settings = settings.read_settings
 
         logger.info(f"Reading from {connection.storage_type} storage: {read_settings.resource_path}")
-        storage_options, credential_provider = CloudStorageReader.get_read_credentials(connection, user_id)
+        if FLOWFILE_COMPUTE_PROTOCOL and connection.auth_method == "aws-cli" and not connection.connection_name:
+            storage_options, credential_provider = CloudStorageReader.get_plan_storage_options(connection), None
+        else:
+            storage_options, credential_provider = CloudStorageReader.get_read_credentials(connection, user_id)
         use_pyarrow = CloudStorageReader.use_pyarrow_for_gcs(connection)
+        backend = None if use_pyarrow else backend
         if read_settings.file_format == "parquet":
             return cls._read_parquet_from_cloud(
                 read_settings.resource_path,
@@ -545,6 +563,7 @@ class FlowDataEngine:
                 credential_provider,
                 read_settings.scan_mode == "directory",
                 use_pyarrow=use_pyarrow,
+                backend=backend,
             )
         elif read_settings.file_format == "delta":
             return cls._read_delta_from_cloud(
@@ -553,6 +572,7 @@ class FlowDataEngine:
                 credential_provider,
                 read_settings,
                 use_pyarrow=use_pyarrow,
+                backend=backend,
             )
         elif read_settings.file_format == "csv":
             return cls._read_csv_from_cloud(
@@ -561,6 +581,7 @@ class FlowDataEngine:
                 credential_provider,
                 read_settings,
                 use_pyarrow=use_pyarrow,
+                backend=backend,
             )
         elif read_settings.file_format == "json":
             return cls._read_json_from_cloud(
@@ -569,6 +590,7 @@ class FlowDataEngine:
                 credential_provider,
                 read_settings.scan_mode == "directory",
                 use_pyarrow=use_pyarrow,
+                backend=backend,
             )
         elif read_settings.file_format == "iceberg":
             return cls._read_iceberg_from_cloud(
@@ -669,6 +691,7 @@ class FlowDataEngine:
         credential_provider: Callable | None,
         is_directory: bool,
         use_pyarrow: bool = False,
+        backend: ComputeBackend | None = None,
     ) -> FlowDataEngine:
         """Reads Parquet file(s) from cloud storage."""
         try:
@@ -676,7 +699,12 @@ class FlowDataEngine:
                 resource_path = ensure_path_has_wildcard_pattern(resource_path=resource_path, file_format="parquet")
             scan_kwargs = {"source": resource_path}
             scan_kwargs.update(CloudStorageReader.get_scan_kwargs(storage_options, credential_provider))
-            if storage_options and is_directory and not isinstance(credential_provider, CredentialRefProvider):
+            if (
+                backend is None
+                and storage_options
+                and is_directory
+                and not isinstance(credential_provider, CredentialRefProvider)
+            ):
                 schema = cls._get_schema_from_first_file_in_dir(
                     resource_path, storage_options, "parquet", use_pyarrow=use_pyarrow
                 )
@@ -688,6 +716,9 @@ class FlowDataEngine:
                 )
             else:
                 lf = pl.scan_parquet(**scan_kwargs)
+            if backend is not None:
+                with _deferred(backend, lf) as ref:
+                    schema = ref.schema
             return cls(
                 lf,
                 number_of_records=CLOUD_PLACEHOLDER_RECORD_COUNT,
@@ -696,6 +727,8 @@ class FlowDataEngine:
                 schema=schema,
             )
 
+        except ComputeError:
+            raise
         except Exception as e:
             logger.error(f"Failed to read Parquet from {resource_path}: {str(e)}")
             raise Exception(f"Failed to read Parquet from cloud storage: {str(e)}") from e
@@ -708,6 +741,7 @@ class FlowDataEngine:
         credential_provider: Callable | None,
         read_settings: cloud_storage_schemas.CloudStorageReadSettings,
         use_pyarrow: bool = False,
+        backend: ComputeBackend | None = None,
     ) -> FlowDataEngine:
         """Reads a Delta Lake table from cloud storage."""
         try:
@@ -721,13 +755,20 @@ class FlowDataEngine:
                     scan_kwargs["version"] = read_settings.delta_version
                 scan_kwargs.update(CloudStorageReader.get_scan_kwargs(storage_options, credential_provider))
                 lf = pl.scan_delta(**scan_kwargs)
+            schema = None
+            if backend is not None:
+                with _deferred(backend, lf) as ref:
+                    schema = ref.schema
 
             return cls(
                 lf,
                 number_of_records=CLOUD_PLACEHOLDER_RECORD_COUNT,
                 optimize_memory=True,
                 streamable=True,
+                schema=schema,
             )
+        except ComputeError:
+            raise
         except Exception as e:
             logger.error(f"Failed to read Delta file from {resource_path}: {str(e)}")
             raise Exception(f"Failed to read Delta file from cloud storage: {str(e)}") from e
@@ -740,6 +781,7 @@ class FlowDataEngine:
         credential_provider: Callable | None,
         read_settings: cloud_storage_schemas.CloudStorageReadSettings,
         use_pyarrow: bool = False,
+        backend: ComputeBackend | None = None,
     ) -> FlowDataEngine:
         """Reads CSV file(s) from cloud storage; unset CSV options take the drawer's defaults (Polars rejects None)."""
         read_settings = read_settings.with_csv_defaults()
@@ -759,7 +801,8 @@ class FlowDataEngine:
                 resource_path = ensure_path_has_wildcard_pattern(resource_path=resource_path, file_format="csv")
                 scan_kwargs["source"] = resource_path
             if (
-                storage_options
+                backend is None
+                and storage_options
                 and read_settings.scan_mode == "directory"
                 and not isinstance(credential_provider, CredentialRefProvider)
             ):
@@ -772,6 +815,9 @@ class FlowDataEngine:
                 lf = df.lazy()
             else:
                 lf = pl.scan_csv(**scan_kwargs)
+            if backend is not None:
+                with _deferred(backend, lf) as ref:
+                    schema = ref.schema
 
             return cls(
                 lf,
@@ -781,6 +827,8 @@ class FlowDataEngine:
                 schema=schema,
             )
 
+        except ComputeError:
+            raise
         except Exception as e:
             logger.error(f"Failed to read CSV from {resource_path}: {str(e)}")
             raise Exception(f"Failed to read CSV from cloud storage: {str(e)}") from e
@@ -793,6 +841,7 @@ class FlowDataEngine:
         credential_provider: Callable | None,
         is_directory: bool,
         use_pyarrow: bool = False,
+        backend: ComputeBackend | None = None,
     ) -> FlowDataEngine:
         """Reads JSON file(s) from cloud storage."""
         try:
@@ -815,14 +864,21 @@ class FlowDataEngine:
                 return cls(df.lazy(), number_of_records=len(df), optimize_memory=True, streamable=True)
 
             lf = pl.scan_ndjson(**scan_kwargs)
+            schema = None
+            if backend is not None:
+                with _deferred(backend, lf) as ref:
+                    schema = ref.schema
 
             return cls(
                 lf,
                 number_of_records=-1,
                 optimize_memory=True,
                 streamable=True,
+                schema=schema,
             )
 
+        except ComputeError:
+            raise
         except Exception as e:
             logger.error(f"Failed to read JSON from {resource_path}: {str(e)}")
             raise Exception(f"Failed to read JSON from cloud storage: {str(e)}") from e
