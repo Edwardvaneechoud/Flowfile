@@ -137,7 +137,9 @@ def place(
     Each node's needs are read with its flow's parameters in its settings, as the run puts them there before the node
     runs (``node_parameters_resolved``), and the settings are restored once they are read. A node that refers to a
     ``${name}`` its flow does not define is assigned and claims nothing, its needs being unknown rather than unmet, so
-    the run fails it with the resolver's message, as it would unplaced.
+    the run fails it with the resolver's message, as it would unplaced; a node whose needs cannot be read from its
+    resolved settings, whatever reading them raises (a cloud path that is the whole ``${n}`` of an integer parameter),
+    claims nothing too, and the run fails it with its own message.
 
     ``boundaries`` lists, in the order of ``nodes``, each pair of a node and an input of it assigned to another backend,
     once; an edge with an end that is not assigned is none.
@@ -156,11 +158,14 @@ def place(
                 resolved.enter_context(node_parameters_resolved(node))
             except ValueError:
                 continue
-            target, namespace = _catalog_target(node)
             artifact_scheme = _artifact_scheme(node)
-            requirements = requirements_for(
-                node.node_template, node.setting_input, catalog_target=target, artifact_scheme=artifact_scheme
-            )
+            try:
+                target, namespace = _catalog_target(node)
+                requirements = requirements_for(
+                    node.node_template, node.setting_input, catalog_target=target, artifact_scheme=artifact_scheme
+                )
+            except Exception:
+                continue
         reasons = _unmet(requirements, capabilities, namespace, artifact_scheme)
         if isinstance(node.setting_input, input_schema.NodeRunFlow):
             reasons += _child_refusals(flow, node, backend_id, backends, policy)

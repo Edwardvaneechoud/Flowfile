@@ -30,7 +30,7 @@ from flowfile_core.flowfile.execution.errors import ComputeUnavailable, VersionM
 from flowfile_core.flowfile.execution.placement import Placement, Refusal, SingleBackendPolicy, place
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
-from flowfile_core.schemas import input_schema, schemas, transform_schema
+from flowfile_core.schemas import cloud_storage_schemas, input_schema, schemas, transform_schema
 from shared.compute_protocol import Capabilities
 from tests import test_run_flow_node
 from tests.flowfile.conftest import add_test_catalog_writer, create_test_namespace
@@ -877,3 +877,27 @@ def test_a_read_on_a_parameter_its_flow_does_not_define_is_not_refused_and_fails
     assert run_info.success is False
     assert backend.work == []
     assert "no node was started" not in Path(graph.flow_logger.log_file_path).read_text()
+
+
+def test_a_cloud_read_on_a_parameter_whose_value_is_no_path_is_not_refused_and_fails_when_it_runs(protocol_on, declare):
+    backend = declare(everything())
+    graph = make_graph(8443)
+    graph.flow_settings.parameters = [schemas.FlowParameter(name="n", default_value="1", type="integer")]
+    add_promise(graph, 1, "cloud_storage_reader")
+    read = cloud_storage_schemas.CloudStorageReadSettings(resource_path="${n}", file_format="csv")
+    graph.add_cloud_storage_reader(
+        input_schema.NodeCloudStorageReader(flow_id=8443, node_id=1, cloud_storage_settings=read)
+    )
+
+    run_info = graph.run_graph()
+
+    [result] = run_info.node_step_result
+    assert result.node_id == 1
+    assert result.success is False
+    assert "'int' object has no attribute 'strip'" in result.error, result.error
+    assert result.compute_error is None
+    assert run_info.success is False
+    assert backend.asked == 1
+    assert backend.work == []
+    assert "no node was started" not in Path(graph.flow_logger.log_file_path).read_text()
+    assert graph.get_node(1).setting_input.cloud_storage_settings.resource_path == "${n}"
