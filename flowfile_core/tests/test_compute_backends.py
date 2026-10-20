@@ -179,6 +179,15 @@ def test_a_bad_name_or_url_is_refused(admin_client, name, url):
     assert admin_client.get(ROUTE).json() == []
 
 
+def test_a_body_that_fails_validation_is_answered_without_its_input(admin_client):
+    response = admin_client.post(ROUTE, json={"name": "team", "token": "row-token"})
+
+    assert response.status_code == 422, response.text
+    assert response.json() == {"detail": [{"type": "missing", "loc": ["body", "url"], "msg": "Field required"}]}
+    assert "row-token" not in response.text
+    assert admin_client.get(ROUTE).json() == []
+
+
 @NO_HEADER_VALUES
 def test_a_token_that_is_no_header_value_is_refused_naming_the_rule_never_the_token(admin_client, flag, token):
     response = add(admin_client, "http://team-worker.test:63579", token=token)
