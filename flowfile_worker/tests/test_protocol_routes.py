@@ -9,6 +9,7 @@ import ipaddress
 import json
 import logging
 import os
+import socket
 import ssl
 import threading
 import time
@@ -16,9 +17,11 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from multiprocessing import Queue
 from pathlib import Path
+from types import SimpleNamespace
 
 import polars as pl
 import pytest
+import requests
 from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 from polars.testing import assert_frame_equal
@@ -468,6 +471,30 @@ def test_an_export_whose_sink_fails_is_500_with_the_childs_error(held):
     assert client.head(f"/v1/results/{result_id}").status_code == 200
 
 
+def test_a_failed_export_logs_its_target_without_the_query(monkeypatch):
+    shipped = []
+
+    def post(url, **kwargs):
+        shipped.append(kwargs["json"]["log_message"])
+        return SimpleNamespace(status_code=200, text="")
+
+    monkeypatch.setattr(requests, "post", post)
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        target = f"https://127.0.0.1:{probe.getsockname()[1]}/bucket/out.parquet"
+    query = "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=minio%2F20261020&X-Amz-Signature=5e22signature"
+    progress, error_message = mp_context.Value("i", 0), mp_context.Array("c", 1024)
+
+    funcs.export_result(
+        _plan().serialize(), progress, error_message, Queue(), "", FLOW_ID, NODE_ID, f"{target}?{query}", None
+    )
+
+    assert progress.value == -1
+    [line] = [message for message in shipped if "Error during export" in message]
+    assert target in line
+    assert "X-Amz-Signature" not in line
+
+
 def test_import_holds_a_deferred_result_over_the_uri_with_the_given_columns_and_count(held, monkeypatch, tmp_path):
     result_id = held()
     plan = _plan()
@@ -521,6 +548,15 @@ def test_import_under_a_held_id_replaces_it(held, tmp_path):
             {"uri": "file:///in.blob", "columns": [], "kind": "blob", "credential": {"connection_id": 1, "user_id": 1}},
         ),
         ("import", {"uri": "file:///in.blob", "columns": [{"name": "a", "data_type": "Int64"}], "kind": "blob"}),
+        (
+            "import",
+            {
+                "uri": "https://minio.test/bucket/in.blob?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=5e22signature",
+                "columns": [],
+                "kind": "blob",
+                "credential": {"connection_id": 1, "user_id": 1},
+            },
+        ),
     ],
     ids=[
         "export-unknown-field",
@@ -529,6 +565,7 @@ def test_import_under_a_held_id_replaces_it(held, tmp_path):
         "import-no-columns",
         "import-blob-credential",
         "import-blob-columns",
+        "import-presigned-blob-credential",
     ],
 )
 def test_a_bad_export_or_import_body_is_422(held, route, body):
@@ -537,6 +574,8 @@ def test_a_bad_export_or_import_body_is_422(held, route, body):
     response = client.post(f"/v1/results/{result_id}/{route}", json=body)
 
     assert response.status_code == 422
+    assert all("input" not in error for error in response.json()["detail"])
+    assert "X-Amz-Signature" not in response.text
     assert client.head(f"/v1/results/{result_id}").status_code == 404
 
 
@@ -744,7 +783,7 @@ def test_a_failed_blob_transfer_is_500_and_names_no_signature(held, presign, tmp
     tampered = url("put_object", "model.bin").replace("X-Amz-Signature=", "X-Amz-Signature=00")
     missing = held()
 
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.INFO), caplog.at_level(logging.DEBUG, logger="urllib3.connectionpool"):
         refused = client.post(f"/v1/results/{fitted}/export", json={"uri": tampered})
         not_found = client.post(f"/v1/results/{missing}/import", json=_blob_body(url("get_object", "missing.bin")))
 

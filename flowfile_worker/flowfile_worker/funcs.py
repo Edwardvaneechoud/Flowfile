@@ -418,7 +418,7 @@ def export_result(
     this child resolves against its catalog with its master key when the sink opens the target, beside the
     connection's endpoint and region read from that catalog (``credential_ref_kwargs``). A ``file:`` URI is sunk to
     the local path it names (``file_uri_path``), whose folder is the caller's. The URI written is queued. *file_path*
-    is not read.
+    is not read. A failure is logged with the target cut at its query, where a presigned URL's signature is.
     """
     from shared.cloud_credential_provider import credential_ref_kwargs
     from shared.compute_protocol import file_uri_path
@@ -430,7 +430,8 @@ def export_result(
         credential_kwargs = {} if credential is None else credential_ref_kwargs(**credential)
         lf.sink_parquet(file_uri_path(uri), **credential_kwargs)
     except BaseException as e:
-        flowfile_logger.error(f"Error during export: {str(e)}")
+        target = uri.partition("?")[0]
+        flowfile_logger.error(f"Error during export to {target}: {str(e).replace(uri, target)}")
         record_task_failure(error_message, progress, e, limit=1024)
         if not isinstance(e, Exception):
             raise
