@@ -1,3 +1,6 @@
+_HINT = "Is the compute backend running? Start it, or check the Backends page."
+
+
 class ComputeError(Exception):
     """Base class for every failure while talking to compute."""
 
@@ -9,11 +12,12 @@ class ComputeUnavailable(ComputeError):
         """The message, plus what to do about it when the connection was refused.
 
         A refused connection reads ``Connection refused`` on POSIX and ``the target machine actively refused it``
-        on Windows (``WinError 10061``); both get the hint.
+        on Windows (``WinError 10061``); both get the hint. The hint is added once: a message that already ends with
+        it, as an error rebuilt from its own text (a run report row's) does, is read as it is.
         """
         message = super().__str__()
-        if "refused" in message.lower():
-            return f"{message}. Is the worker running? Start it, or switch the flow to local execution."
+        if "refused" in message.lower() and not message.endswith(_HINT):
+            return f"{message}. {_HINT}"
         return message
 
 

@@ -169,7 +169,7 @@ def test_worker_down_on_first_contact_surfaces_typed_503(
     detail = response.json()["detail"]
     assert detail["error_code"] == "WORKER_UNAVAILABLE"
     assert detail["message"].startswith(f"Worker not reachable: Could not reach the worker at {dead_url}: ")
-    assert detail["message"].endswith("Is the worker running? Start it, or switch the flow to local execution.")
+    assert detail["message"].endswith("Is the compute backend running? Start it, or check the Backends page.")
 
 
 def test_out_of_range_size_returns_422(admin_client: TestClient, live_worker: str) -> None:

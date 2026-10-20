@@ -284,7 +284,8 @@ def register_gated_child(
 def assert_refused_before_any_node(
     graph: FlowGraph, run_info, backend: DeclaringBackend, refused: dict[int, list[str]]
 ):
-    """The run failed with exactly ``refused`` (node id -> phrases its error holds) and nothing ran or holds the run."""
+    """The run failed with exactly ``refused`` (node id -> phrases its error holds), nothing ran or holds the run, and
+    its flow log holds the refusal and no completion."""
     errors = {result.node_id: result.error for result in run_info.node_step_result}
     assert errors.keys() == refused.keys(), errors
     for node_id, phrases in refused.items():
@@ -298,6 +299,9 @@ def assert_refused_before_any_node(
     assert run_info.is_running is False
     assert graph.flow_settings.is_running is False
     assert backend.work == []
+    flow_log = Path(graph.flow_logger.log_file_path).read_text()
+    assert "no node was started" in flow_log, flow_log
+    assert "Flow completed!" not in flow_log, flow_log
 
 
 def test_a_catalog_write_to_a_local_disk_namespace_is_refused_on_a_backend_without_local_files(
@@ -561,6 +565,7 @@ def test_a_flow_its_backend_can_run_runs_as_it_does_unplaced(declare, monkeypatc
 
         assert run_info.success is True, [result.error for result in run_info.node_step_result]
         assert run_info.nodes_completed == 3
+        assert "Flow completed!" in Path(graph.flow_logger.log_file_path).read_text()
         rows[flag] = graph.get_node(3).get_resulting_data().collect().sort(pl.all()).rows()
     assert rows[True] == rows[False]
     assert len(rows[True]) == 3
@@ -688,8 +693,14 @@ def test_a_model_published_to_or_fetched_from_a_filesystem_store_is_refused_off_
         run_info,
         backend,
         {
-            2: ["it writes storage this backend does not write: file"],
-            3: ["it reads storage this backend does not read: file"],
+            2: [
+                "it publishes its model to the artifact store, which is on local disk; "
+                "remote execution needs the S3 artifact store"
+            ],
+            3: [
+                "it fetches its model from the artifact store, which is on local disk; "
+                "remote execution needs the S3 artifact store"
+            ],
         },
     )
     assert not any("operation" in result.error for result in run_info.node_step_result)
@@ -730,8 +741,12 @@ def test_an_s3_artifact_store_needs_https_where_a_model_crosses_it(s3_artifact_s
     without_file = place(graph, {BACKEND_ID: without(everything(), scheme="file")}, policy)
 
     assert without_https.refusals == [
-        Refusal(2, BACKEND_ID, "it writes storage this backend does not write: https"),
-        Refusal(3, BACKEND_ID, "it reads storage this backend does not read: https"),
+        Refusal(
+            2, BACKEND_ID, "it publishes its model to the artifact store over https, which this backend does not write"
+        ),
+        Refusal(
+            3, BACKEND_ID, "it fetches its model from the artifact store over https, which this backend does not read"
+        ),
     ]
     assert without_file.refusals == []
 
