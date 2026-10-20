@@ -17,6 +17,7 @@ from flowfile_core.schemas import input_schema, schemas
 from shared.compute_protocol import EXPRESSION_PLUGINS, local_capabilities
 
 HINT = ". Is the compute backend running? Start it, or check the Backends page."
+TEAM_HINT = '. Is backend "worker:team" running? Start it, or check the Backends page.'
 
 
 WORKER_URL = registry.worker_url()
@@ -417,6 +418,9 @@ def test_compute_unavailable_adds_the_hint_once_and_only_for_a_refused_connectio
     assert str(ComputeUnavailable("[Errno 61] Connection refused")) == f"[Errno 61] Connection refused{HINT}"
     rebuilt = f"node 1: [Errno 61] Connection refused{HINT}"
     assert str(ComputeUnavailable(rebuilt)) == rebuilt
+    named = str(ComputeUnavailable("[Errno 61] Connection refused", backend_id="worker:team"))
+    assert named == f"[Errno 61] Connection refused{TEAM_HINT}"
+    assert str(ComputeUnavailable(f"node 1: {named}")) == f"node 1: {named}"
     windows = "[WinError 10061] No connection could be made because the target machine actively refused it"
     assert str(ComputeUnavailable(windows)) == f"{windows}{HINT}"
     assert str(ComputeUnavailable("Read timed out")) == "Read timed out"

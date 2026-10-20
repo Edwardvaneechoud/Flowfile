@@ -1,4 +1,4 @@
-_HINT = "Is the compute backend running? Start it, or check the Backends page."
+_ADVICE = "Start it, or check the Backends page."
 
 
 class ComputeError(Exception):
@@ -6,19 +6,31 @@ class ComputeError(Exception):
 
 
 class ComputeUnavailable(ComputeError):
-    """Compute cannot be reached."""
+    """Compute cannot be reached.
+
+    ``backend_id`` is the id of the backend that could not be reached, when the code that made the error knows it
+    (``WorkerBackend`` and the handshake gate it hands its id to), else ``None``.
+    """
+
+    def __init__(self, message: str, *, backend_id: str | None = None) -> None:
+        super().__init__(message)
+        self.backend_id = backend_id
 
     def __str__(self) -> str:
         """The message, plus what to do about it when the connection was refused.
 
         A refused connection reads ``Connection refused`` on POSIX and ``the target machine actively refused it``
-        on Windows (``WinError 10061``); both get the hint. The hint is added once: a message that already ends with
-        it, as an error rebuilt from its own text (a run report row's) does, is read as it is.
+        on Windows (``WinError 10061``); both get the hint: ``Is backend "<backend_id>" running? Start it, or check
+        the Backends page.``, or ``Is the compute backend running? …`` when the error has no ``backend_id``. The hint
+        is added once: a message that already ends with the advice, as an error rebuilt from its own text (a run
+        report row's) does, is read as it is, whichever backend it names.
         """
         message = super().__str__()
-        if "refused" in message.lower() and not message.endswith(_HINT):
-            return f"{message}. {_HINT}"
-        return message
+        if "refused" not in message.lower() or message.endswith(_ADVICE):
+            return message
+        if self.backend_id is None:
+            return f"{message}. Is the compute backend running? {_ADVICE}"
+        return f'{message}. Is backend "{self.backend_id}" running? {_ADVICE}'
 
 
 class VersionMismatch(ComputeError):
