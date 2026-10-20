@@ -151,8 +151,8 @@ def _first_error(run_info: RunInformation | None) -> str | None:
 def _first_compute_error(run_info: RunInformation | None) -> ComputeError | None:
     """The typed compute error that failed the run's first failed node, rebuilt from its run report row, else None.
 
-    The row keeps the error's class name and its text. ``ComputeUnavailable`` adds its hint when it is read, and the
-    row's text carries it already, so the rebuilt error is given the text without it and reads as the row does.
+    The row keeps the error's class name and its text. The row's text carries ``ComputeUnavailable``'s hint already,
+    and the class does not add it twice, so the rebuilt error reads as the row does.
     """
     if run_info is None:
         return None
@@ -161,9 +161,7 @@ def _first_compute_error(run_info: RunInformation | None) -> ComputeError | None
             error_class = _COMPUTE_ERRORS.get(node_result.compute_error)
             if error_class is None:
                 return None
-            message = f"node {node_result.node_id}: {node_result.error}"
-            added = str(error_class(message))[len(message) :]
-            return error_class(message.removesuffix(added))
+            return error_class(f"node {node_result.node_id}: {node_result.error}")
     return None
 
 

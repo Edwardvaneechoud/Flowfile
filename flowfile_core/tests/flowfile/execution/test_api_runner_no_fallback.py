@@ -336,7 +336,7 @@ def test_with_the_protocol_flag_a_worker_unreachable_when_the_run_starts_answers
     assert type(raised) is ComputeUnavailable
     assert str(raised).startswith("node 1: ")
     assert f"port={closed_worker_port}" in str(raised)
-    assert str(raised).count("Is the worker running?") == 1
+    assert str(raised).count("Is the compute backend running?") == 1
     expected_detail = PUBLIC_UNAVAILABLE_DETAIL if route == "public" else str(raised)
     assert response.json()["detail"] == expected_detail
     assert run_record.raised == []

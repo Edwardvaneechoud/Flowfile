@@ -196,5 +196,5 @@ def test_worker_down_gives_clean_node_error(registered_node, monkeypatch):
     assert not run_info.success
     failed = [r for r in run_info.node_step_result if not r.success]
     assert [r.node_id for r in failed] == [1]
-    assert "Is the worker running?" in failed[0].error
+    assert "Is the compute backend running?" in failed[0].error
     assert not any(r.node_id == 2 and r.success for r in run_info.node_step_result)
