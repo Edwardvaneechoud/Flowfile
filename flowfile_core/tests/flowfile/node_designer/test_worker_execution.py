@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from flowfile_core.configs import settings
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import custom_node_task_id
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import _worker_session
@@ -196,5 +197,7 @@ def test_worker_down_gives_clean_node_error(registered_node, monkeypatch):
     assert not run_info.success
     failed = [r for r in run_info.node_step_result if not r.success]
     assert [r.node_id for r in failed] == [1]
-    assert "Is the compute backend running?" in failed[0].error
+    # with the flag off the task-route fetcher enters the gate with a URL only
+    hint = 'Is backend "worker" running?' if settings.FLOWFILE_COMPUTE_PROTOCOL else "Is the compute backend running?"
+    assert hint in failed[0].error
     assert not any(r.node_id == 2 and r.success for r in run_info.node_step_result)

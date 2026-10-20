@@ -11,6 +11,7 @@ import tests write a result to a URI on the worker and hold a URI there as a res
 call reads as rows.
 """
 
+import dataclasses
 import hashlib
 import io
 import json
@@ -635,15 +636,22 @@ def test_a_backend_on_another_protocol_version_is_refused_and_nothing_is_held(ba
 
 
 def test_a_worker_out_of_reach_is_unavailable_naming_it(running_worker, closed_port_url):
-    dead = WorkerBackend(url=closed_port_url)
+    """The URL and the backend's id: from the gate at submit, from ``_v1`` past a gate another worker passed, and
+    from ``capabilities``."""
+    dead = WorkerBackend(url=closed_port_url, backend_id="worker:team")
     unreachable = re.escape(f"Could not reach the worker at {closed_port_url}")
+    hint = 'Is backend "worker:team" running? Start it, or check the Backends page.'
 
-    with pytest.raises(ComputeUnavailable, match=unreachable):
+    with pytest.raises(ComputeUnavailable, match=unreachable) as at_submit:
         dead.submit(people(), [], hints(True), new_result_id(), flow_id=-1, node_id=-1)
-    with pytest.raises(ComputeUnavailable, match=unreachable):
-        dead.exists(v1_ref(new_result_id()))
-    with pytest.raises(ComputeUnavailable, match=unreachable):
+    handshake.ensure_handshake(settings.WORKER_URL)
+    with pytest.raises(ComputeUnavailable, match=unreachable) as past_the_gate:
+        dead.exists(dataclasses.replace(v1_ref(new_result_id()), backend_id="worker:team"))
+    with pytest.raises(ComputeUnavailable, match=unreachable) as reading_capabilities:
         dead.capabilities()
+
+    for raised in (at_submit, past_the_gate, reading_capabilities):
+        assert str(raised.value).endswith(hint)
 
 
 def test_status_follows_the_job_and_cancel_leaves_an_ended_one(backend, kept):

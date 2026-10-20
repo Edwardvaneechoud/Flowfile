@@ -3,7 +3,8 @@
 Core ships the worker serialized Polars plans and reads back what the worker wrote, so the
 two processes must agree on everything a plan's bytes depend on. ``ensure_handshake`` runs
 before core's first worker call, in the REST session and before a websocket submit, each
-passing the worker URL it is about to call, and checks that once per process.
+passing the worker URL it is about to call (and a caller that knows which backend that worker
+is, its backend id), and checks that once per process.
 
 First, ``GET /capabilities`` returns the worker's ``Capabilities``, which are compared field
 by field with ``local_capabilities()`` of this process. Every field must match exactly:
@@ -27,7 +28,7 @@ each plugin's library from the path the plan carries.
 
 A difference in either check is a ``VersionMismatch`` that names it with both sides' values;
 no work goes to that worker and nothing runs in core instead. An unreachable worker is a
-``ComputeUnavailable``.
+``ComputeUnavailable``, naming the backend id the gate was given.
 """
 
 import polars as pl
@@ -133,7 +134,7 @@ def probe_plugins(worker_url: str, core: Capabilities, worker: Capabilities) -> 
         clear_task_from_worker(fetcher.file_ref, worker_url=worker_url)
 
 
-def ensure_handshake(worker_url: str) -> None:
+def ensure_handshake(worker_url: str, *, backend_id: str | None = None) -> None:
     """Check the worker at *worker_url* before core's first worker call in this process; afterwards return at once.
 
     ``_handshake_done`` is set before the checks start, so the probe's own worker calls pass
@@ -142,8 +143,11 @@ def ensure_handshake(worker_url: str) -> None:
     worker call checks again; the worker session also clears it when a call cannot reach the
     worker, because the worker that comes back may be another one.
 
+    A caller that knows which backend the worker is passes its id as *backend_id*; a
+    ``ComputeUnavailable`` the check raises then names that backend in its hint.
+
     Raises:
-        ComputeUnavailable: the worker cannot be reached.
+        ComputeUnavailable: the worker cannot be reached; its ``backend_id`` is *backend_id*.
         VersionMismatch: the worker differs from core; the message names every difference.
     """
     global _handshake_done
@@ -156,8 +160,10 @@ def ensure_handshake(worker_url: str) -> None:
         if differences:
             raise VersionMismatch(f"The worker at {worker_url} does not match core ({'; '.join(differences)})")
         probe_plugins(worker_url, core, worker)
-    except BaseException:
+    except BaseException as e:
         _handshake_done = False
+        if isinstance(e, ComputeUnavailable) and e.backend_id is None:
+            e.backend_id = backend_id
         raise
 
 

@@ -414,6 +414,20 @@ def test_unreachable_worker_on_the_first_call_is_compute_unavailable(closed_port
     assert handshake._handshake_done is False
 
 
+def test_the_gate_names_the_backend_it_is_given_when_the_worker_cannot_be_reached(closed_port_url):
+    with pytest.raises(ComputeUnavailable) as at_the_gate:
+        handshake.ensure_handshake(closed_port_url, backend_id="worker:team")
+    assert handshake._handshake_done is False
+    with pytest.raises(ComputeUnavailable) as through_the_session:
+        subops._worker_session.request("GET", "/status/x", worker_url=closed_port_url, backend_id="worker:team")
+    assert handshake._handshake_done is False
+
+    for raised in (at_the_gate.value, through_the_session.value):
+        assert raised.backend_id == "worker:team"
+        assert str(raised).startswith(f"Could not reach the worker at {closed_port_url}: ")
+        assert str(raised).endswith(TEAM_HINT)
+
+
 def test_compute_unavailable_adds_the_hint_once_and_only_for_a_refused_connection():
     assert str(ComputeUnavailable("[Errno 61] Connection refused")) == f"[Errno 61] Connection refused{HINT}"
     rebuilt = f"node 1: [Errno 61] Connection refused{HINT}"
