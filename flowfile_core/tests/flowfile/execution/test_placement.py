@@ -284,7 +284,8 @@ def register_gated_child(
 def assert_refused_before_any_node(
     graph: FlowGraph, run_info, backend: DeclaringBackend, refused: dict[int, list[str]]
 ):
-    """The run failed with exactly ``refused`` (node id -> phrases its error holds) and nothing ran or holds the run."""
+    """The run failed with exactly ``refused`` (node id -> phrases its error holds), nothing ran or holds the run, and
+    its flow log holds the refusal and no completion."""
     errors = {result.node_id: result.error for result in run_info.node_step_result}
     assert errors.keys() == refused.keys(), errors
     for node_id, phrases in refused.items():
@@ -298,6 +299,9 @@ def assert_refused_before_any_node(
     assert run_info.is_running is False
     assert graph.flow_settings.is_running is False
     assert backend.work == []
+    flow_log = Path(graph.flow_logger.log_file_path).read_text()
+    assert "no node was started" in flow_log, flow_log
+    assert "Flow completed!" not in flow_log, flow_log
 
 
 def test_a_catalog_write_to_a_local_disk_namespace_is_refused_on_a_backend_without_local_files(
@@ -561,6 +565,7 @@ def test_a_flow_its_backend_can_run_runs_as_it_does_unplaced(declare, monkeypatc
 
         assert run_info.success is True, [result.error for result in run_info.node_step_result]
         assert run_info.nodes_completed == 3
+        assert "Flow completed!" in Path(graph.flow_logger.log_file_path).read_text()
         rows[flag] = graph.get_node(3).get_resulting_data().collect().sort(pl.all()).rows()
     assert rows[True] == rows[False]
     assert len(rows[True]) == 3

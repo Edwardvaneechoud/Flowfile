@@ -1454,9 +1454,9 @@ class ExecutionMixin(GraphMixinBase):
                         self._run_post_execution_callbacks(
                             failed_node_ids, plan_skip_ids, deliberate_skip_ids, selected
                         )
+                    self.flow_logger.info("Flow completed!")
 
                 self.latest_run_info.end_time = datetime.datetime.now()
-                self.flow_logger.info("Flow completed!")
                 self.end_datetime = datetime.datetime.now()
                 self.release_run()
                 released = True
