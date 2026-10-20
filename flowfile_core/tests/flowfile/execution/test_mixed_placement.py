@@ -716,6 +716,67 @@ def test_a_retry_reruns_an_input_on_the_backend_holding_its_result_and_crosses_i
 
 
 @requires_minio
+def test_a_retry_after_a_deep_reset_reruns_a_cached_input_on_the_backend_holding_its_result(root, worker, monkeypatch):
+    """Flow 8517, the chain on core with manual input 1 on the worker caching its result, is run; switching the flow to
+    Performance and back resets every node, so node 1 no longer counts as run with its current setup while it holds its
+    result under the same hash. In a second run node 1 is served from that result, the first export of it finds it gone
+    and fails node 2 with a missing file, so the retry reruns node 1 on the worker and node 2 crosses it again."""
+    local = registry.backend(LOCAL)
+    graph = chain(create_test_graph(flow_id=8517, execution_location=LOCAL), filter_on=LOCAL, user_id=1)
+    source = graph.get_node(1)
+    source.setting_input.execution_location = WORKER
+    source.node_settings.cache_results = True
+    try:
+        run_info = graph.run_graph()
+        assert run_info.success is True, [result.error for result in run_info.node_step_result]
+        held = source.results.result_ref
+        for mode in ("Performance", "Development"):
+            graph.flow_settings = graph.flow_settings.model_copy(update={"execution_mode": mode})
+        assert source.node_stats.has_run_with_current_setup is False
+        assert source.held_result(held.backend_id) == held
+        submits: list[tuple[str, int | str]] = []
+        for backend in (local, worker):
+
+            def record(plan, inputs, hints, result_id, *, flow_id, node_id, backend=backend, submit=backend.submit):
+                submits.append((backend.id, node_id))
+                return submit(plan, inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
+
+            monkeypatch.setattr(backend, "submit", record)
+        exports: list[str] = []
+        export = worker.export
+
+        def drop_the_first(ref, uri, credential):
+            exports.append(uri)
+            if len(exports) == 1:
+                worker.release(ref)
+                raise TaskFailed(f"No such file or directory (os error 2): {ref.result_id}.arrow")
+            return export(ref, uri, credential)
+
+        monkeypatch.setattr(worker, "export", drop_the_first)
+
+        run_info = graph.run_graph()
+
+        assert run_info.success is True, [result.error for result in run_info.node_step_result]
+        ref_1, ref_3 = source.results.result_ref, graph.get_node(3).results.result_ref
+        assert pl.read_ipc_stream(local.sample(ref_3, 10)).sort("region").equals(EXPECTED)
+        if not settings.FLOWFILE_COMPUTE_PROTOCOL:
+            assert exports == []
+            assert run_info.boundaries == []
+            assert (held.backend_id, ref_1.backend_id, ref_3.backend_id) == (LOCAL, LOCAL, LOCAL)
+            return
+        assert held.backend_id == WORKER
+        assert run_info.boundaries == [(1, 2)]
+        assert submits == [(WORKER, 1), (LOCAL, 2), (LOCAL, 3)]
+        assert len(exports) == 2 and exports[0] == exports[1], exports
+        assert (ref_1.backend_id, ref_1.state) == (WORKER, "materialised")
+        assert worker.exists(ref_1)
+        assert _keys(f"{root}/8517/") == []
+        assert graph.exchange_run is None
+    finally:
+        graph.close_flow()
+
+
+@requires_minio
 def test_a_retry_in_a_fetch_reruns_an_input_changed_since_it_ran_elsewhere_where_the_fetched_node_runs(
     root, worker, monkeypatch
 ):

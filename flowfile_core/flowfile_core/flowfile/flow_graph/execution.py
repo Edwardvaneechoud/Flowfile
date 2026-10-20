@@ -988,7 +988,8 @@ class ExecutionMixin(GraphMixinBase):
             raise ValueError("gate input produced no result to evaluate its formula against")
         formula = resolve_expression_parameters(gate_input.formula, params or {})
         context = current_context(self)
-        held = source_node.results.result_ref if source_node.node_stats.has_run_with_current_setup else None
+        ref = source_node.results.result_ref
+        held = source_node.held_result(ref.backend_id) if ref is not None else None
         if held is not None and held.backend_id != context.backend_id:
             context = replace(context, backend_id=held.backend_id)
         with use_context(context):
