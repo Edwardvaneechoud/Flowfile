@@ -96,7 +96,11 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import convert_stats_to_column_info
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import safe_eval_pl_type
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import ensure_handshake, reset_handshake
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import (
+    capabilities_from_answer,
+    ensure_handshake,
+    reset_handshake,
+)
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
     CustomNodeExecuteInput,
     FuzzyJoinInput,
@@ -318,9 +322,11 @@ class WorkerBackend:
         kinds the worker runs, the ones ``run_op`` sends it.
 
         Raises:
-            ComputeUnavailable: The worker could not be reached.
+            ComputeUnavailable: The worker could not be reached, or it answered with no ``Capabilities`` and no
+                ``app_version``, so the URL is no Flowfile worker (``capabilities_from_answer``, naming this backend).
             VersionMismatch: With the flag off, the worker has no ``/capabilities`` route, so it predates core; with
-                it on, the worker refused this protocol version (426).
+                it on, the worker refused this protocol version (426); in either, its answer carries an
+                ``app_version`` but is no ``Capabilities``, so it is of another release.
             TaskFailed: This backend's token is no header value (``is_header_value``); nothing was sent.
             ComputeError: Any other answer that is no success (``_v1_failure``): a refused token is a ``TaskFailed``
                 naming 401.
@@ -342,7 +348,7 @@ class WorkerBackend:
             )
         if not response.ok:
             raise _v1_failure(response.status_code, response.content, response.reason)
-        return Capabilities.model_validate(response.json())
+        return capabilities_from_answer(self.url, response, backend_id=self.id)
 
     def submit(
         self,
