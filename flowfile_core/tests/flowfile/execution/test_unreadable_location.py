@@ -453,7 +453,7 @@ def test_a_flow_runs_previews_and_predicts_over_stored_results_core_cannot_read(
         graph.close_flow()
 
 
-SPLIT_NODE_SOURCE = '''
+SPLIT_NODE_SOURCE = """
 import polars as pl
 from flowfile_core.flowfile.node_designer import CustomNodeBase
 
@@ -466,7 +466,7 @@ class UnreadableSplitNode(CustomNodeBase):
     def process(self, *inputs: pl.LazyFrame):
         lf = inputs[0]
         return {"big": lf.filter(pl.col("amount") > 20), "small": lf.filter(pl.col("amount") <= 20)}
-'''
+"""
 
 
 @pytest.fixture
