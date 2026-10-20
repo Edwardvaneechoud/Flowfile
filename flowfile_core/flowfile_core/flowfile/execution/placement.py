@@ -229,8 +229,8 @@ def _unresolvable_connections(node: FlowNode, credentials: frozenset[str], names
     its own message. Any other node's connections (a database, Kafka or Google Analytics connection) are not compared.
     """
     settings = node.setting_input
-    cloud = isinstance(settings, (input_schema.NodeCloudStorageReader, input_schema.NodeCloudStorageWriter))
-    catalog = isinstance(settings, (input_schema.NodeCatalogReader, input_schema.NodeCatalogWriter))
+    cloud = isinstance(settings, input_schema.NodeCloudStorageReader | input_schema.NodeCloudStorageWriter)
+    catalog = isinstance(settings, input_schema.NodeCatalogReader | input_schema.NodeCatalogWriter)
     if not credentials or not (cloud or catalog):
         return []
     reasons = []
