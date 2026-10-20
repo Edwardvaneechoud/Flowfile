@@ -5,6 +5,9 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from flowfile_worker import mp_context
 from flowfile_worker.configs import FLOWFILE_CORE_URI, SERVICE_HOST, SERVICE_PORT, logger
@@ -59,6 +62,13 @@ app.include_router(router)
 app.include_router(streaming_router)
 app.include_router(protocol_router)
 app.include_router(v1_streaming_router)
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_without_input(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """FastAPI's 422 without each error's ``input``, which repeats the body (an export or import's presigned URI)."""
+    errors = [{key: value for key, value in error.items() if key != "input"} for error in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
 
 
 @app.post("/shutdown")

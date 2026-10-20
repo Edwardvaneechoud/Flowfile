@@ -6,12 +6,14 @@ the operations and schemes it declares, and core builds the same for its own pro
 two can be compared field by field. The wire models (``SubmitHints``, ``SubmitResult``,
 ``ResultRef``) are what the two exchange about one result. A result is a table or a blob, a file of bytes such as a
 fitted model that is never read as rows; ``put_blob`` and ``get_blob`` copy a blob's bytes to and from a ``file://`` URI
-or a presigned ``https://`` URL, in whichever process holds it. ``file_uri`` writes a local path's ``file:`` URI and
+or a presigned ``https://`` URL, in whichever process holds it, and importing this module cuts urllib3's request line
+at the query, so its DEBUG log names no presigned URL's signature. ``file_uri`` writes a local path's ``file:`` URI and
 ``file_uri_path`` reads the path back, in one form on every platform.
 """
 
 import importlib.metadata
 import importlib.util
+import logging
 import platform
 import shutil
 import sys
@@ -261,7 +263,8 @@ def _transfer(method: str, uri: str, *, data: BinaryIO | None = None, out: Binar
     """Send ``data`` to ``uri`` (``PUT``) or write what it answers to ``out`` (``GET``).
 
     No message names the URL's query: a presigned URL's signature is there, and ``requests``' own messages repeat
-    the whole URL, so they are not passed on.
+    the whole URL, so they are not passed on. urllib3's DEBUG request line is cut at the query by
+    ``_RequestLineWithoutQuery``.
     """
     import requests
 
@@ -276,3 +279,19 @@ def _transfer(method: str, uri: str, *, data: BinaryIO | None = None, out: Binar
                     out.write(chunk)
     except requests.RequestException as e:
         raise OSError(f"{method} {where} failed: {type(e).__name__}") from None
+
+
+class _RequestLineWithoutQuery(logging.Filter):
+    """Cut each text argument of a ``urllib3.connectionpool`` record at its first ``?``.
+
+    urllib3 logs every request line at DEBUG with the request's path and query as one of ``record.args``, so a process
+    run at DEBUG would log a presigned URL's signature; the args are rewritten in place and keep their arity.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(arg.partition("?")[0] if isinstance(arg, str) else arg for arg in record.args)
+        return True
+
+
+logging.getLogger("urllib3.connectionpool").addFilter(_RequestLineWithoutQuery())
