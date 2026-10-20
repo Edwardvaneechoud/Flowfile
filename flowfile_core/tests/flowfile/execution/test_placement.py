@@ -693,8 +693,14 @@ def test_a_model_published_to_or_fetched_from_a_filesystem_store_is_refused_off_
         run_info,
         backend,
         {
-            2: ["it writes storage this backend does not write: file"],
-            3: ["it reads storage this backend does not read: file"],
+            2: [
+                "it publishes its model to the artifact store, which is on local disk; "
+                "remote execution needs the S3 artifact store"
+            ],
+            3: [
+                "it fetches its model from the artifact store, which is on local disk; "
+                "remote execution needs the S3 artifact store"
+            ],
         },
     )
     assert not any("operation" in result.error for result in run_info.node_step_result)
@@ -735,8 +741,12 @@ def test_an_s3_artifact_store_needs_https_where_a_model_crosses_it(s3_artifact_s
     without_file = place(graph, {BACKEND_ID: without(everything(), scheme="file")}, policy)
 
     assert without_https.refusals == [
-        Refusal(2, BACKEND_ID, "it writes storage this backend does not write: https"),
-        Refusal(3, BACKEND_ID, "it reads storage this backend does not read: https"),
+        Refusal(
+            2, BACKEND_ID, "it publishes its model to the artifact store over https, which this backend does not write"
+        ),
+        Refusal(
+            3, BACKEND_ID, "it fetches its model from the artifact store over https, which this backend does not read"
+        ),
     ]
     assert without_file.refusals == []
 

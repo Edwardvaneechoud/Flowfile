@@ -142,10 +142,11 @@ def place(
             continue
         assignment[node.node_id] = backend_id
         target, namespace = _catalog_target(node)
+        artifact_scheme = _artifact_scheme(node)
         requirements = requirements_for(
-            node.node_template, node.setting_input, catalog_target=target, artifact_scheme=_artifact_scheme(node)
+            node.node_template, node.setting_input, catalog_target=target, artifact_scheme=artifact_scheme
         )
-        reasons = _unmet(requirements, capabilities, namespace)
+        reasons = _unmet(requirements, capabilities, namespace, artifact_scheme)
         if isinstance(node.setting_input, input_schema.NodeRunFlow):
             reasons += _child_refusals(flow, node, backend_id, backends, policy)
         if reasons:
@@ -163,10 +164,14 @@ def place(
     return Placement(assignment=assignment, boundaries=boundaries, refusals=refusals)
 
 
-def _unmet(requirements: NodeRequirements, capabilities: Capabilities, namespace: str | None) -> list[str]:
+def _unmet(
+    requirements: NodeRequirements, capabilities: Capabilities, namespace: str | None, artifact_scheme: str | None
+) -> list[str]:
     """What ``requirements`` ask that ``capabilities`` do not offer, one phrase each.
 
-    A catalog node (``namespace`` named) on a backend without ``file`` is refused for its namespace's local disk.
+    A catalog node (``namespace`` named) on a backend without ``file`` is refused for its namespace's local disk. A
+    model node (``artifact_scheme`` named) short of the artifact store's scheme is refused for the store: the publish
+    of a Train Model node, the fetch of an Apply Model node, on local disk for the filesystem store.
     """
     reasons = []
     operation = requirements.operation
@@ -181,6 +186,12 @@ def _unmet(requirements: NodeRequirements, capabilities: Capabilities, namespace
             reasons.append(
                 f'namespace "{namespace}" is on local disk; remote execution needs an object-storage namespace'
             )
+        elif artifact_scheme is not None and artifact_scheme in missing:
+            store = f"it {'publishes its model to' if verb == 'write' else 'fetches its model from'} the artifact store"
+            if artifact_scheme == "file":
+                reasons.append(f"{store}, which is on local disk; remote execution needs the S3 artifact store")
+            else:
+                reasons.append(f"{store} over {artifact_scheme}, which this backend does not {verb}")
         elif missing:
             reasons.append(f"it {verb}s storage this backend does not {verb}: {', '.join(sorted(missing))}")
     missing_plugins = requirements.plugins - capabilities.plugins.keys()
