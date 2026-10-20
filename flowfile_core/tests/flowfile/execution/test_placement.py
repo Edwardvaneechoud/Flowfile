@@ -34,6 +34,7 @@ from flowfile_core.flowfile.execution.errors import ComputeUnavailable, VersionM
 from flowfile_core.flowfile.execution.placement import Placement, Refusal, SingleBackendPolicy, place
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
+from flowfile_core.flowfile.flow_node.flow_node import schema_prefetch_blocked
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings, FullCloudStorageConnection
 from shared.compute_protocol import Capabilities
@@ -874,18 +875,26 @@ def stored_connection():
 
 
 def add_cloud_reader(graph: FlowGraph, node_id: int, connection_name: str | None) -> None:
-    """A cloud storage reader of user 1 over a parquet file, through ``connection_name`` (``None``: no connection)."""
+    """A cloud storage reader of user 1 over a parquet file, through ``connection_name`` (``None``: no connection).
+
+    Built with the start node's schema prefetch blocked: the prefetch would take the read's schema from the graph's
+    backend in a thread of its own, so building the reader sends no backend anything.
+    """
     add_promise(graph, node_id, "cloud_storage_reader")
-    graph.add_cloud_storage_reader(
-        input_schema.NodeCloudStorageReader(
-            flow_id=graph.flow_id,
-            node_id=node_id,
-            user_id=1,
-            cloud_storage_settings=CloudStorageReadSettings(
-                connection_name=connection_name, resource_path="s3://placement-bucket/data.parquet"
-            ),
+    token = schema_prefetch_blocked.set(True)
+    try:
+        graph.add_cloud_storage_reader(
+            input_schema.NodeCloudStorageReader(
+                flow_id=graph.flow_id,
+                node_id=node_id,
+                user_id=1,
+                cloud_storage_settings=CloudStorageReadSettings(
+                    connection_name=connection_name, resource_path="s3://placement-bucket/data.parquet"
+                ),
+            )
         )
-    )
+    finally:
+        schema_prefetch_blocked.reset(token)
 
 
 def test_a_cloud_read_of_an_access_key_connection_is_refused_on_an_ambient_backend(
