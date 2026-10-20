@@ -11,6 +11,7 @@ from flowfile_core.catalog.delta_utils import (
 )
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.storage_backend import CatalogStorageTarget, _is_cloud_uri, resolve_for_namespace
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.catalog_cdc import (
     make_cdc_commit_callback,
@@ -18,6 +19,9 @@ from flowfile_core.flowfile.catalog_cdc import (
     resolve_change_window,
     resolve_consumer_key,
 )
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.protocol import ComputeBackend
+from flowfile_core.flowfile.flow_data_engine.bounded import _deferred
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
@@ -142,6 +146,11 @@ class CatalogBuildersMixin(GraphMixinBase):
     def _add_catalog_table_reader(self, node_catalog_reader: input_schema.NodeCatalogReader) -> bool | None:
         """Read a single table from the catalog (physical or virtual).
 
+        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a table on object storage takes its schema from the backend the reader
+        runs on: its plan is held there as a deferred result with no preview while the reference's schema is read,
+        then released, so the plan's connection is resolved by that backend, a worker in its own process and
+        ``LocalBackend`` in core. Every other read here resolves its schema from its plan in core.
+
         Returns:
             Whether the virtual table is optimized, or None if not a virtual table.
         """
@@ -191,8 +200,12 @@ class CatalogBuildersMixin(GraphMixinBase):
             if resolved_path and not _is_cloud_uri(resolved_path) and is_legacy_parquet(resolved_path):
                 raise ValueError("Change tracking is not available for legacy parquet catalog tables")
 
-        def _apply_scd2_filter(lf: pl.LazyFrame) -> FlowDataEngine:
-            return FlowDataEngine(lf if _scd2_filter is None else lf.filter(_scd2_filter))
+        def _apply_scd2_filter(lf: pl.LazyFrame, backend: ComputeBackend | None = None) -> FlowDataEngine:
+            plan = lf if _scd2_filter is None else lf.filter(_scd2_filter)
+            if backend is None:
+                return FlowDataEngine(plan)
+            with _deferred(backend, plan) as ref:
+                return FlowDataEngine(plan, schema=ref.schema)
 
         def _resolve_table_row(db):
             repo = SQLAlchemyCatalogRepository(db)
@@ -312,7 +325,8 @@ class CatalogBuildersMixin(GraphMixinBase):
             if _is_cloud_uri(resolved_path):
                 # Cloud catalog table: scan directly (stays lazy ⇒ no collect in core).
                 scan_kwargs.update(_reader_target.scan_kwargs(_user_id))
-                return _apply_scd2_filter(pl.scan_delta(resolved_path, **scan_kwargs))
+                backend = current_context(self).backend if FLOWFILE_COMPUTE_PROTOCOL else None
+                return _apply_scd2_filter(pl.scan_delta(resolved_path, **scan_kwargs), backend)
             if is_delta_table(resolved_path):
                 return _apply_scd2_filter(pl.scan_delta(resolved_path, **scan_kwargs))
             return _apply_scd2_filter(pl.scan_parquet(resolved_path))
