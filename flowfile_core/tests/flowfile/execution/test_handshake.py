@@ -17,6 +17,7 @@ from flowfile_core.schemas import input_schema, schemas
 from shared.compute_protocol import EXPRESSION_PLUGINS, local_capabilities
 
 HINT = ". Is the compute backend running? Start it, or check the Backends page."
+TEAM_HINT = '. Is backend "worker:team" running? Start it, or check the Backends page.'
 
 
 WORKER_URL = registry.worker_url()
@@ -413,10 +414,27 @@ def test_unreachable_worker_on_the_first_call_is_compute_unavailable(closed_port
     assert handshake._handshake_done is False
 
 
+def test_the_gate_names_the_backend_it_is_given_when_the_worker_cannot_be_reached(closed_port_url):
+    with pytest.raises(ComputeUnavailable) as at_the_gate:
+        handshake.ensure_handshake(closed_port_url, backend_id="worker:team")
+    assert handshake._handshake_done is False
+    with pytest.raises(ComputeUnavailable) as through_the_session:
+        subops._worker_session.request("GET", "/status/x", worker_url=closed_port_url, backend_id="worker:team")
+    assert handshake._handshake_done is False
+
+    for raised in (at_the_gate.value, through_the_session.value):
+        assert raised.backend_id == "worker:team"
+        assert str(raised).startswith(f"Could not reach the worker at {closed_port_url}: ")
+        assert str(raised).endswith(TEAM_HINT)
+
+
 def test_compute_unavailable_adds_the_hint_once_and_only_for_a_refused_connection():
     assert str(ComputeUnavailable("[Errno 61] Connection refused")) == f"[Errno 61] Connection refused{HINT}"
     rebuilt = f"node 1: [Errno 61] Connection refused{HINT}"
     assert str(ComputeUnavailable(rebuilt)) == rebuilt
+    named = str(ComputeUnavailable("[Errno 61] Connection refused", backend_id="worker:team"))
+    assert named == f"[Errno 61] Connection refused{TEAM_HINT}"
+    assert str(ComputeUnavailable(f"node 1: {named}")) == f"node 1: {named}"
     windows = "[WinError 10061] No connection could be made because the target machine actively refused it"
     assert str(ComputeUnavailable(windows)) == f"{windows}{HINT}"
     assert str(ComputeUnavailable("Read timed out")) == "Read timed out"

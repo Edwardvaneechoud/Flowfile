@@ -245,7 +245,9 @@ class WorkerBackend:
     worker session or its WebSocket submit, which run it, and the ``/v1`` submit's socket calls ``ensure_handshake``
     before it dials, as the transport's WebSocket submit does. So every method that calls the worker is gated by it
     and can raise its ``VersionMismatch`` or ``ComputeUnavailable``, except ``capabilities``: it is the one read that
-    goes around the gate, so a caller can read a worker's versions and compare them with core's itself.
+    goes around the gate, so a caller can read a worker's versions and compare them with core's itself. The ``/v1``
+    requests and the ``/v1`` submit's socket give the gate this backend's ``id``, so its ``ComputeUnavailable`` names
+    the backend, as every one this backend makes for a worker it cannot reach does.
 
     With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on (read on each call), ``submit`` sends a meta JSON (hints, inputs,
     ids) and the plan over the worker's ``WS /v1/ws/submit``, and posts them to ``POST /v1/submit`` only when the socket
@@ -332,7 +334,7 @@ class WorkerBackend:
                 timeout=_WORKER_TIMEOUT,
             )
         except requests.RequestException as e:
-            raise ComputeUnavailable(f"Could not reach the worker at {self.url}: {e}") from e
+            raise ComputeUnavailable(f"Could not reach the worker at {self.url}: {e}", backend_id=self.id) from e
         if response.status_code == 404 and not protocol:
             raise VersionMismatch(
                 f"The worker at {self.url} does not report its capabilities (GET /capabilities answered 404), "
@@ -513,7 +515,8 @@ class WorkerBackend:
                     operation_type="calculate_number_of_records",
                     wait_on_completion=False,
                     worker_url=self.url,
-                )
+                ),
+                backend_id=self.id,
             )
             return fetcher.result
         path = self._file(ref)
@@ -653,7 +656,8 @@ class WorkerBackend:
                 kwargs={"uri": uri, "credential": _wire_credential(credential)},
                 wait_on_completion=False,
                 worker_url=self.url,
-            )
+            ),
+            backend_id=self.id,
         )
         return uri
 
@@ -743,7 +747,7 @@ class WorkerBackend:
         try:
             status = get_status(handle.job_id, worker_url=self.url)
         except requests.RequestException as e:
-            raise ComputeUnavailable(f"Could not reach the worker: {e}") from e
+            raise ComputeUnavailable(f"Could not reach the worker: {e}", backend_id=self.id) from e
         state = _JOB_STATES[status.status]
         error = (status.error_message or status.status) if state == "failed" else None
         return JobStatus(state=state, progress=status.progress, error=error)
@@ -761,7 +765,7 @@ class WorkerBackend:
         try:
             return get_status(handle.job_id, worker_url=self.url).results
         except requests.RequestException as e:
-            raise ComputeUnavailable(f"Could not reach the worker: {e}") from e
+            raise ComputeUnavailable(f"Could not reach the worker: {e}", backend_id=self.id) from e
 
     def cancel(self, handle: JobHandle) -> None:
         """Cancel the task ``handle`` names: through its fetcher while ``submit`` waits on it, else on the worker.
@@ -829,13 +833,14 @@ class WorkerBackend:
                 method,
                 f"/v1{path}",
                 worker_url=self.url,
+                backend_id=self.id,
                 headers={wire.PROTOCOL_VERSION_HEADER: str(self.protocol_version)},
                 timeout=timeout,
                 auth=self._auth,
                 **kwargs,
             )
         except requests.RequestException as e:
-            raise ComputeUnavailable(f"Could not reach the worker at {self.url}: {e}") from e
+            raise ComputeUnavailable(f"Could not reach the worker at {self.url}: {e}", backend_id=self.id) from e
         if response.ok or (missing_ok and response.status_code == 404):
             return response
         raise _v1_failure(response.status_code, response.content, response.reason)
@@ -857,7 +862,7 @@ class WorkerBackend:
             VersionMismatch: The worker refused the upgrade with 426.
             ComputeError: The handshake failed, or the worker's ``error`` frame (``_v1_error``).
         """
-        ensure_handshake(self.url)
+        ensure_handshake(self.url, backend_id=self.id)
         token = self._internal_token()
         try:
             ws = connect(
@@ -1098,7 +1103,7 @@ class WorkerBackend:
                 self._in_flight[task_id] = fetcher
 
         try:
-            return _run(start, on_started=track)
+            return _run(start, on_started=track, backend_id=self.id)
         finally:
             with self._lock:
                 self._in_flight.pop(task_id, None)
@@ -1116,7 +1121,7 @@ class WorkerBackend:
 
     def _read(self, start: Callable[[], BaseFetcher], job_id: str | None = None) -> OpResult:
         """Run a task that writes one result and return it as ``{"result": ref}``; tracked under ``job_id`` if given."""
-        fetcher = _run(start) if job_id is None else self._run_tracked(job_id, start)
+        fetcher = _run(start, backend_id=self.id) if job_id is None else self._run_tracked(job_id, start)
         return OpResult(refs={"result": self._result_ref(fetcher.file_ref, _written_file(fetcher))})
 
     def _read_tracked(self, job_id: str, start: Callable[[], BaseFetcher]) -> tuple[BaseFetcher, ResultRef]:
@@ -1380,7 +1385,7 @@ class WorkerBackend:
             else:
                 answer = trigger_visualize_query(source, request.query, request.max_rows, worker_url=self.url)
         except requests.RequestException as e:
-            raise ComputeUnavailable(f"Could not reach the worker: {e}") from e
+            raise ComputeUnavailable(f"Could not reach the worker: {e}", backend_id=self.id) from e
         return OpResult(refs={}, metadata=answer)
 
     def _delta_task(
@@ -1405,10 +1410,14 @@ class WorkerBackend:
         return OpResult(refs={}, metadata=_reported(fetcher))
 
 
-def _run(start: Callable[[], BaseFetcher], on_started: Callable[[BaseFetcher], None] | None = None) -> BaseFetcher:
+def _run(
+    start: Callable[[], BaseFetcher], on_started: Callable[[BaseFetcher], None] | None = None, *, backend_id: str
+) -> BaseFetcher:
     """Start a worker task through ``start``, wait for it to end and return its fetcher.
 
-    ``on_started`` receives the fetcher once the task is submitted, before the wait. A failed task raises a typed
+    ``on_started`` receives the fetcher once the task is submitted, before the wait. A worker that cannot be reached
+    while the task is started is a ``ComputeUnavailable`` naming ``backend_id``, except one the handshake gate
+    raised for ``start``'s call, which carries a URL only and so names none. A failed task raises a typed
     error: error code -1 goes through ``worker_failure``, whose ``error_kind`` tells a plan the worker could not
     load (``PlanRejected``) from a lost connection and a killed child; every other code is a ``TaskFailed`` with
     the fetcher's description, raised from the fetcher's ``RemoteExecutionError`` so the worker-side class
@@ -1417,7 +1426,7 @@ def _run(start: Callable[[], BaseFetcher], on_started: Callable[[BaseFetcher], N
     try:
         fetcher = start()
     except requests.RequestException as e:
-        raise ComputeUnavailable(f"Could not reach the worker: {e}") from e
+        raise ComputeUnavailable(f"Could not reach the worker: {e}", backend_id=backend_id) from e
     if on_started is not None:
         on_started(fetcher)
     try:

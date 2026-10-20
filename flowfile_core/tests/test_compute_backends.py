@@ -242,6 +242,7 @@ def test_a_worker_out_of_reach_fails_the_handshake_naming_it(admin_client, flag)
     assert verdict["ok"] is False
     assert verdict["worker"] is None
     assert verdict["error"].startswith(f"Could not reach the worker at {url}")
+    assert verdict["error"].endswith('Is backend "worker:team" running? Start it, or check the Backends page.')
 
 
 def test_a_removed_worker_is_gone_from_the_list_and_the_registry(admin_client, fake_worker):
