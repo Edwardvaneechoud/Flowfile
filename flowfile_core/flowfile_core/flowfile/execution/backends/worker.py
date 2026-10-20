@@ -1416,7 +1416,8 @@ def _run(
     """Start a worker task through ``start``, wait for it to end and return its fetcher.
 
     ``on_started`` receives the fetcher once the task is submitted, before the wait. A worker that cannot be reached
-    while the task is started is a ``ComputeUnavailable`` naming ``backend_id``. A failed task raises a typed
+    while the task is started is a ``ComputeUnavailable`` naming ``backend_id``, except one the handshake gate
+    raised for ``start``'s call, which carries a URL only and so names none. A failed task raises a typed
     error: error code -1 goes through ``worker_failure``, whose ``error_kind`` tells a plan the worker could not
     load (``PlanRejected``) from a lost connection and a killed child; every other code is a ``TaskFailed`` with
     the fetcher's description, raised from the fetcher's ``RemoteExecutionError`` so the worker-side class
