@@ -32,6 +32,7 @@ from flowfile_core.flowfile.execution.protocol import (
     SubmitHints,
     SubmitResult,
 )
+from flowfile_core.flowfile.flow_data_engine.bounded import head_rows
 from flowfile_core.flowfile.flow_data_engine.column_stats import ColumnStatsUnavailable, compute_column_stats
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
@@ -2342,7 +2343,14 @@ class FlowNode:
         """Generates a `TableExample` model summarizing the node's output.
 
         This can optionally include a sample of the data. For multi-output
-        nodes, ``output_handle`` selects which named output to preview.
+        nodes, ``output_handle`` selects which named output to preview. With
+        ``FLOWFILE_COMPUTE_PROTOCOL`` on and a reference held, the default
+        output's rows are the node's cached sample when it kept one; any other
+        output's, and the default's when none was kept, are read through
+        ``bounded.head_rows`` of the output's plan on the backend that holds
+        the node's reference, and are not cached. With the flag off, or for a
+        node that holds no reference, an output's first rows are collected in
+        core.
 
         Args:
             include_data: If True, includes a data sample in the result.
@@ -2361,14 +2369,22 @@ class FlowNode:
                 return src.get_table_example(include_data, output_handle=handle)
 
             logger.info("getting the table example since the node has run")
-            # For multi-output nodes, pull the sample from the requested named
-            # output instead of the default cached example_data_generator.
+            # A multi-output node previews the requested named output.
             if self._named_outputs and output_handle in self._named_outputs:
                 engine = self._named_outputs[output_handle]
-                preview_df = engine.data_frame.head(100)
-                if isinstance(preview_df, pl.LazyFrame):
-                    preview_df = preview_df.collect()
-                data = preview_df.to_dicts() if preview_df is not None else []
+                ref = self.results.result_ref
+                if settings.FLOWFILE_COMPUTE_PROTOCOL and ref is not None:
+                    cached = self.results.example_data_generator
+                    if output_handle == DEFAULT_OUTPUT_HANDLE and cached is not None:
+                        table = cached()
+                    else:
+                        table = head_rows(registry.backend(ref.backend_id), engine.data_frame, 100)
+                    data = table.to_pylist()
+                else:
+                    preview_df = engine.data_frame.head(100)
+                    if isinstance(preview_df, pl.LazyFrame):
+                        preview_df = preview_df.collect()
+                    data = preview_df.to_dicts() if preview_df is not None else []
                 schema = [FileColumn.model_validate(c.get_column_repr()) for c in engine.schema]
                 return TableExample(
                     node_id=self.node_id,
