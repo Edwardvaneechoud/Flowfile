@@ -26,7 +26,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
-from flowfile_core.flowfile.execution.protocol import OpPayload, ResultRef
+from flowfile_core.flowfile.execution.protocol import OpPayload, ResultRef, Schema
 
 if TYPE_CHECKING:
     import polars as pl
@@ -317,12 +317,17 @@ class FuzzyJoinPayload(OperationPayload):
         settings: The node's settings; its ``join_input`` (copied, never changed) holds the fuzzy mappings and the
             column selections of both sides.
         node_logger: The node's logger, which an in-process match reports its progress to; read in core only.
+        left_schema: The left rows' columns as the input node knows them, which the worker backend prepares the side
+            over instead of resolving its plan; ``None`` resolves the plan.
+        right_schema: The right rows' columns, as ``left_schema``.
     """
 
     left: pl.LazyFrame
     right: pl.LazyFrame
     settings: NodeFuzzyMatch
     node_logger: NodeLogger | None = None
+    left_schema: Schema | None = None
+    right_schema: Schema | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

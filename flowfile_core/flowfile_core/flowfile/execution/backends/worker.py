@@ -434,9 +434,9 @@ class WorkerBackend:
         ``random_split``, ``custom_node``, ``ml_train`` and ``ml_apply``. Its frames are serialised here, its
         credentials sent still encrypted, and the worker task is filed under the payload's ``job_id`` (a write's under
         the id the worker gives it), whose fetcher ``cancel(JobHandle("worker", job_id))`` reaches while the call
-        waits. ``fuzzy_join`` checks the join and selects and renames each side here, as the in-process join does,
-        before it sends the sides; ``custom_node`` resolves the ``$ffsec$`` ciphertext of the secrets the node's
-        ``SecretSelector`` fields select here and sends only that.
+        waits. ``fuzzy_join`` checks the join and selects and renames each side here, over the sides' schemas its
+        payload carries, as the in-process join does, before it sends the sides; ``custom_node`` resolves the
+        ``$ffsec$`` ciphertext of the secrets the node's ``SecretSelector`` fields select here and sends only that.
 
         A read's and ``fuzzy_join``'s and ``ml_apply``'s refs are ``{"result": ref}``, a stored result. A custom
         node's refs are one stored result per declared output, keyed by its output handle (``output-0``,
@@ -1713,10 +1713,16 @@ def _file_to_read(read: FileReadPayload) -> ReceivedTable:
 
 
 def _fuzzy_sides(join: FuzzyJoinPayload) -> tuple[pl.LazyFrame, pl.LazyFrame, list[FuzzyMapping]]:
-    """Both sides of a fuzzy join selected and renamed as the in-process join does, and the mappings to match on."""
+    """Both sides of a fuzzy join selected and renamed as the in-process join does, and the mappings to match on.
+
+    Each side is prepared over the schema the payload carries for it, so no side's plan, which may scan a result the
+    worker holds, is resolved here; a side whose schema is ``None`` is.
+    """
     manager = FuzzyMatchInputManager(deepcopy(join.settings.join_input))
     left, right = prepare_for_fuzzy_match(
-        left=FlowDataEngine(join.left), right=FlowDataEngine(join.right), fuzzy_match_input_manager=manager
+        left=FlowDataEngine(join.left, schema=join.left_schema),
+        right=FlowDataEngine(join.right, schema=join.right_schema),
+        fuzzy_match_input_manager=manager,
     )
     return left, right, manager.fuzzy_maps
 
