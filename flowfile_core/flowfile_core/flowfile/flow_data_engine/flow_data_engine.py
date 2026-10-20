@@ -28,6 +28,7 @@ from flowfile_core.configs.flow_logger import NodeLogger
 from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine import utils
 from flowfile_core.flowfile.flow_data_engine.bounded import _deferred, count_rows, single_row, unique_values
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import (
@@ -542,6 +543,7 @@ class FlowDataEngine:
             ValueError: If the storage type or file format is not supported.
             NotImplementedError: If a requested file format like "delta" or "iceberg"
                 is not yet implemented.
+            ComputeError: `backend` could not answer the read's schema, raised as the backend raised it.
             Exception: If reading from cloud storage fails.
         """
         connection = settings.connection
@@ -725,6 +727,8 @@ class FlowDataEngine:
                 schema=schema,
             )
 
+        except ComputeError:
+            raise
         except Exception as e:
             logger.error(f"Failed to read Parquet from {resource_path}: {str(e)}")
             raise Exception(f"Failed to read Parquet from cloud storage: {str(e)}") from e
@@ -763,6 +767,8 @@ class FlowDataEngine:
                 streamable=True,
                 schema=schema,
             )
+        except ComputeError:
+            raise
         except Exception as e:
             logger.error(f"Failed to read Delta file from {resource_path}: {str(e)}")
             raise Exception(f"Failed to read Delta file from cloud storage: {str(e)}") from e
@@ -821,6 +827,8 @@ class FlowDataEngine:
                 schema=schema,
             )
 
+        except ComputeError:
+            raise
         except Exception as e:
             logger.error(f"Failed to read CSV from {resource_path}: {str(e)}")
             raise Exception(f"Failed to read CSV from cloud storage: {str(e)}") from e
@@ -869,6 +877,8 @@ class FlowDataEngine:
                 schema=schema,
             )
 
+        except ComputeError:
+            raise
         except Exception as e:
             logger.error(f"Failed to read JSON from {resource_path}: {str(e)}")
             raise Exception(f"Failed to read JSON from cloud storage: {str(e)}") from e
