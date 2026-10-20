@@ -16,8 +16,11 @@ if __name__ == "__main__" and "--run-flow" in sys.argv:
     sys.exit(_run_flow_main(sys.argv))
 
 import uvicorn
-from fastapi import BackgroundTasks, FastAPI
+from fastapi import BackgroundTasks, FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from flowfile_core import change_feed
 from flowfile_core import telemetry as core_telemetry
@@ -190,6 +193,14 @@ app = FastAPI(
     description="Backend for the Flowfile application",
     lifespan=shutdown_handler,
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_without_input(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """FastAPI's 422 without each error's ``input``, which repeats the request body (a token, a secret's value)."""
+    errors = [{key: value for key, value in error.items() if key != "input"} for error in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
 
 # The Tauri 2 desktop shell loads the renderer from a custom protocol — the
 # exact origin differs per OS (`tauri://localhost` on macOS/iOS, `http://tauri.localhost`

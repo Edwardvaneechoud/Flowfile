@@ -84,11 +84,12 @@ class _WorkerSession(requests.Session):
     its own, its callers pass the one of the backend they serve. Each call first passes ``ensure_handshake``, which
     is once per process, not per worker: the first call's worker is refused before it is sent anything when its
     versions differ from core's, and later calls pass whichever worker they name. A call that cannot reach the
-    worker re-arms that check, because the worker that comes back may be another one.
+    worker re-arms that check, because the worker that comes back may be another one. A caller that knows which
+    backend the worker is names it with the keyword ``backend_id``, which the check's ``ComputeUnavailable`` names.
     """
 
-    def request(self, method, path, *args, worker_url: str, **kwargs):
-        ensure_handshake(worker_url)
+    def request(self, method, path, *args, worker_url: str, backend_id: str | None = None, **kwargs):
+        ensure_handshake(worker_url, backend_id=backend_id)
         try:
             return super().request(method, f"{worker_url}{path}", *args, **kwargs)
         except requests.ConnectionError:

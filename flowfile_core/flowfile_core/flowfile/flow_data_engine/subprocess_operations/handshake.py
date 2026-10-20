@@ -3,7 +3,8 @@
 Core ships the worker serialized Polars plans and reads back what the worker wrote, so the
 two processes must agree on everything a plan's bytes depend on. ``ensure_handshake`` runs
 before core's first worker call, in the REST session and before a websocket submit, each
-passing the worker URL it is about to call, and checks that once per process.
+passing the worker URL it is about to call (and a caller that knows which backend that worker
+is, its backend id), and checks that once per process.
 
 First, ``GET /capabilities`` returns the worker's ``Capabilities``, which are compared field
 by field with ``local_capabilities()`` of this process. Every field must match exactly:
@@ -27,14 +28,19 @@ each plugin's library from the path the plan carries.
 
 A difference in either check is a ``VersionMismatch`` that names it with both sides' values;
 no work goes to that worker and nothing runs in core instead. An unreachable worker is a
-``ComputeUnavailable``.
+``ComputeUnavailable``, naming the backend id the gate was given. An answer that is no
+``Capabilities`` is a ``VersionMismatch`` naming both app versions when it carries an
+``app_version`` (a worker of another release), else a ``ComputeUnavailable``: the URL is no
+Flowfile worker (``capabilities_from_answer``).
 """
 
 import polars as pl
 import requests
 from polars_grouper import graph_solver
+from pydantic import ValidationError
 
 from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable, VersionMismatch
+from shared._version import get_version
 from shared.compute_protocol import EXPRESSION_PLUGINS, Capabilities, local_capabilities
 
 _COMPARED_FIELDS = ("app_version", "protocol_version", "polars_version", "python_version", "platform")
@@ -49,8 +55,10 @@ def fetch_worker_capabilities(worker_url: str) -> Capabilities:
     """``GET /capabilities`` from the worker at *worker_url*, signed with the internal token like every worker call.
 
     Raises:
-        ComputeUnavailable: the worker cannot be reached.
-        VersionMismatch: the worker answers but has no ``/capabilities`` route, so it predates core.
+        ComputeUnavailable: the worker cannot be reached, or its answer is no ``Capabilities`` and carries no
+            ``app_version``, so the URL is no Flowfile worker.
+        VersionMismatch: the worker answers but has no ``/capabilities`` route, so it predates core; or its answer
+            carries an ``app_version`` but is no ``Capabilities``, so it is of another release.
     """
     # imported here: subprocess_operations imports this module
     from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
@@ -68,7 +76,41 @@ def fetch_worker_capabilities(worker_url: str) -> Capabilities:
             "so it is an older release than core"
         )
     response.raise_for_status()
-    return Capabilities.model_validate(response.json())
+    return capabilities_from_answer(worker_url, response)
+
+
+def capabilities_from_answer(
+    worker_url: str, response: requests.Response, *, backend_id: str | None = None
+) -> Capabilities:
+    """The ``Capabilities`` a 2xx answer to ``GET /capabilities`` from *worker_url* carries.
+
+    An answer that does not validate is a worker of another release when it carries an ``app_version`` (a field
+    added since without a default is missing from it), and otherwise a server that is no Flowfile worker (other
+    JSON, or a body that is no JSON). Either error is raised from pydantic's ``ValidationError``.
+
+    Raises:
+        VersionMismatch: the answer carries an ``app_version`` but is no ``Capabilities``; the message names both
+            app versions and each field this release could not read.
+        ComputeUnavailable: the answer carries no ``app_version``; its ``backend_id`` is *backend_id*.
+    """
+    try:
+        answer = response.json()
+    except ValueError:
+        answer = None
+    try:
+        return Capabilities.model_validate(answer)
+    except ValidationError as e:
+        app_version = answer.get("app_version") if isinstance(answer, dict) else None
+        if isinstance(app_version, str):
+            unread = "; ".join(f"{'.'.join(map(str, error['loc']))}: {error['msg']}" for error in e.errors())
+            raise VersionMismatch(
+                f"The worker at {worker_url} does not match core (app_version: core {get_version()}, worker "
+                f"{app_version}): its capabilities answer is not one this release reads ({unread})"
+            ) from e
+        raise ComputeUnavailable(
+            f"The server at {worker_url} is not a Flowfile worker: its capabilities answer carries no app_version",
+            backend_id=backend_id,
+        ) from e
 
 
 def capability_differences(core: Capabilities, worker: Capabilities) -> list[str]:
@@ -133,7 +175,7 @@ def probe_plugins(worker_url: str, core: Capabilities, worker: Capabilities) -> 
         clear_task_from_worker(fetcher.file_ref, worker_url=worker_url)
 
 
-def ensure_handshake(worker_url: str) -> None:
+def ensure_handshake(worker_url: str, *, backend_id: str | None = None) -> None:
     """Check the worker at *worker_url* before core's first worker call in this process; afterwards return at once.
 
     ``_handshake_done`` is set before the checks start, so the probe's own worker calls pass
@@ -142,8 +184,11 @@ def ensure_handshake(worker_url: str) -> None:
     worker call checks again; the worker session also clears it when a call cannot reach the
     worker, because the worker that comes back may be another one.
 
+    A caller that knows which backend the worker is passes its id as *backend_id*; a
+    ``ComputeUnavailable`` the check raises then names that backend in its hint.
+
     Raises:
-        ComputeUnavailable: the worker cannot be reached.
+        ComputeUnavailable: the worker cannot be reached; its ``backend_id`` is *backend_id*.
         VersionMismatch: the worker differs from core; the message names every difference.
     """
     global _handshake_done
@@ -156,8 +201,10 @@ def ensure_handshake(worker_url: str) -> None:
         if differences:
             raise VersionMismatch(f"The worker at {worker_url} does not match core ({'; '.join(differences)})")
         probe_plugins(worker_url, core, worker)
-    except BaseException:
+    except BaseException as e:
         _handshake_done = False
+        if isinstance(e, ComputeUnavailable) and e.backend_id is None:
+            e.backend_id = backend_id
         raise
 
 

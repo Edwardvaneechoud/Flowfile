@@ -34,6 +34,13 @@ NO_HEADER_VALUES = pytest.mark.parametrize(
     ["row-token\n", "row-token\r\n", "row-token\x00", "row-token\u20ac"],
     ids=["line-feed", "crlf", "nul", "beyond-latin-1"],
 )
+OLDER_ANSWER = {
+    **local_capabilities().model_dump(
+        mode="json", exclude={"operations", "read_schemes", "write_schemes", "credential_resolution"}
+    ),
+    "app_version": "0.23.0",
+}
+"""The capabilities of a worker built before it declared its operations, schemes and credential resolution."""
 
 
 def free_port() -> int:
@@ -85,10 +92,13 @@ def no_configured_backends() -> Iterator[None]:
 
 @pytest.fixture
 def fake_worker() -> Iterator[Callable[..., str]]:
-    """Start a worker that answers its capabilities only to ``token``, as this process's with ``changes``; its URL."""
+    """Start a worker that answers its capabilities only to ``token``, as this process's with ``changes``; its URL.
+
+    Given ``answer``, the worker answers that instead, as it is.
+    """
     servers: list[tuple[uvicorn.Server, threading.Thread]] = []
 
-    def start(token: str, **changes) -> str:
+    def start(token: str, *, answer: dict | None = None, **changes) -> str:
         reported = local_capabilities().model_copy(update=changes)
         app = FastAPI()
 
@@ -97,7 +107,7 @@ def fake_worker() -> Iterator[Callable[..., str]]:
         def capabilities(request: Request) -> dict:
             if request.headers.get("X-Flowfile-Internal") != token:
                 raise HTTPException(status_code=401, detail="Invalid or missing internal token")
-            return reported.model_dump(mode="json")
+            return reported.model_dump(mode="json") if answer is None else answer
 
         port = free_port()
         server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
@@ -169,6 +179,15 @@ def test_a_bad_name_or_url_is_refused(admin_client, name, url):
     assert admin_client.get(ROUTE).json() == []
 
 
+def test_a_body_that_fails_validation_is_answered_without_its_input(admin_client):
+    response = admin_client.post(ROUTE, json={"name": "team", "token": "row-token"})
+
+    assert response.status_code == 422, response.text
+    assert response.json() == {"detail": [{"type": "missing", "loc": ["body", "url"], "msg": "Field required"}]}
+    assert "row-token" not in response.text
+    assert admin_client.get(ROUTE).json() == []
+
+
 @NO_HEADER_VALUES
 def test_a_token_that_is_no_header_value_is_refused_naming_the_rule_never_the_token(admin_client, flag, token):
     response = add(admin_client, "http://team-worker.test:63579", token=token)
@@ -222,6 +241,35 @@ def test_a_worker_on_other_versions_fails_the_handshake_naming_both_sides(admin_
     assert verdict["error"] is None
 
 
+def test_a_worker_of_an_earlier_release_fails_the_handshake_naming_both_app_versions(admin_client, fake_worker, flag):
+    url = fake_worker("row-token", answer=OLDER_ANSWER)
+    add(admin_client, url)
+
+    verdict = handshake(admin_client)
+
+    assert verdict["ok"] is False
+    assert verdict["worker"] is None
+    assert verdict["differences"] == []
+    assert verdict["error"] == (
+        f"The worker at {url} does not match core (app_version: core {local_capabilities().app_version}, "
+        "worker 0.23.0): its capabilities answer is not one this release reads (credential_resolution: Field required)"
+    )
+
+
+def test_a_url_that_is_no_worker_fails_the_handshake_as_unavailable(admin_client, fake_worker, flag):
+    url = fake_worker("row-token", answer={"status": "ok"})
+    add(admin_client, url)
+
+    verdict = handshake(admin_client)
+
+    assert verdict["ok"] is False
+    assert verdict["worker"] is None
+    assert verdict["differences"] == []
+    assert verdict["error"] == (
+        f"The server at {url} is not a Flowfile worker: its capabilities answer carries no app_version"
+    )
+
+
 def test_a_worker_that_refuses_the_rows_token_fails_the_handshake_naming_401(admin_client, fake_worker, flag):
     add(admin_client, fake_worker("another-token"))
 
@@ -242,6 +290,7 @@ def test_a_worker_out_of_reach_fails_the_handshake_naming_it(admin_client, flag)
     assert verdict["ok"] is False
     assert verdict["worker"] is None
     assert verdict["error"].startswith(f"Could not reach the worker at {url}")
+    assert verdict["error"].endswith('Is backend "worker:team" running? Start it, or check the Backends page.')
 
 
 def test_a_removed_worker_is_gone_from_the_list_and_the_registry(admin_client, fake_worker):

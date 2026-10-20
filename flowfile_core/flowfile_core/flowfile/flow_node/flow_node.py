@@ -11,7 +11,7 @@ from typing import Any, Literal, Optional
 import polars as pl
 import pyarrow as pa
 
-from flowfile_core.configs import logger, node_store
+from flowfile_core.configs import logger, node_store, settings
 from flowfile_core.configs.flow_logger import NodeLogger
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
@@ -2309,7 +2309,10 @@ class FlowNode:
         source of truth), so this run's later previews carry them too; the
         return value is that column's ordinary ``FileColumn`` representation.
         The aggregate runs on ``backend``, by default the current execution
-        context's: outside a run that is the default backend, not the flow's,
+        context's. With ``FLOWFILE_COMPUTE_PROTOCOL`` on that is read in the
+        context of the node's graph: the run's during a run, the flow's own
+        outside one, and the default backend only for a node with no graph.
+        With it off, outside a run it is the default backend, not the flow's,
         so with the worker configured a locally-run node's result (its full
         upstream plan) is aggregated on the worker, and in core only when the
         default backend is core's own. Raises ``ColumnStatsUnavailable`` when
@@ -2321,7 +2324,11 @@ class FlowNode:
             return sink[0].get_column_stats(column_name, output_handle=sink[1], backend=backend)
         engine = self.get_cached_result(output_handle)
         if backend is None:
-            backend = current_context().backend
+            if settings.FLOWFILE_COMPUTE_PROTOCOL:
+                with self._in_execution_context():
+                    backend = current_context().backend
+            else:
+                backend = current_context().backend
         stats = compute_column_stats(engine, column_name, backend=backend)
         # compute rebinds the engine's schema list (copy-on-write); follow it on
         # this node so previews via self.schema carry the stats too.

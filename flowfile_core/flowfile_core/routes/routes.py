@@ -2234,10 +2234,11 @@ def get_node_column_stats(
     Runs a single bounded aggregate (counts, uniques, min/max) over the result
     the last run left behind — it never re-executes the node — and returns the
     column's updated ``FileColumn``, the same shape ``table_schema`` ships.
-    The aggregate runs on the default compute backend, whatever the flow's
-    location (``FlowNode.get_column_stats``): on the worker whenever one is
-    configured, so core reads back only the one-row result, and a failure
-    there is a 409, never an in-process collect.
+    With ``FLOWFILE_COMPUTE_PROTOCOL`` on the aggregate runs on the flow's
+    backend, and with it off on the default compute backend whatever the
+    flow's location, the worker whenever one is configured
+    (``FlowNode.get_column_stats``); core reads back only the one-row result,
+    and a failure there is a 409, never an in-process collect.
     Query parameters (not path segments): column names contain ``/`` and ``.``.
     """
     flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")

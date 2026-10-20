@@ -9,6 +9,7 @@ import ipaddress
 import json
 import logging
 import os
+import socket
 import ssl
 import threading
 import time
@@ -16,9 +17,11 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from multiprocessing import Queue
 from pathlib import Path
+from types import SimpleNamespace
 
 import polars as pl
 import pytest
+import requests
 from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 from polars.testing import assert_frame_equal
@@ -468,6 +471,30 @@ def test_an_export_whose_sink_fails_is_500_with_the_childs_error(held):
     assert client.head(f"/v1/results/{result_id}").status_code == 200
 
 
+def test_a_failed_export_logs_its_target_without_the_query(monkeypatch):
+    shipped = []
+
+    def post(url, **kwargs):
+        shipped.append(kwargs["json"]["log_message"])
+        return SimpleNamespace(status_code=200, text="")
+
+    monkeypatch.setattr(requests, "post", post)
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        target = f"https://127.0.0.1:{probe.getsockname()[1]}/bucket/out.parquet"
+    query = "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=minio%2F20261020&X-Amz-Signature=5e22signature"
+    progress, error_message = mp_context.Value("i", 0), mp_context.Array("c", 1024)
+
+    funcs.export_result(
+        _plan().serialize(), progress, error_message, Queue(), "", FLOW_ID, NODE_ID, f"{target}?{query}", None
+    )
+
+    assert progress.value == -1
+    [line] = [message for message in shipped if "Error during export" in message]
+    assert target in line
+    assert "X-Amz-Signature" not in line
+
+
 def test_import_holds_a_deferred_result_over_the_uri_with_the_given_columns_and_count(held, monkeypatch, tmp_path):
     result_id = held()
     plan = _plan()
@@ -509,6 +536,32 @@ def test_import_under_a_held_id_replaces_it(held, tmp_path):
     assert not os.path.exists(stored_file)
 
 
+def test_an_import_whose_catalog_cannot_be_read_is_the_500_of_a_failed_export(held, monkeypatch, tmp_path):
+    import shared.database
+
+    def unreadable(connection_id):
+        raise RuntimeError("the catalog is gone")
+
+    monkeypatch.setattr(shared.database, "cloud_connection_record", unreadable)
+    result_id = held()
+    body = {
+        "uri": file_uri(tmp_path / "in.parquet"),
+        "columns": [],
+        "credential": {"connection_id": 3, "user_id": 1},
+    }
+
+    response = client.post(f"/v1/results/{result_id}/import", json=body)
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == {
+        "status": "Error",
+        "error_message": "CredentialResolutionError: Could not read cloud connection 3 (user 1) from the catalog "
+        "database: RuntimeError",
+        "error_kind": "task",
+    }
+    assert client.head(f"/v1/results/{result_id}").status_code == 404
+
+
 @pytest.mark.parametrize(
     ("route", "body"),
     [
@@ -521,6 +574,15 @@ def test_import_under_a_held_id_replaces_it(held, tmp_path):
             {"uri": "file:///in.blob", "columns": [], "kind": "blob", "credential": {"connection_id": 1, "user_id": 1}},
         ),
         ("import", {"uri": "file:///in.blob", "columns": [{"name": "a", "data_type": "Int64"}], "kind": "blob"}),
+        (
+            "import",
+            {
+                "uri": "https://minio.test/bucket/in.blob?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=5e22signature",
+                "columns": [],
+                "kind": "blob",
+                "credential": {"connection_id": 1, "user_id": 1},
+            },
+        ),
     ],
     ids=[
         "export-unknown-field",
@@ -529,6 +591,7 @@ def test_import_under_a_held_id_replaces_it(held, tmp_path):
         "import-no-columns",
         "import-blob-credential",
         "import-blob-columns",
+        "import-presigned-blob-credential",
     ],
 )
 def test_a_bad_export_or_import_body_is_422(held, route, body):
@@ -537,6 +600,8 @@ def test_a_bad_export_or_import_body_is_422(held, route, body):
     response = client.post(f"/v1/results/{result_id}/{route}", json=body)
 
     assert response.status_code == 422
+    assert all("input" not in error for error in response.json()["detail"])
+    assert "X-Amz-Signature" not in response.text
     assert client.head(f"/v1/results/{result_id}").status_code == 404
 
 
@@ -744,7 +809,7 @@ def test_a_failed_blob_transfer_is_500_and_names_no_signature(held, presign, tmp
     tampered = url("put_object", "model.bin").replace("X-Amz-Signature=", "X-Amz-Signature=00")
     missing = held()
 
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.INFO), caplog.at_level(logging.DEBUG, logger="urllib3.connectionpool"):
         refused = client.post(f"/v1/results/{fitted}/export", json={"uri": tampered})
         not_found = client.post(f"/v1/results/{missing}/import", json=_blob_body(url("get_object", "missing.bin")))
 
@@ -899,6 +964,46 @@ def test_a_finished_job_cannot_be_cancelled(held):
     _submit(result_id, _plan())
 
     assert client.post(f"/v1/jobs/{result_id}/cancel").status_code == 404
+
+
+@pytest.mark.parametrize("held_at", ["child", "in_process"])
+def test_a_cancel_posted_while_a_submit_is_starting_stops_it_when_it_starts(held, monkeypatch, held_at):
+    """The submit is held in ``Starting`` before its child spawns, or before its columns are resolved in process."""
+    result_id = held()
+    if held_at == "child":
+        meta, name, real = _meta(result_id, must_materialise=True), "start_process", protocol_routes.start_process
+    else:
+        meta, name, real = _meta(result_id), "_load_plan", protocol_routes._load_plan
+    go = threading.Event()
+
+    def held_back(*args, **kwargs):
+        go.wait(30)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(protocol_routes, name, held_back)
+    answers = []
+    submit = threading.Thread(target=lambda: answers.append(_post(_plan().serialize(), meta)))
+    submit.start()
+    try:
+        deadline = time.monotonic() + 30
+        while (job := client.get(f"/v1/jobs/{result_id}")).status_code != 200 or job.json()["status"] != "Starting":
+            assert time.monotonic() < deadline, "the submit never registered its job"
+            time.sleep(0.01)
+
+        cancel = client.post(f"/v1/jobs/{result_id}/cancel")
+
+        assert cancel.status_code == 200, cancel.text
+        job = client.get(f"/v1/jobs/{result_id}").json()
+        assert job["status"] == "Cancelled"
+        models.Status.model_validate(job)
+    finally:
+        go.set()
+        submit.join(60)
+    [response] = answers
+    assert response.status_code == 500
+    assert response.json()["detail"]["status"] == "Cancelled"
+    assert client.head(f"/v1/results/{result_id}").status_code == 404
+    assert not result_path(FLOW_ID, result_id).exists()
 
 
 def _ws_submit(plan: bytes, meta: str) -> tuple[list[dict], dict, int]:

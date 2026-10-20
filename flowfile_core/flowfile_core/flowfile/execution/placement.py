@@ -6,9 +6,18 @@ writes, the plugins its work loads and, for a node on a notebook kernel, ``file`
 because the kernel shared volume is a local-disk location on core's host. A Train Model node that publishes its model
 and an Apply Model node that takes one from the catalog also need the scheme the artifact store's bytes travel by:
 ``file`` for the filesystem store, ``https`` for the S3 store's presigned URLs. A node whose backend falls short is a
-``Refusal`` with the reasons in words. Stored connections are not compared: every backend resolves one with the master
-key it holds. A Run Flow node is placed with the flow it runs: that flow is built for the call, the nodes its run would
-run are placed on the node's backend by the same policy, and each of them refused there refuses the Run Flow node.
+``Refusal`` with the reasons in words. Stored connections are compared only on a backend whose
+``credential_resolution`` is ``ambient``, a compute that reaches storage with its own identity and holds no catalog: a
+cloud reader or writer, and a catalog reader or writer over an object-storage namespace, is refused there for each
+stored connection it names whose ``auth_method`` is not one a plan leaves to the executor's environment
+(``_AMBIENT_AUTH_METHODS``). A backend declaring ``master_key`` or ``vended`` resolves a stored connection itself. A Run
+Flow node is placed with the flow it runs: that flow is built for the call, the nodes its run would run are placed on
+the node's backend by the same policy, and each of them refused there refuses the Run Flow node.
+Each node's needs are read from its settings with its flow's parameters in them, as the run puts them there before the
+node runs (``parameter_resolver.node_parameters_resolved``), and the settings are restored after, so a path on
+``${dir}`` is placed by where ``dir`` points; a node that refers to a ``${name}`` its flow does not define claims
+nothing, so the run fails it with the resolver's message, and a node whose needs cannot be read from its resolved
+settings is refused with the error, logged with its traceback.
 
 ``SingleBackendPolicy`` puts a whole run on one backend, except the node types whose builders always run on a backend
 of their own. ``MixedPlacementPolicy`` puts each node on the backend its own ``execution_location`` names, and ``place``
@@ -19,6 +28,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Mapping
+from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -27,6 +37,7 @@ from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.storage_backend import CatalogStorageTarget, locate_for_namespace
 from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.flowfile.database_connection_manager import db_connections
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_node.requirements import NodeRequirements, requirements_for
 from flowfile_core.flowfile.param_types import coerce_param_value, stringify_param_value
@@ -43,6 +54,12 @@ _PINNED_BACKENDS: dict[str, str] = {
 }
 """Node type -> the backend its builder runs it on whatever the flow's: the Google Analytics reader
 (``builders/connectors.py``) runs on the worker, since core's backend reads no Google Analytics."""
+
+_AMBIENT_AUTH_METHODS = frozenset({"env_vars", "managed_identity"})
+"""The stored-connection methods a backend reaching storage with its own identity can serve: a plan of one carries no
+credential provider, the executor's environment supplying the credentials (``CloudStorageReader.get_read_credentials``),
+where every other method puts a ``CredentialRefProvider`` in the plan, which only a process holding the catalog and the
+master key resolves."""
 
 
 @dataclass(frozen=True)
@@ -122,12 +139,23 @@ def place(
 
     ``backends`` holds the capabilities in hand of the backends the policy names for them. A node whose backend is not
     among them (one that could not be asked) is neither assigned nor refused: reaching a backend is the handshake's
-    concern, and the node meets that backend's typed error when it runs. Nothing is asked of a backend; the three
+    concern, and the node meets that backend's typed error when it runs. Nothing is asked of a backend; the four
     lookups are where a catalog reader's or writer's namespace keeps its tables (``locate_for_namespace``, which reads
     the namespace row and no credential), for a Train or Apply Model node, the kind of the artifact store
     (``artifacts.get_storage_backend``, whose only side effect is making the store the first time: the filesystem store
-    makes its two folders, the S3 store a client) and, for a Run Flow node, the flow it runs (``_child_refusals``: its
-    registration and its file, built for the call).
+    makes its two folders, the S3 store a client), for a Run Flow node, the flow it runs (``_child_refusals``: its
+    registration and its file, built for the call) and, only on a backend whose ``credential_resolution`` is
+    ``ambient``, the ``auth_method`` of each stored connection a cloud or catalog node names
+    (``_unresolvable_connections``, which reads the connection's row and decrypts nothing).
+
+    Each node's needs are read with its flow's parameters in its settings, as the run puts them there before the node
+    runs (``node_parameters_resolved``), and the settings are restored once they are read. A node that refers to a
+    ``${name}`` its flow does not define is assigned and claims nothing, its needs being unknown rather than unmet, so
+    the run fails it with the resolver's message, as it would unplaced. A node whose needs cannot be read from its
+    resolved settings, whatever ``_catalog_target`` or ``requirements_for`` raises (a cloud path that is the whole
+    ``${n}`` of an integer parameter, a fault in either, a catalog database error), is refused with the error's class
+    and message, and a warning with the traceback goes to core's log: its needs were not checked, so it is not sent to
+    a backend that may not meet them.
 
     ``boundaries`` lists, in the order of ``nodes``, each pair of a node and an input of it assigned to another backend,
     once; an edge with an end that is not assigned is none.
@@ -141,11 +169,34 @@ def place(
         if capabilities is None:
             continue
         assignment[node.node_id] = backend_id
-        target, namespace = _catalog_target(node)
-        requirements = requirements_for(
-            node.node_template, node.setting_input, catalog_target=target, artifact_scheme=_artifact_scheme(node)
-        )
-        reasons = _unmet(requirements, capabilities, namespace)
+        with ExitStack() as resolved:
+            try:
+                resolved.enter_context(node_parameters_resolved(node))
+            except ValueError:
+                continue
+            artifact_scheme = _artifact_scheme(node)
+            try:
+                target, namespace, namespace_id = _catalog_target(node)
+                requirements = requirements_for(
+                    node.node_template, node.setting_input, catalog_target=target, artifact_scheme=artifact_scheme
+                )
+            except Exception as e:
+                reason = (
+                    f"its settings could not be checked with the flow's parameters filled in ({type(e).__name__}: {e})"
+                )
+                logger.warning(
+                    'Node %s of flow %s is refused on backend "%s": %s',
+                    node.node_id,
+                    flow.flow_id,
+                    backend_id,
+                    reason,
+                    exc_info=True,
+                )
+                refusals.append(Refusal(node_id=node.node_id, backend_id=backend_id, reason=reason))
+                continue
+        reasons = _unmet(requirements, capabilities, namespace, artifact_scheme)
+        if capabilities.credential_resolution == "ambient":
+            reasons += _unresolvable_connections(node, requirements.credentials, namespace_id)
         if isinstance(node.setting_input, input_schema.NodeRunFlow):
             reasons += _child_refusals(flow, node, backend_id, backends, policy)
         if reasons:
@@ -163,10 +214,14 @@ def place(
     return Placement(assignment=assignment, boundaries=boundaries, refusals=refusals)
 
 
-def _unmet(requirements: NodeRequirements, capabilities: Capabilities, namespace: str | None) -> list[str]:
+def _unmet(
+    requirements: NodeRequirements, capabilities: Capabilities, namespace: str | None, artifact_scheme: str | None
+) -> list[str]:
     """What ``requirements`` ask that ``capabilities`` do not offer, one phrase each.
 
-    A catalog node (``namespace`` named) on a backend without ``file`` is refused for its namespace's local disk.
+    A catalog node (``namespace`` named) on a backend without ``file`` is refused for its namespace's local disk. A
+    model node (``artifact_scheme`` named) short of the artifact store's scheme is refused for the store: the publish
+    of a Train Model node, the fetch of an Apply Model node, on local disk for the filesystem store.
     """
     reasons = []
     operation = requirements.operation
@@ -181,6 +236,12 @@ def _unmet(requirements: NodeRequirements, capabilities: Capabilities, namespace
             reasons.append(
                 f'namespace "{namespace}" is on local disk; remote execution needs an object-storage namespace'
             )
+        elif artifact_scheme is not None and artifact_scheme in missing:
+            store = f"it {'publishes its model to' if verb == 'write' else 'fetches its model from'} the artifact store"
+            if artifact_scheme == "file":
+                reasons.append(f"{store}, which is on local disk; remote execution needs the S3 artifact store")
+            else:
+                reasons.append(f"{store} over {artifact_scheme}, which this backend does not {verb}")
         elif missing:
             reasons.append(f"it {verb}s storage this backend does not {verb}: {', '.join(sorted(missing))}")
     missing_plugins = requirements.plugins - capabilities.plugins.keys()
@@ -191,6 +252,35 @@ def _unmet(requirements: NodeRequirements, capabilities: Capabilities, namespace
             "it runs on a notebook kernel, which reads its inputs from the kernel shared volume on core's host, "
             "where this backend does not write"
         )
+    return reasons
+
+
+def _unresolvable_connections(node: FlowNode, credentials: frozenset[str], namespace_id: int | None) -> list[str]:
+    """One phrase per stored connection of ``node`` a backend reaching storage with its own identity cannot resolve.
+
+    A cloud reader's or writer's connection is looked up for the node's user, a catalog reader's or writer's namespace
+    connection for the catalog's owner, as each resolves it when it runs; the lookup is ``get_cloud_connection``'s row
+    and its ``auth_method``, nothing decrypted. A name with no row claims nothing, so the node fails when it runs with
+    its own message. Any other node's connections (a database, Kafka or Google Analytics connection) are not compared.
+    """
+    settings = node.setting_input
+    cloud = isinstance(settings, input_schema.NodeCloudStorageReader | input_schema.NodeCloudStorageWriter)
+    catalog = isinstance(settings, input_schema.NodeCatalogReader | input_schema.NodeCatalogWriter)
+    if not credentials or not (cloud or catalog):
+        return []
+    reasons = []
+    with get_db_context() as db:
+        if cloud:
+            user_id = settings.user_id
+        else:
+            user_id = SQLAlchemyCatalogRepository(db).get_root_namespace(namespace_id).owner_id
+        for name in sorted(credentials):
+            row = db_connections.get_cloud_connection(db, name, user_id)
+            if row is not None and row.auth_method not in _AMBIENT_AUTH_METHODS:
+                reasons.append(
+                    f'connection "{name}" uses {row.auth_method}, which this backend cannot resolve; it reaches '
+                    "storage with its own identity, as env_vars and managed_identity connections do"
+                )
     return reasons
 
 
@@ -308,14 +398,15 @@ def _artifact_scheme(node: FlowNode) -> str | None:
     return "https" if isinstance(store, S3Storage) else "file"
 
 
-def _catalog_target(node: FlowNode) -> tuple[CatalogStorageTarget | None, str | None]:
-    """Where a catalog writer's or reader's namespace keeps its tables, and the namespace's name; else ``(None, None)``.
+def _catalog_target(node: FlowNode) -> tuple[CatalogStorageTarget | None, str | None, int | None]:
+    """Where a catalog writer's or reader's namespace keeps its tables, the namespace's name and its id.
 
-    A writer's namespace is the one its ``namespace_full_name`` names, else its ``namespace_id``, as the writer resolves
-    it; with neither, its tables go to the local catalog tables directory of the default namespace. A reader's is its
-    ``catalog_namespace_id``; a reader without one (a SQL reader, or a table picked with no namespace) claims no
-    storage, its table's namespace being unknown here. A namespace whose storage cannot be located (an object-storage
-    root without a connection) answers no target either, so the node fails when it runs, as it would unplaced.
+    ``(None, None, None)`` for any other node. A writer's namespace is the one its ``namespace_full_name`` names, else
+    its ``namespace_id``, as the writer resolves it; with neither, its tables go to the local catalog tables directory
+    of the default namespace. A reader's is its ``catalog_namespace_id``; a reader without one (a SQL reader, or a
+    table picked with no namespace) claims no storage, its table's namespace being unknown here. A namespace whose
+    storage cannot be located (an object-storage root without a connection) answers no target either, so the node
+    fails when it runs, as it would unplaced.
     """
     settings = node.setting_input
     if isinstance(settings, input_schema.NodeCatalogWriter):
@@ -331,9 +422,9 @@ def _catalog_target(node: FlowNode) -> tuple[CatalogStorageTarget | None, str | 
         with get_db_context() as db:
             name = CatalogService(SQLAlchemyCatalogRepository(db)).resolve_namespace_full_name(namespace_id)
     else:
-        return None, None
+        return None, None, None
     try:
         target = locate_for_namespace(namespace_id)
     except ValueError:
-        return None, None
-    return target, name or ("default" if namespace_id is None else str(namespace_id))
+        return None, None, None
+    return target, name or ("default" if namespace_id is None else str(namespace_id)), namespace_id

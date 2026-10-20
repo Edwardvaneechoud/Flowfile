@@ -3,35 +3,49 @@
 With the compute protocol flag on, ``run_graph`` places the nodes it will run, each on the run's backend, the model
 nodes included, and compares what each needs with the ``Capabilities`` that backend declares; a model that crosses the
 artifact store needs the store's scheme, and a Run Flow node is refused for what a node the flow it runs would run
-needs, while one whose flow cannot be built fails when it runs. A refused node is a failed row on the run report
+needs, while one whose flow cannot be built fails when it runs. A node's settings are read with its flow's parameters
+in them, so a path on a parameter is placed by where it points; a node that refers to a parameter its flow does not
+define is not refused but fails when it runs, and one whose settings cannot be checked with the parameters in them is
+refused with the error. A refused node is a failed row on the run report
 naming the backend and the reason; no node runs and the backend is sent no work. A backend that cannot be asked for
 its capabilities is not in the map placement is given: its nodes are not refused and meet its typed error when they
 run. The backends here are core's own under another id, declaring what each test hands them, so no worker is needed.
-With the flag off nothing is placed.
+With the flag off nothing is placed. A backend that reaches storage with its own identity (``credential_resolution``
+``ambient``) is refused a cloud or catalog node for each stored connection it names of any method but ``env_vars`` and
+``managed_identity``, which a plan leaves to the executor's environment.
 
 A row's ``compute_error`` says what kind of failure it is: ``"Refusal"`` on a refused row, the class name of the typed
 compute error that failed a node on that node's row, in both flag states, and ``None`` for any other failure.
 """
 
 import threading
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import polars as pl
 import pytest
+from pydantic import SecretStr
+from sqlalchemy.exc import OperationalError
 
 from flowfile_core.artifacts import reset_storage_backend
 from flowfile_core.configs import logger, settings
+from flowfile_core.database.connection import get_db_context
+from flowfile_core.flowfile.database_connection_manager import db_connections
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, VersionMismatch
-from flowfile_core.flowfile.execution.placement import Placement, Refusal, SingleBackendPolicy, place
+from flowfile_core.flowfile.execution.placement import Placement, Refusal, SingleBackendPolicy, _catalog_target, place
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
+from flowfile_core.flowfile.flow_node.flow_node import schema_prefetch_blocked
+from flowfile_core.flowfile.flow_node.requirements import requirements_for
 from flowfile_core.schemas import input_schema, schemas, transform_schema
+from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings, FullCloudStorageConnection
 from shared.compute_protocol import Capabilities
 from tests import test_run_flow_node
 from tests.flowfile.conftest import add_test_catalog_writer, create_test_namespace
+from tests.test_catalog_cloud_virtual import _create_cloud_schema, _ensure_connection
 
 BACKEND_ID = "declaring"
 LOCAL_DISK = 'namespace "TestCat.TestSch" is on local disk; remote execution needs an object-storage namespace'
@@ -40,6 +54,11 @@ LOCAL_DISK = 'namespace "TestCat.TestSch" is on local disk; remote execution nee
 def everything() -> Capabilities:
     """What core's own backend declares: its fifteen operations, ``file`` and object storage, every plugin."""
     return LocalBackend().capabilities()
+
+
+def ambient() -> Capabilities:
+    """``everything()`` on a compute that reaches storage with its own identity, as a cluster does."""
+    return everything().model_copy(update={"credential_resolution": "ambient"})
 
 
 def without(capabilities: Capabilities, *, operation=None, scheme=None, plugin=None) -> Capabilities:
@@ -284,7 +303,8 @@ def register_gated_child(
 def assert_refused_before_any_node(
     graph: FlowGraph, run_info, backend: DeclaringBackend, refused: dict[int, list[str]]
 ):
-    """The run failed with exactly ``refused`` (node id -> phrases its error holds) and nothing ran or holds the run."""
+    """The run failed with exactly ``refused`` (node id -> phrases its error holds), nothing ran or holds the run, and
+    its flow log holds the refusal and no completion."""
     errors = {result.node_id: result.error for result in run_info.node_step_result}
     assert errors.keys() == refused.keys(), errors
     for node_id, phrases in refused.items():
@@ -298,6 +318,9 @@ def assert_refused_before_any_node(
     assert run_info.is_running is False
     assert graph.flow_settings.is_running is False
     assert backend.work == []
+    flow_log = Path(graph.flow_logger.log_file_path).read_text()
+    assert "no node was started" in flow_log, flow_log
+    assert "Flow completed!" not in flow_log, flow_log
 
 
 def test_a_catalog_write_to_a_local_disk_namespace_is_refused_on_a_backend_without_local_files(
@@ -561,6 +584,7 @@ def test_a_flow_its_backend_can_run_runs_as_it_does_unplaced(declare, monkeypatc
 
         assert run_info.success is True, [result.error for result in run_info.node_step_result]
         assert run_info.nodes_completed == 3
+        assert "Flow completed!" in Path(graph.flow_logger.log_file_path).read_text()
         rows[flag] = graph.get_node(3).get_resulting_data().collect().sort(pl.all()).rows()
     assert rows[True] == rows[False]
     assert len(rows[True]) == 3
@@ -688,8 +712,14 @@ def test_a_model_published_to_or_fetched_from_a_filesystem_store_is_refused_off_
         run_info,
         backend,
         {
-            2: ["it writes storage this backend does not write: file"],
-            3: ["it reads storage this backend does not read: file"],
+            2: [
+                "it publishes its model to the artifact store, which is on local disk; "
+                "remote execution needs the S3 artifact store"
+            ],
+            3: [
+                "it fetches its model from the artifact store, which is on local disk; "
+                "remote execution needs the S3 artifact store"
+            ],
         },
     )
     assert not any("operation" in result.error for result in run_info.node_step_result)
@@ -730,8 +760,12 @@ def test_an_s3_artifact_store_needs_https_where_a_model_crosses_it(s3_artifact_s
     without_file = place(graph, {BACKEND_ID: without(everything(), scheme="file")}, policy)
 
     assert without_https.refusals == [
-        Refusal(2, BACKEND_ID, "it writes storage this backend does not write: https"),
-        Refusal(3, BACKEND_ID, "it reads storage this backend does not read: https"),
+        Refusal(
+            2, BACKEND_ID, "it publishes its model to the artifact store over https, which this backend does not write"
+        ),
+        Refusal(
+            3, BACKEND_ID, "it fetches its model from the artifact store over https, which this backend does not read"
+        ),
     ]
     assert without_file.refusals == []
 
@@ -780,6 +814,16 @@ def url_read_flow(flow_id: int, url: str) -> FlowGraph:
     return graph
 
 
+def parameter_read_flow(flow_id: int, path: str, dir_value: str) -> FlowGraph:
+    """Read node 1 over the CSV at ``path``, in a flow whose string parameter ``dir`` is ``dir_value``."""
+    graph = make_graph(flow_id)
+    graph.flow_settings.parameters = [schemas.FlowParameter(name="dir", default_value=dir_value, type="string")]
+    add_promise(graph, 1, "read")
+    received = input_schema.ReceivedTable(path=path, file_type="csv", table_settings={"encoding": "utf-8"})
+    graph.add_read(input_schema.NodeRead(flow_id=flow_id, node_id=1, received_file=received))
+    return graph
+
+
 def test_a_read_from_a_url_is_refused_on_a_backend_that_does_not_read_its_scheme(protocol_on, declare, csv_url):
     backend = declare(without(everything(), scheme="http"))
     graph = url_read_flow(8432, csv_url)
@@ -800,3 +844,240 @@ def test_a_read_from_a_url_runs_on_a_backend_that_reads_its_scheme(declare, monk
     assert run_info.success is True, [result.error for result in run_info.node_step_result]
     assert graph.get_node(1).get_resulting_data().collect().rows() == [(1, "a"), (2, "b"), (3, "c")]
     assert backend.work == ["submit 1"]
+
+
+def cannot_resolve(name: str, method: str) -> str:
+    """The reason a backend that reaches storage with its own identity is refused a stored connection of ``method``."""
+    return (
+        f'connection "{name}" uses {method}, which this backend cannot resolve; '
+        "it reaches storage with its own identity, as env_vars and managed_identity connections do"
+    )
+
+
+@pytest.fixture
+def stored_connection():
+    """``stored_connection(auth_method)`` stores an S3 connection of that method for user 1 and answers its name.
+
+    Each is deleted after the test; nothing reaches its endpoint.
+    """
+    names: list[str] = []
+
+    def store(auth_method: str) -> str:
+        name = f"placement {auth_method} {uuid.uuid4().hex[:6]}"
+        keys = (
+            {"aws_access_key_id": "AKIDPLACEMENT", "aws_secret_access_key": SecretStr("placement")}
+            if auth_method == "access_key"
+            else {}
+        )
+        connection = FullCloudStorageConnection(
+            connection_name=name,
+            storage_type="s3",
+            auth_method=auth_method,
+            aws_region="us-east-1",
+            endpoint_url="http://localhost:9000",
+            aws_allow_unsafe_html=True,
+            **keys,
+        )
+        with get_db_context() as db:
+            db_connections.store_cloud_connection(db, connection, user_id=1)
+        names.append(name)
+        return name
+
+    yield store
+    with get_db_context() as db:
+        for name in names:
+            db_connections.delete_cloud_connection(db, name, user_id=1)
+
+
+def add_cloud_reader(graph: FlowGraph, node_id: int, connection_name: str | None) -> None:
+    """A cloud storage reader of user 1 over a parquet file, through ``connection_name`` (``None``: no connection).
+
+    Built with the start node's schema prefetch blocked: the prefetch would take the read's schema from the graph's
+    backend in a thread of its own, so building the reader sends no backend anything.
+    """
+    add_promise(graph, node_id, "cloud_storage_reader")
+    token = schema_prefetch_blocked.set(True)
+    try:
+        graph.add_cloud_storage_reader(
+            input_schema.NodeCloudStorageReader(
+                flow_id=graph.flow_id,
+                node_id=node_id,
+                user_id=1,
+                cloud_storage_settings=CloudStorageReadSettings(
+                    connection_name=connection_name, resource_path="s3://placement-bucket/data.parquet"
+                ),
+            )
+        )
+    finally:
+        schema_prefetch_blocked.reset(token)
+
+
+def test_a_cloud_read_of_an_access_key_connection_is_refused_on_an_ambient_backend(
+    protocol_on, declare, stored_connection
+):
+    backend = declare(ambient())
+    name = stored_connection("access_key")
+    graph = make_graph(8438)
+    add_cloud_reader(graph, 1, name)
+
+    run_info = graph.run_graph()
+
+    assert_refused_before_any_node(graph, run_info, backend, {1: [cannot_resolve(name, "access_key")]})
+
+
+def test_an_ambient_backend_is_refused_no_connection_of_its_own_identity_and_a_master_key_one_looks_none_up(
+    stored_connection, monkeypatch
+):
+    env_vars = stored_connection("env_vars")
+    access_key = stored_connection("access_key")
+    graph = make_graph(8439)
+    add_cloud_reader(graph, 1, env_vars)
+    add_cloud_reader(graph, 2, None)
+    add_cloud_reader(graph, 3, access_key)
+    policy = SingleBackendPolicy(BACKEND_ID)
+
+    on_ambient = place(graph, {BACKEND_ID: ambient()}, policy)
+
+    assert on_ambient.refusals == [Refusal(3, BACKEND_ID, cannot_resolve(access_key, "access_key"))]
+
+    def no_lookup(*args, **kwargs):
+        raise AssertionError("a backend that resolves a stored connection itself is placed without looking one up")
+
+    monkeypatch.setattr(db_connections, "get_cloud_connection", no_lookup)
+
+    on_master_key = place(graph, {BACKEND_ID: everything()}, policy)
+
+    assert on_master_key == Placement(
+        assignment={1: BACKEND_ID, 2: BACKEND_ID, 3: BACKEND_ID}, boundaries=[], refusals=[]
+    )
+
+
+def test_a_catalog_node_over_an_object_storage_namespace_is_refused_on_an_ambient_backend_for_its_connection(
+    catalog_clean_state,
+):
+    _ensure_connection()
+    graph = make_graph(8440)
+    add_manual_input(graph, 1, [{"id": 1, "name": "ada"}])
+    add_test_catalog_writer(
+        graph,
+        node_id=2,
+        depending_on_id=1,
+        table_name="dim",
+        namespace_id=_create_cloud_schema("s3://flowfile-test/placement"),
+    )
+
+    placement = place(graph, {BACKEND_ID: ambient()}, SingleBackendPolicy(BACKEND_ID))
+
+    assert placement.refusals == [Refusal(2, BACKEND_ID, cannot_resolve("catalog-cloudvt-minio", "access_key"))]
+
+
+@pytest.mark.parametrize(
+    ("flow_id", "directory", "refusals"),
+    [
+        (8444, "s3://bucket/prefix", []),
+        (8445, None, [Refusal(1, BACKEND_ID, "it reads storage this backend does not read: file")]),
+    ],
+    ids=["object_storage", "local"],
+)
+def test_a_read_on_a_parameter_is_placed_by_the_path_it_resolves_to(tmp_path, flow_id, directory, refusals):
+    graph = parameter_read_flow(flow_id, "${dir}/x.csv", directory or str(tmp_path))
+
+    placement = place(graph, {BACKEND_ID: without(everything(), scheme="file")}, SingleBackendPolicy(BACKEND_ID))
+
+    assert placement == Placement(assignment={1: BACKEND_ID}, boundaries=[], refusals=refusals)
+    assert graph.get_node(1).setting_input.received_file.path == "${dir}/x.csv"
+
+
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+def test_a_read_on_a_parameter_runs_as_it_does_unplaced(declare, monkeypatch, tmp_path, flag):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    backend = declare(everything())
+    (tmp_path / "x.csv").write_text("n,label\n1,a\n2,b\n", encoding="utf-8")
+    graph = parameter_read_flow(8447 if flag else 8446, "${dir}/x.csv", str(tmp_path))
+
+    run_info = graph.run_graph()
+
+    assert run_info.success is True, [result.error for result in run_info.node_step_result]
+    assert graph.get_node(1).get_resulting_data().collect().rows() == [(1, "a"), (2, "b")]
+    assert backend.work == ["submit 1"]
+    assert graph.get_node(1).setting_input.received_file.path == "${dir}/x.csv"
+
+
+def test_a_read_on_a_parameter_its_flow_does_not_define_is_not_refused_and_fails_when_it_runs(
+    protocol_on, declare, tmp_path
+):
+    backend = declare(without(everything(), scheme="file"))
+    graph = parameter_read_flow(8448, "${other}/x.csv", str(tmp_path))
+
+    run_info = graph.run_graph()
+
+    [result] = run_info.node_step_result
+    assert result.node_id == 1
+    assert result.success is False
+    assert "Unresolved parameter references" in result.error, result.error
+    assert result.compute_error is None
+    assert run_info.success is False
+    assert backend.work == []
+    assert "no node was started" not in Path(graph.flow_logger.log_file_path).read_text()
+
+
+def unchecked(error: Exception) -> str:
+    """The reason a node is refused whose needs could not be read from its settings with its flow's parameters in."""
+    return f"its settings could not be checked with the flow's parameters filled in ({type(error).__name__}: {error})"
+
+
+def test_a_cloud_read_on_a_parameter_whose_value_is_no_path_is_refused_before_any_node_starts(protocol_on, declare):
+    backend = declare(everything())
+    graph = make_graph(8449)
+    graph.flow_settings.parameters = [schemas.FlowParameter(name="n", default_value="1", type="integer")]
+    add_promise(graph, 1, "cloud_storage_reader")
+    read = CloudStorageReadSettings(resource_path="${n}", file_format="csv")
+    graph.add_cloud_storage_reader(
+        input_schema.NodeCloudStorageReader(flow_id=8449, node_id=1, cloud_storage_settings=read)
+    )
+
+    run_info = graph.run_graph()
+
+    reason = unchecked(TypeError("argument of type 'int' is not iterable"))
+    assert_refused_before_any_node(graph, run_info, backend, {1: [reason]})
+    assert graph.get_node(1).setting_input.cloud_storage_settings.resource_path == "${n}"
+
+
+@pytest.mark.parametrize(
+    ("flow_id", "derivation", "error"),
+    [
+        (8450, requirements_for, RuntimeError("the derivation failed")),
+        (8451, _catalog_target, OperationalError("SELECT 1", {}, Exception("database is locked"))),
+    ],
+    ids=["requirements_for", "_catalog_target"],
+)
+def test_a_write_whose_needs_cannot_be_read_is_refused_before_any_node_starts_and_writes_nothing(
+    protocol_on, declare, tmp_path, monkeypatch, caplog, flow_id, derivation, error
+):
+    backend = declare(without(everything(), scheme="file"))
+    graph = make_graph(flow_id)
+    add_manual_input(graph, 1, [{"id": 1}, {"id": 2}])
+    add_promise(graph, 2, "output")
+    output = input_schema.OutputSettings(
+        name="out.csv", directory=str(tmp_path), file_type="csv", table_settings=input_schema.OutputCsvTable()
+    )
+    graph.add_output(input_schema.NodeOutput(flow_id=flow_id, node_id=2, output_settings=output))
+    connect(graph, 1, 2)
+
+    def derive(*args, **kwargs):
+        node_settings = args[0].setting_input if derivation is _catalog_target else args[1]
+        if isinstance(node_settings, input_schema.NodeOutput):
+            raise error
+        return derivation(*args, **kwargs)
+
+    monkeypatch.setattr(f"{place.__module__}.{derivation.__name__}", derive)
+    monkeypatch.setattr(logger, "propagate", True)
+
+    run_info = graph.run_graph()
+
+    assert_refused_before_any_node(graph, run_info, backend, {2: [unchecked(error)]})
+    assert not (tmp_path / "out.csv").exists()
+    [warning] = [record for record in caplog.records if record.module == "placement"]
+    assert warning.levelname == "WARNING"
+    assert warning.getMessage() == f'Node 2 of flow {flow_id} is refused on backend "{BACKEND_ID}": {unchecked(error)}'
+    assert warning.exc_info[1] is error

@@ -1,5 +1,6 @@
 """Core checks the worker's versions and plugin libraries before its first worker call, once per process."""
 
+import json
 import socket
 
 import polars as pl
@@ -16,11 +17,28 @@ from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas
 from shared.compute_protocol import EXPRESSION_PLUGINS, local_capabilities
 
-HINT = ". Is the worker running? Start it, or switch the flow to local execution."
+HINT = ". Is the compute backend running? Start it, or check the Backends page."
+TEAM_HINT = '. Is backend "worker:team" running? Start it, or check the Backends page.'
 
 
 WORKER_URL = registry.worker_url()
 """The session worker's URL: the one the registry's worker backend, and so a remote flow, calls."""
+
+OLDER_ANSWER = {
+    **local_capabilities().model_dump(
+        mode="json", exclude={"operations", "read_schemes", "write_schemes", "credential_resolution"}
+    ),
+    "app_version": "0.23.0",
+}
+"""The capabilities of a worker built before it declared its operations, schemes and credential resolution."""
+
+OLDER_RELEASE_REFUSAL = (
+    f"The worker at {WORKER_URL} does not match core (app_version: core {local_capabilities().app_version}, "
+    "worker 0.23.0): its capabilities answer is not one this release reads (credential_resolution: Field required)"
+)
+NO_WORKER_REFUSAL = (
+    f"The server at {WORKER_URL} is not a Flowfile worker: its capabilities answer carries no app_version"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -109,6 +127,19 @@ def closed_port_url() -> str:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     return f"http://127.0.0.1:{port}"
+
+
+@pytest.fixture
+def capabilities_answer(monkeypatch):
+    """Make ``GET /capabilities`` answer 200 with the given body, to the gate and to ``WorkerBackend`` alike."""
+
+    def answer(body: bytes) -> None:
+        response = requests.Response()
+        response.status_code = 200
+        response._content = body
+        monkeypatch.setattr(handshake.requests, "get", lambda url, **kwargs: response)
+
+    return answer
 
 
 def _one_node_remote_graph(flow_id: int):
@@ -332,6 +363,52 @@ def test_worker_without_a_capabilities_route_is_an_older_release():
     assert handshake._handshake_done is False
 
 
+def test_a_worker_of_an_earlier_release_is_refused_naming_both_app_versions(capabilities_answer, sent_to_worker):
+    capabilities_answer(json.dumps(OLDER_ANSWER).encode())
+
+    with pytest.raises(VersionMismatch) as excinfo:
+        handshake.ensure_handshake(WORKER_URL)
+
+    assert str(excinfo.value) == OLDER_RELEASE_REFUSAL
+    assert handshake._handshake_done is False
+    assert sent_to_worker == {"requests": 0, "probe_plans": 0}
+
+
+@pytest.mark.parametrize(
+    "body", [b'{"status": "ok"}', b"<!doctype html><html><body>Welcome</body></html>"], ids=["other-json", "html-page"]
+)
+def test_a_url_that_answers_no_workers_capabilities_is_unavailable(capabilities_answer, body):
+    capabilities_answer(body)
+
+    with pytest.raises(ComputeUnavailable) as excinfo:
+        handshake.ensure_handshake(WORKER_URL, backend_id="worker:team")
+
+    assert str(excinfo.value) == NO_WORKER_REFUSAL
+    assert excinfo.value.backend_id == "worker:team"
+    assert handshake._handshake_done is False
+
+
+@pytest.mark.parametrize("protocol", [False, True], ids=["flag-off", "flag-on"])
+@pytest.mark.parametrize(
+    ("answer", "error", "message"),
+    [(OLDER_ANSWER, VersionMismatch, OLDER_RELEASE_REFUSAL), ({"status": "ok"}, ComputeUnavailable, NO_WORKER_REFUSAL)],
+    ids=["earlier-release", "no-worker"],
+)
+def test_a_node_on_an_earlier_release_or_on_no_worker_fails_with_the_typed_error(
+    capabilities_answer, monkeypatch, protocol, answer, error, message
+):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", protocol)
+    capabilities_answer(json.dumps(answer).encode())
+    graph = _one_node_remote_graph(9205)
+
+    run_info = graph.run_graph()
+
+    result = next(r for r in run_info.node_step_result if r.node_id == 1)
+    assert run_info.success is False
+    assert result.error == message
+    assert result.compute_error == error.__name__
+
+
 def test_websocket_submit_to_a_mismatched_worker_is_refused(
     worker_reports, sent_to_worker, websocket_connects, monkeypatch
 ):
@@ -413,8 +490,27 @@ def test_unreachable_worker_on_the_first_call_is_compute_unavailable(closed_port
     assert handshake._handshake_done is False
 
 
-def test_compute_unavailable_adds_the_hint_only_for_a_refused_connection():
+def test_the_gate_names_the_backend_it_is_given_when_the_worker_cannot_be_reached(closed_port_url):
+    with pytest.raises(ComputeUnavailable) as at_the_gate:
+        handshake.ensure_handshake(closed_port_url, backend_id="worker:team")
+    assert handshake._handshake_done is False
+    with pytest.raises(ComputeUnavailable) as through_the_session:
+        subops._worker_session.request("GET", "/status/x", worker_url=closed_port_url, backend_id="worker:team")
+    assert handshake._handshake_done is False
+
+    for raised in (at_the_gate.value, through_the_session.value):
+        assert raised.backend_id == "worker:team"
+        assert str(raised).startswith(f"Could not reach the worker at {closed_port_url}: ")
+        assert str(raised).endswith(TEAM_HINT)
+
+
+def test_compute_unavailable_adds_the_hint_once_and_only_for_a_refused_connection():
     assert str(ComputeUnavailable("[Errno 61] Connection refused")) == f"[Errno 61] Connection refused{HINT}"
+    rebuilt = f"node 1: [Errno 61] Connection refused{HINT}"
+    assert str(ComputeUnavailable(rebuilt)) == rebuilt
+    named = str(ComputeUnavailable("[Errno 61] Connection refused", backend_id="worker:team"))
+    assert named == f"[Errno 61] Connection refused{TEAM_HINT}"
+    assert str(ComputeUnavailable(f"node 1: {named}")) == f"node 1: {named}"
     windows = "[WinError 10061] No connection could be made because the target machine actively refused it"
     assert str(ComputeUnavailable(windows)) == f"{windows}{HINT}"
     assert str(ComputeUnavailable("Read timed out")) == "Read timed out"

@@ -366,6 +366,15 @@ def ensure_description(node: input_schema.NodeBase):
         node.description = ""
 
 
+def ensure_execution_location(node: input_schema.NodeBase):
+    """Open a node pickled before nodes carried an execution location on "auto", the NodeBase default.
+
+    Written straight into __dict__ because a legacy settings class has no such field for normal setattr to accept.
+    """
+    if "execution_location" not in node.__dict__:
+        object.__setattr__(node, "__dict__", {**node.__dict__, "execution_location": "auto"})
+
+
 def ensure_compatibility_node_sample(node_sample: input_schema.NodeSample):
     """Add the sampling fields to nodes pickled before random sampling existed.
 
@@ -512,6 +521,7 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
     - NodeJoin/NodeFuzzyMatch (join input positions, dataclass -> BaseModel)
     - NodePolarsCode (depending_on_ids, dataclass -> BaseModel)
     - Node descriptions
+    - Node execution locations ("auto")
     """
     flow_storage_obj = ensure_flow_settings(flow_storage_obj, flow_path)
     for _id, node_information in flow_storage_obj.data.items():
@@ -548,6 +558,7 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
         elif class_name == "NodeSample":
             ensure_compatibility_node_sample(setting_input)
         ensure_description(setting_input)
+        ensure_execution_location(setting_input)
 
     return flow_storage_obj
 
