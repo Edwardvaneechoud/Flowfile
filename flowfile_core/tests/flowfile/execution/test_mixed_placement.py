@@ -25,6 +25,7 @@ from flowfile_core.flowfile.execution.placement import MixedPlacementPolicy, Pla
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_node.executor import hints_for
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
+from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.schemas import input_schema, transform_schema
 from tests import test_run_flow_node
 from tests.flowfile.conftest import create_test_graph
@@ -40,6 +41,7 @@ from tests.flowfile.execution.test_placement import (
     make_graph,
 )
 from tests.flowfile.execution.test_two_backend_chain import A_ROWS, CUSTOMERS, EXPECTED
+from tests.flowfile.test_yaml_io import find_parent_directory
 from tests.test_catalog_cloud_virtual import requires_minio
 
 # The fixtures these tests share with the placement, exchange-store and run-flow tests, bound here so pytest finds them.
@@ -428,6 +430,21 @@ def test_a_fetch_whose_placement_raises_fails_the_nodes_row_and_runs_nothing(mon
         assert graph.get_node(3).results.result_ref is held
     finally:
         graph.close_flow()
+
+
+def test_a_flow_opened_from_a_legacy_pickle_runs_with_a_store_configured(monkeypatch, worker):
+    """``read_csv.flowfile`` was pickled before nodes carried an ``execution_location``; a store configured, the mixed
+    policy reads each node's own."""
+    monkeypatch.setenv("FLOWFILE_EXCHANGE_URI", f"s3://{_BUCKET}/exchange")
+    flow = open_flow(find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/read_csv.flowfile")
+    try:
+        run_info = flow.run_graph()
+
+        assert run_info.success is True, [result.error for result in run_info.node_step_result]
+        assert run_info.boundaries == []
+        assert [node.setting_input.execution_location for node in flow.nodes] == ["auto"] * len(flow.nodes)
+    finally:
+        flow.close_flow()
 
 
 @requires_minio
