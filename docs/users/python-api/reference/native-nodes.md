@@ -1,6 +1,6 @@
 # Native Node Classes
 
-This page covers the canvas node types that have no fluent `FlowFrame` method, and the Python classes that place them: `Gate`, `FlowInput` / `to_flow_output`, `RunFlow`, `custom_node` / `CustomNode`, `python_script` / `PythonScript` and the generic `Node`, plus the helpers they use (flow parameters, flow references, flow registration, the `custom_nodes` registry, the `kernels` list). Each call adds one node to the same `FlowGraph` the fluent methods build, so the flow opens in the designer like any other.
+This page covers the canvas node types that have no fluent `FlowFrame` method, and the Python classes that place them: `Gate`, `FlowInput` / `to_flow_output`, `RunFlow`, `custom_node` / `CustomNode`, `python_script` / `PythonScript`, the generic `Node` and its `explore` shorthand, plus the helpers they use (flow parameters, flow references, flow registration, the `custom_nodes` registry, the `kernels` list). Each call adds one node to the same `FlowGraph` the fluent methods build, so the flow opens in the designer like any other.
 
 The examples use `import flowfile as ff`. The tested ones run in CI on every commit and share these imports:
 
@@ -19,6 +19,7 @@ Every class returns an object with the same accessors:
 | `.outputs` | The output names, in handle order (`output-0` first). |
 | `.node_id`, `.node`, `.flow_graph` | The node id, the placed core `FlowNode`, and the graph it lives on. |
 | `.node_reference` | The node's reference, `None` for the default `df_<node_id>`. Settable; see below. |
+| `.add_to_group(group)` | Puts the node in a [visual group](visual-ui.md#visual-groups) (`ff.FlowGroup`) and returns the node, so it chains. Organizational only. |
 
 The `custom_node(...)` factory and a `@ff.python_script` function are callables instead: calling one returns the output frame, and its `.node(...)` method returns the node object with these accessors.
 
@@ -557,6 +558,15 @@ An API Response node, which has no fluent method, with its settings as a dict:
 
 ```python
 --8<-- "docs/examples/native_nodes.py:node"
+```
+
+## `explore`
+
+`ff.explore(frame, *, description=None, group=None)` places an Explore Data node reading `frame`, the node the designer opens to build charts on its input. The node has no output, so the call returns `None` and nothing chains after it; `group` puts it in a [visual group](visual-ui.md#visual-groups). Charts are built in the designer, so code carries none: the [canvas notebook](../../visual-editor/notebook.md) renders an Explore Data node as `ff.explore(...)`, and pushing that cell keeps the charts saved on the node.
+
+```python
+big_orders = orders.filter(ff.col("amount") > 100)
+ff.explore(big_orders, description="Big orders")
 ```
 
 ## `polars_code`

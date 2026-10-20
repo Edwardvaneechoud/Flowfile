@@ -87,10 +87,7 @@ export function typingMemberAccess(state: EditorState, pos: number): boolean {
 // help stays out of it. An unterminated string still counts; the spot right after a closing
 // quote does not.
 export function insideString(state: EditorState, pos: number): boolean {
-  const tree = syntaxTreeAvailable(state, pos)
-    ? syntaxTree(state)
-    : (ensureSyntaxTree(state, pos, 50) ?? syntaxTree(state));
-  let node: SyntaxNode | null = tree.resolveInner(pos, -1);
+  let node: SyntaxNode | null = treeAt(state, pos).resolveInner(pos, -1);
   for (let climbed = 0; node && climbed < MAX_STRING_CLIMB; climbed++) {
     if (!STRING_NODES.has(node.name)) {
       node = node.parent;
@@ -103,6 +100,17 @@ export function insideString(state: EditorState, pos: number): boolean {
     return pos > node.from + quote && (unterminated || pos < node.to);
   }
   return false;
+}
+
+// Is the cursor inside a `#` comment?
+export function insideComment(state: EditorState, pos: number): boolean {
+  return treeAt(state, pos).resolveInner(pos, -1).name === "Comment";
+}
+
+function treeAt(state: EditorState, pos: number) {
+  return syntaxTreeAvailable(state, pos)
+    ? syntaxTree(state)
+    : (ensureSyntaxTree(state, pos, 50) ?? syntaxTree(state));
 }
 
 // Map an LSP (1-based line, 0-based column) range to absolute doc offsets, clamping to the

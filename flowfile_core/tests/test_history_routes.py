@@ -60,7 +60,8 @@ def new_flow(flow_id: int, path: str = ".") -> "Api":
             path=path,
             execution_mode="Development",
             execution_location="local",
-        )
+        ),
+        user_id=1,
     )
     return Api(flow_id)
 
@@ -822,7 +823,7 @@ class TestDescriptionProvenance:
         assert api.shown_description(3) == auto
 
         api.flow.save_flow(str(path))
-        reopened = Api(flow_file_handler.import_flow(path))
+        reopened = Api(flow_file_handler.import_flow(path, user_id=1))
         assert reopened.shown_description(3) == auto
         assert reopened.settings("filter", _filter_payload(reopened.flow_id, 3, 1, "2")).status_code == 200
         followed = reopened.shown_description(3)

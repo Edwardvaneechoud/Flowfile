@@ -1,5 +1,5 @@
-"""Docker-mode security regressions: dtype strings are data, editor routes still look flows up without the
-caller's session (strict xfails), and authoring custom-node source is admin-only.
+"""Docker-mode security regressions: dtype strings are data, editor routes resolve flows in the caller's
+session only, and authoring custom-node source is admin-only.
 
 The dtype probe is ``pl.Config.set_tbl_rows(7)``: harmless, but evaluating it writes
 ``POLARS_FMT_MAX_ROWS``, so an evaluated call is observable without running anything risky.
@@ -137,10 +137,6 @@ def test_dtype_string_via_update_settings_is_not_evaluated(users, client_for, ow
     assert _PROBE_ENV not in os.environ, "a non-admin's node settings evaluated a dtype string as code in core"
 
 
-_UNSCOPED = pytest.mark.xfail(strict=True, reason="editor routes look flows up by id without the caller's session")
-
-
-@_UNSCOPED
 def test_node_data_not_readable_by_other_user(users, client_for, own_flow):
     alice, bob = client_for("alice"), client_for("bob")
     flow_id = own_flow(alice)
@@ -152,7 +148,6 @@ def test_node_data_not_readable_by_other_user(users, client_for, own_flow):
     assert resp.status_code == 404, f"bob read alice's node preview: {resp.status_code} {resp.text[:200]}"
 
 
-@_UNSCOPED
 def test_update_settings_not_writable_by_other_user(users, client_for, own_flow):
     alice, bob = client_for("alice"), client_for("bob")
     flow_id = own_flow(alice)

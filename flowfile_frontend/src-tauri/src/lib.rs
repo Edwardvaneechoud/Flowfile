@@ -3,6 +3,7 @@ mod drag_paths;
 mod env;
 mod menu;
 mod oauth;
+mod popout;
 mod sidecar;
 mod state;
 mod webview2_drop;
@@ -35,11 +36,10 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        // Notebook windows are per flow: remembering one entry per flow id would pile up, and
-        // the plugin's restore would also override the size the window is built with.
+        // Pop-out windows are per flow and kind: remembering each would pile up and override the built size.
         .plugin(
             tauri_plugin_window_state::Builder::default()
-                .with_filter(|label| !label.starts_with(window::NOTEBOOK_LABEL_PREFIX))
+                .with_filter(|label| !popout::is_popout_label(label))
                 .build(),
         );
 
@@ -58,13 +58,16 @@ pub fn run() {
             commands::app_refresh,
             commands::open_oauth,
             commands::read_drag_paths,
-            commands::open_notebook_window,
-            commands::focus_notebook_window,
-            commands::close_notebook_window,
-            commands::list_notebook_windows,
-            commands::return_notebook_window,
+            commands::open_popout_window,
+            commands::focus_popout_window,
+            commands::close_popout_window,
+            commands::list_popout_windows,
+            commands::return_popout_window,
+            commands::rekey_popout_window,
+            commands::popout_window_ready,
+            commands::post_to_popout_window,
         ])
-        .menu(|app_handle| menu::build(app_handle))
+        .menu(menu::build)
         .on_menu_event(|app, event| menu::on_menu_event(app, event.id().as_ref()))
         .setup(|app| {
             let handle = app.handle().clone();
@@ -145,8 +148,8 @@ pub fn run() {
             if window.label() == "main" {
                 if let WindowEvent::CloseRequested { .. } = event {
                     let app = window.app_handle().clone();
-                    // Notebook windows go first: left open they would outlive the sidecars and keep the app alive.
-                    window::close_notebook_windows(&app);
+                    // Pop-out windows go first: left open they would outlive the sidecars and keep the app alive.
+                    window::close_popout_windows(&app);
                     tauri::async_runtime::block_on(async move {
                         sidecar::shutdown::shutdown_all(&app).await;
                     });

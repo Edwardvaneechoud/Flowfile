@@ -29,7 +29,20 @@ const routes: Array<RouteRecordRaw> = [
     // no sidebar, no app-wide modals, no update check.
     path: "/notebook",
     name: "notebookWindow",
-    component: () => import("../views/NotebookWindowView/NotebookWindowView.vue"),
+    component: () => import("../views/PopoutWindow/NotebookWindowView.vue"),
+    meta: { requiresAuth: true },
+  },
+  {
+    // The bottom dock's pop-outs: one flow's data preview or run logs, outside AppLayout like the notebook.
+    path: "/popout/table",
+    name: "tableWindow",
+    component: () => import("../views/PopoutWindow/TableWindowView.vue"),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: "/popout/logs",
+    name: "logsWindow",
+    component: () => import("../views/PopoutWindow/LogsWindowView.vue"),
     meta: { requiresAuth: true },
   },
   {

@@ -83,6 +83,42 @@ ff.open_graph_in_editor(
 )
 ```
 
+## Visual groups
+
+A visual group is a labelled box around nodes on the canvas. It is organizational only: it never changes execution or results, and it is unrelated to `group_by` (aggregation). `ff.FlowGroup` builds one from Python, and `add_to_group` puts a frame's node in it. The examples below run in CI on every commit and share these imports:
+
+```python
+--8<-- "docs/examples/visual_groups.py:imports"
+```
+
+```python
+--8<-- "docs/examples/visual_groups.py:nested"
+```
+
+- `FlowGroup(name="Group", *, color=None, parent_group=None)`. `color` is one of the designer's tints (`slate`, `blue`, `green`, `amber`, `rose`, `violet`, `cyan`); `None` keeps the default tint. `parent_group` nests the group inside another one.
+- `add_to_group(group)` returns the frame (or the native node), so it chains. It adds only that frame's node; a chain needs one call per node you want in the box.
+- A group is placed on the graph the first time a node joins it, its parents first, so it can be declared before any data is read. `group.id`, `group.flow_graph` and `group.node_ids` are `None` or empty until then.
+- A group holds nodes of one graph. A join or a concat of frames from two graphs moves every group of both onto the merged graph, so a group built before the join keeps working after it; adding a frame of an unrelated graph raises `NativeNodeError`.
+- Groups are saved with the flow (`save_graph`, `open_graph_in_editor`) and come back from the designer's **FlowFrame** code export and the canvas notebook as the same `ff.FlowGroup` declarations and `add_to_group` calls.
+
+A group holds one graph's nodes. A join merges the graphs of its two frames and moves the group along, after which frames from the other graph can join it:
+
+```python
+--8<-- "docs/examples/visual_groups.py:join"
+```
+
+The FlowFrame export declares the groups first and ends every grouped node's call with `add_to_group`, so the exported script rebuilds the same boxes; a saved flow reopens with them:
+
+```python
+--8<-- "docs/examples/visual_groups.py:export"
+```
+
+```python
+--8<-- "docs/examples/visual_groups.py:round-trip"
+```
+
+The older forms stay available: `with df.group("Cleaning"):` groups every node created inside the block, and `df.set_group("Cleaning")` finds or creates a group by name.
+
 ## Server Management
 
 ### Checking Server Status

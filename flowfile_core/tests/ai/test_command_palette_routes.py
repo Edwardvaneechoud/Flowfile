@@ -128,7 +128,7 @@ def test_route_happy_path(authed_client: TestClient, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(
         command_palette_routes.flow_file_handler,
         "get_flow",
-        lambda _id: flow,
+        lambda _id, _user_id=None: flow,
     )
     provider = _FakeProvider(
         tool_calls=[
@@ -183,7 +183,7 @@ def test_route_409_unconfigured(authed_client: TestClient, monkeypatch: pytest.M
     monkeypatch.setattr(
         command_palette_routes.flow_file_handler,
         "get_flow",
-        lambda _id: flow,
+        lambda _id, _user_id=None: flow,
     )
 
     def _raise(*_a: Any, **_kw: Any):
@@ -209,7 +209,7 @@ def test_route_422_flow_not_found(authed_client: TestClient, monkeypatch: pytest
     monkeypatch.setattr(
         command_palette_routes.flow_file_handler,
         "get_flow",
-        lambda _id: None,
+        lambda _id, _user_id=None: None,
     )
     response = authed_client.post(
         "/ai/command_palette",
@@ -271,7 +271,7 @@ def test_route_degraded_passes_through(authed_client: TestClient, monkeypatch: p
     monkeypatch.setattr(
         command_palette_routes.flow_file_handler,
         "get_flow",
-        lambda _id: flow,
+        lambda _id, _user_id=None: flow,
     )
     # Provider returns no tool calls at all → degraded("no_tool_calls").
     provider = _FakeProvider(tool_calls=[], content="I cannot do that.")

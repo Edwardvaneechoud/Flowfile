@@ -259,6 +259,11 @@ def _gate(settings: dict) -> None:
         gate_input.pop("formula", None)
 
 
+def _explore_data(settings: dict) -> None:
+    """The saved charts are the designer's view of the input; ``ff.explore`` carries none and computes the same."""
+    settings.pop("graphic_walker_input", None)
+
+
 def script_cells(cells: list[str]) -> list[str]:
     """Script cells as they compare: blank lines at each cell's start and end dropped, then blank cells."""
     trimmed = []
@@ -310,6 +315,7 @@ RULES: dict[str, tuple[Callable[[dict], None], ...]] = {
     "read": (_read,),
     "text_to_rows": (_text_to_rows,),
     "gate": (_gate,),
+    "explore_data": (_explore_data,),
     "python_script": (_python_script,),
     "record_id": (_record_id,),
     "polars_code": (_polars_code,),

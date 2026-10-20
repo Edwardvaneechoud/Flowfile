@@ -60,8 +60,10 @@ def create_expr_method_wrapper(method_name: str, original_method: Callable) -> C
 
         processed = process_callable_args(args, kwargs)
 
+        from flowfile_frame.expr import _polars_argument
+
         try:
-            result_expr = getattr(self.expr, method_name)(*args, **kwargs)
+            result_expr = getattr(self.expr, method_name)(*_polars_argument(args), **_polars_argument(kwargs))
         except Exception as e:
             logger.debug(f"Warning: Error in {method_name}() call: {e}")
             result_expr = None

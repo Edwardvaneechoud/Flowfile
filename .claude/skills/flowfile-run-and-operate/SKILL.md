@@ -299,7 +299,7 @@ Ciphertext format and HKDF derivation are owned by `flowfile-architecture-contra
 | docker logs | container stdout | `docker compose logs -f [service]` |
 
 Access:
-- Stream a flow's log live: `GET /logs/{flow_id}` (Bearer header, only flows open in the caller's session, `idle_timeout=300` default). Worker and kernel ingest: `POST /raw_logs` (signed with `X-Internal-Token`). Wipe all: `POST /clear-logs`.
+- Stream a flow's log live: `GET /logs/{flow_id}` (Bearer header, only flows open in the caller's session; follows a running flow to the run's end, sends an idle flow's file once). Worker and kernel ingest: `POST /raw_logs` (signed with `X-Internal-Token`). Wipe all: `POST /clear-logs`.
 - Prompt-log CLI: `python -m flowfile_core.ai.prompt_log tail [N]` (default 10), `... grep PATTERN [SURFACE]`.
 - **Logs survive restarts and expire only by age** (`FLOWFILE_RUN_LOG_RETENTION_DAYS`, default 30d; swept at core startup and hourly on the scheduler tick). `POST /clear-logs` is scoped to `flow_*.log` and never touches run logs. Per-flow `flow_<id>.log` is still truncated at each run start, so it holds only the latest run.
 

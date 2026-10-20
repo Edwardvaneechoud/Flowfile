@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
+from flowfile_core.auth.models import User
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
@@ -739,14 +740,16 @@ def test_wait_for_runs_after_dependency_and_passes_data_through():
 
 # /ml/upstream-train-models picker — strict DAG ancestor scope
 
+_USER = User(id=1, username="local_user")
+
 
 def _patch_upstream_handler(monkeypatch, graph: FlowGraph) -> None:
     """Point the ml routes module at a stub handler holding this single graph."""
     from flowfile_core.ml import routes as ml_routes
 
     class _StubHandler:
-        def get_flow(self, fid):
-            return graph if fid == graph.flow_id else None
+        def get_flow(self, fid, user_id=None):
+            return graph if fid == graph.flow_id and user_id == _USER.id else None
 
     monkeypatch.setattr(ml_routes, "flow_file_handler", _StubHandler())
 
@@ -774,7 +777,7 @@ def test_upstream_picker_returns_directly_connected_train_model(monkeypatch):
     _wire_ml_node(graph, "apply_model", node_id=3, upstream_id=2)
 
     _patch_upstream_handler(monkeypatch, graph)
-    result = list_upstream_train_models(graph.flow_id, 3)
+    result = list_upstream_train_models(graph.flow_id, 3, current_user=_USER)
     assert [r.node_id for r in result] == [2]
 
 
@@ -788,7 +791,7 @@ def test_upstream_picker_excludes_train_model_in_parallel_branch(monkeypatch):
     _wire_ml_node(graph, "apply_model", node_id=2, upstream_id=1)
 
     _patch_upstream_handler(monkeypatch, graph)
-    result = list_upstream_train_models(graph.flow_id, 2)
+    result = list_upstream_train_models(graph.flow_id, 2, current_user=_USER)
     assert result == []
 
 
@@ -802,7 +805,7 @@ def test_upstream_picker_finds_train_model_through_wait_for(monkeypatch):
     _wire_ml_node(graph, "apply_model", node_id=4, upstream_id=3)
 
     _patch_upstream_handler(monkeypatch, graph)
-    result = list_upstream_train_models(graph.flow_id, 4)
+    result = list_upstream_train_models(graph.flow_id, 4, current_user=_USER)
     assert [r.node_id for r in result] == [2]
 
 
@@ -814,7 +817,7 @@ def test_upstream_picker_returns_empty_when_no_train_models(monkeypatch):
     _wire_ml_node(graph, "apply_model", node_id=2, upstream_id=1)
 
     _patch_upstream_handler(monkeypatch, graph)
-    result = list_upstream_train_models(graph.flow_id, 2)
+    result = list_upstream_train_models(graph.flow_id, 2, current_user=_USER)
     assert result == []
 
 
@@ -829,5 +832,5 @@ def test_upstream_picker_returns_only_ancestor_train_model_among_many(monkeypatc
     _wire_ml_node(graph, "apply_model", node_id=3, upstream_id=2)
 
     _patch_upstream_handler(monkeypatch, graph)
-    result = list_upstream_train_models(graph.flow_id, 3)
+    result = list_upstream_train_models(graph.flow_id, 3, current_user=_USER)
     assert [r.node_id for r in result] == [2]

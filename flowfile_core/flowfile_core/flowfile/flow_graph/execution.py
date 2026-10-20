@@ -224,15 +224,27 @@ class ExecutionMixin(GraphMixinBase):
             run_type="init",
         )
 
-    def try_claim_run(self) -> bool:
+    def try_claim_run(self, *, kernel_hold: KernelHold | None = None, commit_sources: bool = True) -> bool:
         """Atomically claim the flow's single-run slot; False when a run is already in flight.
 
         Waits for an in-flight edit first, so a run never starts on a half-applied mutation
-        (lock order: edit lock, then claim lock).
+        (lock order: edit lock, then claim lock). Everything a caller may read off a running flow is
+        set under the same lock, before the claim is visible: the cancel flag is cleared, so a
+        ``cancel`` that lands once ``is_running`` is seen is never wiped by the run's own start, and
+        the run's ``kernel_hold`` and ``commit_sources`` are in place, so a notebook interrupt that
+        sees the run also sees the kernel it holds. The flow's log file is truncated under the same lock,
+        before ``is_running`` is set: a log stream opened on ``is_running`` or on ``run_started`` reads
+        this run's file from its first line, never the previous run's. Truncating after the flag was
+        visible left a window where a stream opened on the stale file and the truncation moved the end of
+        the file below its read offset, so the new run's first lines were skipped.
         """
         with self.edit_lock(bounded=False), self._run_claim_lock:
             if self.flow_settings.is_running:
                 return False
+            self.flow_logger.clear_log_file()
+            self._kernel_hold = kernel_hold
+            self._commit_sources = commit_sources
+            self.flow_settings.is_canceled = False
             self.flow_settings.is_running = True
         self._bump_revision("run_started")
         return True
@@ -253,6 +265,7 @@ class ExecutionMixin(GraphMixinBase):
         *,
         performance_mode: bool = False,
         reset_cache: bool = True,
+        claimed: bool = False,
     ) -> RunInformation | None:
         """Executes a specific node in the graph by its ID.
 
@@ -261,19 +274,24 @@ class ExecutionMixin(GraphMixinBase):
         that only need the node's query plan (the Explore Data drawer) pass
         ``performance_mode=True``, which skips that store entirely, and
         ``reset_cache=False`` so exploring doesn't evict a useful cache.
+        ``claimed`` says the caller already holds the run slot (``try_claim_run``),
+        as the fetch route does before it answers; the slot is released here either way.
         """
-        if not self.try_claim_run():
+        if not claimed and not self.try_claim_run():
             raise Exception("Flow is already running")
-        flow_node = self.get_node(node_id)
-        self.flow_settings.is_canceled = False
-        self.flow_logger.clear_log_file()
-        self.latest_run_info = self.create_initial_run_information(1, "fetch_one")
-        node_logger = self.flow_logger.get_node_logger(flow_node.node_id)
-        node_result = NodeResult(
-            node_id=flow_node.node_id,
-            node_name=flow_node.name,
-            description=flow_node.get_node_information().description,
-        )
+        try:
+            flow_node = self.get_node(node_id)
+            self.latest_run_info = self.create_initial_run_information(1, "fetch_one")
+            node_logger = self.flow_logger.get_node_logger(flow_node.node_id)
+            node_result = NodeResult(
+                node_id=flow_node.node_id,
+                node_name=flow_node.name,
+                description=flow_node.get_node_information().description,
+            )
+        except BaseException:
+            # The node left between the route's check and this task: the slot must not stay claimed.
+            self.release_run()
+            raise
         logger.info(f"Starting to run: node {flow_node.node_id}, start time: {node_result.start_timestamp}")
         self.latest_run_info.node_step_result.append(node_result)
         try:
@@ -983,6 +1001,7 @@ class ExecutionMixin(GraphMixinBase):
         node_ids: Collection[int | str] | None = None,
         kernel_hold: KernelHold | None = None,
         commit_sources: bool = True,
+        claimed: bool = False,
     ) -> RunInformation | None:
         """Executes the entire data flow graph from start to finish.
 
@@ -1004,6 +1023,9 @@ class ExecutionMixin(GraphMixinBase):
                 output node): no source's post-execution callback fires, so no change-feed cursor or Kafka
                 offset moves. The callbacks stay set and fire in the next run that commits. A subflow this
                 run runs inherits it (``_commit_sources``), so its sources commit only when this run does.
+            claimed: The caller already holds the run slot (``try_claim_run``), as the run routes do
+                before they answer, so a client sees ``is_running`` once its request returns. The slot
+                is released here either way.
 
         Returns:
             A RunInformation object summarizing the execution results.
@@ -1011,17 +1033,17 @@ class ExecutionMixin(GraphMixinBase):
         Raises:
             Exception: If the flow is already running.
         """
-        if not self.try_claim_run():
-            raise Exception("Flow is already running")
         if kernel_hold is None:
             kernel_hold = ambient_kernel_hold.get()
-        self._kernel_hold = kernel_hold
-        self._commit_sources = commit_sources
+        if claimed:
+            # The route claimed with no hold (a route runs outside any kernel session): set the run's own.
+            self._kernel_hold = kernel_hold
+            self._commit_sources = commit_sources
+        elif not self.try_claim_run(kernel_hold=kernel_hold, commit_sources=commit_sources):
+            raise Exception("Flow is already running")
         ambient = ambient_kernel_hold.set(kernel_hold)
         released = False
         try:
-            self.flow_settings.is_canceled = False
-            self.flow_logger.clear_log_file()
             self.flow_logger.info("Starting to run flowfile flow...")
 
             publish("flow_run_started", graph=self)

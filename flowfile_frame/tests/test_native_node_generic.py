@@ -62,6 +62,25 @@ def test_explore_data_gets_a_graphic_walker_input():
     assert node.output.columns == list(ORDERS)
 
 
+def test_explore_places_an_explore_data_node_and_returns_nothing():
+    big = ff.from_dict(ORDERS).filter(ff.col("amount") > 3)
+    charts = ff.FlowGroup("Charts")
+    assert ff.explore(big, description="big orders", group=charts) is None
+    node = next(n for n in big.flow_graph.nodes if n.node_type == "explore_data")
+    assert node.setting_input.description == "big orders"
+    assert isinstance(node.setting_input.graphic_walker_input, GraphicWalkerInput)
+    assert [n.node_id for n in node.node_inputs.main_inputs] == [big.node_id]
+    assert big.flow_graph._groups[node.setting_input.group_id].name == "Charts"
+
+
+def test_explore_with_a_bad_group_places_nothing():
+    big = ff.from_dict(ORDERS)
+    count = len(big.flow_graph.nodes)
+    with pytest.raises(ff.NativeNodeError, match="FlowGroup"):
+        ff.explore(big, group="Charts")
+    assert len(big.flow_graph.nodes) == count
+
+
 def test_flow_output_via_node_and_duplicate_name():
     orders = ff.from_dict(ORDERS)
     graph = orders.flow_graph

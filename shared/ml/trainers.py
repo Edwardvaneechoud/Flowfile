@@ -10,7 +10,10 @@ protocol with ``serialization_format="joblib"``.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+from pathlib import Path
 from typing import Any, ClassVar, Protocol
 
 import polars as pl
@@ -53,6 +56,62 @@ class Trainer(Protocol):
         model: dict[str, Any],
         output_column: str,
     ) -> pl.LazyFrame: ...
+
+
+def _float_features(features: list[str]) -> list[pl.Expr]:
+    # polars_ds panics on Int8/Int16/Decimal inputs; apply() casts the same way.
+    return [pl.col(f).cast(pl.Float64) for f in features]
+
+
+def _fit_coefficients(coefs_frame: pl.DataFrame, features: list[str], add_bias: bool, label: str) -> tuple[list, float]:
+    """The coefficients and intercept a polars_ds fit returned (one row holding one list), or an actionable error."""
+    coeffs = coefs_frame.row(0)[0] if coefs_frame.height else None
+    if coeffs is None:
+        raise ValueError(
+            f"{label} could not be fitted: a feature column is constant, or a linear combination of "
+            f"other features (e.g. a total next to its parts). Features: {features!r}. Remove the redundant "
+            "column(s), or use Ridge Regression."
+        )
+    if add_bias:
+        *coefficients, intercept = coeffs
+    else:
+        coefficients, intercept = list(coeffs), 0.0
+    if len(coefficients) != len(features):
+        raise ValueError(
+            f"Coefficient count ({len(coefficients)}) does not match feature count ({len(features)}). "
+            "The polars_ds fit returned an unexpected shape."
+        )
+    return list(coefficients), float(intercept)
+
+
+def _linear_model(trainer, target: str, features: list[str], coefficients: list, intercept: float, params) -> bytes:
+    """The JSON wire form of a fitted linear model (coefficients + intercept), shared by every coefficient trainer."""
+    model = {
+        "model_type": trainer.model_type,
+        "task_type": trainer.task_type,
+        "target": target,
+        "features": list(features),
+        "coefficients": [float(c) for c in coefficients],
+        "intercept": intercept,
+        "params": params.model_dump(),
+        "output_dtype": trainer.output_dtype,
+    }
+    return json.dumps(model).encode("utf-8")
+
+
+def _linear_combination(lf: pl.LazyFrame, model: dict[str, Any]) -> pl.Expr:
+    """``intercept + sum(coef * feature)`` over Float64 casts, after checking every feature is present."""
+    features, coefficients = model["features"], model["coefficients"]
+    missing = [f for f in features if f not in lf.collect_schema().names()]
+    if missing:
+        raise ValueError(
+            f"Apply Model: input is missing required feature column(s) {missing!r}. "
+            f"Model was trained on {features!r}."
+        )
+    expr = pl.lit(float(model.get("intercept", 0.0)), dtype=pl.Float64)
+    for feature_name, coef in zip(features, coefficients, strict=True):
+        expr = expr + pl.col(feature_name).cast(pl.Float64) * pl.lit(float(coef))
+    return expr
 
 
 class _LinearFamilyTrainer:
@@ -107,33 +166,9 @@ class _LinearFamilyTrainer:
 
         validated = self.params_class(**params)
         kwargs = self._lin_reg_kwargs(validated)
-        coefs_frame = lf.select(pds.lin_reg(*features, target=target, **kwargs)).collect()
-        if coefs_frame.height == 0:
-            raise ValueError("Training data is empty; cannot fit a regression model.")
-        coeffs = coefs_frame.row(0)[0]
-        if validated.add_bias:
-            *coefficients, intercept = coeffs
-        else:
-            coefficients = list(coeffs)
-            intercept = 0.0
-
-        if len(coefficients) != len(features):
-            raise ValueError(
-                f"Coefficient count ({len(coefficients)}) does not match feature count ({len(features)}). "
-                "polars_ds.lin_reg returned an unexpected shape."
-            )
-
-        model = {
-            "model_type": self.model_type,
-            "task_type": self.task_type,
-            "target": target,
-            "features": list(features),
-            "coefficients": list(coefficients),
-            "intercept": float(intercept),
-            "params": validated.model_dump(),
-            "output_dtype": self.output_dtype,
-        }
-        return json.dumps(model).encode("utf-8")
+        coefs_frame = lf.select(pds.lin_reg(*_float_features(features), target=target, **kwargs)).collect()
+        coefficients, intercept = _fit_coefficients(coefs_frame, features, validated.add_bias, self.label)
+        return _linear_model(self, target, features, coefficients, intercept, validated)
 
     def apply(
         self,
@@ -141,19 +176,7 @@ class _LinearFamilyTrainer:
         model: dict[str, Any],
         output_column: str,
     ) -> pl.LazyFrame:
-        features = model["features"]
-        coefficients = model["coefficients"]
-        intercept = float(model.get("intercept", 0.0))
-        missing = [f for f in features if f not in lf.collect_schema().names()]
-        if missing:
-            raise ValueError(
-                f"Apply Model: input is missing required feature column(s) {missing!r}. "
-                f"Model was trained on {features!r}."
-            )
-        expr = pl.lit(intercept, dtype=pl.Float64)
-        for feature_name, coef in zip(features, coefficients, strict=True):
-            expr = expr + pl.col(feature_name).cast(pl.Float64) * pl.lit(float(coef))
-        return lf.with_columns(expr.alias(output_column))
+        return lf.with_columns(_linear_combination(lf, model).alias(output_column))
 
 
 class LinearRegressionTrainer(_LinearFamilyTrainer):
@@ -308,7 +331,7 @@ class LogisticRegressionTrainer:
         validated = self.params_class(**params)
         coefs_frame = lf.select(
             pds.logistic_reg(
-                *features,
+                *_float_features(features),
                 target=target,
                 add_bias=validated.add_bias,
                 l1_reg=validated.l1_reg,
@@ -316,34 +339,8 @@ class LogisticRegressionTrainer:
                 max_iter=validated.max_iter,
             )
         ).collect()
-        if coefs_frame.height == 0:
-            raise ValueError(
-                "Training data is empty; cannot fit a logistic regression model."
-            )
-        coeffs = coefs_frame.row(0)[0]
-        if validated.add_bias:
-            *coefficients, intercept = coeffs
-        else:
-            coefficients = list(coeffs)
-            intercept = 0.0
-
-        if len(coefficients) != len(features):
-            raise ValueError(
-                f"Coefficient count ({len(coefficients)}) does not match feature count ({len(features)}). "
-                "polars_ds.logistic_reg returned an unexpected shape."
-            )
-
-        model = {
-            "model_type": self.model_type,
-            "task_type": self.task_type,
-            "target": target,
-            "features": list(features),
-            "coefficients": list(coefficients),
-            "intercept": float(intercept),
-            "params": validated.model_dump(),
-            "output_dtype": self.output_dtype,
-        }
-        return json.dumps(model).encode("utf-8")
+        coefficients, intercept = _fit_coefficients(coefs_frame, features, validated.add_bias, self.label)
+        return _linear_model(self, target, features, coefficients, intercept, validated)
 
     def apply(
         self,
@@ -351,20 +348,8 @@ class LogisticRegressionTrainer:
         model: dict[str, Any],
         output_column: str,
     ) -> pl.LazyFrame:
-        features = model["features"]
-        coefficients = model["coefficients"]
-        intercept = float(model.get("intercept", 0.0))
-        missing = [f for f in features if f not in lf.collect_schema().names()]
-        if missing:
-            raise ValueError(
-                f"Apply Model: input is missing required feature column(s) {missing!r}. "
-                f"Model was trained on {features!r}."
-            )
-        # Decision boundary: sigmoid(logit) > 0.5  <=>  logit > 0; skip the
-        # exp/log roundtrip and threshold the linear combination directly.
-        logit = pl.lit(intercept, dtype=pl.Float64)
-        for feature_name, coef in zip(features, coefficients, strict=True):
-            logit = logit + pl.col(feature_name).cast(pl.Float64) * pl.lit(float(coef))
+        # Decision boundary: sigmoid(logit) > 0.5  <=>  logit > 0; threshold the linear combination directly.
+        logit = _linear_combination(lf, model)
         return lf.with_columns((logit > 0).cast(pl.Int64).alias(output_column))
 
 
@@ -473,9 +458,9 @@ class KNNClassifierTrainer:
         concatenated under the test rows, ``query_knn_ptwise`` produces a list
         of neighbour row-indices per test row, that list is exploded and
         self-joined back to the labels, and a group-by + majority vote yields
-        the prediction. The result is left-joined onto the original input via a
-        ``__test_pos`` row index so we never collect the user's data here —
-        downstream nodes can keep streaming.
+        the prediction. The input is collected once with its ``__test_pos`` row
+        index, and both the query and the final join read that one frame, so a
+        prediction stays on its row even when the input's row order is not stable.
 
         Tie-break (e.g. k=2 with split labels) goes to class 1, matching the
         previous eager implementation.
@@ -505,9 +490,8 @@ class KNNClassifierTrainer:
             pl.lit(None, dtype=pl.UInt32).alias("__test_pos"),
         )
 
-        # Tag input rows with their position so we can re-attach predictions
-        # to the original LazyFrame without collecting.
-        test_lf = lf.with_row_index("__test_pos")
+        # One evaluation of the input: a second one could order its rows differently from the neighbour query.
+        test_lf = lf.with_row_index("__test_pos").collect().lazy()
         test_features = test_lf.select(
             *[pl.col(f).cast(pl.Float64) for f in features],
             pl.lit(None, dtype=pl.Int64).alias("__label"),
@@ -593,3 +577,31 @@ def get_trainer(model_type: str) -> Trainer:
         raise ValueError(
             f"Unknown model_type {model_type!r}. Supported: {supported}."
         ) from exc
+
+
+def fit_to_path(
+    lf: pl.LazyFrame,
+    staging_path: str | Path,
+    model_type: str,
+    target: str,
+    features: list[str],
+    params: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Fit a *model_type* model on *lf*, write its bytes to *staging_path* (fsynced) and report it.
+
+    The one fit-and-write step the worker's ``train_model_task`` and core's in-process Train Model share.
+    Returns ``{sha256, size_bytes, model_type}``, the report ``finalize_upload`` takes.
+    """
+    model_bytes = get_trainer(model_type).train(lf, target=target, features=features, params=params or {})
+    os.makedirs(os.path.dirname(staging_path), exist_ok=True)
+    with open(staging_path, "wb") as f:
+        f.write(model_bytes)
+        f.flush()
+        os.fsync(f.fileno())
+    return {"sha256": hashlib.sha256(model_bytes).hexdigest(), "size_bytes": len(model_bytes), "model_type": model_type}
+
+
+def load_model(model_path: str | Path) -> dict[str, Any]:
+    """The stored model (the trainer's JSON) at *model_path*."""
+    with open(model_path, "rb") as f:
+        return json.loads(f.read())

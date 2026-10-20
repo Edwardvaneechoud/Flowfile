@@ -186,6 +186,7 @@ import { GridApi, BodyScrollEvent } from "@ag-grid-community/core";
 import { ModuleRegistry } from "@ag-grid-community/core";
 import { ClientSideRowModelModule } from "@ag-grid-community/client-side-row-model";
 import { DEFAULT_OUTPUT_HANDLE } from "../../utils/outputHandle";
+import type { NodeHandle } from "../../types/flow.types";
 import "@ag-grid-community/styles/ag-grid.css";
 import "@ag-grid-community/styles/ag-theme-balham.css";
 
@@ -216,10 +217,11 @@ const isFetching = ref(false);
 const currentNodeId = ref<number | null>(null);
 const selectedOutputHandle = ref<string>(DEFAULT_OUTPUT_HANDLE);
 
-// Available output handles for the currently previewed node, read from the
-// VueFlow node's data.outputs (populated by useDragAndDrop's buildOutputHandles).
-const nodeOutputs = computed(() => {
+// Available output handles for the currently previewed node: the host's `outputs` when it has no
+// canvas (the Data window), else the VueFlow node's data.outputs (useDragAndDrop's buildOutputHandles).
+const nodeOutputs = computed((): Array<{ id: string; label?: string; title?: string }> => {
   if (currentNodeId.value == null) return [];
+  if (props.outputs) return props.outputs;
   const vfInstance = flowStore.vueFlowInstance;
   if (!vfInstance) return [];
   const vfNode = vfInstance.findNode(String(currentNodeId.value));
@@ -246,6 +248,8 @@ interface Props {
   refreshToken?: number;
   // Only fetch while the Data tab is actually shown (the host gates this).
   active?: boolean;
+  // The node's output handles when there is no canvas to read them from (the Data window).
+  outputs?: NodeHandle[];
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -254,6 +258,7 @@ const props = withDefaults(defineProps<Props>(), {
   nodeId: null,
   refreshToken: 0,
   active: true,
+  outputs: undefined,
 });
 
 // Use the flow execution composable with persistent polling for node fetches.

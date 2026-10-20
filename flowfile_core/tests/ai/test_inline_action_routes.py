@@ -218,6 +218,7 @@ def _build_polars_code_flow() -> FlowGraph:
 def registered_filter_flow() -> Iterator[FlowGraph]:
     flow = _build_filter_flow()
     flow_file_handler._flows[flow.flow_id] = flow
+    flow_file_handler._register_user_session(1, flow.flow_id)
     try:
         yield flow
     finally:
@@ -228,6 +229,7 @@ def registered_filter_flow() -> Iterator[FlowGraph]:
 def registered_polars_flow() -> Iterator[FlowGraph]:
     flow = _build_polars_code_flow()
     flow_file_handler._flows[flow.flow_id] = flow
+    flow_file_handler._register_user_session(1, flow.flow_id)
     try:
         yield flow
     finally:

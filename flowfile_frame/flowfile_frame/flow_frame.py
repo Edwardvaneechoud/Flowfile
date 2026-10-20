@@ -15,6 +15,7 @@ from polars._typing import CsvEncoding, FrameInitTypes, Orientation, SchemaDefin
 from polars_expr_transformer import simple_function_to_expr
 
 if TYPE_CHECKING:
+    from flowfile_core.schemas.output_model import RunInformation
     from flowfile_frame.catalog_reference import SchemaReference
     from flowfile_frame.run_flow import FlowOutput
 
@@ -37,7 +38,8 @@ from flowfile_core.schemas.schemas import GroupColor
 from flowfile_frame.callable_utils import _get_function_source, process_callable_args
 from flowfile_frame.cloud_storage.frame_helpers import add_write_ff_to_cloud_storage
 from flowfile_frame.config import logger
-from flowfile_frame.expr import Column, Expr, col, lit
+from flowfile_frame.expr import Column, Expr, _polars_argument, col, lit
+from flowfile_frame.flow_group import FlowGroup
 from flowfile_frame.group_frame import GroupByFrame
 from flowfile_frame.join import _create_join_mappings, _normalize_columns_to_list
 from flowfile_frame.lazy_methods import PURE_TRANSFORMS, _refuse_frame_argument, add_lazyframe_methods
@@ -56,6 +58,7 @@ from flowfile_frame.native import (
 from flowfile_frame.notebook import current
 from flowfile_frame.parameters import refuse_parameter_as_column, refuse_parameter_column_in_formula
 from flowfile_frame.selectors import Selector
+from flowfile_frame.trained_model import TrainedModel, _read_trained_model, _train_model_note, _trained_model_summary
 from flowfile_frame.utils import (
     _check_if_convertible_to_code,
     _expand_user,
@@ -211,22 +214,6 @@ def can_be_expr(param: inspect.Parameter) -> bool:
 
 def _contains_lambda_pattern(text: str) -> bool:
     return "<lambda> at" in text
-
-
-def _polars_argument(value: Any) -> Any:
-    """``value`` with every frame expression in it, at any depth, replaced by its Polars expression.
-
-    Raises ``TypeError`` for a selector or an expression without a Polars expression.
-    """
-    if isinstance(value, Expr) and value.expr is not None:
-        return value.expr
-    if isinstance(value, Expr | Selector):
-        raise TypeError("an argument has no Polars expression")
-    if isinstance(value, list | tuple):
-        return type(value)(_polars_argument(item) for item in value)
-    if isinstance(value, dict):
-        return {key: _polars_argument(item) for key, item in value.items()}
-    return value
 
 
 def _formula_parses(formula: str, params: dict[str, ParamValue] | None = None) -> bool:
@@ -618,8 +605,34 @@ class FlowFrame:
         """
         pass
 
-    def __repr__(self):
-        return str(self.data)
+    def __repr__(self) -> str:
+        """Show the frame's node, flow, data object and a Train Model node's model, without executing data."""
+        node = self.get_node_settings()
+        node_label = repr(node) if node is not None else f"Node id: {self.node_id} (unavailable)"
+        display = f"FlowFrame (lazy)\n  {node_label}\n  Flow id: {self.flow_graph.flow_id}\n  Data: {self.data!r}"
+        if node is not None and node.node_type == "train_model":
+            display += f"\n  Model: {self._model_display()}"
+        return display
+
+    def _model_display(self) -> str:
+        """The fitted model for ``__repr__``, read only where building the frame fitted it, so nothing runs."""
+        if self._deferred or self._below_a_gate():
+            return "fitted when the flow runs" + ("" if current() is not None else "; read_model() runs it")
+        try:
+            summary = _trained_model_summary(self.flow_graph.flow_id, self.node_id)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return f"unreadable ({type(exc).__name__})"
+        return "not fitted yet" if summary is None else summary.replace("\n", "\n  ")
+
+    def help(self) -> None:
+        """Print a short guide to transforming, inspecting, and saving this frame."""
+        print(
+            "FlowFrame usage:\n"
+            "  .select(...), .filter(...), .with_columns(...)  Transform data\n"
+            "  .get_node_settings()                          Inspect node settings\n"
+            "  .explain()                                    View the query plan\n"
+            '  .save_graph("flow.yaml")                      Save the flow'
+        )
 
     def _add_connection(
         self,
@@ -1784,8 +1797,10 @@ class FlowFrame:
         """
         Fit an ML model (regression or classification) and optionally publish it to the catalog.
 
-        Compute runs on the worker. Catalog publishing requires the flow to be
-        registered (so the artifact has a ``source_registration_id``); see
+        The model is fitted where the flow runs: in the core process for a local
+        flow (a new graph is local), or on the worker for a remote one. Catalog
+        publishing requires the flow to be registered (so the artifact has a
+        ``source_registration_id``); see
         :class:`flowfile_core.flowfile.flow_graph.FlowGraph.add_train_model`.
 
         Parameters
@@ -1816,8 +1831,9 @@ class FlowFrame:
         Returns
         -------
         FlowFrame
-            A new FlowFrame whose data is the input pass-through. The model
-            is recorded in the catalog as a side effect.
+            A new FlowFrame whose data is the input pass-through. Read the
+            fitted model with :meth:`read_model`; with ``publish_to_catalog``
+            it is also recorded in the catalog.
         """
         from flowfile_frame.catalog_reference import _resolve_namespace_id
 
@@ -1853,6 +1869,49 @@ class FlowFrame:
         )
         self.flow_graph.add_train_model(train_settings)
         return self._create_child_frame(new_node_id)
+
+    def read_model(self) -> TrainedModel:
+        """
+        Read the model the Train Model node behind this frame fitted.
+
+        Call it on the frame :meth:`train_model` returns. A frame built on
+        ready data was trained when it was built; a deferred frame, or one
+        below a gate, runs its lineage first, as :meth:`collect` does.
+
+        Returns
+        -------
+        TrainedModel
+            The model's type, target, features and parameters, with
+            ``coefficients`` and ``intercept`` for a linear or logistic model;
+            ``to_dict()`` gives the stored model as is.
+
+        Raises
+        ------
+        NativeNodeError
+            The frame is not a Train Model node's, the node has not fitted
+            a model (a gate routed it away), or it is called in a notebook,
+            which does not run the flow.
+        """
+        node = self.flow_graph.get_node(self.node_id)
+        if node is None or node.node_type != "train_model":
+            found = f"a {node.node_type}" if node is not None else "no"
+            raise NativeNodeError(
+                f"read_model reads the frame train_model returns; node {self.node_id} is {found} node. "
+                f"{_train_model_note(self.flow_graph)}"
+            )
+        if current() is not None:
+            raise NativeNodeError(
+                "read_model reads the model a run fitted, and a notebook does not run the flow: run it on the canvas, "
+                "or call read_model() in a script"
+            )
+        if self._deferred or self._below_a_gate():
+            self._materialised_lazyframe()
+            if self._routed_away(self.flow_graph.latest_run_info):
+                raise NativeNodeError(f"Train Model node {self.node_id} did not run (a gate routed it away)")
+        model = _read_trained_model(self.flow_graph.flow_id, self.node_id)
+        if model is None:
+            raise NativeNodeError(f"Train Model node {self.node_id} has not fitted a model yet")
+        return model
 
     def wait_for(
         self,
@@ -2921,6 +2980,22 @@ class FlowFrame:
         self.flow_graph.assign_node_to_named_group(self.node_id, name, color=color)
         return self
 
+    def add_to_group(self, group: FlowGroup) -> FlowFrame:
+        """Put this frame's node in ``group``, a :class:`~flowfile_frame.flow_group.FlowGroup`.
+
+        Returns ``self`` for chaining. Organizational only: the group is a box on the canvas and
+        never changes execution or results. The group is placed on this frame's graph the first
+        time a node joins it, its parent groups first. Unrelated to :meth:`group_by` (aggregation).
+
+        Example:
+            >>> cleaning = ff.FlowGroup("Cleaning", color="blue")
+            >>> df = df.filter(col("age") > 18).add_to_group(cleaning)
+        """
+        if not isinstance(group, FlowGroup):
+            raise NativeNodeError(f"add_to_group takes a ff.FlowGroup, got {type(group).__name__}")
+        group._add_node(self.flow_graph, self.node_id)
+        return self
+
     def to_graph(self):
         """Get the underlying ETL graph."""
         return self.flow_graph
@@ -2992,6 +3067,12 @@ class FlowFrame:
             return self.data.collect(*args, **kwargs)
         return self.data
 
+    def _routed_away(self, run_info: RunInformation | None) -> bool:
+        """Whether *run_info*'s run routed this frame away: its node deliberately skipped, or this a dead exit."""
+        results = run_info.node_step_result if run_info is not None else ()
+        skipped = any(r.node_id == self.node_id and r.skipped for r in results)
+        return skipped or self.output_handle in self.flow_graph.last_closed_gate_handles.get(self.node_id, ())
+
     def _below_a_gate(self) -> bool:
         """Whether this node or any ancestor is a gate (a gate exit's frame points at the gate node)."""
         return any(n.node_type == "gate" for n in ancestors(self.flow_graph.get_node(self.node_id)).values())
@@ -3036,9 +3117,7 @@ class FlowFrame:
         if problems:
             errors = "\n".join(problems)
             raise NativeNodeError(f"Running the flow failed for node {self.node_id}:\n{errors}")
-        own_result = results.get(self.node_id)
-        closed_handles = self.flow_graph.last_closed_gate_handles.get(self.node_id, ())
-        if (own_result is not None and own_result.skipped) or self.output_handle in closed_handles:
+        if self._routed_away(run_info):
             # self.data holds real rows when the frame was built after an earlier run; the routing wins.
             return self.data.clear()
         frame = node.get_output(self.output_handle).data_frame

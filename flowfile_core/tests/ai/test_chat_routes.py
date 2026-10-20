@@ -473,6 +473,7 @@ def registered_flow_for_w28() -> Iterator[FlowGraph]:
     """
     flow = _build_simple_flow_for_chat()
     flow_file_handler._flows[flow.flow_id] = flow
+    flow_file_handler._register_user_session(1, flow.flow_id)
     try:
         yield flow
     finally:
@@ -733,6 +734,7 @@ def registered_cold_flow_for_w48() -> Iterator[FlowGraph]:
     flow.get_node(2).node_schema.predicted_schema = None
 
     flow_file_handler._flows[flow.flow_id] = flow
+    flow_file_handler._register_user_session(1, flow.flow_id)
     try:
         yield flow
     finally:
@@ -961,6 +963,7 @@ def _build_random_split_flow_for_w65() -> FlowGraph:
 def registered_random_split_flow_for_w65() -> Iterator[FlowGraph]:
     flow = _build_random_split_flow_for_w65()
     flow_file_handler._flows[flow.flow_id] = flow
+    flow_file_handler._register_user_session(1, flow.flow_id)
     try:
         yield flow
     finally:

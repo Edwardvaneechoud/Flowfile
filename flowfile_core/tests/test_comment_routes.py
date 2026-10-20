@@ -24,7 +24,7 @@ client = get_test_client()
 def make_flow(flow_id: int) -> int:
     if flow_file_handler.get_flow(flow_id) is not None:
         flow_file_handler.delete_flow(flow_id)
-    flow_file_handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name="cmt", path="."))
+    flow_file_handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name="cmt", path="."), user_id=1)
     graph = flow_file_handler.get_flow(flow_id)
     graph.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=1, node_type="manual_input"))
     graph.add_manual_input(

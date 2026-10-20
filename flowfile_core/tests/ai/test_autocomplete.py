@@ -414,7 +414,7 @@ def _join_body(**overrides: Any) -> dict[str, Any]:
 
 
 def test_route_join_keys_404_on_missing_flow(authed_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(autocomplete_routes.flow_file_handler, "get_flow", lambda _id: None)
+    monkeypatch.setattr(autocomplete_routes.flow_file_handler, "get_flow", lambda _id, _user_id=None: None)
     response = authed_client.post(
         "/ai/autocomplete/join_keys",
         json=_join_body(flow_id=99),
@@ -438,7 +438,7 @@ def test_route_join_keys_409_on_unconfigured_provider(
     monkeypatch.setattr(
         autocomplete_routes.flow_file_handler,
         "get_flow",
-        lambda _id: object(),  # truthy
+        lambda _id, _user_id=None: object(),  # truthy
     )
 
     def _raise(*_a: Any, **_kw: Any):
@@ -480,7 +480,7 @@ def test_route_join_keys_happy_path(authed_client: TestClient, monkeypatch: pyte
     right = _make_node("R", predicted_schema=_columns("user_id"))
     graph = _FakeGraph({"L": left, "R": right})
 
-    monkeypatch.setattr(autocomplete_routes.flow_file_handler, "get_flow", lambda _id: graph)
+    monkeypatch.setattr(autocomplete_routes.flow_file_handler, "get_flow", lambda _id, _user_id=None: graph)
     provider = _FakeProvider(
         content=_join_payload([{"left_col": "user_id", "right_col": "user_id", "confidence": 0.99}])
     )

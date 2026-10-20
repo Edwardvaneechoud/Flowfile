@@ -125,6 +125,7 @@ def _kinds() -> dict[type, str]:
     from flowfile_frame.custom_nodes import CustomNodes
     from flowfile_frame.expr import Column, DateTimeMethods, Expr, StringMethods, When
     from flowfile_frame.flow_frame import FlowFrame
+    from flowfile_frame.flow_group import FlowGroup
     from flowfile_frame.gate import Gate
     from flowfile_frame.group_frame import GroupByFrame
     from flowfile_frame.notebook_cells import SeededNode, _CanvasNode
@@ -136,7 +137,7 @@ def _kinds() -> dict[type, str]:
         type(None): "none", bool: "bool", int: "int", float: "float", str: "str",
         list: "list", tuple: "tuple", dict: "dict", datetime.date: "date", datetime.datetime: "datetime_value",
         FlowFrame: "FlowFrame", GroupByFrame: "GroupByFrame", Expr: "Expr", Column: "Expr", When: "Expr",
-        StringMethods: "StringNS", DateTimeMethods: "DateTimeNS", Gate: "Gate",
+        StringMethods: "StringNS", DateTimeMethods: "DateTimeNS", Gate: "Gate", FlowGroup: "FlowGroup",
         RunFlow: "NodeOutputs", PythonScript: "NodeOutputs", CustomNode: "NodeOutputs", _CanvasNode: "NodeOutputs",
         SeededNode: "NodeOutputs",
         CustomNodes: "CustomNodes", CustomNodeFactory: "CustomNodeFactory", PythonScriptFunction: "ScriptFunction",

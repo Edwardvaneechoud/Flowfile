@@ -880,8 +880,8 @@ def test_catalog_writer_unchanged_settings_pass_for_reader(
 def test_unchanged_writer_resave_preserves_author_identity(
     users, client_for, alice_ns, team, grant_factory, registration_cleanup, flow_session_cleanup, tmp_flow_path
 ):
-    """A viewer closing the writer drawer (unchanged re-POST) must not re-stamp the
-    node's run-time principal, which would break the owner's later runs."""
+    """Another user re-POSTing the writer's settings must not re-stamp the node's
+    run-time principal, which would break the owner's later runs."""
     grant_factory("catalog_namespace", alice_ns["schema"], team, permission="manage", granted_by=users["alice"].id)
     alice = client_for("alice")
     flow_id = _own_flow(alice, tmp_flow_path, "alice_writer_flow")
@@ -892,10 +892,9 @@ def test_unchanged_writer_resave_preserves_author_identity(
     payload = _writer_payload(flow_id, alice_ns["schema"])
     assert alice.post("/update_settings/", json=payload, params={"node_type": "catalog_writer"}).status_code == 200
 
-    # Bob (only a use-grantee on the flow's shared graph) re-POSTs the unchanged
-    # settings, as the drawer does on close.
+    # Bob cannot reach alice's in-memory flow at all, even with a grant on the namespace.
     bob = client_for("bob")
-    assert bob.post("/update_settings/", json=payload, params={"node_type": "catalog_writer"}).status_code == 200
+    assert bob.post("/update_settings/", json=payload, params={"node_type": "catalog_writer"}).status_code == 404
 
     node = flow_file_handler.get_flow(flow_id).get_node(1)
     assert node.setting_input.user_id == users["alice"].id
@@ -927,9 +926,11 @@ def test_flow_manager_can_resave_in_place_without_namespace_write(
         grant_factory("flow", reg_id, team, permission="manage", granted_by=users["alice"].id)
 
         bob = client_for("bob")
-        # bob (namespace: read-only; flow: manage) re-saves the shared flow in place.
+        # bob (namespace: read-only; flow: manage) opens the shared flow and re-saves it in place.
+        bob_flow_id = bob.get("/import_flow/", params={"flow_path": flow_path}).json()
+        assert bob_flow_id != flow_id
         resp = bob.post(
-            "/save_flow", params={"flow_id": flow_id, "flow_path": flow_path, "namespace_id": alice_ns["schema"]}
+            "/save_flow", params={"flow_id": bob_flow_id, "flow_path": flow_path, "namespace_id": alice_ns["schema"]}
         )
         assert resp.status_code == 200, resp.text
         assert reg_name in _registrations_in(alice_ns["schema"])

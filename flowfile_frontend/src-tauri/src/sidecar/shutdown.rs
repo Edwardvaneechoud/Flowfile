@@ -168,19 +168,26 @@ fn process_alive(pid: u32) -> bool {
 }
 
 #[cfg(windows)]
+fn windows_command(program: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut cmd = std::process::Command::new(program);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
+
+#[cfg(windows)]
 fn send_sigterm(pid: u32) -> bool {
-    // Windows has no SIGTERM; `taskkill` without `/F` sends WM_CLOSE first
-    // which gives the process a chance to drain its event loop.
-    std::process::Command::new("taskkill")
+    // No /F: WM_CLOSE, which a windowless sidecar cannot receive, so only the liveness answer counts.
+    let _ = windows_command("taskkill")
         .args(["/T", "/PID", &pid.to_string()])
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false)
+        .output();
+    process_alive(pid)
 }
 
 #[cfg(windows)]
 fn send_sigkill(pid: u32) -> bool {
-    std::process::Command::new("taskkill")
+    windows_command("taskkill")
         .args(["/F", "/T", "/PID", &pid.to_string()])
         .output()
         .map(|out| out.status.success())
@@ -189,7 +196,7 @@ fn send_sigkill(pid: u32) -> bool {
 
 #[cfg(windows)]
 fn process_alive(pid: u32) -> bool {
-    std::process::Command::new("tasklist")
+    windows_command("tasklist")
         .args(["/FI", &format!("PID eq {pid}"), "/NH"])
         .output()
         .map(|out| {

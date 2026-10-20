@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from flowfile_core import flow_file_handler
+from flowfile_core.auth.models import User
 from flowfile_core.configs import node_store
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
@@ -28,6 +29,8 @@ from flowfile_core.flowfile.user_defined.registry import LoadedNode
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
 from flowfile_core.routes.routes import get_node_available_artifacts
 from flowfile_core.schemas import input_schema, schemas
+
+LOCAL_USER = User(id=1, username="local_user")
 
 
 @pytest.fixture
@@ -47,6 +50,7 @@ def flow_factory():
         )
         flow = handler.get_flow(flow_id)
         flow_file_handler._flows[flow_id] = flow
+        flow_file_handler._register_user_session(LOCAL_USER.id, flow_id)
         created.append(flow_id)
         return flow
 
@@ -148,7 +152,7 @@ def test_kernel_from_python_script_input_returns_observed(flow_factory):
         2, "k1", [{"name": "scaler", "type_name": "StandardScaler", "module": "sklearn.preprocessing"}]
     )
 
-    resp = get_node_available_artifacts(flow_id=9101, node_id=3, kernel_id=None)
+    resp = get_node_available_artifacts(flow_id=9101, node_id=3, kernel_id=None, current_user=LOCAL_USER)
 
     assert len(resp["artifacts"]) == 1
     art = resp["artifacts"][0]
@@ -172,7 +176,7 @@ def test_kernel_from_manifest_default_fallback(flow_factory, register_manifest):
     _add_custom_promise(flow, 3, "udf_target", upstream_ids=(2,))  # target, no explicit binding
     flow.artifact_context.record_published(2, "kdata", [{"name": "prep", "type_name": "dict"}])
 
-    resp = get_node_available_artifacts(flow_id=9102, node_id=3, kernel_id=None)
+    resp = get_node_available_artifacts(flow_id=9102, node_id=3, kernel_id=None, current_user=LOCAL_USER)
 
     names = {a["name"]: a for a in resp["artifacts"]}
     assert set(names) == {"prep"}
@@ -197,7 +201,7 @@ def test_declared_publishes_merged_when_no_run(flow_factory, register_manifest):
     _add_custom_promise(flow, 2, "xgb_train", upstream_ids=(1,))
     _add_python_script(flow, 3, upstream_ids=(2,))  # target, kernel via query param
 
-    resp = get_node_available_artifacts(flow_id=9103, node_id=3, kernel_id="k1")
+    resp = get_node_available_artifacts(flow_id=9103, node_id=3, kernel_id="k1", current_user=LOCAL_USER)
 
     by_name = {a["name"]: a for a in resp["artifacts"]}
     assert set(by_name) == {"model", "metrics"}
@@ -237,7 +241,7 @@ def test_observed_wins_over_declared(flow_factory, register_manifest):
         2, "k1", [{"name": "model", "type_name": "ObservedBooster", "module": "xgboost.core"}]
     )
 
-    resp = get_node_available_artifacts(flow_id=9104, node_id=3, kernel_id="k1")
+    resp = get_node_available_artifacts(flow_id=9104, node_id=3, kernel_id="k1", current_user=LOCAL_USER)
 
     models = [a for a in resp["artifacts"] if a["name"] == "model"]
     assert len(models) == 1
@@ -265,7 +269,7 @@ def test_upstream_on_different_kernel_excluded(flow_factory, register_manifest):
     _add_custom_promise(flow, 2, "xgb_train_k2", upstream_ids=(1,))
     _add_python_script(flow, 3, upstream_ids=(2,))
 
-    resp = get_node_available_artifacts(flow_id=9105, node_id=3, kernel_id="k1")
+    resp = get_node_available_artifacts(flow_id=9105, node_id=3, kernel_id="k1", current_user=LOCAL_USER)
 
     assert resp == {"artifacts": []}
 
@@ -280,6 +284,6 @@ def test_unresolvable_kernel_returns_empty(flow_factory):
     _add_manual_input(flow, 1)
     _add_python_script(flow, 2, upstream_ids=(1,))  # no kernel binding
 
-    resp = get_node_available_artifacts(flow_id=9106, node_id=2, kernel_id=None)
+    resp = get_node_available_artifacts(flow_id=9106, node_id=2, kernel_id=None, current_user=LOCAL_USER)
 
     assert resp == {"artifacts": []}

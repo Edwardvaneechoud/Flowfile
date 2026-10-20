@@ -69,7 +69,7 @@
         data-tooltip-text="Toggle Full Screen"
         @click="toggleFullScreen"
       >
-        <span class="icon">⬜</span>
+        <span class="material-icons icon" aria-hidden="true">fullscreen</span>
       </button>
       <button
         v-if="allowFullScreen && intent.fullScreen"
@@ -78,7 +78,7 @@
         data-tooltip-text="Exit Full Screen"
         @click="toggleFullScreen"
       >
-        <span class="icon">❐</span>
+        <span class="material-icons icon" aria-hidden="true">fullscreen_exit</span>
       </button>
       <div v-if="tabs.length" class="dragitem-tabs" @mousedown.stop>
         <button
@@ -93,6 +93,9 @@
       </div>
       <div v-else-if="title" class="dragitem-tabs" @mousedown="startMove">
         <span class="dragitem-tab dragitem-tab--static active">{{ title }}</span>
+      </div>
+      <div v-if="$slots['header-actions']" class="dragitem-actions" @mousedown.stop>
+        <slot name="header-actions"></slot>
       </div>
     </div>
 
@@ -522,6 +525,12 @@ button.dragitem-tab:hover {
   cursor: move;
   user-select: none;
   font-size: 10px;
+}
+/* The host's per-tab actions (a pop-out button), after the tab strip. */
+.dragitem-actions {
+  display: flex;
+  align-items: center;
+  margin-left: 4px;
 }
 .overlay.minimized {
   width: auto !important;

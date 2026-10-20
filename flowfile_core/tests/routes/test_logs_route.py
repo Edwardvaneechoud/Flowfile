@@ -3,6 +3,7 @@
 import json
 import socket
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from flowfile_core import main
 from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.routes import logs
 from flowfile_core.routes.routes import flow_file_handler
+from flowfile_core.schemas import input_schema
 
 LOG_LINE = "hello from the log stream"
 
@@ -139,3 +141,172 @@ def test_worker_log_handler_lands_lines_in_core(own_flow, live_core, monkeypatch
     monkeypatch.setattr(flow_logger, "LOGGING_URL", f"{live_core}/raw_logs")
     flow_logger.get_worker_logger(own_flow, 4).warning("shipped by the worker")
     assert "shipped by the worker" in _flow_log_text(own_flow)
+
+
+def _events(response) -> list[str]:
+    return [json.loads(block.removeprefix("data: ")) for block in response.text.split("\n\n") if block]
+
+
+def _run(flow_id: int, after: float, line: str, for_seconds: float) -> threading.Thread:
+    """Claim the flow after a delay, log a line into the run, release it later."""
+
+    def run():
+        flow = flow_file_handler.get_flow(flow_id)
+        time.sleep(after)
+        flow.flow_settings.is_running = True
+        flow.flow_logger.info(line)
+        time.sleep(for_seconds)
+        flow.flow_settings.is_running = False
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return thread
+
+
+def test_idle_stream_sends_the_file_once_and_closes(own_flow):
+    started = time.monotonic()
+    response = client.get(f"/logs/{own_flow}", headers=headers)
+    events = _events(response)
+    assert response.status_code == 200
+    assert any(event.endswith(f"INFO - {LOG_LINE}") for event in events)
+    assert time.monotonic() - started < 2  # closed with the file
+
+
+def test_stream_opened_during_a_run_follows_it_and_ends_with_it(own_flow):
+    thread = _run(own_flow, after=0, line="written while running", for_seconds=1.0)
+    time.sleep(0.1)
+    response = client.get(f"/logs/{own_flow}", headers=headers)
+    thread.join()
+    events = _events(response)
+    assert any(event.endswith("written while running") for event in events)
+
+
+def test_run_request_claims_the_run_and_rewrites_its_log_before_it_answers(own_flow, monkeypatch):
+    """The queued task finds the run claimed and the log file truncated: so does a client the response reached."""
+    from flowfile_core.routes import routes
+
+    seen: dict[str, object] = {}
+
+    def run_and_track(flow, user_id, node_ids=None):
+        seen["running"] = flow.flow_settings.is_running
+        seen["log"] = _flow_log_text(own_flow)
+        flow.release_run()
+
+    monkeypatch.setattr(routes, "_run_and_track", run_and_track)
+    response = client.post("/flow/run/", params={"flow_id": own_flow}, headers=headers)
+    assert response.status_code == 200
+    assert seen == {"running": True, "log": ""}
+    assert flow_file_handler.get_flow(own_flow).flow_settings.is_running is False
+
+
+def test_the_log_is_truncated_before_the_claim_is_visible(own_flow, monkeypatch):
+    """A stream opened on ``is_running`` must never read the previous run's file, so truncation comes first."""
+    flow = flow_file_handler.get_flow(own_flow)
+    seen: dict[str, object] = {}
+    clear = flow.flow_logger.clear_log_file
+
+    def clear_log_file():
+        seen["running_at_truncation"] = flow.flow_settings.is_running
+        clear()
+
+    monkeypatch.setattr(flow.flow_logger, "clear_log_file", clear_log_file)
+    assert LOG_LINE in _flow_log_text(own_flow)
+    assert flow.try_claim_run()
+    try:
+        assert seen == {"running_at_truncation": False}
+        assert _flow_log_text(own_flow) == ""
+    finally:
+        flow.release_run()
+
+
+def test_a_run_whose_pre_work_fails_releases_the_claim(own_flow, monkeypatch):
+    from flowfile_core.routes import routes
+
+    def failing_pre_work(flow, user_id, node_ids):
+        raise RuntimeError("registration broke")
+
+    monkeypatch.setattr(routes, "_open_run_record", failing_pre_work)
+    with pytest.raises(RuntimeError, match="registration broke"):
+        client.post("/flow/run/", params={"flow_id": own_flow}, headers=headers)
+    assert flow_file_handler.get_flow(own_flow).flow_settings.is_running is False
+
+
+def _post_with_failing_send(path: str, query: str) -> None:
+    """Drive the ASGI app directly with a ``send`` that fails on the response start."""
+    import asyncio
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "root_path": "",
+        "query_string": query.encode(),
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+        "client": ("127.0.0.1", 1),
+        "server": ("127.0.0.1", 80),
+    }
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        raise ConnectionResetError("the client went away")
+
+    with pytest.raises(ConnectionResetError):
+        asyncio.run(main.app(scope, receive, send))
+
+
+def test_a_run_whose_answer_cannot_be_sent_still_runs_and_releases_the_claim(own_flow, monkeypatch):
+    """Starlette runs background tasks only after the body went out: the claimed run must not depend on that."""
+    from flowfile_core.routes import routes
+
+    seen: dict[str, object] = {}
+
+    def run_and_track(flow, user_id, node_ids=None):
+        seen["running"] = flow.flow_settings.is_running
+        flow.release_run()
+
+    monkeypatch.setattr(routes, "_run_and_track", run_and_track)
+    _post_with_failing_send("/flow/run/", f"flow_id={own_flow}")
+    assert seen == {"running": True}
+    assert flow_file_handler.get_flow(own_flow).flow_settings.is_running is False
+
+
+def test_a_fetch_whose_answer_cannot_be_sent_still_releases_the_claim(own_flow, monkeypatch):
+    flow = flow_file_handler.get_flow(own_flow)
+    flow.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=own_flow, node_id=1, raw_data_format=input_schema.RawData.from_pylist([{"a": 1}])
+        )
+    )
+    _post_with_failing_send("/node/trigger_fetch_data", f"flow_id={own_flow}&node_id=1")
+    assert flow.flow_settings.is_running is False
+    assert flow.get_node(1).node_stats.has_run_with_current_setup
+
+
+def test_a_second_run_request_is_refused_while_the_first_is_claimed(own_flow):
+    flow = flow_file_handler.get_flow(own_flow)
+    assert flow.try_claim_run()
+    try:
+        response = client.post("/flow/run/", params={"flow_id": own_flow}, headers=headers)
+        assert response.status_code == 422
+    finally:
+        flow.release_run()
+
+
+def test_stream_opened_after_the_run_request_reads_that_run(own_flow, live_core):
+    """Over a real server the task runs after the response: the stream still never sees the previous file."""
+    import httpx
+
+    posted = httpx.post(f"{live_core}/flow/run/", params={"flow_id": own_flow}, headers=headers, timeout=30)
+    assert posted.status_code == 200, posted.text
+    events: list[str] = []
+    with httpx.stream("GET", f"{live_core}/logs/{own_flow}", headers=headers, timeout=60) as stream:
+        for block in stream.iter_text():
+            events.extend(json.loads(line.removeprefix("data: ")) for line in block.split("\n\n") if line.strip())
+    assert not any(LOG_LINE in event for event in events)
+    assert any("Flow completed!" in event for event in events), events

@@ -14,6 +14,7 @@ from polars.testing import assert_frame_equal
 import flowfile_frame as ff
 from flowfile_core.flowfile.code_generator.code_generator import export_flow_to_flowframe
 from flowfile_frame import col
+from test_utils.exec_script import exec_script
 
 DATA = {"a": [1, 2, 3], "b": [10, 20, 30], "name": ["ann", "bob", "cid"]}
 
@@ -134,9 +135,7 @@ def test_independent_flowfile_formulas_still_land_on_one_node():
 
 def _reimport(frame: ff.FlowFrame) -> ff.FlowFrame:
     """Export the graph as FlowFrame code, execute it, and hand back the rebuilt frame."""
-    exec_globals: dict = {}
-    exec(export_flow_to_flowframe(frame.flow_graph), exec_globals)
-    return exec_globals["run_etl_pipeline"]()
+    return exec_script(export_flow_to_flowframe(frame.flow_graph))["run_etl_pipeline"]()
 
 
 @pytest.mark.parametrize(

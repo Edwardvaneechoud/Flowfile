@@ -49,6 +49,11 @@ def test_python_script_cells_compare_by_code_and_gate_by_its_active_source():
     assert settings_equal(gate, fresh, "gate")
 
 
+def test_explore_data_saved_charts_are_cosmetic():
+    saved = {"graphic_walker_input": {"is_initial": False, "specList": [{"name": "Chart 1"}]}}
+    assert settings_equal(saved, {"graphic_walker_input": None}, "explore_data")
+
+
 def _script(cells: list[str], code: str | None = None) -> dict:
     joined = "\n\n".join(cell for cell in cells if cell) if code is None else code
     return {"python_script_input": {"code": joined, "cells": [{"id": str(i), "code": c} for i, c in enumerate(cells)]}}

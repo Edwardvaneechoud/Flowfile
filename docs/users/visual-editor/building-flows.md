@@ -16,6 +16,7 @@ This page covers the canvas mechanics: creating a flow, adding and connecting no
 | Mouse wheel | Zoom |
 | Drag empty canvas | Pan |
 | Shift + drag | Select multiple nodes |
+| Alt + click (also ⌘ + click on macOS, Ctrl + click elsewhere) | Add a node to the selection, or remove it |
 | Right-click | Context menu; add notes to the canvas |
 
 ## Create a flow

@@ -173,8 +173,8 @@ def _ensure_known_provider(name: str) -> None:
         )
 
 
-def _resolve_flow(flow_id: int):
-    flow = flow_file_handler.get_flow(flow_id)
+def _resolve_flow(flow_id: int, user_id: int):
+    flow = flow_file_handler.get_flow(flow_id, user_id)
     if flow is None:
         raise HTTPException(status_code=404, detail=f"Flow {flow_id} not found")
     return flow
@@ -265,7 +265,7 @@ async def agent_start(
             ),
         )
     _ensure_known_provider(body.provider)
-    flow = _resolve_flow(body.flow_id)
+    flow = _resolve_flow(body.flow_id, current_user.id)
 
     # Resolve the model with surface-aware routing **before** byok runs so the
     # explicit ``model=`` arg wins. Default behaviour (cred.default_model
@@ -406,7 +406,7 @@ async def agent_resume(
         return AgentDiscardResponse(session_id=session_id)
 
     # continue
-    flow = _resolve_flow(session.flow_id)
+    flow = _resolve_flow(session.flow_id, current_user.id)
     # Mirror /start's surface-aware model resolution: if the session was
     # opened without an explicit model, force ``surface_models[surface]`` so
     # the resumed run uses the same tool-capable model the original /start
@@ -492,7 +492,7 @@ async def agent_followup(
             ),
         )
 
-    flow = _resolve_flow(session.flow_id)
+    flow = _resolve_flow(session.flow_id, current_user.id)
 
     # Mirror /resume's surface-aware model resolution: if the session was
     # opened without an explicit model, force ``surface_models[surface]`` so

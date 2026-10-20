@@ -17,11 +17,11 @@
 </template>
 
 <script lang="ts" setup>
-import { useNotebookPopout } from "../../../composables/useNotebookPopout";
+import { usePopout } from "../../../composables/usePopout";
 
 defineProps<{ flowId: number }>();
 
-const { focus, bringBack } = useNotebookPopout();
+const { focus, bringBack } = usePopout("notebook");
 </script>
 
 <style scoped>

@@ -175,6 +175,7 @@ def registered_flow() -> Iterator[FlowGraph]:
 
     flow = _build_linear_flow()
     flow_file_handler._flows[flow.flow_id] = flow
+    flow_file_handler._register_user_session(1, flow.flow_id)
     try:
         yield flow
     finally:
@@ -188,6 +189,7 @@ def registered_unnamed_flow() -> Iterator[FlowGraph]:
 
     flow = _build_linear_flow(name="")
     flow_file_handler._flows[flow.flow_id] = flow
+    flow_file_handler._register_user_session(1, flow.flow_id)
     try:
         yield flow
     finally:
@@ -198,6 +200,7 @@ def registered_unnamed_flow() -> Iterator[FlowGraph]:
 def registered_empty_flow() -> Iterator[FlowGraph]:
     flow = _build_empty_flow()
     flow_file_handler._flows[flow.flow_id] = flow
+    flow_file_handler._register_user_session(1, flow.flow_id)
     try:
         yield flow
     finally:

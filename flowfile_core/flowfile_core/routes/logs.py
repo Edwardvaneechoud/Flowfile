@@ -1,7 +1,6 @@
 import asyncio
 import functools
 import json
-import time
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -70,13 +69,9 @@ async def add_raw_log(raw_log_input: schemas.RawLogInput):
     return {"message": "Log added successfully"}
 
 
-async def stream_log_file(
-    log_file_path: Path,
-    is_running_callable: callable,
-    idle_timeout: int = 60,  # timeout in seconds
-) -> AsyncGenerator[str, None]:
+async def stream_log_file(log_file_path: Path, is_running_callable: callable) -> AsyncGenerator[str, None]:
+    """Send the file's lines; while ``is_running_callable`` holds, follow it, then drain what is left."""
     logger.info(f"Streaming log file: {log_file_path}")
-    last_active = time.monotonic()
     try:
         async with aiofiles.open(log_file_path) as file:
             await file.seek(0)
@@ -87,13 +82,8 @@ async def stream_log_file(
 
                 line = await file.readline()
                 if line:
-                    formatted_message = await format_sse_message(line.strip())
-                    yield formatted_message
-                    last_active = time.monotonic()
+                    yield await format_sse_message(line.strip())
                 else:
-                    if time.monotonic() - last_active > idle_timeout:
-                        yield await format_sse_message("Connection timed out due to inactivity.")
-                        break
                     # Allow the event loop to process other tasks (like signals)
                     await asyncio.sleep(0.1)
 
@@ -107,28 +97,31 @@ async def stream_log_file(
 
             logger.info("Streaming completed")
 
+    # The response has started by the time the file is read, so a failure can only end the stream; the
+    # cause stays in core's log, never in the event (no server path, no exception text).
     except FileNotFoundError:
-        error_msg = await format_sse_message(f"Log file not found: {log_file_path}")
-        yield error_msg
-        raise HTTPException(status_code=404, detail=f"Log file not found: {log_file_path}") from None
-    except Exception as e:
-        error_msg = await format_sse_message(f"Error reading log file: {str(e)}")
-        yield error_msg
-        raise HTTPException(status_code=500, detail=f"Error reading log file: {e}") from e
+        logger.warning(f"Log file not found while streaming: {log_file_path}")
+        yield await format_sse_message("Log file not found.")
+    except Exception:
+        logger.exception(f"Error reading log file {log_file_path}")
+        yield await format_sse_message("Error reading log file.")
 
 
 @router.get("/logs/{flow_id}", tags=["flow_logging"])
-async def stream_logs(flow_id: int, idle_timeout: int = 300, current_user=Depends(get_current_active_user)):
+async def stream_logs(flow_id: int, current_user=Depends(get_current_active_user)):
     """
     Streams logs for a given flow_id using Server-Sent Events.
     Requires a Bearer token header (the renderer reads the stream with fetch, not EventSource,
     so the token never goes in the URL). Only flows open in the caller's session are served.
-    The connection will close gracefully if the server shuts down.
+
+    Core owns the stream's end: opened while the flow runs, the stream follows the run and ends with
+    it, however long the run stays silent; opened while the flow is idle, it sends the file once and
+    closes. The run routes claim the run and truncate its log before they answer, so a stream opened
+    once a run request returned follows that run from its first line. The connection will close
+    gracefully if the server shuts down.
     """
     logger.info(f"Starting log stream for flow_id: {flow_id} by user: {current_user.username}")
-    await asyncio.sleep(0.3)
     flow = flow_file_handler.get_flow(flow_id, current_user.id)
-    logger.info("Streaming logs")
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
 
@@ -136,19 +129,14 @@ async def stream_logs(flow_id: int, idle_timeout: int = 300, current_user=Depend
     if not Path(log_file_path).exists():
         raise HTTPException(status_code=404, detail="Log file not found")
 
-    class RunningState:
-        def __init__(self):
-            self.has_started = False
+    follows_run = flow.flow_settings.is_running
+    logger.info("Streaming logs" if follows_run else "Sending the log once: the flow is idle")
 
-        def is_running(self):
-            if flow.flow_settings.is_running:
-                self.has_started = True
-            return flow.flow_settings.is_running or not self.has_started
-
-    running_state = RunningState()
+    def is_running() -> bool:
+        return follows_run and flow.flow_settings.is_running
 
     return StreamingResponse(
-        stream_log_file(log_file_path, running_state.is_running, idle_timeout),
+        stream_log_file(log_file_path, is_running),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

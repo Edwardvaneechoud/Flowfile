@@ -304,6 +304,7 @@ def registered_flow() -> Iterator[FlowGraph]:
 
     flow = _build_linear_flow()
     flow_file_handler._flows[flow.flow_id] = flow
+    flow_file_handler._register_user_session(1, flow.flow_id)
     try:
         yield flow
     finally:
@@ -314,6 +315,7 @@ def registered_flow() -> Iterator[FlowGraph]:
 def registered_empty_flow() -> Iterator[FlowGraph]:
     flow = _build_empty_flow()
     flow_file_handler._flows[flow.flow_id] = flow
+    flow_file_handler._register_user_session(1, flow.flow_id)
     try:
         yield flow
     finally:
@@ -353,6 +355,7 @@ def registered_flow_with_in_memory_run() -> Iterator[FlowGraph]:
     )
     flow.latest_run_info = info
     flow_file_handler._flows[flow.flow_id] = flow
+    flow_file_handler._register_user_session(1, flow.flow_id)
     try:
         yield flow
     finally:
@@ -668,6 +671,7 @@ def registered_cold_flow_for_w48() -> Iterator[FlowGraph]:
     flow.flow_id = _W48_LINEAGE_FLOW_ID
     flow.get_node(2).node_schema.predicted_schema = None
     flow_file_handler._flows[flow.flow_id] = flow
+    flow_file_handler._register_user_session(1, flow.flow_id)
     try:
         yield flow
     finally:

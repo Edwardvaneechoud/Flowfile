@@ -157,7 +157,7 @@ class TestKernelRequiredGate:
         flow_id = 4804
         if flow_file_handler.get_flow(flow_id) is not None:
             flow_file_handler.delete_flow(flow_id)
-        flow_file_handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name="env_422", path="."))
+        flow_file_handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name="env_422", path="."), user_id=1)
         graph = flow_file_handler.get_flow(flow_id)
         graph.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=1, node_type="env_kernel_node"))
 

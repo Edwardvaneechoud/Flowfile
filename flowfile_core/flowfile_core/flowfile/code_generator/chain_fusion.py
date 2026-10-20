@@ -56,7 +56,8 @@ def _link_suffix(consumer: NodeEmission, producer_var: str) -> list[str] | None:
     """Return the method-chain lines of ``consumer`` applied to ``producer_var``.
 
     Recognises ``c = producer.method(...)`` and the paren form ``c = (producer``
-    ... ``)``. Returns None (not fusable) when the head does not anchor on
+    ... ``)`` (also when a call follows the closing paren, as ``).add_to_group(g)``).
+    Returns None (not fusable) when the head does not anchor on
     ``producer_var`` or when ``producer_var`` is referenced anywhere but the chain
     base (e.g. ``record_id``'s ``... for col in producer.columns``), since fusing
     would drop the named variable that reference relies on.
@@ -70,9 +71,13 @@ def _link_suffix(consumer: NodeEmission, producer_var: str) -> list[str] | None:
         suffix = [head[len(direct):]] + consumer.lines[1:]
     elif head == paren:
         body = consumer.lines[1:]
-        if not body or body[-1].rstrip() != ")":
+        tail = body[-1].rstrip() if body else ""
+        if tail == ")":
+            suffix = _dedent(body[:-1])
+        elif tail.startswith(")."):  # a call on the closed expression: ``).add_to_group(g)``
+            suffix = _dedent(body[:-1]) + [tail[1:]]
+        else:
             return None
-        suffix = _dedent(body[:-1])
     else:
         return None
     token = re.compile(r"\b" + re.escape(producer_var) + r"\b")

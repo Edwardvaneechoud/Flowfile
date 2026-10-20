@@ -1,9 +1,10 @@
 """HTTP routes for the ML metadata API."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from flowfile_core import flow_file_handler
+from flowfile_core.auth.jwt import get_current_active_user
 from shared.ml.algorithms import MLAlgorithmSpec, get_algorithm_specs
 
 router = APIRouter(prefix="/ml", tags=["ml"])
@@ -48,8 +49,10 @@ def list_algorithms() -> list[MLAlgorithmSpec]:
         "train→apply at design time without first running the flow."
     ),
 )
-def list_upstream_train_models(flow_id: int, node_id: int) -> list[UpstreamTrainModelOption]:
-    flow = flow_file_handler.get_flow(flow_id)
+def list_upstream_train_models(
+    flow_id: int, node_id: int, current_user=Depends(get_current_active_user)
+) -> list[UpstreamTrainModelOption]:
+    flow = flow_file_handler.get_flow(flow_id, current_user.id)
     if flow is None:
         raise HTTPException(404, f"Flow {flow_id} not found")
     starting_node = flow.get_node(node_id)

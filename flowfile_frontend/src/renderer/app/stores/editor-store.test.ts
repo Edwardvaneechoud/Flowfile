@@ -336,22 +336,32 @@ describe("openCodePane", () => {
   });
 });
 
-describe("notebook pop-out state", () => {
+describe("pop-out window state", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
   });
 
-  it("marks, answers and clears a popped-out flow once", () => {
+  it("marks, answers and clears a popped-out flow once per kind", () => {
     const store = useEditorStore();
-    expect(store.isNotebookPoppedOut(4)).toBe(false);
-    store.markNotebookPoppedOut(4);
-    store.markNotebookPoppedOut(4);
-    expect(store.poppedOutNotebooks).toEqual([4]);
-    expect(store.isNotebookPoppedOut(4)).toBe(true);
-    expect(store.isNotebookPoppedOut(5)).toBe(false);
-    store.clearNotebookPoppedOut(4);
-    expect(store.poppedOutNotebooks).toEqual([]);
-    store.clearNotebookPoppedOut(4);
-    expect(store.isNotebookPoppedOut(4)).toBe(false);
+    expect(store.isPoppedOut("notebook", 4)).toBe(false);
+    store.markPoppedOut("notebook", 4);
+    store.markPoppedOut("notebook", 4);
+    expect(store.poppedOut.notebook).toEqual([4]);
+    expect(store.isPoppedOut("notebook", 4)).toBe(true);
+    expect(store.isPoppedOut("notebook", 5)).toBe(false);
+    store.clearPoppedOut("notebook", 4);
+    expect(store.poppedOut.notebook).toEqual([]);
+    store.clearPoppedOut("notebook", 4);
+    expect(store.isPoppedOut("notebook", 4)).toBe(false);
+  });
+
+  it("keeps the kinds apart", () => {
+    const store = useEditorStore();
+    store.markPoppedOut("table", 4);
+    expect(store.isPoppedOut("table", 4)).toBe(true);
+    expect(store.isPoppedOut("notebook", 4)).toBe(false);
+    expect(store.isPoppedOut("logs", 4)).toBe(false);
+    store.clearPoppedOut("notebook", 4);
+    expect(store.isPoppedOut("table", 4)).toBe(true);
   });
 });

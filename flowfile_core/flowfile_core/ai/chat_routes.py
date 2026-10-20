@@ -163,20 +163,20 @@ def _resolve_prompt_surface(requested: str | None) -> str:
     return _DEFAULT_SURFACE
 
 
-def _build_chat_messages(body: ChatStreamRequest) -> list[Message]:
+def _build_chat_messages(body: ChatStreamRequest, current_user) -> list[Message]:
     """The exact message list ``/chat/stream`` sends — shared with
     ``/chat/preview`` so the preview can never drift from the stream.
 
     With a ``flow_id`` the system prompt is context-rich (subgraph
     snapshot + per-node schemas, samples off); without one it is the
     identity-only layered prompt, so callers without a flow keep working.
-    Raises the 422 for an unknown flow.
+    Raises the 422 for a flow that is not open in ``current_user``'s session.
     """
     prompt_surface = _resolve_prompt_surface(body.surface)
     is_local = body.provider == LOCAL_PROVIDER_ID
 
     if body.flow_id is not None:
-        flow = flow_file_handler.get_flow(body.flow_id)
+        flow = flow_file_handler.get_flow(body.flow_id, current_user.id)
         if flow is None:
             raise HTTPException(status_code=422, detail=f"Flow {body.flow_id} not found")
         # Client-parsed mentions are forwarded as parsed ``Mention``s — not
@@ -273,7 +273,7 @@ async def chat_stream(
         # PROVIDERS-side mapping, but provider_factory has its own check.
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    messages = _build_chat_messages(body)
+    messages = _build_chat_messages(body, current_user)
 
     provider_stream = provider.stream(
         messages=messages,
@@ -344,7 +344,7 @@ async def chat_preview(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     prompt_surface = _resolve_prompt_surface(body.surface)
-    messages = _build_chat_messages(body)
+    messages = _build_chat_messages(body, current_user)
 
     preview_messages: list[ChatPreviewMessage] = []
     total_chars = 0

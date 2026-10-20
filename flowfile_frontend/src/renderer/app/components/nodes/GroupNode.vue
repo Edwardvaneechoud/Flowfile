@@ -10,7 +10,7 @@ import {
   useNodeGroups,
 } from "../../composables/useNodeGroups";
 import { useFlowStore } from "../../stores/flow-store";
-import type { GroupColor, GroupNodeData } from "../../types/flow.types";
+import { GROUP_COLORS, type GroupColor, type GroupNodeData } from "../../types/flow.types";
 
 const props = defineProps<{
   id: string;
@@ -22,7 +22,6 @@ const flowStore = useFlowStore();
 const { updateNodeData } = useVueFlow();
 const { ungroupNodes, setGroupCollapsed } = useNodeGroups();
 
-const GROUP_COLORS: GroupColor[] = ["slate", "blue", "green", "amber", "rose", "violet", "cyan"];
 // Header/border tint per color token. Body uses the same hue at low alpha.
 const COLOR_HEX: Record<GroupColor, string> = {
   slate: "#64748b",

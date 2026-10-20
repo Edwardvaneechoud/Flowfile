@@ -17,9 +17,9 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     get_local_cloud_connection,
 )
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
+from flowfile_core.auth.models import User
+from flowfile_core.routes import routes
 from flowfile_core.routes.routes import (
-    add_node,
-    connect_node,
     flow_file_handler,
     input_schema,
     output_model,
@@ -63,6 +63,17 @@ except ModuleNotFoundError:
     )
 
 FlowId = int
+
+# The electron-mode user every test client authenticates as; flows are scoped to their session.
+LOCAL_USER = User(id=1, username="local_user")
+
+
+def add_node(*args, **kwargs):
+    return routes.add_node(*args, current_user=LOCAL_USER, **kwargs)
+
+
+def connect_node(*args, **kwargs):
+    return routes.connect_node(*args, current_user=LOCAL_USER, **kwargs)
 
 
 def get_auth_token():

@@ -54,7 +54,10 @@ export interface FlowLogStreamOptions {
   onData: (data: string) => void;
 }
 
-/** Resolves when core closes the stream; rejects on a non-2xx response, a network error or an abort. */
+/**
+ * Resolves when core closes the stream: at the run's end for a running flow, right after the file for
+ * an idle one. Rejects on a non-2xx response, a network error or an abort.
+ */
 export const streamFlowLogs = async ({
   flowId,
   token,
