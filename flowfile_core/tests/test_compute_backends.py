@@ -34,6 +34,13 @@ NO_HEADER_VALUES = pytest.mark.parametrize(
     ["row-token\n", "row-token\r\n", "row-token\x00", "row-token\u20ac"],
     ids=["line-feed", "crlf", "nul", "beyond-latin-1"],
 )
+OLDER_ANSWER = {
+    **local_capabilities().model_dump(
+        mode="json", exclude={"operations", "read_schemes", "write_schemes", "credential_resolution"}
+    ),
+    "app_version": "0.23.0",
+}
+"""The capabilities of a worker built before it declared its operations, schemes and credential resolution."""
 
 
 def free_port() -> int:
@@ -85,10 +92,13 @@ def no_configured_backends() -> Iterator[None]:
 
 @pytest.fixture
 def fake_worker() -> Iterator[Callable[..., str]]:
-    """Start a worker that answers its capabilities only to ``token``, as this process's with ``changes``; its URL."""
+    """Start a worker that answers its capabilities only to ``token``, as this process's with ``changes``; its URL.
+
+    Given ``answer``, the worker answers that instead, as it is.
+    """
     servers: list[tuple[uvicorn.Server, threading.Thread]] = []
 
-    def start(token: str, **changes) -> str:
+    def start(token: str, *, answer: dict | None = None, **changes) -> str:
         reported = local_capabilities().model_copy(update=changes)
         app = FastAPI()
 
@@ -97,7 +107,7 @@ def fake_worker() -> Iterator[Callable[..., str]]:
         def capabilities(request: Request) -> dict:
             if request.headers.get("X-Flowfile-Internal") != token:
                 raise HTTPException(status_code=401, detail="Invalid or missing internal token")
-            return reported.model_dump(mode="json")
+            return reported.model_dump(mode="json") if answer is None else answer
 
         port = free_port()
         server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
@@ -220,6 +230,35 @@ def test_a_worker_on_other_versions_fails_the_handshake_naming_both_sides(admin_
     assert verdict["differences"] == [f"polars_version: core {pl.__version__}, worker 0.0.1"]
     assert verdict["worker"]["polars_version"] == "0.0.1"
     assert verdict["error"] is None
+
+
+def test_a_worker_of_an_earlier_release_fails_the_handshake_naming_both_app_versions(admin_client, fake_worker, flag):
+    url = fake_worker("row-token", answer=OLDER_ANSWER)
+    add(admin_client, url)
+
+    verdict = handshake(admin_client)
+
+    assert verdict["ok"] is False
+    assert verdict["worker"] is None
+    assert verdict["differences"] == []
+    assert verdict["error"] == (
+        f"The worker at {url} does not match core (app_version: core {local_capabilities().app_version}, "
+        "worker 0.23.0): its capabilities answer is not one this release reads (credential_resolution: Field required)"
+    )
+
+
+def test_a_url_that_is_no_worker_fails_the_handshake_as_unavailable(admin_client, fake_worker, flag):
+    url = fake_worker("row-token", answer={"status": "ok"})
+    add(admin_client, url)
+
+    verdict = handshake(admin_client)
+
+    assert verdict["ok"] is False
+    assert verdict["worker"] is None
+    assert verdict["differences"] == []
+    assert verdict["error"] == (
+        f"The server at {url} is not a Flowfile worker: its capabilities answer carries no app_version"
+    )
 
 
 def test_a_worker_that_refuses_the_rows_token_fails_the_handshake_naming_401(admin_client, fake_worker, flag):
