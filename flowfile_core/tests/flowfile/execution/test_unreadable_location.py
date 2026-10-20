@@ -6,7 +6,8 @@ host, but any read of that leaf from core raises ``FileNotFoundError``. A touch 
 instead of being counted, so these flows pass only while core takes a stored result's schema from its reference.
 They run with the protocol flag off and on: with it on, core asks the backend that holds a result whether it still
 does, and reads rows of those results through the backend: the formula editor's preview row, a formula gate's probe,
-column statistics, the CSV export and a Run Flow node's parameter rows; and a filter, a select, a join, a group_by, a
+column statistics, the CSV export, a Run Flow node's parameter rows and the preview of each output of a random split
+or a custom node; and a filter, a select, a join, a group_by, a
 formula, a record count, a unique, a union, an unpivot, window functions, text to rows, a multi-field formula, a graph
 solver, an explode hierarchy, a pivot, a dynamic rename, a data cleansing, a cross join or a Polars code node over a
 stored result, a node's output field config, a Run Flow node's outputs over its child's stored results and its data
@@ -52,6 +53,7 @@ from flowfile_core.flowfile.flow_node.executor import NodeExecutor
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.models import InvalidationReason
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
+from flowfile_core.flowfile.user_defined.registry import registry as node_registry
 from flowfile_core.routes.routes import export_node_data
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from shared.compute_protocol import WorkerLocation
@@ -447,6 +449,103 @@ def test_a_flow_runs_previews_and_predicts_over_stored_results_core_cannot_read(
             "id_right",
         ]
         assert [column.column_name for column in graph.get_node(9).get_predicted_schema()] == ["region", "total"]
+    finally:
+        graph.close_flow()
+
+
+SPLIT_NODE_SOURCE = '''
+import polars as pl
+from flowfile_core.flowfile.node_designer import CustomNodeBase
+
+
+class UnreadableSplitNode(CustomNodeBase):
+    node_name: str = "Unreadable Split Node"
+    number_of_outputs: int = 2
+    output_names: list[str] = ["big", "small"]
+
+    def process(self, *inputs: pl.LazyFrame):
+        lf = inputs[0]
+        return {"big": lf.filter(pl.col("amount") > 20), "small": lf.filter(pl.col("amount") <= 20)}
+'''
+
+
+@pytest.fixture
+def split_node(tmp_path):
+    """A custom node with two outputs loaded from a node file, so it runs as the ``custom_node`` operation."""
+    path = tmp_path / "unreadable_split_node.py"
+    path.write_text(SPLIT_NODE_SOURCE)
+    entry = node_registry.load_file(path)
+    assert entry.error is None, entry.error
+    yield entry
+    node_registry.remove_file(entry.file_path)
+
+
+def multi_output_flow(flow_id: int, node_type: str, split_node) -> FlowGraph:
+    """Manual input 1 of six customers → node 2, a random split or ``split_node``, whose outputs the backend stores."""
+    graph = make_graph(flow_id, max_parallel_workers=1)
+    customers = [{"id": i, "name": f"n{i}", "region": "eu" if i % 2 else "us", "amount": i * 10} for i in range(1, 7)]
+    add_manual_input(graph, 1, customers)
+    if node_type == "random_split":
+        add_promise(graph, 2, "random_split")
+        graph.add_random_split(
+            input_schema.NodeRandomSplit(
+                flow_id=graph.flow_id,
+                node_id=2,
+                depending_on_id=1,
+                seed=1,
+                splits=[
+                    input_schema.RandomSplitGroup(name="train", percentage=50.0),
+                    input_schema.RandomSplitGroup(name="test", percentage=50.0),
+                ],
+            )
+        )
+    else:
+        graph.add_node_promise(
+            input_schema.NodePromise(
+                flow_id=graph.flow_id, node_id=2, node_type=split_node.node_key, is_user_defined=True
+            )
+        )
+        graph.add_user_defined_node(
+            custom_node=split_node.node_class.from_settings({}),
+            user_defined_node_settings=input_schema.UserDefinedNode(
+                flow_id=graph.flow_id, node_id=2, settings={}, is_user_defined=True, user_id=1
+            ),
+        )
+    connect(graph, 1, 2)
+    return graph
+
+
+@pytest.mark.parametrize(
+    "flow_id, node_type", [(9367, "random_split"), (9368, "custom_node")], ids=["random_split", "custom_node"]
+)
+def test_a_multi_output_node_previews_each_output_stored_where_core_cannot_read(
+    unreadable, protocol, split_node, flow_id, node_type
+):
+    graph = multi_output_flow(flow_id, node_type, split_node)
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        node = graph.get_node(2)
+        handles = [DEFAULT_OUTPUT_HANDLE, "output-1"]
+        if not protocol:
+            for handle in handles:
+                with pytest.raises(FileNotFoundError):
+                    node.get_table_example(True, output_handle=handle)
+        else:
+            previews = {handle: node.get_table_example(True, output_handle=handle) for handle in handles}
+            node.results.example_data_generator = None
+            read_again = node.get_table_example(True, output_handle=DEFAULT_OUTPUT_HANDLE)
+
+            ids = {handle: [row["id"] for row in preview.data] for handle, preview in previews.items()}
+            counts = {handle: preview.number_of_records for handle, preview in previews.items()}
+            if node_type == "random_split":
+                assert counts == {DEFAULT_OUTPUT_HANDLE: 3, "output-1": 3}
+                assert sorted(ids[DEFAULT_OUTPUT_HANDLE] + ids["output-1"]) == [1, 2, 3, 4, 5, 6]
+            else:
+                assert ids == {DEFAULT_OUTPUT_HANDLE: [3, 4, 5, 6], "output-1": [1, 2]}
+                assert counts == {DEFAULT_OUTPUT_HANDLE: 4, "output-1": 2}
+            assert read_again.data == previews[DEFAULT_OUTPUT_HANDLE].data
     finally:
         graph.close_flow()
 
