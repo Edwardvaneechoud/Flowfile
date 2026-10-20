@@ -268,6 +268,9 @@ class NodeExecutor:
         clears that error and ``FlowNode._do_execute`` reads the stored result back rather
         than recomputing it.
 
+        Whether the held result vanished is asked only of a node that has run with its current setup, the one the
+        "already ran" rule would skip, so a node reset by a move to another backend never asks the backend it left.
+
         Raises:
             ComputeError: Asking the backend whether the stored result still exists
                 failed (``ComputeUnavailable`` when the worker cannot be reached). ``execute``
@@ -294,9 +297,8 @@ class NodeExecutor:
         if self._source_file_changed(state):
             return ExecutionDecision(True, InvalidationReason.SOURCE_FILE_CHANGED)
 
-        # A vanished worker artifact outranks the in-memory "already ran" flag: the held
-        # result is a scan of that file, so skipping here hands downstream a dangling plan.
-        if self.node.results.artifact_is_missing():
+        # A vanished result outranks the "already ran" skip below: skipping would hand downstream a dangling plan.
+        if state.has_run_with_current_setup and self.node.results.artifact_is_missing():
             return ExecutionDecision(True, InvalidationReason.CACHE_MISSING)
 
         # Cache-enabled nodes: check the stored result is still held.

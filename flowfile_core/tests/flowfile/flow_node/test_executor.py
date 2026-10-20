@@ -6,6 +6,7 @@ location, state management, and the decision-making logic of the refactored Flow
 
 import os
 import shutil
+import socket
 import tempfile
 import time
 from contextlib import contextmanager
@@ -18,8 +19,10 @@ from polars.exceptions import ColumnNotFoundError
 
 from flowfile_core.configs import settings
 from flowfile_core.configs.settings import WORKER_URL
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.execution.protocol import ResultRef, SubmitHints
 from flowfile_core.flowfile.flow_data_engine.column_stats import ColumnStatsUnavailable
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
@@ -1882,6 +1885,124 @@ class TestMissingWorkerArtifact:
         )
         assert decision.should_run is True
         assert decision.reason == InvalidationReason.CACHE_MISSING
+
+
+@pytest.fixture
+def unreachable_worker():
+    """``worker:gone``, a worker backend at a port nothing listens on, registered for the test."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    registry.reset()
+    registry.register_backend(
+        "worker:gone", lambda: WorkerBackend(url=f"http://127.0.0.1:{port}", backend_id="worker:gone")
+    )
+    yield "worker:gone"
+    registry.reset()
+
+
+class TestHeldResultsOnAnUnreachableBackend:
+    """A flow moved off a worker that cannot be reached runs on its new backend with a cold cache.
+
+    What the nodes held on the old worker is dropped when its release cannot reach it, and nothing asks that
+    worker whether a result still exists.
+    """
+
+    @staticmethod
+    def _held_on(backend_id: str, result_id: str, kind: Literal["table", "blob"] = "table") -> ResultRef:
+        location = WorkerLocation(kind="file" if kind == "table" else "blob", path=f"/gone/{result_id}")
+        return ResultRef(
+            backend_id=backend_id,
+            result_id=result_id,
+            schema=[],
+            row_count=2 if kind == "table" else None,
+            state="materialised",
+            location=location.model_dump_json().encode(),
+            kind=kind,
+        )
+
+    @staticmethod
+    def _train_and_apply(flow_id: int, execution_location: str) -> FlowGraph:
+        """Manual input 1 -> Train Model 10 (linear regression on ``x1``) -> Apply Model 20 scoring into ``pred``."""
+        graph = FlowGraph(
+            schemas.FlowSettings(flow_id=flow_id, name="moved_flow", path=".", execution_location=execution_location)
+        )
+        add_manual_input(graph, [{"x1": 1.0, "x2": 2.0, "y": 5.0}, {"x1": 3.0, "x2": 4.0, "y": 13.0}], node_id=1)
+        add_node_promise(graph, "train_model", node_id=10)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 10))
+        graph.add_train_model(
+            input_schema.NodeTrainModel(
+                flow_id=flow_id,
+                node_id=10,
+                depending_on_id=1,
+                train_input=input_schema.TrainModelSettings(
+                    target_column="y",
+                    feature_columns=["x1"],
+                    model_type="linear_regression",
+                    params={"add_bias": True},
+                ),
+            )
+        )
+        add_node_promise(graph, "apply_model", node_id=20)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(10, 20))
+        graph.add_apply_model(
+            input_schema.NodeApplyModel(
+                flow_id=flow_id,
+                node_id=20,
+                depending_on_id=10,
+                apply_input=input_schema.ApplyModelSettings(
+                    source="upstream", upstream_node_id=10, output_column="pred"
+                ),
+            )
+        )
+        return graph
+
+    def test_a_flow_moved_off_an_unreachable_worker_runs_on_local(self, protocol, unreachable_worker, monkeypatch):
+        asked: list[tuple[str, str, type | None]] = []
+
+        def recorded(name: str):
+            original = getattr(WorkerBackend, name)
+
+            def call(self, ref):
+                if self.id != unreachable_worker:
+                    return original(self, ref)
+                try:
+                    answer = original(self, ref)
+                except Exception as e:
+                    asked.append((name, ref.kind, type(e)))
+                    raise
+                asked.append((name, ref.kind, None))
+                return answer
+
+            return call
+
+        for name in ("exists", "release"):
+            monkeypatch.setattr(WorkerBackend, name, recorded(name))
+
+        graph = self._train_and_apply(5180, unreachable_worker)
+        try:
+            for node_id in (1, 10, 20):
+                node = graph.get_node(node_id)
+                node.results.result_ref = self._held_on(unreachable_worker, node.hash)
+                node._execution_state.has_run_with_current_setup = True
+            trained = graph.get_node(10)
+            trained.results.model_ref = self._held_on(unreachable_worker, f"{trained.hash}_model", kind="blob")
+
+            graph.execution_location = "local"
+            run_info = graph.run_graph()
+
+            assert run_info.success, [(step.node_id, step.error) for step in run_info.node_step_result]
+            assert all(step.success for step in run_info.node_step_result)
+            for node_id in (1, 10, 20):
+                assert graph.get_node(node_id).results.result_ref.backend_id == "local"
+            assert graph.get_node(10).results.model_ref.backend_id == "local"
+            scored = graph.get_node(20).get_resulting_data().collect()
+            assert scored["pred"].to_list() == pytest.approx([5.0, 13.0])
+            assert not [call for call in asked if call[0] == "exists"]
+            assert sorted(kind for name, kind, _ in asked if name == "release") == ["blob", "table", "table", "table"]
+            assert {raised for _, _, raised in asked} == {ComputeUnavailable}
+        finally:
+            graph.close_flow()
 
 
 class TestDeferredUntilRun:
