@@ -197,7 +197,7 @@ class ApplyModelInput(BaseModel):
 
 class Status(BaseModel):
     background_task_id: str
-    status: Literal["Processing", "Completed", "Error", "Unknown Error", "Starting"]  # Type alias for status
+    status: Literal["Processing", "Completed", "Error", "Unknown Error", "Starting", "Cancelled"]
     file_ref: str
     progress: int | None = 0
     error_message: str | None = None
