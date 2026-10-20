@@ -13,6 +13,11 @@ stored connection it names whose ``auth_method`` is not one a plan leaves to the
 (``_AMBIENT_AUTH_METHODS``). A backend declaring ``master_key`` or ``vended`` resolves a stored connection itself. A Run
 Flow node is placed with the flow it runs: that flow is built for the call, the nodes its run would run are placed on
 the node's backend by the same policy, and each of them refused there refuses the Run Flow node.
+Each node's needs are read from its settings with its flow's parameters in them, as the run puts them there before the
+node runs (``parameter_resolver.node_parameters_resolved``), and the settings are restored after, so a path on
+``${dir}`` is placed by where ``dir`` points; a node that refers to a ``${name}`` its flow does not define claims
+nothing, so the run fails it with the resolver's message, and a node whose needs cannot be read from its resolved
+settings is refused with the error, logged with its traceback.
 
 ``SingleBackendPolicy`` puts a whole run on one backend, except the node types whose builders always run on a backend
 of their own. ``MixedPlacementPolicy`` puts each node on the backend its own ``execution_location`` names, and ``place``
@@ -23,6 +28,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Mapping
+from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -142,6 +148,15 @@ def place(
     ``ambient``, the ``auth_method`` of each stored connection a cloud or catalog node names
     (``_unresolvable_connections``, which reads the connection's row and decrypts nothing).
 
+    Each node's needs are read with its flow's parameters in its settings, as the run puts them there before the node
+    runs (``node_parameters_resolved``), and the settings are restored once they are read. A node that refers to a
+    ``${name}`` its flow does not define is assigned and claims nothing, its needs being unknown rather than unmet, so
+    the run fails it with the resolver's message, as it would unplaced. A node whose needs cannot be read from its
+    resolved settings, whatever ``_catalog_target`` or ``requirements_for`` raises (a cloud path that is the whole
+    ``${n}`` of an integer parameter, a fault in either, a catalog database error), is refused with the error's class
+    and message, and a warning with the traceback goes to core's log: its needs were not checked, so it is not sent to
+    a backend that may not meet them.
+
     ``boundaries`` lists, in the order of ``nodes``, each pair of a node and an input of it assigned to another backend,
     once; an edge with an end that is not assigned is none.
     """
@@ -154,11 +169,31 @@ def place(
         if capabilities is None:
             continue
         assignment[node.node_id] = backend_id
-        target, namespace, namespace_id = _catalog_target(node)
-        artifact_scheme = _artifact_scheme(node)
-        requirements = requirements_for(
-            node.node_template, node.setting_input, catalog_target=target, artifact_scheme=artifact_scheme
-        )
+        with ExitStack() as resolved:
+            try:
+                resolved.enter_context(node_parameters_resolved(node))
+            except ValueError:
+                continue
+            artifact_scheme = _artifact_scheme(node)
+            try:
+                target, namespace, namespace_id = _catalog_target(node)
+                requirements = requirements_for(
+                    node.node_template, node.setting_input, catalog_target=target, artifact_scheme=artifact_scheme
+                )
+            except Exception as e:
+                reason = (
+                    f"its settings could not be checked with the flow's parameters filled in ({type(e).__name__}: {e})"
+                )
+                logger.warning(
+                    'Node %s of flow %s is refused on backend "%s": %s',
+                    node.node_id,
+                    flow.flow_id,
+                    backend_id,
+                    reason,
+                    exc_info=True,
+                )
+                refusals.append(Refusal(node_id=node.node_id, backend_id=backend_id, reason=reason))
+                continue
         reasons = _unmet(requirements, capabilities, namespace, artifact_scheme)
         if capabilities.credential_resolution == "ambient":
             reasons += _unresolvable_connections(node, requirements.credentials, namespace_id)
