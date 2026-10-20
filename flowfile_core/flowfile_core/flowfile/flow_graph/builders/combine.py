@@ -158,6 +158,8 @@ class CombineBuildersMixin(GraphMixinBase):
             join = FuzzyJoinPayload(
                 left=main.data_frame.lazy(),
                 right=right.data_frame.lazy(),
+                left_schema=main.schema,
+                right_schema=right.schema,
                 settings=fuzzy_settings,
                 node_logger=self.flow_logger.get_node_logger(fuzzy_settings.node_id),
                 flow_id=self.flow_id,

@@ -9,9 +9,8 @@ catalog. The artifact store reaches MinIO through an HTTPS forwarder with a cert
 it presigns for the worker are ``https`` ones. The secrets and the certificate reach the services through the
 environment only. A second flow runs one node on the worker and the rest in core, its data crossing through an exchange
 store on MinIO, with the protocol flag on and then off; its flag-off case recreates core, which is why it comes last.
-The elaborate integration flow (``complex_flow.json``, its outputs written to MinIO) runs on the worker but for its
-fuzzy match, which runs in core, and with its nodes alternating between the worker and core, so that its edges cross
-through the exchange store.
+The elaborate integration flow (``complex_flow.json``, its outputs written to MinIO) runs whole on the worker, and
+with its nodes alternating between the worker and core, so that its edges cross through the exchange store.
 """
 
 from __future__ import annotations
@@ -471,8 +470,6 @@ COMPLEX_ROWS = {
     "combined_aggregations.csv": 52,
 }
 COMPLEX_FLOW_IDS = {"worker": 7404, "alternating": 7405}
-# the worker backend prepares a fuzzy match's sides in core, reading its inputs' stored files
-FUZZY_MATCH_IN_CORE = {43: "local"}
 ALTERNATING = {
     **dict.fromkeys((1, 2, 4, 5, 12, 14, 17, 26, 27, 30, 41, 72, 73, 74, 9999), "worker"),
     **dict.fromkeys((3, 11, 13, 15, 16, 28, 29, 31, 32, 42, 43, 51, 52, 61, 71), "local"),
@@ -514,7 +511,7 @@ def complex_outputs(stack: Stack, exchange: None) -> None:
     stack.minio.create_bucket(Bucket=COMPLEX_BUCKET)
 
 
-def _complex_flow(flow_id: int, locations: dict[int, str]) -> dict:
+def _complex_flow(flow_id: int, locations: dict[int, str] | None = None) -> dict:
     """The elaborate flow from its file, its writers under ``<bucket>/<flow id>/``, each node placed per ``locations``."""
     flow = json.loads(COMPLEX_FLOW.read_text())
     flow["flowfile_id"] = flow_id
@@ -522,7 +519,7 @@ def _complex_flow(flow_id: int, locations: dict[int, str]) -> dict:
         if node["type"] == "cloud_storage_writer":
             storage = node["setting_input"]["cloud_storage_settings"]
             storage["resource_path"] = storage["resource_path"].replace("/out/", f"/{flow_id}/")
-        if node["id"] in locations:
+        if locations is not None:
             node["setting_input"]["execution_location"] = locations[node["id"]]
     return flow
 
@@ -538,7 +535,7 @@ def _written(stack: Stack, flow_id: int) -> dict[str, int]:
 
 def test_the_elaborate_flow_runs_on_a_worker_that_shares_no_volume_with_core(stack, exchange, complex_outputs):
     stack = _core_with_protocol(stack, "1")
-    flow_id = _import_flow(stack, _complex_flow(COMPLEX_FLOW_IDS["worker"], FUZZY_MATCH_IN_CORE))
+    flow_id = _import_flow(stack, _complex_flow(COMPLEX_FLOW_IDS["worker"]))
     assert flow_id == COMPLEX_FLOW_IDS["worker"]
 
     run = _run(stack, flow_id)
@@ -547,7 +544,11 @@ def test_the_elaborate_flow_runs_on_a_worker_that_shares_no_volume_with_core(sta
     assert run["success"] is True and not failures, f"{failures}\n{_logs()}"
     assert run["nodes_completed"] == 30
     assert _written(stack, flow_id) == COMPLEX_ROWS
-    assert sorted(run["boundaries"]) == [[1, 43], [4, 43], [43, 72]]
+    assert run["boundaries"] == []
+    versions = stack.minio.list_object_versions(Bucket=EXCHANGE_BUCKET, Prefix=f"runs/{flow_id}/")
+    assert "Versions" not in versions and "DeleteMarkers" not in versions, versions
+    core_cache = f"/app/internal_storage/cache/local/{flow_id}/"
+    assert [path for path in _cache_files("flowfile-core") if path.startswith(core_cache)] == []
 
 
 def test_the_elaborate_flow_with_its_nodes_alternating_between_worker_and_core_crosses_the_exchange_store(

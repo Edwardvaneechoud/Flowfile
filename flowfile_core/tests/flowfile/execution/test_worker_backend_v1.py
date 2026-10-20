@@ -1026,6 +1026,39 @@ def test_a_fuzzy_join_runs_over_v1_and_matches_as_it_does_in_core(backend, kept,
 
 
 @SOCKET_ONLY
+def test_a_fuzzy_join_over_results_the_worker_holds_resolves_neither_side_in_core(
+    backend, kept, no_file_read_in_core, monkeypatch
+):
+    names = pl.LazyFrame({"name": ["eduward", "edward", "courtney"]})
+    stored = submit(backend, kept, must_materialise=True, plan=names).ref
+    join = FuzzyJoinPayload(
+        left=backend.plan_for(stored),
+        right=backend.plan_for(stored),
+        left_schema=stored.schema,
+        right_schema=stored.schema,
+        settings=fuzzy_settings(),
+        flow_id=1,
+        node_id=2,
+        job_id=f"{new_result_id()}_fm",
+    )
+
+    def no_schema_resolved(*args, **kwargs):
+        pytest.fail("core resolved a side of the fuzzy join")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(pl.LazyFrame, "collect_schema", no_schema_resolved)
+        ref = backend.run_op(OperationKind.fuzzy_join, op_payload(join)).refs["result"]
+    kept.append(ref)
+
+    assert (ref.state, ref.row_count) == ("materialised", 5)
+    in_core = LocalBackend()
+    in_memory = dataclasses.replace(join, left=names, right=names, left_schema=None, right_schema=None)
+    local_ref = in_core.run_op(OperationKind.fuzzy_join, op_payload(in_memory)).refs["result"]
+    columns = ["name", "name_right", "name_vs_name_right_levenshtein"]
+    assert sampled(backend, ref).sort(columns).equals(in_core.plan_for(local_ref).collect().sort(columns))
+
+
+@SOCKET_ONLY
 def test_a_random_split_runs_over_v1_and_partitions_like_core(backend, kept, no_file_read_in_core):
     settings_ = input_schema.NodeRandomSplit(flow_id=1, node_id=3, seed=11)
     split = RandomSplitPayload(
