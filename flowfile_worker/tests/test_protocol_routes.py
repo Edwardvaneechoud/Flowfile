@@ -536,6 +536,32 @@ def test_import_under_a_held_id_replaces_it(held, tmp_path):
     assert not os.path.exists(stored_file)
 
 
+def test_an_import_whose_catalog_cannot_be_read_is_the_500_of_a_failed_export(held, monkeypatch, tmp_path):
+    import shared.database
+
+    def unreadable(connection_id):
+        raise RuntimeError("the catalog is gone")
+
+    monkeypatch.setattr(shared.database, "cloud_connection_record", unreadable)
+    result_id = held()
+    body = {
+        "uri": file_uri(tmp_path / "in.parquet"),
+        "columns": [],
+        "credential": {"connection_id": 3, "user_id": 1},
+    }
+
+    response = client.post(f"/v1/results/{result_id}/import", json=body)
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == {
+        "status": "Error",
+        "error_message": "CredentialResolutionError: Could not read cloud connection 3 (user 1) from the catalog "
+        "database: RuntimeError",
+        "error_kind": "task",
+    }
+    assert client.head(f"/v1/results/{result_id}").status_code == 404
+
+
 @pytest.mark.parametrize(
     ("route", "body"),
     [
@@ -938,6 +964,46 @@ def test_a_finished_job_cannot_be_cancelled(held):
     _submit(result_id, _plan())
 
     assert client.post(f"/v1/jobs/{result_id}/cancel").status_code == 404
+
+
+@pytest.mark.parametrize("held_at", ["child", "in_process"])
+def test_a_cancel_posted_while_a_submit_is_starting_stops_it_when_it_starts(held, monkeypatch, held_at):
+    """The submit is held in ``Starting`` before its child spawns, or before its columns are resolved in process."""
+    result_id = held()
+    if held_at == "child":
+        meta, name, real = _meta(result_id, must_materialise=True), "start_process", protocol_routes.start_process
+    else:
+        meta, name, real = _meta(result_id), "_load_plan", protocol_routes._load_plan
+    go = threading.Event()
+
+    def held_back(*args, **kwargs):
+        go.wait(30)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(protocol_routes, name, held_back)
+    answers = []
+    submit = threading.Thread(target=lambda: answers.append(_post(_plan().serialize(), meta)))
+    submit.start()
+    try:
+        deadline = time.monotonic() + 30
+        while (job := client.get(f"/v1/jobs/{result_id}")).status_code != 200 or job.json()["status"] != "Starting":
+            assert time.monotonic() < deadline, "the submit never registered its job"
+            time.sleep(0.01)
+
+        cancel = client.post(f"/v1/jobs/{result_id}/cancel")
+
+        assert cancel.status_code == 200, cancel.text
+        job = client.get(f"/v1/jobs/{result_id}").json()
+        assert job["status"] == "Cancelled"
+        models.Status.model_validate(job)
+    finally:
+        go.set()
+        submit.join(60)
+    [response] = answers
+    assert response.status_code == 500
+    assert response.json()["detail"]["status"] == "Cancelled"
+    assert client.head(f"/v1/results/{result_id}").status_code == 404
+    assert not result_path(FLOW_ID, result_id).exists()
 
 
 def _ws_submit(plan: bytes, meta: str) -> tuple[list[dict], dict, int]:

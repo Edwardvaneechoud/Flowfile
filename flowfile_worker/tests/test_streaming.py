@@ -542,6 +542,40 @@ class TestHandleTaskTerminalStatus:
                 status_dict.pop(task_id, None)
             process_manager.remove_process(task_id)
 
+    @pytest.mark.parametrize("child_lives", [True, False], ids=["while_the_child_lives", "after_the_child_exited"])
+    def test_a_failure_cut_inside_a_character_is_read_with_its_progress(self, child_lives):
+        # The buffer ends inside a two-byte character; the loop reads the -1 only while the child lives.
+        task_id = f"test-handle-task-cut-character-{child_lives}"
+        progress = mp_context.Value("i", -1)
+        error_message = mp_context.Array("c", 1024)
+        error_message[:1024] = ("ValueError: x" + "é" * 600).encode()[:1024]
+        q = mp_context.Queue(maxsize=1)
+        p = mp_context.Process(target=time.sleep, args=(2 if child_lives else 0,))
+        p.start()
+        if not child_lives:
+            p.join()
+        process_manager.add_process(task_id, p)
+        with status_dict_lock:
+            status_dict[task_id] = models.Status(
+                background_task_id=task_id, status="Starting", file_ref="x", result_type="polars"
+            )
+        try:
+            handle_task(task_id, p, progress, error_message, q)
+            with status_dict_lock:
+                status = status_dict[task_id]
+            assert status.status == "Error"
+            assert status.error_kind == "task"
+            assert status.error_message.startswith("ValueError: x")
+            assert status.error_message.endswith("�")
+            assert status.progress == -1
+        finally:
+            if p.is_alive():
+                p.terminate()
+                p.join()
+            with status_dict_lock:
+                status_dict.pop(task_id, None)
+            process_manager.remove_process(task_id)
+
 
 class TestWsMonitorTimeout:
     """_monitor_progress (WS path) must terminate a wedged child at the deadline

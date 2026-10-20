@@ -29,6 +29,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     delete_cloud_connection,
     store_cloud_connection,
 )
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
@@ -203,7 +204,7 @@ def storage_options_spy(monkeypatch):
 
 
 def _seed_files(prefix: str) -> dict[str, str]:
-    """Parquet, a two-file parquet directory, CSV, NDJSON and a change-tracked Delta table under *prefix*."""
+    """Parquet, CSV and NDJSON files, a two-file directory of each, and a change-tracked Delta table under *prefix*."""
     frame = pl.DataFrame(_ROWS)
     base = f"s3://{_BUCKET}/{prefix}"
     frame.write_parquet(f"{base}/single.parquet", storage_options=_ROOT_OPTIONS)
@@ -211,13 +212,18 @@ def _seed_files(prefix: str) -> dict[str, str]:
     frame.write_parquet(f"{base}/dir/part1.parquet", storage_options=_ROOT_OPTIONS)
     frame.write_csv(f"{base}/data.csv", storage_options=_ROOT_OPTIONS)
     frame.lazy().sink_ndjson(f"{base}/data.json", storage_options=_ROOT_OPTIONS)
+    for part in (0, 1):
+        frame.write_csv(f"{base}/csv_dir/part{part}.csv", storage_options=_ROOT_OPTIONS)
+        frame.lazy().sink_ndjson(f"{base}/json_dir/part{part}.json", storage_options=_ROOT_OPTIONS)
     write_delta(frame.head(2), f"{base}/delta", mode="overwrite", storage_options=_ROOT_OPTIONS, enable_cdf=True)
     write_delta(frame.tail(1), f"{base}/delta", mode="append", storage_options=_ROOT_OPTIONS)
     return {
         "single": f"{base}/single.parquet",
         "dir": f"{base}/dir/",
         "csv": f"{base}/data.csv",
+        "csv_dir": f"{base}/csv_dir/",
         "json": f"{base}/data.json",
+        "json_dir": f"{base}/json_dir/",
         "delta": f"{base}/delta",
     }
 
@@ -359,6 +365,69 @@ class TestReadPlansNameTheirConnection:
             assert probed == []
 
 
+def test_a_read_with_no_saved_connection_carries_nothing_core_resolved(
+    protocol, storage_options_spy, monkeypatch, tmp_path
+):
+    """An aws-cli read with no saved connection, core's default profile holding a sentinel key; no I/O.
+
+    Flag on, the plan carries no credential and no provider, so the default chain resolves where the plan runs; flag
+    off, core resolves its default chain and the plan carries the keys encrypted.
+    """
+    sentinel = f"SENTINEL-{uuid.uuid4().hex}"
+    isolate_aws(monkeypatch, tmp_path, {"default": ("AKIDNOCONNECTION", sentinel)})
+    monkeypatch.setattr(pl.LazyFrame, "collect_schema", lambda self: pl.Schema({"id": pl.Int64}))
+    read = CloudStorageReadSettingsInternal(
+        connection=FullCloudStorageConnection(storage_type="s3", auth_method="aws-cli", connection_name=None),
+        read_settings=CloudStorageReadSettings(
+            auth_mode="aws-cli", resource_path=_PATHS["s3"] + _SUFFIXES["parquet"], file_format="parquet"
+        ),
+    )
+
+    plan = FlowDataEngine.from_cloud_storage_obj(read, user_id=1).data_frame.serialize()
+
+    _assert_no_secret([plan], sentinel.encode(), b"AKIDNOCONNECTION")
+    if protocol:
+        assert storage_options_spy == []
+        _no_encrypted_provider([plan])
+        assert b"CredentialRefProvider" not in plan
+    else:
+        assert len(storage_options_spy) == 1
+        assert b"$ffsec$" in plan
+
+
+class _SubmitRaises:
+    """A backend whose submit raises ``error``."""
+
+    def __init__(self, error: Exception):
+        self.error = error
+
+    def submit(self, *args, **kwargs):
+        raise self.error
+
+
+@pytest.mark.parametrize(
+    ("file_format", "kind"), [("parquet", "Parquet"), ("csv", "CSV"), ("json", "JSON"), ("delta", "Delta file")]
+)
+def test_a_compute_error_from_the_schema_read_reaches_the_caller_as_the_backend_raised_it(file_format, kind):
+    """A reader leaves the backend's typed error as it is and wraps any other failure in its own message; no I/O."""
+    read = CloudStorageReadSettingsInternal(
+        connection=FullCloudStorageConnection(storage_type="s3", auth_method="env_vars", connection_name=None),
+        read_settings=CloudStorageReadSettings(
+            resource_path=_PATHS["s3"] + _SUFFIXES[file_format], file_format=file_format
+        ),
+    )
+    unreachable = ComputeUnavailable("Could not reach the worker")
+
+    with pytest.raises(ComputeUnavailable) as typed:
+        FlowDataEngine.from_cloud_storage_obj(read, backend=_SubmitRaises(unreachable))
+    with pytest.raises(Exception) as wrapped:
+        FlowDataEngine.from_cloud_storage_obj(read, backend=_SubmitRaises(OSError("No such bucket")))
+
+    assert typed.value is unreachable
+    assert type(wrapped.value) is Exception
+    assert str(wrapped.value) == f"Failed to read {kind} from cloud storage: No such bucket"
+
+
 @requires_minio
 def test_cloud_reader_plans_carry_no_secret(
     execution_location, protocol, stored_connection, minio_prefix, serialized_plans
@@ -397,6 +466,57 @@ def test_cloud_reader_plans_carry_no_secret(
     if protocol:
         _no_encrypted_provider(serialized_plans)
         assert any(b"CredentialRefProvider" in plan for plan in serialized_plans)
+
+
+@requires_minio
+@pytest.mark.parametrize("execution_location", ["remote"], indirect=True)
+def test_a_cloud_read_on_the_worker_resolves_no_connection_in_core(
+    execution_location, protocol, stored_connection, minio_prefix, monkeypatch
+):
+    """Core's credential providers and options builder raise, so a cloud read sent to the worker passes only if the
+    worker resolves it.
+
+    Flag on, each reader's schema comes from the worker; flag off, core builds the read's options.
+    """
+    paths = _seed_files(minio_prefix)
+    connection_name = stored_connection(
+        "access_key", aws_access_key_id=MINIO_ACCESS_KEY, aws_secret_access_key=SecretStr(MINIO_SECRET_KEY)
+    )
+    resolved = []
+
+    def _refuse(*args):
+        resolved.append(args)
+        raise RuntimeError("core resolved a connection for a read on the worker")
+
+    monkeypatch.setattr(cp, "resolve_credential_ref", _refuse)
+    monkeypatch.setattr(cp.EncryptedCredentialProvider, "__call__", _refuse)
+    monkeypatch.setattr(CloudStorageReader, "get_storage_options", staticmethod(_refuse))
+    graph = create_test_graph(flow_id=7410, execution_location=execution_location)
+    readers = {
+        1: {"resource_path": paths["single"], "file_format": "parquet"},
+        3: {"resource_path": paths["dir"], "file_format": "parquet", "scan_mode": "directory"},
+        5: {"resource_path": paths["csv"], "file_format": "csv"},
+        7: {"resource_path": paths["csv_dir"], "file_format": "csv", "scan_mode": "directory"},
+        9: {"resource_path": paths["json"], "file_format": "json"},
+        11: {"resource_path": paths["json_dir"], "file_format": "json", "scan_mode": "directory"},
+        13: {"resource_path": paths["delta"], "file_format": "delta"},
+    }
+    for node_id, settings in readers.items():
+        _add_reader(graph, node_id, connection_name, **settings)
+        _add_record_count(graph, node_id + 1, node_id)
+
+    run_info = graph.run_graph()
+
+    if protocol:
+        _assert_run_succeeded(run_info)
+        counts = {node_id + 1: _count(graph, node_id + 1) for node_id in readers}
+        assert counts == {2: 3, 4: 6, 6: 3, 8: 6, 10: 3, 12: 6, 14: 3}
+        assert [column.column_name for column in graph.get_node(1).get_resulting_data().schema] == ["id", "name"]
+        assert resolved == []
+    else:
+        failures = {step.node_id: step.error for step in run_info.node_step_result if not step.success}
+        assert set(readers) <= set(failures), failures
+        assert all("core resolved a connection" in failures[node_id] for node_id in readers), failures
 
 
 @requires_minio
@@ -630,6 +750,68 @@ class TestCatalogReadersOnObjectStorage:
         if protocol:
             _no_encrypted_provider(serialized_plans)
             assert any(b"CredentialRefProvider" in plan for plan in serialized_plans)
+
+    @pytest.mark.parametrize("execution_location", ["remote"], indirect=True)
+    def test_a_catalog_table_read_on_the_worker_resolves_no_connection_in_core(
+        self, execution_location, protocol, minio_prefix, monkeypatch
+    ):
+        """Core's credential providers raise, so a table read sent to the worker passes only if the worker resolves it.
+
+        Flag on, the reader's schema comes from the worker; flag off, core decrypts the plan's ciphertext to build it.
+        """
+        _ensure_connection()
+        schema_id = _create_cloud_schema(f"s3://{_BUCKET}/{minio_prefix}/catalog")
+        target = resolve_for_namespace(schema_id)
+        dest = f"s3://{_BUCKET}/{minio_prefix}/catalog/core_probe"
+        write_delta(pl.DataFrame(_ROWS), dest, mode="overwrite", storage_options=target.storage_options)
+        with get_db_context() as db:
+            table_id = (
+                CatalogService(SQLAlchemyCatalogRepository(db))
+                .register_table_from_data(
+                    name=f"core_probe_{uuid.uuid4().hex[:6]}",
+                    table_path=dest,
+                    owner_id=1,
+                    namespace_id=schema_id,
+                    storage_format="delta",
+                    schema=[{"name": "id", "dtype": "Int64"}, {"name": "name", "dtype": "Utf8"}],
+                    row_count=3,
+                    column_count=2,
+                    size_bytes=100,
+                )
+                .id
+            )
+        write_delta(pl.DataFrame(_ROWS[:1]), dest, mode="append", storage_options=target.storage_options)
+        resolved = []
+
+        def _refuse(*args):
+            resolved.append(args)
+            raise RuntimeError("core resolved a connection for a read on the worker")
+
+        monkeypatch.setattr(cp, "resolve_credential_ref", _refuse)
+        monkeypatch.setattr(cp.EncryptedCredentialProvider, "__call__", _refuse)
+        graph = create_test_graph(flow_id=7409, execution_location=execution_location)
+        for node_id, version in ((1, None), (3, 0)):
+            graph.add_node_promise(
+                input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="catalog_reader")
+            )
+            graph.add_catalog_reader(
+                input_schema.NodeCatalogReader(
+                    flow_id=graph.flow_id, node_id=node_id, catalog_table_id=table_id, delta_version=version
+                )
+            )
+            _add_record_count(graph, node_id + 1, node_id)
+
+        run_info = graph.run_graph()
+
+        if protocol:
+            _assert_run_succeeded(run_info)
+            assert {node_id: _count(graph, node_id) for node_id in (2, 4)} == {2: 4, 4: 3}
+            assert [column.column_name for column in graph.get_node(1).get_resulting_data().schema] == ["id", "name"]
+            assert resolved == []
+        else:
+            failures = {step.node_id: step.error for step in run_info.node_step_result if not step.success}
+            assert {1, 3} <= set(failures), failures
+            assert all("core resolved a connection" in failures[node_id] for node_id in (1, 3)), failures
 
 
 @requires_minio
