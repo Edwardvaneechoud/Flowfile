@@ -29,6 +29,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     delete_cloud_connection,
     store_cloud_connection,
 )
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
@@ -392,6 +393,39 @@ def test_a_read_with_no_saved_connection_carries_nothing_core_resolved(
     else:
         assert len(storage_options_spy) == 1
         assert b"$ffsec$" in plan
+
+
+class _SubmitRaises:
+    """A backend whose submit raises ``error``."""
+
+    def __init__(self, error: Exception):
+        self.error = error
+
+    def submit(self, *args, **kwargs):
+        raise self.error
+
+
+@pytest.mark.parametrize(
+    ("file_format", "kind"), [("parquet", "Parquet"), ("csv", "CSV"), ("json", "JSON"), ("delta", "Delta file")]
+)
+def test_a_compute_error_from_the_schema_read_reaches_the_caller_as_the_backend_raised_it(file_format, kind):
+    """A reader leaves the backend's typed error as it is and wraps any other failure in its own message; no I/O."""
+    read = CloudStorageReadSettingsInternal(
+        connection=FullCloudStorageConnection(storage_type="s3", auth_method="env_vars", connection_name=None),
+        read_settings=CloudStorageReadSettings(
+            resource_path=_PATHS["s3"] + _SUFFIXES[file_format], file_format=file_format
+        ),
+    )
+    unreachable = ComputeUnavailable("Could not reach the worker")
+
+    with pytest.raises(ComputeUnavailable) as typed:
+        FlowDataEngine.from_cloud_storage_obj(read, backend=_SubmitRaises(unreachable))
+    with pytest.raises(Exception) as wrapped:
+        FlowDataEngine.from_cloud_storage_obj(read, backend=_SubmitRaises(OSError("No such bucket")))
+
+    assert typed.value is unreachable
+    assert type(wrapped.value) is Exception
+    assert str(wrapped.value) == f"Failed to read {kind} from cloud storage: No such bucket"
 
 
 @requires_minio
