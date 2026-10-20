@@ -16,7 +16,8 @@ the node's backend by the same policy, and each of them refused there refuses th
 Each node's needs are read from its settings with its flow's parameters in them, as the run puts them there before the
 node runs (``parameter_resolver.node_parameters_resolved``), and the settings are restored after, so a path on
 ``${dir}`` is placed by where ``dir`` points; a node that refers to a ``${name}`` its flow does not define claims
-nothing, so the run fails it with the resolver's message.
+nothing, so the run fails it with the resolver's message, and a node whose needs cannot be read from its resolved
+settings is refused with the error, logged with its traceback.
 
 ``SingleBackendPolicy`` puts a whole run on one backend, except the node types whose builders always run on a backend
 of their own. ``MixedPlacementPolicy`` puts each node on the backend its own ``execution_location`` names, and ``place``
@@ -150,9 +151,11 @@ def place(
     Each node's needs are read with its flow's parameters in its settings, as the run puts them there before the node
     runs (``node_parameters_resolved``), and the settings are restored once they are read. A node that refers to a
     ``${name}`` its flow does not define is assigned and claims nothing, its needs being unknown rather than unmet, so
-    the run fails it with the resolver's message, as it would unplaced; a node whose needs cannot be read from its
-    resolved settings, whatever reading them raises (a cloud path that is the whole ``${n}`` of an integer parameter),
-    claims nothing too, and the run fails it with its own message.
+    the run fails it with the resolver's message, as it would unplaced. A node whose needs cannot be read from its
+    resolved settings, whatever ``_catalog_target`` or ``requirements_for`` raises (a cloud path that is the whole
+    ``${n}`` of an integer parameter, a fault in either, a catalog database error), is refused with the error's class
+    and message, and a warning with the traceback goes to core's log: its needs were not checked, so it is not sent to
+    a backend that may not meet them.
 
     ``boundaries`` lists, in the order of ``nodes``, each pair of a node and an input of it assigned to another backend,
     once; an edge with an end that is not assigned is none.
@@ -177,7 +180,19 @@ def place(
                 requirements = requirements_for(
                     node.node_template, node.setting_input, catalog_target=target, artifact_scheme=artifact_scheme
                 )
-            except Exception:
+            except Exception as e:
+                reason = (
+                    f"its settings could not be checked with the flow's parameters filled in ({type(e).__name__}: {e})"
+                )
+                logger.warning(
+                    'Node %s of flow %s is refused on backend "%s": %s',
+                    node.node_id,
+                    flow.flow_id,
+                    backend_id,
+                    reason,
+                    exc_info=True,
+                )
+                refusals.append(Refusal(node_id=node.node_id, backend_id=backend_id, reason=reason))
                 continue
         reasons = _unmet(requirements, capabilities, namespace, artifact_scheme)
         if capabilities.credential_resolution == "ambient":

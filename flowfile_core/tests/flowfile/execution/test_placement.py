@@ -4,8 +4,9 @@ With the compute protocol flag on, ``run_graph`` places the nodes it will run, e
 nodes included, and compares what each needs with the ``Capabilities`` that backend declares; a model that crosses the
 artifact store needs the store's scheme, and a Run Flow node is refused for what a node the flow it runs would run
 needs, while one whose flow cannot be built fails when it runs. A node's settings are read with its flow's parameters
-in them, so a path on a parameter is placed by where it points, and a node that refers to a parameter its flow does not
-define is not refused but fails when it runs. A refused node is a failed row on the run report
+in them, so a path on a parameter is placed by where it points; a node that refers to a parameter its flow does not
+define is not refused but fails when it runs, and one whose settings cannot be checked with the parameters in them is
+refused with the error. A refused node is a failed row on the run report
 naming the backend and the reason; no node runs and the backend is sent no work. A backend that cannot be asked for
 its capabilities is not in the map placement is given: its nodes are not refused and meet its typed error when they
 run. The backends here are core's own under another id, declaring what each test hands them, so no worker is needed.
@@ -25,6 +26,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 from pydantic import SecretStr
+from sqlalchemy.exc import OperationalError
 
 from flowfile_core.artifacts import reset_storage_backend
 from flowfile_core.configs import logger, settings
@@ -33,10 +35,11 @@ from flowfile_core.flowfile.database_connection_manager import db_connections
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, VersionMismatch
-from flowfile_core.flowfile.execution.placement import Placement, Refusal, SingleBackendPolicy, place
+from flowfile_core.flowfile.execution.placement import Placement, Refusal, SingleBackendPolicy, _catalog_target, place
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_node.flow_node import schema_prefetch_blocked
+from flowfile_core.flowfile.flow_node.requirements import requirements_for
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings, FullCloudStorageConnection
 from shared.compute_protocol import Capabilities
@@ -1018,7 +1021,12 @@ def test_a_read_on_a_parameter_its_flow_does_not_define_is_not_refused_and_fails
     assert "no node was started" not in Path(graph.flow_logger.log_file_path).read_text()
 
 
-def test_a_cloud_read_on_a_parameter_whose_value_is_no_path_is_not_refused_and_fails_when_it_runs(protocol_on, declare):
+def unchecked(error: Exception) -> str:
+    """The reason a node is refused whose needs could not be read from its settings with its flow's parameters in."""
+    return f"its settings could not be checked with the flow's parameters filled in ({type(error).__name__}: {error})"
+
+
+def test_a_cloud_read_on_a_parameter_whose_value_is_no_path_is_refused_before_any_node_starts(protocol_on, declare):
     backend = declare(everything())
     graph = make_graph(8449)
     graph.flow_settings.parameters = [schemas.FlowParameter(name="n", default_value="1", type="integer")]
@@ -1030,13 +1038,46 @@ def test_a_cloud_read_on_a_parameter_whose_value_is_no_path_is_not_refused_and_f
 
     run_info = graph.run_graph()
 
-    [result] = run_info.node_step_result
-    assert result.node_id == 1
-    assert result.success is False
-    assert "'int' object has no attribute 'strip'" in result.error, result.error
-    assert result.compute_error is None
-    assert run_info.success is False
-    assert backend.asked == 1
-    assert backend.work == []
-    assert "no node was started" not in Path(graph.flow_logger.log_file_path).read_text()
+    reason = unchecked(TypeError("argument of type 'int' is not iterable"))
+    assert_refused_before_any_node(graph, run_info, backend, {1: [reason]})
     assert graph.get_node(1).setting_input.cloud_storage_settings.resource_path == "${n}"
+
+
+@pytest.mark.parametrize(
+    ("flow_id", "derivation", "error"),
+    [
+        (8450, requirements_for, RuntimeError("the derivation failed")),
+        (8451, _catalog_target, OperationalError("SELECT 1", {}, Exception("database is locked"))),
+    ],
+    ids=["requirements_for", "_catalog_target"],
+)
+def test_a_write_whose_needs_cannot_be_read_is_refused_before_any_node_starts_and_writes_nothing(
+    protocol_on, declare, tmp_path, monkeypatch, caplog, flow_id, derivation, error
+):
+    backend = declare(without(everything(), scheme="file"))
+    graph = make_graph(flow_id)
+    add_manual_input(graph, 1, [{"id": 1}, {"id": 2}])
+    add_promise(graph, 2, "output")
+    output = input_schema.OutputSettings(
+        name="out.csv", directory=str(tmp_path), file_type="csv", table_settings=input_schema.OutputCsvTable()
+    )
+    graph.add_output(input_schema.NodeOutput(flow_id=flow_id, node_id=2, output_settings=output))
+    connect(graph, 1, 2)
+
+    def derive(*args, **kwargs):
+        node_settings = args[0].setting_input if derivation is _catalog_target else args[1]
+        if isinstance(node_settings, input_schema.NodeOutput):
+            raise error
+        return derivation(*args, **kwargs)
+
+    monkeypatch.setattr(f"{place.__module__}.{derivation.__name__}", derive)
+    monkeypatch.setattr(logger, "propagate", True)
+
+    run_info = graph.run_graph()
+
+    assert_refused_before_any_node(graph, run_info, backend, {2: [unchecked(error)]})
+    assert not (tmp_path / "out.csv").exists()
+    [warning] = [record for record in caplog.records if record.module == "placement"]
+    assert warning.levelname == "WARNING"
+    assert warning.getMessage() == f'Node 2 of flow {flow_id} is refused on backend "{BACKEND_ID}": {unchecked(error)}'
+    assert warning.exc_info[1] is error
