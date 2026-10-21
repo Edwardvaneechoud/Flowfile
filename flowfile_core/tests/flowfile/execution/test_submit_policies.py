@@ -22,6 +22,7 @@ from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ResultMissing, TaskFailed
 from flowfile_core.flowfile.execution.protocol import JobHandle, ResultRef, SubmitHints
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from shared.storage_config import storage
 
@@ -66,7 +67,10 @@ def running_worker():
 
 @pytest.fixture
 def worker(running_worker):
-    return WorkerBackend(url=WORKER_URL)
+    """A worker backend already checked, so the handshake's probe jobs run before a test records anything."""
+    backend = WorkerBackend(url=WORKER_URL)
+    handshake.ensure_verdict(backend)
+    return backend
 
 
 @pytest.fixture
