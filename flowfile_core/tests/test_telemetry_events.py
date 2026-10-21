@@ -956,11 +956,15 @@ def test_flow_as_api_runs_are_marked_as_system_runs(monkeypatch) -> None:
             seen["skipped_by_telemetry"] = glue._skip(self)
             return _Bag(success=True, node_step_result=[])
 
+        def close_flow(self) -> None:
+            seen["closed"] = True
+
     monkeypatch.setattr(api_runner, "open_flow", lambda *args, **kwargs: _Flow())
     with pytest.raises(api_runner.ApiExecutionError):
         api_runner.run_flow_as_api("/tmp/published.yaml", owner_id=1, param_specs=[], query={})
 
     assert seen["skipped_by_telemetry"] is True
+    assert seen["closed"] is True
 
 
 def test_a_panic_publishes_a_crash_and_still_propagates(sent, subscribed, monkeypatch) -> None:
