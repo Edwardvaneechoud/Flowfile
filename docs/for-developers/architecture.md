@@ -125,7 +125,9 @@ In Performance mode, Flowfile fully embraces Polars' lazy evaluation. Each node 
 - **Output nodes** (writing to a file, a database or cloud storage) run their write as an operation on the flow's backend, which computes the plan it is given.
 - **Nodes with `cache_results` enabled** submit with `must_materialise`, so the backend stores their rows whatever the mode.
 
-This minimizes computation and memory usage by avoiding unnecessary intermediate materializations. [Execution Strategy](flowfile-core.md#execution-strategy-how-nodes-decide-where-to-run) has the detail: the hints, each backend's policy and the previews.
+This minimizes computation and memory usage by avoiding unnecessary intermediate materializations.
+
+[Execution Strategy](flowfile-core.md#execution-strategy-how-nodes-decide-where-to-run) has the detail: the hints, each backend's policy and the previews.
 
 <details markdown="1">
 <summary>View Performance Mode Python Example (simplified)</summary>
