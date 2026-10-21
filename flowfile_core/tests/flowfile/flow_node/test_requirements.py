@@ -405,10 +405,14 @@ def _formula(expression: str) -> transform_schema.FunctionInput:
         ),
     ],
 )
-def test_a_node_that_carries_a_formula_needs_polars_ds_and_may_carry_a_python_function(item, settings):
+def test_a_node_that_carries_a_formula_needs_polars_ds_and_the_formula_library_and_may_carry_a_python_function(
+    item, settings
+):
     requirements = _requirements(item, settings)
 
-    assert requirements == NodeRequirements(plugins=frozenset({"polars_ds"}), python_function=True)
+    assert requirements == NodeRequirements(
+        plugins=frozenset({"polars_ds", "polars_expr_transformer"}), python_function=True
+    )
     assert requirements.plugins <= set(PLUGIN_PACKAGES)
 
 

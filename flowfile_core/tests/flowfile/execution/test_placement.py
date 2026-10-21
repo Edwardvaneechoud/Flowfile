@@ -18,6 +18,7 @@ A row's ``compute_error`` says what kind of failure it is: ``"Refusal"`` on a re
 compute error that failed a node on that node's row, in both flag states, and ``None`` for any other failure.
 """
 
+import importlib.metadata
 import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -379,6 +380,103 @@ def test_a_fuzzy_match_is_refused_on_a_backend_without_its_plugin(protocol_on, d
     assert_refused_before_any_node(
         graph, run_info, backend, {3: ["it needs polars_simed, which this backend does not have"]}
     )
+
+
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+def test_each_formula_node_is_refused_on_a_backend_without_the_formula_library_and_a_select_still_runs(
+    declare, monkeypatch, flag
+):
+    """Every formula-family node needs the formula library, whatever its formulas compile to, so a backend without it
+    refuses each of them and places a select; with the flag off nothing is placed."""
+    assert everything().plugins["polars_expr_transformer"] == importlib.metadata.version("polars_expr_transformer")
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    backend = declare(without(everything(), plugin="polars_expr_transformer"))
+    graph = make_graph(8470 + flag)
+    add_manual_input(graph, 1, [{"a": 1}, {"a": 2}])
+    add_promise(graph, 2, "formula")
+    graph.add_formula(
+        input_schema.NodeFormula(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            function=transform_schema.FunctionInput(field=transform_schema.FieldInput(name="b"), function="[a] + 1"),
+        )
+    )
+    connect(graph, 1, 2)
+    add_promise(graph, 3, "multi_field_formula")
+    graph.add_multi_field_formula(
+        input_schema.NodeMultiFieldFormula(
+            flow_id=graph.flow_id,
+            node_id=3,
+            depending_on_id=1,
+            multi_field_formula_input=transform_schema.MultiFieldFormulaInput(
+                formula="[_CurrentField_] + 1", selection_mode="list", selected_columns=["a"]
+            ),
+        )
+    )
+    connect(graph, 1, 3)
+    add_promise(graph, 4, "filter")
+    graph.add_filter(
+        input_schema.NodeFilter(
+            flow_id=graph.flow_id,
+            node_id=4,
+            depending_on_id=1,
+            filter_input=transform_schema.FilterInput(mode="advanced", advanced_filter="[a] > 1"),
+        )
+    )
+    connect(graph, 1, 4)
+    add_promise(graph, 5, "gate")
+    graph.add_gate(
+        input_schema.NodeGate(
+            flow_id=graph.flow_id,
+            node_id=5,
+            depending_on_id=1,
+            gate_input=transform_schema.GateInput(condition_source="formula", formula="[a] > 1"),
+        )
+    )
+    connect(graph, 1, 5)
+    add_promise(graph, 6, "dynamic_rename")
+    graph.add_dynamic_rename(
+        input_schema.NodeDynamicRename(
+            flow_id=graph.flow_id,
+            node_id=6,
+            depending_on_id=1,
+            dynamic_rename_input=transform_schema.DynamicRenameInput(
+                rename_mode="formula", formula="uppercase([column_name])"
+            ),
+        )
+    )
+    connect(graph, 1, 6)
+    add_promise(graph, 7, "select")
+    graph.add_select(
+        input_schema.NodeSelect(
+            flow_id=graph.flow_id,
+            node_id=7,
+            depending_on_id=1,
+            select_input=[transform_schema.SelectInput(old_name="a")],
+        )
+    )
+    connect(graph, 1, 7)
+
+    run_info = graph.run_graph()
+
+    if not flag:
+        assert run_info.success is True, [result.error for result in run_info.node_step_result]
+        assert backend.asked == 0
+        assert graph.get_node(2).get_resulting_data().collect()["b"].to_list() == [2, 3]
+        return
+    assert_refused_before_any_node(
+        graph,
+        run_info,
+        backend,
+        {n: ["it needs polars_expr_transformer, which this backend does not have"] for n in range(2, 7)},
+    )
+    for node_id in range(2, 7):
+        graph.delete_node(node_id)
+    ran = graph.run_graph()
+
+    assert ran.success is True, [result.error for result in ran.node_step_result]
+    assert graph.get_node(7).get_resulting_data().collect().to_dicts() == [{"a": 1}, {"a": 2}]
 
 
 def test_a_python_script_node_is_refused_on_a_backend_off_cores_host(protocol_on, declare):
