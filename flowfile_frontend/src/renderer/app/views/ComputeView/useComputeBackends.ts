@@ -10,6 +10,19 @@ import {
   type HandshakeVerdict,
 } from "../../api/computeBackends.api";
 
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/** Whether `url` reaches a worker over plain HTTP on another host; a URL that does not parse yet is not. */
+export function plainHttpOffLoopback(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  return parsed.protocol === "http:" && !LOOPBACK_HOSTS.has(parsed.hostname);
+}
+
 /** The route's own words: a string detail as is, FastAPI's validation list as its messages. */
 function detailOf(error: unknown, fallback: string): string {
   const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
@@ -46,8 +59,9 @@ export function useComputeBackends() {
 
   const add = async (input: ComputeBackendInput): Promise<ComputeBackend> => {
     adding.value = true;
+    const { ca_cert, ...rest } = input;
     try {
-      const row = await addComputeBackend(input);
+      const row = await addComputeBackend(ca_cert ? { ...rest, ca_cert } : rest);
       await load();
       return row;
     } catch (error) {

@@ -7,7 +7,9 @@ passing the worker URL it is about to call (and a caller that knows which backen
 is, its backend id), and checks that once per process.
 
 First, ``GET /capabilities`` returns the worker's ``Capabilities``, which are compared field
-by field with ``local_capabilities()`` of this process. Every field must match exactly:
+by field with ``local_capabilities()`` of this process. The request goes through the worker
+session around its own gate, so a worker core trusts by its CA certificate (``trust_ca``) is
+verified against it here too. Every field must match exactly:
 
 - ``app_version``: core and the worker are released together and their routes, payloads
   and on-disk results change between releases.
@@ -63,11 +65,11 @@ def fetch_worker_capabilities(worker_url: str) -> Capabilities:
     # imported here: subprocess_operations imports this module
     from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
         _WORKER_TIMEOUT,
-        _WorkerAuth,
+        _worker_session,
     )
 
     try:
-        response = requests.get(f"{worker_url}/capabilities", auth=_WorkerAuth(), timeout=_WORKER_TIMEOUT)
+        response = _worker_session.get("/capabilities", worker_url=worker_url, gated=False, timeout=_WORKER_TIMEOUT)
     except (requests.ConnectionError, requests.Timeout) as e:
         raise ComputeUnavailable(f"Could not reach the worker at {worker_url}: {e}") from e
     if response.status_code == 404:

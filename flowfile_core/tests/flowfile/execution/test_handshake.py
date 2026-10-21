@@ -137,7 +137,14 @@ def capabilities_answer(monkeypatch):
         response = requests.Response()
         response.status_code = 200
         response._content = body
-        monkeypatch.setattr(handshake.requests, "get", lambda url, **kwargs: response)
+        real_send = requests.Session.send
+
+        def send(self, request, **kwargs):
+            if request.url.endswith("/capabilities"):
+                return response
+            return real_send(self, request, **kwargs)
+
+        monkeypatch.setattr(requests.Session, "send", send)
 
     return answer
 

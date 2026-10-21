@@ -7,9 +7,11 @@ states of the protocol flag. Auth fixtures mirror ``test_system_worker.py``.
 """
 
 import socket
+import ssl
 import threading
 import time
 from collections.abc import Callable, Iterator
+from datetime import datetime, timedelta, timezone
 
 import polars as pl
 import pytest
@@ -25,6 +27,7 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.worker import TOKEN_RULE
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared.compute_protocol import local_capabilities
 
@@ -127,8 +130,34 @@ def fake_worker() -> Iterator[Callable[..., str]]:
         thread.join(timeout=15)
 
 
-def add(client: TestClient, url: str, name: str = "team", token: str = "row-token"):
-    return client.post(ROUTE, json={"name": name, "url": url, "token": token})
+def add(client: TestClient, url: str, name: str = "team", token: str = "row-token", ca_cert: str | None = None):
+    body = {"name": name, "url": url, "token": token}
+    if ca_cert is not None:
+        body["ca_cert"] = ca_cert
+    return client.post(ROUTE, json=body)
+
+
+def self_signed_pem() -> str:
+    """A self-signed P-256 certificate, PEM: the CA of a worker that serves it."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "team-worker.test")])
+    now = datetime.now(timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5))
+        .not_valid_after(now + timedelta(hours=2))
+        .sign(key, hashes.SHA256())
+    )
+    return cert.public_bytes(serialization.Encoding.PEM).decode()
 
 
 def handshake(client: TestClient, backend_id: str = "worker:team") -> dict:
@@ -185,6 +214,46 @@ def test_a_body_that_fails_validation_is_answered_without_its_input(admin_client
     assert response.status_code == 422, response.text
     assert response.json() == {"detail": [{"type": "missing", "loc": ["body", "url"], "msg": "Field required"}]}
     assert "row-token" not in response.text
+    assert admin_client.get(ROUTE).json() == []
+
+
+def test_an_added_worker_keeps_its_ca_certificate_and_is_listed_without_it(admin_client):
+    pem = self_signed_pem()
+
+    added = add(admin_client, "https://team-worker.test:63579", ca_cert=pem)
+
+    assert added.status_code == 201, added.text
+    assert added.json() == {"id": "worker:team", "url": "https://team-worker.test:63579"}
+    with get_db_context() as db:
+        assert db.get(ConfiguredBackend, "worker:team").ca_cert == pem
+    listed = admin_client.get(ROUTE)
+    assert listed.json() == [{"id": "worker:team", "url": "https://team-worker.test:63579"}]
+    assert "BEGIN CERTIFICATE" not in listed.text
+
+
+def test_an_empty_ca_certificate_is_stored_as_none(admin_client):
+    added = add(admin_client, "http://team-worker.test:63579", ca_cert="")
+
+    assert added.status_code == 201, added.text
+    with get_db_context() as db:
+        assert db.get(ConfiguredBackend, "worker:team").ca_cert is None
+
+
+def test_a_ca_certificate_that_is_no_pem_is_refused_and_nothing_is_stored(admin_client):
+    response = add(admin_client, "https://team-worker.test:63579", ca_cert="not a certificate")
+
+    assert response.status_code == 422, response.text
+    assert response.json() == {
+        "detail": "The CA certificate was not stored: it must be PEM, -----BEGIN CERTIFICATE----- blocks"
+    }
+    assert admin_client.get(ROUTE).json() == []
+
+
+def test_a_ca_certificate_with_an_http_url_is_refused_and_nothing_is_stored(admin_client):
+    response = add(admin_client, "http://team-worker.test:63579", ca_cert=self_signed_pem())
+
+    assert response.status_code == 422, response.text
+    assert response.json() == {"detail": "The CA certificate was not stored: it applies to an https:// worker URL only"}
     assert admin_client.get(ROUTE).json() == []
 
 
@@ -305,6 +374,27 @@ def test_a_removed_worker_is_gone_from_the_list_and_the_registry(admin_client, f
         registry.backend("worker:team")
     assert admin_client.delete(f"{ROUTE}/worker:team").status_code == 404
     assert admin_client.post(f"{ROUTE}/worker:team/handshake").status_code == 404
+
+
+def test_a_worker_removed_and_added_again_is_trusted_as_its_new_row_says(admin_client):
+    url = "https://team-worker.test:63579"
+    add(admin_client, url, ca_cert=self_signed_pem())
+    registry.backend("worker:team")
+    first = subops.ssl_context_for(url)
+    assert isinstance(first, ssl.SSLContext)
+
+    admin_client.delete(f"{ROUTE}/worker:team")
+    add(admin_client, url, ca_cert=self_signed_pem())
+    registry.backend("worker:team")
+    second = subops.ssl_context_for(url)
+    assert isinstance(second, ssl.SSLContext)
+    assert second is not first
+
+    admin_client.delete(f"{ROUTE}/worker:team")
+    add(admin_client, url)
+    registry.backend("worker:team")
+    assert subops.ssl_context_for(url) is None
+    assert not isinstance(subops._worker_session.get_adapter(f"{url}/capabilities"), subops._TrustedCa)
 
 
 def test_a_non_admin_is_refused_every_route(non_admin_client):

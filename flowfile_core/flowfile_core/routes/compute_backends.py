@@ -1,15 +1,17 @@
 """Admin routes over core's compute backends table: the workers core reaches by id, beside its built-in backends.
 
 Mounted at ``/compute_backends`` in :mod:`flowfile_core.main`, admin-only like the ``/system`` routes. A row is one
-configured worker: its id ``worker:<name>``, its base URL and its bearer token, stored as secret-manager ciphertext and
-never answered. ``local`` and ``worker`` are built in and never rows. A self-hoster fills the table through the
-settings page, a deployment's control plane over these routes; core manages no worker itself, and how one is hosted,
-registered or scaled is the control plane's. The registry makes a ``WorkerBackend`` from a row on the first lookup of
-its id (``registry.backend``), and removing the row forgets that instance.
+configured worker: its id ``worker:<name>``, its base URL, its bearer token, stored as secret-manager ciphertext and
+never answered, and, for a worker whose TLS certificate is not public, the PEM of the CA core trusts for it. ``local``
+and ``worker`` are built in and never rows. A self-hoster fills the table through the settings page, a deployment's
+control plane over these routes; core manages no worker itself, and how one is hosted, registered or scaled is the
+control plane's. The registry makes a ``WorkerBackend`` from a row on the first lookup of its id (``registry.backend``),
+and removing the row forgets that instance.
 
 The token travels as an HTTP header value, so the add route refuses one that is no header value
 (``worker.is_header_value``) with a 422 whose detail states the rule and never the token. The route checks it itself:
-a validator on the request model would fail with an error that echoes the field's input.
+a validator on the request model would fail with an error that echoes the field's input. A CA certificate the ``ssl``
+module cannot load as PEM, or one given with an ``http://`` URL, is a 422 too, and an empty one is no CA.
 
 The handshake reads the worker's capabilities with the row's token and compares them with this process's, field by
 field, each difference naming both sides (``handshake.capability_differences``). The verdict is the answer, so a worker
@@ -18,6 +20,8 @@ error, not a 503 as from the ``/system/worker_pool`` proxy, which forwards a cal
 """
 
 from __future__ import annotations
+
+import ssl
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field, SecretStr, field_validator
@@ -38,11 +42,13 @@ router = APIRouter(prefix="/compute_backends", dependencies=[Depends(get_current
 
 
 class ComputeBackendInput(BaseModel):
-    """Request body for ``POST /compute_backends``: the worker's name, its base URL and its bearer token."""
+    """Request body for ``POST /compute_backends``: the worker's name, its base URL, its bearer token and, optionally,
+    the PEM of the CA to trust for its certificate."""
 
     name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$", max_length=64)
     url: str
     token: SecretStr = Field(min_length=1)
+    ca_cert: str | None = None
 
     @field_validator("url")
     @classmethod
@@ -95,15 +101,29 @@ def add_compute_backend(
 ) -> ComputeBackendOut:
     """Configure the worker ``worker:<name>``, its token encrypted for the admin who adds it; 409 when the id exists.
 
-    A token that is no header value is a 422 stating ``TOKEN_RULE``, and nothing is stored.
+    A token that is no header value is a 422 stating ``TOKEN_RULE``, and nothing is stored; so is a CA certificate that
+    is no PEM certificate or that comes with an ``http://`` URL.
     """
     if not is_header_value(body.token.get_secret_value()):
         raise HTTPException(status_code=422, detail=f"The token was not stored: {TOKEN_RULE}")
+    ca_cert = body.ca_cert or None
+    if ca_cert is not None:
+        if not body.url.startswith("https://"):
+            raise HTTPException(
+                status_code=422, detail="The CA certificate was not stored: it applies to an https:// worker URL only"
+            )
+        try:
+            ssl.create_default_context(cadata=ca_cert)
+        except ssl.SSLError:
+            raise HTTPException(
+                status_code=422,
+                detail="The CA certificate was not stored: it must be PEM, -----BEGIN CERTIFICATE----- blocks",
+            ) from None
     backend_id = registry.CONFIGURED_WORKER_PREFIX + body.name
     if db.get(ConfiguredBackend, backend_id) is not None:
         raise HTTPException(status_code=409, detail=f"Compute backend {backend_id!r} already exists")
     token = encrypt_secret(body.token.get_secret_value(), current_user.id)
-    db.add(ConfiguredBackend(id=backend_id, url=body.url, token=token))
+    db.add(ConfiguredBackend(id=backend_id, url=body.url, token=token, ca_cert=ca_cert))
     db.commit()
     return ComputeBackendOut(id=backend_id, url=body.url)
 
