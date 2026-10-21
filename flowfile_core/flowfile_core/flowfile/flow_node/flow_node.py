@@ -250,6 +250,8 @@ class FlowNode:
     _stored_outputs: dict[str, ResultRef]
     # output name -> a materialised result the node's operation minted (run_op), released with the node's result
     _operation_refs: dict[str, ResultRef]
+    # the exception the last run failed with; a read raises it while results.errors is set
+    _last_run_error: BaseException | None
 
     user_provided_schema_callback: Callable | None
     _schema_callback: SingleExecutionFuture | None
@@ -363,6 +365,7 @@ class FlowNode:
         self._cache_progress = None
         self._fetch_cached_df = None
         self._submit_in_flight = None
+        self._last_run_error = None
 
         self._kernel_cancel_context = None
         self._kernel_cancel_event = None
@@ -575,6 +578,7 @@ class FlowNode:
             self.node_settings.cache_results = setting_input.cache_results
 
         self.results.errors = None
+        self._last_run_error = None
         self.add_lead_to_in_depend_source()
         _ = self.hash
         self.node_template = node_store.node_dict.get(self.node_type)
@@ -1354,10 +1358,14 @@ class FlowNode:
             A FlowDataEngine instance containing the result, or None on error.
 
         Raises:
-            Exception: Propagates exceptions from the node's function execution.
+            Exception: Propagates exceptions from the node's function execution. While the node's last run failed
+                (``results.errors`` set), every read raises the exception that run failed with, never the frame it
+                built before the failure.
         """
         if self.is_setup:
             with self._execution_lock_held():
+                if self._last_run_error is not None and self.results.errors is not None:
+                    raise self._last_run_error
                 if self.results.resulting_data is None and self.results.errors is None:
                     if self.deferred_until_run:
                         raise DeferredNodeError(f"node {self.node_id} is deferred until the flow runs")
@@ -1444,6 +1452,7 @@ class FlowNode:
                     except Exception as e:
                         self.results.resulting_data = FlowDataEngine()
                         self.results.errors = str(e)
+                        self._last_run_error = e
                         self.node_stats.has_run_with_current_setup = False
                         self.node_stats.has_completed_last_run = False
                         raise e
@@ -2087,6 +2096,7 @@ class FlowNode:
             self._hash = None
             self.node_information.is_setup = None
             self.results.errors = None
+            self._last_run_error = None
             if self.placed_deferred:
                 self.deferred_until_run = True
 

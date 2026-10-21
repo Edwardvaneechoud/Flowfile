@@ -907,6 +907,10 @@ class ExecutionMixin(GraphMixinBase):
                 node.node_stats.has_completed_last_run = False
                 node._execution_state.has_run_with_current_setup = False
                 node._execution_state.has_completed_last_run = False
+                if statuses.get(node_id) == NodeRunStatus.SKIPPED_ERROR and not node.deferred_until_run:
+                    # Skipped below a failure: drop what it held, so a read reaches the failed input's error.
+                    node.results.resulting_data = None
+                    node._named_outputs = {}
             for node in any_rule_nodes_touched:
                 node._skipped_input_ids_this_run = frozenset()
 

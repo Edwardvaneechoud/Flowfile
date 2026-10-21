@@ -161,6 +161,10 @@ class NodeExecutor:
         neither on the worker nor in core, and the next run that executes it clears
         the error again.
 
+        A node that fails keeps the exception it failed with (``_handle_error``), and
+        until the next run clears it every read of the node (``get_resulting_data``)
+        raises that exception, never the frame the run built before it failed.
+
         Args:
             reset_cache: Force cache invalidation
             performance_mode: Skip example data generation for speed
@@ -390,6 +394,7 @@ class NodeExecutor:
         state.is_canceled = False  # clear any stale cancel flag from a prior run
         self.node.node_stats.is_canceled = False
         self.node.results.errors = None
+        self.node._last_run_error = None
         self.node.results.resulting_data = None
         self.node.results.example_data = None
 
@@ -437,6 +442,7 @@ class NodeExecutor:
         self.node.results.errors = error_str
         # Class name only, never the message; a worker wrapper carries the original class.
         self.node._last_exception_class = getattr(error, "original_class", None) or type(error).__name__
+        self.node._last_run_error = error
 
         # Retry on missing file errors (upstream cache was cleared)
         if (
