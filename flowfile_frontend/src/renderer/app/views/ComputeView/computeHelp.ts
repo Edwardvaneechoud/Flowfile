@@ -5,10 +5,10 @@ export const computeHelp: PageHelpContent = {
   icon: "fa-solid fa-server",
   sections: [
     {
-      title: "Two kinds of compute",
+      title: "Three kinds of compute",
       icon: "fa-solid fa-info-circle",
       description:
-        "Flowfile runs your flows with two separate systems. This page manages both — each on its own tab.",
+        "Flowfile runs your flows with three separate systems. This page manages all three — each on its own tab.",
       features: [
         {
           icon: "fa-brands fa-python",
@@ -21,6 +21,12 @@ export const computeHelp: PageHelpContent = {
           title: "Warm worker pool",
           description:
             "A speed setting for all the regular data nodes (joins, filters, formulas, …). Warm worker processes start on demand when a flow runs and retire after sitting idle, skipping the per-node start-up cost. Admins manage it on the Performance tab.",
+        },
+        {
+          icon: "fa-solid fa-network-wired",
+          title: "Backends",
+          description:
+            "The workers your flows run on: the default worker, and workers on other hosts that admins add on the Backends tab. A flow picks one by its id in its settings, and the Handshake button checks that a worker matches this Flowfile.",
         },
       ],
     },
