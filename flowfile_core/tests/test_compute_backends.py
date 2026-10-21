@@ -10,6 +10,7 @@ import socket
 import threading
 import time
 from collections.abc import Callable, Iterator
+from datetime import datetime, timedelta, timezone
 
 import polars as pl
 import pytest
@@ -127,8 +128,34 @@ def fake_worker() -> Iterator[Callable[..., str]]:
         thread.join(timeout=15)
 
 
-def add(client: TestClient, url: str, name: str = "team", token: str = "row-token"):
-    return client.post(ROUTE, json={"name": name, "url": url, "token": token})
+def add(client: TestClient, url: str, name: str = "team", token: str = "row-token", ca_cert: str | None = None):
+    body = {"name": name, "url": url, "token": token}
+    if ca_cert is not None:
+        body["ca_cert"] = ca_cert
+    return client.post(ROUTE, json=body)
+
+
+def self_signed_pem() -> str:
+    """A self-signed P-256 certificate, PEM: the CA of a worker that serves it."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "team-worker.test")])
+    now = datetime.now(timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5))
+        .not_valid_after(now + timedelta(hours=2))
+        .sign(key, hashes.SHA256())
+    )
+    return cert.public_bytes(serialization.Encoding.PEM).decode()
 
 
 def handshake(client: TestClient, backend_id: str = "worker:team") -> dict:
@@ -185,6 +212,46 @@ def test_a_body_that_fails_validation_is_answered_without_its_input(admin_client
     assert response.status_code == 422, response.text
     assert response.json() == {"detail": [{"type": "missing", "loc": ["body", "url"], "msg": "Field required"}]}
     assert "row-token" not in response.text
+    assert admin_client.get(ROUTE).json() == []
+
+
+def test_an_added_worker_keeps_its_ca_certificate_and_is_listed_without_it(admin_client):
+    pem = self_signed_pem()
+
+    added = add(admin_client, "https://team-worker.test:63579", ca_cert=pem)
+
+    assert added.status_code == 201, added.text
+    assert added.json() == {"id": "worker:team", "url": "https://team-worker.test:63579"}
+    with get_db_context() as db:
+        assert db.get(ConfiguredBackend, "worker:team").ca_cert == pem
+    listed = admin_client.get(ROUTE)
+    assert listed.json() == [{"id": "worker:team", "url": "https://team-worker.test:63579"}]
+    assert "BEGIN CERTIFICATE" not in listed.text
+
+
+def test_an_empty_ca_certificate_is_stored_as_none(admin_client):
+    added = add(admin_client, "http://team-worker.test:63579", ca_cert="")
+
+    assert added.status_code == 201, added.text
+    with get_db_context() as db:
+        assert db.get(ConfiguredBackend, "worker:team").ca_cert is None
+
+
+def test_a_ca_certificate_that_is_no_pem_is_refused_and_nothing_is_stored(admin_client):
+    response = add(admin_client, "https://team-worker.test:63579", ca_cert="not a certificate")
+
+    assert response.status_code == 422, response.text
+    assert response.json() == {
+        "detail": "The CA certificate was not stored: it must be PEM, -----BEGIN CERTIFICATE----- blocks"
+    }
+    assert admin_client.get(ROUTE).json() == []
+
+
+def test_a_ca_certificate_with_an_http_url_is_refused_and_nothing_is_stored(admin_client):
+    response = add(admin_client, "http://team-worker.test:63579", ca_cert=self_signed_pem())
+
+    assert response.status_code == 422, response.text
+    assert response.json() == {"detail": "The CA certificate was not stored: it applies to an https:// worker URL only"}
     assert admin_client.get(ROUTE).json() == []
 
 
