@@ -12,9 +12,10 @@ its schema, row count and samples come over the wire, never from a file core ope
 ``WS /v1/ws/submit``, and to ``POST /v1/submit`` only when that socket cannot be opened or the plan not sent. ``run_op``
 runs the reads, ``fuzzy_join``, ``random_split``, ``custom_node``, ``ml_train`` and ``ml_apply`` over
 ``POST /v1/ops/{kind}``, whose outputs the worker holds as it holds a stored submit, a trained model as a blob; the
-writes and ``viz_session`` stay on the task routes. ``polars_code`` has no task route and goes over
-``POST /v1/ops/polars_code`` in either flag state, its result held as a submit's is: deferred, as its plan, for code
-that answered a LazyFrame over sources, stored for code that answered a DataFrame or a LazyFrame over rows in memory.
+writes and ``viz_session`` stay on the task routes. ``polars_code`` and ``sql_query`` have no task route and go over
+``POST /v1/ops/polars_code`` and ``POST /v1/ops/sql_query`` in either flag state, the result held as a submit's is:
+deferred, as its plan, for code that answered a LazyFrame over sources, stored for code that answered a DataFrame or a
+LazyFrame over rows in memory.
 ``import_uri`` asks the worker to hold a scan of the URI (``POST /v1/results/{id}/import``). A result is read and
 exported over the routes that minted it, whatever the flag says when it is read: a ``/v1`` result is exported by a
 child on the worker (``POST /v1/results/{id}/export``), a task-route result by a worker task running the same child.
@@ -80,6 +81,7 @@ from flowfile_core.flowfile.execution.payloads import (
     PolarsCodePayload,
     RandomSplitPayload,
     RestApiReadPayload,
+    SqlQueryPayload,
     VizSessionPayload,
     unpack,
 )
@@ -192,6 +194,7 @@ _V1_OPERATIONS = frozenset(
         OperationKind.ml_train,
         OperationKind.ml_apply,
         OperationKind.polars_code,
+        OperationKind.sql_query,
     }
 )
 _JOB_STATES: dict[str, Literal["running", "done", "failed", "cancelled"]] = {
@@ -284,8 +287,8 @@ class WorkerBackend:
     flag says when it is read, and only ``/v1`` references go as a submit's ``inputs``. ``run_op`` runs the reads,
     ``fuzzy_join``, ``random_split``, ``custom_node``, ``ml_train`` and ``ml_apply`` over ``POST /v1/ops/{kind}``
     (``run_op`` has the details), whose refs are ``/v1`` references like a stored submit's; every other operation and
-    its results stay on the task routes, but ``polars_code``, which goes over ``POST /v1/ops/polars_code`` with the flag
-    off too. ``status`` and ``cancel`` of a job no fetcher waits on use ``/v1/jobs/{id}``.
+    its results stay on the task routes, but ``polars_code`` and ``sql_query``, which go over ``POST /v1/ops/<kind>``
+    with the flag off too. ``status`` and ``cancel`` of a job no fetcher waits on use ``/v1/jobs/{id}``.
     Every ``/v1`` request and the socket's upgrade carry ``X-Protocol-Version``. A REST answer, a refused upgrade and
     an ``error`` frame map alike (``_v1_error``): 426 is ``VersionMismatch``, a 404 ``ResultMissing``, and a failed
     child's 500 goes through ``worker_failure``.
@@ -327,6 +330,7 @@ class WorkerBackend:
             OperationKind.ml_train: self._ml_train,
             OperationKind.ml_apply: self._ml_apply,
             OperationKind.polars_code: self._polars_code,
+            OperationKind.sql_query: self._sql_query,
             OperationKind.database_write: self._database_write,
             OperationKind.cloud_write: self._cloud_write,
             OperationKind.file_write: self._file_write,
@@ -497,7 +501,9 @@ class WorkerBackend:
         either flag state, with the code and each input plan serialised. Its refs are ``{"result": ref}``, a ``/v1``
         reference ``<job_id>_0`` carrying the columns of the frame the code returned: deferred, its plan decoded by
         ``plan_for`` as a deferred submit's is, when the code returned a LazyFrame over sources, stored when it returned
-        a DataFrame or a LazyFrame over rows in memory.
+        a DataFrame or a LazyFrame over rows in memory. ``sql_query`` takes a ``SqlQueryPayload`` and goes to
+        ``POST /v1/ops/sql_query`` the same way, with the statement and each input plan serialised, its result keyed
+        and held as a Polars Code result is.
 
         Raises:
             ComputeUnavailable: The worker could not be reached for a ``viz_session`` request.
@@ -1049,6 +1055,14 @@ class WorkerBackend:
                     "flowfile_flow_id": job.flow_id,
                     "flowfile_node_id": job.node_id,
                 }
+            case OperationKind.sql_query:
+                job = unpack(payload, SqlQueryPayload)
+                body = {
+                    "sql_code": job.sql_code,
+                    "inputs": [base64.b64encode(plan.serialize()).decode("ascii") for plan in job.inputs],
+                    "flowfile_flow_id": job.flow_id,
+                    "flowfile_node_id": job.node_id,
+                }
             case _:
                 job = unpack(payload, RandomSplitPayload)
                 body = {
@@ -1300,6 +1314,10 @@ class WorkerBackend:
     def _polars_code(self, payload: OpPayload) -> OpResult:
         """Run the code over ``POST /v1/ops/polars_code`` whatever the flag says, as no task route runs it."""
         return self._v1_op(OperationKind.polars_code, payload)
+
+    def _sql_query(self, payload: OpPayload) -> OpResult:
+        """Send the statement to ``POST /v1/ops/sql_query`` whatever the flag says, as no task route runs it."""
+        return self._v1_op(OperationKind.sql_query, payload)
 
     def _ml_train(self, payload: OpPayload) -> OpResult:
         """Stage the model in the flow's cache directory as worker task ``<job_id>_0``, apart from the node's task."""

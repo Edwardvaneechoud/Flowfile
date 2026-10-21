@@ -160,6 +160,7 @@ class OperationKind(enum.Enum):
     ml_train = "ml_train"
     ml_apply = "ml_apply"
     polars_code = "polars_code"
+    sql_query = "sql_query"
     delta_write = "delta_write"
     delta_merge = "delta_merge"
     delta_scd2 = "delta_scd2"

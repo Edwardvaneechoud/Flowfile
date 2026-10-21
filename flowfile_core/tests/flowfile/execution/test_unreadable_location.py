@@ -14,11 +14,15 @@ node's output field config, a Run Flow node's outputs over its child's stored re
 columns over stored inputs, or the REST API reader's alignment of a read it stored, takes its input's columns from the
 input engine's cached schema; a Polars code node over a stored result is the ``polars_code`` operation, its code run
 once on the backend that holds the input and never in core, eager code and a side effect included, and the designer's
-prediction for it is the same operation over an empty frame; and a node that fails on a missing file in
-core keeps its stored input rather than rerunning it. The elaborate integration flow runs whole over stored inputs with
-the flag on, and with it off fails at the nodes that read them in core. The tests named for ``v1`` results check the
-same over the session worker's ``/v1`` routes, where a multi-output node's other output previews from the result the
-node holds for it.
+prediction for it is the same operation over an empty frame; a SQL query node is likewise the ``sql_query``
+operation, its query translated once on the backend that holds the inputs and never in core, the designer's prediction
+included; and a node that fails on a missing file in core keeps its stored input rather than rerunning it. The
+elaborate integration flow runs whole over stored inputs with the flag on, and with it off fails at the nodes that read
+them in core. The tests named for ``v1`` results check the same over the session worker's ``/v1`` routes, where a
+multi-output node's other output previews from the result the node holds for it. Two backends hold what they store
+where core cannot read it: ``UnreadableBackend``, core's own backend, whose stored files exist only while one of its
+calls runs, and ``UnreadableWorker``, the session worker as core sees one on another host, whose stored files exist
+only while one of its requests runs; a fuzzy match and a SQL query run over a stored input on the second.
 """
 
 import dataclasses
@@ -1052,6 +1056,32 @@ TRANSFORM_VARIANTS = [
         4,
     ),
     (
+        9393,
+        "sql_query",
+        "sql_query",
+        input_schema.NodeSqlQuery,
+        {
+            "sql_query_input": transform_schema.SqlQueryInput(
+                sql_code="SELECT id, region, amount FROM input_1 WHERE amount > 20"
+            )
+        },
+        [("id", "Int64"), ("region", "String"), ("amount", "Int64")],
+        4,
+    ),
+    (
+        9394,
+        "sql_query_aggregate",
+        "sql_query",
+        input_schema.NodeSqlQuery,
+        {
+            "sql_query_input": transform_schema.SqlQueryInput(
+                sql_code="SELECT region, SUM(amount) AS total FROM input_1 GROUP BY region ORDER BY region"
+            )
+        },
+        [("region", "String"), ("total", "Int64")],
+        2,
+    ),
+    (
         9372,
         "output_fields_raise_on_missing",
         "filter",
@@ -1193,6 +1223,31 @@ def prediction_flow(flow_id: int) -> FlowGraph:
     return graph
 
 
+SQL_QUERY = "SELECT id, region, amount FROM input_1 WHERE amount > 20"
+SQL_AGGREGATE = "SELECT region, SUM(amount) AS total FROM input_1 GROUP BY region ORDER BY region"
+
+
+def translated_in_core(*args, **kwargs):
+    pytest.fail("core translated the SQL")
+
+
+def sql_query_flow(flow_id: int, sql_code: str) -> FlowGraph:
+    """Manual input 1 → SQL query 2 running ``sql_code`` over it as ``input_1``; neither has run."""
+    graph = make_graph(flow_id, max_parallel_workers=1)
+    add_manual_input(graph, 1, TRANSFORM_ROWS)
+    add_promise(graph, 2, "sql_query")
+    graph.add_sql_query(
+        input_schema.NodeSqlQuery(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_ids=[1],
+            sql_query_input=transform_schema.SqlQueryInput(sql_code=sql_code),
+        )
+    )
+    connect(graph, 1, 2)
+    return graph
+
+
 def written_lines(written: Path) -> list[int]:
     """The number of lines of each CSV file in ``written``."""
     return [len(path.read_text().splitlines()) for path in written.glob("*.csv")]
@@ -1283,6 +1338,57 @@ def test_the_designers_prediction_of_a_polars_code_node_runs_on_the_worker(remot
         assert columns(predicted) == [("id", "Int64"), ("region", "String"), ("amount", "Int64")]
         ((kind, payload, result),) = calls
         assert kind == "polars_code"
+        assert payload.inputs[0].select(pl.len()).collect().item() == 0
+        assert (result.refs["result"].state, result.refs["result"].row_count) == ("materialised", 0)
+    finally:
+        graph.close_flow()
+
+
+def test_the_designers_prediction_of_a_sql_query_node_is_the_operation_over_an_empty_frame(
+    unreadable, protocol_on, monkeypatch
+):
+    calls = []
+    run_op = UnreadableBackend.run_op
+
+    def recording(self, op, payload):
+        result = run_op(self, op, payload)
+        calls.append((op.value, payload["payload"], result))
+        return result
+
+    monkeypatch.setattr(UnreadableBackend, "run_op", recording)
+    graph = sql_query_flow(9396, SQL_QUERY)
+    try:
+        predicted = graph.get_node(2).get_predicted_schema()
+
+        assert columns(predicted) == [("id", "Int64"), ("region", "String"), ("amount", "Int64")]
+        ((kind, payload, result),) = calls
+        assert kind == "sql_query"
+        assert payload.inputs[0].select(pl.len()).collect().item() == 0
+        assert result.refs["result"].row_count == 0
+        assert [graph.get_node(node_id).results.result_ref for node_id in (1, 2)] == [None, None]
+    finally:
+        graph.close_flow()
+
+
+def test_the_designers_prediction_of_a_sql_query_node_runs_on_the_worker(remote_worker, protocol_on, monkeypatch):
+    """The prediction reads an empty frame in memory, so the worker holds the query's result as a file of no rows."""
+    calls = []
+    run_op = WorkerBackend.run_op
+
+    def recording(self, op, payload):
+        result = run_op(self, op, payload)
+        calls.append((op.value, payload["payload"], result))
+        return result
+
+    monkeypatch.setattr(WorkerBackend, "run_op", recording)
+    monkeypatch.setattr(pl.SQLContext, "execute", translated_in_core)
+    graph = sql_query_flow(9397, SQL_QUERY)
+    try:
+        predicted = graph.get_node(2).get_predicted_schema()
+
+        assert columns(predicted) == [("id", "Int64"), ("region", "String"), ("amount", "Int64")]
+        ((kind, payload, result),) = calls
+        assert kind == "sql_query"
         assert payload.inputs[0].select(pl.len()).collect().item() == 0
         assert (result.refs["result"].state, result.refs["result"].row_count) == ("materialised", 0)
     finally:
@@ -1617,6 +1723,34 @@ def test_a_fuzzy_match_runs_on_a_worker_over_a_stored_input_core_cannot_read(unr
             ("edward", "eduward"),
             ("edward", "edward"),
         ]
+    finally:
+        graph.close_flow()
+
+
+def test_a_sql_query_runs_on_the_worker(unreadable_worker, protocol_on, monkeypatch):
+    """The query is translated over a stored input core cannot open, on the worker that holds it, never in core."""
+    ops = []
+    run_op = WorkerBackend.run_op
+
+    def recording(self, op, payload):
+        ops.append(op.value)
+        return run_op(self, op, payload)
+
+    monkeypatch.setattr(WorkerBackend, "run_op", recording)
+    monkeypatch.setattr(pl.SQLContext, "execute", translated_in_core)
+    graph = sql_query_flow(9395, SQL_AGGREGATE)
+    graph.get_node(1).node_settings.cache_results = True
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        assert ops == ["sql_query"]
+        ref = graph.get_node(1).results.result_ref
+        assert (ref.backend_id, ref.state) == (UNREADABLE_WORKER_ID, "materialised")
+        path = WorkerLocation.model_validate_json(ref.location).path
+        assert path in unreadable_worker[0].stored and not os.path.exists(path)
+        assert columns(graph.get_node(2).schema) == [("region", "String"), ("total", "Int64")]
+        assert len(graph.get_node(2).get_table_example(True).data) == 2
     finally:
         graph.close_flow()
 

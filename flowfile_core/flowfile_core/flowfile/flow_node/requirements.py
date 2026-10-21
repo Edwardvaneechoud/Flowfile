@@ -301,6 +301,7 @@ _BY_TEMPLATE: dict[str, NodeRequirements] = {
     "fuzzy_match": NodeRequirements(operation=OperationKind.fuzzy_join, plugins=frozenset({"polars_simed"})),
     "random_split": NodeRequirements(operation=OperationKind.random_split),
     "polars_code": NodeRequirements(operation=OperationKind.polars_code),
+    "sql_query": NodeRequirements(operation=OperationKind.sql_query),
     "rest_api_reader": NodeRequirements(operation=OperationKind.rest_api_read),
     "explore_data": NodeRequirements(operation=OperationKind.viz_session),
     "graph_solver": NodeRequirements(plugins=_POLARS_GROUPER),

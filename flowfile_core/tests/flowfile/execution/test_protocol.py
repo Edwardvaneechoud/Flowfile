@@ -32,7 +32,7 @@ BACKEND_METHODS = (
 )
 
 
-def test_the_operation_set_is_exactly_the_eighteen_kinds():
+def test_the_operation_set_is_exactly_the_nineteen_kinds():
     assert [kind.name for kind in OperationKind] == [
         "database_read",
         "kafka_read",
@@ -48,6 +48,7 @@ def test_the_operation_set_is_exactly_the_eighteen_kinds():
         "ml_train",
         "ml_apply",
         "polars_code",
+        "sql_query",
         "delta_write",
         "delta_merge",
         "delta_scd2",
