@@ -1,6 +1,6 @@
 # Flowfile Roadmap
 
-**Flowfile 0.22 · updated 2026-10-14 · [discuss this roadmap](https://github.com/edwardvaneechoud/Flowfile/discussions/categories/announcements)**
+**Flowfile 0.23 · updated 2026-10-14 · [discuss this roadmap](https://github.com/edwardvaneechoud/Flowfile/discussions/categories/announcements)**
 
 Flowfile lets you build the same data pipeline on a canvas or in Python.
 The priority is to make that everyday workflow dependable: edit it, run it,
