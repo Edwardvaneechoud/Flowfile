@@ -162,7 +162,7 @@ def test_capabilities_pass_the_workers_declaration_through(monkeypatch):
     answer = requests.Response()
     answer.status_code = 200
     answer._content = declared.model_dump_json().encode()
-    monkeypatch.setattr(worker_module.requests, "get", lambda url, **kwargs: answer)
+    monkeypatch.setattr(worker_module._worker_session, "get", lambda path, **kwargs: answer)
 
     assert WorkerBackend(url=WORKER_URL).capabilities() == declared
 

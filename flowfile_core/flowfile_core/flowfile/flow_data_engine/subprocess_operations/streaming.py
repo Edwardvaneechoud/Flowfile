@@ -243,14 +243,20 @@ def streaming_start(
     passes ``ensure_handshake`` like every REST call, so the first worker this process
     calls is refused before the task is sent when its versions differ from core's (the
     check is once per process, not per worker); a connect that fails re-arms that check,
-    because the worker that comes back may be another one.
+    because the worker that comes back may be another one. A ``wss://`` socket verifies the
+    worker against the CA core trusts for it (``ssl_context_for``), else the public CAs.
     """
+    # imported here: subprocess_operations imports this module
+    from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import ssl_context_for
+
     ensure_handshake(worker_url)
     ws_url = _get_ws_url(worker_url) + "/ws/submit"
     metadata = _build_metadata(task_id, operation_type, flow_id, node_id, kwargs)
 
     try:
-        ws = connect(ws_url, additional_headers={"X-Flowfile-Internal": get_internal_token()})
+        ws = connect(
+            ws_url, additional_headers={"X-Flowfile-Internal": get_internal_token()}, ssl=ssl_context_for(worker_url)
+        )
     except OSError:
         reset_handshake()
         raise

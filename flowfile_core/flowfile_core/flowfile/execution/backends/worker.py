@@ -137,8 +137,10 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     fetch_kafka_offsets,
     get_status,
     results_exists,
+    ssl_context_for,
     trigger_visualize_fields,
     trigger_visualize_query,
+    trust_ca,
 )
 from flowfile_core.flowfile.flow_node.multi_output import output_handle
 from flowfile_core.flowfile.sources.external_sources.rest_api_source import build_rest_api_worker_settings
@@ -224,6 +226,11 @@ class WorkerBackend:
     sign as a ``TaskFailed`` naming ``TOKEN_RULE``, before any HTTP or socket client is handed it, so no message, log
     line or traceback carries it.
 
+    ``ca_cert`` is the PEM of the CA to verify an ``https://`` worker's certificate against when it is not public (a
+    self-signed worker certificate is its own); the backend hands it to the transport (``trust_ca``) for its ``url``,
+    so the task routes, the handshake gate, the ``/v1`` requests, ``capabilities`` and both submit sockets trust it,
+    and a worker whose certificate it does not verify is unreachable. ``None`` verifies against the public CAs.
+
     Materialisation policy: ``submit`` stores a plan on the worker when ``hints.must_materialise`` is set, or when
     the plan is ``wide`` and a preview is asked for (``preview_rows`` is not ``None``); every other plan stays
     deferred. A wide plan is stored so its preview and its consumers read rows computed once; with no preview
@@ -286,10 +293,14 @@ class WorkerBackend:
     id = WORKER_BACKEND_ID
     protocol_version = PROTOCOL_VERSION
 
-    def __init__(self, url: str, *, backend_id: str = WORKER_BACKEND_ID, token: str | None = None) -> None:
+    def __init__(
+        self, url: str, *, backend_id: str = WORKER_BACKEND_ID, token: str | None = None, ca_cert: str | None = None
+    ) -> None:
         self.url = url
         self.id = backend_id
         self.token = token
+        if ca_cert:
+            trust_ca(url, ca_cert)
         self._auth = _TokenAuth(token, backend_id) if token is not None else None
         self._lock = threading.Lock()
         self._deferred: dict[str, _DeferredPlan] = {}
@@ -317,9 +328,9 @@ class WorkerBackend:
     def capabilities(self) -> Capabilities:
         """The answer of the worker at ``url`` to ``GET /capabilities``, as the worker declares it.
 
-        With the protocol flag on, the answer to ``GET /v1/capabilities``. Either is one request outside the handshake
-        gate, signed with this backend's token and carrying its ``X-Protocol-Version``. Its ``operations`` are the
-        kinds the worker runs, the ones ``run_op`` sends it.
+        With the protocol flag on, the answer to ``GET /v1/capabilities``. Either is one request through the worker
+        session around the handshake gate (``gated=False``), signed with this backend's token and carrying its
+        ``X-Protocol-Version``. Its ``operations`` are the kinds the worker runs, the ones ``run_op`` sends it.
 
         Raises:
             ComputeUnavailable: The worker could not be reached, or it answered with no ``Capabilities`` and no
@@ -333,8 +344,10 @@ class WorkerBackend:
         """
         protocol = bool(settings.FLOWFILE_COMPUTE_PROTOCOL)
         try:
-            response = requests.get(
-                f"{self.url}{'/v1' if protocol else ''}/capabilities",
+            response = _worker_session.get(
+                f"{'/v1' if protocol else ''}/capabilities",
+                worker_url=self.url,
+                gated=False,
                 auth=self._auth or _WorkerAuth(),
                 headers={wire.PROTOCOL_VERSION_HEADER: str(self.protocol_version)},
                 timeout=_WORKER_TIMEOUT,
@@ -856,10 +869,11 @@ class WorkerBackend:
 
         ``None`` means the socket could not be opened or the plan not sent. The worker reads both frames before it runs
         anything and drops a socket that closed before the plan, so the post never runs a plan twice. The socket is
-        dialled after ``ensure_handshake``, with this backend's token (``_internal_token``), its ``X-Protocol-Version``
-        and no frame-size cap (a deferred result's ``complete`` frame carries its plan); a connect that fails at the
-        network re-arms the handshake, as the transport's WebSocket submit does. Once the plan is sent the answer is the
-        final frame's, and nothing is resent.
+        dialled after ``ensure_handshake``, with this backend's token (``_internal_token``), its ``X-Protocol-Version``,
+        no frame-size cap (a deferred result's ``complete`` frame carries its plan) and the CA the transport trusts for
+        ``url`` (``ssl_context_for``; ``None`` verifies a ``wss://`` worker against the public CAs); a connect that
+        fails at the network re-arms the handshake, as the transport's WebSocket submit does. Once the plan is sent the
+        answer is the final frame's, and nothing is resent.
 
         Raises:
             ComputeUnavailable: The socket closed after the plan was sent.
@@ -878,6 +892,7 @@ class WorkerBackend:
                     wire.PROTOCOL_VERSION_HEADER: str(self.protocol_version),
                 },
                 max_size=None,
+                ssl=ssl_context_for(self.url),
             )
         except OSError as e:
             reset_handshake()

@@ -1384,4 +1384,4 @@ def test_the_socket_is_dialled_under_the_workers_url_with_the_token_and_version(
     WorkerBackend(url=worker_url).submit(people(), [], hints(False), result_id, flow_id=-1, node_id=-1)
 
     headers = {"X-Flowfile-Internal": get_internal_token(), PROTOCOL_VERSION_HEADER: "1"}
-    assert dials == [(socket_url, {"additional_headers": headers, "max_size": None})]
+    assert dials == [(socket_url, {"additional_headers": headers, "max_size": None, "ssl": None})]
