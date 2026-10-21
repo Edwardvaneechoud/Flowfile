@@ -1,0 +1,2305 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Read a flow as Python cells in the Code panel, edit them, and run a cell to sync it to the canvas and see its node's rows.">
+      
+      
+      
+        <link rel="canonical" href="https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/notebook.html">
+      
+      
+        <link rel="prev" href="building-flows.html">
+      
+      
+        <link rel="next" href="nodes/index.html">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Canvas Notebook - Flowfile</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CSource+Code+Pro:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Source Code Pro"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+      <link rel="stylesheet" href="../../stylesheets/formula-reference.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#the-canvas-notebook" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../index.html" title="Flowfile" class="md-header__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../../assets/images/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Flowfile
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Canvas Notebook
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../what-is-flowfile.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Get Started
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Visual Editor
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../connect/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Connect Your Data
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="catalog/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Catalog & Automation
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../python-api/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Python API
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../ai/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  AI Assistant
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../deployment/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Deploy & Operate
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../for-developers/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  For Developers
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../roadmap.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Roadmap
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../community.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Community
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../index.html" title="Flowfile" class="md-nav__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../../assets/images/logo.png" alt="logo">
+
+    </a>
+    Flowfile
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    
+  
+  
+  
+    <a href="../../what-is-flowfile.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Get Started
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visual Editor
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Visual Editor
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="building-flows.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building Flows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Canvas Notebook
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="notebook.html" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Canvas Notebook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#opening-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Opening it
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#placeholder-cells" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Placeholder cells
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-a-cell" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running a cell
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Running a cell">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#edited-synced-and-failed-cells" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Edited, synced and failed cells
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#run-all-and-push" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run all and Push
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-a-sync-does" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a sync does
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-a-sync-refuses-or-asks-about" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a sync refuses or asks about
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-on-a-kernel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running on a kernel
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#kernels-docker-and-deployments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kernels, Docker and deployments
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exporting-the-notebook" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exporting the notebook
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-is-not-saved-with-the-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is not saved with the flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="nodes/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Actions
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../formulas/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Formula Language
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="kernels.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sandboxed Python (Kernels)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="kernel-api.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The flowfile_ctx API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="node-designer.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Node Designer
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="tutorials/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Worked Examples
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="settings.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Settings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../connect/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect Your Data
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="catalog/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog & Automation
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../python-api/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../ai/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI Assistant
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../deployment/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy & Operate
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../for-developers/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Developers
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../roadmap.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../community.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#opening-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Opening it
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#placeholder-cells" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Placeholder cells
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-a-cell" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running a cell
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Running a cell">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#edited-synced-and-failed-cells" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Edited, synced and failed cells
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#run-all-and-push" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run all and Push
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-a-sync-does" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a sync does
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-a-sync-refuses-or-asks-about" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a sync refuses or asks about
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-on-a-kernel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running on a kernel
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#kernels-docker-and-deployments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kernels, Docker and deployments
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exporting-the-notebook" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exporting the notebook
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-is-not-saved-with-the-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is not saved with the flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="the-canvas-notebook">The Canvas Notebook</h1>
+<p>The canvas notebook shows the open flow as Python code, one cell per statement, in the <strong>Notebook</strong> mode of the Code panel. It uses the editor of a <a href="catalog/notebooks.html">catalog notebook</a>, with the same cells, shortcuts, undo, drag and completions. By default it has no kernel: running a cell writes your edits onto the canvas and runs the cell's node where the flow runs. In the desktop app you can also <a href="#running-on-a-kernel">run it on a kernel</a>, where cells run as real Python. This page covers what the cells contain, what <strong>Run</strong> does for each kind of cell, what a sync refuses, running on a kernel, and how the notebook behaves in each deployment.</p>
+<details open="open">
+<summary>See it: a filter cell pushed to the canvas, and a Sort node added on the canvas back in the notebook</summary>
+<video aria-label="A flow with one CSV reader opened in the canvas notebook. A cell big_orders = source_1.filter(ff.col('qty') &gt; 5) is typed and pushed: a Filter node appears on the canvas and the cells re-render as one chained big_orders statement. A Sort node dropped on the canvas shows up as a placeholder cell, ordered_3 = ff.canvas_node(3), marked inputs not fully connected; once it is connected and set to sort by qty descending, the cell reads ordered_3 = big_orders.sort(['qty'], descending=[True])" autoplay="autoplay" controls="controls" height="900" loop="loop" muted="muted" playsinline="playsinline" preload="metadata" style="width: 100%; height: auto;" width="1600">
+  <source src="../../assets/images/guides/notebooks/notebook-round-trip.mp4" type="video/mp4">
+</video>
+</details>
+<h2 id="opening-it">Opening it</h2>
+<p>Open the <a href="tutorials/code-generator.html">Code panel</a> (Ctrl/Cmd+G) and pick <strong>Notebook</strong>, or click <strong>Modify in notebook</strong> on a flow's page in the <a href="catalog/index.html#flow-detail-panel">Catalog</a>, which opens the flow with the notebook already showing. The panel stays open while you click the canvas or switch flows; a double-click on an empty spot of the canvas closes it, and closing it keeps your edits. The notebook renders the flow:</p>
+<ul>
+<li>The leading cells hold the imports, the flow parameters and the canvas's visual groups (<code>cleaning = ff.FlowGroup("Cleaning", color="blue")</code>, a nested group with <code>parent_group=</code>), then one cell per statement in the order the flow runs; a cell holds every node its statement chains together, and a node inside a group ends its call with <code>.add_to_group(cleaning)</code>.</li>
+<li>Cells use the <a href="../python-api/index.html">Python API</a> (<code>import flowfile as ff</code>): fluent <code>FlowFrame</code> calls for built-in transforms, and the <a href="../python-api/reference/native-nodes.html">native node classes</a> (<code>ff.Gate</code>, <code>ff.RunFlow</code>, <code>ff.PythonScript</code>, custom nodes, parameters) for the rest.</li>
+<li>A Python Script node written in its drawer is a <code>@ff.python_script</code> function <a href="../python-api/reference/native-nodes.html#scripts-without-a-return">without a <code>return</code></a>: the body is the script as written, its cells separated by <code># %%</code> markers, and the frames it reads go in the call below it (<code>python_script_2 = _script_2(df)</code>). A script that would not come back from that form unchanged, such as one holding a multi-line string, is an <code>ff.PythonScript(cells=[...])</code> call instead.</li>
+<li>A Polars Code node holding a function is that function as written, followed by the call that wires it (<code>transformed_5 = df.polars_code(high_value)</code>); rename the function or its parameters and the node keeps your names. A node holding a snippet is a generated <code>_polars_code_&lt;id&gt;(input_df)</code> function whose body is the snippet with its result returned; edit the body and it stays a snippet, rename the function or a parameter and it becomes a function node.</li>
+<li>A node's variable is its node reference when it has one, else a label derived from its type and id (<code>filtered_12</code>).</li>
+<li>Dropping, connecting or saving a node on the canvas updates the cells within a couple of seconds; a cell you edited keeps your text. Moving a node changes nothing.</li>
+</ul>
+<p><img alt="The canvas holds a CSV reader, a filter and a Sort by qty Descending node; the notebook beside it shows the reader and filter as one chained big_orders statement and the sort as its own cell, ordered_3 = big_orders.sort([&quot;qty&quot;], descending=[True])" src="../../assets/images/guides/notebooks/notebook-canvas-sort.png" /></p>
+<p>The code is rendered on the server and needs no Python session, no kernel and no Docker, so every user can open it in every deployment.</p>
+<h2 id="placeholder-cells">Placeholder cells</h2>
+<p>A node the notebook cannot express as code becomes a <strong>placeholder</strong> cell that still binds the node's output to a variable, so the cells below it keep working:</p>
+<p><code>enriched = ff.canvas_node(7, joined)</code></p>
+<p><code>ff.canvas_node(node_id, *inputs, output=None)</code> adopts canvas node 7 with its current settings and wires it to the frames passed. The comment on the cell's first line says why it is a placeholder, for example:</p>
+<table>
+<thead>
+<tr>
+<th>Reason on the cell</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>not configured yet, inputs not fully connected</td>
+<td>Configure or connect the node on the canvas. A placeholder for an unconfigured node can also be replaced with code.</td>
+</tr>
+<tr>
+<td>downstream of node N, which is not editable as code</td>
+<td>Fix node N; everything below it follows.</td>
+</tr>
+<tr>
+<td>nodes below it read its output, which ff.explore does not return</td>
+<td>An Explore data node feeds other nodes, which only code can wire. Connect them to the node's input instead.</td>
+</tr>
+<tr>
+<td>headers or query parameters hold a credential</td>
+<td>A REST API reader with a key in its headers or parameters. Move the key to a <a href="catalog/secrets.html">secret</a>.</td>
+</tr>
+<tr>
+<td>No code generator implemented for node type '...'</td>
+<td>The node type has no code form; edit it on the canvas.</td>
+</tr>
+</tbody>
+</table>
+<p>A Polars LazyFrame node (a frame passed in from Python) is <strong>unsupported</strong>: it cannot be rebuilt, and a flow that contains one cannot be synced until the node is replaced on the canvas.</p>
+<h2 id="running-a-cell">Running a cell</h2>
+<p>This section describes the notebook with <strong>No kernel</strong> picked. Cell code never runs as Python on the server. The server reads the cells as a description of the flow, and data is only computed where the flow runs: the backend and worker, and a Python Script node on its <a href="kernels.html">kernel</a>.</p>
+<p><strong>Run</strong> (the cell's run button, <strong>Shift+Enter</strong> or <strong>Cmd/Ctrl+Enter</strong>) first syncs the cells to the canvas when the notebook no longer matches the canvas (a cell edited, added, removed or moved), then does what the cell's kind calls for:</p>
+<table>
+<thead>
+<tr>
+<th>Cell</th>
+<th>Example</th>
+<th>What Run shows</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Imports</td>
+<td><code>import flowfile as ff</code></td>
+<td>Nothing.</td>
+</tr>
+<tr>
+<td>Groups</td>
+<td><code>cleaning = ff.FlowGroup("Cleaning", color="blue")</code></td>
+<td>Nothing.</td>
+</tr>
+<tr>
+<td>Parameters</td>
+<td><code>min_quantity = ff.add_flow_parameter(flow, ff.Parameter("min_quantity", default=8, type="integer"))</code></td>
+<td>The flow's parameters, each with its name, type and default, read from the canvas after the sync.</td>
+</tr>
+<tr>
+<td>Node</td>
+<td><code>filtered_2 = source_1.filter(ff.col("quantity") &gt;= min_quantity)</code></td>
+<td>Runs the cell's last node and everything it depends on, honouring <a href="nodes/combine.html">gates</a>, then shows up to 100 of its rows. A writer cell writes, and a <a href="catalog/change-tracking.html">change-tracking</a> cursor or Kafka offsets then move with what it wrote. Any other node cell only shows rows and leaves them where they are.</td>
+</tr>
+<tr>
+<td>Plain value</td>
+<td><code>threshold = 8</code></td>
+<td>Nothing.</td>
+</tr>
+</tbody>
+</table>
+<p>A node cell's table is the node's preview, the one the canvas shows, so it holds at most 100 rows and its title says so. A longer result ends with "showing 100 of N rows" when its row count is known; when it is not, as for a lazy result the run never counted, the title says the total is unknown. In the <strong>Performance</strong> <a href="building-flows.html#flow-settings">execution mode</a>, where a run keeps no rows per node, the cell then fetches its node's rows the way the preview's <strong>Fetch Data</strong> button does, so <strong>Run</strong> can take a moment longer. A node with more than one output, such as a gate with an else output, shows its first output, and a writer shows the rows it received. A node that failed, or did not run because a node above it failed, shows <code>Node #N failed:</code> and that error instead of rows; after a cancelled run the cell says the node did not run. When the cell's node is no longer on the canvas, because a sync or a canvas edit removed it, the cell says <code>Node #N is not on the canvas.</code> and reads nothing.</p>
+<p><strong>Run and preview on canvas</strong> in a node cell's <strong>⋯</strong> menu runs the cell the same way, then opens the node's preview on the canvas.</p>
+<p>A cell cannot print, display or compute rows: a node cell's output is always its node's preview. Code outside the flow description, such as <code>print(...)</code>, a loop, <code>import os</code> or a <code>lambda</code>, stops the sync and nothing reaches the canvas: the failing line is highlighted and the cell's output gives the reason, for example <code>Line 1: `import os` is not part of the notebook's flow code; this needs a kernel</code>.</p>
+<h3 id="edited-synced-and-failed-cells">Edited, synced and failed cells</h3>
+<p>Each cell carries a marker that compares it with the canvas:</p>
+<table>
+<thead>
+<tr>
+<th>Marker</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Edited</strong></td>
+<td>The cell's code differs from what the canvas holds; the next <strong>Run</strong>, <strong>Run all</strong> or <strong>Push</strong> syncs it.</td>
+</tr>
+<tr>
+<td><strong>Synced</strong></td>
+<td>The canvas holds the cell's code.</td>
+</tr>
+<tr>
+<td><strong>Sync failed</strong></td>
+<td>The last sync stopped at this cell, and its output says why. Editing the cell marks it edited again.</td>
+</tr>
+</tbody>
+</table>
+<p>These markers take the place of the catalog notebook's <strong>Code changed — rerun</strong> and <strong>Earlier cells changed — rerun</strong> labels: the canvas notebook keeps no variables between runs.</p>
+<h3 id="run-all-and-push">Run all and Push</h3>
+<p><strong>Run all</strong> syncs when the notebook no longer matches the canvas (a cell edited, added, removed or moved), runs the whole flow as <strong>Run</strong> in the top toolbar does, then fills in every parameters and node cell's output; imports and plain cells show nothing.</p>
+<p><strong>Push</strong> only syncs: it writes the cells onto the canvas and runs nothing.</p>
+<p><img alt="After a push, the canvas shows a CSV reader connected to a filter node labelled [qty] &gt; 5, and the notebook shows the two as one cell: big_orders = ff.scan_csv(...).filter(ff.col(&quot;qty&quot;) &gt; 5)" src="../../assets/images/guides/notebooks/notebook-push-filter.png" /></p>
+<details>
+<summary>See it: a longer example with a group-by, filter and join pushed from one cell</summary>
+<video aria-label="A flow opened in the canvas notebook: a cell that counts customers and premium customers per city and joins them is pushed and appears on the canvas as group-by, filter and join nodes; after a run, a Sort node added on the canvas shows up in the notebook as an ordered_17 = output.sort(...) cell" controls="controls" height="676" loop="loop" muted="muted" playsinline="playsinline" preload="metadata" style="width: 100%; height: auto;" width="1280">
+  <source src="../../assets/images/guides/notebooks/canvas-notebook-in-action.mp4" type="video/mp4">
+</video>
+</details>
+<h2 id="what-a-sync-does">What a sync does</h2>
+<p><strong>Run</strong>, <strong>Run all</strong> and <strong>Push</strong> sync the same way. The server reads every cell top to bottom on a fresh copy of the flow, so a name a cell defines is available to the cells below it; no variable is kept from one sync to the next. A cell may only describe the flow, with the calls the notebook itself renders (<code>ff</code> readers, transforms and writers, the native node classes, parameters and plain values) and a few Polars frame methods it renders another way, such as <code>.limit(n)</code>, <code>.tail(n)</code> and <code>.write_ipc(path)</code>. Such a method places the node the <a href="../python-api/index.html">Python API</a> builds for it, most often a Polars Code node, and the next render shows that node instead of your call. <code>ff.LazyFrame(data)</code> and <code>ff.DataFrame(data)</code> work the same way: they take Polars' constructor arguments (<code>schema=</code>, <code>orient=</code> and the like) and place a Manual Input node holding the data, which the next render writes as <code>ff.from_raw_data(...)</code>. The result is applied to the canvas as one step that <strong>Undo</strong> reverts.</p>
+<p>A sync runs no node and opens no connection. A source, or a node whose columns depend on its data (Polars code, pivot, custom nodes, a data cleansing that removes null columns), keeps the columns the canvas shows while its settings are unchanged; a new or edited one takes the columns its cell declares, the columns Polars works out from the call when <code>.tail(n)</code> or a similar Polars frame method, or <code>with_columns</code>, <code>select</code>, <code>filter</code> or <code>sort</code>, places a Polars Code node, the header of the local file it reads or a catalog table's registered columns, and otherwise the sync treats it as having no columns.</p>
+<p>A sync keeps the id, position, description and cached results of every node the edit does not touch, and a lowercase variable name assigned in a cell becomes that node's reference. Visual groups follow the cells too: a node whose cell changed lands in the group its <code>.add_to_group(...)</code> names (a new <code>ff.FlowGroup</code> in the groups cell becomes a new box, a renamed or recoloured one updates the box), a node whose cell did not change keeps its canvas group, and a box left empty is removed.</p>
+<h2 id="what-a-sync-refuses-or-asks-about">What a sync refuses or asks about</h2>
+<p>A sync is refused, with the reason on the failing cell or in a message, when:</p>
+<ul>
+<li>the canvas changed since the cells were rendered: the panel refreshes the cells, keeps your edits and says the canvas changed; run or push again;</li>
+<li>a cell holds code outside the flow description (it needs a kernel); the cell shows the line;</li>
+<li>the flow contains a Polars LazyFrame node (a cell cannot create one: <code>ff.FlowFrame(pl.LazyFrame(...))</code> needs a kernel);</li>
+<li>a cell places a custom node that is not installed, or whose installed file fails to load;</li>
+<li>a REST API reader carries an inline secret instead of a secret name;</li>
+<li>a source or writer names a connection you cannot use, or, in a Docker deployment, a cloud reader or writer has a local path or no connection;</li>
+<li>a cell calls a build-time write or runs a flow; <a href="../python-api/reference/native-nodes.html#notebook-mode">notebook mode</a> lists the calls.</li>
+</ul>
+<p><strong>Push</strong> asks for confirmation first, listing the reasons, when the sync deletes nodes, changes a node's type, changes flow parameters (parameter changes are not undone by <strong>Undo</strong>), takes a node reference from another node, drops an input a cell did not rebuild, changes the names a Python Script node reads its inputs by, names a kernel you do not own, or places a node it could not check because a node above it has no known columns (the run checks it). <strong>Run</strong> and <strong>Run all</strong> ask only when the sync deletes nodes, and show the other reasons as a warning once the sync is applied.</p>
+<h2 id="running-on-a-kernel">Running on a kernel</h2>
+<p>In the desktop app, and with <code>pip install flowfile</code> in the default mode, the notebook toolbar has a kernel picker. Pick a <strong>notebook kernel</strong>, a <a href="kernels.html">kernel</a> on the <strong>Notebook</strong> image (the Lite image with this app's <code>flowfile</code> installed, published for every Flowfile version), and the cells run as real Python in a session on that kernel: loops, <code>print</code>, other imports and <code>display(...)</code> work, as in a script. When you have no such kernel, <strong>Create notebook kernel</strong> in the toolbar sets one up in one click: created, started and selected for this flow; nothing is installed on your machine. When the Notebook image is not here yet, the button reads <strong>Download image and create notebook kernel</strong> and downloads it first (several hundred MB, once per Flowfile version). <strong>Customise…</strong> in the picker opens the kernel form with the same settings filled in. A flow you never picked a kernel for selects a notebook kernel by itself as soon as one exists (a running one first). Pick <strong>No kernel</strong> to run on the canvas instead; that choice is remembered for the flow.</p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>With a kernel picked</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Run</strong></td>
+<td>Runs the cell as Python in the session. The canvas does not change.</td>
+</tr>
+<tr>
+<td><strong>Run all</strong></td>
+<td>Runs every cell in the session.</td>
+</tr>
+<tr>
+<td><strong>Push</strong></td>
+<td>Runs every cell again in a fresh session on the kernel, then applies what they build to the canvas as one step, with the same review as without a kernel. The session is then reseeded from the canvas.</td>
+</tr>
+<tr>
+<td><strong>Run and preview on canvas</strong> (⋯)</td>
+<td>Pushes first when the notebook differs from the canvas, then runs the node on the canvas, as without a kernel.</td>
+</tr>
+<tr>
+<td><strong>Reset session</strong> (⋯)</td>
+<td>Drops the session's variables and binds one variable per canvas node again.</td>
+</tr>
+<tr>
+<td><strong>Stop</strong></td>
+<td>Shown beside a running cell's run button. Interrupts the cell, and cancels the canvas run it is waiting on for rows.</td>
+</tr>
+</tbody>
+</table>
+<p>When the session opens, every canvas node is bound to its variable, so a cell can use <code>filtered_2</code> without running anything first. <code>display(frame)</code> shows rows. The kernel computes them itself for frames built on rows it has (manual input, and transforms over rows it was handed); for any other node that is on the canvas, such as a file or catalog table reader, a database reader or a Python Script node, the canvas runs the node and hands its rows to the kernel. A node that exists only in your cells and that the kernel does not run (a file or catalog table read, a database, API or Kafka source, a subflow, a gate, a Python Script on another kernel) is run by the app from the cell's settings, over the rows of its inputs, and its columns are known as soon as the cell builds it; the canvas does not change. So every file a cell names is read by the app, never by the kernel: from the canvas node with the same settings, else from the cell's settings. Only a writer in a cell needs a push: a cell never writes. Running a cell again unchanged does not make its node new: a node a cell builds with a canvas node's settings and inputs keeps reading that canvas node's rows, so a Python Script cell can be run again, alone or with <strong>Run all</strong>, and its frame still shows rows. After an edit to the cell, or to a cell above it, the app runs the node again from the cell.</p>
+<p>A canvas node whose columns are only known once it runs, such as a Python Script node without declared outputs, has no columns in the session until the canvas has run it. Once it has, through <strong>Run and preview on canvas</strong> or a run on the canvas, the next cell you run sees its columns, and so do frames built on it in earlier cells. Showing a node's rows in a session does not move a <a href="catalog/change-tracking.html">change-tracking</a> cursor or commit Kafka offsets, unless that node is a writer the canvas has to run.</p>
+<p><code>flowfile_ctx</code> is available in cells, as in a Python Script node (<a href="kernel-api.html">The flowfile_ctx API</a>). An artifact published with <code>flowfile_ctx.publish_artifact</code> in a cell stays in the session: later cells can read it, Python Script nodes on the canvas cannot. To hand a model to the canvas, publish it from the Python Script node's own code, or use <code>flowfile_ctx.publish_global</code>, which stores it in the catalog.</p>
+<p>The kernel is busy with the cell while the canvas runs, so that run cannot use the notebook's own kernel. When it would have to run a node on it, such as a Python Script node on that kernel (also inside a subflow or a virtual table's producer), the cell stops at once with a message naming the node. Use <strong>Run and preview on canvas</strong> for the node first, so the canvas runs it while the kernel is free, or run the notebook on another kernel.</p>
+<p>The kernel mounts no folder of this machine: files, catalog tables, saved flows and custom nodes reach it through the app, which also copies the code of your installed custom nodes into the kernel, so a cell can place them. What a cell looks up in the catalog, such as a table's record, a flow reference, a connection's name or <code>ff.kernels</code>, is answered by the app, and stored secrets never reach the kernel in any form: a cloud or database source and a custom node with a secret setting are always run by the app, from the canvas or from the cell's settings. The kernel holds no copy of the catalog database: a cell that opens it itself, through <code>flowfile_core</code>'s <code>get_db_context()</code>, stops with a message naming the <code>ff</code> functions to use instead.</p>
+<p>In cells, write file paths as they are on your machine (<code>C:\Users\me\data\sales.csv</code> on Windows). The kernel never opens them: Flowfile's readers and <code>list_files</code> are run by the app, and a push stores the path as written. Plain Polars, such as <code>pl.read_csv</code>, or <code>open()</code> cannot see a file on this machine from a cell; use <code>ff.read_csv</code> or <code>ff.scan_csv</code> instead. Writing a file directly from a cell, such as <code>df.write_csv(...)</code>, is not possible; an <code>ff</code> writer in a cell adds a writer node, which writes when the flow runs.</p>
+<p>Limits:</p>
+<ul>
+<li>Only in the desktop app and in a default <code>pip install flowfile</code> (<code>FLOWFILE_MODE</code> unset or <code>electron</code>), for a local connection. Docker deployments keep the notebook without a kernel.</li>
+<li>The kernel's <code>flowfile</code> must have the same version as the app. After an app update the picked kernel still runs the previous Notebook image, so the toolbar shows <strong>Update notebook kernel</strong>: it stops the kernel and starts it again, which downloads this app's image and drops what the kernel holds in memory.</li>
+</ul>
+<h2 id="kernels-docker-and-deployments">Kernels, Docker and deployments</h2>
+<p>With <strong>No kernel</strong> picked the notebook starts no Python process and needs no <a href="kernels.html">kernel</a> and no Docker. A Python Script node in the flow still runs on its kernel: its cell is an <code>ff.PythonScript</code> or <code>@ff.python_script</code> definition, and running that cell runs the node on its kernel, which needs Docker as it does on the canvas. Python that prints, displays or computes needs a kernel: this notebook <a href="#running-on-a-kernel">on a kernel</a>, a Python Script node or a <a href="catalog/notebooks.html">catalog notebook</a>.</p>
+<p>Viewing and editing the cells, and running them while the notebook matches the canvas, work for every user, for their own flows, in the desktop app, with <code>pip install flowfile</code> and in a Docker deployment. Syncing works for every user in the default <code>electron</code> mode: the desktop app, and <code>pip install flowfile</code> unless you set <code>FLOWFILE_MODE</code>. With any other <code>FLOWFILE_MODE</code> (<code>docker</code> in a Docker deployment, or <code>package</code>) syncing needs an admin account, because the catalog lookups a cell can reach do not check each user's access. Other users keep editable cells; <strong>Run</strong> and <strong>Run all</strong> when the notebook no longer matches the canvas, and <strong>Push</strong>, leave the edits in the notebook, and a banner says that syncing needs an admin. The notebook has no settings of its own.</p>
+<h2 id="exporting-the-notebook">Exporting the notebook</h2>
+<p>The <strong>⋯</strong> menu in the toolbar saves the cells as a file, so the code can leave Flowfile. <strong>Export as Python script…</strong> writes a <code>.py</code> file in which every cell opens with a <code># %%</code> marker (<code># %% [markdown]</code> for a Markdown cell, whose text becomes comments): VS Code, Spyder and Jupytext read the markers as cell boundaries, and a plain <code>python</code> runs the file top to bottom, since the imports cell comes first. <strong>Export as Jupyter notebook…</strong> writes an <code>.ipynb</code> that Jupyter, VS Code and Colab open, carrying the last output of every cell that ran in the panel. <strong>Copy as Python script</strong> puts the same script on the clipboard. The desktop app asks where to save; the browser downloads the file. The file is named after the flow, and nothing is sent anywhere: the export is built from the cells as they are in the panel, edits included.</p>
+<h2 id="what-is-not-saved-with-the-flow">What is not saved with the flow</h2>
+<p>The notebook is a view of the flow. Edits are kept in this browser window until a sync writes them to the canvas; reloading the page drops them. Saving the flow saves the canvas, not the notebook. A cell you add that places no node, such as <code>threshold = 8</code>, is not part of the flow: after a sync it stays in the panel only until the canvas next changes.</p>
+<h2 id="related">Related</h2>
+<ul>
+<li><a href="tutorials/code-generator.html">Export to Python</a>: a standalone script or project from the same flow, which does not round-trip.</li>
+<li><a href="catalog/notebooks.html">Catalog notebooks</a>: notebooks stored in the catalog that run on a kernel.</li>
+<li><a href="../python-api/reference/native-nodes.html#notebook-mode">Native node classes</a>: the Python API the cells use, and what notebook mode changes.</li>
+</ul>
+
+
+
+
+
+
+
+  
+  
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="building-flows.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Building Flows">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Building Flows
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="nodes/index.html" class="md-footer__link md-footer__link--next" aria-label="Next: Data Actions">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Data Actions
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Flowfile is MIT-licensed. Alteryx is a trademark of Alteryx, Inc.; KNIME is a trademark of KNIME AG. Flowfile is not affiliated with or endorsed by either.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.indexes", "navigation.prune", "navigation.tracking", "navigation.top", "navigation.footer", "toc.follow", "search.suggest", "search.highlight", "search.share", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../javascripts/formula-reference.js"></script>
+      
+    
+  </body>
+</html>
