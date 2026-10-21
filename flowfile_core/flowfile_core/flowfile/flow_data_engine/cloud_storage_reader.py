@@ -140,8 +140,12 @@ class CloudStorageReader:
 
         With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a Polars scan of a stored connection whose method holds a credential
         carries a ``CredentialRefProvider`` and options with no secret, so whichever process executes the plan resolves
-        the connection; ``env_vars`` and managed identity carry no provider. Otherwise core resolves the options and
-        the plan carries their credentials encrypted.
+        the connection; ``env_vars`` and managed identity carry no provider, and a named connection the catalog does
+        not hold for *user_id* is refused, never resolved in core. Otherwise, the flag off, a GCS read through gcsfs or
+        a read with no saved connection, core resolves the options and the plan carries their credentials encrypted.
+
+        Raises:
+            ValueError: With the flag on, the connection is named but not stored for *user_id*, or *user_id* is None.
         """
         if settings.FLOWFILE_COMPUTE_PROTOCOL and not CloudStorageReader.use_pyarrow_for_gcs(connection):
             if connection.auth_method in ("env_vars", "managed_identity"):
@@ -150,6 +154,12 @@ class CloudStorageReader:
             if ref is not None:
                 provider = CredentialRefProvider(ref.connection_id, ref.user_id)
                 return CloudStorageReader.get_plan_storage_options(connection), provider
+            if connection.connection_name:
+                reason = "is read with no user" if user_id is None else f"is not stored for user {user_id}"
+                raise ValueError(
+                    f'Cloud connection "{connection.connection_name}" {reason}: '
+                    "a read names a connection stored for the user it runs as"
+                )
         storage_options = CloudStorageReader.get_storage_options(connection)
         return storage_options, CloudStorageReader.get_credential_provider(storage_options, user_id)
 
