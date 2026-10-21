@@ -26,17 +26,21 @@ import requests
 from flowfile_core import events
 from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.configs import settings
+from flowfile_core.database.connection import get_db_context
+from flowfile_core.flowfile.database_connection_manager.db_connections import get_cloud_connection
 from flowfile_core.flowfile.execution import exchange, registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, PlanRejected, TaskFailed
+from flowfile_core.flowfile.execution.exchange import ExchangeRun
 from flowfile_core.flowfile.execution.placement import MixedPlacementPolicy, Placement, SingleBackendPolicy, place
-from flowfile_core.flowfile.execution.protocol import OpResult, ResultRef
+from flowfile_core.flowfile.execution.protocol import CredentialRef, OpResult, ResultRef
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_graph import execution as graph_execution
 from flowfile_core.flowfile.flow_node.executor import hints_for
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
+from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
 from flowfile_core.schemas import input_schema, transform_schema
 from shared.compute_protocol import PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER
 from tests import test_run_flow_node
@@ -327,30 +331,28 @@ def test_a_store_that_cannot_be_used_refuses_the_importing_node_before_any_node_
     assert no_s3_client == []
 
 
-def test_a_store_the_upstream_nodes_user_has_no_connection_for_refuses_the_importing_node(
+def test_the_store_is_the_operators_whatever_user_the_upstream_node_is_stamped(
     protocol_on, declare, no_s3_client, connection_name, monkeypatch
 ):
-    """Node 1, stamped user 2, crosses to node 2 on core: the edge opens the store for user 2, who has no connection."""
-    backend = declare(everything())
+    """Node 1, stamped user 2, crosses to node 2 on core: the edge opens the store with the one user's connection."""
+    declare(everything())
     monkeypatch.setenv("FLOWFILE_EXCHANGE_URI", f"s3://{_BUCKET}/exchange")
     monkeypatch.setenv("FLOWFILE_EXCHANGE_CONNECTION", connection_name)
     graph = chain(make_graph(8509), filter_on=LOCAL, user_id=1)
     graph.get_node(1).setting_input.user_id = 2
     graph.get_node(3).setting_input.execution_location = LOCAL
+    flow_starts = graph._flow_starts + graph.get_implicit_starter_nodes()
+    plan = compute_execution_plan(nodes=graph.nodes, flow_starts=flow_starts)
 
-    run_info = graph.run_graph()
+    placement, edges = graph._place_run(plan, ExchangeRun(graph.flow_id, uuid.uuid4().hex))
 
-    errors = {result.node_id: result.error for result in run_info.node_step_result}
-    assert errors == {
-        2: (
-            f'cannot run on backend "{LOCAL}": User 2 has no cloud connection named {connection_name!r}, '
-            "which FLOWFILE_EXCHANGE_CONNECTION names"
-        )
-    }
-    assert all(result.compute_error == "Refusal" for result in run_info.node_step_result)
-    assert (run_info.success, run_info.nodes_completed) == (False, 0)
-    assert run_info.boundaries == [(1, 2)]
-    assert backend.work == []
+    with get_db_context() as db:
+        connection_id = get_cloud_connection(db, connection_name, 1).id
+    assert placement.refusals == []
+    assert [(edge.source.node_id, edge.handle, edge.target.node_id) for edge in edges] == [
+        (1, DEFAULT_OUTPUT_HANDLE, 2)
+    ]
+    assert edges[0].credential == CredentialRef(connection_id=connection_id, user_id=1)
     assert no_s3_client == []
 
 

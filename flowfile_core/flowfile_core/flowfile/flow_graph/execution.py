@@ -1037,14 +1037,15 @@ class ExecutionMixin(GraphMixinBase):
         error when they run; an id the registry does not know refuses every node assigned to it with the registry's
         message.
 
-        Every boundary crosses through the run's prefix in the exchange store (the ``exchange_run`` given), for the
-        upstream node's user: one ``BoundaryEdge`` per output of the upstream node that the importing node reads, to
-        ``<prefix><from>-<handle>-<to>.parquet``, keyed by the handle the node looks that input up by. A store that
-        cannot be used for that user (no connection named, a scheme other than ``s3``, no such connection for the user)
-        refuses the importing node with the store's message, so the run starts no node. So does an edge whose output
-        core knows before the run to hold more rows than ``FLOWFILE_EXCHANGE_MAX_ROWS`` (``BoundaryEdge.cost``), the
-        message naming the rows, the columns and the limit, and a limit that is not a whole number; an edge whose count
-        core does not know crosses whatever its size. A node is refused once, for the first of its crossings refused.
+        Every boundary crosses through the run's prefix in the exchange store (the ``exchange_run`` given), resolved
+        once per run as the operator's connection: one ``BoundaryEdge`` per output of the upstream node that the
+        importing node reads, to ``<prefix><from>-<handle>-<to>.parquet``, keyed by the handle the node looks that input
+        up by. A store that cannot be used (no connection named, a scheme other than ``s3``, no administrator's
+        connection of that name) refuses the importing node with the store's message, so the run starts no node. So does
+        an edge whose output core knows before the run to hold more rows than ``FLOWFILE_EXCHANGE_MAX_ROWS``
+        (``BoundaryEdge.cost``), the message naming the rows, the columns and the limit, and a limit that is not a whole
+        number; an edge whose count core does not know crosses whatever its size. A node is refused once, for the first
+        of its crossings refused.
         """
         if not settings.FLOWFILE_COMPUTE_PROTOCOL:
             return None, []
@@ -1080,7 +1081,7 @@ class ExecutionMixin(GraphMixinBase):
         for source_id, target_id in placement.boundaries:
             source, target = self.get_node(source_id), self.get_node(target_id)
             try:
-                crossing = exchange_run.prefix(source.setting_input.user_id)
+                crossing = exchange_run.prefix()
                 max_rows = settings.get_exchange_max_rows() if crossing is not None else None
             except ValueError as e:
                 crossing_refusals.setdefault(target_id, Refusal(target_id, placement.assignment[target_id], str(e)))

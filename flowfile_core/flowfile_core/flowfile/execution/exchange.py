@@ -1,7 +1,8 @@
 """The exchange store: an object-storage prefix that a run's results cross between backends through.
 
 ``FLOWFILE_EXCHANGE_URI`` names its root, an ``s3://`` URI, and ``FLOWFILE_EXCHANGE_CONNECTION`` the stored cloud
-connection that opens it, as a catalog on object storage is configured. The connection is named to a backend by its
+connection that opens it, as a catalog on object storage is configured. The connection is the operator's, never a
+node's user's: an administrator's connection of that name, looked up once per run. It is named to a backend by its
 ``CredentialRef``, which core resolves with its master key and a worker against the shared catalog. A run writes under
 ``<uri>/<flow id>/<run id>/``, and ``run_graph`` removes that prefix when the run ends.
 """
@@ -25,14 +26,17 @@ class ExchangeStore:
     credential: CredentialRef
 
 
-def exchange_store(user_id: int) -> ExchangeStore | None:
-    """The exchange store as configured, its connection looked up for *user_id*; ``None`` when no URI is set.
+def exchange_store() -> ExchangeStore | None:
+    """The exchange store as configured, opened by the operator's connection; ``None`` when no URI is set.
 
-    The connection is found by name as a cloud read's is, the user's own first, then the lowest-id group grant.
+    The connection is the deployment's, never a node's user's: in multi-user mode the lowest-id cloud connection of
+    that name an administrator owns, so no user's own connection of the name shadows it and none a regular user owns
+    is ever the store's; in single-user mode the lowest-id one of that name, the one user's. Its ``CredentialRef``
+    names the connection's owner.
 
     Raises:
         ValueError: ``FLOWFILE_EXCHANGE_URI`` is set without ``FLOWFILE_EXCHANGE_CONNECTION``, its scheme is not
-            ``s3``, or *user_id* has no cloud connection of that name.
+            ``s3``, or no administrator has a cloud connection of that name.
     """
     uri = settings.get_exchange_uri()
     if uri is None:
@@ -46,46 +50,50 @@ def exchange_store(user_id: int) -> ExchangeStore | None:
     scheme = urlsplit(uri).scheme
     if scheme != "s3":
         raise ValueError(f"The exchange store must be on S3; FLOWFILE_EXCHANGE_URI {uri!r} has the scheme {scheme!r}")
+    from flowfile_core.auth import sharing
     from flowfile_core.database.connection import get_db_context
-    from flowfile_core.flowfile.database_connection_manager.db_connections import get_cloud_connection
+    from flowfile_core.database.models import CloudStorageConnection, User
 
     with get_db_context() as db:
-        row = get_cloud_connection(db, name, user_id)
+        rows = db.query(CloudStorageConnection).filter(CloudStorageConnection.connection_name == name)
+        if sharing.sharing_enabled():
+            rows = rows.join(User).filter(User.is_admin.is_(True))
+        row = rows.order_by(CloudStorageConnection.id.asc()).first()
         if row is None:
             raise ValueError(
-                f"User {user_id} has no cloud connection named {name!r}, which FLOWFILE_EXCHANGE_CONNECTION names"
+                f"No administrator has a cloud connection named {name!r}, which FLOWFILE_EXCHANGE_CONNECTION names"
             )
-        return ExchangeStore(uri=uri.rstrip("/"), credential=CredentialRef(connection_id=row.id, user_id=user_id))
+        return ExchangeStore(uri=uri.rstrip("/"), credential=CredentialRef(connection_id=row.id, user_id=row.user_id))
 
 
 class ExchangeRun:
     """One run's prefix in the exchange store, ``<uri>/<flow id>/<run id>/``, and its removal when the run ends.
 
-    The store's connection is looked up per user, so the run remembers every store it answered a prefix for, and
-    ``collect`` removes the run's prefix from each of them.
+    The run looks the store up once, on the first ``prefix`` that finds one, and answers that store after; ``collect``
+    removes the run's prefix from it.
     """
 
     def __init__(self, flow_id: int, run_id: str):
         self.flow_id = flow_id
         self.run_id = run_id
-        self._stores: set[ExchangeStore] = set()
+        self._store: ExchangeStore | None = None
 
-    def prefix(self, user_id: int) -> tuple[str, CredentialRef] | None:
-        """The run's prefix for *user_id* and the reference that opens it; ``None`` when no store is configured.
+    def prefix(self) -> tuple[str, CredentialRef] | None:
+        """The run's prefix and the reference that opens it; ``None`` when no store is configured.
 
         Raises:
             ValueError: The store is misconfigured, as ``exchange_store`` says.
         """
-        store = exchange_store(user_id)
-        if store is None:
+        if self._store is None:
+            self._store = exchange_store()
+        if self._store is None:
             return None
-        self._stores.add(store)
-        return self._prefix(store), store.credential
+        return self._prefix(self._store), self._store.credential
 
     def collect(self) -> None:
-        """Remove the run's prefix from every store it answered one for, and forget them; without one, call nothing."""
-        stores, self._stores = self._stores, set()
-        for store in stores:
+        """Remove the run's prefix from its store and forget the store; without one, call nothing."""
+        store, self._store = self._store, None
+        if store is not None:
             remove_prefix(store, self._prefix(store))
 
     def _prefix(self, store: ExchangeStore) -> str:
