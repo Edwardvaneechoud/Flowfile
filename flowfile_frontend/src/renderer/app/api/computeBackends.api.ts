@@ -1,4 +1,4 @@
-// The admin /compute_backends routes; the token goes in the add body once and is never answered.
+// The admin /compute_backends routes; the token and the CA certificate go in the add body once and are never answered.
 
 import axios from "../services/axios.config";
 
@@ -13,6 +13,8 @@ export interface ComputeBackendInput {
   name: string;
   url: string;
   token: string;
+  /** PEM of the CA to trust for an https worker whose certificate is not public. */
+  ca_cert?: string;
 }
 
 export interface WorkerCapabilities {

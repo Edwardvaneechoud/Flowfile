@@ -20,7 +20,7 @@ vi.mock("../../api/computeBackends.api", () => ({
   handshakeComputeBackend: mocks.handshake,
 }));
 
-import { useComputeBackends } from "./useComputeBackends";
+import { plainHttpOffLoopback, useComputeBackends } from "./useComputeBackends";
 
 const TEAM_URL = "https://team.example:63579";
 
@@ -106,6 +106,29 @@ describe("add", () => {
     expect(row).toEqual({ id: "worker:team", url: TEAM_URL });
     expect(page.backends.value.map((b) => b.id)).toEqual(["worker:team"]);
     expect(page.adding.value).toBe(false);
+  });
+
+  it("posts a CA certificate when one is given", async () => {
+    const page = useComputeBackends();
+    const pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n";
+
+    await page.add({ name: "team", url: TEAM_URL, token: "row-token", ca_cert: pem });
+
+    expect(mocks.add).toHaveBeenCalledWith({
+      name: "team",
+      url: TEAM_URL,
+      token: "row-token",
+      ca_cert: pem,
+    });
+  });
+
+  it("leaves an empty CA certificate out of the body", async () => {
+    const page = useComputeBackends();
+
+    await page.add({ name: "team", url: TEAM_URL, token: "row-token", ca_cert: "" });
+
+    expect(mocks.add).toHaveBeenCalledWith({ name: "team", url: TEAM_URL, token: "row-token" });
+    expect(mocks.add.mock.calls[0][0]).not.toHaveProperty("ca_cert");
   });
 
   it("rejects with the route's detail when the id exists, and reloads nothing", async () => {
@@ -249,4 +272,19 @@ describe("handshake", () => {
       expect(page.verdicts.value["worker:team"]).toEqual(verdict);
     },
   );
+});
+
+describe("plainHttpOffLoopback", () => {
+  it.each([
+    ["http://10.0.0.5:63579", true],
+    ["http://flowfile-worker:63579", true],
+    ["http://localhost:63579", false],
+    ["http://127.0.0.1:63579", false],
+    ["http://[::1]:63579", false],
+    ["https://10.0.0.5:63579", false],
+    ["http://", false],
+    ["", false],
+  ])("warns for %s: %s", (url, warns) => {
+    expect(plainHttpOffLoopback(url)).toBe(warns);
+  });
 });

@@ -67,6 +67,20 @@ describe("addComputeBackend", () => {
     expect(result).toEqual(row);
   });
 
+  it("posts a CA certificate as given", async () => {
+    mocks.post.mockResolvedValue({ status: 201, data: { id: "worker:team", url: "https://t" } });
+    const pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n";
+
+    await addComputeBackend({ name: "team", url: "https://t", token: "x", ca_cert: pem });
+
+    expect(mocks.post).toHaveBeenCalledWith("/compute_backends", {
+      name: "team",
+      url: "https://t",
+      token: "x",
+      ca_cert: pem,
+    });
+  });
+
   it("propagates a rejection raw, so the caller reads the route's detail", async () => {
     const failure = Object.assign(new Error("Request failed with status code 409"), {
       response: { status: 409, data: { detail: "Compute backend 'worker:team' already exists" } },
