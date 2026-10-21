@@ -56,14 +56,19 @@ Settings:                                #<-- The FlowSettings object you provid
   -save_location: None                   #<-- Where the flow definition is saved.
   -name: My First Pipeline               #<-- The name of our flow.
   -path:                                 #<-- Path to the flow file.
-  -execution_mode: Development           #<-- 'Development' for debugging or 'Performance' for speed.
+  -source_registration_id: None          #<-- The catalog registration, when running a registered flow.
+  -execution_mode: Performance           #<-- 'Performance' (the default) for speed or 'Development' for debugging.
   -execution_location: auto              #<-- Where the flow runs: 'auto' (the default backend) or a backend id.
+  -max_parallel_workers: 4               #<-- Most nodes of a stage that run at once.
+  -parameters: []                        #<-- Flow parameters, referenced as ${name}.
   -auto_save: False                      #<-- Auto-save changes (feature in development).
   -modified_on: None                     #<-- Last modified timestamp (feature in development).
   -show_detailed_progress: True          #<-- If True, shows detailed logs in the UI.
+  -show_edge_labels: False               #<-- Show named edge labels on connections.
   -is_running: False                     #<-- Is the flow currently running?
   -is_canceled: False                    #<-- Was a cancellation requested?
-)
+  -track_history: True                   #<-- Keep undo and redo history.
+  -validate_settings: True               #<-- Warn on settings that name missing input columns.
 ```
 </details>
 
@@ -432,7 +437,7 @@ In Performance mode every node runs on every run unless it is a cached node whos
 
 | Hint | Value |
 |---|---|
-| `must_materialise` | `cache_results` is on and the node is not one of the `IN_CORE_NODE_TYPES` (`output`, `api_response`, `flow_output`, `run_flow`) |
+| `must_materialise` | `cache_results` is on and the node is not one of the `IN_CORE_NODE_TYPES` (`output`, `api_response`, `flow_output`, `run_flow`); or the node reads an input that crossed from another backend, whatever its type, so no result refers to the exchange store once the run removes its prefix |
 | `wide` | the node is not a narrow transform (`is_narrow_transform`) and not one of the `IN_CORE_NODE_TYPES` |
 | `fanout` | how many distinct downstream nodes read the result; no backend's policy reads it yet |
 | `preview_rows` | the context's `preview_rows`: 100 in Development mode, `None` in Performance mode, except for a `cache_results` node, which keeps a 100-row preview in every mode; always `None` for the `IN_CORE_NODE_TYPES` |
@@ -445,10 +450,10 @@ In Performance mode every node runs on every run unless it is a cached node whos
 
 | Backend | Stores the rows when | Otherwise | Preview |
 |---|---|---|---|
-| `LocalBackend` (`backends/local.py`) | never: every plan is held lazily in core, whatever the hints say | deferred | no inline sample; `sample` computes the first rows when a preview is opened |
+| `LocalBackend` (`backends/local.py`) | with the protocol on, `must_materialise`: streamed by `sink_ipc` to core's own storage directory and held as a scan of that file; with it off, never | deferred: the plan held lazily in core | with the protocol on, inline when `preview_rows` is set, a bounded collect of what it now holds, so a plan that cannot run fails its node; with it off, no inline sample, and `sample` computes the first rows when a preview is opened |
 | `WorkerBackend` (`backends/worker.py`) | `must_materialise`, or `wide` with `preview_rows` set | deferred: core holds the plan object in its own process, unserialised | inline when `preview_rows` is set: read from the Arrow IPC file the worker stored, or, for a deferred plan, from a worker sampler task over it |
 
-On `LocalBackend` nothing computes a node's rows before a consumer, a write or an opened preview reads them, and a chain of deferred results composes over the frames its first plan read. On the worker, a wide plan is stored in Development mode so its preview and its consumers read rows computed once; in Performance mode nothing reads it before the run's writers do, so it stays a plan. A stored result's `plan_for` is a scan of the file the worker wrote (`pl.scan_ipc`), which a consumer's plan composes on.
+On `LocalBackend` nothing computes a deferred result's rows before a consumer, a write or a preview reads them, and a chain of deferred results composes over the frames its first plan read. On the worker, a wide plan is stored in Development mode so its preview and its consumers read rows computed once; in Performance mode nothing reads it before the run's writers do, so it stays a plan. A stored result's `plan_for` is a scan of the file the worker wrote (`pl.scan_ipc`), which a consumer's plan composes on.
 
 ### Node Classification
 
@@ -461,11 +466,11 @@ What each kind of node becomes on the worker backend:
 | any node with `cache_results` | `must_materialise` | stored; sampled inline | stored; sampled inline |
 | `output`, `api_response`, `flow_output`, `run_flow` | none; `preview_rows` is `None` | deferred; no inline sample, sampled when its preview is opened | deferred; no sample |
 
-On `LocalBackend` every row of this table is deferred. In Development mode, and for a `cache_results` node in either mode, the preview is computed in core when it is opened.
+On `LocalBackend` with the protocol on, a `cache_results` node is stored and every other row of this table is deferred; in Development mode, and for a `cache_results` node in either mode, the preview is computed in core inline on `submit`. With the protocol off every row is deferred and the preview is computed in core when it is opened.
 
 ### Operations
 
-Work that is not a plain Polars plan runs through the backend's `run_op` as an `OperationKind`, the closed enum in `flowfile/execution/protocol.py`: the database, Kafka, REST and Google Analytics reads and the file reads Polars cannot scan lazily; the database, cloud and file writes; fuzzy join; custom nodes; random split; model training and apply; the Delta writes; and visualisation sessions. A node's function calls `FlowNode.run_op` with the backend it runs on, the context's as a rule, and the references a read or a transform gets back become the frame the node then submits like any other plan. Some operations run outside that call: the read node's `file_read` goes through `run_operation`, the function `FlowNode.run_op` wraps, because a new read node's schema prefetch runs it before the node is bound; a `viz_session` is opened by no node's function but by the Explore data analysis routes (`analytics/node_viz.py`); and every `file_write` but the write node's calls `run_op` on the current context's backend directly: the parquet hand-off to a kernel (`write_parquet_for_kernel` in `kernel/execution.py`), which writes the inputs of a Python Script or kernel custom node, of the custom-node dry run and of the notebook kernel runner, and the CSV export route (`routes/routes.py`). A backend lists the kinds it runs in `capabilities().operations` and raises `OperationUnsupported` for the rest. `LocalBackend` runs no Google Analytics read, model training or apply, or visualisation session, so those run on the worker backend in every flow.
+Work that is not a plain Polars plan runs through the backend's `run_op` as an `OperationKind`, the closed enum in `flowfile/execution/protocol.py`: the database, Kafka, REST and Google Analytics reads and the file reads Polars cannot scan lazily; the database, cloud and file writes; fuzzy join; custom nodes; random split; Polars Code; model training and apply; the Delta writes; and visualisation sessions. A node's function calls `FlowNode.run_op` with the backend it runs on, the context's as a rule, and the references a read or a transform gets back become the frame the node then submits like any other plan. Some operations run outside that call: the read node's `file_read` goes through `run_operation`, the function `FlowNode.run_op` wraps, because a new read node's schema prefetch runs it before the node is bound; a `viz_session` is opened by no node's function but by the Explore data analysis routes (`analytics/node_viz.py`); and every `file_write` but the write node's calls `run_op` on the current context's backend directly: the parquet hand-off to a kernel (`write_parquet_for_kernel` in `kernel/execution.py`), which writes the inputs of a Python Script or kernel custom node, of the custom-node dry run and of the notebook kernel runner, and the CSV export route (`routes/routes.py`). A backend lists the kinds it runs in `capabilities().operations` and raises `OperationUnsupported` for the rest. `LocalBackend` runs every kind but the Google Analytics read and the visualisation session, so those run on the worker backend in every flow. With the protocol on, a Polars Code node runs its code as the `polars_code` operation on its backend, never in core, and the designer predicts its schema by the same operation over empty frames.
 
 ---
 
