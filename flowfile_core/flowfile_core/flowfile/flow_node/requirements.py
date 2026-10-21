@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 _OBJECT_STORAGE_SCHEMES = {"s3": "s3", "adls": "az", "gcs": "gs"}
 _LAZY_SCAN_FILE_TYPES = ("parquet", "ipc", "ndjson")
 _FILE = frozenset({"file"})
-_POLARS_DS = frozenset({"polars_ds"})
+_FORMULA_PLUGINS = frozenset({"polars_ds", "polars_expr_transformer"})
 _POLARS_GROUPER = frozenset({"polars_grouper"})
 
 
@@ -64,8 +64,9 @@ class NodeRequirements:
 _ON_KERNEL = NodeRequirements(operation=OperationKind.file_write, write_schemes=_FILE, needs_kernel=True)
 """A kernel node: its inputs are written as parquet to the kernel shared volume, a ``file_write`` operation."""
 
-_FORMULA = NodeRequirements(plugins=_POLARS_DS, python_function=True)
-"""A formula: its plan may load ``polars_ds`` and carry a Python function, whichever its formulas compile to."""
+_FORMULA = NodeRequirements(plugins=_FORMULA_PLUGINS, python_function=True)
+"""A formula: its plan may load ``polars_ds`` and the formula library ``polars_expr_transformer`` and carry a Python
+function, whichever its formulas compile to, so every formula node needs both, its settings not telling which."""
 
 
 def requirements_for(

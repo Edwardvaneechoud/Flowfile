@@ -64,7 +64,14 @@ def test_capabilities_report_the_index_width_of_the_loaded_polars_runtime(route_
 @pytest.mark.worker
 def test_capabilities_plugin_set_and_versions():
     caps = Capabilities.model_validate(client.get("/capabilities").json())
-    assert set(caps.plugins) == {"polars_grouper", "polars_simed", "polars_ds", "deltalake", "pl_fuzzy_frame_match"}
+    assert set(caps.plugins) == {
+        "polars_grouper",
+        "polars_simed",
+        "polars_ds",
+        "deltalake",
+        "pl_fuzzy_frame_match",
+        "polars_expr_transformer",
+    }
     for name, version in caps.plugins.items():
         assert version == importlib.metadata.version(name)
 

@@ -30,7 +30,14 @@ PROTOCOL_VERSION = 1
 PROTOCOL_VERSION_HEADER = "X-Protocol-Version"
 
 # Packages whose installed version a compute reports.
-PLUGIN_PACKAGES = ("polars_grouper", "polars_simed", "polars_ds", "deltalake", "pl_fuzzy_frame_match")
+PLUGIN_PACKAGES = (
+    "polars_grouper",
+    "polars_simed",
+    "polars_ds",
+    "deltalake",
+    "pl_fuzzy_frame_match",
+    "polars_expr_transformer",
+)
 # The subset that registers Polars expression plugins: a plan that uses one carries the
 # plugin's library path as Polars resolved it, relative to the sending process's sys.prefix.
 EXPRESSION_PLUGINS = ("polars_grouper", "polars_ds")
