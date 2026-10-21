@@ -1,5 +1,6 @@
 import asyncio
 import ipaddress
+import os
 import signal
 from contextlib import asynccontextmanager
 
@@ -105,7 +106,8 @@ def signal_handler(signum, frame):
 
 
 def run(host: str = None, port: int = None):
-    """Run the FastAPI app with graceful shutdown"""
+    """Run the FastAPI app with graceful shutdown, over TLS when `FLOWFILE_WORKER_TLS_CERT` and
+    `FLOWFILE_WORKER_TLS_KEY` name a certificate and its key."""
     global server_instance
 
     if host is None:
@@ -119,7 +121,12 @@ def run(host: str = None, port: int = None):
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
-    config = uvicorn.Config(app, host=host, port=port, loop="asyncio")
+    tls_cert = os.environ.get("FLOWFILE_WORKER_TLS_CERT")
+    tls_key = os.environ.get("FLOWFILE_WORKER_TLS_KEY")
+    if tls_cert:
+        logger.info(f"Serving TLS with the certificate {tls_cert}")
+
+    config = uvicorn.Config(app, host=host, port=port, loop="asyncio", ssl_certfile=tls_cert, ssl_keyfile=tls_key)
     server = uvicorn.Server(config)
     server_instance = server
 
