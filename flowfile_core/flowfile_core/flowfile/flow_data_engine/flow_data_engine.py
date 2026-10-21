@@ -3313,10 +3313,12 @@ def execute_sql_query(*flowfile_tables: FlowDataEngine, sql_code: str) -> FlowDa
 def execute_polars_code(*flowfile_tables: FlowDataEngine, code: str) -> FlowDataEngine:
     """Executes arbitrary Polars code on one or more FlowDataEngine objects.
 
-    This function takes a string of Python code that uses Polars and executes it.
+    This function takes a string of Python code that uses Polars and executes it, once.
     Function-form code (a single ``def``) is called with the inputs as positional
     LazyFrames; snippet code reads them as `input_df` (for a single input) or
-    `input_df_1`, `input_df_2`, etc.
+    `input_df_1`, `input_df_2`, etc. The backend that runs the ``polars_code``
+    operation in core's process calls it, and so does the Polars Code node's builder
+    with ``FLOWFILE_COMPUTE_PROTOCOL`` off.
 
     Args:
         *flowfile_tables: A variable number of `FlowDataEngine` objects to be
@@ -3330,4 +3332,4 @@ def execute_polars_code(*flowfile_tables: FlowDataEngine, code: str) -> FlowData
     df = polars_executable(*(flowfile_table.data_frame for flowfile_table in flowfile_tables))
     if isinstance(df, pl.DataFrame):
         logger.warning("Got a non lazy DataFrame, possibly harming performance, if possible, try to use a lazy method")
-    return FlowDataEngine(df, schema=_derived_schema(polars_executable, *flowfile_tables))
+    return FlowDataEngine(df)

@@ -9,10 +9,12 @@ does, and reads rows of those results through the backend: the formula editor's 
 column statistics, the CSV export, a Run Flow node's parameter rows and the preview of each output of a random split
 or a custom node; and a filter, a select, a join, a group_by, a
 formula, a record count, a unique, a union, an unpivot, window functions, text to rows, a multi-field formula, a graph
-solver, an explode hierarchy, a pivot, a dynamic rename, a data cleansing, a cross join or a Polars code node over a
-stored result, a node's output field config, a Run Flow node's outputs over its child's stored results and its data
-input and metadata columns over stored inputs, or the REST API reader's alignment of a read it stored, takes its
-input's columns from the input engine's cached schema; and a node that fails on a missing file in
+solver, an explode hierarchy, a pivot, a dynamic rename, a data cleansing or a cross join over a stored result, a
+node's output field config, a Run Flow node's outputs over its child's stored results and its data input and metadata
+columns over stored inputs, or the REST API reader's alignment of a read it stored, takes its input's columns from the
+input engine's cached schema; a Polars code node over a stored result is the ``polars_code`` operation, its code run
+once on the backend that holds the input and never in core, eager code and a side effect included, and the designer's
+prediction for it is the same operation over an empty frame; and a node that fails on a missing file in
 core keeps its stored input rather than rerunning it. The elaborate integration flow runs whole over stored inputs with
 the flag on, and with it off fails at the nodes that read them in core. The tests named for ``v1`` results check the
 same over the session worker's ``/v1`` routes, where a multi-output node's other output previews from the result the
@@ -49,6 +51,7 @@ from flowfile_core.flowfile.flow_data_engine.formula_entries import (
     apply_formula_entries,
 )
 from flowfile_core.flowfile.flow_data_engine.hierarchy import explode_hierarchy_frame
+from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_node.executor import NodeExecutor
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
@@ -1033,6 +1036,21 @@ TRANSFORM_VARIANTS = [
         4,
     ),
     (
+        9388,
+        "polars_code_eager",
+        "polars_code",
+        input_schema.NodePolarsCode,
+        {
+            "polars_code_input": transform_schema.PolarsCodeInput(
+                polars_code="output_df = input_df.filter(pl.col('amount') >= input_df.collect().item(2, 'amount'))"
+                ".with_columns(top=pl.lit(input_df.select(pl.col('amount').max()).collect().item()))"
+                ".select('id', 'amount', 'top')"
+            )
+        },
+        [("id", "Int64"), ("amount", "Int64"), ("top", "Int32")],
+        4,
+    ),
+    (
         9372,
         "output_fields_raise_on_missing",
         "filter",
@@ -1123,6 +1141,149 @@ def test_a_transform_variant_runs_over_stored_results_core_cannot_read(
             assert not os.path.exists(ref.location.decode("utf-8"))
         assert columns(graph.get_node(2).schema) == expected_columns
         assert len(graph.get_node(2).get_table_example(True).data) == rows
+    finally:
+        graph.close_flow()
+
+
+LAZY_POLARS_CODE = "output_df = input_df.filter(pl.col('amount') > 20).select('id', 'region', 'amount')"
+
+
+def executed_in_core(*args, **kwargs):
+    pytest.fail("core executed the Polars code")
+
+
+def side_effect_flow(flow_id: int, written: Path) -> FlowGraph:
+    """Manual input 1, cached → Polars code 2, which writes its collected input to a new CSV file in ``written``."""
+    graph = make_graph(flow_id, max_parallel_workers=1)
+    add_manual_input(graph, 1, TRANSFORM_ROWS)
+    graph.get_node(1).node_settings.cache_results = True
+    add_promise(graph, 2, "polars_code")
+    code = (
+        "rows = input_df.collect()\n"
+        f'rows.write_csv(f"{written}/{{time.time_ns()}}.csv")\n'
+        "output_df = rows.lazy().select('id', 'amount')"
+    )
+    graph.add_polars_code(
+        input_schema.NodePolarsCode(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_ids=[1],
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code=code),
+        )
+    )
+    connect(graph, 1, 2)
+    return graph
+
+
+def prediction_flow(flow_id: int) -> FlowGraph:
+    """Manual input 1 → Polars code 2 with lazy code; neither has run."""
+    graph = make_graph(flow_id, max_parallel_workers=1)
+    add_manual_input(graph, 1, TRANSFORM_ROWS)
+    add_promise(graph, 2, "polars_code")
+    graph.add_polars_code(
+        input_schema.NodePolarsCode(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_ids=[1],
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code=LAZY_POLARS_CODE),
+        )
+    )
+    connect(graph, 1, 2)
+    return graph
+
+
+def written_lines(written: Path) -> list[int]:
+    """The number of lines of each CSV file in ``written``."""
+    return [len(path.read_text().splitlines()) for path in written.glob("*.csv")]
+
+
+def test_polars_code_with_a_side_effect_runs_it_once_on_the_backend(unreadable, protocol_on, tmp_path):
+    written = tmp_path / "written"
+    written.mkdir()
+    graph = side_effect_flow(9389, written)
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        assert written_lines(written) == [7]
+        assert columns(graph.get_node(2).schema) == [("id", "Int64"), ("amount", "Int64")]
+        assert len(graph.get_node(2).get_table_example(True).data) == 6
+    finally:
+        graph.close_flow()
+
+
+def test_polars_code_with_a_side_effect_runs_it_once_on_the_worker(remote_worker, protocol_on, monkeypatch, tmp_path):
+    ops = []
+    run_op = WorkerBackend.run_op
+
+    def recording(self, op, payload):
+        ops.append(op.value)
+        return run_op(self, op, payload)
+
+    monkeypatch.setattr(WorkerBackend, "run_op", recording)
+    monkeypatch.setattr(polars_code_parser, "get_executable", executed_in_core)
+    written = tmp_path / "written"
+    written.mkdir()
+    graph = side_effect_flow(9390, written)
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        assert ops == ["polars_code"]
+        assert written_lines(written) == [7]
+        assert columns(graph.get_node(2).schema) == [("id", "Int64"), ("amount", "Int64")]
+        assert len(graph.get_node(2).get_table_example(True).data) == 6
+    finally:
+        graph.close_flow()
+
+
+def test_the_designers_prediction_of_a_polars_code_node_is_the_operation_over_an_empty_frame(
+    unreadable, protocol_on, monkeypatch
+):
+    calls = []
+    run_op = UnreadableBackend.run_op
+
+    def recording(self, op, payload):
+        result = run_op(self, op, payload)
+        calls.append((op.value, payload["payload"], result))
+        return result
+
+    monkeypatch.setattr(UnreadableBackend, "run_op", recording)
+    graph = prediction_flow(9391)
+    try:
+        predicted = graph.get_node(2).get_predicted_schema()
+
+        assert columns(predicted) == [("id", "Int64"), ("region", "String"), ("amount", "Int64")]
+        ((kind, payload, result),) = calls
+        assert kind == "polars_code"
+        assert payload.inputs[0].select(pl.len()).collect().item() == 0
+        assert result.refs["result"].row_count == 0
+        assert [graph.get_node(node_id).results.result_ref for node_id in (1, 2)] == [None, None]
+    finally:
+        graph.close_flow()
+
+
+def test_the_designers_prediction_of_a_polars_code_node_runs_on_the_worker(remote_worker, protocol_on, monkeypatch):
+    """The prediction reads an empty frame in memory, so the worker holds the code's result as a file of no rows."""
+    calls = []
+    run_op = WorkerBackend.run_op
+
+    def recording(self, op, payload):
+        result = run_op(self, op, payload)
+        calls.append((op.value, payload["payload"], result))
+        return result
+
+    monkeypatch.setattr(WorkerBackend, "run_op", recording)
+    monkeypatch.setattr(polars_code_parser, "get_executable", executed_in_core)
+    graph = prediction_flow(9392)
+    try:
+        predicted = graph.get_node(2).get_predicted_schema()
+
+        assert columns(predicted) == [("id", "Int64"), ("region", "String"), ("amount", "Int64")]
+        ((kind, payload, result),) = calls
+        assert kind == "polars_code"
+        assert payload.inputs[0].select(pl.len()).collect().item() == 0
+        assert (result.refs["result"].state, result.refs["result"].row_count) == ("materialised", 0)
     finally:
         graph.close_flow()
 

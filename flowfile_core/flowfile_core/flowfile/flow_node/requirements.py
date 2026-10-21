@@ -291,6 +291,7 @@ _BY_TEMPLATE: dict[str, NodeRequirements] = {
     "python_script": _ON_KERNEL,
     "fuzzy_match": NodeRequirements(operation=OperationKind.fuzzy_join, plugins=frozenset({"polars_simed"})),
     "random_split": NodeRequirements(operation=OperationKind.random_split),
+    "polars_code": NodeRequirements(operation=OperationKind.polars_code),
     "rest_api_reader": NodeRequirements(operation=OperationKind.rest_api_read),
     "graph_solver": NodeRequirements(plugins=_POLARS_GROUPER),
     "explode_hierarchy": NodeRequirements(plugins=_POLARS_GROUPER),

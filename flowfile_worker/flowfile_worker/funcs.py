@@ -487,6 +487,64 @@ def split_result(
         progress.value = 100
 
 
+def _scans_rows_in_memory(lf: pl.LazyFrame) -> bool:
+    """Whether *lf* reads a frame held in memory, whose rows its serialised plan carries whole.
+
+    Polars prints such a leaf (``input_df.collect().lazy()``, ``pl.LazyFrame({...})``) as ``DF [<columns>]`` in the
+    plan before optimisation, which is the plan that is serialised, and a scan of a source as the scan
+    (``Ipc SCAN [<path>]``). A string literal spelling such a line matches too, and the result is then written to a
+    file it did not need.
+    """
+    return any(line.lstrip().startswith("DF [") for line in lf.explain(optimized=False).splitlines())
+
+
+def polars_code(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,
+    flowfile_flow_id: int,
+    flowfile_node_id: int | str,
+    code: str,
+    inputs: list[bytes],
+):
+    """Run a Polars Code node's code once over its input plans, for ``POST /v1/ops/polars_code``.
+
+    The code runs in the Polars Code sandbox (``shared.polars_code_parser``), given the plans of *inputs* in order. A
+    ``LazyFrame`` it returns over sources is queued as its resolved ``pl.Schema`` and its serialised plan, with no row
+    count, nothing collected and nothing written. A ``DataFrame``, or a ``LazyFrame`` that reads a frame held in memory
+    (``_scans_rows_in_memory``), whose plan would carry those rows to core, is collected if lazy and written as IPC to
+    *file_path*, and its ``pl.Schema`` and height are queued. The schema is the result's own, never one read back from
+    a file (see ``submit_result``). *polars_serializable_object* is not read: the plans come as *inputs*.
+    """
+    from shared.polars_code_parser import polars_code_parser
+
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(f"Starting Polars code over {len(inputs)} inputs")
+    try:
+        frames = [_load_plan(plan) for plan in inputs]
+        result = polars_code_parser.get_executable(code, num_inputs=len(inputs))(*frames)
+        if isinstance(result, pl.LazyFrame) and _scans_rows_in_memory(result):
+            result = collect_lazy_frame(result)
+        if isinstance(result, pl.DataFrame):
+            with environment_failures():
+                result.write_ipc(file_path)
+            reported = {"columns": result.schema, "row_count": result.height, "plan": None}
+        else:
+            reported = {"columns": result.collect_schema(), "row_count": None, "plan": result.serialize()}
+    except BaseException as e:
+        flowfile_logger.error(f"Error during Polars code: {str(e)}")
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
+        return
+    # A dict, not a tuple: spawner.unpack_result reads a 2-tuple as (payload, row_count).
+    queue.put(reported)
+    with progress.get_lock():
+        progress.value = 100
+
+
 def calculate_schema_logic(
     df: pl.LazyFrame, optimize_memory: bool = True, flowfile_logger: Logger = None
 ) -> list[dict]:

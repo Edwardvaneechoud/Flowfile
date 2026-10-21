@@ -103,6 +103,5 @@ Core and every worker open the store at its connection's endpoint, so that endpo
 - **Plugin layout.** A worker whose plugins sit at other library paths than core's is refused as a whole by the version check above, not only for the nodes that use a plugin.
 - **Headless runs.** `flowfile run flow` computes in its own process unless the run passes `--backend <id>` or the flow's **Execution location** is a backend id. A scheduled run follows the flow's setting the same way.
 - **Node logs.** A node's log lines reach core's flow log only when the worker reaches `CORE_HOST` on `CORE_PORT` with core's token; otherwise they stay in the worker's own output.
-- **Polars code.** A **Polars code** node whose code collects an input or reads its schema reads that input in core, so with the worker on another host it fails; see [Polars code](../visual-editor/nodes/transform.md#polars-code).
 
 Hosting a worker on Kubernetes or behind an ingress, and running and scaling several workers, are outside this page.

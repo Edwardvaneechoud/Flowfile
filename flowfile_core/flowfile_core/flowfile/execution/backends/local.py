@@ -51,6 +51,7 @@ from flowfile_core.flowfile.execution.payloads import (
     KafkaReadPayload,
     MlApplyPayload,
     MlTrainPayload,
+    PolarsCodePayload,
     RandomSplitPayload,
     RestApiReadPayload,
     unpack,
@@ -69,7 +70,7 @@ from flowfile_core.flowfile.execution.protocol import (
 )
 from flowfile_core.flowfile.execution.registry import LOCAL_BACKEND_ID
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import convert_stats_to_column_info
 from flowfile_core.flowfile.flow_data_engine.utils import local_write_output
 from flowfile_core.flowfile.flow_node.multi_output import output_handle
@@ -588,6 +589,16 @@ class LocalBackend:
             return OpResult(refs={"result": self._hold_plan(FlowDataEngine(output))})
         return OpResult(refs={})
 
+    def _polars_code(self, payload: OpPayload) -> OpResult:
+        """Run the code of the ``PolarsCodePayload`` under ``"payload"`` once in this process over its input plans.
+
+        Returns the refs ``{"result": ref}``, a deferred result holding the frame the code returned as a plan, with its
+        row count when the code computed the frame.
+        """
+        job = unpack(payload, PolarsCodePayload)
+        engine = execute_polars_code(*(FlowDataEngine(plan) for plan in job.inputs), code=job.code)
+        return OpResult(refs={"result": self._hold_plan(engine)})
+
     def _write_cloud_storage(self, payload: OpPayload) -> OpResult:
         """Write the rows of the ``CloudWritePayload`` under ``"payload"`` to object storage.
 
@@ -753,6 +764,7 @@ class LocalBackend:
         OperationKind.fuzzy_join: _fuzzy_join,
         OperationKind.random_split: _random_split,
         OperationKind.custom_node: _run_custom_node,
+        OperationKind.polars_code: _polars_code,
         OperationKind.cloud_write: _write_cloud_storage,
         OperationKind.delta_write: _write_delta,
         OperationKind.delta_merge: _merge_delta,

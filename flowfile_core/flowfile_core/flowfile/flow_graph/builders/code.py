@@ -2,6 +2,10 @@
 
 import polars as pl
 
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.payloads import PolarsCodePayload, op_payload
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
     execute_polars_code,
@@ -26,12 +30,33 @@ class CodeBuildersMixin(GraphMixinBase):
     def add_polars_code(self, node_polars_code: input_schema.NodePolarsCode):
         """Adds a node that executes custom Polars code.
 
+        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, the code runs once as the ``polars_code`` operation on the execution
+        context's backend, over the plans its input engines hold, and core never executes it; the node's engine is a
+        plan over the reference the backend answers, with that reference's schema. The designer's prediction is the
+        same call over empty frames of the inputs' predicted schemas, so the backend answers the columns and no rows.
+        With the flag off the code runs in core to build the plan.
+
         Args:
             node_polars_code: The settings for the Polars code node.
         """
 
         def _func(*flowfile_tables: FlowDataEngine) -> FlowDataEngine:
-            return execute_polars_code(*flowfile_tables, code=node_polars_code.polars_code_input.polars_code)
+            if not FLOWFILE_COMPUTE_PROTOCOL:
+                return execute_polars_code(*flowfile_tables, code=node_polars_code.polars_code_input.polars_code)
+            node = self.get_node(node_polars_code.node_id)
+            job = PolarsCodePayload(
+                code=node_polars_code.polars_code_input.polars_code,
+                inputs=tuple(table.data_frame.lazy() for table in flowfile_tables),
+                flow_id=self.flow_id,
+                node_id=node_polars_code.node_id,
+                job_id=f"{node.hash}-polars-code",
+            )
+            backend = current_context(self).backend
+            ref = node.run_op(backend, OperationKind.polars_code, op_payload(job), job_id=job.job_id).refs["result"]
+            engine = FlowDataEngine(backend.plan_for(ref), schema=ref.schema, number_of_records=ref.row_count)
+            if ref.state == "deferred":
+                backend.release(ref)
+            return engine
 
         self.add_node_step(
             node_id=node_polars_code.node_id,

@@ -30,6 +30,7 @@ from flowfile_core.flowfile.execution.payloads import (
     FuzzyJoinPayload,
     MlApplyPayload,
     MlTrainPayload,
+    PolarsCodePayload,
     RandomSplitPayload,
     op_payload,
 )
@@ -430,6 +431,22 @@ def test_random_split_holds_one_result_per_split(backend):
     assert [backend.count(ref) for ref in refs.values()] == [80, 20]
     rows = pl.concat([backend.plan_for(ref).collect() for ref in refs.values()])
     assert sorted(rows["n"].to_list()) == list(range(100))
+
+
+def test_polars_code_holds_the_codes_result(backend):
+    rows = pl.LazyFrame({"n": list(range(5))})
+    code = "output_df = input_df.filter(pl.col('n') > 2).with_columns(double=pl.col('n') * 2)"
+    lazy = PolarsCodePayload(code=code, inputs=(rows,), flow_id=1, node_id=1)
+
+    refs = backend.run_op(OperationKind.polars_code, op_payload(lazy)).refs
+
+    ref = refs["result"]
+    assert refs == {"result": ref}
+    assert ref.state == "deferred"
+    assert [(column.column_name, column.data_type) for column in ref.schema] == [("n", "Int64"), ("double", "Int64")]
+    assert backend.plan_for(ref).collect().to_dicts() == [{"n": 3, "double": 6}, {"n": 4, "double": 8}]
+    eager = PolarsCodePayload(code="output_df = input_df.collect().head(2)", inputs=(rows,), flow_id=1, node_id=1)
+    assert backend.run_op(OperationKind.polars_code, op_payload(eager)).refs["result"].row_count == 2
 
 
 def test_file_read_holds_the_rows_of_a_csv(backend, tmp_path):
