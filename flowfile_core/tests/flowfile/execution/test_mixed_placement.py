@@ -793,6 +793,93 @@ def test_a_node_that_fails_to_store_its_second_output_on_the_worker_leaves_nothi
         graph.close_flow()
 
 
+def test_a_run_flow_child_leaves_its_operation_outputs_held_for_the_parent_that_reads_them(
+    worker, tmp_path, monkeypatch
+):
+    """Manual input 1 (``CUSTOMERS``) → run flow 2 over a child, flow input → random split → flow output → sort 3.
+
+    The child runs on the parent's backend in Performance mode, so its split node holds a deferred result over the
+    split's stored outputs; once the child's run ends its deferred results go and the split's outputs stay, which the
+    parent's sort then reads. With the flag off the split answers deferred slices of the worker's shuffle task, which
+    the node does not hold.
+    """
+    child = test_run_flow_node.make_graph(8523, "split_child")
+    add_promise(child, 1, "flow_input")
+    child.add_flow_input(input_schema.NodeFlowInput(flow_id=child.flow_id, node_id=1, input_name="rows"))
+    add_promise(child, 2, "random_split")
+    child.add_random_split(
+        input_schema.NodeRandomSplit(
+            flow_id=child.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            user_id=1,
+            seed=7,
+            splits=[
+                input_schema.RandomSplitGroup(name="train", percentage=50.0),
+                input_schema.RandomSplitGroup(name="test", percentage=50.0),
+            ],
+        )
+    )
+    connect(child, 1, 2)
+    add_promise(child, 3, "flow_output")
+    child.add_flow_output(
+        input_schema.NodeFlowOutput(flow_id=child.flow_id, node_id=3, output_name="result", depending_on_id=2)
+    )
+    connect(child, 2, 3)
+    path = tmp_path / "split_child.yaml"
+    child.save_flow(str(path))
+    graph = make_graph(8522)
+    add_manual_input(graph, 1, CUSTOMERS.to_dicts())
+    add_promise(graph, 2, "run_flow")
+    graph.add_run_flow(
+        input_schema.NodeRunFlow(
+            flow_id=graph.flow_id,
+            node_id=2,
+            user_id=1,
+            flow_reference=input_schema.SubflowReference(
+                registration_id=test_run_flow_node.register_flow_file(path, "split_child")
+            ),
+            input_slots=["rows"],
+            output_slots=["result"],
+            append_run_metadata=False,
+        )
+    )
+    test_run_flow_node.connect(graph, 1, 2, "input-1")
+    add_promise(graph, 3, "sort")
+    graph.add_sort(
+        input_schema.NodeSort(
+            flow_id=graph.flow_id,
+            node_id=3,
+            depending_on_id=2,
+            sort_input=[transform_schema.SortByInput(column="id", how="asc")],
+        )
+    )
+    connect(graph, 2, 3)
+    answered = record_refs(monkeypatch, "submit", "run_op")
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success is True, [result.error for result in run_info.node_step_result]
+        operated = [ref for method, _, ref in answered if method == "run_op"]
+        rows = sorted_rows(worker, graph.get_node(3).results.result_ref)
+        if not settings.FLOWFILE_COMPUTE_PROTOCOL:
+            assert [ref.state for ref in operated] == ["deferred"] * 2
+            assert len(rows) == operated[0].row_count
+            return
+        parents = {graph.get_node(node_id).hash for node_id in (1, 2, 3)}
+        deferred = [ref for method, _, ref in answered if method == "submit" and ref.result_id not in parents]
+        assert deferred and all(ref.state == "deferred" for ref in deferred)
+        assert not any(worker.exists(ref) for ref in deferred)
+        assert [ref.state for ref in operated] == ["materialised"] * 2
+        assert [v1_head(worker, ref.result_id) for ref in operated] == [200, 200]
+        assert rows.equals(sorted_rows(worker, operated[0]))
+    finally:
+        graph.close_flow()
+        for _, backend, ref in answered:
+            if ref.state == "materialised":
+                backend.release(ref)
+
+
 def test_a_formula_gate_probes_its_source_on_the_backend_holding_its_result(declare, no_s3_client, monkeypatch):
     """Flow 8514 on core: manual input 1 on the declaring backend, caching its result, → formula gate 2 on the same
     backend. Nothing crosses, and the gate's probe reads node 1's result where it is held, not on the run's backend."""

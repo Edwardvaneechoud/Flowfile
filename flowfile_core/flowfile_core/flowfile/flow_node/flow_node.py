@@ -1649,11 +1649,22 @@ class FlowNode:
         """Releases the held result when it is a deferred plan; a stored one is left to whatever scans its file.
 
         For a graph that is discarded while what it computed lives on (a ``run_flow`` child's output in its
-        parent's result): a consumer holds a deferred plan itself, so only the backend's holding goes.
+        parent's result): a consumer holds a deferred plan itself, so only the backend's holding goes. The node's
+        other stored results (the outputs it stored beside its result, its operation's outputs, a fitted model) stay
+        held, since that plan may scan them.
         """
         ref = self.results.result_ref
-        if ref is not None and ref.state == "deferred":
-            self.release_result()
+        if ref is None or ref.state != "deferred":
+            return
+        self.results.result_ref = None
+        self.results.job_handle = None
+        try:
+            registry.backend(ref.backend_id).release(ref)
+        except ComputeUnavailable as e:
+            logger.warning(
+                f"Node {self.node_id}: dropped result {ref.result_id} without releasing it, "
+                f"backend {ref.backend_id!r} cannot be reached: {e}"
+            )
 
     def held_result(self, backend_id: str) -> ResultRef | None:
         """The result this node holds on backend ``backend_id`` under its current hash, else ``None``."""
