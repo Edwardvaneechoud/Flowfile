@@ -3,8 +3,8 @@
 Every route needs the internal token, then an ``X-Protocol-Version`` equal to this worker's
 ``PROTOCOL_VERSION``: a request without one, or with another, is answered 426. ``POST /v1/submit``
 runs the plan in a spawned ``funcs.submit_result`` child and keeps the result in ``results.results``,
-written to a file or deferred as ``_materialise`` decides; a deferred submit with no preview spawns no
-child, as this process resolves the plan's columns and collects nothing. The other routes read, count,
+written to a file or deferred as ``_materialise`` decides; a deferred submit with no preview runs in the
+child too, which resolves the plan's columns and collects nothing. The other routes read, count,
 probe and release what it holds. A submit's job id is its result id, and every submit first drops what has
 been held for ``CACHE_EXPIRATION_TIME``. ``run_submit`` is the submit itself, which ``streaming.py``'s
 ``/v1/ws/submit`` runs too. ``POST /v1/ops/<kind>`` runs a read, a fuzzy join, a random split, a
@@ -54,7 +54,6 @@ from flowfile_worker.external_sources.rest_api_source.main import read_rest_api
 from flowfile_worker.external_sources.rest_api_source.models import RestApiReadSettings
 from flowfile_worker.external_sources.sql_source.main import read_sql_source
 from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings
-from flowfile_worker.funcs import _load_plan
 from flowfile_worker.results import ResultRecord, result_path, results
 from flowfile_worker.spawner import (
     process_manager,
@@ -65,7 +64,7 @@ from flowfile_worker.spawner import (
     start_process,
     start_train_model_process,
 )
-from flowfile_worker.task_errors import DEFAULT_ERROR_LIMIT, WorkerEnvironmentError, describe_exception
+from flowfile_worker.task_errors import describe_exception
 from shared.cloud_credential_provider import CredentialResolutionError, credential_ref_kwargs
 from shared.compute_protocol import (
     CLOUD_SCHEMES,
@@ -375,38 +374,6 @@ def _run(
     )
 
 
-def _resolve_columns(task_id: str, plan: bytes) -> None:
-    """Load *plan* and resolve its columns in this process as job *task_id*, which ends as a child's would.
-
-    It does what a deferred ``submit_result`` child with no preview does, and no more: deserialise the plan, which
-    loads its UDF modules and plugin libraries, and resolve its schema; nothing is collected. The entry ends
-    ``Completed`` with the dict that child queues, or ``Error`` with ``progress`` -1 and the kind and message its
-    recorded failure splits into, the message cut to fit that child's ``DEFAULT_ERROR_LIMIT``-byte buffer. An entry a
-    cancel marked ``Cancelled`` meanwhile is left as it is, so what was resolved is discarded.
-    """
-    try:
-        columns = _load_plan(plan).collect_schema()
-    except (Exception, pl.exceptions.PanicException) as e:
-        environment = isinstance(e, WorkerEnvironmentError)
-        # A child's buffer spends one byte on the environment marker.
-        limit = DEFAULT_ERROR_LIMIT - 1 if environment else DEFAULT_ERROR_LIMIT
-        description = describe_exception(e.original if environment else e).encode()[:limit]
-        with status_dict_lock:
-            status = status_dict[task_id]
-            if status.status != "Cancelled":
-                status.status = "Error"
-                status.progress = -1
-                status.error_kind = "environment" if environment else "task"
-                status.error_message = description.decode(errors="replace")
-        return
-    with status_dict_lock:
-        status = status_dict[task_id]
-        if status.status != "Cancelled":
-            status.status = "Completed"
-            status.progress = 100
-            status.results = {"columns": columns, "row_count": None, "sample": None}
-
-
 def _run_child(record: ResultRecord, plan: bytes, operation: str, kwargs: dict | None = None) -> Any:
     """Run *operation* over *plan* as a task of its own under *record*'s flow and node; its result, no entry left."""
     task_id = uuid.uuid4().hex
@@ -555,9 +522,8 @@ def run_submit(submit_meta: SubmitMeta, plan: bytes) -> SubmitResult:
     swept first; a result already held under the id is released. The end of the submit is stamped
     whether or not it completed, so its job entry ages out like a held result.
 
-    A deferred submit with no preview runs no child, since all that child would do is resolve the
-    plan's columns: they are resolved here (``_resolve_columns``), nothing is collected, and a
-    failure is the 500 a child's would be.
+    A deferred submit with no preview runs in the child too, which loads the plan and resolves its
+    columns, so its UDF modules and plugin libraries never load here, and collects nothing.
     """
     sweep_expired()
     for input_id in submit_meta.inputs:
@@ -574,18 +540,15 @@ def run_submit(submit_meta: SubmitMeta, plan: bytes) -> SubmitResult:
         path = str(target)
     logger.info(f"Submitting result {result_id} ({'materialised' if materialise else 'deferred'})")
     try:
-        if not materialise and submit_meta.hints.preview_rows is None:
-            status = _run_job(result_id, lambda: _resolve_columns(result_id, plan))
-        else:
-            status = _run(
-                result_id,
-                plan,
-                "submit_result",
-                path or "",
-                submit_meta.flow_id,
-                submit_meta.node_id,
-                {"materialise": materialise, "preview_rows": submit_meta.hints.preview_rows},
-            )
+        status = _run(
+            result_id,
+            plan,
+            "submit_result",
+            path or "",
+            submit_meta.flow_id,
+            submit_meta.node_id,
+            {"materialise": materialise, "preview_rows": submit_meta.hints.preview_rows},
+        )
     finally:
         results.mark_ended(result_id)
     if status.status != "Completed":
@@ -770,9 +733,9 @@ def cancel_job(job_id: str) -> dict[str, str]:
     """Stop a running job's child and mark the job cancelled.
 
     A job still ``Starting`` has no child yet: its entry is marked ``Cancelled`` under ``status_dict_lock`` and the
-    job ends as a cancel when it starts, its child stopped on the monitor's first pass or, for a deferred submit with
-    no preview, its in-process resolution discarded. The check comes first because the spawner registers a job's
-    process before its monitor writes ``Processing`` under that lock, so a job seen ``Processing`` has one to stop.
+    job ends as a cancel when it starts, its child stopped on the monitor's first pass. The check comes first because
+    the spawner registers a job's process before its monitor writes ``Processing`` under that lock, so a job seen
+    ``Processing`` has one to stop.
     """
     with status_dict_lock:
         status = status_dict.get(job_id)
