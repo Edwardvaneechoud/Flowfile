@@ -5,12 +5,14 @@ of its bytes and exported as those bytes, to and from a ``file://`` URI and a pr
 """
 
 import asyncio
+import importlib
 import ipaddress
 import json
 import logging
 import os
 import socket
 import ssl
+import sys
 import threading
 import time
 import uuid
@@ -27,9 +29,19 @@ from fastapi.testclient import TestClient
 from polars.testing import assert_frame_equal
 from starlette.testclient import WebSocketDenialResponse
 
-from flowfile_worker import funcs, main, models, mp_context, protocol_routes, status_dict, status_dict_lock, streaming
+from flowfile_worker import (
+    funcs,
+    main,
+    models,
+    mp_context,
+    pool,
+    protocol_routes,
+    spawner,
+    status_dict,
+    status_dict_lock,
+    streaming,
+)
 from flowfile_worker.results import result_path
-from flowfile_worker.task_errors import WorkerEnvironmentError, split_failure
 from shared.compute_protocol import (
     PROTOCOL_VERSION,
     PROTOCOL_VERSION_HEADER,
@@ -128,6 +140,25 @@ def _meta(
 
 def _post(plan: bytes, meta: str):
     return client.post("/v1/submit", files={"plan": ("plan", plan, "application/octet-stream")}, data={"meta": meta})
+
+
+class _SleepWhenLoaded:
+    """Pickled into a plan's UDF, it sleeps *seconds* when the plan is loaded, as a slow import or library load can."""
+
+    def __init__(self, seconds: float):
+        self.seconds = seconds
+
+    def __reduce__(self):
+        return time.sleep, (self.seconds,)
+
+
+@pytest.fixture
+def one_member_pool(monkeypatch):
+    """A pool of one member, spawned at its first lease, in place of the worker's own; shut down when the test ends."""
+    test_pool = pool.TaskPool(size=1, max_tasks_per_member=100, idle_ttl_seconds=300, rss_limit_mb=100_000)
+    monkeypatch.setattr(pool, "task_pool", test_pool)
+    yield test_pool
+    test_pool.shutdown()
 
 
 @pytest.fixture
@@ -284,15 +315,10 @@ def test_no_sample_comes_back_without_preview_rows(held, must_materialise):
     assert result.sample is None
 
 
-def test_a_deferred_submit_without_a_preview_runs_no_child(held, monkeypatch):
+def test_a_deferred_submit_without_a_preview_runs_in_a_pooled_child(held, one_member_pool):
     result_id = held()
     plan = _typed_plan()
     plan_bytes = plan.serialize()
-
-    def spawn(*args, **kwargs):
-        raise AssertionError("A deferred submit without a preview spawned a child")
-
-    monkeypatch.setattr(protocol_routes, "start_process", spawn)
 
     response = _post(plan_bytes, _meta(result_id, wide=True, preview_rows=None))
 
@@ -306,6 +332,66 @@ def test_a_deferred_submit_without_a_preview_runs_no_child(held, monkeypatch):
     assert _location(result).plan == plan_bytes
     assert not result_path(FLOW_ID, result_id).exists()
     assert client.get(f"/v1/jobs/{result_id}").json()["status"] == "Completed"
+    described = one_member_pool.describe()
+    assert described["tasks_completed"] == 1
+    assert described["idle"] == 1
+
+
+@pytest.mark.parametrize("stop", ["cancel", "time-limit"])
+def test_a_deferred_submit_whose_plan_hangs_answers_in_time(held, one_member_pool, monkeypatch, stop):
+    """The plan blocks while it loads, as a UDF module's import or a plugin library's load can, in the child."""
+    result_id = held()
+    sleeper = _SleepWhenLoaded(30)
+    plan = _plan().with_columns(pl.col("id").map_batches(lambda s, _=sleeper: s, return_dtype=pl.Int64)).serialize()
+    if stop == "time-limit":
+        monkeypatch.setattr(spawner, "_TASK_TIMEOUT", 1.0)
+    answers = []
+    submit = threading.Thread(target=lambda: answers.append(_post(plan, _meta(result_id))))
+    submit.start()
+    try:
+        if stop == "cancel":
+            deadline = time.monotonic() + 15
+            while client.get(f"/v1/jobs/{result_id}").json().get("status") != "Processing":
+                assert time.monotonic() < deadline, "the submit's child never started"
+                time.sleep(0.01)
+            cancel = client.post(f"/v1/jobs/{result_id}/cancel")
+            assert cancel.status_code == 200, cancel.text
+
+        submit.join(10)
+
+        assert not submit.is_alive(), "the submit did not answer in time"
+    finally:
+        submit.join(60)
+    [response] = answers
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    if stop == "cancel":
+        assert detail["status"] == "Cancelled"
+    else:
+        assert detail["error_kind"] == "environment"
+        assert "time limit" in detail["error_message"]
+    assert client.head(f"/v1/results/{result_id}").status_code == 404
+    assert not result_path(FLOW_ID, result_id).exists()
+    assert one_member_pool.stats()["total"] == 0
+
+
+def test_a_plan_over_a_udf_module_leaves_the_serving_process_modules_unchanged(
+    held, one_member_pool, tmp_path, monkeypatch
+):
+    """A spawned member starts with this process's ``sys.path``, so it imports the module the plan names."""
+    module_name = f"udf_seen_by_a_child_{tmp_path.name}"
+    (tmp_path / f"{module_name}.py").write_text("def plus_one(s):\n    return s + 1\n")
+    monkeypatch.syspath_prepend(tmp_path)
+    module = importlib.import_module(module_name)
+    plan = pl.LazyFrame({"a": [1, 2]}).select(pl.col("a").map_batches(module.plus_one, return_dtype=pl.Int64))
+    plan_bytes = plan.serialize()
+    sys.modules.pop(module_name)
+
+    response = _post(plan_bytes, _meta(held()))
+
+    assert response.status_code == 200, response.text
+    assert SubmitResult.model_validate_json(response.text).ref.columns == schema_to_wire(pl.Schema({"a": pl.Int64}))
+    assert module_name not in sys.modules
 
 
 def test_a_plan_over_a_megabyte_submits_as_a_file_part(held):
@@ -931,31 +1017,6 @@ def test_a_failed_submits_job_carries_the_error(held):
     assert job["error_message"].startswith("ColumnNotFoundError")
 
 
-@pytest.mark.parametrize(
-    "failure",
-    [pl.exceptions.ColumnNotFoundError("x" * 3000), WorkerEnvironmentError(ImportError("y" * 3000))],
-    ids=["task", "environment"],
-)
-def test_a_deferred_submit_without_a_preview_fails_as_its_child_would(held, monkeypatch, failure):
-    def load(plan):
-        raise failure
-
-    monkeypatch.setattr(funcs, "_load_plan", load)
-    monkeypatch.setattr(protocol_routes, "_load_plan", load)
-    plan = _plan().serialize()
-    progress, error_message = mp_context.Value("i", 0), mp_context.Array("c", 1024)
-    funcs.submit_result(plan, progress, error_message, Queue(maxsize=1), "", FLOW_ID, NODE_ID, False, None)
-    kind, message = split_failure(error_message.value.decode(errors="replace"))
-    result_id = held()
-
-    response = _post(plan, _meta(result_id))
-
-    assert response.status_code == 500
-    assert response.json()["detail"] == {"status": "Error", "error_message": message, "error_kind": kind}
-    assert len(message.encode()) <= 1024
-    assert client.get(f"/v1/jobs/{result_id}").json()["progress"] == progress.value == -1
-
-
 def test_an_unknown_job_is_404():
     assert client.get("/v1/jobs/unknown").status_code == 404
     assert client.post("/v1/jobs/unknown/cancel").status_code == 404
@@ -968,21 +1029,18 @@ def test_a_finished_job_cannot_be_cancelled(held):
     assert client.post(f"/v1/jobs/{result_id}/cancel").status_code == 404
 
 
-@pytest.mark.parametrize("held_at", ["child", "in_process"])
-def test_a_cancel_posted_while_a_submit_is_starting_stops_it_when_it_starts(held, monkeypatch, held_at):
-    """The submit is held in ``Starting`` before its child spawns, or before its columns are resolved in process."""
+@pytest.mark.parametrize("hints", [{"must_materialise": True}, {}], ids=["materialised", "deferred-without-a-preview"])
+def test_a_cancel_posted_while_a_submit_is_starting_stops_it_when_it_starts(held, monkeypatch, hints):
+    """The submit is held in ``Starting`` before its child spawns."""
     result_id = held()
-    if held_at == "child":
-        meta, name, real = _meta(result_id, must_materialise=True), "start_process", protocol_routes.start_process
-    else:
-        meta, name, real = _meta(result_id), "_load_plan", protocol_routes._load_plan
+    meta, real = _meta(result_id, **hints), protocol_routes.start_process
     go = threading.Event()
 
     def held_back(*args, **kwargs):
         go.wait(30)
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(protocol_routes, name, held_back)
+    monkeypatch.setattr(protocol_routes, "start_process", held_back)
     answers = []
     submit = threading.Thread(target=lambda: answers.append(_post(_plan().serialize(), meta)))
     submit.start()
