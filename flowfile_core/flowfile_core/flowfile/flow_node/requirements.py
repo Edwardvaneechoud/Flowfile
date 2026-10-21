@@ -87,7 +87,8 @@ def requirements_for(
     or writer claims no scheme for a path it refuses itself when it runs: empty, blank, relative, or a URI that is
     not object storage, a URL included; a path that still holds a ``${…}`` parameter claims the scheme of its text,
     ``file`` for ``${root}/table``. A ``NodePromise``, a node not set up yet, answers only what its template says:
-    whether it runs on a kernel.
+    whether it runs on a kernel. An Explore Data node runs ``viz_session`` for its chart, on the backend that holds its
+    result.
 
     Args:
         template: The node's template.
@@ -301,6 +302,7 @@ _BY_TEMPLATE: dict[str, NodeRequirements] = {
     "random_split": NodeRequirements(operation=OperationKind.random_split),
     "polars_code": NodeRequirements(operation=OperationKind.polars_code),
     "rest_api_reader": NodeRequirements(operation=OperationKind.rest_api_read),
+    "explore_data": NodeRequirements(operation=OperationKind.viz_session),
     "graph_solver": NodeRequirements(plugins=_POLARS_GROUPER),
     "explode_hierarchy": NodeRequirements(plugins=_POLARS_GROUPER),
     "formula": _FORMULA,
