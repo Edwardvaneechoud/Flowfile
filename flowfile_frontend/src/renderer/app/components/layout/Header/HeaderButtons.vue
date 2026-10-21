@@ -139,7 +139,7 @@
   <!-- Hidden run-button instance kept solely to back loadFlowSettings()'s
        polling-restoration path. The user-visible run-button now lives in
        RightActionCluster; this off-screen instance preserves the existing
-       runButton.value.startPolling()/stopPolling() calls below without
+       runButton.value.startStatusPolling()/stopPolling() calls below without
        refactoring the polling restore. v-show:false stays in the layout
        tree so the ref resolves. -->
   <run-button v-show="false" ref="runButton" :flow-id="nodeStore.flow_id" aria-hidden="true" />
@@ -409,11 +409,7 @@ const loadFlowSettings = async (): Promise<void> => {
 
     if (flowSettings.value.is_running) {
       editorStore.isRunning = true;
-      button.startPolling(
-        () => button.checkRunStatus(undefined, "", true, undefined, flowId),
-        "",
-        flowId,
-      );
+      button.startStatusPolling(flowId);
     } else {
       editorStore.isRunning = false;
       button.stopPolling();

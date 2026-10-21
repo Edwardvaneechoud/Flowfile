@@ -44,11 +44,11 @@ const {
   isCancelling: cancelPending,
   showNotification,
   startPolling,
+  startStatusPolling,
   stopPolling,
   checkRunStatus,
 } = useFlowExecution(() => props.flowId, props.pollingConfig, {
   persistPolling: props.persistPolling,
-  pollingKey: `run_button_${props.flowId}`,
 });
 const isCancelling = computed(
   () => nodeStore.isRunning && (editorStore.isCanceled || cancelPending.value),
@@ -58,6 +58,7 @@ defineEmits(["logs-start", "logs-stop"]);
 
 defineExpose({
   startPolling,
+  startStatusPolling,
   stopPolling,
   checkRunStatus,
   showNotification,

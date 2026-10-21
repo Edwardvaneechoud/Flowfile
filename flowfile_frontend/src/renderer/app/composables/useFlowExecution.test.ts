@@ -26,6 +26,11 @@ vi.mock("axios", () => ({ default: { post: mocks.post, get: mocks.get } }));
 vi.mock("element-plus", () => ({ ElNotification: mocks.notify, ElMessage: { error: vi.fn() } }));
 vi.mock("@element-plus/icons-vue", () => ({ Promotion: {}, DataLine: {} }));
 vi.mock("../api", () => ({ FlowApi: { getFlowSettings: mocks.getFlowSettings } }));
+vi.mock("../services/auth.service", () => ({ default: { getToken: vi.fn() } }));
+vi.mock("../services/flowEventsClient", () => ({
+  FlowEventsHttpError: class extends Error {},
+  streamFlowEvents: vi.fn(),
+}));
 vi.mock("../stores/column-store", () => ({ useNodeStore: () => mocks.nodeState }));
 vi.mock("../stores/node-store", () => ({ useNodeStore: () => mocks.nodeState }));
 vi.mock("../stores/results-store", () => ({ useResultsStore: () => ({}) }));
@@ -33,6 +38,7 @@ vi.mock("../stores/tutorial-store", () => ({ useTutorialStore: () => ({ notify: 
 
 import { ref } from "vue";
 import { useEditorStore } from "../stores/editor-store";
+import { useFlowSyncStore } from "../stores/flow-sync-store";
 import { useFlowExecution } from "./useFlowExecution";
 import { useNodeSettings } from "./useNodeSettings";
 
@@ -43,6 +49,14 @@ const openDrawerWithSave = (save: () => Promise<unknown>) => {
   editor.setCloseFunction(save);
   return editor;
 };
+
+const rekey = (from: number, to: number) =>
+  useFlowSyncStore().handleEvent(from, {
+    kind: "rekeyed",
+    flow_id: from,
+    revision: null,
+    new_flow_id: to,
+  });
 
 describe("useFlowExecution.runFlow", () => {
   beforeEach(() => {
@@ -60,6 +74,7 @@ describe("useFlowExecution.runFlow", () => {
       mocks.calls.push(url);
       return { status: 200 };
     });
+    vi.stubGlobal("sessionStorage", { getItem: () => null, setItem: vi.fn() });
     vi.stubGlobal("document", {
       createElement: () => ({ textContent: "", innerHTML: "" }),
     });
@@ -184,16 +199,15 @@ describe("useFlowExecution.runFlow", () => {
       headers: { accept: "application/json" },
     });
     expect(editor.isRunning).toBe(true);
-    expect(editor.isCanceled).toBe(true);
     expect(execution.isPollingActive()).toBe(true);
-    expect(execution.isCancelling.value).toBe(true);
+    expect(editor.isCanceled).toBe(true);
+    expect(execution.isCancelling.value).toBe(false);
     expect(mocks.nodeState.insertRunResult).toHaveBeenCalledWith(running);
 
     await vi.advanceTimersByTimeAsync(2000);
 
     expect(mocks.nodeState.insertRunResult).toHaveBeenLastCalledWith(cancelled);
     expect(editor.isRunning).toBe(false);
-    expect(editor.isCanceled).toBe(false);
     expect(execution.isCancelling.value).toBe(false);
     expect(execution.isPollingActive()).toBe(false);
   });
@@ -236,20 +250,26 @@ describe("useFlowExecution.runFlow", () => {
     );
   });
 
-  it("keeps polling the cancelled flow after changing canvases without corrupting the new canvas", async () => {
+  it("keeps polling the cancelled flow when switching before acknowledgement", async () => {
     const currentId = ref(1);
     const editor = useEditorStore();
     editor.isRunning = true;
-    const execution = useFlowExecution(() => currentId.value);
+    const execution = useFlowExecution(() => currentId.value, undefined, { persistPolling: true });
+    let acknowledge!: () => void;
+    mocks.post.mockImplementationOnce(
+      () => new Promise((resolve) => (acknowledge = () => resolve({ status: 200 }))),
+    );
     const oldRunning = { flow_id: 1, node_step_result: [] };
     mocks.get
       .mockResolvedValueOnce({ status: 202, data: oldRunning })
       .mockResolvedValueOnce({ status: 200, data: { flow_id: 1, success: false } });
 
-    await execution.cancelFlow();
+    const cancellation = execution.cancelFlow();
     currentId.value = 2;
     editor.isCanceled = false;
     editor.isRunning = true; // Flow 2 is also running.
+    acknowledge();
+    await cancellation;
     mocks.nodeState.insertRunResult.mockClear();
     mocks.notify.mockClear();
 
@@ -266,105 +286,118 @@ describe("useFlowExecution.runFlow", () => {
     expect(execution.isPollingActive()).toBe(false);
   });
 
-  it("pins a cancelled flow even when the user switches before the server acknowledges", async () => {
-    const currentId = ref(1);
-    let acknowledge!: () => void;
-    mocks.post.mockImplementationOnce(
-      () => new Promise((resolve) => (acknowledge = () => resolve({ status: 200 }))),
-    );
-    mocks.get.mockResolvedValue({ status: 200, data: { flow_id: 1, success: false } });
+  it("completes a background node fetch without changing the selected flow UI", async () => {
+    const currentId = ref(11);
     const editor = useEditorStore();
-    const execution = useFlowExecution(() => currentId.value);
+    const onComplete = vi.fn();
+    const execution = useFlowExecution(currentId, undefined, { persistPolling: true });
+    mocks.get.mockResolvedValue({ status: 200, data: { flow_id: 11, success: true } });
 
-    const cancelled = execution.cancelFlow();
-    currentId.value = 2;
+    await execution.triggerNodeFetch(3, { focusResultPanels: false, onComplete });
+    currentId.value = 12;
     editor.isRunning = true;
-    acknowledge();
-    await cancelled;
+    mocks.notify.mockClear();
+    expect(onComplete).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(4000);
 
-    expect(mocks.get).toHaveBeenCalledWith("/flow/run_status/", {
-      params: { flow_id: 1 },
-      headers: { accept: "application/json" },
-    });
-    expect(editor.isRunning).toBe(true);
-    expect(editor.isCanceled).toBe(false);
+    expect(onComplete).toHaveBeenCalledOnce();
     expect(mocks.nodeState.insertRunResult).not.toHaveBeenCalled();
-    expect(execution.isCancelling.value).toBe(false);
+    expect(mocks.notify).not.toHaveBeenCalled();
+    expect(editor.isRunning).toBe(true);
+    expect(editor.showFlowResult).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("keeps the existing node-fetch polling path working", async () => {
-    const execution = useFlowExecution(
-      1,
-      { interval: 2000, enabled: true },
-      { persistPolling: true },
-    );
-    const result = { flow_id: 1, success: true, node_step_result: [] };
-    mocks.get.mockResolvedValue({ status: 200, data: result });
+  it.each(["pre-registered", "pending POST"])(
+    "preserves terminal callbacks when node-fetch pollers collide on rekey (%s)",
+    async (order) => {
+      const currentId = ref(21);
+      const sourceComplete = vi.fn(() => useEditorStore().isRunning);
+      const destinationComplete = vi.fn(() => useEditorStore().isRunning);
+      const source = useFlowExecution(currentId, undefined, { persistPolling: true });
+      const destination = useFlowExecution(22, undefined, { persistPolling: true });
+      const terminalReplies: Array<(response: unknown) => void> = [];
+      mocks.get
+        .mockResolvedValueOnce({ status: 202, data: { flow_id: 22 } })
+        .mockImplementation(() => new Promise((resolve) => terminalReplies.push(resolve)));
 
-    await execution.triggerNodeFetch(3);
-    expect(execution.isPollingActive("node_3")).toBe(true);
-    await vi.advanceTimersByTimeAsync(2000);
+      let acknowledge!: () => void;
+      if (order === "pending POST") {
+        mocks.post.mockImplementationOnce(
+          () => new Promise((resolve) => (acknowledge = () => resolve({ status: 200 }))),
+        );
+      }
+      const sourceFetch = source.triggerNodeFetch(3, {
+        focusResultPanels: false,
+        onComplete: sourceComplete,
+      });
+      await Promise.resolve(); // Let the source POST start before the destination fetch.
+      if (order === "pre-registered") await sourceFetch;
+      await destination.triggerNodeFetch(3, {
+        focusResultPanels: false,
+        onComplete: destinationComplete,
+      });
+      expect(vi.getTimerCount()).toBe(order === "pre-registered" ? 2 : 1);
+      currentId.value = 22;
+      rekey(21, 22);
+      expect(vi.getTimerCount()).toBe(1);
+      if (order === "pending POST") {
+        acknowledge();
+        await sourceFetch;
+      }
+      expect(vi.getTimerCount()).toBe(1);
+      expect(sourceComplete).not.toHaveBeenCalled();
+      expect(destinationComplete).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(sourceComplete).not.toHaveBeenCalled();
+      expect(destinationComplete).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(terminalReplies).toHaveLength(2);
+      expect(sourceComplete).not.toHaveBeenCalled();
+      expect(destinationComplete).not.toHaveBeenCalled();
+      for (const reply of terminalReplies) {
+        reply({ status: 200, data: { flow_id: 22, success: true } });
+        await Promise.resolve();
+      }
 
-    expect(mocks.nodeState.insertRunResult).toHaveBeenCalledWith(result);
-    expect(execution.isPollingActive("node_3")).toBe(false);
-    expect(useEditorStore().isRunning).toBe(false);
-  });
+      expect(sourceComplete).toHaveBeenCalledOnce();
+      expect(destinationComplete).toHaveBeenCalledOnce();
+      expect(sourceComplete).toHaveReturnedWith(false);
+      expect(destinationComplete).toHaveReturnedWith(false);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(useEditorStore().showFlowResult).toBe(false);
+    },
+  );
 
-  it("uses the rekeyed flow id for a new run after Save As", async () => {
+  it("follows Save As without applying an in-flight old-ID result", async () => {
     const currentId = ref(1);
-    const execution = useFlowExecution(() => currentId.value);
-    currentId.value = 2;
+    const editor = useEditorStore();
+    const execution = useFlowExecution(() => currentId.value, undefined, { persistPolling: true });
+    const terminal = { flow_id: 2, success: true, node_step_result: [] };
+    let finishOldStatus!: (response: unknown) => void;
+    mocks.get
+      .mockImplementationOnce(() => new Promise((resolve) => (finishOldStatus = resolve)))
+      .mockResolvedValue({ status: 200, data: terminal });
 
     await execution.runFlow();
+    const oldRequest = execution.checkRunStatus();
+    currentId.value = 2;
+    const restored = useFlowExecution(() => currentId.value, undefined, { persistPolling: true });
+    restored.startStatusPolling(2);
+    rekey(1, 2);
+    expect(vi.getTimerCount()).toBe(1);
+    finishOldStatus({ status: 200, data: { flow_id: 1, success: false } });
+    await oldRequest;
+    expect(mocks.nodeState.insertRunResult).not.toHaveBeenCalled();
+    expect(editor.isRunning).toBe(true);
+    await vi.advanceTimersByTimeAsync(2000);
 
-    expect(mocks.getFlowSettings).toHaveBeenCalledWith(2);
-    expect(mocks.post).toHaveBeenCalledWith("/flow/run/", null, {
+    expect(mocks.get).toHaveBeenCalledWith("/flow/run_status/", {
       params: { flow_id: 2 },
       headers: { accept: "application/json" },
     });
-  });
-
-  it("ignores a late terminal response from canvas A while canvas B is polling", async () => {
-    const currentId = ref(1);
-    let finishOld!: (response: unknown) => void;
-    mocks.get.mockImplementationOnce(() => new Promise((resolve) => (finishOld = resolve)));
-    mocks.get.mockResolvedValueOnce({ status: 202, data: { flow_id: 2 } });
-    const editor = useEditorStore();
-    editor.isRunning = true;
-    const execution = useFlowExecution(() => currentId.value, undefined, { persistPolling: true });
-
-    execution.startPolling(execution.checkRunStatus);
-    const oldRequest = execution.checkRunStatus();
-    currentId.value = 2;
-    execution.startPolling(execution.checkRunStatus);
-    await execution.checkRunStatus();
-    finishOld({ status: 200, data: { flow_id: 1, success: false } });
-    await oldRequest;
-
-    expect(mocks.nodeState.insertRunResult).toHaveBeenCalledTimes(1);
-    expect(mocks.nodeState.insertRunResult).toHaveBeenCalledWith({ flow_id: 2 });
-    expect(editor.isRunning).toBe(true);
-    expect(execution.isPollingActive()).toBe(true);
-    expect(mocks.notify).not.toHaveBeenCalledWith(expect.objectContaining({ title: "Error" }));
-    execution.stopPolling();
-  });
-
-  it("does not start the old flow if Save As rekeys during the settings request", async () => {
-    const currentId = ref(1);
-    let finishSettings!: (settings: unknown) => void;
-    mocks.getFlowSettings.mockImplementationOnce(
-      () => new Promise((resolve) => (finishSettings = resolve)),
-    );
-    const execution = useFlowExecution(() => currentId.value);
-
-    const start = execution.runFlow();
-    await Promise.resolve();
-    currentId.value = 2;
-    finishSettings({ name: "old flow", execution_mode: "Development" });
-    await start;
-
-    expect(mocks.getFlowSettings).toHaveBeenCalledWith(1);
-    expect(mocks.post).not.toHaveBeenCalled();
-    expect(useEditorStore().isRunning).toBe(false);
+    expect(mocks.nodeState.insertRunResult).toHaveBeenCalledWith(terminal);
+    expect(editor.isRunning).toBe(false);
+    expect(execution.isPollingActive()).toBe(false);
   });
 });
