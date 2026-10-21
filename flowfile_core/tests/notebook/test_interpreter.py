@@ -331,7 +331,8 @@ def _source_graph(**columns: list[int]):
     return graph, ff.from_raw_data(raw, flow_graph=graph)
 
 
-def test_negations_render_as_expressions_and_a_translation_outside_the_allowlist_as_formula_text():
+def test_negations_and_a_translation_outside_the_allowlist_render_as_formula_text():
+    """``.neg()`` has no formula form, so a cell holding it would rebuild the Formula or Filter node as Polars code."""
     graph, source = _source_graph(a=[1, -2], qty=[3, 4])
     frame = source.filter(flowfile_formula="[qty] * -1 < 0")
     formulas = {
@@ -344,9 +345,13 @@ def test_negations_render_as_expressions_and_a_translation_outside_the_allowlist
             flowfile_formulas=[formula], output_column_names=[name], output_column_datatypes=["Auto"]
         )
     code = "\n".join(cell.code for cell in render(graph).cells)
-    assert code.count(".neg()") == 3
-    assert f"flowfile_formulas=[{formulas['banded']!r}]" in code
+    assert ".neg()" not in code
+    assert all(f"flowfile_formulas=[{formula!r}]" in code for formula in formulas.values())
+    assert "flowfile_formula='[qty] * -1 < 0'" in code
     _assert_both_runners_build_it_alike(graph)
+    interpreted, _ = _synced(graph)
+    rebuilt = {node["id"]: node["type"] for node in interpreted.flowfile_data["nodes"]}
+    assert rebuilt == {node.node_id: node.node_type for node in graph.nodes}
 
 
 def test_a_basic_filter_value_shaped_like_arithmetic_renders_as_text():

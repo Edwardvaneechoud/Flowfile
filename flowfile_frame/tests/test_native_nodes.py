@@ -163,6 +163,14 @@ def test_filter_split_without_formula_form_raises():
         _frame().filter_split(col("a").shift(1) > 1)
 
 
+def test_filter_split_on_a_cast_lowers_only_faithful_casts():
+    """An Int32 cast has no formula form (to_integer is Int64), so the split refuses it and names the cast."""
+    passed, _ = _frame().filter_split(col("a").cast(pl.Int64) > 1)
+    assert core_node(passed).setting_input.filter_input.advanced_filter == "(to_integer([a]) > 1)"
+    with pytest.raises(ValueError, match="casts to anything but Int64, Float64 or String"):
+        _frame().filter_split(col("a").cast(pl.Int32) > 1)
+
+
 # when / then / otherwise
 
 
