@@ -2,7 +2,7 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 from flowfile_worker.secrets import decrypt_secret
 from shared.cloud_storage.gcs import use_pyarrow_for_gcs as _use_pyarrow_for_gcs
@@ -24,6 +24,8 @@ AuthMethod = Literal[
 
 class FullCloudStorageConnection(BaseModel):
     """Internal model with decrypted secrets"""
+
+    model_config = ConfigDict(extra="forbid")
 
     storage_type: CloudStorageType
     auth_method: AuthMethod
@@ -93,6 +95,8 @@ class FullCloudStorageConnection(BaseModel):
 class WriteSettings(BaseModel):
     """Settings for writing to cloud storage"""
 
+    model_config = ConfigDict(extra="forbid")
+
     resource_path: str  # s3://bucket/path/to/file.csv
 
     write_mode: Literal["overwrite", "append", "error", "upsert", "update", "delete"] = "overwrite"
@@ -117,6 +121,8 @@ class WriteSettings(BaseModel):
 
 
 class CloudStorageWriteSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     write_settings: WriteSettings
     connection: FullCloudStorageConnection
     flowfile_flow_id: int = 1

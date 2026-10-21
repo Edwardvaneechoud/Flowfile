@@ -70,7 +70,10 @@ def test_core_schema_round_trips_through_file_column_and_the_wire():
         for index, (name, dtype) in enumerate(DTYPES.items())
     ]
     wire_columns = [
-        WireColumn.model_validate(FileColumn.model_validate(column.get_column_repr()).model_dump()) for column in schema
+        WireColumn.model_validate(
+            FileColumn.model_validate(column.get_column_repr()).model_dump(include={"name", "data_type"})
+        )
+        for column in schema
     ]
 
     rebuilt = [
