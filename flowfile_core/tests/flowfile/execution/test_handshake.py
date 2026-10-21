@@ -268,7 +268,10 @@ def add_cloud_reader(graph, node_id: int, **read) -> None:
     try:
         graph.add_cloud_storage_reader(
             input_schema.NodeCloudStorageReader(
-                flow_id=graph.flow_id, node_id=node_id, user_id=1, cloud_storage_settings=CloudStorageReadSettings(**read)
+                flow_id=graph.flow_id,
+                node_id=node_id,
+                user_id=1,
+                cloud_storage_settings=CloudStorageReadSettings(**read),
             )
         )
     finally:
@@ -297,7 +300,9 @@ def test_two_workers_are_each_checked_on_first_use_and_the_mismatched_one_is_sen
 
     result = row(refused, 1)
     assert refused.success is False
-    assert result.error == f'Backend "{TEAM}" does not match core (polars_version: core {pl.__version__}, backend 0.0.1)'
+    assert result.error == (
+        f'Backend "{TEAM}" does not match core (polars_version: core {pl.__version__}, backend 0.0.1)'
+    )
     assert result.compute_error == "VersionMismatch"
     # a refused verdict is checked again on the next use: with the flag on, placement is the first, the node's gate next
     assert team_asked == [1] * (2 if flag else 1)
@@ -478,7 +483,9 @@ def test_another_polars_or_runtime_refuses_the_backend_naming_both_sides(flag, m
     with pytest.raises(VersionMismatch) as refused:
         subops.results_exists("no-such-task", worker_url=WORKER_URL)
 
-    assert str(refused.value) == f'Backend "worker" does not match core ({field}: core {getattr(core, field)}, backend {other})'
+    assert str(refused.value) == (
+        f'Backend "worker" does not match core ({field}: core {getattr(core, field)}, backend {other})'
+    )
     assert sent == []
 
 
