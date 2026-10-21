@@ -62,6 +62,7 @@ from flowfile_core.flowfile.flow_node.multi_output import (
     DEFAULT_OUTPUT_HANDLE,
     NamedOutputs,
     output_handle,
+    output_handle_index,
 )
 from flowfile_core.flowfile.flow_node.output_field_config_applier import apply_output_field_config
 from flowfile_core.flowfile.flow_node.schema_callback import SingleExecutionFuture
@@ -1660,6 +1661,21 @@ class FlowNode:
             return None
         return ref
 
+    def held_output(self, handle: str) -> ResultRef | None:
+        """The stored result this node holds for its output ``handle``, else ``None``.
+
+        The output it stored beside its result (``_store_other_outputs``) when there is one, else the operation output
+        the handle names (a custom node's are keyed by handle), else, when its operation answered one output per
+        handle, as a random split does by split name, the output at the handle's position.
+        """
+        ref = self._stored_outputs.get(handle) or self._operation_refs.get(handle)
+        if ref is not None:
+            return ref
+        outputs = list(self._operation_refs.values())
+        if handle in self._named_outputs and len(outputs) == len(self._named_outputs):
+            return outputs[output_handle_index(handle)]
+        return None
+
     def _held_result_exists(self) -> bool:
         """Whether the backend that minted this node's result for its current hash still holds it."""
         ref = self.results.result_ref
@@ -2379,9 +2395,11 @@ class FlowNode:
         nodes, ``output_handle`` selects which named output to preview. With
         ``FLOWFILE_COMPUTE_PROTOCOL`` on and a reference held, the default
         output's rows are the node's cached sample when it kept one; any other
-        output's, and the default's when none was kept, are read through
+        output's are a sample of the result the node holds for it
+        (``held_output``) on the backend that holds it, and those of an output
+        with none, and the default's when no sample was kept, are read through
         ``bounded.head_rows`` of the output's plan on the backend that holds
-        the node's reference, and are not cached. With the flag off, or for a
+        the node's reference; neither is cached. With the flag off, or for a
         node that holds no reference, an output's first rows are collected in
         core.
 
@@ -2408,8 +2426,11 @@ class FlowNode:
                 ref = self.results.result_ref
                 if settings.FLOWFILE_COMPUTE_PROTOCOL and ref is not None:
                     cached = self.results.example_data_generator
+                    output = self.held_output(output_handle) if output_handle != DEFAULT_OUTPUT_HANDLE else None
                     if output_handle == DEFAULT_OUTPUT_HANDLE and cached is not None:
                         table = cached()
+                    elif output is not None:
+                        table = _arrow_table(registry.backend(output.backend_id).sample(output, 100))
                     else:
                         table = head_rows(registry.backend(ref.backend_id), engine.data_frame, 100)
                     data = table.to_pylist()

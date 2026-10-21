@@ -15,7 +15,8 @@ input and metadata columns over stored inputs, or the REST API reader's alignmen
 input's columns from the input engine's cached schema; and a node that fails on a missing file in
 core keeps its stored input rather than rerunning it. The elaborate integration flow runs whole over stored inputs with
 the flag on, and with it off fails at the nodes that read them in core. The tests named for ``v1`` results check the
-same over the session worker's ``/v1`` routes.
+same over the session worker's ``/v1`` routes, where a multi-output node's other output previews from the result the
+node holds for it.
 """
 
 import dataclasses
@@ -546,6 +547,49 @@ def test_a_multi_output_node_previews_each_output_stored_where_core_cannot_read(
                 assert ids == {DEFAULT_OUTPUT_HANDLE: [3, 4, 5, 6], "output-1": [1, 2]}
                 assert counts == {DEFAULT_OUTPUT_HANDLE: 4, "output-1": 2}
             assert read_again.data == previews[DEFAULT_OUTPUT_HANDLE].data
+    finally:
+        graph.close_flow()
+
+
+@pytest.mark.parametrize(
+    "flow_id, node_type", [(9369, "random_split"), (9370, "custom_node")], ids=["random_split", "custom_node"]
+)
+def test_a_v1_multi_output_node_previews_its_other_output_from_the_result_it_holds(
+    remote_worker, protocol_on, split_node, monkeypatch, flow_id, node_type
+):
+    calls: list[tuple[str, str]] = []
+    real_sample, real_submit = WorkerBackend.sample, WorkerBackend.submit
+
+    def recording_sample(self, ref, n):
+        calls.append(("sample", ref.result_id))
+        return real_sample(self, ref, n)
+
+    def recording_submit(self, plan, inputs, hints, result_id, **kwargs):
+        calls.append(("submit", result_id))
+        return real_submit(self, plan, inputs, hints, result_id, **kwargs)
+
+    monkeypatch.setattr(WorkerBackend, "sample", recording_sample)
+    monkeypatch.setattr(WorkerBackend, "submit", recording_submit)
+    graph = multi_output_flow(flow_id, node_type, split_node)
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        node = graph.get_node(2)
+        ref = node.held_output("output-1")
+        assert (ref.backend_id, ref.state) == (registry.WORKER_BACKEND_ID, "materialised")
+        calls.clear()
+
+        preview = node.get_table_example(True, output_handle="output-1")
+
+        assert calls == [("sample", ref.result_id)]
+        worker = registry.backend(ref.backend_id)
+        assert preview.data == pl.read_ipc_stream(worker.sample(ref, 100)).to_dicts()
+        ids = [row["id"] for row in preview.data]
+        if node_type == "random_split":
+            assert preview.number_of_records == 3 and len(ids) == 3
+        else:
+            assert (ids, preview.number_of_records) == ([1, 2], 2)
     finally:
         graph.close_flow()
 
