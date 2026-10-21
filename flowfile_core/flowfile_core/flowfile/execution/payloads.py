@@ -17,6 +17,10 @@ The Delta writes (``DeltaWritePayload``, ``DeltaMergePayload``, ``DeltaScd2Paylo
 ``CatalogTableIdentity`` instead of a ``path``, and the compute reports the path or URI it resolved that to as the
 ``table_path``. A visualisation session request
 (``VizSessionPayload``) reports the session's answer as the metadata too.
+
+The transform payloads (``FuzzyJoinPayload``, ``RandomSplitPayload``, ``CustomNodePayload``, ``PolarsCodePayload``)
+carry their input rows as the ``pl.LazyFrame`` each input engine holds; a Polars Code node's code is the payload's
+text, which only the backend that runs the operation executes.
 """
 
 from __future__ import annotations
@@ -369,6 +373,23 @@ class CustomNodePayload(OperationPayload):
     settings_values: dict[str, Any]
     output_names: list[str]
     user_id: int | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class PolarsCodePayload(OperationPayload):
+    """Run a Polars Code node's code once over its inputs on the backend that holds them.
+
+    The operation's refs are ``{"result": ref}``, carrying the schema of the frame the code returned.
+
+    Attributes:
+        code: The node's code as its settings hold it when the node runs, a ``${name}`` parameter resolved.
+        inputs: The node's input rows in connection order, each the plan its input engine holds (a leaf over the
+            input's result); empty for a node with no input. The designer's prediction sends an empty frame of each
+            input's schema.
+    """
+
+    code: str
+    inputs: tuple[pl.LazyFrame, ...]
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -159,6 +159,7 @@ class OperationKind(enum.Enum):
     random_split = "random_split"
     ml_train = "ml_train"
     ml_apply = "ml_apply"
+    polars_code = "polars_code"
     delta_write = "delta_write"
     delta_merge = "delta_merge"
     delta_scd2 = "delta_scd2"

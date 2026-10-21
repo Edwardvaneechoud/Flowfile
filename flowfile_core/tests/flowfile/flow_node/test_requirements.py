@@ -534,12 +534,6 @@ def test_a_promise_answers_only_whether_its_template_runs_on_a_kernel(template, 
         ("record_count", input_schema.NodeRecordCount(**_ids())),
         ("sample", input_schema.NodeSample(**_ids())),
         (
-            "polars_code",
-            input_schema.NodePolarsCode(
-                **_ids(polars_code_input=transform_schema.PolarsCodeInput(polars_code="output_df = input_df"))
-            ),
-        ),
-        (
             "sql_query",
             input_schema.NodeSqlQuery(
                 **_ids(sql_query_input=transform_schema.SqlQueryInput(sql_code="SELECT * FROM input_1"))
@@ -559,3 +553,11 @@ def test_a_promise_answers_only_whether_its_template_runs_on_a_kernel(template, 
 )
 def test_a_plain_transform_or_a_node_working_in_core_needs_nothing(item, settings):
     assert _requirements(item, settings) == NOTHING
+
+
+def test_a_polars_code_node_runs_the_polars_code_operation():
+    settings = input_schema.NodePolarsCode(
+        **_ids(polars_code_input=transform_schema.PolarsCodeInput(polars_code="output_df = input_df"))
+    )
+
+    assert _requirements("polars_code", settings) == NodeRequirements(operation=OperationKind.polars_code)
