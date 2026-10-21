@@ -49,7 +49,8 @@ def _formula_text(formula: str | Expr | None, flow_graph: FlowGraph) -> str | No
     if text is None:
         raise NativeNodeError(
             "This Gate condition has no flowfile formula form; build it from comparisons, and/or/not, is_in and "
-            'is_null on columns, or pass the formula as a string such as "[a] > 1"'
+            "is_null on columns (a cast only to Int64, Float64 or String, strict), or pass the formula as a string "
+            'such as "[a] > 1"'
         )
     return text
 

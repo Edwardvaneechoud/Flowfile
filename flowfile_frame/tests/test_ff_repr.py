@@ -550,15 +550,14 @@ class TestWithColumnsFormulaConversion:
         node = result.get_node_settings()
         assert _is_formula_node(node)
 
-    def test_flowfile_formulas_to_boolean_stays_formula(self, sample_ff):
-        """The translator writes to_boolean as a Boolean cast, which keeps nulls; the formula turns them into false."""
+    def test_flowfile_formulas_to_boolean_keeps_formula_semantics(self, sample_ff):
+        """to_boolean translates to native code with the formula's semantics: null becomes false."""
         result = sample_ff.with_columns(
             flowfile_formulas=["to_boolean([nullable])"],
             output_column_names=["flag"],
         )
         node = result.get_node_settings()
-        assert _is_formula_node(node)
-        assert _get_formula(node) == "to_boolean([nullable])"
+        assert _is_polars_code_node(node)
         assert result.collect()["flag"].to_list() == [True, False, True]
 
     @pytest.mark.parametrize(
@@ -573,12 +572,11 @@ class TestWithColumnsFormulaConversion:
         ],
         ids=["to_date", "to_datetime"],
     )
-    def test_flowfile_formulas_date_parse_stays_formula(self, formula, text, parsed):
-        """The translator writes a strict parse with an inferred format; the formula parses "%Y-%m-%d" text, else null."""
+    def test_flowfile_formulas_date_parse_keeps_formula_semantics(self, formula, text, parsed):
+        """to_date/to_datetime translate to a non-strict parse of the default format: other text becomes null."""
         result = FlowFrame({"s": text}).with_columns(flowfile_formulas=[formula], output_column_names=["out"])
         node = result.get_node_settings()
-        assert _is_formula_node(node)
-        assert _get_formula(node) == formula
+        assert _is_polars_code_node(node)
         assert result.collect()["out"].to_list() == parsed
 
     def test_flowfile_formulas_explicit_datatypes_skip_translation(self, sample_ff):

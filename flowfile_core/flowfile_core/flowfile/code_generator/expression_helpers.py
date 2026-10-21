@@ -1,6 +1,12 @@
 import datetime
+import functools
+import hashlib
 import re
 
+import polars as pl
+from polars_expr_transformer import PolarsCodeGenError, to_polars_code
+
+from flowfile_core.configs import logger
 from flowfile_core.flowfile.code_generator.base import ConverterMixinBase
 from flowfile_core.schemas import transform_schema
 
@@ -38,32 +44,31 @@ def _temporal_literal(value: str, base: str) -> str | None:
         return None
 
 
-# The translators write to_boolean as a strict Boolean cast and to_date/to_datetime as a strict parse with an
-# inferred format, where the formula turns null into false and parses only "%Y-%m-%d" text, as null when it fails.
-_UNFAITHFUL_TRANSLATIONS = frozenset({"to_boolean", "to_date", "to_datetime"})
+@functools.lru_cache(maxsize=2048)
+def _try_translate_to_polars_code(formula: str) -> str | None:
+    """Translate a flowfile formula into native ``pl.``-prefixed Polars expression code.
 
-
-def _calls_unfaithful_function(node) -> bool:
-    if getattr(getattr(node, "func_ref", None), "val", None) in _UNFAITHFUL_TRANSLATIONS:
-        return True
-    children = [*(getattr(node, "args", None) or []), getattr(node, "else_val", None)]
-    for condition_val in getattr(node, "conditions", None) or []:
-        children += [condition_val.condition, condition_val.val]
-    return any(_calls_unfaithful_function(child) for child in children if child is not None)
-
-
-def translates_faithfully(formula: str) -> bool:
-    """Whether the expression translators (``to_flowframe_code``, ``to_polars_code``) keep ``formula``'s meaning.
-
-    An unparseable formula answers True: the translator rejects it on its own.
+    Returns the validated code string, or None so callers fall back to the
+    ``simple_function_to_expr`` runtime emission (always correct, but it keeps
+    the exported script dependent on polars_expr_transformer). Validation evals
+    the snippet with the modules a generated expression may reference. Memoised
+    on the formula text, the only input the result depends on.
     """
-    from polars_expr_transformer.process.polars_expr_transformer import build_func
-
     try:
-        tree = build_func(formula)
-    except Exception:
-        return True
-    return not _calls_unfaithful_function(tree)
+        generated = to_polars_code(formula)
+    except PolarsCodeGenError:
+        return None
+    except Exception as e:
+        logger.debug(f"to_polars_code failed for {formula!r}: {e}")
+        return None
+    if not generated:
+        return None
+    try:
+        result = eval(generated, {"__builtins__": {}}, {"pl": pl, "datetime": datetime, "hashlib": hashlib})  # noqa: S307
+    except Exception as e:
+        logger.debug(f"Generated polars code failed validation for {formula!r}: {e}")
+        return None
+    return generated if isinstance(result, pl.Expr) else None
 
 
 class ExpressionHelpersMixin(ConverterMixinBase):

@@ -1,9 +1,8 @@
 from pl_fuzzy_frame_match.models import FuzzyMapping
-from polars_expr_transformer import PolarsCodeGenError, to_polars_code
 
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.code_generator.base import ConverterMixinBase
-from flowfile_core.flowfile.code_generator.expression_helpers import translates_faithfully
+from flowfile_core.flowfile.code_generator.expression_helpers import _try_translate_to_polars_code
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import convert_pl_type_to_string
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.schemas import input_schema, transform_schema
@@ -77,23 +76,10 @@ class TransformHandlersMixin(ConverterMixinBase):
 
         Registers the imports the chosen branch needs, so callers only assemble text.
         """
-        formula = entry.function
-        can_convert_to_pl_code: bool = False
-        pl_code: str | None = None
-        try:
-            pl_code = to_polars_code(formula) if translates_faithfully(formula) else None
-            if pl_code:
-                can_convert_to_pl_code = True
-        except PolarsCodeGenError:
-            can_convert_to_pl_code = False
-        except Exception as e:
-            logger.debug(f"Unhandled conversion of the formula to polars expression falling back to expression {e}")
-            can_convert_to_pl_code = False
-
-        if can_convert_to_pl_code:
+        pl_code = _try_translate_to_polars_code(entry.function)
+        if pl_code:
             self._register_expr_stdlib_imports(pl_code)
         else:
-            pl_code = None
             self.imports.add(
                 "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr"
             )
