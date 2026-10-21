@@ -195,7 +195,7 @@ def test_a_backend_naming_the_ca_submits_over_wss(tls_worker, flag, no_rest_fall
         assert backend.exists(result.ref) is True
     finally:
         backend.release(result.ref)
-    assert handshake._handshake_done is True
+    assert handshake.last_verdict("worker:tls").ok is True
 
 
 def test_a_backend_not_naming_the_ca_is_refused_before_anything_is_sent(tls_worker, flag):
@@ -208,11 +208,10 @@ def test_a_backend_not_naming_the_ca_is_refused_before_anything_is_sent(tls_work
         backend.submit(THREE_ROWS, [], HINTS, result_id, flow_id=-1, node_id=-1)
 
     assert read.value.backend_id == "worker:untrusted"
-    # Over the task routes the gate's error names the URL only (``backends/worker.py::_run``).
-    assert submitted.value.backend_id == ("worker:untrusted" if flag else None)
+    assert submitted.value.backend_id == "worker:untrusted"
     for refusal in (read.value, submitted.value):
         assert tls_worker.url_by_name in str(refusal)
         assert "CERTIFICATE_VERIFY_FAILED" in str(refusal)
     assert subops.ssl_context_for(tls_worker.url_by_name) is None
-    assert handshake._handshake_done is False
+    assert handshake.last_verdict("worker:untrusted").ok is False
     assert held_anywhere(tls_worker, result_id) == []

@@ -2,11 +2,13 @@
 
 ``place`` compares what each node needs from its compute (``flow_node.requirements.requirements_for``) with what the
 backend the policy assigns it declares (``Capabilities``): the operation the node runs there, the schemes it reads and
-writes, the plugins its work loads and, for a node on a notebook kernel, ``file`` among the backend's write schemes,
-because the kernel shared volume is a local-disk location on core's host. A Train Model node that publishes its model
-and an Apply Model node that takes one from the catalog also need the scheme the artifact store's bytes travel by:
-``file`` for the filesystem store, ``https`` for the S3 store's presigned URLs. A node whose backend falls short is a
-``Refusal`` with the reasons in words. Stored connections are compared only on a backend whose
+writes, the plugins its work loads, whether core's Python functions run there for a node whose plan may carry one and,
+for a node on a notebook kernel, ``file`` among the backend's write schemes, because the kernel shared volume is a
+local-disk location on core's host. What a backend's handshake found it does not offer comes with the reason
+(``absent``), which the refusal names. A Train Model node that publishes its model and an Apply Model node that takes
+one from the catalog also need the scheme the artifact store's bytes travel by: ``file`` for the filesystem store,
+``https`` for the S3 store's presigned URLs. A node whose backend falls short is a ``Refusal`` with the reasons in
+words. Stored connections are compared only on a backend whose
 ``credential_resolution`` is ``ambient``, a compute that reaches storage with its own identity and holds no catalog: a
 cloud reader or writer, and a catalog reader or writer over an object-storage namespace, is refused there for each
 stored connection it names whose ``auth_method`` is not one a plan leaves to the executor's environment
@@ -54,6 +56,9 @@ _PINNED_BACKENDS: dict[str, str] = {
 }
 """Node type -> the backend its builder runs it on whatever the flow's: the Google Analytics reader
 (``builders/connectors.py``) runs on the worker, since core's backend reads no Google Analytics."""
+
+PYTHON_FUNCTIONS = "python"
+"""The name an absence map gives core's Python functions: where its reason is, a plan that carries one does not run."""
 
 _AMBIENT_AUTH_METHODS = frozenset({"env_vars", "managed_identity"})
 """The stored-connection methods a backend reaching storage with its own identity can serve: a plan of one carries no
@@ -134,19 +139,22 @@ def place(
     policy: PlacementPolicy,
     *,
     nodes: list[FlowNode] | None = None,
+    absent: Mapping[str, Mapping[str, str]] | None = None,
 ) -> Placement:
     """Assign each of ``nodes`` (default all of the flow's) its backend by ``policy``, refusing each it cannot run.
 
     ``backends`` holds the capabilities in hand of the backends the policy names for them. A node whose backend is not
     among them (one that could not be asked) is neither assigned nor refused: reaching a backend is the handshake's
-    concern, and the node meets that backend's typed error when it runs. Nothing is asked of a backend; the four
-    lookups are where a catalog reader's or writer's namespace keeps its tables (``locate_for_namespace``, which reads
-    the namespace row and no credential), for a Train or Apply Model node, the kind of the artifact store
-    (``artifacts.get_storage_backend``, whose only side effect is making the store the first time: the filesystem store
-    makes its two folders, the S3 store a client), for a Run Flow node, the flow it runs (``_child_refusals``: its
-    registration and its file, built for the call) and, only on a backend whose ``credential_resolution`` is
-    ``ambient``, the ``auth_method`` of each stored connection a cloud or catalog node names
-    (``_unresolvable_connections``, which reads the connection's row and decrypts nothing).
+    concern, and the node meets that backend's typed error when it runs. ``absent`` maps a backend id to what its
+    handshake found it does not offer, a plugin's name or ``PYTHON_FUNCTIONS``, and the reason, in words that follow
+    "which"; a plugin a backend lacks with no reason there is one ``this backend does not have``. Nothing is asked of a
+    backend; the four lookups are where a catalog reader's or writer's namespace keeps its tables
+    (``locate_for_namespace``, which reads the namespace row and no credential), for a Train or Apply Model node, the
+    kind of the artifact store (``artifacts.get_storage_backend``, whose only side effect is making the store the first
+    time: the filesystem store makes its two folders, the S3 store a client), for a Run Flow node, the flow it runs
+    (``_child_refusals``: its registration and its file, built for the call) and, only on a backend whose
+    ``credential_resolution`` is ``ambient``, the ``auth_method`` of each stored connection a cloud or catalog node
+    names (``_unresolvable_connections``, which reads the connection's row and decrypts nothing).
 
     Each node's needs are read with its flow's parameters in its settings, as the run puts them there before the node
     runs (``node_parameters_resolved``), and the settings are restored once they are read. A node that refers to a
@@ -168,6 +176,7 @@ def place(
         capabilities = backends.get(backend_id)
         if capabilities is None:
             continue
+        absent_here = (absent or {}).get(backend_id, {})
         assignment[node.node_id] = backend_id
         with ExitStack() as resolved:
             try:
@@ -194,11 +203,11 @@ def place(
                 )
                 refusals.append(Refusal(node_id=node.node_id, backend_id=backend_id, reason=reason))
                 continue
-        reasons = _unmet(requirements, capabilities, namespace, artifact_scheme)
+        reasons = _unmet(requirements, capabilities, namespace, artifact_scheme, absent_here)
         if capabilities.credential_resolution == "ambient":
             reasons += _unresolvable_connections(node, requirements.credentials, namespace_id)
         if isinstance(node.setting_input, input_schema.NodeRunFlow):
-            reasons += _child_refusals(flow, node, backend_id, backends, policy)
+            reasons += _child_refusals(flow, node, backend_id, backends, policy, absent)
         if reasons:
             refusals.append(Refusal(node_id=node.node_id, backend_id=backend_id, reason="; ".join(reasons)))
     boundaries: list[tuple[int, int]] = []
@@ -215,13 +224,18 @@ def place(
 
 
 def _unmet(
-    requirements: NodeRequirements, capabilities: Capabilities, namespace: str | None, artifact_scheme: str | None
+    requirements: NodeRequirements,
+    capabilities: Capabilities,
+    namespace: str | None,
+    artifact_scheme: str | None,
+    absent: Mapping[str, str],
 ) -> list[str]:
     """What ``requirements`` ask that ``capabilities`` do not offer, one phrase each.
 
     A catalog node (``namespace`` named) on a backend without ``file`` is refused for its namespace's local disk. A
     model node (``artifact_scheme`` named) short of the artifact store's scheme is refused for the store: the publish
-    of a Train Model node, the fetch of an Apply Model node, on local disk for the filesystem store.
+    of a Train Model node, the fetch of an Apply Model node, on local disk for the filesystem store. A missing plugin
+    and a plan that may carry a Python function where core's do not run are refused with the reason ``absent`` gives.
     """
     reasons = []
     operation = requirements.operation
@@ -244,9 +258,10 @@ def _unmet(
                 reasons.append(f"{store} over {artifact_scheme}, which this backend does not {verb}")
         elif missing:
             reasons.append(f"it {verb}s storage this backend does not {verb}: {', '.join(sorted(missing))}")
-    missing_plugins = requirements.plugins - capabilities.plugins.keys()
-    if missing_plugins:
-        reasons.append(f"it needs plugins this backend does not have: {', '.join(sorted(missing_plugins))}")
+    for plugin in sorted(requirements.plugins - capabilities.plugins.keys()):
+        reasons.append(f"it needs {plugin}, which {absent.get(plugin, 'this backend does not have')}")
+    if requirements.python_function and PYTHON_FUNCTIONS in absent:
+        reasons.append(f"its plan may carry a Python function, which {absent[PYTHON_FUNCTIONS]}")
     if requirements.needs_kernel and "file" not in capabilities.write_schemes:
         reasons.append(
             "it runs on a notebook kernel, which reads its inputs from the kernel shared volume on core's host, "
@@ -285,7 +300,12 @@ def _unresolvable_connections(node: FlowNode, credentials: frozenset[str], names
 
 
 def _child_refusals(
-    flow: FlowGraph, node: FlowNode, backend_id: str, backends: Mapping[str, Capabilities], policy: PlacementPolicy
+    flow: FlowGraph,
+    node: FlowNode,
+    backend_id: str,
+    backends: Mapping[str, Capabilities],
+    policy: PlacementPolicy,
+    absent: Mapping[str, Mapping[str, str]] | None,
 ) -> list[str]:
     """One reason per node the flow a Run Flow node runs would run that its placement on ``backend_id`` refuses.
 
@@ -321,7 +341,7 @@ def _child_refusals(
                 child._subflow_depth = depth
                 child_policy = dataclasses.replace(policy, backend_id=backend_id)
                 nodes = _child_run_nodes(child, settings, forwarded)
-                placement = place(child, backends, child_policy, nodes=nodes)
+                placement = place(child, backends, child_policy, nodes=nodes, absent=absent)
     except Exception as e:
         logger.warning(
             "Run Flow node %s of flow %s is placed without the flow it runs (registration %s), which could not be "

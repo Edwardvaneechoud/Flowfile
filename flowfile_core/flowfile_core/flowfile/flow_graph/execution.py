@@ -39,6 +39,7 @@ from flowfile_core.flowfile.flow_data_engine.bounded import DEFERRED_HINTS, head
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.flow_graph._base import GraphMixinBase
 from flowfile_core.flowfile.flow_graph._root import root
 from flowfile_core.flowfile.flow_graph.cloud import _cloud_change_read_target, _is_cloud_change_read
@@ -1032,10 +1033,12 @@ class ExecutionMixin(GraphMixinBase):
         With an exchange store configured (``FLOWFILE_EXCHANGE_URI``) each node goes to the backend its own
         ``execution_location`` names, ``"auto"`` to the run's (``MixedPlacementPolicy``); without one every node goes
         to the run's backend whatever its own setting says, but the ones their builders pin to the worker
-        (``SingleBackendPolicy``). Each backend named is asked for its ``capabilities()`` once. One that raises a
-        ``ComputeError`` is left out of the map ``place`` is given, so its nodes are not placed and meet that typed
+        (``SingleBackendPolicy``). Each backend named is read through its handshake verdict (``handshake.verdict_for``,
+        which checks it on its first use in this process). One whose check raises a ``ComputeError``, or whose verdict
+        refuses it whole, is left out of the map ``place`` is given, so its nodes are not placed and meet that typed
         error when they run; an id the registry does not know refuses every node assigned to it with the registry's
-        message.
+        message. Every other backend's offered capabilities go into that map and what its verdict found it does not
+        offer into ``place``'s ``absent``, so a node that needs it is refused there with the reason.
 
         Every boundary crosses through the run's prefix in the exchange store (the ``exchange_run`` given), resolved
         once per run as the operator's connection: one ``BoundaryEdge`` per output of the upstream node that the
@@ -1056,15 +1059,20 @@ class ExecutionMixin(GraphMixinBase):
         else:
             policy = SingleBackendPolicy(run_backend_id)
         declared: dict[str, Capabilities] = {}
+        absent: dict[str, dict[str, str]] = {}
         unknown: dict[str, str] = {}
         for backend_id in dict.fromkeys(policy.backend_for(node) for node in nodes):
             try:
-                declared[backend_id] = registry.backend(backend_id).capabilities()
+                verdict = handshake.verdict_for(registry.backend(backend_id))
             except ComputeError:
                 continue
             except LookupError as e:
                 unknown[backend_id] = str(e)
-        placement = place(self, declared, policy, nodes=nodes)
+                continue
+            if verdict.ok:
+                declared[backend_id] = verdict.offered
+                absent[backend_id] = verdict.absent
+        placement = place(self, declared, policy, nodes=nodes, absent=absent)
         if unknown:
             refusals = [
                 Refusal(node.node_id, policy.backend_for(node), unknown[policy.backend_for(node)])

@@ -37,6 +37,7 @@ from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, VersionMismatch
 from flowfile_core.flowfile.execution.placement import Placement, Refusal, SingleBackendPolicy, _catalog_target, place
 from flowfile_core.flowfile.execution.protocol import OperationKind
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_node.flow_node import schema_prefetch_blocked
 from flowfile_core.flowfile.flow_node.requirements import requirements_for
@@ -78,7 +79,8 @@ class DeclaringBackend(LocalBackend):
     """Core's own backend under another id, declaring the capabilities it is given.
 
     Given an error instead, it is unreachable: ``capabilities()``, ``submit`` and ``run_op`` raise it. ``work`` records
-    each ``submit`` and ``run_op`` it is sent; ``asked`` counts its ``capabilities()`` calls.
+    each ``submit`` and ``run_op`` it is sent but the handshake's probe jobs; ``asked`` counts its ``capabilities()``
+    calls.
     """
 
     def __init__(self, backend_id: str, declared: Capabilities | Exception):
@@ -96,8 +98,9 @@ class DeclaringBackend(LocalBackend):
         return self.declared
 
     def submit(self, plan, inputs, hints, result_id, *, flow_id, node_id):
-        with self._work_lock:
-            self.work.append(f"submit {node_id}")
+        if not result_id.startswith("handshake-"):
+            with self._work_lock:
+                self.work.append(f"submit {node_id}")
         if isinstance(self.declared, Exception):
             raise self.declared
         return super().submit(plan, inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
@@ -127,6 +130,7 @@ def declare(monkeypatch):
     ``declaring`` is the default backend, the one a ``"remote"`` flow runs on.
     """
     registry.reset()
+    handshake.reset_handshake()
     monkeypatch.setenv("FLOWFILE_COMPUTE_BACKEND", BACKEND_ID)
 
     def register(declared: Capabilities | Exception, backend_id: str = BACKEND_ID) -> DeclaringBackend:
@@ -136,6 +140,7 @@ def declare(monkeypatch):
 
     yield register
     registry.reset()
+    handshake.reset_handshake()
 
 
 def make_graph(flow_id: int, execution_location: str = "remote") -> FlowGraph:
@@ -372,7 +377,7 @@ def test_a_fuzzy_match_is_refused_on_a_backend_without_its_plugin(protocol_on, d
     run_info = graph.run_graph()
 
     assert_refused_before_any_node(
-        graph, run_info, backend, {3: ["it needs plugins this backend does not have: polars_simed"]}
+        graph, run_info, backend, {3: ["it needs polars_simed, which this backend does not have"]}
     )
 
 
@@ -457,7 +462,7 @@ def test_a_run_flow_node_is_not_refused_for_a_child_node_a_parameter_gate_closes
     assert [result.compute_error for result in run_info.node_step_result] == [None, None]
     [child_run] = child_runs
     assert {result.node_id: result.skipped for result in child_run.node_step_result} == {1: False, 2: False, 3: True}
-    assert backend.asked == 2
+    assert backend.asked == 1
 
 
 def test_a_run_flow_node_decides_its_child_s_gates_on_the_parent_parameters_it_forwards(protocol_on, declare, tmp_path):
@@ -572,7 +577,7 @@ def test_a_run_flow_node_is_not_refused_for_a_nested_flow_s_gate_on_a_parameter_
         2: False,
         3: True,
     }
-    assert backend.asked == 3
+    assert backend.asked == 1
 
 
 def test_a_run_flow_node_over_a_flow_that_cannot_be_built_fails_when_it_runs(protocol_on, declare, tmp_path):

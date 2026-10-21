@@ -83,7 +83,7 @@ from flowfile_core.schemas.input_schema import (
 )
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared import compute_protocol as wire
-from shared.compute_protocol import PROTOCOL_VERSION_HEADER, WorkerLocation, file_uri
+from shared.compute_protocol import PROTOCOL_VERSION_HEADER, WorkerLocation, file_uri, local_capabilities
 from shared.storage_config import storage
 
 PEOPLE = pl.DataFrame(
@@ -636,8 +636,8 @@ def test_a_backend_on_another_protocol_version_is_refused_and_nothing_is_held(ba
 
 
 def test_a_worker_out_of_reach_is_unavailable_naming_it(running_worker, closed_port_url):
-    """The URL and the backend's id: from the gate at submit, from ``_v1`` past a gate another worker passed, and
-    from ``capabilities``."""
+    """The URL and the backend's id: from the gate at submit, from the gate again at the next call, its refused verdict
+    checked again, and from ``capabilities``."""
     dead = WorkerBackend(url=closed_port_url, backend_id="worker:team")
     unreachable = re.escape(f"Could not reach the worker at {closed_port_url}")
     hint = 'Is backend "worker:team" running? Start it, or check the Backends page.'
@@ -725,7 +725,10 @@ def test_a_backend_with_its_own_token_signs_every_v1_call_and_the_socket_with_it
 def test_a_token_that_is_no_header_value_fails_each_call_typed_and_is_never_quoted(
     running_worker, token, monkeypatch, caplog
 ):
-    """``http.client`` quotes such a token in its error and ``websockets`` logs it, so neither is ever handed it."""
+    """``http.client`` quotes such a token in its error and ``websockets`` logs it, so neither is ever handed it.
+
+    The session worker that owns the URL is checked first, so the probe jobs of its check are not among the dials."""
+    handshake.ensure_handshake(settings.WORKER_URL)
     dialled = []
     real_dial = worker_module.connect
 
@@ -1377,7 +1380,9 @@ def test_a_socket_closed_after_the_plan_is_unavailable_and_not_posted(backend, s
 def test_the_socket_is_dialled_under_the_workers_url_with_the_token_and_version(
     running_worker, monkeypatch, worker_url, socket_url
 ):
-    handshake.ensure_handshake(settings.WORKER_URL)
+    """No worker answers ``worker_url``, so the backend made on it is given a passing verdict instead of a check."""
+    passing = handshake.Verdict(id="worker", ok=True, core=local_capabilities())
+    monkeypatch.setattr(handshake, "verdict_for", lambda backend: passing)
     result_id = new_result_id()
     dials = dial_into(monkeypatch, FakeSocket([complete_frame(result_id, people())]))
 

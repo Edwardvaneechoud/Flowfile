@@ -827,6 +827,7 @@ class TestGetTableHistory:
         """A worker that fails core's handshake degrades like an unreachable one: core reads locally."""
         import flowfile_core.configs.settings
         from flowfile_core.configs.utils import MutableBool
+        from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
         from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
         from shared.compute_protocol import local_capabilities
 
@@ -836,12 +837,12 @@ class TestGetTableHistory:
         fetches = []
         reported = local_capabilities().model_copy(update={"polars_version": "0.0.1"})
 
-        def fetch(worker_url):
+        def fetch(self):
             fetches.append(1)
             return reported
 
         monkeypatch.setattr(flowfile_core.configs.settings, "OFFLOAD_TO_WORKER", MutableBool(True))
-        monkeypatch.setattr(handshake, "fetch_worker_capabilities", fetch)
+        monkeypatch.setattr(WorkerBackend, "capabilities", fetch)
         handshake.reset_handshake()
         with get_db_context() as db:
             table = CatalogTable(

@@ -120,7 +120,7 @@ def test_a_cloud_read_is_a_plan_over_its_object_storage_scheme(resource_path, sc
     )
 
 
-def test_a_cloud_change_read_is_a_plan_too():
+def test_a_cloud_change_read_is_a_plan_that_may_carry_a_python_function():
     cloud = cloud_storage_schemas.CloudStorageReadSettings(
         resource_path="s3://bucket/table",
         connection_name="minio",
@@ -131,7 +131,7 @@ def test_a_cloud_change_read_is_a_plan_too():
     settings = input_schema.NodeCloudStorageReader(**_ids(cloud_storage_settings=cloud))
 
     assert _requirements("cloud_storage_reader", settings) == NodeRequirements(
-        read_schemes=frozenset({"s3"}), credentials=frozenset({"minio"})
+        read_schemes=frozenset({"s3"}), credentials=frozenset({"minio"}), python_function=True
     )
 
 
@@ -405,10 +405,10 @@ def _formula(expression: str) -> transform_schema.FunctionInput:
         ),
     ],
 )
-def test_a_node_that_carries_a_formula_needs_polars_ds(item, settings):
+def test_a_node_that_carries_a_formula_needs_polars_ds_and_may_carry_a_python_function(item, settings):
     requirements = _requirements(item, settings)
 
-    assert requirements == NodeRequirements(plugins=frozenset({"polars_ds"}))
+    assert requirements == NodeRequirements(plugins=frozenset({"polars_ds"}), python_function=True)
     assert requirements.plugins <= set(PLUGIN_PACKAGES)
 
 
