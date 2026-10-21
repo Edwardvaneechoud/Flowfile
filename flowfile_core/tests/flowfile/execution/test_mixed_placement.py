@@ -7,10 +7,11 @@ is materialised with its other outputs, so no result refers to the prefix once t
 is placed with the nodes it reads from and crosses as a run's node does, through a prefix of the fetch's own; an input
 it reads that has not run is composed into its plan. A formula gate's probe reads its source on the backend that holds
 the source's result, and the missing-file retry reruns an input on the backend that holds its result for its current
-setup, the node then crossing it again, and any other input where the node runs. Without a store a node's own setting
-is not read. The protocol flag comes from the environment, as for the exchange-store, two-backend chain and run-flow
-tests whose fixtures and frames these reuse; the cases over a declaring backend set it on themselves, but for the
-formula gate's.
+setup, the node then crossing it again, and any other input where the node runs. A CSV read whose type inference is
+widened holds its result under its hash, so it is served from its cache, priced and reread where it is held like any
+other result. Without a store a node's own setting is not read. The protocol flag comes from the environment, as for
+the exchange-store, two-backend chain and run-flow tests whose fixtures and frames these reuse; the cases over a
+declaring backend set it on themselves, but for the formula gate's.
 """
 
 import re
@@ -28,6 +29,7 @@ from flowfile_core.flowfile.execution.placement import MixedPlacementPolicy, Pla
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_graph import execution as graph_execution
 from flowfile_core.flowfile.flow_node.executor import hints_for
+from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.schemas import input_schema, transform_schema
@@ -163,6 +165,37 @@ def listing(root: str, seen: dict):
 def sorted_rows(backend, ref, n: int = 10) -> pl.DataFrame:
     """The first ``n`` rows ``backend`` holds for ``ref``, in ``CUSTOMERS``'s columns, sorted by ``id``."""
     return pl.read_ipc_stream(backend.sample(ref, n)).select(CUSTOMERS.columns).sort("id")
+
+
+def _late_conflict_csv(path: str, n_rows: int = 120_000, conflict_at: int = 60_000) -> None:
+    """A CSV whose ``val`` parses as integers for its first ``conflict_at`` rows and then turns to text, past the first
+    batch that the read's one-row probe in core takes, so at a 1 000-row inference window only the full read fails."""
+    with open(path, "w") as fh:
+        fh.write("id,val\n")
+        for i in range(n_rows):
+            fh.write(f"{i},{'not_a_number' if i == conflict_at else i}\n")
+
+
+def read_csv_on_worker(graph: FlowGraph, path: str) -> FlowNode:
+    """Read 1 of the CSV at ``path`` on the worker, caching its result, its types inferred from the first 1 000 rows."""
+    add_promise(graph, 1, "read")
+    graph.add_read(
+        input_schema.NodeRead(
+            flow_id=graph.flow_id,
+            node_id=1,
+            user_id=1,
+            execution_location=WORKER,
+            received_file=input_schema.ReceivedTable(
+                file_type="csv",
+                name="late.csv",
+                path=path,
+                table_settings=input_schema.InputCsvTable(infer_schema_length=1000),
+            ),
+        )
+    )
+    source = graph.get_node(1)
+    source.node_settings.cache_results = True
+    return source
 
 
 def test_the_mixed_policy_places_each_node_where_its_setting_says_and_lists_the_crossings():
@@ -816,5 +849,170 @@ def test_a_retry_in_a_fetch_reruns_an_input_changed_since_it_ran_elsewhere_where
         assert (ref_2.backend_id, ref_3.backend_id) == (LOCAL, LOCAL)
         assert pl.read_ipc_stream(local.sample(ref_3, 10)).sort("region").equals(EXPECTED)
         assert graph.exchange_run is None
+    finally:
+        graph.close_flow()
+
+
+@requires_minio
+def test_an_escalated_csv_read_holds_its_result_under_its_hash_and_is_served_from_it(
+    root, worker, monkeypatch, tmp_path
+):
+    """Flow 8518: a CSV read on the worker, caching its result, whose type inference fails at 1 000 rows and is widened,
+    → filter 2 on the flow's backend, core with the protocol on and the worker with it off. The widened result is held
+    under the read's hash, so a second run serves the read from it and prices its edge with its row count; when the
+    first export of it in a third run finds it gone, the retry reruns the read on the worker and node 2 crosses it
+    again."""
+    local = registry.backend(LOCAL)
+    flag = bool(settings.FLOWFILE_COMPUTE_PROTOCOL)
+    filter_on = LOCAL if flag else WORKER
+    monkeypatch.setenv("FLOWFILE_EXCHANGE_MAX_ROWS", "1000000")
+    path = str(tmp_path / "late.csv")
+    _late_conflict_csv(path)
+    graph = create_test_graph(flow_id=8518, execution_location=filter_on)
+    source = read_csv_on_worker(graph, path)
+    add_promise(graph, 2, "filter")
+    graph.add_filter(
+        input_schema.NodeFilter(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            user_id=1,
+            filter_input=transform_schema.FilterInput(mode="advanced", advanced_filter="[id] > 10"),
+        )
+    )
+    connect(graph, 1, 2)
+    submits: list[tuple[str, int | str, bool]] = []
+    for backend in (local, worker):
+
+        def record(plan, inputs, hints, result_id, *, flow_id, node_id, backend=backend, submit=backend.submit):
+            if node_id != -1:
+                submits.append((backend.id, node_id, result_id == source.hash))
+            return submit(plan, inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
+
+        monkeypatch.setattr(backend, "submit", record)
+    costs: list[tuple[int, tuple[int, int] | None]] = []
+    cost = graph_execution.BoundaryEdge.cost
+
+    def record_cost(edge):
+        answer = cost(edge)
+        costs.append((edge.source.node_id, answer))
+        return answer
+
+    monkeypatch.setattr(graph_execution.BoundaryEdge, "cost", record_cost)
+    exports: list[str] = []
+    drop: list[bool] = []
+    export = worker.export
+
+    def drop_when_armed(ref, uri, credential):
+        exports.append(uri)
+        if drop:
+            drop.clear()
+            worker.release(ref)
+            raise TaskFailed(f"No such file or directory (os error 2): {ref.result_id}.arrow")
+        return export(ref, uri, credential)
+
+    monkeypatch.setattr(worker, "export", drop_when_armed)
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success is True, [result.error for result in run_info.node_step_result]
+        held = source.results.result_ref
+        assert held.result_id == source.hash
+        assert (held.backend_id, held.state, held.row_count) == (WORKER, "materialised", 120_000)
+        assert source.held_result(WORKER) == held
+        assert worker.exists(held)
+        assert {column.column_name: column.data_type for column in held.schema}["val"] == "String"
+        ref_2 = graph.get_node(2).results.result_ref
+        assert ref_2.backend_id == filter_on
+        assert registry.backend(filter_on).count(ref_2) == 119_989
+        assert submits == [(WORKER, 1, True), (WORKER, 1, True), (filter_on, 2, False)]
+        assert run_info.boundaries == ([(1, 2)] if flag else [])
+        assert costs == ([(1, None)] if flag else [])
+        del submits[:]
+        exports_before = len(exports)
+
+        run_info = graph.run_graph()
+
+        assert run_info.success is True, [result.error for result in run_info.node_step_result]
+        assert submits == []
+        assert source.results.result_ref == held
+        assert len(exports) == exports_before
+        assert run_info.boundaries == ([(1, 2)] if flag else [])
+        assert costs[-1:] == ([(1, (120_000, 2))] if flag else [])
+
+        node_2 = graph.get_node(2)
+        graph.add_filter(
+            node_2.setting_input.model_copy(
+                update={"filter_input": transform_schema.FilterInput(mode="advanced", advanced_filter="[id] > 20")}
+            )
+        )
+        drop.append(True)
+        del exports[:]
+
+        run_info = graph.run_graph()
+
+        assert run_info.success is True, [result.error for result in run_info.node_step_result]
+        ref_2 = graph.get_node(2).results.result_ref
+        assert registry.backend(filter_on).count(ref_2) == 119_979
+        if not flag:
+            assert exports == []
+            assert submits == [(WORKER, 2, False)]
+            return
+        assert submits == [(WORKER, 1, True), (WORKER, 1, True), (LOCAL, 2, False)]
+        assert len(exports) == 2 and exports[0] == exports[1], exports
+        prefix = rf"s3://{_BUCKET}/{re.escape(root)}/8518/[0-9a-f]{{32}}/"
+        assert re.fullmatch(rf"{prefix}1-{DEFAULT_OUTPUT_HANDLE}-2\.parquet", exports[0]), exports[0]
+        rerun = source.results.result_ref
+        assert (rerun.result_id, rerun.backend_id, rerun.state) == (source.hash, WORKER, "materialised")
+        assert worker.exists(rerun)
+        assert _keys(f"{root}/8518/") == []
+        assert graph.exchange_run is None
+    finally:
+        graph.close_flow()
+
+
+def test_a_formula_gate_probes_an_escalated_csv_read_on_the_backend_holding_its_result(
+    worker, no_s3_client, monkeypatch, tmp_path
+):
+    """Flow 8519: a CSV read on the worker, caching its result, whose type inference is widened, → formula gate 2 on
+    the worker. Nothing crosses, and the read holds its widened result under its hash, so with the protocol on the
+    gate's probe reads it on the worker."""
+    monkeypatch.setenv("FLOWFILE_EXCHANGE_URI", f"s3://{_BUCKET}/exchange")
+    probes: list[str] = []
+    head_rows = graph_execution.head_rows
+
+    def record(backend, plan, n):
+        probes.append(backend.id)
+        return head_rows(backend, plan, n)
+
+    monkeypatch.setattr(graph_execution, "head_rows", record)
+    path = str(tmp_path / "late.csv")
+    _late_conflict_csv(path)
+    graph = create_test_graph(flow_id=8519, execution_location=LOCAL if settings.FLOWFILE_COMPUTE_PROTOCOL else WORKER)
+    source = read_csv_on_worker(graph, path)
+    add_promise(graph, 2, "gate")
+    graph.add_gate(
+        input_schema.NodeGate(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            execution_location=WORKER,
+            gate_input=transform_schema.GateInput(condition_source="formula", formula="[id] > 20"),
+        )
+    )
+    connect(graph, 1, 2)
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success is True, [result.error for result in run_info.node_step_result]
+        assert run_info.nodes_completed == 2
+        assert run_info.boundaries == []
+        assert graph.last_closed_gate_handles == {}
+        assert no_s3_client == []
+        held = source.results.result_ref
+        assert held.result_id == source.hash
+        assert (held.backend_id, held.state) == (WORKER, "materialised")
+        assert source.held_result(WORKER) == held
+        assert probes == ([WORKER] if settings.FLOWFILE_COMPUTE_PROTOCOL else [])
     finally:
         graph.close_flow()
