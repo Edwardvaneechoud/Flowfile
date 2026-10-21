@@ -43,7 +43,7 @@ Accepted file formats are `.yaml`, `.yml`, and `.json`. (The legacy `.flowfile` 
 
 What a headless run does:
 
-- **Forces local execution.** The flow runs entirely in-process — no worker service needs to be running.
+- **Runs in-process by default.** The flow computes in the command's own process, so no worker service needs to be running, unless `--backend <id>` or the flow's saved **Execution location**, when it is a backend id such as `worker:<name>`, names a backend; the run then uses that backend. A flow saved as **Auto** runs in-process.
 - **Skips UI-only nodes.** `explore_data` nodes are dropped before the run (they require the interactive UI); the command reports how many it skipped.
 - **Prints progress.** It shows the flow name, node count, the node tree, and a per-node error summary if anything fails.
 
@@ -51,6 +51,7 @@ Flags:
 
 - `--param KEY=VALUE` — override a flow parameter. Repeat the flag for several overrides. An override that names a parameter the flow doesn't have is added as a new one.
 - `--run-id N` — report the run's result back to a pre-created run record (used by the scheduler). You normally don't set this by hand.
+- `--backend ID` — the compute backend the run uses: `local` (the default), `worker` or `worker:<name>`. It takes precedence over the backend id saved in the flow.
 
 ```bash
 # Override two parameters
@@ -86,10 +87,10 @@ When you run the UI the two are combined into one process via single-file mode (
 The desktop app and packaged builds run a saved flow through the core module directly rather than the `flowfile` wrapper:
 
 ```bash
-python -m flowfile_core.main --run-flow <path> --run-id <N>
+python -m flowfile_core.main --run-flow <path> --run-id <N> [--backend <id>]
 ```
 
-This forces local execution and drops `explore_data` nodes, exactly like `flowfile run flow`. Here `--run-id` is required — the packaged path always reports back to a run record. Prefer `flowfile run flow` for your own headless runs; this form exists for the scheduler and installed builds.
+This runs in-process unless `--backend` or the flow's saved backend id names a backend, and drops `explore_data` nodes, exactly like `flowfile run flow`. Here `--run-id` is required — the packaged path always reports back to a run record. Prefer `flowfile run flow` for your own headless runs; this form exists for the scheduler and installed builds.
 
 ## Demo catalog
 
