@@ -1497,6 +1497,129 @@ def test_the_elaborate_integration_flow_runs_over_stored_inputs_core_cannot_read
         graph.close_flow()
 
 
+UNREADABLE_WORKER_ID = "unreadable_worker"
+
+
+class UnreadableWorker(WorkerBackend):
+    """The session worker as core sees a worker on another host, whose stored files exist only during a request.
+
+    The file of a result the worker stores is at its path only while one of this backend's requests to the worker
+    runs, so the worker stores, reads, samples and releases as always, and a read of a stored result in core outside
+    a request raises ``FileNotFoundError``. The window is the request, not the backend call as in
+    ``UnreadableBackend``, because a call such as ``run_op`` prepares its payload in core before it sends it.
+    """
+
+    def __init__(self, url: str):
+        super().__init__(url, backend_id=UNREADABLE_WORKER_ID)
+        self.stored: list[str] = []
+
+    def put_back(self) -> None:
+        """Every stored file this backend moved aside back at its path."""
+        for path in self.stored:
+            if os.path.exists(path + ".away"):
+                os.replace(path + ".away", path)
+
+    def _ref_from_wire(self, ref):
+        """The parent's reference; the file it names is moved aside, since the request that answered it has returned."""
+        result = super()._ref_from_wire(ref)
+        location = WorkerLocation.model_validate_json(result.location)
+        if location.kind == "file":
+            self.stored.append(location.path)
+            if os.path.exists(location.path):
+                os.replace(location.path, location.path + ".away")
+        return result
+
+    def _v1(self, method, path, **kwargs):
+        with self._requesting():
+            return super()._v1(method, path, **kwargs)
+
+    def _v1_socket_submit(self, meta, plan, result_id):
+        with self._requesting():
+            return super()._v1_socket_submit(meta, plan, result_id)
+
+    @contextmanager
+    def _requesting(self):
+        """Every stored file is at its path while the block runs; one the worker released stays gone."""
+        self.put_back()
+        try:
+            yield
+        finally:
+            for path in self.stored:
+                if os.path.exists(path):
+                    os.replace(path, path + ".away")
+
+
+@pytest.fixture
+def unreadable_worker(remote_worker, monkeypatch) -> list[UnreadableWorker]:
+    """``unreadable_worker`` on the session worker is registered and is the default; the list holds each instance made.
+
+    Each instance puts back the files it moved aside when the test ends, so none is left aside in the worker's storage.
+    """
+    made: list[UnreadableWorker] = []
+    registry.reset()
+    url = registry.worker_url()
+
+    def make_unreadable_worker() -> UnreadableWorker:
+        made.append(UnreadableWorker(url))
+        return made[-1]
+
+    registry.register_backend(UNREADABLE_WORKER_ID, make_unreadable_worker)
+    monkeypatch.setenv("FLOWFILE_COMPUTE_BACKEND", UNREADABLE_WORKER_ID)
+    yield made
+    for worker in made:
+        worker.put_back()
+    registry.reset()
+
+
+def test_a_fuzzy_match_runs_on_a_worker_over_a_stored_input_core_cannot_read(unreadable_worker, protocol_on):
+    graph = make_graph(9399, max_parallel_workers=1)
+    add_manual_input(graph, 1, [{"name": "eduward"}, {"name": "edward"}, {"name": "courtney"}])
+    graph.get_node(1).node_settings.cache_results = True
+    add_promise(graph, 2, "fuzzy_match")
+    graph.add_fuzzy_match(
+        input_schema.NodeFuzzyMatch(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_ids=[1, 1],
+            join_input=transform_schema.FuzzyMatchInput(
+                join_mapping=[
+                    transform_schema.FuzzyMap(
+                        left_col="name", right_col="name", threshold_score=75, fuzzy_type="levenshtein"
+                    )
+                ],
+                left_select=[transform_schema.SelectInput("name", join_key=True)],
+                right_select=[transform_schema.SelectInput("name", join_key=True)],
+                how="inner",
+            ),
+        )
+    )
+    connect(graph, 1, 2)
+    connect(graph, 1, 2, input_type="right")
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        ref = graph.get_node(1).results.result_ref
+        assert (ref.backend_id, ref.state) == (UNREADABLE_WORKER_ID, "materialised")
+        path = WorkerLocation.model_validate_json(ref.location).path
+        assert path in unreadable_worker[0].stored and not os.path.exists(path)
+        assert [column.column_name for column in graph.get_node(2).schema] == [
+            "name",
+            "name_right",
+            "name_vs_name_right_levenshtein",
+        ]
+        rows = graph.get_node(2).get_table_example(True).data
+        assert sorted((row["name"], row["name_right"]) for row in rows) == [
+            ("courtney", "courtney"),
+            ("eduward", "eduward"),
+            ("eduward", "edward"),
+            ("edward", "eduward"),
+            ("edward", "edward"),
+        ]
+    finally:
+        graph.close_flow()
+
+
 API_ROWS = [{"id": 1, "name": "a", "city": "ams"}, {"id": 2, "name": "b", "city": "rtm"}]
 
 
