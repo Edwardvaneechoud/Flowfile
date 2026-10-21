@@ -19,6 +19,7 @@ The `flowfile-worker` image starts `python -m flowfile_worker --host 0.0.0.0` an
 | `CORE_HOST`, `CORE_PORT` | Where the worker posts node log lines to core (`/raw_logs`, signed with its token). `CORE_PORT` defaults to `63578`. |
 | `FLOWFILE_STORAGE_DIR` | The worker's own storage, where it keeps results. Defaults to `/app/internal_storage` in Docker mode. |
 | `FLOWFILE_WORKER_LOCAL_FILES` | Leave unset. Set to `1`, the worker declares local files among the storage it reads and writes, which is true only for a worker on core's host. |
+| `FLOWFILE_WORKER_TLS_CERT`, `FLOWFILE_WORKER_TLS_KEY` | Optional: the paths of a PEM certificate and its private key in the worker's container. Set both, and the worker serves `https` and `wss` itself; see [TLS](#tls). |
 
 The worker reaches the catalog database and every database, Kafka broker, REST endpoint and storage endpoint the flows use, by the names their connections use. For an Azure service principal or a GCS service account it also reaches the provider's token endpoint, since it exchanges the stored secret for a bearer token itself. Core reaches the worker's port.
 
@@ -65,12 +66,22 @@ Core runs the check on the first worker it calls after it starts, and again afte
 There are two ways:
 
 - **As the default worker.** Point core at it with `FLOWFILE_WORKER_URL`, or `WORKER_HOST` and `FLOWFILE_WORKER_PORT`. Flows whose **Execution location** is **Auto (default worker)** run there.
-- **On Settings → Execution → Backends** (administrators only). Under **Add a worker**, enter a **Name** (the worker's id becomes `worker:<name>`), its **URL** (`http://` or `https://`) and its **Token**, click **Add**, then click **Handshake** on its row. The id then appears under **Execution location** in [Flow settings](../visual-editor/building-flows.md#flow-settings) for administrators, and a flow set to it runs there. Setting core's `FLOWFILE_COMPUTE_BACKEND` to the id makes it the default backend instead.
+- **On Settings → Execution → Backends** (administrators only). Under **Add a worker**, enter a **Name** (the worker's id becomes `worker:<name>`), its **URL** (`http://` or `https://`), its **Token** and, for an `https://` worker whose certificate is not public, its **CA certificate (PEM, optional)** (see [TLS](#tls)), click **Add**, then click **Handshake** on its row. While the URL is plain `http://` to a host other than `localhost`, `127.0.0.1` or `[::1]`, the page warns under it that the token and every plan cross the network in clear. The id then appears under **Execution location** in [Flow settings](../visual-editor/building-flows.md#flow-settings) for administrators, and a flow set to it runs there. Setting core's `FLOWFILE_COMPUTE_BACKEND` to the id makes it the default backend instead.
 
-To change a worker's URL or token, **Remove** it and add it again. A row changed in the catalog database directly is not seen by a running core that has already used that worker, until core restarts.
+To change a worker's URL, token or CA certificate, **Remove** it and add it again. A row changed in the catalog database directly is not seen by a running core that has already used that worker, until core restarts.
 
-!!! warning "The token is core's internal token"
+!!! warning "The token is code execution on the worker"
+    A plan can carry Python code that the worker runs when it loads the plan, and an operation runs node code there, so whoever holds the token and reaches the worker's port can run code on the worker, with its access to the catalog database, the master key and every stored connection. Keep the worker's port off untrusted networks, and beyond a trusted network serve the worker over [TLS](#tls), so neither the token nor a plan crosses in clear. The single-host `docker-compose.yml` stays plain HTTP inside its own Docker network.
+
     Enter core's `FLOWFILE_INTERNAL_TOKEN` as the **Token**, and start the worker with that same value. The worker accepts one token, and core signs some of its calls to every worker with its own internal token: the writes, the Delta operations, the visualisation sessions and the version check.
+
+## TLS
+
+Given a certificate and its key, the worker serves `https` and `wss` itself, so a worker with a self-signed certificate needs no proxy in front of it. Set `FLOWFILE_WORKER_TLS_CERT` and `FLOWFILE_WORKER_TLS_KEY` in [the worker's environment](#the-workers-environment) and add the worker with an `https://` URL whose host the certificate names. Core verifies the certificate against the public certificate authorities, or, for one they do not sign, against the **CA certificate** on the worker's row: paste the certificate of the authority that signed it, or the self-signed certificate itself, as PEM. Core then trusts that certificate for that URL on every call it makes to the worker. A worker whose certificate core cannot verify is unreachable: its **Handshake** says core could not reach it, naming `CERTIFICATE_VERIFY_FAILED`. A proxy in front of the worker that terminates TLS still works, with the proxy's certificate.
+
+The default worker (`FLOWFILE_WORKER_URL`) has no CA setting: add a worker with a private certificate on the Backends page.
+
+The image's health check calls `http://localhost:63579/docs`, which a worker serving TLS does not answer; override it, for example with `curl -fk https://localhost:63579/docs`.
 
 ## Nodes on several backends
 
@@ -92,4 +103,4 @@ Core and every worker open the store at its connection's endpoint, so that endpo
 - **Node logs.** A node's log lines reach core's flow log only when the worker reaches `CORE_HOST` on `CORE_PORT` with core's token; otherwise they stay in the worker's own output.
 - **Polars code.** A **Polars code** node whose code collects an input or reads its schema reads that input in core, so with the worker on another host it fails; see [Polars code](../visual-editor/nodes/transform.md#polars-code).
 
-The worker serves plain HTTP on its port; its URL may be `https://` when something in front of it terminates TLS. Hosting a worker on Kubernetes or behind an ingress, and running and scaling several workers, are outside this page.
+Hosting a worker on Kubernetes or behind an ingress, and running and scaling several workers, are outside this page.
