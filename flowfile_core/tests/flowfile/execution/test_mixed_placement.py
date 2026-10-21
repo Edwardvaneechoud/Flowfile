@@ -11,7 +11,9 @@ setup, the node then crossing it again, and any other input where the node runs.
 widened holds its result under its hash, so it is served from its cache, priced and reread where it is held like any
 other result. Without a store a node's own setting is not read. The protocol flag comes from the environment, as for
 the exchange-store, two-backend chain and run-flow tests whose fixtures and frames these reuse; the cases over a
-declaring backend set it on themselves, but for the formula gate's.
+declaring backend set it on themselves, but for the formula gate's. A node releases every result it minted together:
+closing the graph leaves nothing held on the worker that a run's node submitted, operated or imported there, and a node
+that fails after storing part of its outputs holds nothing.
 """
 
 import re
@@ -19,13 +21,16 @@ import uuid
 
 import polars as pl
 import pytest
+import requests
 
 from flowfile_core import events
+from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution import exchange, registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, PlanRejected, TaskFailed
 from flowfile_core.flowfile.execution.placement import MixedPlacementPolicy, Placement, SingleBackendPolicy, place
+from flowfile_core.flowfile.execution.protocol import OpResult, ResultRef
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_graph import execution as graph_execution
 from flowfile_core.flowfile.flow_node.executor import hints_for
@@ -33,9 +38,10 @@ from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.schemas import input_schema, transform_schema
+from shared.compute_protocol import PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER
 from tests import test_run_flow_node
 from tests.flowfile.conftest import create_test_graph
-from tests.flowfile.execution import test_exchange_store, test_placement
+from tests.flowfile.execution import test_exchange_store, test_placement, test_unreadable_location
 from tests.flowfile.execution.test_exchange_store import _BUCKET, _key, _keys
 from tests.flowfile.execution.test_placement import (
     BACKEND_ID,
@@ -50,11 +56,12 @@ from tests.flowfile.execution.test_two_backend_chain import A_ROWS, CUSTOMERS, E
 from tests.flowfile.test_yaml_io import find_parent_directory
 from tests.test_catalog_cloud_virtual import requires_minio
 
-# The fixtures these tests share with the placement, exchange-store and run-flow tests, bound here so pytest finds them.
+# The fixtures these tests share with the placement, exchange-store, run-flow and unreadable-location tests, bound here.
 declare = test_placement.declare
 connection_name = test_exchange_store.connection_name
 root = test_exchange_store.root
 two_port_subflow = test_run_flow_node.two_port_subflow
+split_node = test_unreadable_location.split_node
 
 LOCAL, WORKER = registry.LOCAL_BACKEND_ID, registry.WORKER_BACKEND_ID
 FAIL_ROWS = CUSTOMERS.filter(pl.col("amount") <= 10)
@@ -165,6 +172,44 @@ def listing(root: str, seen: dict):
 def sorted_rows(backend, ref, n: int = 10) -> pl.DataFrame:
     """The first ``n`` rows ``backend`` holds for ``ref``, in ``CUSTOMERS``'s columns, sorted by ``id``."""
     return pl.read_ipc_stream(backend.sample(ref, n)).select(CUSTOMERS.columns).sort("id")
+
+
+def record_refs(monkeypatch, *methods: str) -> list[tuple[str, WorkerBackend, ResultRef]]:
+    """Every ``(method, backend, ref)`` the ``WorkerBackend`` methods named (``submit``, ``run_op``, ``import_uri``)
+    answer from here on."""
+    answered: list[tuple[str, WorkerBackend, ResultRef]] = []
+    for method in methods:
+        real = getattr(WorkerBackend, method)
+
+        def recording(self, *args, _method=method, _real=real, **kwargs):
+            answer = _real(self, *args, **kwargs)
+            if isinstance(answer, ResultRef):
+                refs = [answer]
+            elif isinstance(answer, OpResult):
+                refs = list(answer.refs.values())
+            else:
+                refs = [answer.ref]
+            answered.extend((_method, self, ref) for ref in refs)
+            return answer
+
+        monkeypatch.setattr(WorkerBackend, method, recording)
+    return answered
+
+
+def v1_head(worker: WorkerBackend, result_id: str) -> int:
+    """The status the worker answers ``HEAD /v1/results/{result_id}`` with, asked as core asks."""
+    headers = {"X-Flowfile-Internal": get_internal_token(), PROTOCOL_VERSION_HEADER: str(PROTOCOL_VERSION)}
+    return requests.head(f"{worker.url}/v1/results/{result_id}", headers=headers, timeout=10).status_code
+
+
+def still_held(answered: list[tuple[str, WorkerBackend, ResultRef]]) -> list[str]:
+    """The ids among ``answered`` the backend that answered them still holds: by ``exists`` and, with the protocol
+    flag on, by the worker's own answer to ``HEAD``, which is 404 for a result it no longer holds."""
+    held = []
+    for _, backend, ref in answered:
+        if backend.exists(ref) or (settings.FLOWFILE_COMPUTE_PROTOCOL and v1_head(backend, ref.result_id) != 404):
+            held.append(ref.result_id)
+    return held
 
 
 def _late_conflict_csv(path: str, n_rows: int = 120_000, conflict_at: int = 60_000) -> None:
@@ -589,19 +634,82 @@ def test_a_node_reading_two_outputs_of_one_source_on_another_backend_takes_each_
         graph.close_flow()
 
 
+@requires_minio
+def test_closing_the_graph_leaves_nothing_held_on_the_worker_that_its_nodes_minted_there(
+    root, worker, split_node, monkeypatch
+):
+    """Manual input 1 on core → random split 2 on the worker, two groups → the two-output custom node 3 on the worker.
+
+    With the flag on node 2 imports its input, so it stores ``output-1`` beside its result; with it off the nodes' own
+    settings are not read and the flow runs on the worker as a whole, through the task routes.
+    """
+    answered = record_refs(monkeypatch, "submit", "run_op", "import_uri")
+    graph = make_graph(8520)
+    add_manual_input(graph, 1, CUSTOMERS.to_dicts())
+    graph.get_node(1).setting_input.user_id = 1
+    graph.get_node(1).setting_input.execution_location = LOCAL
+    add_promise(graph, 2, "random_split")
+    graph.add_random_split(
+        input_schema.NodeRandomSplit(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            user_id=1,
+            seed=7,
+            execution_location=WORKER,
+            splits=[
+                input_schema.RandomSplitGroup(name="train", percentage=50.0),
+                input_schema.RandomSplitGroup(name="test", percentage=50.0),
+            ],
+        )
+    )
+    connect(graph, 1, 2)
+    graph.add_node_promise(
+        input_schema.NodePromise(flow_id=graph.flow_id, node_id=3, node_type=split_node.node_key, is_user_defined=True)
+    )
+    graph.add_user_defined_node(
+        custom_node=split_node.node_class.from_settings({}),
+        user_defined_node_settings=input_schema.UserDefinedNode(
+            flow_id=graph.flow_id, node_id=3, settings={}, is_user_defined=True, user_id=1, execution_location=WORKER
+        ),
+    )
+    connect(graph, 2, 3)
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success is True, [result.error for result in run_info.node_step_result]
+        assert run_info.nodes_completed == 3
+        methods = {method for method, _, _ in answered}
+        if settings.FLOWFILE_COMPUTE_PROTOCOL:
+            assert methods == {"submit", "run_op", "import_uri"}
+            assert graph.get_node(2)._stored_outputs.keys() == {"output-1"}
+        else:
+            assert methods == {"submit", "run_op"}
+        assert [worker.exists(graph.get_node(node_id).results.result_ref) for node_id in (2, 3)] == [True, True]
+    finally:
+        graph.close_flow()
+
+    assert still_held(answered) == []
+
+
 class RefusesTheThirdOutput(DeclaringBackend):
-    """Core's own backend under the declaring id, refusing the plan a node submits for its output ``output-2``."""
+    """Core's own backend under the declaring id, refusing the plan a node submits for its output ``output-2``;
+    ``answered`` holds every reference its ``submit`` answered."""
+
+    def __init__(self, backend_id, declared):
+        super().__init__(backend_id, declared)
+        self.answered: list[ResultRef] = []
 
     def submit(self, plan, inputs, hints, result_id, *, flow_id, node_id):
         if result_id.endswith("_output-2"):
             raise PlanRejected("the backend refused output-2")
-        return super().submit(plan, inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
+        result = super().submit(plan, inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
+        self.answered.append(result.ref)
+        return result
 
 
 @requires_minio
-def test_a_second_output_that_fails_to_store_fails_the_node_and_what_it_stored_is_released_with_it(
-    protocol_on, declare, root
-):
+def test_a_second_output_that_fails_to_store_fails_the_node_and_releases_everything_it_held(protocol_on, declare, root):
     """Manual input 1 on core → random split 2 on the declaring backend, three groups: node 2 imports its input, so it
     stores ``output-1`` and then ``output-2`` beside its result, and the second of those is refused."""
     backend = RefusesTheThirdOutput(BACKEND_ID, everything())
@@ -638,22 +746,50 @@ def test_a_second_output_that_fails_to_store_fails_the_node_and_what_it_stored_i
         assert "the backend refused output-2" in errors[2], errors[2]
         assert run_info.success is False
         node = graph.get_node(2)
-        assert node._stored_outputs.keys() == {"output-1"}
-        stored = node._stored_outputs["output-1"]
-        assert stored.backend_id == BACKEND_ID
+        assert (node.results.result_ref, node._stored_outputs, node._operation_refs) == (None, {}, {})
         assert node._submit_in_flight is None
         assert node._boundary_inputs == {}
         assert seen["listed"] == [f"{_key(seen['prefix'])}1-{DEFAULT_OUTPUT_HANDLE}-2.parquet"]
         assert _keys(seen["prefix"]) == []
         assert graph.exchange_run is None
-        result = node.results.result_ref
-        assert result is not None and result.backend_id == BACKEND_ID
-
-        node.release_result()
-
+        result, stored = backend.answered
+        assert (result.result_id, stored.result_id) == (node.hash, f"{node.hash}_output-1")
         assert (backend.exists(result), backend.exists(stored)) == (False, False)
     finally:
         events._handlers["flow_run_finished"].remove(list_the_prefix)
+        graph.close_flow()
+
+
+@requires_minio
+def test_a_node_that_fails_to_store_its_second_output_on_the_worker_leaves_nothing_held_there(
+    protocol_on, root, worker, monkeypatch
+):
+    """Manual input 1 on core → split filter 2 on the worker, which refuses the plan node 2 stores ``output-1`` from."""
+    answered: list[ResultRef] = []
+    real_submit = WorkerBackend.submit
+
+    def refusing_output_1(self, plan, inputs, hints, result_id, **kwargs):
+        if result_id.endswith("_output-1"):
+            raise PlanRejected("the worker refused output-1")
+        result = real_submit(self, plan, inputs, hints, result_id, **kwargs)
+        answered.append(result.ref)
+        return result
+
+    monkeypatch.setattr(WorkerBackend, "submit", refusing_output_1)
+    graph = split(make_graph(8521, LOCAL), split_on=WORKER)
+    try:
+        run_info = graph.run_graph()
+
+        errors = {result.node_id: result.error for result in run_info.node_step_result if not result.success}
+        assert errors.keys() == {2}, errors
+        assert "the worker refused output-1" in errors[2], errors[2]
+        node = graph.get_node(2)
+        assert (node.results.result_ref, node._stored_outputs, node._operation_refs) == (None, {}, {})
+        [result] = [ref for ref in answered if ref.result_id == node.hash]
+        assert result.backend_id == WORKER
+        assert worker.exists(result) is False
+        assert v1_head(worker, result.result_id) == 404
+    finally:
         graph.close_flow()
 
 
