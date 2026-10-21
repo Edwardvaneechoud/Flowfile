@@ -75,6 +75,9 @@ class CatalogBuildersMixin(GraphMixinBase):
     def _add_catalog_sql_reader(self, node_catalog_reader: input_schema.NodeCatalogReader) -> bool | None:
         """Execute a SQL query against all catalog tables (physical + virtual).
 
+        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a virtual table whose producer flow runs is resolved on the backend the
+        reader runs on, the one placement gave it in a run; with it off, on the flow's location.
+
         Returns:
             Whether all referenced virtual tables are optimized, or None if no virtual tables.
         """
@@ -106,6 +109,7 @@ class CatalogBuildersMixin(GraphMixinBase):
                     ctx.register(name, pl.scan_delta(path, **scan_kwargs))
                 else:
                     ctx.register(name, pl.scan_delta(path))
+            run_location = current_context(self).backend_id if FLOWFILE_COMPUTE_PROTOCOL else self.execution_location
             for name, (is_opt, ser_lf, tid, stv) in virtual_tables.items():
                 ctx.register(
                     name,
@@ -114,7 +118,7 @@ class CatalogBuildersMixin(GraphMixinBase):
                         ser_lf,
                         tid,
                         node_logger=self.flow_logger.get_node_logger(node_catalog_reader.node_id),
-                        run_location=self.execution_location,
+                        run_location=run_location,
                         source_table_versions=stv,
                         user_id=node_catalog_reader.user_id,
                     ),
@@ -149,7 +153,9 @@ class CatalogBuildersMixin(GraphMixinBase):
         With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a table on object storage takes its schema from the backend the reader
         runs on: its plan is held there as a deferred result with no preview while the reference's schema is read,
         then released, so the plan's connection is resolved by that backend, a worker in its own process and
-        ``LocalBackend`` in core. Every other read here resolves its schema from its plan in core.
+        ``LocalBackend`` in core. Every other read here resolves its schema from its plan in core. A virtual table whose
+        producer flow runs is resolved, with the flag on, on the backend the reader runs on, the one placement gave it
+        in a run, and with it off on the flow's location.
 
         Returns:
             Whether the virtual table is optimized, or None if not a virtual table.
@@ -311,7 +317,9 @@ class CatalogBuildersMixin(GraphMixinBase):
                         _serialized_lf,
                         _catalog_table_id,
                         node_logger=self.flow_logger.get_node_logger(node_catalog_reader.node_id),
-                        run_location=self.execution_location,
+                        run_location=(
+                            current_context(self).backend_id if FLOWFILE_COMPUTE_PROTOCOL else self.execution_location
+                        ),
                         source_table_versions=_source_table_versions,
                         user_id=_user_id,
                     )
