@@ -88,7 +88,18 @@ def _resolve_catalog_target(table_name: str, base_uri: str | None) -> str:
     return str(_validate_catalog_path(table_name))
 
 
-def _delta_target(output_path: str | None, table_name: str | None, storage_payload: dict | None) -> str:
+def _storage(storage_payload: models.DeltaStoragePayload | dict | None) -> models.DeltaStoragePayload | None:
+    """A Delta operation's *storage_payload* as its model (``None`` or empty ⇒ local); an unknown key fails the task."""
+    if not storage_payload:
+        return None
+    from flowfile_worker import models
+
+    return models.DeltaStoragePayload.model_validate(storage_payload)
+
+
+def _delta_target(
+    output_path: str | None, table_name: str | None, storage_payload: models.DeltaStoragePayload | dict | None
+) -> str:
     """The table a Delta operation writes: *output_path* as given, or the catalog table *table_name*.
 
     *table_name* is a bare directory name, joined onto the payload's ``base_uri`` for object storage or onto this
@@ -97,24 +108,23 @@ def _delta_target(output_path: str | None, table_name: str | None, storage_paylo
     """
     if table_name is None:
         return output_path
-    base_uri = (storage_payload or {}).get("base_uri")
+    storage_payload = _storage(storage_payload)
+    base_uri = storage_payload.base_uri if storage_payload is not None else None
     if base_uri is not None:
         return _resolve_catalog_target(table_name, base_uri)
     _validate_catalog_path(table_name)
     return str(storage.catalog_tables_directory / table_name)
 
 
-def _resolve_storage_options(storage_payload: dict | None) -> dict | None:
-    """Decrypt object-storage options from a serialized ``CatalogStorageInterface`` (``None`` for local).
+def _resolve_storage_options(storage_payload: models.DeltaStoragePayload | dict | None) -> dict | None:
+    """Decrypt object-storage options from a Delta operation's ``DeltaStoragePayload`` (``None`` for local).
 
     The connection's owner-encrypted secrets are decrypted here, worker-side.
     """
-    if not storage_payload:
+    storage_payload = _storage(storage_payload)
+    if storage_payload is None:
         return None
-    from flowfile_worker.external_sources.s3_source.models import FullCloudStorageConnection
-
-    conn = FullCloudStorageConnection(**storage_payload["connection"])
-    return conn.get_storage_options()
+    return storage_payload.connection.get_storage_options()
 
 
 def _validate_virtual_results_path(name: str) -> Path:
@@ -871,7 +881,7 @@ def write_delta(
     output_path: str | None = None,
     mode: str = "overwrite",
     partition_by: list[str] | None = None,
-    storage_payload: dict | None = None,
+    storage_payload: models.DeltaStoragePayload | None = None,
     enable_cdf: bool = False,
     table_name: str | None = None,
     table_id: int | None = None,
@@ -892,6 +902,7 @@ def write_delta(
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     try:
+        from flowfile_worker import models
         from shared.delta_utils import write_delta as _write_delta
 
         output_path = _delta_target(output_path, table_name, storage_payload)
@@ -910,7 +921,7 @@ def write_delta(
         )
 
         if not wrote:
-            queue.put({"skipped": True})
+            queue.put(models.DeltaSkipReport(skipped=True).model_dump(exclude_unset=True))
             flowfile_logger.info(f"write_delta skipped (no-op) for {output_path}")
             with progress.get_lock():
                 progress.value = 100
@@ -920,13 +931,13 @@ def write_delta(
         schema = [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns]
 
         queue.put(
-            {
-                "table_path": output_path,
-                "schema": schema,
-                "row_count": df.height,
-                "column_count": len(df.columns),
-                "size_bytes": size_bytes,
-            }
+            models.DeltaWriteReport(
+                table_path=output_path,
+                column_schema=schema,
+                row_count=df.height,
+                column_count=len(df.columns),
+                size_bytes=size_bytes,
+            ).model_dump(by_alias=True)
         )
         flowfile_logger.info(f"write_delta completed: {df.height} records written to {output_path}")
         with progress.get_lock():
@@ -948,7 +959,7 @@ def merge_delta(
     merge_mode: str = "upsert",
     merge_keys: list[str] | None = None,
     partition_by: list[str] | None = None,
-    storage_payload: dict | None = None,
+    storage_payload: models.DeltaStoragePayload | None = None,
     enable_cdf: bool = False,
     table_name: str | None = None,
     table_id: int | None = None,
@@ -969,6 +980,7 @@ def merge_delta(
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     try:
+        from flowfile_worker import models
         from shared.delta_utils import merge_into_delta
 
         output_path = _delta_target(output_path, table_name, storage_payload)
@@ -988,7 +1000,7 @@ def merge_delta(
         )
 
         if not wrote:
-            queue.put({"skipped": True})
+            queue.put(models.DeltaSkipReport(skipped=True).model_dump(exclude_unset=True))
             flowfile_logger.info(f"merge_delta skipped (no-op) for {output_path}")
             with progress.get_lock():
                 progress.value = 100
@@ -1001,13 +1013,13 @@ def merge_delta(
         size_bytes = _get_delta_size_bytes(output_path, storage_options=storage_options)
 
         queue.put(
-            {
-                "table_path": output_path,
-                "schema": schema,
-                "row_count": row_count,
-                "column_count": len(schema),
-                "size_bytes": size_bytes,
-            }
+            models.DeltaWriteReport(
+                table_path=output_path,
+                column_schema=schema,
+                row_count=row_count,
+                column_count=len(schema),
+                size_bytes=size_bytes,
+            ).model_dump(by_alias=True)
         )
         flowfile_logger.info(f"merge_delta ({merge_mode}) completed: {row_count} rows in {output_path}")
         with progress.get_lock():
@@ -1036,7 +1048,7 @@ def scd2_delta(
     full_snapshot: bool = False,
     partition_by: list[str] | None = None,
     partition_on_current: bool = True,
-    storage_payload: dict | None = None,
+    storage_payload: models.DeltaStoragePayload | None = None,
     table_name: str | None = None,
     table_id: int | None = None,
     flowfile_flow_id: int = -1,
@@ -1056,6 +1068,7 @@ def scd2_delta(
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     try:
+        from flowfile_worker import models
         from shared.delta_utils import scd2_into_delta
 
         output_path = _delta_target(output_path, table_name, storage_payload)
@@ -1082,7 +1095,7 @@ def scd2_delta(
 
         if result.skipped:
             # The version rides along even on a skip: core reads the unchanged table back at it.
-            queue.put({"skipped": True, "version": result.version})
+            queue.put(models.DeltaSkipReport(skipped=True, version=result.version).model_dump(exclude_unset=True))
             flowfile_logger.info(f"scd2_delta skipped (nothing changed) for {output_path}")
             with progress.get_lock():
                 progress.value = 100
@@ -1095,21 +1108,21 @@ def scd2_delta(
         size_bytes = _get_delta_size_bytes(output_path, storage_options=storage_options)
 
         queue.put(
-            {
-                "table_path": output_path,
-                "schema": schema,
-                "row_count": result.rows_total,
-                "column_count": len(schema),
-                "size_bytes": size_bytes,
-                "version": result.version,
-                "scd2_metrics": {
-                    "rows_inserted": result.rows_inserted,
-                    "rows_closed": result.rows_closed,
-                    "rows_total": result.rows_total,
-                    "rows_current": result.rows_current,
-                    "created": result.created,
-                },
-            }
+            models.Scd2WriteReport(
+                table_path=output_path,
+                column_schema=schema,
+                row_count=result.rows_total,
+                column_count=len(schema),
+                size_bytes=size_bytes,
+                version=result.version,
+                scd2_metrics=models.Scd2Metrics(
+                    rows_inserted=result.rows_inserted,
+                    rows_closed=result.rows_closed,
+                    rows_total=result.rows_total,
+                    rows_current=result.rows_current,
+                    created=result.created,
+                ),
+            ).model_dump(by_alias=True)
         )
         flowfile_logger.info(
             f"scd2_delta completed: +{result.rows_inserted} inserted, {result.rows_closed} closed "

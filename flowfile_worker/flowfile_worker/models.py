@@ -239,6 +239,57 @@ class CatalogStorageInterface(BaseModel):
     connection: FullCloudStorageConnection
 
 
+class DeltaStoragePayload(BaseModel):
+    """The ``storage_payload`` of the Delta task operations (``write_delta``, ``merge_delta``, ``scd2_delta``).
+
+    ``connection`` carries owner-encrypted secrets the worker decrypts itself; ``base_uri`` is the catalog root a table
+    named by identity is resolved under. Absent on a request ⇒ a table on this worker's disk.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    base_uri: str | None = None
+    connection: FullCloudStorageConnection
+
+
+class DeltaSkipReport(BaseModel):
+    """What a Delta task operation answers when it wrote nothing; an SCD2 write adds the table's unchanged version."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    skipped: Literal[True]
+    version: int | None = None
+
+
+class DeltaWriteReport(BaseModel):
+    """What ``write_delta`` and ``merge_delta`` answer: the table written and what core records of it."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    table_path: str
+    column_schema: list[ColumnSchema] = Field(alias="schema")
+    row_count: int
+    column_count: int
+    size_bytes: int
+
+
+class Scd2Metrics(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rows_inserted: int
+    rows_closed: int
+    rows_total: int
+    rows_current: int
+    created: bool
+
+
+class Scd2WriteReport(DeltaWriteReport):
+    """What ``scd2_delta`` answers: the write's report, the version it committed and its row counts."""
+
+    version: int | None
+    scd2_metrics: Scd2Metrics
+
+
 class CatalogMaterializeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

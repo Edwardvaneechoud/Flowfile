@@ -9,7 +9,8 @@ module pins it: the number and one sha256 per entry. An entry is one of:
 - ``socket <path>``: a submit socket. ``/v1/ws/submit`` carries ``SubmitMeta`` in its text frame and answers a
   ``SubmitResult``; the legacy ``/ws/submit`` is pinned by its path.
 - ``operation <kind>``: a ``POST /v1/ops/<kind>`` route, and ``operation task:<type>`` the keyword parameters of the
-  task function a legacy submit dispatches by its operation type, minus those the worker fills in itself.
+  task function a legacy submit dispatches by its operation type, minus those the worker fills in itself, with the
+  shape of each model a parameter is annotated with and of each report the task answers (``TASK_RESULTS``).
 - ``catalog cloud_storage_connections``: the columns ``shared.database.cloud_connection_record`` reads from the catalog.
 
 Descriptions, summaries, titles and operation ids are not shape and are left out. A changed or removed entry, or a new
@@ -47,6 +48,13 @@ INJECTED = frozenset(
     }
 )
 """The keyword arguments the worker passes a task function itself, never read from core's request."""
+
+TASK_RESULTS = {
+    "write_delta": ("DeltaWriteReport", "DeltaSkipReport"),
+    "merge_delta": ("DeltaWriteReport", "DeltaSkipReport"),
+    "scd2_delta": ("Scd2WriteReport", "DeltaSkipReport"),
+}
+"""The ``flowfile_worker.models`` reports a task operation puts on its queue, which core reads from ``/status``."""
 
 NOT_SHAPE = frozenset({"summary", "description", "operationId", "title", "tags"})
 UNCHECKED_MODELS = frozenset({"FuzzyMapping"})
@@ -94,7 +102,37 @@ def _model_shape(model) -> dict:
     return _shape(schema, schema.get("$defs", {}))
 
 
-def _task_operations() -> dict[str, list[str]]:
+def _models_in(annotation) -> list[type]:
+    """The pydantic models ``annotation`` names, itself or inside a union or a container."""
+    from pydantic import BaseModel
+
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return [annotation]
+    return [model for argument in typing.get_args(annotation) for model in _models_in(argument)]
+
+
+def _task_parameters(function) -> dict[str, list[type]]:
+    """The models each of ``function``'s parameters the worker does not fill in is annotated with, by name."""
+    from deltalake import DeltaTable
+    from pl_fuzzy_frame_match import FuzzyMapping
+
+    from flowfile_worker import models
+    from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings
+    from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
+
+    type_checking = {
+        "DeltaTable": DeltaTable,
+        "FuzzyMapping": FuzzyMapping,
+        "models": models,
+        "CloudStorageWriteSettings": CloudStorageWriteSettings,
+        "DatabaseWriteSettings": DatabaseWriteSettings,
+    }
+    hints = typing.get_type_hints(function, localns=type_checking)
+    parameters = inspect.signature(function).parameters
+    return {name: _models_in(hints.get(name)) for name in parameters if name not in INJECTED}
+
+
+def _task_operations() -> dict[str, dict]:
     from flowfile_worker import funcs, models
 
     operations = {}
@@ -102,7 +140,15 @@ def _task_operations() -> dict[str, list[str]]:
         function = getattr(funcs, operation_type, None)
         if function is not None:
             parameters = inspect.signature(function).parameters.values()
-            operations[f"operation task:{operation_type}"] = [str(p) for p in parameters if p.name not in INJECTED]
+            operations[f"operation task:{operation_type}"] = {
+                "parameters": [str(p) for p in parameters if p.name not in INJECTED],
+                "models": {
+                    name: [_model_shape(model) for model in found]
+                    for name, found in _task_parameters(function).items()
+                    if found
+                },
+                "results": [_model_shape(getattr(models, name)) for name in TASK_RESULTS.get(operation_type, ())],
+            }
     return operations
 
 
@@ -170,10 +216,12 @@ def pin_of(entries: dict[str, str], protocol_version: int) -> dict:
 
 
 def request_models(route_groups: Iterable[Sequence]) -> dict[str, type]:
-    """Every pydantic model a worker route's request body or the submit's ``meta`` reaches, by qualified name."""
+    """Every pydantic model a worker route's request body, the submit's ``meta`` or a task operation's keyword
+    arguments reach, by qualified name."""
     from fastapi.routing import APIRoute
     from pydantic import BaseModel
 
+    from flowfile_worker import funcs, models
     from flowfile_worker.protocol_routes import SubmitMeta
 
     found: dict[str, type] = {}
@@ -201,6 +249,12 @@ def request_models(route_groups: Iterable[Sequence]) -> dict[str, type]:
             if isinstance(route, APIRoute):
                 visit_dependant(route.dependant)
     visit(SubmitMeta)
+    for operation_type in typing.get_args(models.OperationType):
+        function = getattr(funcs, operation_type, None)
+        if function is not None:
+            for found_models in _task_parameters(function).values():
+                for model in found_models:
+                    visit(model)
     return dict(sorted(found.items()))
 
 
@@ -308,6 +362,66 @@ def test_a_new_operation_kind_needs_no_bump_and_a_new_route_does():
     changes = contract_changes(fingerprint([*worker_routes(), scratch.routes]), _pinned_now(), PROTOCOL_VERSION)
 
     assert changes == ["added: route GET /v1/brand_new_route"]
+
+
+def test_a_changed_delta_storage_payload_without_a_bump_fails_naming_each_delta_operation(monkeypatch):
+    from flowfile_worker import models
+    from shared.compute_protocol import PROTOCOL_VERSION
+
+    pinned = _pinned_now()
+
+    class WiderStoragePayload(models.DeltaStoragePayload):
+        region: str | None = None
+
+    monkeypatch.setattr(models, "DeltaStoragePayload", WiderStoragePayload)
+
+    assert contract_changes(fingerprint(worker_routes()), pinned, PROTOCOL_VERSION) == [
+        "changed: operation task:merge_delta",
+        "changed: operation task:scd2_delta",
+        "changed: operation task:write_delta",
+    ]
+
+
+def test_a_changed_delta_report_without_a_bump_fails_naming_each_operation_that_answers_it(monkeypatch):
+    from flowfile_worker import models
+    from shared.compute_protocol import PROTOCOL_VERSION
+
+    pinned = _pinned_now()
+
+    class WiderWriteReport(models.DeltaWriteReport):
+        files_added: int = 0
+
+    monkeypatch.setattr(models, "DeltaWriteReport", WiderWriteReport)
+
+    assert contract_changes(fingerprint(worker_routes()), pinned, PROTOCOL_VERSION) == [
+        "changed: operation task:merge_delta",
+        "changed: operation task:write_delta",
+    ]
+
+
+def test_a_delta_operation_with_an_unknown_storage_payload_key_fails_and_writes_nothing(tmp_path):
+    from multiprocessing import Array, Queue, Value
+
+    import polars as pl
+
+    from flowfile_worker import funcs
+
+    progress, error_message, queue = Value("i", 0), Array("c", 1024), Queue(maxsize=1)
+    target = tmp_path / "table"
+
+    funcs.write_delta(
+        pl.LazyFrame({"a": [1]}).serialize(),
+        progress,
+        error_message,
+        queue,
+        file_path=str(tmp_path / "unused.arrow"),
+        output_path=str(target),
+        storage_payload={"base_uri": "s3://bucket/catalog", "an_unknown_field": 1},
+    )
+
+    assert progress.value == -1
+    assert b"an_unknown_field" in error_message.value
+    assert not target.exists()
 
 
 def test_a_pin_of_another_number_fails_until_it_is_rewritten():
