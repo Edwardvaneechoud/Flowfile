@@ -2,11 +2,12 @@
 offers.
 
 A backend's check reads its ``capabilities()`` and runs each probe plan on it as an ordinary job. A Polars version, an
-index-width runtime, a protocol or an app version that differs refuses the backend whole, before it is sent any work; a
-plugin it lacks, has in another version or cannot load, and core's Python functions where they do not run there, only
-refuse the nodes that need them, with the reason. The session worker is the backend ``worker``; ``worker:team`` is that
-worker reached by another name, or core's own process under that id, faked to report or fail what a case needs. Every
-gate case runs under both states of the protocol flag; placement runs with the flag on only.
+index-width runtime or a protocol version that differs refuses the backend whole, before it is sent any work, and the
+app version is not compared; a plugin it lacks, has in another version or cannot load, and core's Python functions
+where they do not run there, only refuse the nodes that need them, with the reason. The session worker is the backend
+``worker``; ``worker:team`` is that worker reached by another name, or core's own process under that id, faked to report
+or fail what a case needs. Every gate case runs under both states of the protocol flag; placement runs with the flag on
+only.
 """
 
 import json
@@ -32,7 +33,7 @@ from flowfile_core.flowfile.flow_node.flow_node import schema_prefetch_blocked
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings
-from shared.compute_protocol import local_capabilities
+from shared.compute_protocol import PROTOCOL_VERSION, local_capabilities
 
 HINT = ". Is the compute backend running? Start it, or check the Backends page."
 TEAM_HINT = '. Is backend "worker:team" running? Start it, or check the Backends page.'
@@ -505,7 +506,7 @@ def test_another_polars_or_runtime_refuses_the_backend_naming_both_sides(flag, m
     assert sent == []
 
 
-def test_a_verdict_lists_each_difference_and_refuses_on_the_app_and_protocol_versions(monkeypatch):
+def test_a_verdict_lists_each_difference_and_refuses_on_the_protocol_version(monkeypatch):
     core = local_capabilities()
     reported = core.model_copy(
         update={"app_version": "0.0.0", "protocol_version": core.protocol_version + 1, "python_version": "3.99.0"}
@@ -517,15 +518,59 @@ def test_a_verdict_lists_each_difference_and_refuses_on_the_app_and_protocol_ver
 
     assert verdict.ok is False
     assert verdict.differences == [
-        f"app_version: core {core.app_version}, backend 0.0.0",
         f"protocol_version: core {core.protocol_version}, backend {core.protocol_version + 1}",
         f"python_version: core {core.python_version}, backend 3.99.0",
     ]
     assert verdict.error == (
-        f'Backend "worker" does not match core (app_version: core {core.app_version}, backend 0.0.0; '
-        f"protocol_version: core {core.protocol_version}, backend {core.protocol_version + 1})"
+        f'Backend "worker" does not match core '
+        f"(protocol_version: core {core.protocol_version}, backend {core.protocol_version + 1})"
     )
     assert verdict.offered is None
+    assert verdict.backend.app_version == "0.0.0"
+
+
+def test_two_workers_of_other_app_versions_and_one_contract_both_run(flag, monkeypatch):
+    core = local_capabilities()
+    worker = registry.backend(registry.WORKER_BACKEND_ID)
+    counted(monkeypatch, worker, core.model_copy(update={"app_version": "0.0.1"}))
+    team = WorkerBackend(same_worker_by_another_name(), backend_id=TEAM)
+    counted(monkeypatch, team, core.model_copy(update={"app_version": "0.0.2"}))
+    registry.register_backend(TEAM, lambda: team)
+
+    assert one_node_graph(9216, cache_results=True).run_graph().success is True
+    assert one_node_graph(9217, TEAM, cache_results=True).run_graph().success is True
+
+    for backend_id, app_version in ((registry.WORKER_BACKEND_ID, "0.0.1"), (TEAM, "0.0.2")):
+        verdict = handshake.last_verdict(backend_id)
+        assert verdict.ok is True
+        assert verdict.differences == []
+        assert verdict.backend.app_version == app_version
+
+
+def test_another_contract_number_refuses_the_backend_naming_both_sides(flag, monkeypatch, sent):
+    core = local_capabilities()
+    worker = registry.backend(registry.WORKER_BACKEND_ID)
+    counted(monkeypatch, worker, core.model_copy(update={"protocol_version": core.protocol_version + 1}))
+
+    with pytest.raises(VersionMismatch) as refused:
+        subops.results_exists("no-such-task", worker_url=WORKER_URL)
+
+    assert str(refused.value) == (
+        f'Backend "worker" does not match core '
+        f"(protocol_version: core {core.protocol_version}, backend {core.protocol_version + 1})"
+    )
+    assert sent == []
+
+
+def test_an_unreadable_answer_of_another_contract_names_both_numbers(flag, capabilities_answer):
+    capabilities_answer(json.dumps({**OLDER_ANSWER, "protocol_version": PROTOCOL_VERSION + 1}).encode())
+
+    with pytest.raises(VersionMismatch) as excinfo:
+        handshake.ensure_handshake(WORKER_URL)
+
+    assert str(excinfo.value) == OLDER_RELEASE_REFUSAL.replace(
+        "(app_version:", f"(protocol_version: core {PROTOCOL_VERSION}, worker {PROTOCOL_VERSION + 1}; app_version:"
+    )
 
 
 def test_a_worker_of_an_earlier_release_is_refused_naming_both_app_versions(flag, capabilities_answer, probes):

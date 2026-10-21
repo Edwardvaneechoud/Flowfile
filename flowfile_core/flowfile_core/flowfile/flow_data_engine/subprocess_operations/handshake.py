@@ -13,8 +13,8 @@ and the gate raise ``VersionMismatch`` naming both sides before the backend is s
 
 - ``polars_version`` and ``polars_runtime``: plan bytes are not stable across Polars versions, and the index width makes
   ``pl.len()`` and row indexes ``UInt32`` on one side and ``UInt64`` on the other.
-- ``protocol_version``: the contract between core and a worker.
-- ``app_version``: core and the worker are released together.
+- ``protocol_version``: the worker contract, the shape of everything core and a worker exchange, so two releases that
+  speak one contract work together.
 
 Every other difference narrows what the backend offers instead: ``absent`` maps what it lacks to the reason, in words
 that follow "which", and ``offered`` is its capabilities with ``plugins`` cut to what it offers, which is what placement
@@ -27,12 +27,13 @@ compares a node's needs with, so only the nodes that need the missing piece are 
   and, for an expression plugin, its probe plan, an empty frame calling one cheap expression of it, loads it from the
   path core's plans carry. One missing, in another version or not loadable is absent with the reason naming which; a
   package with no probe plan is decided by its version alone.
-- ``platform`` and ``plugin_libs`` are reported in the verdict's ``backend``, not compared.
+- ``app_version``, ``platform`` and ``plugin_libs`` are reported in the verdict's ``backend``, not compared.
 
 The probe jobs run as flow ``-1``, node ``-1``, under result ids ``handshake-<probe>-<hex>``. A backend that cannot be
 reached, for its capabilities or during a probe, is a ``ComputeUnavailable``; a worker's answer that is no
-``Capabilities`` is a ``VersionMismatch`` naming both app versions when it carries an ``app_version`` (a worker of
-another release), else a ``ComputeUnavailable``: the URL is no Flowfile worker (``capabilities_from_answer``).
+``Capabilities`` is a ``VersionMismatch`` when it carries an ``app_version`` (a worker of another release), naming both
+contract numbers when they differ and both app versions, else a ``ComputeUnavailable``: the URL is no Flowfile worker
+(``capabilities_from_answer``).
 """
 
 from __future__ import annotations
@@ -48,14 +49,14 @@ from pydantic import BaseModel, ValidationError
 
 from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable, VersionMismatch
 from shared._version import get_version
-from shared.compute_protocol import Capabilities, local_capabilities
+from shared.compute_protocol import PROTOCOL_VERSION, Capabilities, local_capabilities
 
 if TYPE_CHECKING:
     from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
     from flowfile_core.flowfile.execution.protocol import ComputeBackend
 
-_COMPARED_FIELDS = ("app_version", "protocol_version", "polars_version", "polars_runtime", "python_version")
-_REFUSING_FIELDS = frozenset({"app_version", "protocol_version", "polars_version", "polars_runtime"})
+_COMPARED_FIELDS = ("protocol_version", "polars_version", "polars_runtime", "python_version")
+_REFUSING_FIELDS = frozenset({"protocol_version", "polars_version", "polars_runtime"})
 _NOT_INSTALLED = "not installed"
 
 _lock = threading.Lock()
@@ -129,7 +130,8 @@ def capabilities_from_answer(
 
     Raises:
         VersionMismatch: the answer carries an ``app_version`` but is no ``Capabilities``; the message names both
-            app versions and each field this release could not read.
+            contract numbers when the answer carries one that differs, both app versions and each field this release
+            could not read.
         ComputeUnavailable: the answer carries no ``app_version``; its ``backend_id`` is *backend_id*.
     """
     try:
@@ -142,8 +144,14 @@ def capabilities_from_answer(
         app_version = answer.get("app_version") if isinstance(answer, dict) else None
         if isinstance(app_version, str):
             unread = "; ".join(f"{'.'.join(map(str, error['loc']))}: {error['msg']}" for error in e.errors())
+            protocol_version = answer.get("protocol_version")
+            contract = (
+                f"protocol_version: core {PROTOCOL_VERSION}, worker {protocol_version}; "
+                if isinstance(protocol_version, int) and protocol_version != PROTOCOL_VERSION
+                else ""
+            )
             raise VersionMismatch(
-                f"The worker at {worker_url} does not match core (app_version: core {get_version()}, worker "
+                f"The worker at {worker_url} does not match core ({contract}app_version: core {get_version()}, worker "
                 f"{app_version}): its capabilities answer is not one this release reads ({unread})"
             ) from e
         raise ComputeUnavailable(
@@ -155,7 +163,8 @@ def capabilities_from_answer(
 def capability_differences(core: Capabilities, backend: Capabilities) -> list[str]:
     """Each compared field where *backend* differs from *core*, e.g. ``polars_version: core 1.43.2, backend 0.20.31``.
 
-    The fields are the four that refuse a backend whole and ``python_version``, in that order.
+    The fields are the three that refuse a backend whole and ``python_version``, in that order; ``app_version`` is
+    not compared.
     """
     differences = []
     for field in _COMPARED_FIELDS:

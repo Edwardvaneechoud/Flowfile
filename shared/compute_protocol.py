@@ -27,6 +27,13 @@ from pydantic import BaseModel, ConfigDict
 from shared._version import get_version
 
 PROTOCOL_VERSION = 1
+"""The worker contract: the shape of every request and answer between core and a worker, and the catalog columns a
+worker reads.
+
+``shared/tests/test_worker_contract.py`` pins it and says when to bump it; a new operation kind needs no bump, since a
+worker that does not declare it is refused only that kind's nodes. Workers must be upgraded when this number changes,
+and when the Polars version does; the app version is reported and compared nowhere.
+"""
 PROTOCOL_VERSION_HEADER = "X-Protocol-Version"
 
 # Packages whose installed version a compute reports.
@@ -49,9 +56,10 @@ CLOUD_SCHEMES = frozenset({"s3", "az", "gs"})
 class Capabilities(BaseModel):
     """What one compute process can run.
 
-    A handshake refuses a compute whose app, protocol or Polars version or ``polars_runtime`` (the index width of the
+    A handshake refuses a compute whose protocol or Polars version or ``polars_runtime`` (the index width of the
     loaded Polars runtime, ``"32"`` or ``"64"``) differs from core's, compares ``python_version`` and each of
-    ``plugins`` to narrow what it offers, and reports ``platform`` and ``plugin_libs`` without comparing them. The other
+    ``plugins`` to narrow what it offers, and reports ``app_version``, ``platform`` and ``plugin_libs`` without
+    comparing them. The other
     four fields are what a compute declares and are never compared: ``operations``, the values of the
     ``OperationKind``s it runs; ``read_schemes`` and ``write_schemes``, the URI schemes it reads and writes; and
     ``credential_resolution``, how it resolves a connection a plan names.
