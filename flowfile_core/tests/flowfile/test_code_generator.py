@@ -4072,7 +4072,8 @@ def test_cloud_storage_writer(file_format):
     code = export_flow_to_flowframe(flow)
     verify_if_execute(code)
     fde = FlowDataEngine.from_cloud_storage_obj(
-        cloud_ss.CloudStorageReadSettingsInternal(read_settings=read_settings, connection=get_cloud_connection())
+        cloud_ss.CloudStorageReadSettingsInternal(read_settings=read_settings, connection=get_cloud_connection()),
+        user_id=1,
     )
     assert fde.collect()[0, 0] == 5
 

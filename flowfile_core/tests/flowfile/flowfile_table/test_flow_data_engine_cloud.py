@@ -14,6 +14,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
     FullCloudStorageConnection,
 )
 from flowfile_core.schemas.transform_schema import UniqueInput
+from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection
 
 logger = getLogger(__name__)
 
@@ -96,7 +97,8 @@ def source_flow_data_engine():
 
 @pytest.fixture
 def aws_access_key_connection():
-    """Reusable AWS CLI connection configuration."""
+    """Reusable AWS CLI connection configuration, stored for user 1 so a read can name it."""
+    ensure_cloud_storage_connection_is_available_and_get_connection()
     minio_connection = FullCloudStorageConnection(
         connection_name="minio-test",
         storage_type="s3",  # Use s3, not a separate minio type
@@ -264,7 +266,7 @@ def test_read_from_s3_with_aws_keys(test_case: S3TestReadCase, aws_access_key_co
     logger.info(f"Resource path: {test_case.read_settings.resource_path}")
     logger.info(f"File format: {test_case.read_settings.file_format}")
 
-    flow_data_engine = FlowDataEngine.from_cloud_storage_obj(settings)
+    flow_data_engine = FlowDataEngine.from_cloud_storage_obj(settings, user_id=1)
     assert flow_data_engine is not None
     assert flow_data_engine.lazy is True
     assert flow_data_engine.schema is not None
@@ -299,7 +301,7 @@ def test_write_to_s3_with_aws_keys(
     read_settings = CloudStorageReadSettingsInternal(
         connection=aws_access_key_connection,
         read_settings=CloudStorageReadSettings.model_validate(test_case.write_settings.model_dump()))
-    now_vals = (FlowDataEngine.from_cloud_storage_obj(read_settings).select_columns(["ref_col"])
+    now_vals = (FlowDataEngine.from_cloud_storage_obj(read_settings, user_id=1).select_columns(["ref_col"])
                 .make_unique(UniqueInput(columns=["ref_col"]))).to_raw_data().data[0]
     for now_value in added_values:
         assert now_value in now_vals, "Data did not update"
@@ -342,7 +344,7 @@ def test_write_partitioned_delta_to_s3(
         connection=aws_access_key_connection,
         read_settings=CloudStorageReadSettings.model_validate(write_settings.model_dump()),
     )
-    read_back = FlowDataEngine.from_cloud_storage_obj(read_settings)
+    read_back = FlowDataEngine.from_cloud_storage_obj(read_settings, user_id=1)
     assert read_back.get_number_of_records(force_calculate=True) == 5
 
 
@@ -423,6 +425,7 @@ def test_read_from_s3_with_env_vars(test_case: S3TestReadCase, s3_env_vars):
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_read_parquet_single():
     """Test reading a Parquet file from S3 using AWS CLI credentials."""
+    ensure_cloud_storage_connection_is_available_and_get_connection()
     settings = CloudStorageReadSettingsInternal(
         connection=FullCloudStorageConnection(
             connection_name="minio-test",
@@ -439,7 +442,7 @@ def test_read_parquet_single():
             scan_mode="single_file"
         )
     )
-    flow_data_engine = FlowDataEngine.from_cloud_storage_obj(settings)
+    flow_data_engine = FlowDataEngine.from_cloud_storage_obj(settings, user_id=1)
     assert flow_data_engine.schema is not None
     assert len(flow_data_engine.columns) == 4
     assert flow_data_engine.number_of_records == 6_666_666, "The number of columns should be a fictive number"

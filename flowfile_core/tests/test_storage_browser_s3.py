@@ -246,7 +246,8 @@ class TestBrowseReadRoundTrip:
                     file_format="parquet",
                 ),
                 connection=self._connection(),
-            )
+            ),
+            user_id=1,
         )
         assert engine.data_frame.collect_schema().names()
 
@@ -270,7 +271,8 @@ class TestBrowseReadRoundTrip:
                     file_format="parquet",
                 ),
                 connection=self._connection(),
-            )
+            ),
+            user_id=1,
         )
         assert engine.data_frame.collect_schema().names()
 

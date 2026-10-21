@@ -14,6 +14,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
     FullCloudStorageConnection,
 )
 from flowfile_core.schemas.transform_schema import UniqueInput
+from tests.utils import ensure_adls_cloud_storage_connection_is_available_and_get_connection
 
 logger = getLogger(__name__)
 
@@ -28,7 +29,8 @@ from test_utils.azurite.fixtures import (
 
 @pytest.fixture
 def adls_access_key_connection():
-    """Reusable ADLS connection using Azurite emulator with access key auth."""
+    """Reusable ADLS connection using Azurite emulator with access key auth, stored for user 1 so a read can name it."""
+    ensure_adls_cloud_storage_connection_is_available_and_get_connection()
     return FullCloudStorageConnection(
         connection_name="azurite-test",
         storage_type="adls",
@@ -200,7 +202,7 @@ def test_read_from_adls_with_access_key(test_case: ADLSTestReadCase, adls_access
     )
     logger.info(f"Testing ADLS read scenario: {test_case.id}")
     logger.info(f"Resource path: {test_case.read_settings.resource_path}")
-    flow_data_engine = FlowDataEngine.from_cloud_storage_obj(settings)
+    flow_data_engine = FlowDataEngine.from_cloud_storage_obj(settings, user_id=1)
 
     assert flow_data_engine is not None
     assert flow_data_engine.lazy is True
@@ -235,7 +237,7 @@ def test_write_to_adls_with_access_key(
         read_settings=CloudStorageReadSettings.model_validate(test_case.write_settings.model_dump()),
     )
     now_vals = (
-        FlowDataEngine.from_cloud_storage_obj(read_settings)
+        FlowDataEngine.from_cloud_storage_obj(read_settings, user_id=1)
         .select_columns(["ref_col"])
         .make_unique(UniqueInput(columns=["ref_col"]))
     ).to_raw_data().data[0]
