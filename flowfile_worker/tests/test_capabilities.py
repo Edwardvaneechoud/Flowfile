@@ -55,6 +55,13 @@ def test_capabilities_reports_this_process():
 
 
 @pytest.mark.worker
+@both_routes
+def test_capabilities_report_the_index_width_of_the_loaded_polars_runtime(route_client, path):
+    caps = declared(route_client, path)
+    assert caps.polars_runtime == ("64" if pl.get_index_type() == pl.UInt64 else "32")
+
+
+@pytest.mark.worker
 def test_capabilities_plugin_set_and_versions():
     caps = Capabilities.model_validate(client.get("/capabilities").json())
     assert set(caps.plugins) == {"polars_grouper", "polars_simed", "polars_ds", "deltalake", "pl_fuzzy_frame_match"}

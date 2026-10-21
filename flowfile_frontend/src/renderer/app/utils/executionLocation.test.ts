@@ -1,14 +1,84 @@
 import { describe, expect, it } from "vitest";
 
+import type { HandshakeVerdict, WorkerCapabilities } from "../api/computeBackends.api";
 import {
   executionLocationLabel,
   executionLocationOptions,
   nodeExecutionLocationLabel,
   nodeExecutionLocationOptions,
+  verdictSummary,
 } from "./executionLocation";
 
+const rows = (backendIds: string[]) => backendIds.map((id) => ({ id, verdict: null }));
+
 const keys = (current: string, backendIds: string[]) =>
-  executionLocationOptions(current, backendIds).map((option) => option.key);
+  executionLocationOptions(current, rows(backendIds)).map((option) => option.key);
+
+const capabilities: WorkerCapabilities = {
+  app_version: "0.23.0",
+  polars_version: "1.43.2",
+  python_version: "3.12.15",
+  protocol_version: 1,
+  platform: "linux-x86_64",
+  polars_runtime: "64",
+  plugins: { polars_ds: "0.10.0", polars_grouper: "0.6.0" },
+  plugin_libs: {},
+  operations: [],
+  read_schemes: ["s3"],
+  write_schemes: ["s3"],
+  credential_resolution: "master_key",
+};
+
+const verdict = (overrides: Partial<HandshakeVerdict>): HandshakeVerdict => ({
+  id: "worker:team",
+  ok: true,
+  core: capabilities,
+  backend: capabilities,
+  offered: capabilities,
+  differences: [],
+  absent: {},
+  error: null,
+  ...overrides,
+});
+
+const VERDICTS: [string, HandshakeVerdict | null, string][] = [
+  ["unchecked", null, "not checked"],
+  ["passing", verdict({}), "ok"],
+  [
+    "narrowed",
+    verdict({
+      absent: {
+        polars_ds: "this backend has in version 0.0.1 where core has 0.10.0",
+        python:
+          "core's Python functions do not run on this backend (Python: core 3.12.15, backend 3.12.8): …",
+      },
+      differences: ["python_version: core 3.12.15, backend 3.12.8"],
+    }),
+    "ok, without polars_ds, Python functions",
+  ],
+  [
+    "refused",
+    verdict({
+      ok: false,
+      offered: null,
+      error:
+        'Backend "worker:team" does not match core (polars_version: core 1.43.2, backend 1.39.3)',
+      differences: ["polars_version: core 1.43.2, backend 1.39.3"],
+    }),
+    'refused: Backend "worker:team" does not match core (polars_version: core 1.43.2, backend 1.39.3)',
+  ],
+  [
+    "refused-without-an-error",
+    verdict({ ok: false, offered: null, differences: ["polars_runtime: core 64, backend 32"] }),
+    "refused: polars_runtime: core 64, backend 32",
+  ],
+];
+
+describe("verdictSummary", () => {
+  it.each(VERDICTS)("says what the %s verdict says", (_, given, summary) => {
+    expect(verdictSummary(given)).toBe(summary);
+  });
+});
 
 describe("executionLocationOptions", () => {
   it("offers auto and the configured backends, never local", () => {
@@ -34,6 +104,33 @@ describe("executionLocationOptions", () => {
   });
 });
 
+describe("the verdict beside a configured backend's id", () => {
+  it.each(VERDICTS)("labels a %s backend in the dialog and the picker", (_, given, summary) => {
+    const listed = [{ id: "worker:team", verdict: given }];
+
+    expect(executionLocationOptions("auto", listed)).toEqual([
+      { key: "auto", label: "Auto (default worker)" },
+      { key: "worker:team", label: `worker:team · ${summary}` },
+    ]);
+    expect(nodeExecutionLocationOptions("auto", listed)).toEqual([
+      { key: "auto", label: "Auto (the flow's backend)" },
+      { key: "worker", label: "Default worker" },
+      { key: "worker:team", label: `worker:team · ${summary}` },
+    ]);
+  });
+
+  it("labels a saved id that is no longer configured by its id alone", () => {
+    const listed = [{ id: "worker:team", verdict: verdict({}) }];
+
+    for (const options of [
+      executionLocationOptions("worker:gone", listed),
+      nodeExecutionLocationOptions("worker:gone", listed),
+    ]) {
+      expect(options[options.length - 1]).toEqual({ key: "worker:gone", label: "worker:gone" });
+    }
+  });
+});
+
 describe("executionLocationLabel", () => {
   it("names each value", () => {
     expect(executionLocationLabel("local")).toBe("Local");
@@ -44,7 +141,7 @@ describe("executionLocationLabel", () => {
 });
 
 const nodeKeys = (current: string, backendIds: string[]) =>
-  nodeExecutionLocationOptions(current, backendIds).map((option) => option.key);
+  nodeExecutionLocationOptions(current, rows(backendIds)).map((option) => option.key);
 
 describe("nodeExecutionLocationOptions", () => {
   it("offers auto, the default worker and the configured backends, never local", () => {

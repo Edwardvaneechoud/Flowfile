@@ -696,7 +696,7 @@ def test_closing_the_graph_leaves_nothing_held_on_the_worker_that_its_nodes_mint
 
 class RefusesTheThirdOutput(DeclaringBackend):
     """Core's own backend under the declaring id, refusing the plan a node submits for its output ``output-2``;
-    ``answered`` holds every reference its ``submit`` answered."""
+    ``answered`` holds every reference its ``submit`` answered but the handshake's probe jobs'."""
 
     def __init__(self, backend_id, declared):
         super().__init__(backend_id, declared)
@@ -706,7 +706,8 @@ class RefusesTheThirdOutput(DeclaringBackend):
         if result_id.endswith("_output-2"):
             raise PlanRejected("the backend refused output-2")
         result = super().submit(plan, inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
-        self.answered.append(result.ref)
+        if not result_id.startswith("handshake-"):
+            self.answered.append(result.ref)
         return result
 
 

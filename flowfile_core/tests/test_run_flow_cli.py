@@ -103,7 +103,8 @@ def test_a_headless_run_defaults_to_core_s_own_backend_and_leaves_the_offload_fl
 
 
 class CountingBackend(LocalBackend):
-    """Core's own backend under another id; ``submitted`` holds the node id of every plan submitted to it."""
+    """Core's own backend under another id; ``submitted`` holds the node id of every plan submitted to it but the
+    handshake's probe jobs."""
 
     def __init__(self, backend_id: str):
         super().__init__()
@@ -111,7 +112,8 @@ class CountingBackend(LocalBackend):
         self.submitted: list[int | str] = []
 
     def submit(self, plan, inputs, hints, result_id, **kwargs):
-        self.submitted.append(kwargs["node_id"])
+        if not result_id.startswith("handshake-"):
+            self.submitted.append(kwargs["node_id"])
         return super().submit(plan, inputs, hints, result_id, **kwargs)
 
 

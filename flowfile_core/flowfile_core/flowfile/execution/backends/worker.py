@@ -102,6 +102,7 @@ from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_ma
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import (
     capabilities_from_answer,
     ensure_handshake,
+    owns,
     reset_handshake,
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
@@ -216,19 +217,19 @@ class _DeferredPlan:
 class WorkerBackend:
     """``ComputeBackend`` for ``flowfile_worker``, built on the worker's existing routes.
 
-    ``url`` is the base URL of the worker this backend runs on; every transport call it makes goes there. The
-    registry's built-in worker backend is made with the URL core's worker settings configure, and a backend made on
-    another URL reaches that worker instead. The version handshake is once per process, not per backend: the first
-    worker called is checked, and a later call to another one is not.
+    ``url`` is the base URL of the worker this backend runs on; every transport call it makes goes there. The registry's
+    built-in worker backend is made with the URL core's worker settings configure, and a backend made on another URL
+    reaches that worker instead. The handshake checks each backend once per process, on its first use: the verdict is
+    this instance's, and a call that names ``url`` alone gates on it too while it owns the URL (``handshake.owns``).
 
     ``backend_id`` is the id the backend answers to, ``"worker"`` for the built-in one and ``worker:<name>`` for a
     configured one: the references and job handles it makes carry it, and it refuses those of any other id.
     ``token`` is the worker's own bearer token, which every ``/v1`` request and the ``/v1`` submit socket's upgrade
     carry as ``X-Flowfile-Internal``, and ``capabilities`` too in both flag states; ``None`` (the built-in backend)
-    signs them with the process's internal token. The task routes, and the handshake gate in front of them, always
-    sign with the process's token. A token that is no header value (``is_header_value``) fails each call it would
-    sign as a ``TaskFailed`` naming ``TOKEN_RULE``, before any HTTP or socket client is handed it, so no message, log
-    line or traceback carries it.
+    signs them with the process's internal token. The task routes always sign with the process's token; the handshake
+    reads ``capabilities`` and runs its probe jobs through this backend, so each signs as that call does. A token that
+    is no header value (``is_header_value``) fails each call it would sign as a ``TaskFailed`` naming ``TOKEN_RULE``,
+    before any HTTP or socket client is handed it, so no message, log line or traceback carries it.
 
     ``ca_cert`` is the PEM of the CA to verify an ``https://`` worker's certificate against when it is not public (a
     self-signed worker certificate is its own); the backend hands it to the transport (``trust_ca``) for its ``url``,
@@ -260,11 +261,13 @@ class WorkerBackend:
 
     The worker handshake runs before any call reaches the worker: every worker call goes through the transport's
     worker session or its WebSocket submit, which run it, and the ``/v1`` submit's socket calls ``ensure_handshake``
-    before it dials, as the transport's WebSocket submit does. So every method that calls the worker is gated by it
-    and can raise its ``VersionMismatch`` or ``ComputeUnavailable``, except ``capabilities``: it is the one read that
-    goes around the gate, so a caller can read a worker's versions and compare them with core's itself. The ``/v1``
-    requests and the ``/v1`` submit's socket give the gate this backend's ``id``, so its ``ComputeUnavailable`` names
-    the backend, as every one this backend makes for a worker it cannot reach does.
+    before it dials, as the transport's WebSocket submit does. So every method that calls the worker is gated by this
+    backend's verdict and can raise its ``VersionMismatch`` or ``ComputeUnavailable``, except ``capabilities``: it is
+    the one read that goes around the gate, the one the check itself reads, so a caller can read a worker's versions
+    and compare them with core's itself. A plugin or core's Python functions the verdict finds absent refuse no call
+    here; placement refuses the nodes that need them. The ``/v1`` requests and the ``/v1`` submit's socket give the
+    gate this backend's ``id``, so its ``ComputeUnavailable`` names the backend, as every one this backend makes for a
+    worker it cannot reach does.
 
     With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on (read on each call), ``submit`` sends a meta JSON (hints, inputs,
     ids) and the plan over the worker's ``WS /v1/ws/submit``, and posts them to ``POST /v1/submit`` only when the socket
@@ -307,6 +310,7 @@ class WorkerBackend:
         self.id = backend_id
         self.token = token
         trust_ca(url, ca_cert)
+        owns(self)
         self._auth = _TokenAuth(token, backend_id) if token is not None else None
         self._lock = threading.Lock()
         self._deferred: dict[str, _DeferredPlan] = {}
@@ -885,8 +889,8 @@ class WorkerBackend:
         dialled after ``ensure_handshake``, with this backend's token (``_internal_token``), its ``X-Protocol-Version``,
         no frame-size cap (a deferred result's ``complete`` frame carries its plan) and the CA the transport trusts for
         ``url`` (``ssl_context_for``; ``None`` verifies a ``wss://`` worker against the public CAs); a connect that
-        fails at the network re-arms the handshake, as the transport's WebSocket submit does. Once the plan is sent the
-        answer is the final frame's, and nothing is resent.
+        fails at the network re-arms the handshake of the backends on ``url``, as the transport's WebSocket submit does
+        for every backend. Once the plan is sent the answer is the final frame's, and nothing is resent.
 
         Raises:
             ComputeUnavailable: The socket closed after the plan was sent.
@@ -908,7 +912,7 @@ class WorkerBackend:
                 ssl=ssl_context_for(self.url),
             )
         except OSError as e:
-            reset_handshake()
+            reset_handshake(self.url)
             logger.debug(f"The /v1 submit socket to {self.url} could not be opened ({e}); posting the plan instead")
             return None
         except Exception as e:

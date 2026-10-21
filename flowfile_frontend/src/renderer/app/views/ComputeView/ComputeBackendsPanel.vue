@@ -4,7 +4,8 @@
       <h2 class="page-title">Compute backends</h2>
       <p class="page-description">
         Workers Flowfile can reach besides its built-in worker service, on this host or another. A
-        handshake checks that a worker runs the same versions as this server.
+        handshake checks a worker's versions against this server's, and which plugins and Python
+        functions it runs.
       </p>
     </div>
 
@@ -61,11 +62,27 @@
             <tr v-if="verdicts[backend.id]" class="backends-verdict-row">
               <td colspan="3">
                 <div
-                  v-if="verdicts[backend.id].ok && verdicts[backend.id].worker"
+                  v-if="verdicts[backend.id].ok && verdicts[backend.id].backend"
                   class="backends-verdict backends-verdict--ok"
                 >
                   <i class="fa-solid fa-circle-check"></i>
-                  <span>{{ matchLine(verdicts[backend.id].worker!) }}</span>
+                  <div>
+                    <div>{{ matchLine(verdicts[backend.id]) }}</div>
+                    <div
+                      v-for="difference in verdicts[backend.id].differences"
+                      :key="difference"
+                      class="backends-difference"
+                    >
+                      {{ difference }}
+                    </div>
+                    <div
+                      v-for="(reason, name) in verdicts[backend.id].absent"
+                      :key="name"
+                      class="backends-difference"
+                    >
+                      offered without: {{ absentLabel(String(name)) }} — {{ reason }}
+                    </div>
+                  </div>
                 </div>
                 <div v-else class="backends-verdict backends-verdict--error">
                   <i class="fa-solid fa-circle-xmark"></i>
@@ -147,8 +164,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import type { WorkerCapabilities } from "../../api/computeBackends.api";
+import type { HandshakeVerdict } from "../../api/computeBackends.api";
 import { useAuthStore } from "../../stores/auth-store";
+import { absentLabel } from "../../utils/executionLocation";
 import { NO_AUTOFILL } from "../../utils/noAutofill";
 import { plainHttpOffLoopback, useComputeBackends } from "./useComputeBackends";
 
@@ -161,9 +179,14 @@ const form = reactive({ name: "", url: "", token: "", ca_cert: "" });
 const canAdd = computed(() => form.name !== "" && form.url !== "" && form.token !== "");
 const plainHttp = computed(() => plainHttpOffLoopback(form.url));
 
-const matchLine = (worker: WorkerCapabilities): string =>
-  `Matches this server: Flowfile ${worker.app_version}, Polars ${worker.polars_version}, ` +
-  `Python ${worker.python_version}, ${worker.platform}`;
+const matchLine = (verdict: HandshakeVerdict): string => {
+  const backend = verdict.backend!;
+  const exact = !verdict.differences.length && !Object.keys(verdict.absent).length;
+  return (
+    `${exact ? "Matches this server" : "Accepted by this server"}: Flowfile ${backend.app_version}, ` +
+    `Polars ${backend.polars_version}, Python ${backend.python_version}, ${backend.platform}`
+  );
+};
 
 const onAdd = async () => {
   if (!canAdd.value) return;

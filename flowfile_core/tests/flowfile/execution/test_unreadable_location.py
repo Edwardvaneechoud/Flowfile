@@ -627,7 +627,8 @@ def test_a_missing_file_in_core_reruns_a_held_input_only_with_the_flag_off(unrea
         return submit(self, plan, inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
 
     def recording_release(self, ref):
-        releases.append(ref.result_id)
+        if not ref.result_id.startswith("handshake-"):
+            releases.append(ref.result_id)
         return release(self, ref)
 
     monkeypatch.setattr(UnreadableBackend, "submit", recording_submit)

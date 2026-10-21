@@ -30,6 +30,7 @@ const core: WorkerCapabilities = {
   python_version: "3.12.8",
   protocol_version: 1,
   platform: "darwin-arm64",
+  polars_runtime: "32",
   plugins: {},
   plugin_libs: {},
   operations: [],
@@ -57,7 +58,7 @@ beforeEach(() => {
   rows = [];
   mocks.list.mockReset().mockImplementation(async () => rows.map((row) => ({ ...row })));
   mocks.add.mockReset().mockImplementation(async (input: ComputeBackendInput) => {
-    const row = { id: `worker:${input.name}`, url: input.url };
+    const row = { id: `worker:${input.name}`, url: input.url, verdict: null };
     rows.push(row);
     return { ...row };
   });
@@ -67,21 +68,45 @@ beforeEach(() => {
   mocks.handshake.mockReset();
 });
 
+const checked: HandshakeVerdict = {
+  id: "worker:team",
+  ok: true,
+  core,
+  backend: core,
+  offered: core,
+  differences: [],
+  absent: {},
+  error: null,
+};
+
 describe("load", () => {
   it("fills the rows and clears an earlier error", async () => {
-    rows = [{ id: "worker:team", url: TEAM_URL }];
+    rows = [{ id: "worker:team", url: TEAM_URL, verdict: null }];
     const page = useComputeBackends();
     page.loadError.value = "stale";
 
     await page.load();
 
-    expect(page.backends.value).toEqual([{ id: "worker:team", url: TEAM_URL }]);
+    expect(page.backends.value).toEqual([{ id: "worker:team", url: TEAM_URL, verdict: null }]);
     expect(page.loadError.value).toBe("");
     expect(page.loading.value).toBe(false);
   });
 
+  it("seeds each worker's verdict from the listing, so one a run produced shows without a handshake", async () => {
+    rows = [
+      { id: "worker:team", url: TEAM_URL, verdict: checked },
+      { id: "worker:gpu", url: "https://gpu.example:63579", verdict: null },
+    ];
+    const page = useComputeBackends();
+
+    await page.load();
+
+    expect(page.verdicts.value).toEqual({ "worker:team": checked });
+    expect(mocks.handshake).not.toHaveBeenCalled();
+  });
+
   it("keeps the rows it had when the list is refused, and says why", async () => {
-    rows = [{ id: "worker:team", url: TEAM_URL }];
+    rows = [{ id: "worker:team", url: TEAM_URL, verdict: null }];
     const page = useComputeBackends();
     await page.load();
     mocks.list.mockRejectedValueOnce(new Error("Network Error"));
@@ -89,7 +114,7 @@ describe("load", () => {
     await page.load();
 
     expect(page.loadError.value).toBe("Couldn't read the configured workers.");
-    expect(page.backends.value).toEqual([{ id: "worker:team", url: TEAM_URL }]);
+    expect(page.backends.value).toEqual([{ id: "worker:team", url: TEAM_URL, verdict: null }]);
   });
 });
 
@@ -103,7 +128,7 @@ describe("add", () => {
     const row = await pending;
 
     expect(mocks.add).toHaveBeenCalledWith(input);
-    expect(row).toEqual({ id: "worker:team", url: TEAM_URL });
+    expect(row).toEqual({ id: "worker:team", url: TEAM_URL, verdict: null });
     expect(page.backends.value.map((b) => b.id)).toEqual(["worker:team"]);
     expect(page.adding.value).toBe(false);
   });
@@ -201,15 +226,8 @@ describe("add", () => {
 
 describe("remove", () => {
   it("deletes by id, and the row and its verdict are gone", async () => {
-    rows = [{ id: "worker:team", url: TEAM_URL }];
-    mocks.handshake.mockResolvedValueOnce({
-      id: "worker:team",
-      ok: true,
-      core,
-      worker: core,
-      differences: [],
-      error: null,
-    } satisfies HandshakeVerdict);
+    rows = [{ id: "worker:team", url: TEAM_URL, verdict: null }];
+    mocks.handshake.mockResolvedValueOnce(checked);
     const page = useComputeBackends();
     await page.load();
     await page.handshake("worker:team");
@@ -236,21 +254,26 @@ describe("remove", () => {
 
 describe("handshake", () => {
   const verdicts: Record<string, HandshakeVerdict> = {
-    match: { id: "worker:team", ok: true, core, worker: core, differences: [], error: null },
+    match: checked,
+    narrowed: {
+      ...checked,
+      offered: { ...core, plugins: {} },
+      absent: { polars_ds: "this backend does not have" },
+    },
     mismatch: {
-      id: "worker:team",
+      ...checked,
       ok: false,
-      core,
-      worker: { ...core, polars_version: "0.20.31" },
-      differences: ["polars_version: core 1.39.3, worker 0.20.31"],
-      error: null,
+      backend: { ...core, polars_version: "0.20.31" },
+      offered: null,
+      differences: ["polars_version: core 1.39.3, backend 0.20.31"],
+      error:
+        'Backend "worker:team" does not match core (polars_version: core 1.39.3, backend 0.20.31)',
     },
     unreachable: {
-      id: "worker:team",
+      ...checked,
       ok: false,
-      core,
-      worker: null,
-      differences: [],
+      backend: null,
+      offered: null,
       error: `Could not reach the worker at ${TEAM_URL}: Connection refused`,
     },
   };
