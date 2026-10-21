@@ -116,9 +116,11 @@ class LocalBackend:
     Materialisation policy: with ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on, a submit whose hints say
     ``must_materialise`` is stored: a streaming sink writes its rows to a file under core's own storage directory and
     the store holds a scan of that file, so nothing is collected into memory. Every other plan, and every plan with
-    the flag off, is held deferred as the object submitted. No sample is returned inline either way, even when
-    ``preview_rows`` asks for one, because ``sample`` serves it when something reads it. Apart from a stored result,
-    nothing in core computes a node's rows before a consumer, a write or an opened preview needs them.
+    the flag off, is held deferred as the object submitted. With the flag on, a submit whose hints set ``preview_rows``
+    also answers that many rows inline, a bounded collect of what it holds, so a plan that cannot run raises its Polars
+    error from ``submit`` and nothing stays held under the id; with the flag off no sample comes inline and ``sample``
+    serves the preview when it is opened. Apart from a stored result and that preview, nothing in core computes a node's
+    rows before a consumer, a write or an opened preview needs them.
 
     A blob (``ResultRef.kind == "blob"``), an imported one or a model a training fitted here, is held as a copy of its
     bytes at ``cache/local/-1/<result_id>.blob`` under core's storage directory, beside the store, in both flag states.
@@ -168,9 +170,11 @@ class LocalBackend:
         ``must_materialise`` is streamed to ``cache/local/<flow_id>/<result_id>.arrow`` under core's storage
         directory and held as a scan of that file; a sink that fails leaves no file at that path and nothing held, and
         its Polars error propagates, while what it wrote beside the path goes with the id's next ``release`` or
-        ``submit``. The other hints are not read (see the class docstring), nor is ``node_id``. What the id held is
-        dropped first, its files included. ``inputs`` are only validated: a plan over results of this backend already
-        reads them through its own leaves (``plan_for``). The returned sample is always ``None``.
+        ``submit``. ``wide`` and ``fanout`` are not read (see the class docstring), nor is ``node_id``. What the id held
+        is dropped first, its files included. ``inputs`` are only validated: a plan over results of this backend
+        already reads them through its own leaves (``plan_for``). With the flag on and ``preview_rows`` set, the
+        returned sample is the first ``preview_rows`` rows of what the id now holds, and a plan that cannot collect them
+        raises its Polars error with nothing left held under the id; otherwise the sample is ``None``.
 
         Raises:
             ForeignRef: An input was minted by another backend.
@@ -184,7 +188,14 @@ class LocalBackend:
             ref = self._store(plan, result_id=result_id, flow_id=flow_id)
         else:
             ref = self._hold(plan, result_id=result_id)
-        return SubmitResult(ref=ref, sample=None, handle=JobHandle(backend_id=self.id, job_id=result_id))
+        sample = None
+        if settings.FLOWFILE_COMPUTE_PROTOCOL and hints.preview_rows is not None:
+            try:
+                sample = _ipc_stream(self._plan(ref).head(hints.preview_rows).collect())
+            except BaseException:
+                self._drop(_store_key(ref))
+                raise
+        return SubmitResult(ref=ref, sample=sample, handle=JobHandle(backend_id=self.id, job_id=result_id))
 
     def run_op(self, op: OperationKind, payload: OpPayload) -> OpResult:
         """Run ``op`` in this process with the payload its method documents.

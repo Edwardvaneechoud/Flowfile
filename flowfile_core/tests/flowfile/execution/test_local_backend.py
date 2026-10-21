@@ -1,8 +1,10 @@
 """Core's own process as a compute: plans held lazily in an in-process store, operations run in process.
 
 With the protocol flag on, a plan that must be materialised is streamed to a file under core's storage directory
-instead, and held as a scan of that file. A result is exported to a URI by a streaming sink of its plan, and a URI is
-imported as a scan held deferred. A blob is copied into core's storage directory and out again, and never read as rows.
+instead, and held as a scan of that file, and a submit that asks for a preview answers it inline, a bounded collect of
+the held plan, so a plan that cannot collect fails its submit. A result is exported to a URI by a streaming sink of its
+plan, and a URI is imported as a scan held deferred. A blob is copied into core's storage directory and out again, and
+never read as rows.
 """
 
 import datetime
@@ -217,6 +219,22 @@ def test_a_plan_that_fails_to_collect_is_held_and_fails_where_it_is_read(backend
         backend.sample(ref, 5)
 
 
+def test_a_preview_validates_the_plan_so_one_that_cannot_run_fails_its_submit(backend):
+    failing = pl.LazyFrame({"a": ["x"]}).select(pl.col("a").cast(pl.Int64, strict=True))
+
+    if settings.FLOWFILE_COMPUTE_PROTOCOL:
+        with pytest.raises(pl.exceptions.InvalidOperationError):
+            submit(backend, failing, submit_hints=hints(preview_rows=5))
+        assert backend._results == {}
+        return
+
+    ref = submit(backend, failing, submit_hints=hints(preview_rows=5)).ref
+
+    assert ref.state == "deferred"
+    with pytest.raises(pl.exceptions.InvalidOperationError):
+        backend.sample(ref, 5)
+
+
 @pytest.mark.parametrize("next_call", ["release", "submit"])
 def test_a_failed_sink_never_writes_the_result_file_and_what_it_wrote_goes_with_the_ids_next_call(
     backend, ten_rows, next_call, monkeypatch, tmp_path
@@ -260,13 +278,17 @@ def test_the_plan_is_held_as_the_object_submitted(backend, monkeypatch):
 
 
 @pytest.mark.parametrize("preview_rows", [None, 4])
-def test_no_sample_comes_inline_and_sample_serves_it_when_read(backend, ten_rows, preview_rows, monkeypatch):
+def test_a_preview_comes_inline_under_the_flag_and_sample_serves_it_again(backend, ten_rows, preview_rows, monkeypatch):
     collects = count_collects(monkeypatch)
 
     submitted = submit(backend, ten_rows, submit_hints=hints(preview_rows=preview_rows))
 
-    assert submitted.sample is None
-    assert collects == []
+    if settings.FLOWFILE_COMPUTE_PROTOCOL and preview_rows is not None:
+        assert collects == [4]
+        assert ipc_rows(submitted.sample)["n"].to_list() == [0, 1, 2, 3]
+    else:
+        assert submitted.sample is None
+        assert collects == []
     assert ipc_rows(backend.sample(submitted.ref, 4)).height == 4
 
 
