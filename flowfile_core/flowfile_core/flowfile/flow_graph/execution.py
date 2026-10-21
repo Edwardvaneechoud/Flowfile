@@ -25,7 +25,7 @@ from flowfile_core.flowfile.catalog_cdc import (
 )
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.context import ExecutionContext, current_context, use_context
-from flowfile_core.flowfile.execution.errors import ComputeError
+from flowfile_core.flowfile.execution.errors import ComputeError, VersionMismatch
 from flowfile_core.flowfile.execution.exchange import ExchangeRun
 from flowfile_core.flowfile.execution.placement import (
     MixedPlacementPolicy,
@@ -1034,11 +1034,12 @@ class ExecutionMixin(GraphMixinBase):
         ``execution_location`` names, ``"auto"`` to the run's (``MixedPlacementPolicy``); without one every node goes
         to the run's backend whatever its own setting says, but the ones their builders pin to the worker
         (``SingleBackendPolicy``). Each backend named is read through its handshake verdict (``handshake.verdict_for``,
-        which checks it on its first use in this process). One whose check raises a ``ComputeError``, or whose verdict
-        refuses it whole, is left out of the map ``place`` is given, so its nodes are not placed and meet that typed
-        error when they run; an id the registry does not know refuses every node assigned to it with the registry's
-        message. Every other backend's offered capabilities go into that map and what its verdict found it does not
-        offer into ``place``'s ``absent``, so a node that needs it is refused there with the reason.
+        which checks it on its first use in this process). One whose verdict refuses it whole, or whose check raises a
+        ``VersionMismatch``, refuses every node assigned to it with that error, as an id the registry does not know does
+        with the registry's message; one whose check raises any other ``ComputeError`` is left out of the map ``place``
+        is given, so its nodes are not placed and meet that typed error when they run. Every other backend's offered
+        capabilities go into that map and what its verdict found it does not offer into ``place``'s ``absent``, so a
+        node that needs it is refused there with the reason.
 
         Every boundary crosses through the run's prefix in the exchange store (the ``exchange_run`` given), resolved
         once per run as the operator's connection: one ``BoundaryEdge`` per output of the upstream node that the
@@ -1060,24 +1061,29 @@ class ExecutionMixin(GraphMixinBase):
             policy = SingleBackendPolicy(run_backend_id)
         declared: dict[str, Capabilities] = {}
         absent: dict[str, dict[str, str]] = {}
-        unknown: dict[str, str] = {}
+        refused: dict[str, str] = {}
         for backend_id in dict.fromkeys(policy.backend_for(node) for node in nodes):
             try:
                 verdict = handshake.verdict_for(registry.backend(backend_id))
+            except VersionMismatch as e:
+                refused[backend_id] = str(e)
+                continue
             except ComputeError:
                 continue
             except LookupError as e:
-                unknown[backend_id] = str(e)
+                refused[backend_id] = str(e)
                 continue
             if verdict.ok:
                 declared[backend_id] = verdict.offered
                 absent[backend_id] = verdict.absent
+            else:
+                refused[backend_id] = verdict.error
         placement = place(self, declared, policy, nodes=nodes, absent=absent)
-        if unknown:
+        if refused:
             refusals = [
-                Refusal(node.node_id, policy.backend_for(node), unknown[policy.backend_for(node)])
+                Refusal(node.node_id, policy.backend_for(node), refused[policy.backend_for(node)])
                 for node in nodes
-                if policy.backend_for(node) in unknown
+                if policy.backend_for(node) in refused
             ]
             placement = Placement(
                 assignment={**placement.assignment, **{refusal.node_id: refusal.backend_id for refusal in refusals}},

@@ -653,11 +653,9 @@ def test_the_nodes_of_a_backend_that_cannot_be_asked_meet_its_error_when_they_ru
     assert backend.asked == 1
 
 
-@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
-def test_a_node_a_version_mismatch_failed_carries_the_error_s_class_on_its_row(declare, monkeypatch, flag):
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+def test_a_node_a_version_mismatch_failed_carries_the_error_s_class_on_its_row(protocol_off, declare):
     declare(VersionMismatch("polars_version: core 1, worker 2"))
-    graph = fuzzy_flow(8414 if flag else 8413)
+    graph = fuzzy_flow(8413)
 
     run_info = graph.run_graph()
 
@@ -668,6 +666,21 @@ def test_a_node_a_version_mismatch_failed_carries_the_error_s_class_on_its_row(d
         assert result.error.startswith("polars_version: core 1, worker 2"), result.error
         assert result.compute_error == "VersionMismatch"
     assert run_info.success is False
+
+
+def test_a_version_mismatch_refuses_every_node_of_the_backend_before_any_starts(protocol_on, declare):
+    backend = declare(VersionMismatch("polars_version: core 1, worker 2"))
+    graph = fuzzy_flow(8414)
+
+    run_info = graph.run_graph()
+
+    results = {result.node_id: result for result in run_info.node_step_result}
+    assert results.keys() == {1, 2, 3}, results
+    for result in results.values():
+        assert result.error == 'cannot run on backend "declaring": polars_version: core 1, worker 2', result.error
+        assert result.compute_error == "Refusal"
+    assert run_info.success is False
+    assert backend.work == []
 
 
 def test_a_node_another_error_failed_carries_no_compute_error(protocol_off, declare):

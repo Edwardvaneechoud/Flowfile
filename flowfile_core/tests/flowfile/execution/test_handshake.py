@@ -299,13 +299,12 @@ def test_two_workers_are_each_checked_on_first_use_and_the_mismatched_one_is_sen
     refused = one_node_graph(9202, TEAM, cache_results=True).run_graph()
 
     result = row(refused, 1)
+    mismatch = f'Backend "{TEAM}" does not match core (polars_version: core {pl.__version__}, backend 0.0.1)'
     assert refused.success is False
-    assert result.error == (
-        f'Backend "{TEAM}" does not match core (polars_version: core {pl.__version__}, backend 0.0.1)'
-    )
-    assert result.compute_error == "VersionMismatch"
-    # a refused verdict is checked again on the next use: with the flag on, placement is the first, the node's gate next
-    assert team_asked == [1] * (2 if flag else 1)
+    # with the flag on placement refuses the node, so no node starts; with it off the node's gate raises
+    assert result.error == (f'cannot run on backend "{TEAM}": {mismatch}' if flag else mismatch)
+    assert result.compute_error == ("Refusal" if flag else "VersionMismatch")
+    assert team_asked == [1]
     assert probes == []
     assert [url for url in sent if url.split("://", 1)[1].startswith(team.url.split("://", 1)[1])] == []
 
@@ -473,6 +472,23 @@ def test_a_python_that_differs_is_listed_and_a_formula_still_runs_where_the_prob
     assert verdict.backend.platform == "plan9-mips"
 
 
+def test_a_backend_of_any_kind_refused_whole_refuses_its_nodes_at_placement(protocol_on, monkeypatch):
+    backend = register_team(CoreAsTeam(polars_version="0.0.1"))
+    submitted = []
+    monkeypatch.setattr(backend, "submit", lambda *args, **kwargs: submitted.append(args))
+    graph = formula_and_select_graph(9215)
+
+    refused = graph.run_graph()
+
+    mismatch = f'Backend "{TEAM}" does not match core (polars_version: core {pl.__version__}, backend 0.0.1)'
+    assert refused.success is False
+    assert sorted((result.node_id, result.error) for result in refused.node_step_result) == [
+        (node_id, f'cannot run on backend "{TEAM}": {mismatch}') for node_id in (1, 2, 3)
+    ]
+    assert submitted == []
+    assert handshake.last_verdict(TEAM).error == mismatch
+
+
 @pytest.mark.parametrize("field", ["polars_version", "polars_runtime"])
 def test_another_polars_or_runtime_refuses_the_backend_naming_both_sides(flag, monkeypatch, sent, field):
     core = local_capabilities()
@@ -548,9 +564,12 @@ def test_a_node_on_an_earlier_release_or_on_no_worker_fails_with_the_typed_error
 
     run_info = one_node_graph(9205, cache_results=True).run_graph()
 
+    refused_at_placement = flag and error is VersionMismatch
     assert run_info.success is False
-    assert row(run_info, 1).error == message
-    assert row(run_info, 1).compute_error == error.__name__
+    assert row(run_info, 1).error == (
+        f'cannot run on backend "{registry.WORKER_BACKEND_ID}": {message}' if refused_at_placement else message
+    )
+    assert row(run_info, 1).compute_error == ("Refusal" if refused_at_placement else error.__name__)
 
 
 def test_a_worker_without_a_capabilities_route_is_an_older_release(monkeypatch):
