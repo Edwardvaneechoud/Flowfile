@@ -529,3 +529,57 @@ def test_an_ml_body_that_names_a_path_is_422(jobs, tmp_path):
     assert "model_path" in apply.text
     assert job_id not in status_dict
     assert not (tmp_path / "model.json").exists()
+
+
+def _polars_code_body(code: str, inputs: list[pl.LazyFrame]) -> dict:
+    return {
+        "code": code,
+        "inputs": [base64.b64encode(plan.serialize()).decode("ascii") for plan in inputs],
+        "flowfile_flow_id": FLOW_ID,
+        "flowfile_node_id": NODE_ID,
+    }
+
+
+def test_polars_code_holds_a_lazy_result_deferred_with_the_plans_columns(jobs):
+    job_id = jobs()
+    shapes = pl.LazyFrame({"id": [1, 2, 3], "geom": pl.Series([bytes([i]) for i in range(3)], dtype=GEOARROW_WKB)})
+    names = pl.LazyFrame({"id": [2, 3, 4], "name": ["b", "c", "d"]})
+    body = _polars_code_body("input_df_1.join(input_df_2, on='id')", [shapes, names])
+
+    answer = _answer(_post_op("polars_code", job_id, body))
+
+    ref = answer.outputs["result"]
+    assert list(answer.outputs) == ["result"]
+    assert (ref.result_id, ref.state, ref.row_count) == (f"{job_id}_0", "deferred", None)
+    assert ref.columns == schema_to_wire(shapes.join(names, on="id").collect_schema())
+    assert ref.columns[1].data_type == "Extension('geoarrow.wkb', Binary, '{}')"
+    response = client.get(f"/v1/results/{ref.result_id}/sample", params={"n": 10})
+    assert response.status_code == 200, response.text
+    assert sorted(pl.read_ipc_stream(response.content)["name"].to_list()) == ["b", "c"]
+
+
+def test_polars_code_holds_an_eager_result_as_a_file(jobs):
+    job_id = jobs()
+    body = _polars_code_body("output_df = input_df.collect().head(2)", [PEOPLE.lazy()])
+
+    answer = _answer(_post_op("polars_code", job_id, body))
+
+    ref = answer.outputs["result"]
+    assert (ref.result_id, ref.state, ref.row_count) == (f"{job_id}_0", "materialised", 2)
+    assert _location(ref).path == str(result_path(FLOW_ID, ref.result_id))
+    assert _rows(ref)["id"].to_list() == [1, 2]
+
+
+def test_polars_code_that_fails_answers_500_and_holds_nothing(jobs):
+    job_id = jobs()
+    body = _polars_code_body("output_df = input_df.select('missing')", [PEOPLE.lazy()])
+
+    response = _post_op("polars_code", job_id, body)
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert (detail["status"], detail["error_kind"]) == ("Error", "task")
+    assert "ColumnNotFoundError" in detail["error_message"]
+    assert "missing" in detail["error_message"]
+    assert client.head(f"/v1/results/{job_id}_0").status_code == 404
+    assert not result_path(FLOW_ID, f"{job_id}_0").exists()

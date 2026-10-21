@@ -487,6 +487,50 @@ def split_result(
         progress.value = 100
 
 
+def polars_code(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,
+    flowfile_flow_id: int,
+    flowfile_node_id: int | str,
+    code: str,
+    inputs: list[bytes],
+):
+    """Run a Polars Code node's code once over its input plans, for ``POST /v1/ops/polars_code``.
+
+    The code runs in the Polars Code sandbox (``shared.polars_code_parser``), given the plans of *inputs* in order. A
+    ``DataFrame`` it returns is written as IPC to *file_path* and its ``pl.Schema`` and height are queued; a
+    ``LazyFrame`` is queued as its resolved ``pl.Schema`` and its serialised plan, with no row count, nothing collected
+    and nothing written. The schema is the result's own, never one read back from a file (see ``submit_result``).
+    *polars_serializable_object* is not read: the plans come as *inputs*.
+    """
+    from shared.polars_code_parser import polars_code_parser
+
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(f"Starting Polars code over {len(inputs)} inputs")
+    try:
+        frames = [_load_plan(plan) for plan in inputs]
+        result = polars_code_parser.get_executable(code, num_inputs=len(inputs))(*frames)
+        if isinstance(result, pl.DataFrame):
+            with environment_failures():
+                result.write_ipc(file_path)
+            reported = {"columns": result.schema, "row_count": result.height, "plan": None}
+        else:
+            reported = {"columns": result.collect_schema(), "row_count": None, "plan": result.serialize()}
+    except BaseException as e:
+        flowfile_logger.error(f"Error during Polars code: {str(e)}")
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
+        return
+    # A dict, not a tuple: spawner.unpack_result reads a 2-tuple as (payload, row_count).
+    queue.put(reported)
+    with progress.get_lock():
+        progress.value = 100
+
+
 def calculate_schema_logic(
     df: pl.LazyFrame, optimize_memory: bool = True, flowfile_logger: Logger = None
 ) -> list[dict]:

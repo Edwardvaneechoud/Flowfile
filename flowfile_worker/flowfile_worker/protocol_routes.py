@@ -12,6 +12,9 @@ custom node, a model's training or its apply in the child its task route spawns,
 request's ``job_id`` names, and holds each output that child wrote as the materialised result
 ``<job_id>_<i>``, which the same routes read, count, probe and release. A training's output is the
 model it fitted, held as a blob; an apply scores with a model held here, named by its result id.
+``POST /v1/ops/polars_code`` runs a Polars Code node's code once in a pooled child and holds its
+result as ``<job_id>_0``: deferred, as its plan, when the code answered a LazyFrame, materialised in
+its file when it answered a DataFrame.
 ``POST /v1/results/{id}/export`` writes a held result to a URI as parquet in a
 ``funcs.export_result`` child; ``POST /v1/results/{id}/import`` holds a scan of a URI as a deferred
 result, with the columns and row count core sent and nothing read. A credential crosses either as a
@@ -108,13 +111,14 @@ OPERATIONS = frozenset(
         "delta_merge",
         "delta_scd2",
         "viz_session",
+        "polars_code",
     }
 )
 """The operation kinds this worker runs, by ``OperationKind`` value; a kind is named while a route here runs it.
 
-Ten are the ``POST /v1/ops/<kind>`` routes below: the reads, the fuzzy join, the custom node, the random split, and
-ML training and apply. The other seven are served by the task routes in ``routes.py``: the database, cloud and file
-writes, the Delta write, merge and SCD2 write, and the visualisation sessions.
+Eleven are the ``POST /v1/ops/<kind>`` routes below: the reads, the fuzzy join, the custom node, the random split, ML
+training and apply, and Polars code. The other seven are served by the task routes in ``routes.py``: the database,
+cloud and file writes, the Delta write, merge and SCD2 write, and the visualisation sessions.
 """
 
 # An operation's job id names its output files, so it holds no path separator.
@@ -211,6 +215,20 @@ class MlApplyInput(models.PolarsOperation):
 
     model: str
     output_column: str
+
+
+class PolarsCodeInput(BaseModel):
+    """The body of a Polars Code run: the node's code, its input plans in connection order, and its flow and node.
+
+    An unknown field is refused rather than dropped, because core builds this body by hand.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    inputs: list[models.Base64Bytes]
+    flowfile_flow_id: int
+    flowfile_node_id: int | str = -1
 
 
 class CredentialRefBody(BaseModel):
@@ -981,3 +999,45 @@ def ml_apply(body: MlApplyInput, job_id: JobId) -> OpOutputs:
     return OpOutputs(
         outputs={"result": _hold_output(result_id, path, rows.collect_schema(), row_count, flow_id, node_id)}
     )
+
+
+@router.post("/ops/polars_code", response_model=OpOutputs)
+def polars_code(body: PolarsCodeInput, job_id: JobId) -> OpOutputs:
+    """Run a Polars Code node's code once over its input plans in a child as job *job_id* and hold its result.
+
+    A LazyFrame the code answers is held as the deferred result ``result``, its plan and the columns the child resolved
+    for it, nothing collected, so every dtype of the plan reaches its consumers; a DataFrame is written to its file and
+    held materialised with its height. Either is ``<job_id>_0``.
+    """
+    flow_id, node_id = body.flowfile_flow_id, body.flowfile_node_id
+    (result_id,) = _op_outputs(job_id, 1)
+    path = _output_file(flow_id, result_id)
+    reported, _ = _run_op(
+        job_id,
+        lambda: start_process(
+            b"",
+            task_id=job_id,
+            operation="polars_code",
+            file_ref=path,
+            flowfile_flow_id=flow_id,
+            flowfile_node_id=node_id,
+            kwargs={"code": body.code, "inputs": list(body.inputs)},
+        ),
+        [path],
+    )
+    if reported["plan"] is None:
+        ref = _hold_output(result_id, path, reported["columns"], reported["row_count"], flow_id, node_id)
+    else:
+        record = ResultRecord(
+            result_id=result_id,
+            state="deferred",
+            columns=schema_to_wire(reported["columns"]),
+            row_count=None,
+            flow_id=flow_id,
+            node_id=node_id,
+            plan=reported["plan"],
+        )
+        results.put(record)
+        results.mark_ended(result_id)
+        ref = record.ref()
+    return OpOutputs(outputs={"result": ref})

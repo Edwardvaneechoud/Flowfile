@@ -77,6 +77,7 @@ ROUTES = [
             "random_split",
             "ml_train",
             "ml_apply",
+            "polars_code",
         )
     ],
 ]
@@ -198,6 +199,7 @@ def test_the_v1_paths_are_in_the_openapi_document():
         "/v1/ops/random_split",
         "/v1/ops/ml_train",
         "/v1/ops/ml_apply",
+        "/v1/ops/polars_code",
     }
     assert set(paths["/v1/results/{result_id}"]) == {"head", "delete"}
 

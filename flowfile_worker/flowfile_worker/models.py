@@ -38,6 +38,7 @@ OperationType = Literal[
     "write_delta",
     "merge_delta",
     "scd2_delta",
+    "polars_code",
 ]
 ResultType = Literal["polars", "other"]
 
