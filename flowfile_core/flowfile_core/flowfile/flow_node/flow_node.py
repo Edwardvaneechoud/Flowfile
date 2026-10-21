@@ -1619,18 +1619,19 @@ class FlowNode:
         What the node owns goes together: its result (``results.result_ref``), the other outputs it stored beside it
         (``_store_other_outputs``) and the stored outputs of its operation (``_operation_refs``: a read's result, a
         fuzzy join's, a random split's per split, a custom node's per output, the model a Train Model node fitted),
-        each id released once. ``results.model_ref`` is forgotten, not released: the model it names is among the
-        operation's outputs, or, on a combined graph's node, held by the node it was carried from. It is called on a
-        rerun under another hash or on another backend, on removal, when the graph closes and when the node fails after
-        storing part of its outputs. A release whose backend cannot be reached (``ComputeUnavailable``) is logged and
-        the reference dropped; any other release error raises.
+        each id released once. ``results.model_ref`` is forgotten with the model it names when that model is among the
+        operation's outputs; one the node did not fit (carried onto a combined graph's node, held by the node it was
+        carried from) is left as it is. It is called on a rerun under another hash or on another backend, on removal,
+        when the graph closes and when the node fails after storing part of its outputs. A release whose backend
+        cannot be reached (``ComputeUnavailable``) is logged and the reference dropped; any other release error raises.
         """
         ref = self.results.result_ref
         self.results.result_ref = None
         self.results.job_handle = None
-        self.results.model_ref = None
         stored, self._stored_outputs = list(self._stored_outputs.values()), {}
         minted, self._operation_refs = list(self._operation_refs.values()), {}
+        if self.results.model_ref in minted:
+            self.results.model_ref = None
         released: set[tuple[str, str]] = set()
         for held in [ref, *stored, *minted]:
             if held is None or (held.backend_id, held.result_id) in released:
