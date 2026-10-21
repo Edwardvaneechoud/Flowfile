@@ -275,6 +275,8 @@ GROUP BY c.name
 
 The node is read-only: a query must start with `SELECT` or `WITH`, and statements that modify data or schema — `INSERT`, `UPDATE`, `DELETE`, `DROP`, `CREATE`, `ALTER`, `TRUNCATE` — are rejected. Invalid or unsafe SQL surfaces as a node error before the flow runs.
 
+The query runs where the flow runs, on the worker or, for a local run, in Flowfile's own process, once over the node's inputs. Before the node has run, the designer predicts its columns by running the query over an empty frame of each input.
+
 A query placed from the [Python API](../../python-api/reference/flowframe-operations.md#sql-queries) (`frame.sql(...)`, `ff.sql(...)`) that names its tables starts with a `WITH <name> AS (SELECT * FROM input_<n>)` header mapping each name to its input.
 
 !!! tip "Querying catalog tables"
