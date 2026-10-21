@@ -308,7 +308,7 @@ A snippet does the same in fewer lines:
 input_df.filter(pl.col('Age') > 30)
 ```
 
-Code that collects an input (`collect()`) or reads its schema (`collect_schema()`, `.columns`, `.schema`) reads that input in Flowfile's own process instead of on the worker: on one machine `collect()` loads the rows there and a schema read opens the file there, and with a [worker on another host](../../deployment/remote-worker.md) either fails. Keep the code lazy.
+The code runs where the flow runs, on the worker or, for a local run, in Flowfile's own process, and it runs once over the node's inputs, so code that collects an input, reads a value of it or writes a file does that there, once, as a script would. Before the node has run, the designer predicts its columns by running the code once more over an empty frame of each input, so code that reads a value of its input shows its columns once the node has run.
 
 ## ![Python Script](../../../assets/images/nodes/python_code.svg){ width="44" height="44" } Python Script
 
