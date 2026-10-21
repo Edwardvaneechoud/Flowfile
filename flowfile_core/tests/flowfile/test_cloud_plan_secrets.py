@@ -395,6 +395,74 @@ def test_a_read_with_no_saved_connection_carries_nothing_core_resolved(
         assert b"$ffsec$" in plan
 
 
+@requires_minio
+def test_an_in_code_connection_read_through_the_frame_carries_only_its_reference(protocol, minio_prefix):
+    """A connection built in code is stored for the frame's user before the frame's reader names it.
+
+    Flag on, the reader's plan carries the reference and nothing core resolved; flag off, the credentials encrypted
+    for that user.
+    """
+    import flowfile_frame as ff
+
+    paths = _seed_files(minio_prefix)
+    name = f"plan secrets in code {uuid.uuid4().hex[:6]}"
+    ff.create_cloud_storage_connection(
+        _connection(
+            name, "access_key", aws_access_key_id=MINIO_ACCESS_KEY, aws_secret_access_key=SecretStr(MINIO_SECRET_KEY)
+        )
+    )
+    try:
+        frame = ff.scan_parquet_from_cloud_storage(paths["single"], connection_name=name)
+        assert frame.collect().height == 3
+        plan = frame.get_node_settings().get_resulting_data().data_frame.serialize()
+    finally:
+        ff.del_cloud_storage_connection(name)
+
+    _assert_no_secret([plan], SECRET)
+    if protocol:
+        _no_encrypted_provider([plan])
+        assert b"CredentialRefProvider" in plan
+    else:
+        assert b"$ffsec$" in plan
+
+
+@pytest.mark.parametrize("stored", [False, True], ids=["never-stored", "stored-no-user"])
+def test_a_direct_read_of_a_connection_not_stored_for_its_user_is_refused_with_the_flag_on(
+    protocol, stored, stored_connection, storage_options_spy, monkeypatch
+):
+    """A read naming a connection the catalog does not hold for its user, or given no user; no I/O.
+
+    Flag on, the read is refused before core resolves anything. Flag off, core resolves the connection and the plan
+    carries its credentials encrypted: for the user, or with none in the legacy master-key form, which has no
+    ``$ffsec$`` marker.
+    """
+    sentinel = f"SENTINEL-{uuid.uuid4().hex}"
+    fields = dict(aws_access_key_id="AKIDSENTINEL", aws_secret_access_key=SecretStr(sentinel))
+    if stored:
+        name, user_id = stored_connection("access_key", **fields), None
+    else:
+        name, user_id = f"plan secrets in code {uuid.uuid4().hex[:6]}", 1
+    monkeypatch.setattr(pl.LazyFrame, "collect_schema", lambda self: pl.Schema({"id": pl.Int64}))
+    read = CloudStorageReadSettingsInternal(
+        connection=_connection(name, "access_key", **fields),
+        read_settings=CloudStorageReadSettings(
+            connection_name=name, resource_path=_PATHS["s3"] + _SUFFIXES["parquet"], file_format="parquet"
+        ),
+    )
+
+    if protocol:
+        refusal = "is read with no user" if stored else "is not stored for user 1"
+        with pytest.raises(ValueError, match=f'Cloud connection "{name}" {refusal}'):
+            FlowDataEngine.from_cloud_storage_obj(read, user_id=user_id)
+        assert storage_options_spy == []
+        return
+    plan = FlowDataEngine.from_cloud_storage_obj(read, user_id=user_id).data_frame.serialize()
+    assert len(storage_options_spy) == 1
+    _assert_no_secret([plan], sentinel.encode())
+    assert b"EncryptedCredentialProvider" in plan
+    assert (b"$ffsec$" in plan) is not stored
+
+
 class _SubmitRaises:
     """A backend whose submit raises ``error``."""
 
