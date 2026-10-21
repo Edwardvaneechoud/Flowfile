@@ -138,6 +138,8 @@ _BASE64_BYTES = ConfigDict(ser_json_bytes="base64", val_json_bytes="base64")
 class WireColumn(BaseModel):
     """One column of a result: the ``name`` and ``data_type`` of ``FileColumn``, the dtype spelled ``str(dtype)``."""
 
+    model_config = ConfigDict(extra="forbid")
+
     name: str
     data_type: str
 
@@ -176,6 +178,8 @@ class ResultRef(BaseModel):
 
 class SubmitHints(BaseModel):
     """What core knows about a submitted plan, for the worker's materialisation policy."""
+
+    model_config = ConfigDict(extra="forbid")
 
     must_materialise: bool
     wide: bool

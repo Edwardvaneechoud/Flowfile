@@ -16,7 +16,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class HttpMethod(str, Enum):
@@ -61,6 +61,8 @@ class CursorLocation(str, Enum):
 class AuthConfig(BaseModel):
     """Authentication settings. Secret material is carried encrypted."""
 
+    model_config = ConfigDict(extra="forbid")
+
     auth_type: AuthType = AuthType.NONE
 
     # API key (header or query param)
@@ -78,6 +80,8 @@ class AuthConfig(BaseModel):
 
 class PaginationConfig(BaseModel):
     """Pagination strategy and its parameters, plus safety caps."""
+
+    model_config = ConfigDict(extra="forbid")
 
     pagination_type: PaginationType = PaginationType.NONE
 
@@ -104,6 +108,8 @@ class PaginationConfig(BaseModel):
 
 class RestApiReadSettings(BaseModel):
     """Payload for ``POST /store_rest_api_read_result``."""
+
+    model_config = ConfigDict(extra="forbid")
 
     url: str
     method: HttpMethod = HttpMethod.GET
