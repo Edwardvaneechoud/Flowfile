@@ -127,16 +127,21 @@ _worker_session.auth = _WorkerAuth()
 _trusted_cas: dict[str, ssl.SSLContext] = {}
 
 
-def trust_ca(worker_url: str, ca_cert: str) -> None:
+def trust_ca(worker_url: str, ca_cert: str | None) -> None:
     """Verify the worker at ``worker_url`` against ``ca_cert``, a PEM, from now on, in place of the public CAs.
 
     The PEM is the CA that signed the worker's certificate, or a self-signed certificate itself. The worker session
     uses it for every call under ``worker_url``, and ``ssl_context_for`` hands it to both WebSocket clients; a later
-    call for the same URL replaces it. Nothing is written to disk.
+    call for the same URL replaces it, and one with no PEM drops it, so the worker is verified against the public CAs
+    again. Nothing is written to disk.
 
     Raises:
         ssl.SSLError: ``ca_cert`` holds no PEM certificate.
     """
+    if not ca_cert:
+        if _trusted_cas.pop(worker_url, None) is not None:
+            _worker_session.adapters.pop(f"{worker_url}/", None)
+        return
     context = ssl.create_default_context(cadata=ca_cert)
     _trusted_cas[worker_url] = context
     _worker_session.mount(f"{worker_url}/", _TrustedCa(context))

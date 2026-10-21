@@ -229,7 +229,9 @@ class WorkerBackend:
     ``ca_cert`` is the PEM of the CA to verify an ``https://`` worker's certificate against when it is not public (a
     self-signed worker certificate is its own); the backend hands it to the transport (``trust_ca``) for its ``url``,
     so the task routes, the handshake gate, the ``/v1`` requests, ``capabilities`` and both submit sockets trust it,
-    and a worker whose certificate it does not verify is unreachable. ``None`` verifies against the public CAs.
+    and a worker whose certificate it does not verify is unreachable. ``None`` verifies against the public CAs and
+    drops a CA an earlier backend on ``url`` was given, so a worker removed and added again without one is not
+    verified against the certificate it was added with before.
 
     Materialisation policy: ``submit`` stores a plan on the worker when ``hints.must_materialise`` is set, or when
     the plan is ``wide`` and a preview is asked for (``preview_rows`` is not ``None``); every other plan stays
@@ -299,8 +301,7 @@ class WorkerBackend:
         self.url = url
         self.id = backend_id
         self.token = token
-        if ca_cert:
-            trust_ca(url, ca_cert)
+        trust_ca(url, ca_cert)
         self._auth = _TokenAuth(token, backend_id) if token is not None else None
         self._lock = threading.Lock()
         self._deferred: dict[str, _DeferredPlan] = {}
