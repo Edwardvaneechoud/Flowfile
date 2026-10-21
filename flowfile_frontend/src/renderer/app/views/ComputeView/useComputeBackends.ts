@@ -36,7 +36,10 @@ function detailOf(error: unknown, fallback: string): string {
   return fallback;
 }
 
-/** The configured workers and the admin's actions on them; the caller loads, nothing polls. */
+/**
+ * The configured workers and the admin's actions on them; the caller loads, nothing polls. Loading seeds each
+ * worker's verdict from the listing, so one a run produced shows without pressing Handshake.
+ */
 export function useComputeBackends() {
   const backends: Ref<ComputeBackend[]> = ref([]);
   const loading = ref(false);
@@ -49,6 +52,9 @@ export function useComputeBackends() {
     loading.value = true;
     try {
       backends.value = await listComputeBackends();
+      for (const backend of backends.value) {
+        if (backend.verdict) verdicts.value[backend.id] = backend.verdict;
+      }
       loadError.value = "";
     } catch (error) {
       loadError.value = detailOf(error, "Couldn't read the configured workers.");

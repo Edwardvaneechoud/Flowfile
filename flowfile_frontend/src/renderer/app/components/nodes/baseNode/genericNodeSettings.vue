@@ -321,7 +321,7 @@ import { useFlowStore } from "../../../stores/flow-store";
 import { InfoFilled, DCaret, Delete } from "@element-plus/icons-vue";
 import AiInlineActions from "../../../features/ai/AiInlineActions.vue";
 import { listComputeBackends } from "../../../api/computeBackends.api";
-import { nodeExecutionLocationOptions } from "../../../utils/executionLocation";
+import { nodeExecutionLocationOptions, type BackendRow } from "../../../utils/executionLocation";
 
 const nodeStore = useNodeStore();
 const flowStore = useFlowStore();
@@ -404,17 +404,17 @@ const localSettings = ref<
   execution_location: props.modelValue?.execution_location ?? "auto",
 });
 
-// A non-admin may not list the configured backends (403) and keeps auto, worker and its own value.
-const backendIds = ref<string[]>([]);
+// A listing that fails leaves auto, worker and the node's own value.
+const backendRows = ref<BackendRow[]>([]);
 onMounted(async () => {
   try {
-    backendIds.value = (await listComputeBackends()).map((backend) => backend.id);
+    backendRows.value = await listComputeBackends();
   } catch {
-    backendIds.value = [];
+    backendRows.value = [];
   }
 });
 const locationOptions = computed(() =>
-  nodeExecutionLocationOptions(localSettings.value.execution_location ?? "auto", backendIds.value),
+  nodeExecutionLocationOptions(localSettings.value.execution_location ?? "auto", backendRows.value),
 );
 
 const outputFieldConfig = reactive<OutputFieldConfig>(
