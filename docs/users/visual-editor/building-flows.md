@@ -41,7 +41,7 @@ This page covers the canvas mechanics: creating a flow, adding and connecting no
 
 The preview's status bar has **Copy** and **Download CSV**. Copy puts the selected rows, or the node's result, on the clipboard as tab-separated text that pastes into Excel or Google Sheets; it is capped at 10,000 rows and 100,000 cells (rows × columns). Download CSV saves up to 10,000 rows; to export a full result, add a [Write data](nodes/output.md) node. Copying the result or downloading needs a run with the node's current settings and cannot include list or struct columns.
 
-In **Development** mode (the default) every node's data is available for preview after a run. Switch to **Performance** mode when the flow is done: only the steps needed for outputs execute, and the query optimizer works across nodes.
+In **Development** mode every node's data is available for preview after a run. A new flow starts in **Performance** mode, the default; switch to **Development** while you build it. In **Performance** mode only the steps needed for outputs execute, and the query optimizer works across nodes.
 
 ## Flow settings
 
@@ -52,13 +52,13 @@ The **gear icon** in the top toolbar opens the flow-level settings:
 | Setting | Options |
 |---|---|
 | Execution mode | **Development** (preview everything) / **Performance** (optimized, outputs only) |
-| Execution location | **Auto (default worker)**, or a worker added under **Settings → Execution → Backends** |
+| Execution location | **Auto (default worker)**, or a worker added under **Settings → Execution → Backends**, with its last check beside its id |
 | Parallel workers | 1–32, default 4 |
-| Show detailed progress | More granular per-node status during runs |
+| Show details during execution | More granular per-node status during runs |
 | Show edge labels | Display each connection's name on the canvas |
 | Warn about invalid node settings | Flag nodes whose settings no longer match their input, before you run |
 
-**Execution location** picks the worker the flow runs on. **Auto** runs it on the default worker: the worker service that comes with Flowfile, on the same machine by default (in Docker, the worker container). An administrator can add workers on other hosts under **Settings → Execution → Backends** and pick one here by its id, `worker:<name>`. A flow run from the designer runs on a worker, so a step that runs out of memory fails on its own instead of taking Flowfile down. A flow saved with Local or Remote by an earlier version opens as **Auto**.
+**Execution location** picks the worker the flow runs on. **Auto** runs it on the default worker: the worker service that comes with Flowfile, on the same machine by default (in Docker, the worker container). An administrator can add workers on other hosts under **Settings → Execution → Backends**, and every user can pick one here by its id, `worker:<name>`, shown with what its last check said ([Versions and the handshake](../deployment/remote-worker.md#versions-and-the-handshake)). A flow run from the designer runs on a worker, so a step that runs out of memory fails on its own instead of taking Flowfile down. A flow saved with Local or Remote by an earlier version opens as **Auto**.
 
 **Parallel workers** sets how many independent steps the worker runs at the same time, so a flow with independent branches finishes in a few *rounds* instead of one step after another. At 1 every step waits its turn.
 
@@ -66,7 +66,7 @@ The **gear icon** in the top toolbar opens the flow-level settings:
 
 ### A node's own backend
 
-A node's **General Settings** tab has a **Compute backend** setting: **Auto (the flow's backend)**, the default, **Default worker**, and for an administrator the workers added under **Settings → Execution → Backends**, which **Manage backends** next to it opens. It never offers Local. A node's own backend is used only where the deployment has an exchange store ([Remote workers](../deployment/remote-worker.md#nodes-on-several-backends)); otherwise every node runs on the flow's **Execution location**. Write data, Read from Catalog, Write to Catalog, API response and Explore data have no such setting and run on the flow's backend.
+A node's **General Settings** tab has a **Compute backend** setting: **Auto (the flow's backend)**, the default, **Default worker**, and the workers added under **Settings → Execution → Backends**, each with its last check beside its id; **Manage backends** next to it opens that page. It never offers Local. A node's own backend is used only where the deployment has an exchange store ([Remote workers](../deployment/remote-worker.md#nodes-on-several-backends)); otherwise every node runs on the flow's **Execution location**. Write data, Read from Catalog, Write to Catalog, API response and Explore data have no such setting and run on the flow's backend.
 
 After a run, a refused one included, a connection whose two nodes were placed on different backends shows a round badge with two arrows. The badge is for the last run, so a change of backend shows after the next one. When a crossing is refused, because the exchange store could not be used or the input was above the row limit, the reading node's row on the run report says why.
 
