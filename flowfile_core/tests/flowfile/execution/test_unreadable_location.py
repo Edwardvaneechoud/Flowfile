@@ -1264,6 +1264,7 @@ def test_the_designers_prediction_of_a_polars_code_node_is_the_operation_over_an
 
 
 def test_the_designers_prediction_of_a_polars_code_node_runs_on_the_worker(remote_worker, protocol_on, monkeypatch):
+    """The prediction reads an empty frame in memory, so the worker holds the code's result as a file of no rows."""
     calls = []
     run_op = WorkerBackend.run_op
 
@@ -1282,7 +1283,7 @@ def test_the_designers_prediction_of_a_polars_code_node_runs_on_the_worker(remot
         ((kind, payload, result),) = calls
         assert kind == "polars_code"
         assert payload.inputs[0].select(pl.len()).collect().item() == 0
-        assert result.refs["result"].state == "deferred"
+        assert (result.refs["result"].state, result.refs["result"].row_count) == ("materialised", 0)
     finally:
         graph.close_flow()
 

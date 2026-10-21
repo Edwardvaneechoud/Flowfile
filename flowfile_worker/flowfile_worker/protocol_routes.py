@@ -13,8 +13,8 @@ request's ``job_id`` names, and holds each output that child wrote as the materi
 ``<job_id>_<i>``, which the same routes read, count, probe and release. A training's output is the
 model it fitted, held as a blob; an apply scores with a model held here, named by its result id.
 ``POST /v1/ops/polars_code`` runs a Polars Code node's code once in a pooled child and holds its
-result as ``<job_id>_0``: deferred, as its plan, when the code answered a LazyFrame, materialised in
-its file when it answered a DataFrame.
+result as ``<job_id>_0``: deferred, as its plan, when the code answered a LazyFrame over sources,
+materialised in its file when it answered a DataFrame or a LazyFrame over rows in memory.
 ``POST /v1/results/{id}/export`` writes a held result to a URI as parquet in a
 ``funcs.export_result`` child; ``POST /v1/results/{id}/import`` holds a scan of a URI as a deferred
 result, with the columns and row count core sent and nothing read. A credential crosses either as a
@@ -1005,9 +1005,10 @@ def ml_apply(body: MlApplyInput, job_id: JobId) -> OpOutputs:
 def polars_code(body: PolarsCodeInput, job_id: JobId) -> OpOutputs:
     """Run a Polars Code node's code once over its input plans in a child as job *job_id* and hold its result.
 
-    A LazyFrame the code answers is held as the deferred result ``result``, its plan and the columns the child resolved
-    for it, nothing collected, so every dtype of the plan reaches its consumers; a DataFrame is written to its file and
-    held materialised with its height. Either is ``<job_id>_0``.
+    A LazyFrame over sources the code answers is held as the deferred result ``result``, its plan and the columns the
+    child resolved for it, nothing collected, so every dtype of the plan reaches its consumers; a DataFrame, or a
+    LazyFrame over rows in memory, whose plan would carry them to core, is written to its file by the child and held
+    materialised with its height. Either is ``<job_id>_0``.
     """
     flow_id, node_id = body.flowfile_flow_id, body.flowfile_node_id
     (result_id,) = _op_outputs(job_id, 1)

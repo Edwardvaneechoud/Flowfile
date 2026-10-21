@@ -5,6 +5,7 @@ A training holds the model it fitted as a blob, and an apply scores with a blob 
 
 import base64
 import hashlib
+import io
 import json
 import os
 import threading
@@ -540,10 +541,13 @@ def _polars_code_body(code: str, inputs: list[pl.LazyFrame]) -> dict:
     }
 
 
-def test_polars_code_holds_a_lazy_result_deferred_with_the_plans_columns(jobs):
+def test_polars_code_holds_a_lazy_result_deferred_with_the_plans_columns(jobs, tmp_path):
+    """The inputs scan files, as a held result's plan does, so the join's plan carries no rows and is held as it is."""
     job_id = jobs()
-    shapes = pl.LazyFrame({"id": [1, 2, 3], "geom": pl.Series([bytes([i]) for i in range(3)], dtype=GEOARROW_WKB)})
-    names = pl.LazyFrame({"id": [2, 3, 4], "name": ["b", "c", "d"]})
+    pl.DataFrame({"id": [1, 2, 3], "geom": [bytes([i]) for i in range(3)]}).write_ipc(tmp_path / "shapes.arrow")
+    pl.DataFrame({"id": [2, 3, 4], "name": ["b", "c", "d"]}).write_ipc(tmp_path / "names.arrow")
+    shapes = pl.scan_ipc(tmp_path / "shapes.arrow").with_columns(pl.col("geom").cast(GEOARROW_WKB))
+    names = pl.scan_ipc(tmp_path / "names.arrow")
     body = _polars_code_body("input_df_1.join(input_df_2, on='id')", [shapes, names])
 
     answer = _answer(_post_op("polars_code", job_id, body))
@@ -568,6 +572,42 @@ def test_polars_code_holds_an_eager_result_as_a_file(jobs):
     assert (ref.result_id, ref.state, ref.row_count) == (f"{job_id}_0", "materialised", 2)
     assert _location(ref).path == str(result_path(FLOW_ID, ref.result_id))
     assert _rows(ref)["id"].to_list() == [1, 2]
+
+
+def test_polars_code_holds_a_lazy_result_over_rows_in_memory_as_a_file(jobs, tmp_path):
+    PEOPLE.write_ipc(tmp_path / "people.arrow")
+    code = "rows = input_df.collect()\noutput_df = rows.lazy().select('id', 'name')"
+    job_id = jobs()
+    body = _polars_code_body(code, [pl.scan_ipc(tmp_path / "people.arrow")])
+
+    answer = _answer(_post_op("polars_code", job_id, body))
+
+    ref = answer.outputs["result"]
+    assert (ref.result_id, ref.state, ref.row_count) == (f"{job_id}_0", "materialised", 5)
+    assert ref.columns == schema_to_wire(PEOPLE.schema)
+    location = _location(ref)
+    assert (location.kind, location.plan) == ("file", None)
+    assert location.path == str(result_path(FLOW_ID, ref.result_id))
+    assert _rows(ref)["id"].to_list() == [1, 2, 3, 4, 5]
+
+
+def test_polars_code_holds_a_lazy_result_over_its_input_scan_as_a_plan_that_scans_it(jobs, tmp_path):
+    source = tmp_path / "people.arrow"
+    PEOPLE.write_ipc(source)
+    job_id = jobs()
+    body = _polars_code_body("output_df = input_df.filter(pl.col('id') > 2)", [pl.scan_ipc(source)])
+
+    answer = _answer(_post_op("polars_code", job_id, body))
+
+    ref = answer.outputs["result"]
+    assert (ref.result_id, ref.state, ref.row_count) == (f"{job_id}_0", "deferred", None)
+    location = _location(ref)
+    assert location.kind == "plan"
+    plan = pl.LazyFrame.deserialize(io.BytesIO(location.plan))
+    assert plan.collect()["id"].to_list() == [3, 4, 5]
+    source.unlink()
+    with pytest.raises(FileNotFoundError):
+        plan.collect()
 
 
 def test_polars_code_that_fails_answers_500_and_holds_nothing(jobs):

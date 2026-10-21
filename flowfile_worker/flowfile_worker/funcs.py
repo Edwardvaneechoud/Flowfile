@@ -487,6 +487,17 @@ def split_result(
         progress.value = 100
 
 
+def _scans_rows_in_memory(lf: pl.LazyFrame) -> bool:
+    """Whether *lf* reads a frame held in memory, whose rows its serialised plan carries whole.
+
+    Polars prints such a leaf (``input_df.collect().lazy()``, ``pl.LazyFrame({...})``) as ``DF [<columns>]`` in the
+    plan before optimisation, which is the plan that is serialised, and a scan of a source as the scan
+    (``Ipc SCAN [<path>]``). A string literal spelling such a line matches too, and the result is then written to a
+    file it did not need.
+    """
+    return any(line.lstrip().startswith("DF [") for line in lf.explain(optimized=False).splitlines())
+
+
 def polars_code(
     polars_serializable_object: bytes,
     progress: Value,
@@ -501,10 +512,11 @@ def polars_code(
     """Run a Polars Code node's code once over its input plans, for ``POST /v1/ops/polars_code``.
 
     The code runs in the Polars Code sandbox (``shared.polars_code_parser``), given the plans of *inputs* in order. A
-    ``DataFrame`` it returns is written as IPC to *file_path* and its ``pl.Schema`` and height are queued; a
-    ``LazyFrame`` is queued as its resolved ``pl.Schema`` and its serialised plan, with no row count, nothing collected
-    and nothing written. The schema is the result's own, never one read back from a file (see ``submit_result``).
-    *polars_serializable_object* is not read: the plans come as *inputs*.
+    ``LazyFrame`` it returns over sources is queued as its resolved ``pl.Schema`` and its serialised plan, with no row
+    count, nothing collected and nothing written. A ``DataFrame``, or a ``LazyFrame`` that reads a frame held in memory
+    (``_scans_rows_in_memory``), whose plan would carry those rows to core, is collected if lazy and written as IPC to
+    *file_path*, and its ``pl.Schema`` and height are queued. The schema is the result's own, never one read back from
+    a file (see ``submit_result``). *polars_serializable_object* is not read: the plans come as *inputs*.
     """
     from shared.polars_code_parser import polars_code_parser
 
@@ -513,6 +525,8 @@ def polars_code(
     try:
         frames = [_load_plan(plan) for plan in inputs]
         result = polars_code_parser.get_executable(code, num_inputs=len(inputs))(*frames)
+        if isinstance(result, pl.LazyFrame) and _scans_rows_in_memory(result):
+            result = collect_lazy_frame(result)
         if isinstance(result, pl.DataFrame):
             with environment_failures():
                 result.write_ipc(file_path)

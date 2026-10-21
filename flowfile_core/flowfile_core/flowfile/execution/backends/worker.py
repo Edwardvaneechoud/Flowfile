@@ -14,10 +14,10 @@ runs the reads, ``fuzzy_join``, ``random_split``, ``custom_node``, ``ml_train`` 
 ``POST /v1/ops/{kind}``, whose outputs the worker holds as it holds a stored submit, a trained model as a blob; the
 writes and ``viz_session`` stay on the task routes. ``polars_code`` has no task route and goes over
 ``POST /v1/ops/polars_code`` in either flag state, its result held as a submit's is: deferred, as its plan, for code
-that answered a LazyFrame, stored for code that answered a DataFrame. ``import_uri`` asks the worker to hold a scan of
-the URI (``POST /v1/results/{id}/import``). A result is read and exported over the routes that minted it, whatever
-the flag says when it is read: a ``/v1`` result is exported by a child on the worker (``POST /v1/results/{id}/export``),
-a task-route result by a worker task running the same child.
+that answered a LazyFrame over sources, stored for code that answered a DataFrame or a LazyFrame over rows in memory.
+``import_uri`` asks the worker to hold a scan of the URI (``POST /v1/results/{id}/import``). A result is read and
+exported over the routes that minted it, whatever the flag says when it is read: a ``/v1`` result is exported by a
+child on the worker (``POST /v1/results/{id}/export``), a task-route result by a worker task running the same child.
 A blob, a file of bytes that is not rows, is held by the worker over ``/v1``: ``import_uri(kind="blob")`` has the
 worker copy or fetch it and ``export`` has it copy or ``PUT`` it. Over the task routes a blob is a file on the shared
 disk, a model a training staged in the flow's cache directory or the path a ``file://`` import names, which ``export``
@@ -492,7 +492,8 @@ class WorkerBackend:
         ``polars_code`` takes a ``PolarsCodePayload`` and has no task route: it goes to ``POST /v1/ops/polars_code`` in
         either flag state, with the code and each input plan serialised. Its refs are ``{"result": ref}``, a ``/v1``
         reference ``<job_id>_0`` carrying the columns of the frame the code returned: deferred, its plan decoded by
-        ``plan_for`` as a deferred submit's is, when the code returned a LazyFrame, stored when it returned a DataFrame.
+        ``plan_for`` as a deferred submit's is, when the code returned a LazyFrame over sources, stored when it returned
+        a DataFrame or a LazyFrame over rows in memory.
 
         Raises:
             ComputeUnavailable: The worker could not be reached for a ``viz_session`` request.
