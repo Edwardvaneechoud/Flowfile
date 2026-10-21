@@ -454,6 +454,7 @@ def test_every_task_operation_and_the_catalog_columns_have_an_entry():
             "merge_delta",
             "scd2_delta",
             "polars_code",
+            "sql_query",
         )
     }
     assert "catalog cloud_storage_connections" in entries
