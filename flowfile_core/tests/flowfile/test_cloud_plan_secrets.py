@@ -51,6 +51,7 @@ except ModuleNotFoundError:  # pragma: no cover - import shim for ad-hoc runs
     sys.path.append(os.path.dirname(os.path.abspath("test_utils/s3/fixtures.py")))
     from test_utils.s3.fixtures import MINIO_ACCESS_KEY, MINIO_ENDPOINT_URL, MINIO_SECRET_KEY, get_minio_client
 
+from test_utils.gcs.fixtures import GCS_ENDPOINT_URL, is_gcs_available
 from test_utils.s3.aws_profiles import isolate_aws
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -102,6 +103,16 @@ _CONNECTION_TYPES = {
         auth_method="service_account",
         gcs_service_account_key=SecretStr(json.dumps({"private_key": _SENTINELS["gcs"]})),
         gcs_project_id="proj",
+    ),
+    "gcs-service_account-endpoint": dict(
+        storage_type="gcs",
+        auth_method="service_account",
+        gcs_service_account_key=SecretStr(json.dumps({"private_key": _SENTINELS["gcs"]})),
+        gcs_project_id="proj",
+        endpoint_url=GCS_ENDPOINT_URL,
+    ),
+    "gcs-env_vars-endpoint": dict(
+        storage_type="gcs", auth_method="env_vars", gcs_project_id="proj", endpoint_url=GCS_ENDPOINT_URL
     ),
 }
 _PATHS = {
@@ -585,6 +596,129 @@ def test_a_cloud_read_on_the_worker_resolves_no_connection_in_core(
         failures = {step.node_id: step.error for step in run_info.node_step_result if not step.success}
         assert set(readers) <= set(failures), failures
         assert all("core resolved a connection" in failures[node_id] for node_id in readers), failures
+
+
+_GCS_FIXTURE = "gs://test-bucket"
+
+
+@pytest.mark.skipif(not is_gcs_available(), reason="fake GCS not available")
+@pytest.mark.parametrize("execution_location", ["remote"], indirect=True)
+def test_a_gcs_read_with_an_endpoint_on_the_worker_reads_nothing_in_core(
+    execution_location, protocol, serialized_plans, monkeypatch
+):
+    """A GCS connection with an endpoint, read on the worker, with core's gcsfs, options builder and resolution
+    raising.
+
+    Flag on, every reader is a native scan the worker reads and answers the schema of, no plan carrying rows; flag
+    off, core builds the read's options.
+    """
+    import gcsfs
+
+    name = f"plan secrets gcs endpoint {uuid.uuid4().hex[:6]}"
+    with get_db_context() as db:
+        store_cloud_connection(
+            db,
+            FullCloudStorageConnection(
+                connection_name=name,
+                storage_type="gcs",
+                auth_method="env_vars",
+                gcs_project_id="test-project",
+                endpoint_url=GCS_ENDPOINT_URL,
+            ),
+            user_id=1,
+        )
+    resolved = []
+
+    def _refuse(*args, **kwargs):
+        resolved.append(args)
+        raise RuntimeError("core resolved a connection for a read on the worker")
+
+    monkeypatch.setattr(gcsfs.GCSFileSystem, "__init__", _refuse)
+    monkeypatch.setattr(cp, "resolve_credential_ref", _refuse)
+    monkeypatch.setattr(CloudStorageReader, "get_storage_options", staticmethod(_refuse))
+    graph = create_test_graph(flow_id=7412, execution_location=execution_location)
+    readers = {
+        1: {"resource_path": f"{_GCS_FIXTURE}/single-file-parquet/data.parquet", "file_format": "parquet"},
+        3: {"resource_path": f"{_GCS_FIXTURE}/multi-file-parquet/", "file_format": "parquet", "scan_mode": "directory"},
+        5: {"resource_path": f"{_GCS_FIXTURE}/single-file-csv/data.csv", "file_format": "csv"},
+        7: {"resource_path": f"{_GCS_FIXTURE}/multi-file-csv/", "file_format": "csv", "scan_mode": "directory"},
+        9: {"resource_path": f"{_GCS_FIXTURE}/single-file-json/data.json", "file_format": "json"},
+        11: {"resource_path": f"{_GCS_FIXTURE}/multi-file-json/", "file_format": "json", "scan_mode": "directory"},
+        13: {"resource_path": f"{_GCS_FIXTURE}/delta-lake-table", "file_format": "delta"},
+    }
+    try:
+        for node_id, settings in readers.items():
+            _add_reader(graph, node_id, name, **settings)
+            _add_record_count(graph, node_id + 1, node_id)
+
+        run_info = graph.run_graph()
+    finally:
+        with get_db_context() as db:
+            delete_cloud_connection(db, name, user_id=1)
+
+    if protocol:
+        _assert_run_succeeded(run_info)
+        assert {node_id + 1: _count(graph, node_id + 1) for node_id in readers} == {
+            node_id + 1: 100_000 for node_id in readers
+        }
+        schema = graph.get_node(1).get_resulting_data().schema
+        assert [column.column_name for column in schema] == ["id", "name", "value", "category"]
+        assert resolved == []
+        assert serialized_plans, "the run shipped no plan to the worker"
+        assert max(len(plan) for plan in serialized_plans) < 10_000, "a plan core serialised carries rows"
+    else:
+        failures = {step.node_id: step.error for step in run_info.node_step_result if not step.success}
+        assert set(readers) <= set(failures), failures
+        assert all("core resolved a connection" in failures[node_id] for node_id in readers), failures
+
+
+def test_a_catalog_target_over_a_gcs_namespace_with_an_endpoint_carries_no_key(protocol):
+    """A catalog stored on GCS behind an endpoint, its connection holding a sentinel key; no I/O.
+
+    Flag on, the target's scan names the connection and carries no key; flag off, Polars refuses the gcsfs options
+    before any plan exists.
+    """
+    from flowfile_core.catalog.services.namespaces import NamespaceService
+
+    name = f"plan secrets gcs catalog {uuid.uuid4().hex[:6]}"
+    with get_db_context() as db:
+        store_cloud_connection(
+            db,
+            FullCloudStorageConnection(connection_name=name, **_CONNECTION_TYPES["gcs-service_account-endpoint"]),
+            user_id=1,
+        )
+    try:
+        with get_db_context() as db:
+            catalog_id = (
+                NamespaceService(SQLAlchemyCatalogRepository(db))
+                .create_namespace(
+                    f"gcscat_{uuid.uuid4().hex[:8]}",
+                    owner_id=1,
+                    storage_uri=f"{_GCS_FIXTURE}/catalog",
+                    storage_connection_name=name,
+                )
+                .id
+            )
+        with get_db_context() as db:
+            schema_id = (
+                NamespaceService(SQLAlchemyCatalogRepository(db))
+                .create_namespace(f"gcssch_{uuid.uuid4().hex[:8]}", owner_id=1, parent_id=catalog_id)
+                .id
+            )
+        kwargs = resolve_for_namespace(schema_id).scan_kwargs(1)
+        path = f"{_GCS_FIXTURE}/catalog/never_read"
+        if protocol:
+            plan = pl.scan_delta(path, **kwargs).serialize()
+            _assert_no_secret([plan], _SENTINELS["gcs"].encode())
+            _no_encrypted_provider([plan])
+            assert b"CredentialRefProvider" in plan
+        else:
+            with pytest.raises(ValueError, match="cannot combine token with"):
+                pl.scan_delta(path, **kwargs)
+    finally:
+        catalog_cleanup()
+        with get_db_context() as db:
+            delete_cloud_connection(db, name, user_id=1)
 
 
 @requires_minio

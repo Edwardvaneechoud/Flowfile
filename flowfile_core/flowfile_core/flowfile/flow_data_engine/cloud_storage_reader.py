@@ -118,8 +118,19 @@ class CloudStorageReader:
         """The options a read's plan carries when the executor resolves its credentials: no secret, nothing resolved.
 
         The connection's region, endpoint, plain-HTTP, TLS, account and project settings; S3 is built as ``env_vars``,
-        whose branch resolves no credential, and the Azure and GCS builders add a credential only when given one.
+        whose branch resolves no credential, and the Azure and GCS builders add a credential only when given one. A
+        GCS endpoint is reached through object_store's ``gcs_base_url``, which only a service-account key carries: a
+        key with no key material and OAuth off, so the plan sends the provider's bearer or, with none, no token.
         """
+        if CloudStorageReader.use_pyarrow_for_gcs(connection):
+            stub = {
+                "gcs_base_url": connection.endpoint_url,
+                "disable_oauth": True,
+                "client_email": "",
+                "private_key": "",
+                "private_key_id": "",
+            }
+            return {"service_account_key": json.dumps(stub)}
         return build_storage_options(
             storage_type=connection.storage_type,
             auth_method="env_vars" if connection.storage_type == "s3" else connection.auth_method,
@@ -141,13 +152,13 @@ class CloudStorageReader:
         With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a Polars scan of a stored connection whose method holds a credential
         carries a ``CredentialRefProvider`` and options with no secret, so whichever process executes the plan resolves
         the connection; ``env_vars`` and managed identity carry no provider, and a named connection the catalog does
-        not hold for *user_id* is refused, never resolved in core. Otherwise, the flag off, a GCS read through gcsfs or
-        a read with no saved connection, core resolves the options and the plan carries their credentials encrypted.
+        not hold for *user_id* is refused, never resolved in core. Otherwise, the flag off or a read with no saved
+        connection, core resolves the options and the plan carries their credentials encrypted.
 
         Raises:
             ValueError: With the flag on, the connection is named but not stored for *user_id*, or *user_id* is None.
         """
-        if settings.FLOWFILE_COMPUTE_PROTOCOL and not CloudStorageReader.use_pyarrow_for_gcs(connection):
+        if settings.FLOWFILE_COMPUTE_PROTOCOL:
             if connection.auth_method in ("env_vars", "managed_identity"):
                 return CloudStorageReader.get_plan_storage_options(connection), None
             ref = CloudStorageReader.credential_ref(connection, user_id)

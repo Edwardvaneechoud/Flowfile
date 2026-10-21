@@ -527,8 +527,9 @@ class FlowDataEngine:
 
         Given a ``backend``, the scan is held there as a deferred result with no preview while the reference's schema
         is read, then released, and the engine takes that schema: the backend resolves the read's connection, and core
-        reads no directory's first file. A GCS read through gcsfs, and a read given no backend, resolve the schema in
-        core.
+        reads no directory's first file. A read given no backend resolves the schema in core, and so does a GCS read
+        with an endpoint with the flag off, which goes through gcsfs; with the flag on it is a native scan like any
+        other.
 
         Args:
             settings: A `CloudStorageReadSettingsInternal` object containing connection
@@ -554,7 +555,7 @@ class FlowDataEngine:
             storage_options, credential_provider = CloudStorageReader.get_plan_storage_options(connection), None
         else:
             storage_options, credential_provider = CloudStorageReader.get_read_credentials(connection, user_id)
-        use_pyarrow = CloudStorageReader.use_pyarrow_for_gcs(connection)
+        use_pyarrow = CloudStorageReader.use_pyarrow_for_gcs(connection) and not FLOWFILE_COMPUTE_PROTOCOL
         backend = None if use_pyarrow else backend
         if read_settings.file_format == "parquet":
             return cls._read_parquet_from_cloud(
