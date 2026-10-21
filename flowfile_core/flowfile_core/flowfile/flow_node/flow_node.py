@@ -1744,7 +1744,8 @@ class FlowNode:
         (``_store_other_outputs``).
 
         A CSV read whose type inference fails on submit is submitted again at a higher ``infer_schema_length``
-        (configured, then 10k, then 100k rows) under ``<hash>_infer<rows>``, without changing the saved setting.
+        (configured, then 10k, then 100k rows) under the node's hash, without changing the saved setting, so the
+        widened result is the node's held result.
 
         Args:
             hints: What the node submits its plan with (``executor.hints_for``).
@@ -1824,7 +1825,8 @@ class FlowNode:
     def _submit(
         self, backend: ComputeBackend, engine: FlowDataEngine, hints: SubmitHints, node_logger: NodeLogger
     ) -> SubmitResult:
-        """Submits ``engine``'s plan under this node's hash, escalating a CSV read's type inference on failure."""
+        """Submits ``engine``'s plan under this node's hash, escalating a CSV read's type inference on failure under the
+        same id."""
         inputs = self._input_refs(backend.id)
         frame = engine.data_frame
         current_infer = self._eligible_infer_length()
@@ -1858,7 +1860,6 @@ class FlowNode:
                 node_logger.warning(f"CSV type inference failed; retrying read with infer_schema_length={next_rung}.")
                 frame = escalated.data_frame
                 current_infer = next_rung
-                result_id = f"{self.hash}_infer{next_rung}"
             finally:
                 self._submit_in_flight = None
 
