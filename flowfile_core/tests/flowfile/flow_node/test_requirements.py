@@ -343,6 +343,12 @@ def test_a_random_split_runs_random_split():
     assert _requirements("random_split", settings) == NodeRequirements(operation=OperationKind.random_split)
 
 
+def test_an_explore_data_node_runs_the_viz_session_operation():
+    settings = input_schema.NodeExploreData(**_ids())
+
+    assert _requirements("explore_data", settings) == NodeRequirements(operation=OperationKind.viz_session)
+
+
 @pytest.mark.parametrize(
     ("item", "settings"),
     [
@@ -548,7 +554,6 @@ def test_a_promise_answers_only_whether_its_template_runs_on_a_kernel(template, 
             input_schema.NodeManualInput(**_ids(raw_data_format=input_schema.RawData(columns=[], data=[]))),
         ),
         ("list_files", input_schema.NodeListFiles(**_ids(path="/data"))),
-        ("explore_data", input_schema.NodeExploreData(**_ids())),
         ("evaluate_model", input_schema.NodeEvaluateModel(**_ids())),
         ("wait_for", input_schema.NodeWaitFor(**_ids())),
         ("api_response", input_schema.NodeApiResponse(**_ids())),
