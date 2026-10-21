@@ -62,6 +62,7 @@ from flowfile_core.flowfile.flow_node.multi_output import (
     DEFAULT_OUTPUT_HANDLE,
     NamedOutputs,
     output_handle,
+    output_handle_index,
 )
 from flowfile_core.flowfile.flow_node.output_field_config_applier import apply_output_field_config
 from flowfile_core.flowfile.flow_node.schema_callback import SingleExecutionFuture
@@ -247,6 +248,8 @@ class FlowNode:
     _boundary_inputs: dict[tuple[int, str], Any]
     # handle -> the result a node that read such an input stored for that output beside its own (_store_other_outputs)
     _stored_outputs: dict[str, ResultRef]
+    # output name -> a materialised result the node's operation minted (run_op), released with the node's result
+    _operation_refs: dict[str, ResultRef]
 
     user_provided_schema_callback: Callable | None
     _schema_callback: SingleExecutionFuture | None
@@ -347,6 +350,7 @@ class FlowNode:
         self._skipped_input_ids_this_run = frozenset()
         self._boundary_inputs = {}
         self._stored_outputs = {}
+        self._operation_refs = {}
 
         self.user_provided_schema_callback = None
         self._schema_callback = None
@@ -1610,35 +1614,57 @@ class FlowNode:
         self.release_result()
 
     def release_result(self) -> None:
-        """Releases the result this node holds on the backend that minted it and forgets the reference.
+        """Releases every result this node minted on the backend that holds it and forgets the references.
 
-        The other outputs it stored beside that result (``_store_other_outputs``) are released and forgotten with it.
-        A release whose backend cannot be reached (``ComputeUnavailable``) is logged and the reference dropped; any
-        other release error raises.
+        What the node owns goes together: its result (``results.result_ref``), the other outputs it stored beside it
+        (``_store_other_outputs``) and the stored outputs of its operation (``_operation_refs``: a read's result, a
+        fuzzy join's, a random split's per split, a custom node's per output, the model a Train Model node fitted),
+        each id released once. ``results.model_ref`` is forgotten with the model it names when that model is among the
+        operation's outputs; one the node did not fit (carried onto a combined graph's node, held by the node it was
+        carried from) is left as it is. It is called on a rerun under another hash or on another backend, on removal,
+        when the graph closes and when the node fails after storing part of its outputs. A release whose backend
+        cannot be reached (``ComputeUnavailable``) is logged and the reference dropped; any other release error raises.
         """
         ref = self.results.result_ref
         self.results.result_ref = None
         self.results.job_handle = None
         stored, self._stored_outputs = list(self._stored_outputs.values()), {}
-        for held in [ref, *stored]:
-            if held is not None:
-                try:
-                    registry.backend(held.backend_id).release(held)
-                except ComputeUnavailable as e:
-                    logger.warning(
-                        f"Node {self.node_id}: dropped result {held.result_id} without releasing it, "
-                        f"backend {held.backend_id!r} cannot be reached: {e}"
-                    )
+        minted, self._operation_refs = list(self._operation_refs.values()), {}
+        if self.results.model_ref in minted:
+            self.results.model_ref = None
+        released: set[tuple[str, str]] = set()
+        for held in [ref, *stored, *minted]:
+            if held is None or (held.backend_id, held.result_id) in released:
+                continue
+            released.add((held.backend_id, held.result_id))
+            try:
+                registry.backend(held.backend_id).release(held)
+            except ComputeUnavailable as e:
+                logger.warning(
+                    f"Node {self.node_id}: dropped result {held.result_id} without releasing it, "
+                    f"backend {held.backend_id!r} cannot be reached: {e}"
+                )
 
     def release_deferred_result(self) -> None:
         """Releases the held result when it is a deferred plan; a stored one is left to whatever scans its file.
 
         For a graph that is discarded while what it computed lives on (a ``run_flow`` child's output in its
-        parent's result): a consumer holds a deferred plan itself, so only the backend's holding goes.
+        parent's result): a consumer holds a deferred plan itself, so only the backend's holding goes. The node's
+        other stored results (the outputs it stored beside its result, its operation's outputs, a fitted model) stay
+        held, since that plan may scan them.
         """
         ref = self.results.result_ref
-        if ref is not None and ref.state == "deferred":
-            self.release_result()
+        if ref is None or ref.state != "deferred":
+            return
+        self.results.result_ref = None
+        self.results.job_handle = None
+        try:
+            registry.backend(ref.backend_id).release(ref)
+        except ComputeUnavailable as e:
+            logger.warning(
+                f"Node {self.node_id}: dropped result {ref.result_id} without releasing it, "
+                f"backend {ref.backend_id!r} cannot be reached: {e}"
+            )
 
     def held_result(self, backend_id: str) -> ResultRef | None:
         """The result this node holds on backend ``backend_id`` under its current hash, else ``None``."""
@@ -1646,6 +1672,21 @@ class FlowNode:
         if ref is None or ref.backend_id != backend_id or ref.result_id != self.hash:
             return None
         return ref
+
+    def held_output(self, handle: str) -> ResultRef | None:
+        """The stored result this node holds for its output ``handle``, else ``None``.
+
+        The output it stored beside its result (``_store_other_outputs``) when there is one, else the operation output
+        the handle names (a custom node's are keyed by handle), else, when its operation answered one output per
+        handle, as a random split does by split name, the output at the handle's position.
+        """
+        ref = self._stored_outputs.get(handle) or self._operation_refs.get(handle)
+        if ref is not None:
+            return ref
+        outputs = list(self._operation_refs.values())
+        if handle in self._named_outputs and len(outputs) == len(self._named_outputs):
+            return outputs[output_handle_index(handle)]
+        return None
 
     def _held_result_exists(self) -> bool:
         """Whether the backend that minted this node's result for its current hash still holds it."""
@@ -1741,7 +1782,10 @@ class FlowNode:
         submits again. The preview is the backend's inline sample when it returned one, else, outside
         Performance mode, a sample read from the backend the first time the preview is opened. A node that read an
         input which crossed from another backend stores its other outputs beside its result
-        (``_store_other_outputs``).
+        (``_store_other_outputs``). A node that holds no result under its hash on this backend releases what it holds
+        (``release_result``) before its function runs, so a rerun under another hash or on another backend releases
+        the last run's results before its operation mints the next; a node that fails while storing its other outputs
+        releases what it stored.
 
         A CSV read whose type inference fails on submit is submitted again at a higher ``infer_schema_length``
         (configured, then 10k, then 100k rows) under the node's hash, without changing the saved setting, so the
@@ -1761,6 +1805,8 @@ class FlowNode:
         """
         backend = current_context().backend
         held = self.held_result(backend.id)
+        if held is None:
+            self.release_result()
         if self.node_settings.cache_results and held is not None and held.state == "materialised":
             if self._read_stored_result(backend, held, performance_mode, node_logger):
                 return
@@ -1771,7 +1817,11 @@ class FlowNode:
         result = self._submit(backend, engine, hints, node_logger)
         self._take_result(backend, result, engine, hints.preview_rows, performance_mode)
         if self._boundary_inputs:
-            self._store_other_outputs(backend, hints, node_logger)
+            try:
+                self._store_other_outputs(backend, hints, node_logger)
+            except BaseException:
+                self.release_result()
+                raise
 
     def _store_other_outputs(self, backend: ComputeBackend, hints: SubmitHints, node_logger: NodeLogger) -> None:
         """Stores each of this node's outputs but the default on ``backend`` beside its result.
@@ -1833,9 +1883,6 @@ class FlowNode:
         result_id = self.hash
         while True:
             plan = frame.lazy() if isinstance(frame, pl.DataFrame) else frame
-            held = self.results.result_ref
-            if held is not None and (held.backend_id != backend.id or held.result_id != result_id):
-                self.release_result()
             self._submit_in_flight = JobHandle(backend.id, result_id)
             try:
                 return backend.submit(plan, inputs, hints, result_id, flow_id=node_logger.flow_id, node_id=self.node_id)
@@ -1868,14 +1915,19 @@ class FlowNode:
 
         ``job_id`` is the id the payload gives the backend for the job (the payload's ``job_id``): while the call
         runs, ``cancel`` hands ``JobHandle(backend.id, job_id)`` to ``backend.cancel``, as it does for a submit.
+        Each stored result the operation answers is the node's from then on (``_operation_refs``, by output name),
+        released with its result (``release_result``); a deferred one stays the caller's to release, since the
+        engine built over it holds its plan.
 
         Failures follow ``run_operation``'s rule, which is ``_submit``'s.
         """
         self._submit_in_flight = JobHandle(backend.id, job_id)
         try:
-            return run_operation(backend, op, payload)
+            result = run_operation(backend, op, payload)
         finally:
             self._submit_in_flight = None
+        self._operation_refs.update({name: ref for name, ref in result.refs.items() if ref.state == "materialised"})
+        return result
 
     def _input_refs(self, backend_id: str) -> list[ResultRef]:
         """The results this node's upstream nodes hold on backend ``backend_id``; one holding none is left out.
@@ -2355,9 +2407,11 @@ class FlowNode:
         nodes, ``output_handle`` selects which named output to preview. With
         ``FLOWFILE_COMPUTE_PROTOCOL`` on and a reference held, the default
         output's rows are the node's cached sample when it kept one; any other
-        output's, and the default's when none was kept, are read through
+        output's are a sample of the result the node holds for it
+        (``held_output``) on the backend that holds it, and those of an output
+        with none, and the default's when no sample was kept, are read through
         ``bounded.head_rows`` of the output's plan on the backend that holds
-        the node's reference, and are not cached. With the flag off, or for a
+        the node's reference; neither is cached. With the flag off, or for a
         node that holds no reference, an output's first rows are collected in
         core.
 
@@ -2384,8 +2438,11 @@ class FlowNode:
                 ref = self.results.result_ref
                 if settings.FLOWFILE_COMPUTE_PROTOCOL and ref is not None:
                     cached = self.results.example_data_generator
+                    output = self.held_output(output_handle) if output_handle != DEFAULT_OUTPUT_HANDLE else None
                     if output_handle == DEFAULT_OUTPUT_HANDLE and cached is not None:
                         table = cached()
+                    elif output is not None:
+                        table = _arrow_table(registry.backend(output.backend_id).sample(output, 100))
                     else:
                         table = head_rows(registry.backend(ref.backend_id), engine.data_frame, 100)
                     data = table.to_pylist()

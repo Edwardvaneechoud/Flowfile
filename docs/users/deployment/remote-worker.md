@@ -6,6 +6,8 @@ This page covers running `flowfile_worker` on a host other than core's: what the
 
 Core sends each node's plan to the worker and takes back a bounded sample of the rows, the schema and the row count. It never opens a file the worker wrote: results stay in the worker's own storage, except a result that crosses to another backend through an [exchange store](#nodes-on-several-backends). The worker reads sources and writes destinations itself, and resolves a stored connection from the catalog database with the master key, so a plan carries no credentials. All of this needs `FLOWFILE_COMPUTE_PROTOCOL` on, which is core's default.
 
+A node's result, the outputs of its operation (a random split's groups, a custom node's outputs, a fitted model) and what it stored beside them stay on the worker while core holds them, and go together: when the node runs again with other settings, when it is removed or its flow is closed, when a published API call has answered, and when a headless run exits. A core that stops without closing its flows leaves them on the worker until its age sweep, which forgets a result 24 hours after it was made (`CACHE_EXPIRATION_TIME`), the next time the worker receives work. The sweep is the backstop for a core that died, not how a result is meant to go.
+
 ## The worker's environment
 
 The `flowfile-worker` image starts `python -m flowfile_worker --host 0.0.0.0` and listens on port `63579`; `--host` and `--port` change both.

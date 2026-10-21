@@ -25,7 +25,8 @@ def run_flow_cli(flow_path: str, run_id: int, backend: str | None = None) -> int
     ``backend`` names the compute backend the run uses; without it, a backend id saved as the flow's
     ``execution_location`` names one, and a flow saved ``local``, ``remote`` or ``auto`` runs in this process
     (``LocalBackend``). A named backend becomes the process's default and the flow runs ``"remote"`` on it, so its
-    execution context is the one the designer builds for that backend.
+    execution context is the one the designer builds for that backend. The flow is closed when its run ends, so no
+    result the run minted stays held on that backend after the process exits.
     """
     # Configure logging early so all messages are captured in the subprocess log file
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -92,6 +93,8 @@ def run_flow_cli(flow_path: str, run_id: int, backend: str | None = None) -> int
         _cli_logger.exception("Error running flow: %s", e)
         _complete_run(run_id, success=False, nodes_completed=0)
         return 1
+    finally:
+        flow.close_flow()
 
     if result is None:
         _cli_logger.error("Flow execution returned no result")
