@@ -802,6 +802,22 @@ def test_a_version_mismatch_refuses_every_node_of_the_backend_before_any_starts(
     assert backend.work == []
 
 
+def test_a_run_on_local_in_a_process_that_serves_is_refused_before_local_is_made(protocol_on, declare, monkeypatch):
+    monkeypatch.setattr(registry, "_serving", False)
+    registry.mark_serving()
+    local = DeclaringBackend(registry.LOCAL_BACKEND_ID, everything())
+    made = []
+    registry.register_backend(registry.LOCAL_BACKEND_ID, lambda: made.append(local) or local)
+    graph = make_graph(8451, execution_location="local")
+    add_manual_input(graph, 1, [{"a": 1}])
+
+    run_info = graph.run_graph()
+
+    assert_refused_before_any_node(graph, run_info, local, {1: ["this core serves; compute runs on its worker"]})
+    assert made == []
+    assert local.asked == 0
+
+
 def test_a_node_another_error_failed_carries_no_compute_error(protocol_off, declare):
     declare(RuntimeError("boom"))
     graph = fuzzy_flow(8415)
