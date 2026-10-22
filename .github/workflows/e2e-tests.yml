@@ -112,7 +112,7 @@ jobs:
         # Telemetry off: an undecided consent renders a modal over the designer.
         env:
           FLOWFILE_TELEMETRY: '0'
-          # An exchange store with no connection named: placement-picker.spec.ts expects the crossing it makes refused before any node runs, so no S3 call is made.
+          # An exchange store with no connection named, so each node is placed by its own setting: placement-picker.spec.ts expects its node left on local refused by this serving core before any node runs, so no S3 call is made.
           FLOWFILE_EXCHANGE_URI: s3://flowfile-e2e/placement-exchange
         run: |
           poetry -P "$GITHUB_WORKSPACE" run flowfile_core > "$RUNNER_TEMP/core.log" 2>&1 &
