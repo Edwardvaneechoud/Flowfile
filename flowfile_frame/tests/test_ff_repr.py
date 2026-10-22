@@ -1,6 +1,8 @@
 """Tests for _ff_repr (flowfile function representation) tracking on Expr
 and NodeFormula conversion in with_columns."""
 
+from datetime import date, datetime
+
 import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
@@ -270,32 +272,112 @@ class TestFfReprCast:
     def test_cast_int64(self):
         assert col("x").cast(pl.Int64)._ff_repr == "to_integer([x])"
 
-    def test_cast_int32(self):
-        assert col("x").cast(pl.Int32)._ff_repr == "to_integer([x])"
+    def test_cast_int32_has_no_formula(self):
+        """to_integer always yields Int64, so a narrower cast keeps the Polars cast."""
+        assert col("x").cast(pl.Int32)._ff_repr is None
 
     def test_cast_float64(self):
         assert col("x").cast(pl.Float64)._ff_repr == "to_float([x])"
 
-    def test_cast_float32(self):
-        assert col("x").cast(pl.Float32)._ff_repr == "to_float([x])"
+    def test_cast_float32_has_no_formula(self):
+        assert col("x").cast(pl.Float32)._ff_repr is None
 
     def test_cast_utf8(self):
         assert col("x").cast(pl.Utf8)._ff_repr == "to_string([x])"
 
-    def test_cast_boolean(self):
-        assert col("x").cast(pl.Boolean)._ff_repr == "to_boolean([x])"
+    def test_cast_boolean_has_no_formula(self):
+        """to_boolean turns null into false and parses text, so it is not Polars' Boolean cast."""
+        assert col("x").cast(pl.Boolean)._ff_repr is None
 
-    def test_cast_date(self):
-        assert col("x").cast(pl.Date)._ff_repr == "to_date([x])"
+    def test_cast_date_has_no_formula(self):
+        """to_date parses text only, while Polars casts any temporal or integer column to Date."""
+        assert col("x").cast(pl.Date)._ff_repr is None
 
-    def test_cast_datetime(self):
-        assert col("x").cast(pl.Datetime)._ff_repr == "to_datetime([x])"
+    def test_cast_datetime_has_no_formula(self):
+        assert col("x").cast(pl.Datetime)._ff_repr is None
+        assert col("x").cast(pl.Datetime("ns"))._ff_repr is None
+
+    def test_non_strict_cast_has_no_formula(self):
+        """to_integer is a strict cast: it raises where a non-strict Polars cast gives null."""
+        assert col("x").cast(pl.Int64, strict=False)._ff_repr is None
+
+    def test_cast_by_dtype_name(self):
+        assert col("x").cast("Int64")._ff_repr == "to_integer([x])"
+        assert col("x").cast("Int8")._ff_repr is None
+
+    def test_cast_expr_instance_dtype(self):
+        assert (col("x") + 1).cast(pl.Int64())._ff_repr == "to_integer(([x] + 1))"
+        assert (col("x") + 1).cast(pl.Int8())._ff_repr is None
 
     def test_cast_column_preserves_ff_repr(self):
         """Column.cast() should also compute ff_repr."""
         c = col("x").cast(pl.Int64)
         assert isinstance(c, Column)
         assert c._ff_repr == "to_integer([x])"
+
+
+CAST_DTYPES = [pl.Int8, pl.Int16, pl.Int32, pl.UInt8, pl.Float32, pl.Int64, pl.Float64]
+
+
+class TestCastKeepsPolarsDtype:
+    """with_columns gives a cast the dtype Polars gives it; only Int64/Float64 lower onto a Formula node."""
+
+    data = {"Pclass": [1, 2, 3], "fare": [7.25, 71.28, 8.05]}
+
+    def _assert_matches_polars(self, ff_expr, pl_expr):
+        result = FlowFrame(self.data).with_columns(ff_expr)
+        expected = pl.LazyFrame(self.data).with_columns(pl_expr)
+        assert result.schema == expected.collect_schema()
+        assert_frame_equal(result.collect(), expected.collect())
+        return result.get_node_settings()
+
+    @pytest.mark.parametrize("dtype", CAST_DTYPES, ids=str)
+    def test_comparison_cast(self, dtype):
+        self._assert_matches_polars(
+            (col("Pclass") == 1).cast(dtype).alias("FirstClass"),
+            (pl.col("Pclass") == 1).cast(dtype).alias("FirstClass"),
+        )
+
+    @pytest.mark.parametrize("dtype", CAST_DTYPES, ids=str)
+    def test_column_cast(self, dtype):
+        self._assert_matches_polars(col("fare").cast(dtype).alias("fare_cast"), pl.col("fare").cast(dtype).alias("fare_cast"))
+
+    @pytest.mark.parametrize(
+        ("dtype", "formula"),
+        [(pl.Int64, "to_integer(([Pclass] == 1))"), (pl.Float64, "to_float(([Pclass] == 1))")],
+        ids=str,
+    )
+    def test_int64_and_float64_lower_to_formula(self, dtype, formula):
+        node = self._assert_matches_polars(
+            (col("Pclass") == 1).cast(dtype).alias("FirstClass"),
+            (pl.col("Pclass") == 1).cast(dtype).alias("FirstClass"),
+        )
+        assert _is_formula_node(node)
+        assert _get_formula(node) == formula
+
+    @pytest.mark.parametrize("dtype", [pl.Int8, pl.Int16, pl.Int32, pl.UInt8, pl.Float32], ids=str)
+    def test_narrow_casts_use_polars_code(self, dtype):
+        node = self._assert_matches_polars(
+            (col("Pclass") == 1).cast(dtype).alias("FirstClass"),
+            (pl.col("Pclass") == 1).cast(dtype).alias("FirstClass"),
+        )
+        assert _is_polars_code_node(node)
+
+    def test_boolean_cast_keeps_nulls_and_large_values(self):
+        data = {"n": [0, 2, None], "f": [0.0, 1e20, None]}
+        result = FlowFrame(data).with_columns(col("n").cast(pl.Boolean).alias("n_flag"), col("f").cast(pl.Boolean))
+        expected = pl.LazyFrame(data).with_columns(pl.col("n").cast(pl.Boolean).alias("n_flag"), pl.col("f").cast(pl.Boolean))
+        assert_frame_equal(result.collect(), expected.collect())
+        assert result.collect()["n_flag"].to_list() == [False, True, None]
+        assert _is_polars_code_node(result.get_node_settings())
+
+    @pytest.mark.parametrize("dtype", [pl.Date, pl.Datetime("ns")], ids=str)
+    def test_temporal_cast_of_datetime_column(self, dtype):
+        data = {"ts": [datetime(2024, 1, 2, 3, 4, 5)]}
+        result = FlowFrame(data).with_columns(col("ts").cast(dtype).alias("out"))
+        expected = pl.LazyFrame(data).with_columns(pl.col("ts").cast(dtype).alias("out"))
+        assert result.schema == expected.collect_schema()
+        assert_frame_equal(result.collect(), expected.collect())
 
 
 class TestFfReprMiscMethods:
@@ -467,6 +549,35 @@ class TestWithColumnsFormulaConversion:
         )
         node = result.get_node_settings()
         assert _is_formula_node(node)
+
+    def test_flowfile_formulas_to_boolean_keeps_formula_semantics(self, sample_ff):
+        """to_boolean translates to native code with the formula's semantics: null becomes false."""
+        result = sample_ff.with_columns(
+            flowfile_formulas=["to_boolean([nullable])"],
+            output_column_names=["flag"],
+        )
+        node = result.get_node_settings()
+        assert _is_polars_code_node(node)
+        assert result.collect()["flag"].to_list() == [True, False, True]
+
+    @pytest.mark.parametrize(
+        ("formula", "text", "parsed"),
+        [
+            ("to_date([s])", ["2024-01-02", "2024/01/03", "bad", None], [date(2024, 1, 2), None, None, None]),
+            (
+                "to_datetime([s])",
+                ["2024-01-02 03:04:05", "2024-01-02T03:04:05", "bad", None],
+                [datetime(2024, 1, 2, 3, 4, 5), None, None, None],
+            ),
+        ],
+        ids=["to_date", "to_datetime"],
+    )
+    def test_flowfile_formulas_date_parse_keeps_formula_semantics(self, formula, text, parsed):
+        """to_date/to_datetime translate to a non-strict parse of the default format: other text becomes null."""
+        result = FlowFrame({"s": text}).with_columns(flowfile_formulas=[formula], output_column_names=["out"])
+        node = result.get_node_settings()
+        assert _is_polars_code_node(node)
+        assert result.collect()["out"].to_list() == parsed
 
     def test_flowfile_formulas_explicit_datatypes_skip_translation(self, sample_ff):
         """Explicit output_column_datatypes disables translation so the user's

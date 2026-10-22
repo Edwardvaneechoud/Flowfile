@@ -179,8 +179,12 @@ def test_formula_gate_takes_an_expression(condition, is_open):
 
 @pytest.mark.parametrize(
     "condition, match",
-    [(ff.col("a").rolling_mean(2) > 1, "no flowfile formula form"), (5, "got int")],
-    ids=["expression-without-formula", "not-a-condition"],
+    [
+        (ff.col("a").rolling_mean(2) > 1, "no flowfile formula form"),
+        (ff.col("a").cast(pl.Int32) > 1, "a cast only to Int64, Float64 or String"),
+        (5, "got int"),
+    ],
+    ids=["expression-without-formula", "narrow-cast", "not-a-condition"],
 )
 def test_formula_gate_refuses_a_condition_without_formula_text(condition, match):
     source = ff.from_dict(DATA)
