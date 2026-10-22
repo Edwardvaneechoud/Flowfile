@@ -648,7 +648,7 @@ def test_a_missing_file_in_core_reruns_a_held_input_only_with_the_flag_off(unrea
             node_id=2,
             depending_on_ids=[1],
             polars_code_input=transform_schema.PolarsCodeInput(
-                polars_code=f'input_df.join(pl.read_parquet("{missing}").lazy(), how="cross")'
+                polars_code=f'input_df.join(pl.read_parquet("{missing.as_posix()}").lazy(), how="cross")'
             ),
         )
     )
@@ -658,7 +658,7 @@ def test_a_missing_file_in_core_reruns_a_held_input_only_with_the_flag_off(unrea
 
         ref = graph.get_node(1).results.result_ref
         assert [node_id for node_id, _ in failures(run_info)] == [2]
-        assert "No such file or directory (os error 2)" in failures(run_info)[0][1]
+        assert "(os error 2)" in failures(run_info)[0][1]
         assert unreadable[0].exists(ref)
         input_submits = [result_id for node_id, result_id in submits if node_id == 1]
         if protocol:
@@ -1191,7 +1191,7 @@ def side_effect_flow(flow_id: int, written: Path) -> FlowGraph:
     add_promise(graph, 2, "polars_code")
     code = (
         "rows = input_df.collect()\n"
-        f'rows.write_csv(f"{written}/{{time.time_ns()}}.csv")\n'
+        f'rows.write_csv(f"{written.as_posix()}/{{time.time_ns()}}.csv")\n'
         "output_df = rows.lazy().select('id', 'amount')"
     )
     graph.add_polars_code(
@@ -1557,7 +1557,7 @@ def test_a_run_flow_node_runs_over_inputs_stored_where_core_cannot_read(
             assert unreadable[0].count(graph.get_node(2).results.result_ref) == rows
         else:
             assert [node_id for node_id, _ in failures(run_info)] == [2]
-            assert "No such file or directory (os error 2)" in failures(run_info)[0][1]
+            assert "(os error 2)" in failures(run_info)[0][1]
     finally:
         graph.close_flow()
 
@@ -1599,7 +1599,7 @@ def test_the_elaborate_integration_flow_runs_over_stored_inputs_core_cannot_read
         else:
             assert not run_info.success
             assert {node_id for node_id, _ in failures(run_info)} == {11, 17, 26, 28, 30, 31}
-            assert all("No such file or directory (os error 2)" in error for _, error in failures(run_info))
+            assert all("(os error 2)" in error for _, error in failures(run_info))
     finally:
         graph.close_flow()
 
