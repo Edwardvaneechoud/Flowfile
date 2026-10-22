@@ -666,8 +666,13 @@ class EmbeddedWorkerBackend:
         )
 
     def _ref_from_wire(self, ref: wire.ResultRef) -> ResultRef:
-        """Core's ``ResultRef`` for a worker's reference: this backend's id stamped, the columns read as dtypes."""
-        columns = pl.Schema([(column.name, safe_eval_pl_type(column.data_type)) for column in ref.columns])
+        """Core's ``ResultRef`` for a worker's reference: this backend's id stamped, the columns read as dtypes.
+
+        A bare class (``"Categorical"``, how Polars writes ``pl.Categorical()``) is made an instance first, since
+        ``pl.Schema`` refuses a class whose constructor takes arguments.
+        """
+        dtypes = [(column.name, safe_eval_pl_type(column.data_type)) for column in ref.columns]
+        columns = pl.Schema([(name, dtype() if isinstance(dtype, type) else dtype) for name, dtype in dtypes])
         return ResultRef(
             backend_id=self.id,
             result_id=ref.result_id,
