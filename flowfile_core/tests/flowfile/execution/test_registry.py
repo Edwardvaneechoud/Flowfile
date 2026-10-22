@@ -127,6 +127,13 @@ def no_override():
     registry.set_default_override(previous)
 
 
+@pytest.fixture
+def serving(monkeypatch):
+    """The test runs in a process its entry point marked as one that serves; the mark goes after it."""
+    monkeypatch.setattr(registry, "_serving", False)
+    registry.mark_serving()
+
+
 def test_a_registered_backend_is_made_once_and_shared():
     made, factory = counting_factory("probe")
     registry.register_backend("probe", factory)
@@ -297,6 +304,40 @@ def test_a_blank_backend_variable_counts_as_unset(monkeypatch, blank):
     monkeypatch.setenv("FLOWFILE_COMPUTE_BACKEND", blank)
 
     assert registry.default_backend_id() == "local"
+
+
+@pytest.mark.parametrize("offload", [True, False])
+def test_a_process_that_serves_defaults_to_the_worker_whatever_the_offload_setting(monkeypatch, serving, offload):
+    monkeypatch.setattr(settings.OFFLOAD_TO_WORKER, "value", offload)
+
+    assert registry.serving() is True
+    assert registry.default_backend_id() == "worker"
+
+
+def test_a_process_that_serves_never_defaults_to_local_by_the_variable_or_the_override(
+    monkeypatch, serving, no_override
+):
+    monkeypatch.setenv("FLOWFILE_COMPUTE_BACKEND", "local")
+    assert registry.default_backend_id() == "worker"
+
+    registry.set_default_override("local")
+    assert registry.default_backend_id() == "worker"
+
+
+def test_a_process_that_serves_defaults_to_another_backend_its_variable_names(monkeypatch, serving):
+    monkeypatch.setenv("FLOWFILE_COMPUTE_BACKEND", "worker:team")
+
+    assert registry.default_backend_id() == "worker:team"
+
+
+def test_a_process_that_serves_leaves_the_embedded_worker_s_jobs_out_of_its_own_process(monkeypatch, serving):
+    from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
+    from flowfile_worker import spawner
+
+    monkeypatch.setattr(spawner, "in_process", False)
+
+    assert isinstance(registry.backend(registry.LOCAL_BACKEND_ID), EmbeddedWorkerBackend)
+    assert spawner.in_process is False
 
 
 def test_the_default_backend_is_the_instance_of_the_default_id(monkeypatch):
