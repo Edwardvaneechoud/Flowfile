@@ -199,7 +199,7 @@ async def _observe_performance(flow: Any, node: Any, node_id: int, node_type: st
         )
 
     schema = _extract_schema(node)
-    sample_rows = _extract_sample_rows(resulting_data)
+    sample_rows = _extract_sample_rows(node)
     return ObservationResult(
         success=True,
         node_id=node_id,
@@ -276,23 +276,27 @@ def _columns_to_dict_list(cols: Any) -> list[dict[str, Any]]:
     return out
 
 
-def _extract_sample_rows(resulting_data: Any) -> list[dict[str, Any]]:
-    """Collect up to :data:`_MAX_SAMPLE_ROWS` from the resulting
-    data engine. Catches collection errors and returns ``[]`` —
-    a missing sample shouldn't fail the whole observation when the
-    schema is fine.
+def _extract_sample_rows(node: Any) -> list[dict[str, Any]]:
+    """Up to :data:`_MAX_SAMPLE_ROWS` rows of the node's result, read
+    by ``sample`` on the backend that holds its reference, so core
+    collects nothing of it. A node holding no reference, or a read
+    that fails, gives ``[]`` — a missing sample shouldn't fail the
+    whole observation when the schema is fine.
     """
-    try:
-        df = resulting_data.collect(n_records=_MAX_SAMPLE_ROWS)
-    except Exception:
-        logger.exception("observe_after_apply: sample-row collect failed")
+    ref = node.results.result_ref
+    if ref is None:
         return []
+    import io
+
+    import polars as pl
+
+    from flowfile_core.flowfile.execution import registry
+
     try:
-        return df.to_dicts()[:_MAX_SAMPLE_ROWS]
+        sample = registry.backend(ref.backend_id).sample(ref, _MAX_SAMPLE_ROWS)
+        return pl.read_ipc_stream(io.BytesIO(sample)).to_dicts()[:_MAX_SAMPLE_ROWS]
     except Exception:
-        # Polars ``to_dicts`` should always work on a real DataFrame,
-        # but if it doesn't the caller still has the schema + the
-        # success flag.
+        logger.exception("observe_after_apply: sample-row read failed")
         return []
 
 
