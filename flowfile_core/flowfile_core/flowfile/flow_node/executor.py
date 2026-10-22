@@ -446,7 +446,7 @@ class NodeExecutor:
 
         # Retry on missing file errors (upstream cache was cleared)
         if (
-            "No such file or directory (os error" in error_str
+            "(os error 2)" in error_str
             and retry
             and (
                 not settings.FLOWFILE_COMPUTE_PROTOCOL
