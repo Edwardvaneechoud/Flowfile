@@ -89,10 +89,10 @@ When the parent runs and reaches the Run Flow node:
 
 1. Flowfile resolves the registered child, checks the current user may use it, and loads it.
 2. It computes the per-run parameter values from the bindings (one set of values per run in iterate mode).
-3. For each run it opens a fresh copy of the child flow, injects the connected data into the matching Flow Input nodes, applies the parameter values, and runs the child locally.
+3. For each run it opens a fresh copy of the child flow, injects the connected data into the matching Flow Input nodes, applies the parameter values, and runs the child in-process, under the parent's backend.
 4. It collects each Flow Output's dataset. Iterated runs are concatenated (with nulls filling any columns that differ between runs), and run metadata is appended when enabled.
 
-The child always runs in-process and locally — it never registers itself as a live flow and never touches the global worker-offload setting. Outputs stay lazy in core; only the small parameter table is read eagerly.
+The child runs in-process on the parent run's backend: it takes the parent's **Execution location**, so the child of a flow that runs on a worker runs its nodes on that worker. It never registers itself as a live flow and never touches the global worker-offload setting. Outputs stay lazy in core; only the small parameter table is read eagerly.
 
 !!! warning "Recursion and nesting limits"
     A subflow may not call itself, directly or through a chain — Flowfile detects the cycle and stops with an error. Nesting is capped at 5 levels deep.

@@ -8,3 +8,5 @@ Choose how to run Flowfile based on your needs.
 | [Desktop App](desktop.md) | Getting started, local development | No |
 | [Python Package](python.md) | Scripting, CI/CD, automation | No |
 | [Docker](docker.md) | Teams, servers, production | Yes |
+
+To run the worker on a host other than core's, see [Remote workers](remote-worker.md).
