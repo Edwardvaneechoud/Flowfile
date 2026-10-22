@@ -59,6 +59,7 @@ LITERAL_COLLECTS = {
     "add_datasource": "a manual input's own rows",
     "_raw_data_from_sample": "a flow input's sample rows",
     "_compute_renamed_names": "column names through a rename formula",
+    "_user_code_result": "the worker's own collect of a Polars Code or SQL result over rows in memory, which it stores",
 }
 READERS = (
     "scan_csv", "scan_parquet", "scan_ipc", "scan_ndjson", "scan_delta", "read_csv", "read_parquet", "read_ipc",
