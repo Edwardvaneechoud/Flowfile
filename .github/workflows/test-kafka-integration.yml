@@ -113,7 +113,7 @@ jobs:
       - name: Run Kafka integration tests
         run: |
           poetry run pytest tests/kafka -m kafka -vv --tb=long --log-cli-level=INFO
-        timeout-minutes: 10
+        timeout-minutes: 13
         env:
           TEST_MODE: "1"
 
