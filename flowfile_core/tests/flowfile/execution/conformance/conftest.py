@@ -1,11 +1,10 @@
-"""The backends every conformance test runs over: core's own process, the worker embedded in this process and the
-session worker.
+"""The backends every conformance test runs over: the worker embedded in this process and the session worker.
 
-``backend`` is each backend as core configures it, but the embedded worker, which answers to ``embedded`` here while
-``local`` is core's own process, and whose jobs every test runs in this process, as a library host does
-(``jobs_in_process``). ``unreachable`` and ``on_other_versions`` are the same kind of backend with its compute out of
-reach, or on other versions than core; a backend whose compute is this process can be neither, so those tests skip for
-it. ``unreadable`` is ``backend`` as core on another host sees it: the leaf of a
+``backend`` is each backend as core configures it: the embedded worker under its own id, ``local``, whose jobs every
+test runs in this process, as a library host does (the root conftest sets the worker's in-process mode for the
+session), and the worker backend on the session worker. ``unreachable`` and ``on_other_versions`` are the same kind of
+backend with its compute out of reach, or on other versions than core; a backend whose compute is this process can be
+neither, so those tests skip for it. ``unreadable`` is ``backend`` as core on another host sees it: the leaf of a
 stored result names a file core cannot open (``UnreadableLocation``). ``minted_elsewhere`` holds results every other
 backend minted, for ``backend`` to refuse.
 """
@@ -21,7 +20,6 @@ import pytest
 
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.protocol import ComputeBackend, ResultRef, SubmitHints
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
@@ -38,13 +36,6 @@ def _session_worker() -> WorkerBackend:
     if not is_worker_running():
         pytest.skip("flowfile_worker is not running")
     return WorkerBackend(url=_worker_url())
-
-
-def _embedded_worker() -> EmbeddedWorkerBackend:
-    """The worker embedded in this process, under the id ``embedded`` while ``local`` is core's own process."""
-    backend = EmbeddedWorkerBackend()
-    backend.id = "embedded"
-    return backend
 
 
 def _worker_out_of_reach() -> WorkerBackend:
@@ -83,20 +74,11 @@ class UnreadableLocation:
 
 
 BACKENDS: dict[str, Callable[[], ComputeBackend]] = {
-    "local": LocalBackend,
-    "embedded": _embedded_worker,
+    "embedded": EmbeddedWorkerBackend,
     "worker": _session_worker,
 }
 OUT_OF_REACH: dict[str, Callable[[], ComputeBackend]] = {"worker": _worker_out_of_reach}
 ON_OTHER_VERSIONS: dict[str, Callable[[pytest.MonkeyPatch], ComputeBackend]] = {"worker": _worker_on_other_polars}
-
-
-@pytest.fixture(autouse=True)
-def jobs_in_process(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The embedded worker's jobs run in this process for every test, as a library host sets it."""
-    from flowfile_worker import spawner
-
-    monkeypatch.setattr(spawner, "in_process", True)
 
 
 @pytest.fixture(params=list(BACKENDS))

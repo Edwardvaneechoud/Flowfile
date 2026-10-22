@@ -23,7 +23,7 @@ the process-wide override a headless runner sets (``set_default_override``) when
 This module is the one place outside ``configs/settings.py`` that reads the worker settings: the offload setting
 above, and ``WORKER_URL``, the URL the built-in worker backend is made with. Every other module asks this registry,
 or the backend it holds, where compute goes and which worker it reaches (``worker_url``); ``child_env`` names the
-variables a child process needs to run on core's own backend.
+variables a child process needs to run on the worker embedded in its own process.
 """
 
 from __future__ import annotations
@@ -51,10 +51,17 @@ CONFIGURED_WORKER_PREFIX = "worker:"
 
 
 def _local_backend() -> ComputeBackend:
-    """Core's own process as a compute."""
-    from flowfile_core.flowfile.execution.backends.local import LocalBackend
+    """The worker embedded in this process, its jobs run here.
 
-    return LocalBackend()
+    Every process that resolves ``local`` computes in its own process (a headless run, a flow built in code, a test),
+    so the factory sets the worker's in-process mode before it makes the adapter; a serving host keeps its compute on
+    the worker beside it and never resolves this id.
+    """
+    from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
+    from flowfile_worker import spawner
+
+    spawner.in_process = True
+    return EmbeddedWorkerBackend()
 
 
 def _worker_backend() -> ComputeBackend:
@@ -167,7 +174,8 @@ def default_backend() -> ComputeBackend:
 def set_default_override(backend_id: str | None) -> str | None:
     """Make ``backend_id`` the default backend of this process, ahead of ``FLOWFILE_COMPUTE_BACKEND`` and the flag.
 
-    The headless flow runners set it to core's own backend for the run they make. ``None`` removes the override, so
+    The headless flow runners set it to the worker embedded in their process for the run they make. ``None`` removes
+    the override, so
     the default follows the environment variable and the flag again. Returns the override this call replaced
     (``None`` when there was none); passing it back here undoes the call.
     """
@@ -183,7 +191,7 @@ def default_override() -> str | None:
 
 
 def child_env() -> dict[str, str]:
-    """The environment variables a child process needs to run on core's own backend.
+    """The environment variables a child process needs to run on the worker embedded in its own process.
 
     ``FLOWFILE_COMPUTE_BACKEND`` names it; the legacy ``FLOWFILE_OFFLOAD_TO_WORKER=0`` says the same to a release
     that only knows that flag.

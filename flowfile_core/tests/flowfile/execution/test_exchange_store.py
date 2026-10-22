@@ -23,7 +23,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     store_cloud_connection,
 )
 from flowfile_core.flowfile.execution import exchange, registry
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.exchange import ExchangeRun, ExchangeStore, exchange_store, remove_prefix
 from flowfile_core.flowfile.execution.protocol import CredentialRef
@@ -64,8 +64,8 @@ def _unset(monkeypatch):
 
 
 @pytest.fixture
-def local() -> LocalBackend:
-    return LocalBackend()
+def local() -> EmbeddedWorkerBackend:
+    return EmbeddedWorkerBackend()
 
 
 @pytest.fixture

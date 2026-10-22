@@ -1,8 +1,8 @@
 """The write operations take one payload dataclass under ``"payload"``, and both backends unpack the same one.
 
 The worker side is checked at the fetcher boundary: the fetchers are replaced by recorders, so these tests show
-what each payload becomes on its way to the worker without one running. The local side writes for real where the
-target is the local disk, and records the call where it would need object storage.
+what each payload becomes on its way to the worker without one running. The embedded worker's side writes for real
+where the target is the local disk, and records what the worker's writer receives where it would need object storage.
 """
 
 import base64
@@ -18,9 +18,8 @@ from pydantic import SecretStr
 
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution import registry
-from flowfile_core.flowfile.execution.backends import local as local_module
 from flowfile_core.flowfile.execution.backends import worker as worker_module
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import PlanRejected, TaskFailed
 from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, OpResult
@@ -53,7 +52,7 @@ pytestmark = pytest.mark.core
 
 
 def make(backend_type: type):
-    """An instance of ``backend_type``: the worker backend on the session worker, core's own backend as it is."""
+    """An instance of ``backend_type``: the worker backend on the session worker, the embedded worker as it is."""
     return backend_type(url=WORKER_URL) if backend_type is WorkerBackend else backend_type()
 
 
@@ -380,16 +379,16 @@ def test_unpack_names_the_scd2_payload_it_expected():
         unpack(op_payload(delta_write("/tables/dim")), DeltaScd2Payload)
 
 
-def test_the_local_backend_writes_a_file_with_the_payload_settings(tmp_path):
+def test_the_embedded_worker_writes_a_file_with_the_payload_settings(tmp_path):
     write = FileWritePayload(plan=ROWS.lazy(), settings=csv_settings(tmp_path, delimiter=";"), flow_id=7, node_id=3)
 
-    result = LocalBackend().run_op(OperationKind.file_write, op_payload(write))
+    result = EmbeddedWorkerBackend().run_op(OperationKind.file_write, op_payload(write))
 
     assert result == OpResult(refs={})
     assert pl.read_csv(tmp_path / "people.csv", separator=";").equals(ROWS)
 
 
-def test_the_local_backend_writes_a_database_table(tmp_path):
+def test_the_embedded_worker_writes_a_database_table(tmp_path):
     database = tmp_path / "people.db"
     connection = input_schema.DatabaseConnection(database_type="sqlite", database=f"sqlite:///{database}")
     node_settings = input_schema.NodeDatabaseWriter(
@@ -410,18 +409,17 @@ def test_the_local_backend_writes_a_database_table(tmp_path):
         node_id=2,
     )
 
-    LocalBackend().run_op(OperationKind.database_write, op_payload(write))
+    EmbeddedWorkerBackend().run_op(OperationKind.database_write, op_payload(write))
 
     with sqlite3.connect(database) as db:
         assert db.execute("SELECT id, name FROM people ORDER BY id").fetchall() == list(ROWS.iter_rows())
 
 
-def test_the_local_backend_decrypts_a_cloud_write_connection_in_process(monkeypatch):
+def test_the_embedded_worker_hands_the_workers_writer_a_cloud_write_connection_it_decrypts_there(monkeypatch):
     received = []
     monkeypatch.setattr(
-        local_module.FlowDataEngine,
-        "to_cloud_storage_obj",
-        lambda engine, settings: received.append((engine, settings)),
+        "flowfile_worker.external_sources.s3_source.main.write_df_to_cloud",
+        lambda df, settings, logger: received.append((df, settings)),
     )
     write = CloudWritePayload(
         plan=ROWS.lazy(),
@@ -431,18 +429,19 @@ def test_the_local_backend_decrypts_a_cloud_write_connection_in_process(monkeypa
         node_id=3,
     )
 
-    LocalBackend().run_op(OperationKind.cloud_write, op_payload(write))
+    EmbeddedWorkerBackend().run_op(OperationKind.cloud_write, op_payload(write))
 
-    ((engine, settings),) = received
-    assert engine.data_frame is write.plan
-    assert settings.write_settings is write.settings
-    assert settings.connection.aws_secret_access_key.get_secret_value() == SECRET
+    ((df, settings),) = received
+    assert df.collect().equals(ROWS)
+    assert settings.write_settings.resource_path == write.settings.resource_path
+    assert settings.connection.aws_secret_access_key.get_secret_value().startswith("$ffsec$")
+    assert settings.connection.get_storage_options()["aws_secret_access_key"] == SECRET
     assert settings.connection.aws_access_key_id == "key-id"
 
 
-def test_the_local_backend_writes_and_merges_a_local_delta_table(tmp_path):
+def test_the_embedded_worker_writes_and_merges_a_local_delta_table(tmp_path):
     path = str(tmp_path / "people")
-    backend = LocalBackend()
+    backend = EmbeddedWorkerBackend()
 
     backend.run_op(OperationKind.delta_write, op_payload(delta_write(path)))
     changes = pl.LazyFrame({"id": [3, 4], "name": ["dijkstra", "barbara"]})
@@ -451,28 +450,28 @@ def test_the_local_backend_writes_and_merges_a_local_delta_table(tmp_path):
     assert pl.read_delta(path).sort("id").rows() == [(1, "ada"), (2, "grace"), (3, "dijkstra"), (4, "barbara")]
 
 
-def test_the_local_backend_hands_decrypted_storage_options_to_the_delta_write(monkeypatch):
+def test_the_embedded_worker_hands_the_workers_delta_write_the_storage_options_it_decrypts_there(monkeypatch):
     received = []
-    monkeypatch.setattr(local_module, "write_delta", lambda *args, **kwargs: received.append(kwargs))
+    monkeypatch.setattr("shared.delta_utils.write_delta", lambda *args, **kwargs: received.append(kwargs) or False)
     connection = s3_connection().get_worker_interface(USER_ID)
 
-    LocalBackend().run_op(OperationKind.delta_write, op_payload(delta_write("s3://bucket/t", connection)))
+    EmbeddedWorkerBackend().run_op(OperationKind.delta_write, op_payload(delta_write("s3://bucket/t", connection)))
 
     (kwargs,) = received
     assert kwargs["storage_options"]["aws_secret_access_key"] == SECRET
 
 
-def test_the_local_backend_hands_decrypted_storage_options_to_the_scd2_write(monkeypatch):
+def test_the_embedded_worker_hands_the_workers_scd2_write_the_storage_options_it_decrypts_there(monkeypatch):
     received = []
 
     def record(rows, path, **kwargs):
         received.append((rows, path, kwargs))
         return Scd2Result(skipped=True, version=2)
 
-    monkeypatch.setattr(local_module, "scd2_into_delta", record)
+    monkeypatch.setattr("shared.delta_utils.scd2_into_delta", record)
     write = delta_scd2("s3://bucket/dim", s3_connection().get_worker_interface(USER_ID))
 
-    result = LocalBackend().run_op(OperationKind.delta_scd2, op_payload(write))
+    result = EmbeddedWorkerBackend().run_op(OperationKind.delta_scd2, op_payload(write))
 
     ((rows, path, kwargs),) = received
     assert rows.equals(ROWS)
@@ -511,7 +510,7 @@ def test_a_cloud_payload_carries_no_decrypted_secret():
     assert SECRET not in write.connection.model_dump_json()
 
 
-@pytest.mark.parametrize("backend_type", [LocalBackend, WorkerBackend])
+@pytest.mark.parametrize("backend_type", [EmbeddedWorkerBackend, WorkerBackend])
 @pytest.mark.parametrize("kind", list(WRITE_KINDS), ids=lambda kind: kind.value)
 def test_a_write_without_its_payload_key_names_the_key(backend_type, kind, built):
     with pytest.raises(ValueError, match=r"has no 'payload' key; it carries a \w+Payload"):
@@ -519,7 +518,7 @@ def test_a_write_without_its_payload_key_names_the_key(backend_type, kind, built
     assert built == []
 
 
-@pytest.mark.parametrize("backend_type", [LocalBackend, WorkerBackend])
+@pytest.mark.parametrize("backend_type", [EmbeddedWorkerBackend, WorkerBackend])
 def test_a_write_given_another_kind_of_payload_names_the_one_it_expects(backend_type, built, tmp_path):
     wrong = FileWritePayload(plan=ROWS.lazy(), settings=csv_settings(tmp_path), flow_id=1, node_id=1)
 
@@ -618,13 +617,13 @@ def test_the_worker_backend_sends_a_catalog_table_by_identity_and_no_path(built,
 
 
 @pytest.mark.parametrize("kind", IDENTITY_KINDS)
-def test_the_local_backend_writes_a_catalog_table_by_identity_under_its_catalog_directory(kind):
+def test_the_embedded_worker_writes_a_catalog_table_by_identity_under_its_catalog_directory(kind):
     operation, make_write = IDENTITY_KINDS[kind]
     name = f"identity_{uuid.uuid4().hex[:8]}"
     expected = str(storage.catalog_tables_directory / name)
     write = by_identity(make_write(None), CatalogTableIdentity(table_id=None, table_name=name, base_uri=None))
     try:
-        result = LocalBackend().run_op(operation, op_payload(write))
+        result = EmbeddedWorkerBackend().run_op(operation, op_payload(write))
 
         assert result.metadata["table_path"] == expected
         assert pl.read_delta(expected).height == 3
@@ -632,15 +631,15 @@ def test_the_local_backend_writes_a_catalog_table_by_identity_under_its_catalog_
         shutil.rmtree(expected, ignore_errors=True)
 
 
-def test_the_local_backend_resolves_an_object_storage_identity_under_its_root(monkeypatch):
+def test_the_embedded_worker_resolves_an_object_storage_identity_under_its_root(monkeypatch):
     received = []
-    monkeypatch.setattr(local_module, "write_delta", lambda plan, path, **kwargs: received.append(path))
+    monkeypatch.setattr("shared.delta_utils.write_delta", lambda df, path, **kwargs: received.append(path) or False)
     write = by_identity(
         delta_write("unused", s3_connection().get_worker_interface(USER_ID)),
         CatalogTableIdentity(table_id=3, table_name="dim_ab12", base_uri="s3://bucket/catalog"),
     )
 
-    LocalBackend().run_op(OperationKind.delta_write, op_payload(write))
+    EmbeddedWorkerBackend().run_op(OperationKind.delta_write, op_payload(write))
 
     assert received == ["s3://bucket/catalog/dim_ab12"]
 
@@ -650,5 +649,5 @@ def test_an_identity_names_a_directory_and_never_a_path():
         delta_write("unused"), CatalogTableIdentity(table_id=None, table_name="../escape", base_uri=None)
     )
 
-    with pytest.raises(ValueError, match="path separators"):
-        LocalBackend().run_op(OperationKind.delta_write, op_payload(write))
+    with pytest.raises(TaskFailed, match="path separators"):
+        EmbeddedWorkerBackend().run_op(OperationKind.delta_write, op_payload(write))

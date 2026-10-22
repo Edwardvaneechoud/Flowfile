@@ -2270,9 +2270,9 @@ def export_node_data(
     """Downloads up to 10,000 rows of a node's cached result as CSV/TSV without re-executing it.
 
     TSV is also capped at 100,000 cells. Larger exports belong in a write node. The file is written by a
-    ``file_write`` on the flow's backend; with ``FLOWFILE_COMPUTE_PROTOCOL`` on, the schema checks read the
-    engine's cached schema, the rows are read through ``bounded.head_rows`` on the flow's backend and the file is
-    written in core by ``LocalBackend``, so core never serves a file another process wrote.
+    ``file_write`` on the flow's backend in both flag states; with ``FLOWFILE_COMPUTE_PROTOCOL`` on, the schema
+    checks read the engine's cached schema and the rows are read through ``bounded.head_rows`` on that backend, which
+    then writes them, so core reads no result a backend stored.
     """
     flow, node = _get_analysis_node(flow_id, node_id, current_user)
     try:
@@ -2304,12 +2304,11 @@ def export_node_data(
         backend = current_context(flow).backend
         if FLOWFILE_COMPUTE_PROTOCOL:
             rows = pl.from_arrow(head_rows(backend, data, n)).lazy()
-            writer = compute_registry.backend(compute_registry.LOCAL_BACKEND_ID)
         else:
             # head before lazy(): an in-memory DataFrame is sliced so only n rows get serialized.
-            rows, writer = data.head(n).lazy(), backend
+            rows = data.head(n).lazy()
         write = FileWritePayload(plan=rows, settings=output_settings, flow_id=flow_id, node_id=node_id)
-        writer.run_op(OperationKind.file_write, op_payload(write))
+        backend.run_op(OperationKind.file_write, op_payload(write))
     except Exception as e:
         path.unlink(missing_ok=True)
         logger.error(f"Failed to export data for node {node_id}: {e}")

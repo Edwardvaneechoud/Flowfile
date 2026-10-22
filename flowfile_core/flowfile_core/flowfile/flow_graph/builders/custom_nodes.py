@@ -324,13 +324,13 @@ class CustomNodeBuildersMixin(GraphMixinBase):
         """Create the execution function for a non-kernel custom node.
 
         A node that came from the registry runs as the ``custom_node`` operation
-        on the execution context's backend: the worker runs ``process()`` in a
-        killable subprocess that owns the dataset memory, core's own backend
-        runs it in process (a local flow, the --run-flow / offload-disabled
-        fallback). A class with no node file on disk (an inline test class, one
-        registered in process) can only run in core, so it always runs on
-        core's own backend. Both read the settings when the node executes, so
-        ``${name}`` references arrive resolved.
+        on the execution context's backend: a worker runs ``process()`` in a
+        killable subprocess that owns the dataset memory, the worker embedded in
+        this process runs it here. A class with no node file on disk (an inline
+        test class, one registered in process) exists in this process and
+        nowhere else, so it always runs on the worker embedded here, the one
+        compute that has the class. Both read the settings when the node
+        executes, so ``${name}`` references arrive resolved.
 
         The operation's refs become the node's outputs the same way for every
         backend: ``{"result": ref}`` is the node's one output; refs keyed by
@@ -371,12 +371,12 @@ class CustomNodeBuildersMixin(GraphMixinBase):
             node._named_outputs.update(engines)
             return engines[DEFAULT_OUTPUT_HANDLE]
 
-        def _run_in_core(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
+        def _run_on_the_embedded_worker(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
             return _run(registry.backend(registry.LOCAL_BACKEND_ID), flow_data_engine)
 
         def _func(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
             if registry_entry is None or registry_entry.source_text is None:
-                return _run_in_core(*flow_data_engine)
+                return _run_on_the_embedded_worker(*flow_data_engine)
             return _run(current_context(self).backend, flow_data_engine)
 
         return _func

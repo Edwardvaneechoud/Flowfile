@@ -34,7 +34,7 @@ from flowfile_core.configs import logger, settings
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager import db_connections
 from flowfile_core.flowfile.execution import registry
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, VersionMismatch
 from flowfile_core.flowfile.execution.placement import Placement, Refusal, SingleBackendPolicy, _catalog_target, place
 from flowfile_core.flowfile.execution.protocol import OperationKind
@@ -54,8 +54,9 @@ LOCAL_DISK = 'namespace "TestCat.TestSch" is on local disk; remote execution nee
 
 
 def everything() -> Capabilities:
-    """What core's own backend declares: its seventeen operations, ``file`` and object storage, every plugin."""
-    return LocalBackend().capabilities()
+    """What the worker embedded in this process declares: the nineteen operations, ``file`` and object storage,
+    every plugin."""
+    return EmbeddedWorkerBackend().capabilities()
 
 
 def ambient() -> Capabilities:
@@ -76,8 +77,8 @@ def without(capabilities: Capabilities, *, operation=None, scheme=None, plugin=N
     return capabilities.model_copy(update=update)
 
 
-class DeclaringBackend(LocalBackend):
-    """Core's own backend under another id, declaring the capabilities it is given.
+class DeclaringBackend(EmbeddedWorkerBackend):
+    """The worker embedded in this process under another id, declaring the capabilities it is given.
 
     Given an error instead, it is unreachable: ``capabilities()``, ``submit`` and ``run_op`` raise it. ``work`` records
     each ``submit`` and ``run_op`` it is sent but the handshake's probe jobs; ``asked`` counts its ``capabilities()``

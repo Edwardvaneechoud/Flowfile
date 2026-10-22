@@ -152,10 +152,10 @@ class CatalogBuildersMixin(GraphMixinBase):
 
         With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a table on object storage takes its schema from the backend the reader
         runs on: its plan is held there as a deferred result with no preview while the reference's schema is read,
-        then released, so the plan's connection is resolved by that backend, a worker in its own process and
-        ``LocalBackend`` in core. Every other read here resolves its schema from its plan in core. A virtual table whose
-        producer flow runs is resolved, with the flag on, on the backend the reader runs on, the one placement gave it
-        in a run, and with it off on the flow's location.
+        then released, so the plan's connection is resolved by that backend, a worker in its own process and the
+        embedded worker in this one. Every other read here resolves its schema from its plan in core. A virtual table
+        whose producer flow runs is resolved, with the flag on, on the backend the reader runs on, the one placement
+        gave it in a run, and with it off on the flow's location.
 
         Returns:
             Whether the virtual table is optimized, or None if not a virtual table.

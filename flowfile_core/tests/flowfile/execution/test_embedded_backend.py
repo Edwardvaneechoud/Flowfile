@@ -7,7 +7,9 @@ adapter's: a child's failure is a ``TaskFailed`` naming the error, a plan this p
 a result the worker does not hold a ``ResultMissing``, and what a body refuses before anything runs a ``PlanRejected``.
 The handshake passes with its probes run as in-process jobs, the plan crosses as bytes, each operation the adapter
 builds a body for holds its outputs, an import and an export cross a URI, and after a job a secret core encrypted still
-decrypts through the resolver the worker registers.
+decrypts through the resolver the worker registers. The adapter declares every kind the worker declares, with ``file``
+among its schemes; the seven kinds the worker serves on its task routes and a custom node with no node file are
+``test_local_backend.py``'s.
 """
 
 import hashlib
@@ -73,8 +75,6 @@ from tests.flowfile.execution.test_worker_backend_v1 import (
 )
 
 BLOB = bytes(range(256)) * 64
-V1_KINDS = frozenset(kind.value for kind in worker_module._V1_OPERATIONS)
-TASK_ROUTE_KINDS = [kind for kind in OperationKind if kind.value not in V1_KINDS]
 STATES = pytest.mark.parametrize("must_materialise", [True, False], ids=["materialised", "deferred"])
 
 
@@ -234,24 +234,20 @@ def columns(ref: ResultRef) -> list[str]:
     return [column.column_name for column in ref.schema]
 
 
-def test_the_embedded_worker_is_a_backend_that_declares_the_twelve_v1_kinds(backend):
+def test_the_embedded_worker_is_a_backend_that_declares_every_kind_the_worker_declares_and_file(backend):
     assert isinstance(backend, ComputeBackend)
     assert (backend.id, backend.protocol_version) == ("local", PROTOCOL_VERSION)
 
     declared = backend.capabilities()
 
-    assert declared.operations == V1_KINDS
-    assert declared == service.worker_capabilities().model_copy(update={"operations": V1_KINDS})
+    assert declared.operations == service.OPERATIONS == frozenset(kind.value for kind in OperationKind)
+    worker = service.worker_capabilities()
+    assert declared == worker.model_copy(
+        update={"read_schemes": worker.read_schemes | {"file"}, "write_schemes": worker.write_schemes | {"file"}}
+    )
 
 
-@pytest.mark.parametrize("kind", TASK_ROUTE_KINDS, ids=lambda kind: kind.value)
-def test_a_task_route_kind_is_refused_and_not_declared(backend, kind):
-    assert kind.value not in backend.capabilities().operations
-    with pytest.raises(OperationUnsupported, match=kind.value):
-        backend.run_op(kind, {})
-
-
-@pytest.mark.parametrize("kind", sorted(V1_KINDS))
+@pytest.mark.parametrize("kind", [kind.value for kind in OperationKind])
 def test_a_declared_kind_refuses_an_empty_payload_before_anything_runs(backend, kind, inline_jobs):
     with pytest.raises((TypeError, ValueError)):
         backend.run_op(OperationKind(kind), {})

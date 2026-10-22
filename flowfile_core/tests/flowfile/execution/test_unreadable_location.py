@@ -20,9 +20,10 @@ included; and a node that fails on a missing file in core keeps its stored input
 elaborate integration flow runs whole over stored inputs with the flag on, and with it off fails at the nodes that read
 them in core. The tests named for ``v1`` results check the same over the session worker's ``/v1`` routes, where a
 multi-output node's other output previews from the result the node holds for it. Two backends hold what they store
-where core cannot read it: ``UnreadableBackend``, core's own backend, whose stored files exist only while one of its
-calls runs, and ``UnreadableWorker``, the session worker as core sees one on another host, whose stored files exist
-only while one of its requests runs; a fuzzy match and a SQL query run over a stored input on the second.
+where core cannot read it: ``UnreadableBackend``, the worker embedded in this process, whose stored files sit at a
+path that exists only while one of its calls runs, and ``UnreadableWorker``, the session worker as core sees one on
+another host, whose stored files exist only while one of its requests runs; a fuzzy match and a SQL query run over a
+stored input on the second.
 """
 
 import dataclasses
@@ -44,7 +45,7 @@ from flowfile_core.configs import settings
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.execution import registry
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.extensions import get_instant_func_results
 from flowfile_core.flowfile.flow_data_engine.bounded import unique_values
@@ -85,14 +86,16 @@ def detached_payload(payload):
     return dataclasses.replace(payload, **frames)
 
 
-class UnreadableBackend(LocalBackend):
-    """Core's own backend, except that a result it stores sits at a path that exists only while one of its calls runs.
+class UnreadableBackend(EmbeddedWorkerBackend):
+    """The worker embedded in this process, except that a result it stores sits at a path that exists only while one
+    of its calls runs.
 
-    It stores a submit whose hints say ``must_materialise`` and every result an operation holds, with the inline sample
-    for a stored submit; every other plan stays deferred, as in ``LocalBackend``. A stored result is kept under
-    ``<root>/<result id>.arrow``, which is its ``location``, and ``plan_for`` returns ``scan_ipc`` of that path.
-    ``submit``, ``run_op``, ``sample`` and ``count`` write every stored result to its path, so the plans composed on
-    them run, and remove the files before they return.
+    The worker holds a stored result's file under core's cache directory; the leaf ``plan_for`` answers for it here is
+    ``scan_ipc`` of ``<root>/<result id>.arrow`` instead, a path that exists only while ``submit``, ``run_op``,
+    ``sample``, ``count`` or ``export`` runs: ``_readable`` links every stored result there for the call and removes
+    the links before it returns, so the plans core composes on those leaves run on this backend and any read of such a
+    leaf from core raises ``FileNotFoundError``. Every reference this backend mints passes through ``_ref_from_wire``,
+    which notes where the worker wrote a stored result.
 
     Like a worker, it runs a copy of each plan core sends (``detached``) and hands core a copy of each deferred plan
     it holds: Polars keeps what it resolves of a scan on the plan object, so a backend that resolved core's own plans
@@ -100,20 +103,17 @@ class UnreadableBackend(LocalBackend):
     """
 
     def __init__(self, root: Path):
-        super().__init__()
         self.id = BACKEND_ID
         self.root = root
-        self._storing = False
+        self._stored: dict[str, str] = {}
+        self._lock = threading.Lock()
 
     def submit(self, plan, inputs, hints, result_id, *, flow_id, node_id):
-        with self._readable(storing=hints.must_materialise):
-            result = super().submit(detached(plan), inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
-            if result.ref.state == "materialised" and hints.preview_rows is not None:
-                result = dataclasses.replace(result, sample=super().sample(result.ref, hints.preview_rows))
-        return result
+        with self._readable():
+            return super().submit(detached(plan), inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
 
     def run_op(self, op, payload):
-        with self._readable(storing=True):
+        with self._readable():
             return super().run_op(op, {key: detached_payload(value) for key, value in payload.items()})
 
     def sample(self, ref, n):
@@ -124,39 +124,46 @@ class UnreadableBackend(LocalBackend):
         with self._readable():
             return super().count(ref)
 
+    def export(self, ref, uri, credential):
+        with self._readable():
+            return super().export(ref, uri, credential)
+
     def plan_for(self, ref):
         if ref.state == "deferred":
             return detached(super().plan_for(ref))
-        self._plan(ref)
-        return pl.scan_ipc(ref.location.decode("utf-8"))
+        self._table(ref)
+        return pl.scan_ipc(self.root / f"{ref.result_id}.arrow")
 
-    def _store(self, plan, *, result_id, flow_id):
-        return self._hold(plan, result_id=result_id)
-
-    def _hold(self, frame, row_count=None, schema=None, result_id=None):
-        if not self._storing:
-            return super()._hold(frame, row_count=row_count, schema=schema, result_id=result_id)
-        held = super()._hold(frame.lazy().collect(), result_id=result_id)
-        path = str(self.root / f"{held.result_id}.arrow")
+    def release(self, ref):
+        super().release(ref)
         with self._lock:
-            self._results[path] = self._results.pop(held.result_id)
-        return dataclasses.replace(held, location=path.encode("utf-8"))
+            self._stored.pop(ref.result_id, None)
+
+    def _ref_from_wire(self, ref):
+        made = super()._ref_from_wire(ref)
+        held = WorkerLocation.model_validate_json(made.location)
+        if held.kind == "file":
+            with self._lock:
+                self._stored[made.result_id] = held.path
+        return made
 
     @contextmanager
-    def _readable(self, storing: bool = False):
-        """Every stored result is on disk while the block runs; with ``storing``, ``_hold`` stores what it holds."""
+    def _readable(self):
+        """Every stored result is at its unreadable path while the block runs, and gone from it after."""
         with self._lock:
-            stored = {key: frame for key, frame in self._results.items() if key.startswith(str(self.root))}
+            stored = dict(self._stored)
         self.root.mkdir(parents=True, exist_ok=True)
-        for path, frame in stored.items():
-            frame.collect().write_ipc(path)
-        self._storing = storing
+        linked = []
+        for result_id, path in stored.items():
+            link = self.root / f"{result_id}.arrow"
+            if os.path.isfile(path) and not link.exists():
+                os.symlink(path, link)
+                linked.append(link)
         try:
             yield
         finally:
-            self._storing = False
-            for path in stored:
-                os.remove(path)
+            for link in linked:
+                link.unlink(missing_ok=True)
 
 
 @pytest.fixture(params=[False, True], ids=["flag_off", "flag_on"])
@@ -419,7 +426,9 @@ def failures(run_info) -> list[tuple[int, str]]:
     return [(result.node_id, result.error) for result in run_info.node_step_result if not result.success]
 
 
-def test_a_flow_runs_previews_and_predicts_over_stored_results_core_cannot_read(unreadable, protocol):
+def test_a_flow_runs_previews_and_predicts_over_stored_results_core_cannot_read(unreadable, protocol_on):
+    """With the flag on only: the worker stores a previewed manual input, whose leaf the flag-off path resolves in
+    core."""
     graph = stored_results_flow(9341)
     try:
         run_info = graph.run_graph()
@@ -601,7 +610,7 @@ def test_a_v1_multi_output_node_previews_its_other_output_from_the_result_it_hol
         graph.close_flow()
 
 
-def test_a_result_its_backend_dropped_is_run_again(unreadable, protocol):
+def test_a_result_its_backend_dropped_is_run_again(unreadable, protocol_on):
     graph = stored_results_flow(9342)
     try:
         assert graph.run_graph().success
@@ -1996,6 +2005,6 @@ def test_rows_of_v1_results_come_over_the_wire(remote_worker, protocol_on, monke
         assert get_instant_func_results(graph.get_node(3), "[name]").result == "n1"
         assert select.get_column_stats("amount").max_value == "40"
         assert export_lines(graph, 2, 10_000)[1:] == [f'"{i}","n{i}","{i * 10}"' for i in range(1, 5)]
-        assert ops == ["random_split"]
+        assert ops == ["random_split", "file_write"], "the export's file is written by the flow's backend"
     finally:
         flow_file_handler.delete_flow(9346)

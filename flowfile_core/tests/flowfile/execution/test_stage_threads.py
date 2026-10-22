@@ -10,7 +10,7 @@ from flowfile_core.configs import settings
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.execution import registry
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.context import ExecutionContext, current_context, use_context
 from flowfile_core.flowfile.execution.protocol import ComputeBackend
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
@@ -22,9 +22,9 @@ from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.schemas import get_global_execution_location
 
 
-class CountingBackend(LocalBackend):
-    """Core's own backend under another id, so a run on it needs no worker; ``touch``, on this class only, records
-    a node id."""
+class CountingBackend(EmbeddedWorkerBackend):
+    """The worker embedded in this process under another id, so a run on it needs no worker process; ``touch``, on
+    this class only, records a node id."""
 
     def __init__(self, backend_id: str):
         super().__init__()

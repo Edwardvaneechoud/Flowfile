@@ -308,13 +308,13 @@ def test_the_default_backend_is_the_instance_of_the_default_id(monkeypatch):
     assert len(made) == 1
 
 
-def test_the_built_in_backends_are_core_and_the_worker_at_the_configured_url():
-    from flowfile_core.flowfile.execution.backends.local import LocalBackend
+def test_the_built_in_backends_are_the_embedded_worker_and_the_worker_at_the_configured_url():
+    from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
     from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 
     local, worker = registry.backend(registry.LOCAL_BACKEND_ID), registry.backend(registry.WORKER_BACKEND_ID)
 
-    assert isinstance(local, LocalBackend)
+    assert isinstance(local, EmbeddedWorkerBackend)
     assert isinstance(worker, WorkerBackend)
     assert worker.url == settings.WORKER_URL
     assert registry.worker_url() == worker.url

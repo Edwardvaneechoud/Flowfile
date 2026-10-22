@@ -38,7 +38,7 @@ from websockets.http11 import Response
 from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution.backends import worker as worker_module
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import TOKEN_RULE, WorkerBackend, _flowfile_schema
 from flowfile_core.flowfile.execution.errors import (
     ComputeUnavailable,
@@ -1021,10 +1021,11 @@ def test_a_fuzzy_join_runs_over_v1_and_matches_as_it_does_in_core(backend, kept,
     kept.append(ref)
 
     assert (ref.result_id, ref.state, ref.row_count) == (f"{join.job_id}_0", "materialised", 5)
-    in_core = LocalBackend()
-    local_ref = in_core.run_op(OperationKind.fuzzy_join, op_payload(join)).refs["result"]
+    embedded = EmbeddedWorkerBackend()
+    embedded_ref = embedded.run_op(OperationKind.fuzzy_join, op_payload(join)).refs["result"]
     columns = ["name", "name_right", "name_vs_name_right_levenshtein"]
-    assert sampled(backend, ref).sort(columns).equals(in_core.plan_for(local_ref).collect().sort(columns))
+    assert sampled(backend, ref).sort(columns).equals(embedded.plan_for(embedded_ref).collect().sort(columns))
+    embedded.release(embedded_ref)
     assert backend.status(JobHandle("worker", join.job_id)).state == "done"
 
 
@@ -1054,11 +1055,12 @@ def test_a_fuzzy_join_over_results_the_worker_holds_resolves_neither_side_in_cor
     kept.append(ref)
 
     assert (ref.state, ref.row_count) == ("materialised", 5)
-    in_core = LocalBackend()
+    embedded = EmbeddedWorkerBackend()
     in_memory = dataclasses.replace(join, left=names, right=names, left_schema=None, right_schema=None)
-    local_ref = in_core.run_op(OperationKind.fuzzy_join, op_payload(in_memory)).refs["result"]
+    embedded_ref = embedded.run_op(OperationKind.fuzzy_join, op_payload(in_memory)).refs["result"]
     columns = ["name", "name_right", "name_vs_name_right_levenshtein"]
-    assert sampled(backend, ref).sort(columns).equals(in_core.plan_for(local_ref).collect().sort(columns))
+    assert sampled(backend, ref).sort(columns).equals(embedded.plan_for(embedded_ref).collect().sort(columns))
+    embedded.release(embedded_ref)
 
 
 @SOCKET_ONLY
@@ -1077,9 +1079,11 @@ def test_a_random_split_runs_over_v1_and_partitions_like_core(backend, kept, no_
         (f"{split.job_id}_1", "materialised", 10),
     ]
     on_worker = {name: sampled(backend, ref)["n"].to_list() for name, ref in refs.items()}
-    in_core = LocalBackend()
-    local_refs = in_core.run_op(OperationKind.random_split, op_payload(split)).refs
-    assert on_worker == {name: in_core.plan_for(ref).collect()["n"].to_list() for name, ref in local_refs.items()}
+    embedded = EmbeddedWorkerBackend()
+    embedded_refs = embedded.run_op(OperationKind.random_split, op_payload(split)).refs
+    assert on_worker == {name: embedded.plan_for(ref).collect()["n"].to_list() for name, ref in embedded_refs.items()}
+    for embedded_ref in embedded_refs.values():
+        embedded.release(embedded_ref)
     assert backend.status(JobHandle("worker", split.job_id)).state == "done"
 
 
