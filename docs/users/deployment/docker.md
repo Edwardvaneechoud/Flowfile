@@ -128,6 +128,8 @@ volumes:
 
 The worker can also run on a host of its own; [Remote workers](remote-worker.md) covers what it and core then need.
 
+A flow you run in the designer computes on the worker container. A scheduled run, and a run started from the catalog, do not: core starts each as a process of its own (`flowfile run flow`), which computes on a worker embedded in it, inside the core container and with that container's memory and CPU, while the worker container serves nothing for it, except a **Google Analytics** read, which always runs on the worker. So the core container needs the memory the largest scheduled flow uses. A flow whose **Execution location** names a configured worker runs on that worker instead.
+
 ## Environment Variables
 
 | Variable | Description | Default |

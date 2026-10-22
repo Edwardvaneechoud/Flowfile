@@ -11,9 +11,6 @@ import json
 import pytest
 
 from flowfile_core.schemas import input_schema
-
-# Importing flowfile_worker sets the multiprocessing start method to "spawn" process-wide.
-# That is inert here: flowfile_core uses no multiprocessing.
 from flowfile_worker.create import models as worker_models
 
 CORE_QUALIFIER = "flowfile_core.schemas.input_schema."

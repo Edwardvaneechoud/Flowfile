@@ -105,7 +105,7 @@ Core and every worker open the store at its connection's endpoint, so that endpo
 
 - **Kernel nodes.** A **Python Script** node, or a custom node that runs on a kernel, is refused on a remote worker: `it runs on a notebook kernel, which reads its inputs from the kernel shared volume on core's host, where this backend does not write`. A flow with such a node runs on a worker on core's host.
 - **Plugin layout.** On a worker whose plugins sit at other library paths than core's, the nodes that use a plugin are refused (see [Versions and the handshake](#versions-and-the-handshake)); the worker still runs every other node.
-- **Headless runs.** `flowfile run flow` computes in its own process unless the run passes `--backend <id>` or the flow's **Execution location** is a backend id. A scheduled run follows the flow's setting the same way.
+- **Headless and scheduled runs.** `flowfile run flow`, and a run a schedule starts, compute on a worker embedded in their own process, which for a scheduled run is inside core's container, unless the run passes `--backend <id>` or the flow's **Execution location** is a backend id. A remote worker runs a scheduled flow's nodes only when the flow names it; a **Google Analytics** read is the exception, running on the default worker in every run. A named worker that cannot be reached fails the run, which does not compute in its own process instead.
 - **Node logs.** A node's log lines reach core's flow log only when the worker reaches `CORE_HOST` on `CORE_PORT` with core's token; otherwise they stay in the worker's own output.
 
 Hosting a worker on Kubernetes or behind an ingress, and running and scaling several workers, are outside this page.

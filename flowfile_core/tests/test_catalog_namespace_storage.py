@@ -541,12 +541,13 @@ def test_cloud_physical_read_path_existence_preview_version_history(monkeypatch)
 
 
 def test_cloud_non_versioned_preview_offloads_to_worker(monkeypatch):
-    """With offload on, a cloud non-versioned preview routes through the worker
-    (trigger_delta_preview) carrying the storage payload, and the catalog's stored
+    """With catalog I/O going to the worker (``uses_worker``), a cloud non-versioned preview routes through the
+    worker (trigger_delta_preview) carrying the storage payload, and the catalog's stored
     row_count stays authoritative for total_rows (a page-bounded read never sees the whole table).
 
     No MinIO/worker needed: the worker call is faked, so this exercises core's routing + total_rows
-    contract deterministically. The real in-process fallback is covered by the offload-off test above.
+    contract deterministically. The read in this process, the one a process on its embedded worker makes, is covered
+    by the read-path test above.
     """
     from flowfile_core.schemas.catalog_schema import CatalogTablePreview
 
