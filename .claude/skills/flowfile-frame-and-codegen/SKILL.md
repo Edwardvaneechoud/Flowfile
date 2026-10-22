@@ -207,7 +207,7 @@ Entry point: `from flowfile import open_graph_in_editor; open_graph_in_editor(fr
 3. `POST /auth/token` (empty body) → JWT; the flow is imported via the authenticated API to obtain a flow id.
 4. Opens a browser tab at `http://HOST:PORT/ui/flow/{id}` **only** when the running server reports single-mode (`GET /single_mode`) **and** `FLOWFILE_MODE == "electron"`.
 
-**Import side effect worth knowing about:** `import flowfile` (the top-level `flowfile` package, not `flowfile_frame`) sets `os.environ["FLOWFILE_WORKER_PORT"] = "63578"` and `os.environ["FLOWFILE_SINGLE_FILE_MODE"] = "1"` at import time, then re-exports the whole frame API (`col`/`lit`/`when`, readers, connections, selectors) plus core classes — this is why docs examples that write `import flowfile as ff` (rather than `import flowfile_frame as ff`) work unmodified.
+**What `import flowfile` does:** the top-level `flowfile` package (not `flowfile_frame`) sets nothing about the worker and re-exports the whole frame API (`col`/`lit`/`when`, readers, connections, selectors) plus core classes — this is why docs examples that write `import flowfile as ff` (rather than `import flowfile_frame as ff`) work unmodified.
 
 ---
 
@@ -220,7 +220,7 @@ All of these persist through `flowfile_core`'s storage layer (the shared SQLite 
 - **Catalog** (`catalog.py`, `catalog_reference.py`): `read_catalog_table`, `read_catalog_sql`, `write_catalog_table`, `register_flow_with_catalog`, plus navigable `CatalogReference`/`SchemaReference`/`list_catalogs()`/`default_schema()` that talk to `CatalogService` directly (in-process, same DB).
 - **Kafka** (`kafka.py`, `read_kafka`) and **REST** (`rest_api.py`, `read_api`, with auth/pagination coercers `_coerce_auth`/`_coerce_pagination`) add `NodeKafkaSource`/`NodeRestApiReader` nodes.
 
-**On "does this need a running `flowfile_worker`": no, for frame graphs — verified, corrects a natural assumption.** Core's general architecture rule is "the worker does all external fetching" (GA4 is the canonical zero-exception template — see `flowfile-node-development` §1.5 for the full rule and rationale). But `add_database_reader`, `add_kafka_source`, and `add_rest_api_reader` each carry an explicit `if self.execution_location == "local":` branch in `flow_graph/builders/connectors.py` that fetches **in-process** instead of dispatching to the worker — added specifically so CLI/`--run-flow` and other no-worker execution modes still work. Since `create_flow_graph()` always sets `execution_location = "local"` for any graph `flowfile_frame` builds, **every DB/Kafka/REST read you do from a `flowfile_frame` script runs in-process, with no worker required for `.collect()`.** Verified live in this session: `ff.read_api(url="https://jsonplaceholder.typicode.com/todos/1").collect()` succeeded with fetching happening inline (`shared/rest_api/fetch.py::fetch_rest_api`, the same function the worker calls, just invoked directly) — no `flowfile_worker` process was running anywhere on the host. This only applies to `.collect()`-time execution of a frame-built graph; a flow later opened in the Designer and run in a non-local execution mode goes back through the worker like any other flow (`flowfile-architecture-contract`).
+**On "does this need a running `flowfile_worker`": no, for frame graphs.** `create_flow_graph()` sets `execution_location = "local"` for every graph `flowfile_frame` builds, and `local` is the worker embedded in this process (`EmbeddedWorkerBackend`), which runs each job in the script's own process: a DB, Kafka or REST read runs the worker's reader there (for REST, `shared/rest_api/fetch.py::fetch_rest_api`, the function a worker beside core calls too), and no port is opened. Nothing of `flowfile_worker` is imported until a node first submits. A flow later opened in the Designer and run there goes to the worker beside core like any other flow (`flowfile-architecture-contract`).
 
 **Import side effect:** these connector modules import `flowfile_core`, whose package `__init__` runs `validate_setup()` + `init_db()` — **importing `flowfile_frame` creates and Alembic-migrates the catalog DB** if it doesn't already have the current schema. For any probing/scripting, isolate with `FLOWFILE_DB_PATH=<scratch path>` (per the standing project rule — do not point ad hoc scripts at the live catalog DB).
 
@@ -345,8 +345,8 @@ grep -n "^PASSTHROUGH_METHODS" flowfile_frame/flowfile_frame/lazy_methods.py flo
 # confirm the sandbox contract hasn't drifted
 grep -n "safe_globals\|_validate_code\|_wrap_in_function" flowfile_core/flowfile_core/flowfile/flow_data_engine/polars_code_parser.py
 
-# confirm which connectors have an execution_location=="local" in-process branch
-grep -rn 'execution_location == "local"' flowfile_core/flowfile_core/flowfile/flow_graph
+# confirm no connector branches on the location (test_inline_location_branches.py pins it at zero)
+grep -rn 'execution_location == "local"' flowfile_core/flowfile_core/flowfile/flow_graph   # expect nothing
 
 # current .pyi file count
 find flowfile_frame/flowfile_frame -name '*.pyi' | wc -l

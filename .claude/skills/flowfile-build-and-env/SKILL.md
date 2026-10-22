@@ -157,7 +157,7 @@ npm run dev                       # http://localhost:5174
 pip install flowfile
 flowfile run ui              # serves bundled web UI + core + worker on ONE port
 ```
-Importing the `flowfile` package sets **`FLOWFILE_WORKER_PORT=63578`** and **`FLOWFILE_SINGLE_FILE_MODE=1`** as a side effect at import time (`flowfile/flowfile/__init__.py`) — do not `import flowfile` in the same process as a normally-configured core/worker pair, it will silently rewire the worker port out from under you. Other CLI verbs: `flowfile run {ui|core|worker|flow <path>}` (`run flow` forces local, non-offloaded execution and strips UI-only nodes), `flowfile project {init|open|save}`, `flowfile seed-demo` / `remove-demo`.
+`import flowfile` sets nothing about the worker; `flowfile run ui` puts its own process in single-file mode, where flows compute on the worker embedded in it, its jobs in the worker's pool. Other CLI verbs: `flowfile run {ui|core|worker|flow <path>}` (`run flow` computes on the worker embedded in its own process unless `--backend` or the flow's saved backend id names one, and strips UI-only nodes), `flowfile project {init|open|save}`, `flowfile seed-demo` / `remove-demo`.
 
 ---
 
