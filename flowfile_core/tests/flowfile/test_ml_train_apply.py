@@ -796,7 +796,8 @@ def _flow_only_train_settings(graph: FlowGraph) -> input_schema.NodeTrainModel:
 @pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
 def test_a_local_flow_trains_and_scores_on_the_embedded_worker(monkeypatch, flag):
     """The worker embedded in this process fits and holds the model, and Apply Model keeps the rows it scored held
-    there: the worker stores them, and a stored result is the node's to release."""
+    there: the worker stores them, and a stored result is the node's to release. The handshake's probe jobs, run and
+    released the first time a session checks ``local`` with the flag on, are not the flow's."""
     monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
     graph = _make_graph()
     graph._flow_settings.path = ""
@@ -807,7 +808,8 @@ def test_a_local_flow_trains_and_scores_on_the_embedded_worker(monkeypatch, flag
     release = EmbeddedWorkerBackend.release
 
     def record_release(self, ref):
-        released.append((ref.kind, ref.state))
+        if not ref.result_id.startswith("handshake-"):
+            released.append((ref.kind, ref.state))
         release(self, ref)
 
     monkeypatch.setattr(EmbeddedWorkerBackend, "release", record_release)
