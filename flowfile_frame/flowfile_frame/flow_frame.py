@@ -1661,7 +1661,8 @@ class FlowFrame:
         if formula is None:
             raise ValueError(
                 "filter_split predicates must have a flowfile-formula form (comparisons, and/or/not, is_in, "
-                "is_null, ...); lambdas and unmapped methods are not supported. Pass flowfile_formula=... "
+                "is_null, ...); lambdas, unmapped methods and casts to anything but Int64, Float64 or String "
+                "(strict) are not supported. Pass flowfile_formula=... "
                 "or use filter() twice instead."
             )
         return formula
