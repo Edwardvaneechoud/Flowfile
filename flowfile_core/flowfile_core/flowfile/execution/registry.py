@@ -18,7 +18,11 @@ is gone.
 ``default_backend_id`` names the default backend, the one a ``"remote"`` flow and a call without a graph use:
 the process-wide override a headless runner sets (``set_default_override``) when there is one, else
 ``FLOWFILE_COMPUTE_BACKEND`` when set, else ``"worker"`` while the ``OFFLOAD_TO_WORKER`` setting is on and
-``"local"`` when it is off.
+``"local"`` when it is off; never ``"local"`` in a process that serves.
+
+A process that serves (the desktop sidecar, the Docker image, the pip server) is marked by its entry point
+(``mark_serving``): its compute is the worker beside it, so its default backend is never the worker embedded in it,
+a run placed on ``local`` there is refused, and the ``local`` factory leaves the embedded worker's jobs to its pool.
 
 This module is the one place outside ``configs/settings.py`` that reads the worker settings: the offload setting
 above, and ``WORKER_URL``, the URL the built-in worker backend is made with. Every other module asks this registry,
@@ -51,16 +55,18 @@ CONFIGURED_WORKER_PREFIX = "worker:"
 
 
 def _local_backend() -> ComputeBackend:
-    """The worker embedded in this process, its jobs run here.
+    """The worker embedded in this process.
 
-    Every process that resolves ``local`` computes in its own process (a headless run, a flow built in code, a test),
-    so the factory sets the worker's in-process mode before it makes the adapter; a serving host keeps its compute on
-    the worker beside it and never resolves this id.
+    A process that does not serve (a headless run, a flow built in code, a test) computes in its own process, so the
+    factory sets the worker's in-process mode before it makes the adapter; in a process that serves
+    (``mark_serving``) it leaves the mode unset, so the embedded worker's jobs run in its pool or a child, never in the
+    serving process.
     """
     from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
     from flowfile_worker import spawner
 
-    spawner.in_process = True
+    if not _serving:
+        spawner.in_process = True
     return EmbeddedWorkerBackend()
 
 
@@ -104,6 +110,7 @@ _factories: dict[str, BackendFactory] = {}
 _instances: dict[str, ComputeBackend] = {}
 _entry_points_scanned = False
 _default_override: str | None = None
+_serving = False
 
 
 def register_backend(backend_id: str, factory: BackendFactory) -> None:
@@ -155,15 +162,17 @@ def default_backend_id() -> str:
     """The id of the default backend, the one a ``"remote"`` flow and a call without a graph use.
 
     The override ``set_default_override`` set, when there is one; else ``FLOWFILE_COMPUTE_BACKEND`` when set to a
-    non-empty value; else ``"worker"`` while ``OFFLOAD_TO_WORKER`` is on and ``"local"`` when it is off.
+    non-empty value; else ``"worker"`` while ``OFFLOAD_TO_WORKER`` is on and ``"local"`` when it is off. In a process
+    that serves (``mark_serving``) it is ``"worker"`` wherever that order gives ``"local"``.
     """
-    override = _default_override
-    if override is not None:
-        return override
-    configured = os.environ.get(BACKEND_ENV_VAR, "").strip()
-    if configured:
-        return configured
-    return WORKER_BACKEND_ID if settings.OFFLOAD_TO_WORKER else LOCAL_BACKEND_ID
+    backend_id = _default_override
+    if backend_id is None:
+        backend_id = os.environ.get(BACKEND_ENV_VAR, "").strip() or (
+            WORKER_BACKEND_ID if settings.OFFLOAD_TO_WORKER else LOCAL_BACKEND_ID
+        )
+    if _serving and backend_id == LOCAL_BACKEND_ID:
+        return WORKER_BACKEND_ID
+    return backend_id
 
 
 def default_backend() -> ComputeBackend:
@@ -188,6 +197,22 @@ def set_default_override(backend_id: str | None) -> str | None:
 def default_override() -> str | None:
     """The override ``set_default_override`` set, or ``None`` when the default follows the environment and the flag."""
     return _default_override
+
+
+def mark_serving() -> None:
+    """Mark this process as one that serves: the desktop sidecar, the Docker image, the pip server.
+
+    Its entry point calls it before the server starts. From then on the default backend is never ``"local"``, a run
+    placed on ``local`` is refused (``FlowGraph._place_run``), and the ``local`` factory leaves the embedded worker's
+    jobs to its pool. Nothing unmarks a process.
+    """
+    global _serving
+    _serving = True
+
+
+def serving() -> bool:
+    """Whether this process serves (``mark_serving``)."""
+    return _serving
 
 
 def child_env() -> dict[str, str]:
