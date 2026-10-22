@@ -322,11 +322,18 @@ def sweep_expired() -> None:
 
 
 def _failure(status: models.Status) -> HTTPException:
-    """A 500 saying why a child did not complete, in the fields of the legacy WebSocket error frame."""
-    return HTTPException(
+    """A 500 saying why a child did not complete, in the fields of the legacy WebSocket error frame.
+
+    A job that ran in this process hands over the exception it failed with as the 500's ``__cause__``, taken off its
+    entry; what the 500 says is the same either way.
+    """
+    failure = HTTPException(
         status_code=500,
         detail={"status": status.status, "error_message": status.error_message, "error_kind": status.error_kind},
     )
+    failure.__cause__ = status._raised
+    status._raised = None
+    return failure
 
 
 def _run_job(task_id: str, start: Callable[[], None]) -> models.Status:

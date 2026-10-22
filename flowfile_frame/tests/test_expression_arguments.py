@@ -66,7 +66,7 @@ CASES = {
     "head": lambda b, m: b.col("x").head(m.lit(2)),
     "slice": lambda b, m: b.col("x").slice(m.lit(1), m.lit(2)),
     "top_k": lambda b, m: b.col("x").top_k(m.lit(2)),
-    "top_k_by": lambda b, m: b.col("x").top_k_by(m.col("n"), 2),
+    "top_k_by": lambda b, m: b.col("x").top_k_by(m.col("srt"), 2),
     "sort_by": lambda b, m: b.col("x").sort_by(m.col("n")),
     "sort_by-list": lambda b, m: b.col("x").sort_by([m.col("n"), m.col("srt")]),
     "max_by": lambda b, m: b.col("x").max_by(m.col("n")),
@@ -116,6 +116,8 @@ CASES = {
     "list.count_matches": lambda b, m: b.col("l").list.count_matches(m.lit(1)),
     "list.gather_every": lambda b, m: b.col("l").list.gather_every(m.col("n") + 1),
 }
+UNORDERED = {CASES["top_k"], CASES["top_k_by"]}
+"""The cases whose rows Polars answers in no particular order (``top_k_by`` sorts by ``srt``, which has no ties)."""
 
 
 def _node(frame: ff.FlowFrame):
@@ -136,7 +138,8 @@ def test_an_expression_argument_matches_polars(build, args):
     expr = build(ff, args)
     assert expr.expr is not None
     out = ff.from_dict(DATA).select(expr.alias("out"))
-    assert_frame_equal(out.collect(), pl.LazyFrame(DATA).select(build(pl, pl).alias("out")).collect())
+    expected = pl.LazyFrame(DATA).select(build(pl, pl).alias("out")).collect()
+    assert_frame_equal(out.collect(), expected, check_row_order=build not in UNORDERED)
 
 
 def test_a_method_and_an_operator_still_apply_after_an_expression_argument():

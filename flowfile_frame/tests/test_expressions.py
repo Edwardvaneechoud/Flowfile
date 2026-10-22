@@ -569,7 +569,7 @@ class TestAdvancedExpressions:
 
     def test_with_columns_with_custom_defined_function(self, sample_df):
         def first_element(x):
-            return str(x)[-1]
+            return x.cast(pl.String).str.slice(-1)
         res = sample_df.with_columns(col("value_1").map_batches(first_element, return_dtype=pl.String))
         res.get_node_settings().setting_input
 

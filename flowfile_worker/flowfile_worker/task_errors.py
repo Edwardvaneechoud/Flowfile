@@ -13,6 +13,7 @@ Stdlib-only by contract: ``funcs``, ``custom_node_runner`` and every pool member
 import this module, and each spawn pays for what it imports.
 """
 
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from multiprocessing import Array, Value
@@ -24,6 +25,8 @@ FailureKind = Literal["task", "environment"]
 
 # Leads a recorded description when the worker's environment, not the plan's data, failed.
 _ENVIRONMENT_MARKER = "\x01"
+
+_kept = threading.local()
 
 
 class WorkerEnvironmentError(Exception):
@@ -46,6 +49,21 @@ def environment_failures() -> Iterator[None]:
         yield
     except Exception as e:
         raise WorkerEnvironmentError(e) from e
+
+
+@contextmanager
+def keeping_failures() -> Iterator[list[BaseException]]:
+    """Keep each exception :func:`record_task_failure` records in this thread meanwhile, the newest last.
+
+    For a job run in the calling process, which has the exception object a child's parent only ever reads as text.
+    Nothing is kept outside the block, so a child or a pool member holds no failure after its job.
+    """
+    outer = getattr(_kept, "failures", None)
+    _kept.failures = failures = []
+    try:
+        yield failures
+    finally:
+        _kept.failures = outer
 
 
 def split_failure(raw: str) -> tuple[FailureKind, str]:
@@ -89,13 +107,17 @@ def record_task_failure(
     ``PanicException`` is described too, and immediately re-raise anything that is not an
     ``Exception`` — the child then dies exactly as it does today, only no longer silently.
     A :class:`WorkerEnvironmentError` is described by its original exception and marked so
-    :func:`split_failure` reports it as an environment failure.
+    :func:`split_failure` reports it as an environment failure. Inside :func:`keeping_failures`
+    *exc* itself is kept as well.
     """
     if isinstance(exc, WorkerEnvironmentError):
         description = _ENVIRONMENT_MARKER + describe_exception(exc.original)
     else:
         description = describe_exception(exc)
     payload = _write(error_message, description, limit)
+    kept = getattr(_kept, "failures", None)
+    if kept is not None:
+        kept.append(exc)
     with progress.get_lock():
         progress.value = -1
     return payload

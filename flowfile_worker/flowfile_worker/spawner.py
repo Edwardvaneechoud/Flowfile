@@ -12,7 +12,7 @@ from typing import Any
 from flowfile_worker import funcs, models, mp_context, pool, status_dict, status_dict_lock
 from flowfile_worker.pool import PoolMember
 from flowfile_worker.process_manager import ProcessManager
-from flowfile_worker.task_errors import record_task_failure, split_failure
+from flowfile_worker.task_errors import keeping_failures, record_task_failure, split_failure
 
 process_manager = ProcessManager()
 
@@ -232,7 +232,8 @@ def run_inline(task_id: str, target: Callable, kwargs: dict) -> None:
     a ``pool._ResultSlot`` as in a pool member. With no child there is no monitor, no time limit and no cancel, given
     up by design; a job a cancel marked ``Cancelled`` keeps that mark and runs to its end. An ``Exception`` that escapes
     the target is recorded as a child records one, so the job ends ``Error`` with its description; a ``BaseException``
-    that is no ``Exception`` propagates, as it ends a child.
+    that is no ``Exception`` propagates, as it ends a child. A job that ends ``Error`` also keeps the exception it
+    recorded on its entry (``Status._raised``), which a child's parent never has.
     """
     progress = mp_context.Value("i", 0)
     error_message = mp_context.Array("c", 1024)
@@ -240,10 +241,11 @@ def run_inline(task_id: str, target: Callable, kwargs: dict) -> None:
     with status_dict_lock:
         if status_dict[task_id].status != "Cancelled":
             status_dict[task_id].status = "Processing"
-    try:
-        target(**kwargs, progress=progress, error_message=error_message, queue=slot)
-    except Exception as e:
-        record_task_failure(error_message, progress, e)
+    with keeping_failures() as failures:
+        try:
+            target(**kwargs, progress=progress, error_message=error_message, queue=slot)
+        except Exception as e:
+            record_task_failure(error_message, progress, e)
     with progress.get_lock():
         final_progress = progress.value
     with status_dict_lock:
@@ -264,6 +266,7 @@ def run_inline(task_id: str, target: Callable, kwargs: dict) -> None:
                 decoded = error_message.value.decode(errors="replace").rstrip("\x00")
             status.error_kind, decoded = split_failure(decoded)
             status.error_message = decoded or "Task failed"
+            status._raised = failures[-1] if failures else None
         else:
             status.status = "Unknown Error"
 

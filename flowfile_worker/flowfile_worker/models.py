@@ -2,7 +2,7 @@ from base64 import b64decode, b64encode
 from typing import Annotated, Any, Literal
 
 from pl_fuzzy_frame_match import FuzzyMapping
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PlainSerializer
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PlainSerializer, PrivateAttr
 
 from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings, FullCloudStorageConnection
 from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
@@ -217,6 +217,8 @@ class Status(BaseModel):
     results: Any | None = None
     result_type: ResultType | None = "polars"
     number_of_records: int | None = None
+    # The exception a job run in process failed with; never serialised, and None for a child's job.
+    _raised: BaseException | None = PrivateAttr(default=None)
 
     def __hash__(self):
         return hash(self.file_ref)

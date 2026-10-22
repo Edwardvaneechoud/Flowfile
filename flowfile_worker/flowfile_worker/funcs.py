@@ -508,15 +508,17 @@ def _scans_rows_in_memory(lf: pl.LazyFrame) -> bool:
     return any(line.lstrip().startswith("DF [") for line in lf.explain(optimized=False).splitlines())
 
 
-def _user_code_result(result: pl.LazyFrame | pl.DataFrame, file_path: str) -> dict:
+def _user_code_result(result: pl.LazyFrame | pl.DataFrame | None, file_path: str) -> dict:
     """What a Polars Code or SQL Query child queues for the frame the user's code answered.
 
     A ``LazyFrame`` over sources is reported as its resolved ``pl.Schema`` and its serialised plan, with no row count,
     nothing collected and nothing written. A ``DataFrame``, or a ``LazyFrame`` that reads a frame held in memory
     (``_scans_rows_in_memory``), whose plan would carry those rows to core, is collected if lazy and written as IPC to
     *file_path*, and its ``pl.Schema`` and height are reported. The schema is the result's own, never one read back
-    from a file (see ``submit_result``).
+    from a file (see ``submit_result``). Code that answers nothing, a sink's ``None``, answers an empty frame.
     """
+    if result is None:
+        result = pl.DataFrame()
     if isinstance(result, pl.LazyFrame) and _scans_rows_in_memory(result):
         result = collect_lazy_frame(result)
     if isinstance(result, pl.DataFrame):

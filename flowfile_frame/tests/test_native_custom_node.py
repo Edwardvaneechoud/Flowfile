@@ -138,7 +138,8 @@ def test_class_places_a_user_defined_node_with_canonical_settings():
 
 def test_instance_contributes_its_configured_values():
     instance = NativeCleaner.from_settings({"options": {"trim": True}})
-    node = ff.CustomNode(instance, _frame(), settings={"options": {"column": "amount"}})
+    source = ff.from_dict({**DATA, "amount": [" 1", "2 ", "3"]})
+    node = ff.CustomNode(instance, source, settings={"options": {"column": "amount"}})
     assert node.node.setting_input.settings == {"options": {"trim": True, "column": "amount"}}
     assert node.node_class is NativeCleaner
 
