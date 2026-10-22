@@ -134,6 +134,13 @@ def serving(monkeypatch):
     registry.mark_serving()
 
 
+@pytest.fixture
+def single_file(monkeypatch, serving):
+    """The test runs in the pip server's process: serving, in single-file mode, the worker's routes at its mount."""
+    monkeypatch.setattr(settings.SINGLE_FILE_MODE, "value", True)
+    monkeypatch.setattr(settings, "WORKER_URL", "http://127.0.0.1:63578/worker")
+
+
 def test_a_registered_backend_is_made_once_and_shared():
     made, factory = counting_factory("probe")
     registry.register_backend("probe", factory)
@@ -338,6 +345,37 @@ def test_a_process_that_serves_leaves_the_embedded_worker_s_jobs_out_of_its_own_
 
     assert isinstance(registry.backend(registry.LOCAL_BACKEND_ID), EmbeddedWorkerBackend)
     assert spawner.in_process is False
+
+
+def test_in_single_file_mode_the_worker_is_the_embedded_worker_its_jobs_left_to_its_pool(monkeypatch, single_file):
+    from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
+    from flowfile_worker import spawner
+
+    monkeypatch.setattr(spawner, "in_process", False)
+
+    worker = registry.backend(registry.WORKER_BACKEND_ID)
+
+    assert isinstance(worker, EmbeddedWorkerBackend)
+    assert worker.id == registry.WORKER_BACKEND_ID
+    assert registry.default_backend() is worker
+    assert spawner.in_process is False
+
+
+def test_in_single_file_mode_the_worker_url_is_the_mount_and_no_backend_is_made_for_it(single_file):
+    made, factory = counting_factory(registry.WORKER_BACKEND_ID)
+    registry.register_backend(registry.WORKER_BACKEND_ID, factory)
+
+    assert registry.worker_url() == "http://127.0.0.1:63578/worker"
+    assert made == []
+
+
+def test_in_single_file_mode_a_configured_worker_stays_a_worker_backend(single_file, configured_row):
+    from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+
+    team = registry.backend(configured_row)
+
+    assert isinstance(team, WorkerBackend)
+    assert team.url == TEAM_URL
 
 
 def test_the_default_backend_is_the_instance_of_the_default_id(monkeypatch):

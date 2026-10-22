@@ -499,6 +499,24 @@ class EmbeddedWorkerBackend:
         error = (status.error_message or status.status) if state == "failed" else None
         return JobStatus(state=state, progress=status.progress, error=error)
 
+    def task_result(self, handle: JobHandle) -> Any:
+        """What the job ``handle`` names reported as its result (its status's ``results``); ``None`` until done.
+
+        Not part of the protocol, as on ``WorkerBackend``: the custom-node dry run starts its job on the worker's task
+        route and reads the job's result here once ``status`` says it is done.
+
+        Raises:
+            ForeignRef: Another backend's handle.
+            LookupError: The worker has no job by that id.
+        """
+        self._own(handle)
+        service = _service()
+        with service.status_dict_lock:
+            status = service.status_dict.get(handle.job_id)
+        if status is None:
+            raise LookupError(f"The embedded worker has no job {handle.job_id!r}")
+        return status.results
+
     def cancel(self, handle: JobHandle) -> None:
         """Stop the job ``handle`` names; one that already ended, or runs in this process, is left as it is."""
         self._own(handle)

@@ -23,6 +23,9 @@ the process-wide override a headless runner sets (``set_default_override``) when
 A process that serves (the desktop sidecar, the Docker image, the pip server) is marked by its entry point
 (``mark_serving``): its compute is the worker beside it, so its default backend is never the worker embedded in it,
 a run placed on ``local`` there is refused, and the ``local`` factory leaves the embedded worker's jobs to its pool.
+The pip server has no worker beside it: in single-file mode (``settings.SINGLE_FILE_MODE``, which its ``start_server``
+sets) the built-in ``worker`` is the worker embedded in this process under that id, its jobs in its pool, while a
+``worker:<name>`` row stays a ``WorkerBackend``.
 
 This module is the one place outside ``configs/settings.py`` that reads the worker settings: the offload setting
 above, and ``WORKER_URL``, the URL the built-in worker backend is made with. Every other module asks this registry,
@@ -71,7 +74,14 @@ def _local_backend() -> ComputeBackend:
 
 
 def _worker_backend() -> ComputeBackend:
-    """The worker at ``settings.WORKER_URL``, which ``FLOWFILE_WORKER_URL`` sets, else ``WORKER_HOST`` and the port."""
+    """The worker at ``settings.WORKER_URL``, which ``FLOWFILE_WORKER_URL`` sets, else ``WORKER_HOST`` and the port.
+
+    In single-file mode it is the worker embedded in this process, made as ``local`` is and answering to ``worker``.
+    """
+    if settings.SINGLE_FILE_MODE:
+        embedded = _local_backend()
+        embedded.id = WORKER_BACKEND_ID
+        return embedded
     from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 
     return WorkerBackend(url=settings.WORKER_URL)
@@ -225,7 +235,13 @@ def child_env() -> dict[str, str]:
 
 
 def worker_url() -> str:
-    """The base URL of the worker the registry's worker backend runs on, for a caller that sends work there itself."""
+    """The base URL of the worker the registry's worker backend runs on, for a caller that sends work there itself.
+
+    In single-file mode that worker is embedded in this process and the app mounts its routes at
+    ``settings.WORKER_URL``, which ``start_server`` sets; no backend is made for the answer.
+    """
+    if settings.SINGLE_FILE_MODE:
+        return settings.WORKER_URL
     return cast("WorkerBackend", backend(WORKER_BACKEND_ID)).url
 
 
