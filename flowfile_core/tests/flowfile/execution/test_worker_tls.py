@@ -5,6 +5,8 @@ made with ``ca_cert`` reads its capabilities over ``https`` and submits a plan o
 refused as unreachable before anything is sent. Core trusts a CA per worker URL, so the backend that names none reaches
 the same worker by its other name, ``localhost``, which the certificate covers too. Every case runs under both states of
 the protocol flag and starts with the handshake not yet run, so the gate's own request and its probe go over TLS too.
+About one fresh ``wss`` open in a hundred to a uvicorn server over TLS stalls before the upgrade reaches the app, so the
+submit case dials a stalled socket again rather than read the server stack's stall as core falling back to the routes.
 """
 
 import io
@@ -27,15 +29,17 @@ import requests
 
 from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.configs import settings
+from flowfile_core.flowfile.execution.backends import worker as worker_backend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.execution.protocol import SubmitHints
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake, streaming
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from shared._version import get_version
 from shared.compute_protocol import PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER
 
 STARTUP_TIMEOUT = 120
+SOCKET_DIALS = 3
 HINTS = SubmitHints(must_materialise=True, wide=False, fanout=1, preview_rows=100)
 THREE_ROWS = pl.LazyFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]})
 
@@ -162,6 +166,33 @@ def no_rest_fallback(monkeypatch, flag) -> None:
         monkeypatch.setattr(WorkerBackend, "_v1", refuse_v1_post)
 
 
+@pytest.fixture
+def redialled_socket(monkeypatch, tls_worker) -> None:
+    """Dial a socket whose opening handshake stalled again, and fail one that does not carry the CA the backend names.
+
+    The server stack, not core, stalls about one fresh ``wss`` open in a hundred: the TLS handshake completes, the
+    upgrade never reaches the app and the client's ``open_timeout`` raises ``TimeoutError``. Nothing was sent on such a
+    socket, so a second dial cannot run a plan twice. Both the transport's socket and the ``/v1`` one, the handshake's
+    probes included, go through it, so none of them takes the REST route the case refuses.
+    """
+
+    def wrap(real_connect):
+        def dial(uri, *args, **kwargs):
+            assert kwargs.get("ssl") is not None
+            assert kwargs["ssl"] is subops.ssl_context_for(tls_worker.url), f"{uri} was dialled without the trusted CA"
+            for attempt in range(1, SOCKET_DIALS + 1):
+                try:
+                    return real_connect(uri, *args, **kwargs)
+                except TimeoutError:
+                    if attempt == SOCKET_DIALS:
+                        raise
+
+        return dial
+
+    monkeypatch.setattr(worker_backend, "connect", wrap(worker_backend.connect))
+    monkeypatch.setattr(streaming, "connect", wrap(streaming.connect))
+
+
 def trusted(tls_worker: TlsWorker) -> WorkerBackend:
     return WorkerBackend(tls_worker.url, backend_id="worker:tls", token=get_internal_token(), ca_cert=tls_worker.pem)
 
@@ -186,7 +217,7 @@ def test_a_backend_naming_the_ca_reads_the_workers_capabilities_over_https(tls_w
     assert handshake.fetch_worker_capabilities(tls_worker.url) == capabilities
 
 
-def test_a_backend_naming_the_ca_submits_over_wss(tls_worker, flag, no_rest_fallback):
+def test_a_backend_naming_the_ca_submits_over_wss(tls_worker, flag, no_rest_fallback, redialled_socket):
     backend = trusted(tls_worker)
 
     result = backend.submit(THREE_ROWS, [], HINTS, f"t-worker-tls-{uuid.uuid4().hex}", flow_id=-1, node_id=-1)
