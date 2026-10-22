@@ -823,17 +823,23 @@ class TestGetTableHistory:
             with pytest.raises(TableNotFoundError):
                 svc.get_table_history(999999)
 
-    def test_worker_on_other_versions_falls_back_to_the_local_read(self, tmp_path, monkeypatch):
-        """A worker that fails core's handshake degrades like an unreachable one: core reads locally."""
+    def test_worker_on_other_versions_is_refused_and_the_history_not_read_in_core(self, monkeypatch):
+        """A worker that fails core's handshake is refused with the mismatch; core does not read the history itself."""
+        import shutil
+        import uuid
+
         import flowfile_core.configs.settings
         from flowfile_core.configs.utils import MutableBool
         from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+        from flowfile_core.flowfile.execution.errors import VersionMismatch
         from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
         from shared.compute_protocol import local_capabilities
+        from shared.storage_config import storage
 
         _, schema_id = _make_namespace()
-        delta_dir = tmp_path / "hist_delta_mismatch"
+        delta_dir = storage.catalog_tables_directory / f"hist_delta_mismatch_{uuid.uuid4().hex[:8]}"
         pl.DataFrame({"x": [1, 2, 3]}).write_delta(str(delta_dir), mode="error")
+        monkeypatch.setattr(DeltaTable, "history", lambda *args, **kwargs: pytest.fail("core read the history"))
         fetches = []
         reported = local_capabilities().model_copy(update={"polars_version": "0.0.1"})
 
@@ -856,13 +862,13 @@ class TestGetTableHistory:
             db.commit()
             db.refresh(table)
             try:
-                history = CatalogService(SQLAlchemyCatalogRepository(db)).get_table_history(table.id)
+                with pytest.raises(VersionMismatch, match="polars_version"):
+                    CatalogService(SQLAlchemyCatalogRepository(db)).get_table_history(table.id)
             finally:
                 handshake.reset_handshake()
+                shutil.rmtree(delta_dir, ignore_errors=True)
 
         assert fetches == [1]
-        assert history.current_version == 0
-        assert [commit.version for commit in history.history] == [0]
 
 
 # get_table_preview (delta + version)

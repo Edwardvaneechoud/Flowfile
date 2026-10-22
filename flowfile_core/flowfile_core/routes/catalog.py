@@ -65,6 +65,7 @@ from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db
 from flowfile_core.database.models import RunType, SchedulerLock
 from flowfile_core.fileExplorer import validate_path_under_cwd
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
 from flowfile_core.schemas.catalog_schema import (
@@ -187,6 +188,7 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     TableVersionUnavailableError: (410, None),
     NotAVirtualTableError: (400, None),
     WorkerUnavailableError: (503, None),
+    ComputeUnavailable: (503, None),
     TableExistsError: (409, "A table with this name already exists in this namespace"),
     AmbiguousTableError: (409, None),
     RunNotFoundError: (404, "Run not found"),

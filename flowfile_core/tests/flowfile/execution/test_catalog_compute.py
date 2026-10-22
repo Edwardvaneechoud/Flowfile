@@ -1,5 +1,6 @@
 """The catalog's compute: the catalog writer's Delta write runs on the execution context's backend, and the catalog
-services send their table I/O to the worker exactly when that backend is not core's own.
+services send their table I/O to the worker exactly when that backend is not the worker embedded in this process, a
+worker they cannot reach answering ``ComputeUnavailable`` and never a read in this process.
 
 The writer's expected reports are what its in-process Delta write returned before the write moved behind the
 backend, recorded from that code on the same inputs; only ``size_bytes`` is measured here, the way that code
@@ -15,7 +16,9 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from fastapi.testclient import TestClient
 
+from flowfile_core import main
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog import compute as catalog_compute
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
@@ -27,10 +30,12 @@ from flowfile_core.catalog.storage_backend import resolve_for_namespace
 from flowfile_core.configs import settings
 from flowfile_core.configs.utils import MutableBool
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.database.models import CatalogTable
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.execution.payloads import (
     PAYLOAD_KEY,
     CatalogTableIdentity,
@@ -40,6 +45,7 @@ from flowfile_core.flowfile.execution.payloads import (
     op_payload,
 )
 from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, OpResult
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_graph.catalog_write import (
     CatalogDeltaWrite,
@@ -50,6 +56,7 @@ from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.catalog_schema import CatalogTablePreview
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 from shared.delta_utils import get_delta_size_bytes
+from shared.storage_config import storage
 from tests.flowfile.conftest import (
     add_test_catalog_writer,
     add_test_manual_input,
@@ -58,6 +65,7 @@ from tests.flowfile.conftest import (
     create_test_namespace,
     run_test_graph,
 )
+from tests.flowfile.execution.test_results_exists_unreachable import _closed_url
 from tests.test_catalog_cloud_virtual import (
     _BUCKET,
     _create_cloud_schema,
@@ -171,7 +179,17 @@ def test_any_backend_but_the_core_one_sends_catalog_io_out(probe_backend):
 
 
 @pytest.fixture
-def delta_table(tmp_path) -> str:
+def delta_table():
+    """A Delta table under the managed catalog directory, whose bare name the worker's catalog routes resolve."""
+    path = storage.catalog_tables_directory / f"people_{uuid.uuid4().hex[:8]}"
+    pl.DataFrame({"id": [1, 2, 3], "name": ["ada", "grace", "edsger"]}).write_delta(str(path))
+    yield str(path)
+    shutil.rmtree(path, ignore_errors=True)
+
+
+@pytest.fixture
+def external_delta_table(tmp_path) -> str:
+    """A Delta table registered where it lies, outside the managed catalog directory."""
     path = tmp_path / "people"
     pl.DataFrame({"id": [1, 2, 3], "name": ["ada", "grace", "edsger"]}).write_delta(str(path))
     return str(path)
@@ -198,7 +216,7 @@ def test_a_metadata_read_runs_where_the_context_says(delta_table, monkeypatch):
 
     assert in_core[1:3] == (3, 2)
     assert on_worker == ([{"name": "id", "dtype": "Int64"}], 99, 1, 7)
-    assert asked == [("people", None, registry.worker_url())]
+    assert asked == [(Path(delta_table).name, None, registry.worker_url())]
 
 
 def test_a_preview_runs_where_the_context_says(delta_table, monkeypatch):
@@ -218,7 +236,93 @@ def test_a_preview_runs_where_the_context_says(delta_table, monkeypatch):
 
     assert in_core.rows == [[1, "ada"], [2, "grace"]]
     assert on_worker.rows == [[42]]
-    assert asked == [("people", 2, registry.worker_url())]
+    assert asked == [(Path(delta_table).name, 2, registry.worker_url())]
+
+
+def previews_of(table_path: str) -> TablePreviewService:
+    """The preview service over a repository that holds one local table at ``table_path``."""
+    table = types.SimpleNamespace(file_path=table_path, namespace_id=None)
+    return TablePreviewService(repo=types.SimpleNamespace(get_table=lambda _: table), tables=None, virtual_tables=None)
+
+
+CATALOG_READS = {
+    "metadata": lambda path: TableService._read_table_metadata(path, "delta"),
+    "preview": lambda path: previews_of(path)._get_delta_preview(path, 2),
+    "version preview": lambda path: previews_of(path)._get_delta_version_preview(path, 0, 2),
+    "history": lambda path: previews_of(path).get_table_history(1),
+}
+
+
+@pytest.fixture(params=["refused at the handshake", "refused once the handshake passed"])
+def stopped_worker(request, monkeypatch) -> str:
+    """The registry's worker pointed at a port nothing listens on; returns its URL.
+
+    Refused by the handshake that checks a worker before the first call to it, or by the call itself while an earlier
+    verdict on it stands.
+    """
+    url = _closed_url()
+    monkeypatch.setattr(registry.backend(registry.WORKER_BACKEND_ID), "url", url)
+    if request.param == "refused once the handshake passed":
+        monkeypatch.setattr(subprocess_operations, "ensure_handshake", lambda *args, **kwargs: None)
+    return url
+
+
+@pytest.mark.parametrize("read", CATALOG_READS)
+def test_a_catalog_read_on_a_stopped_worker_is_compute_unavailable_and_never_read_in_core(
+    read, delta_table, stopped_worker
+):
+    with use_context(WORKER), pytest.raises(ComputeUnavailable) as excinfo:
+        CATALOG_READS[read](delta_table)
+
+    assert str(excinfo.value).startswith(f"Could not reach the worker at {stopped_worker}")
+
+
+@pytest.mark.parametrize("read", ["metadata", "version preview", "history"])
+def test_an_external_table_is_read_in_this_process_whatever_the_context(read, external_delta_table, monkeypatch):
+    def refused(*args, **kwargs):
+        pytest.fail("the worker was asked for a table outside the managed catalog directory")
+
+    monkeypatch.setattr(tables_module, "trigger_read_table_metadata", refused)
+    monkeypatch.setattr(previews_module, "trigger_delta_version_preview", refused)
+    monkeypatch.setattr(previews_module, "trigger_delta_history", refused)
+
+    with use_context(WORKER):
+        on_worker_context = CATALOG_READS[read](external_delta_table)
+    with use_context(LOCAL):
+        on_local_context = CATALOG_READS[read](external_delta_table)
+
+    assert on_worker_context == on_local_context
+
+
+@pytest.fixture
+def catalog_api(monkeypatch):
+    """A client of the app whose catalog I/O goes to the worker, and a namespace to register tables in."""
+    monkeypatch.delenv(registry.BACKEND_ENV_VAR, raising=False)
+    monkeypatch.setattr(settings, "OFFLOAD_TO_WORKER", MutableBool(True))
+    catalog_cleanup()
+    client = TestClient(main.app)
+    client.headers = {"Authorization": f"Bearer {client.post('/auth/token').json()['access_token']}"}
+    yield client, create_test_namespace()
+    catalog_cleanup()
+
+
+def register_physical(namespace_id: int, file_path: str) -> int:
+    table = CatalogTable(name="people", namespace_id=namespace_id, owner_id=1, file_path=file_path)
+    with get_db_context() as db:
+        return SQLAlchemyCatalogRepository(db).create_table(table).id
+
+
+@pytest.mark.parametrize("route", ["/history", "/preview?version=0"])
+def test_a_catalog_route_on_a_stopped_worker_answers_503_with_the_typed_message(
+    route, catalog_api, delta_table, stopped_worker
+):
+    client, namespace_id = catalog_api
+    table_id = register_physical(namespace_id, delta_table)
+
+    response = client.get(f"/catalog/tables/{table_id}{route}")
+
+    assert response.status_code == 503
+    assert response.json()["detail"].startswith(f"Could not reach the worker at {stopped_worker}")
 
 
 # The catalog writer's operation and payload
