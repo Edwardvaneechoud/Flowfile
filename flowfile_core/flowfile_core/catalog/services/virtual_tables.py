@@ -16,7 +16,6 @@ import polars as pl
 from requests.exceptions import RequestException
 
 from flowfile_core.auth import sharing
-from flowfile_core.catalog.compute import uses_worker
 from flowfile_core.catalog.constants import QUERY_VIRTUAL_TABLE_RECURSION_LIMIT
 from flowfile_core.catalog.delta_utils import check_source_versions_current, is_delta_table
 from flowfile_core.catalog.exceptions import (
@@ -42,8 +41,8 @@ from flowfile_core.catalog.validators import format_full_name
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 from flowfile_core.database.models import CatalogTable
 from flowfile_core.flowfile.execution import registry
-from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
-from flowfile_core.flowfile.execution.errors import ComputeError
+from flowfile_core.flowfile.execution.context import ExecutionContext, current_context, use_context
+from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_resolve_virtual_table,
 )
@@ -427,8 +426,9 @@ class VirtualTableService:
         For optimized tables, deserializes the stored LazyFrame directly.
         For query-based virtual tables, delegates to resolve_query_virtual_table.
         For non-optimized tables, runs the producer flow's writer node under the execution context of that flow
-        with ``run_location`` as its location; with none given it is ``"remote"`` when catalog I/O goes to the worker
-        (``catalog.compute.uses_worker``), else ``"local"``.
+        with ``run_location`` as its location; with none given it runs on the current execution context's backend,
+        outside a ``use_context`` block the default one, as an ``"auto"`` flow does. A writer that failed because its
+        compute could not be reached raises that ``ComputeUnavailable``.
         """
         with self.held_virtual_flow_table(table_id, user_id, run_location, node_logger) as (plan, _):
             return plan
@@ -449,7 +449,7 @@ class VirtualTableService:
         it.
         """
         if run_location is None:
-            run_location = "remote" if uses_worker() else "local"
+            run_location = current_context().backend_id
         if node_logger is None:
             node_logger = FlowLogger(-1).get_node_logger(-1)
         from flowfile_core.flowfile.manage.io_flowfile import open_flow
@@ -469,9 +469,7 @@ class VirtualTableService:
             if check_source_versions_current(table.source_table_versions):
                 yield pl.LazyFrame.deserialize(io.BytesIO(table.serialized_lazy_frame)), None
                 return
-            logger.info(
-                "Source table versions changed for virtual table %r, falling back to flow execution", table.name
-            )
+            logger.info("Source table versions changed for virtual table %r, running its producer flow", table.name)
 
         if not table.producer_registration_id:
             raise ValueError(f"Virtual table {table.name} has no producer flow")
@@ -501,6 +499,8 @@ class VirtualTableService:
             selected_node.execute_node(reset_cache=True, performance_mode=True, node_logger=node_logger)
 
         if selected_node.results.errors:
+            if isinstance(selected_node._last_run_error, ComputeUnavailable):
+                raise selected_node._last_run_error
             raise ValueError(f"Flow errors for table '{table.name}': {selected_node.results.errors}")
 
         flowframe = selected_node.get_resulting_data()
