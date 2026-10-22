@@ -78,11 +78,14 @@ class Refusal:
         node_id: The node.
         backend_id: The backend it was assigned.
         reason: What the node needs that the backend does not offer, in words.
+        remedy: The settings that move the node to another backend, as a sentence (``remedy_for``); ``None`` for a
+            node type pinned to its backend, or before the run's placement has added it.
     """
 
     node_id: int
     backend_id: str
     reason: str
+    remedy: str | None = None
 
 
 @dataclass(frozen=True)
@@ -134,6 +137,32 @@ class MixedPlacementPolicy:
 
 
 PlacementPolicy = SingleBackendPolicy | MixedPlacementPolicy
+
+_FLOW_SETTING = "the flow's Execution location under Flow Settings"
+_NODE_SETTING = "its Compute backend under General Settings"
+
+
+def remedy_for(node: FlowNode, policy: PlacementPolicy) -> str | None:
+    """The settings that move ``node`` to another backend under ``policy``, named as the designer shows them.
+
+    With an exchange store (``MixedPlacementPolicy``) the node's own Compute backend decides, and the flow's Execution
+    location too while the node's is Auto. Without one (``SingleBackendPolicy``) only the flow's decides, so a node set
+    to a backend of its own is also told that its setting needs a store. A node type pinned to its backend
+    (``_PINNED_BACKENDS``) has no setting that moves it: ``None``.
+    """
+    if node.node_type in _PINNED_BACKENDS:
+        return None
+    own_backend = getattr(node.setting_input, "execution_location", "auto") != "auto"
+    if isinstance(policy, MixedPlacementPolicy):
+        if own_backend:
+            return f"To run it elsewhere, set {_NODE_SETTING}."
+        return f"To run it elsewhere, set {_NODE_SETTING}, or {_FLOW_SETTING}."
+    if own_backend:
+        return (
+            f"To run it elsewhere, set {_FLOW_SETTING}; "
+            "a node's own Compute backend applies only when an exchange store is configured."
+        )
+    return f"To run it elsewhere, set {_FLOW_SETTING}."
 
 
 def place(

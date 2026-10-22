@@ -48,7 +48,9 @@ from tests.flowfile.conftest import create_test_graph
 from tests.flowfile.execution import test_exchange_store, test_placement, test_unreadable_location
 from tests.flowfile.execution.test_exchange_store import _BUCKET, _key, _keys
 from tests.flowfile.execution.test_placement import (
+    AUTO_REMEDY,
     BACKEND_ID,
+    OWN_REMEDY,
     DeclaringBackend,
     add_manual_input,
     add_promise,
@@ -322,7 +324,9 @@ def test_a_store_that_cannot_be_used_refuses_the_importing_node_before_any_node_
     assert errors.keys() == {2, 3}, errors
     assert errors[2].startswith(f'cannot run on backend "{LOCAL}": '), errors[2]
     assert re.search(re.escape(named), errors[2]), errors[2]
+    assert errors[2].endswith(f". {OWN_REMEDY}"), errors[2]
     assert errors[3].startswith(f'cannot run on backend "{backend.id}": '), errors[3]
+    assert errors[3].endswith(f". {AUTO_REMEDY}"), errors[3]
     assert all(result.compute_error == "Refusal" for result in run_info.node_step_result)
     assert (run_info.success, run_info.nodes_completed) == (False, 0)
     assert run_info.boundaries == [(1, 2), (2, 3)]

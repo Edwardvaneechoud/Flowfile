@@ -27,7 +27,9 @@ from tests import test_run_flow_node
 from tests.flowfile.execution import test_exchange_store, test_placement
 from tests.flowfile.execution.test_mixed_placement import LOCAL, chain
 from tests.flowfile.execution.test_placement import (
+    AUTO_REMEDY,
     BACKEND_ID,
+    OWN_REMEDY,
     DeclaringBackend,
     add_manual_input,
     add_promise,
@@ -116,7 +118,7 @@ def test_a_run_whose_input_is_known_to_be_above_the_limit_starts_no_node(
     run_info = graph.run_graph()
 
     errors = {result.node_id: result.error for result in run_info.node_step_result}
-    assert errors == {2: f'cannot run on backend "{LOCAL}": {above(1, BACKEND_ID, 7, 4, 6)}'}
+    assert errors == {2: f'cannot run on backend "{LOCAL}": {above(1, BACKEND_ID, 7, 4, 6)}. {OWN_REMEDY}'}
     assert all(result.compute_error == "Refusal" for result in run_info.node_step_result)
     assert (run_info.success, run_info.nodes_completed) == (False, 0)
     assert backend.work == []
@@ -131,7 +133,7 @@ def test_a_run_whose_input_is_known_to_be_above_the_limit_starts_no_node(
         (None, [], BOTH_EDGES),
         ("7", [], BOTH_EDGES),
         ("100", [], BOTH_EDGES),
-        ("6", [Refusal(2, LOCAL, above(1, BACKEND_ID, 7, 4, 6))], [(2, OUT, 3)]),
+        ("6", [Refusal(2, LOCAL, above(1, BACKEND_ID, 7, 4, 6), OWN_REMEDY)], [(2, OUT, 3)]),
     ],
     ids=["no-limit", "at-the-limit", "below-the-limit", "above-the-limit"],
 )
@@ -151,7 +153,7 @@ def test_an_edge_is_refused_only_when_its_known_rows_are_above_the_limit(
 @pytest.mark.parametrize(
     "stale, refusals, crossed",
     [
-        (False, [Refusal(3, BACKEND_ID, above(2, LOCAL, 1000, 4, 999))], [(1, OUT, 2)]),
+        (False, [Refusal(3, BACKEND_ID, above(2, LOCAL, 1000, 4, 999), AUTO_REMEDY)], [(1, OUT, 2)]),
         (True, [], BOTH_EDGES),
     ],
     ids=["held", "stale-hash"],
@@ -232,7 +234,7 @@ def test_a_split_whose_input_changed_after_it_ran_is_not_priced_by_that_run(
     add_manual_input(graph, 1, [{"id": i} for i in range(10)])
     changed, edges = placed(graph)
 
-    assert ran.refusals == [Refusal(3, LOCAL, above(2, BACKEND_ID, 80, 1, 50))]
+    assert ran.refusals == [Refusal(3, LOCAL, above(2, BACKEND_ID, 80, 1, 50), OWN_REMEDY)]
     assert changed.refusals == []
     assert crossings(edges) == [(2, OUT, 3)]
 
@@ -281,7 +283,7 @@ def test_a_node_reading_two_outputs_of_one_source_above_the_limit_is_refused_onc
 
     placement, edges = placed(graph)
 
-    assert placement.refusals == [Refusal(9, LOCAL, above(2, BACKEND_ID, 80, 1, 10))]
+    assert placement.refusals == [Refusal(9, LOCAL, above(2, BACKEND_ID, 80, 1, 10), OWN_REMEDY)]
     assert edges == []
 
 
