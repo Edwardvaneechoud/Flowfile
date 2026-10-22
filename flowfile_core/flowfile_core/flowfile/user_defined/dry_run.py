@@ -24,8 +24,10 @@ from pydantic import BaseModel, Field, model_validator
 
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable
 from flowfile_core.flowfile.execution.protocol import JobHandle
+from flowfile_core.flowfile.flow_data_engine.bounded import count_rows, head_rows
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import CustomNodeExecuteInput
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     clear_task_from_worker,
@@ -441,7 +443,13 @@ def _read_kernel_output_previews(
     Mirrors read_kernel_outputs' ``<name>.parquet`` convention and its guard: if the
     kernel reported published files but none match the expected names, surface a clear
     error instead of silently returning empty outputs.
+
+    Each output's rows and columns are read with ``bounded.head_rows`` and its row count
+    with ``bounded.count_rows`` on the current execution context's backend, the one
+    ``write_inputs_to_parquet`` wrote the run's inputs with, so core collects nothing of
+    the file; a ``ComputeError`` there propagates for the route to answer.
     """
+    backend = current_context().backend
     outputs: list[DryRunOutput] = []
     found = False
     for name in output_names:
@@ -451,8 +459,8 @@ def _read_kernel_output_previews(
             continue
         found = True
         lf = pl.scan_parquet(path)
-        head = lf.head(row_limit).collect()
-        row_count = int(lf.select(pl.len()).collect().item())
+        head = pl.from_arrow(head_rows(backend, lf, row_limit))
+        row_count = count_rows(backend, lf)
         outputs.append(
             DryRunOutput(
                 name=name,
