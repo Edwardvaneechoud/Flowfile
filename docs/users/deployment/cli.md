@@ -113,7 +113,7 @@ These are the headless equivalents of the app's project controls. Opening a proj
 
 ## Scheduling
 
-To run flows on a timer rather than on demand, use the scheduler. In the desktop app and pip package it runs inside the app; for a standalone service the `flowfile_scheduler` console script polls for due runs and executes each one through the same headless path documented above. Each run is a process of its own that computes on the worker embedded in it, not on the app's worker: in the desktop app it runs beside that worker without using it, and in [Docker](docker.md) inside the core container. See [Schedules](../visual-editor/catalog/schedules.md) for setup, cron syntax, and the standalone-service mode.
+To run flows on a timer rather than on demand, use the scheduler. In the desktop app and pip package it runs inside the app; for a standalone service the `flowfile_scheduler` console script polls for due runs and executes each one through the same headless path documented above. Each run is a process of its own that computes on the worker embedded in it, not on the app's worker, which it uses only for a Google Analytics read: in the desktop app it runs beside that worker, and in [Docker](docker.md) inside the core container. See [Schedules](../visual-editor/catalog/schedules.md) for setup, cron syntax, and the standalone-service mode.
 
 ## Related
 
