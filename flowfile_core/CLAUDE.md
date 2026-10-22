@@ -80,7 +80,7 @@ Central FastAPI backend and DAG execution engine for Flowfile: manages flows as 
 ```bash
 poetry run flowfile_core                                  # serve API on :63578
 python -m flowfile_core.main --run-flow F --run-id N [--backend ID]  # run a saved flow in-process (CLI/PyInstaller)
-docker build -f flowfile_core/Dockerfile .                 # image: FLOWFILE_MODE=docker, CMD python -m flowfile_core.main
+docker build -f flowfile_core/Dockerfile .                 # image: FLOWFILE_MODE=docker, CMD python -m flowfile_core.main; carries flowfile_worker for the worker a run child embeds
 ```
 Scheduler only starts when `FLOWFILE_SCHEDULER_ENABLED` ∈ {true,1,yes}. `FLOWFILE_MODE` defaults to `electron` if unset (`docker` in the image).
 
