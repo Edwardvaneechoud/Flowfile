@@ -13,7 +13,7 @@ The five execution paths:
 1. **Run flow / execute graph** — Core builds the LazyFrames, serializes them, and POSTs to the **Worker**, which holds dataset memory in spawned subprocesses and returns Arrow-IPC paths. Core ships paths, never collected frames.
 2. **Execute SQL** (SQL editor and catalog SQL) — Core's `SqlService` registers the catalog tables and runs the query on the **Worker**.
 3. **Execute a notebook** — Python cells run in the bound **kernel container** (which writes results to Delta and POSTs metadata back to Core); SQL cells take path ②; Markdown renders client-side.
-4. **Scheduled run** — the embedded **scheduler** loop (only when `FLOWFILE_SCHEDULER_ENABLED`) polls the catalog DB for due triggers and launches a detached **headless subprocess** that runs the flow locally.
+4. **Scheduled run** — the embedded **scheduler** loop (only when `FLOWFILE_SCHEDULER_ENABLED`) polls the catalog DB for due triggers and launches a detached **headless subprocess** that runs the flow on a worker embedded in itself, beside the app's worker and without using it (in Docker, inside the core container).
 5. **Serve a flow as an API** — a registered flow is *published* under `/flow-api` (JWT-managed); the public, API-key-authenticated `GET /api/data/{slug}` then runs it synchronously and returns the output of its single `api_response` node as JSON. One key can call several published flows (`routes/flow_api.py`, `routes/api_consumers.py`).
 
 The [canvas notebook](../users/visual-editor/notebook.md) adds no process. Core renders the flow as cells itself (`GET /notebook/render`). A sync (the notebook's **Run**, **Run all** or **Push**) hands every cell to the notebook runner Core installs at startup (`notebook/runner.py`), which *interprets* the cells rather than executing them: each cell is parsed, and it may only call the flow-building functions an allowlist names for the value it calls them on (`notebook/allowlist.py`, `notebook/interpret.py`); anything else is refused on its line as needing a kernel. The cells build nodes on a fresh graph without running any: sources and nodes whose columns depend on data take their schema from the canvas node they were rendered from, from what the cell declares, or from what the canvas itself reads to show a schema (a local file's header, a catalog table's registered schema), else no columns; no connection is opened. The result is relabelled onto the canvas's ids, reconciled against the live graph (`notebook/relabel.py`, `notebook/reconcile.py`) and applied as one undoable editor transaction. In a multi-user deployment only admins can sync. A node cell's **Run** then takes path ①, restricted to the cell node's lineage.
@@ -166,7 +166,7 @@ Here is how a node submits its plan on the core side, and how the Worker runs a 
 
 ```python
 # Core side - FlowNode._do_execute (simplified)
-backend = current_context().backend                      # the run's backend: the worker, or core's own process
+backend = current_context().backend                      # the run's backend: the worker, or the worker embedded in this process
 result = backend.submit(plan, inputs, hints, self.hash, flow_id=flow_id, node_id=self.node_id)
 self.results.result_ref = result.ref                     # the handle core keeps; it never opens the worker's file
 self.results.resulting_data = FlowDataEngine(backend.plan_for(result.ref), schema=result.ref.schema)
@@ -174,7 +174,7 @@ self.results.resulting_data = FlowDataEngine(backend.plan_for(result.ref), schem
 ```
 </details>
 
-The worker's task routes start a job through `spawner.py::start_process`, below; its `/v1` routes run theirs in a pool of child processes kept warm.
+The worker's task routes start a job through `spawner.py::start_process`, below; its `/v1` routes run theirs in a pool of child processes kept warm. A process that embeds the worker and does not serve, a scheduled run or Flowfile in Python, runs each job in itself instead (`spawner.run_inline`).
 
 <details markdown="1">
 <summary>View Worker-Side Python Example (simplified)</summary>
@@ -188,9 +188,9 @@ def start_process(
     # ... other args like operation type
 ) -> None:
     """Launches a separate OS process to handle the heavy computation."""
-    # The worker forces spawn at module load (set_start_method('spawn',
-    # force=True) in flowfile_worker/__init__.py) so every child is a fresh,
-    # killable process regardless of platform — never fork.
+    # The worker's spawn context forces spawn as its first child starts
+    # (flowfile_worker/__init__.py), never at import, so every child is a
+    # fresh, killable process regardless of platform — never fork.
     mp_context = get_context('spawn')
 
     # Shared memory/queue for progress tracking and results/errors
