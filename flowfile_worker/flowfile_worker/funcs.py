@@ -873,6 +873,10 @@ def write_output(
                 compression=compression,
                 flowfile_logger=flowfile_logger,
             )
+            if data_type == "parquet":
+                # A kernel container reads the file next; "rb+" because os.fsync needs a writable fd on Windows
+                with open(path, "rb+") as f:
+                    os.fsync(f.fileno())
             number_of_records_written = (
                 collect_lazy_frame(df.select(pl.len()))[0, 0] if isinstance(df, pl.LazyFrame) else df.height
             )
