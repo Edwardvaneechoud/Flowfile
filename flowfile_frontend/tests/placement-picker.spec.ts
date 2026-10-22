@@ -14,10 +14,12 @@ import { applySettings, clickRun, openFlow, openNodeSettings } from "./helpers/c
 import { buildSalaryFlow } from "./helpers/flows";
 
 /**
- * A filter picked onto the default worker in its drawer, in a flow that runs in core. With core started
- * with FLOWFILE_COMPUTE_PROTOCOL=1 and FLOWFILE_EXCHANGE_URI but no exchange connection, placement puts
- * the filter on the worker, refuses the crossing into it before any node runs, and the canvas badges the
- * edge between the two backends; with the flag off the node's setting is not read and nothing is badged.
+ * A filter picked onto the default worker in its drawer, in a flow moved onto `local`. The core under
+ * test serves, so with FLOWFILE_COMPUTE_PROTOCOL=1 and FLOWFILE_EXCHANGE_URI (each node placed by its own
+ * setting) placement puts the filter on the worker and refuses its input left on `local`, "this core
+ * serves; compute runs on its worker", before any node runs. No edge is badged: a crossing needs two
+ * backends that compute, and a serving core has one, its worker. With the flag off the node's setting is
+ * not read and nothing is badged.
  */
 test.describe("Compute backend picker", () => {
   let token: string;
@@ -46,7 +48,7 @@ test.describe("Compute backend picker", () => {
     await closeFlow(request, token, flowId);
   });
 
-  test("a node picked onto the worker is saved there and the run badges its crossing", async ({
+  test("a node picked onto the worker is saved there and its input left on local refuses the run", async ({
     page,
     request,
   }) => {
@@ -67,14 +69,16 @@ test.describe("Compute backend picker", () => {
     const previousStart = await lastRunStart(request, token, flowId);
     await clickRun(page);
     if (protocolOn) {
-      await expect(page.locator(".compute-error-banner")).toContainText(
-        'cannot run on backend "worker"',
-        { timeout: 30_000 },
-      );
-      const badge = page.locator('[data-testid=boundary-badge][data-edge="1-2"]');
-      await expect(badge).toBeVisible({ timeout: 30_000 });
-      await badge.hover();
-      await expect(badge.getByTestId("boundary-tooltip")).toContainText(/Node 1.*→.*Node 2/);
+      const refusal = 'cannot run on backend "local": this core serves; compute runs on its worker';
+      const banner = page.locator(".compute-error-banner");
+      await expect(banner).toContainText(refusal, { timeout: 30_000 });
+      await expect(banner).not.toContainText('cannot run on backend "worker"');
+      const run = await waitForRun(request, token, flowId, previousStart);
+      expect(run.success).toBe(false);
+      expect(run.node_step_result.map((n) => [String(n.node_id), n.error])).toEqual([
+        ["1", refusal],
+      ]);
+      await expect(page.locator("[data-testid=boundary-badge]")).toHaveCount(0);
     } else {
       const run = await waitForRun(request, token, flowId, previousStart);
       expect(run.success).toBe(true);
