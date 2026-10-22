@@ -1,7 +1,9 @@
 """A headless run child must not sweep the cache and temp directories a live core still references, and both
-headless runners make core's own backend the process's default through the backend registry, unless ``--backend``
-or a backend id saved as the flow's location names another; a spawned run passes ``--backend`` only when its request
-names one; and a run on the worker leaves no result it minted held there once its runner returns."""
+headless runners make the worker embedded in their process the default through the backend registry, unless
+``--backend`` or a backend id saved as the flow's location names another; a run with no backend named computes there
+and asks for no worker, and one on a saved id whose worker is unreachable fails with ``ComputeUnavailable``; a spawned
+run passes ``--backend`` only when its request names one; and a run on the worker leaves no result it minted held
+there once its runner returns."""
 
 from __future__ import annotations
 
@@ -18,6 +20,7 @@ import pytest
 
 import flowfile_core
 from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
+from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from shared.storage_config import storage
 
 MAIN_PY = Path(flowfile_core.__file__).resolve().parent / "main.py"
@@ -157,8 +160,9 @@ def session_worker() -> str:
     return f"http://{WORKER_HOST}:{WORKER_PORT}"
 
 
-def _save_group_by_flow(path: Path) -> Path:
-    """Manual input -> group_by in Development mode, saved ``remote`` as the designer saves a flow by default."""
+def _save_group_by_flow(path: Path, location: str = "remote") -> Path:
+    """Manual input -> group_by in Development mode, saved ``location``: ``remote``, as the designer saves a flow by
+    default, unless a backend id is given."""
     from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
     from flowfile_core.schemas import input_schema, schemas, transform_schema
 
@@ -187,7 +191,7 @@ def _save_group_by_flow(path: Path) -> Path:
         )
     )
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
-    graph.flow_settings.execution_location = "remote"
+    graph.flow_settings.execution_location = location
     graph.save_flow(str(path))
     return path
 
@@ -196,6 +200,35 @@ def _closed_port_url() -> str:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         return f"http://127.0.0.1:{probe.getsockname()[1]}"
+
+
+def _record_embedded_submits(monkeypatch) -> list[tuple[str, int | str]]:
+    """``(backend id, node id)`` of each plan an ``EmbeddedWorkerBackend`` gets from here on, but the handshake's."""
+    submitted: list[tuple[str, int | str]] = []
+    real_submit = EmbeddedWorkerBackend.submit
+
+    def submit(self, plan, inputs, hints, result_id, **kwargs):
+        if not result_id.startswith("handshake-"):
+            submitted.append((self.id, kwargs["node_id"]))
+        return real_submit(self, plan, inputs, hints, result_id, **kwargs)
+
+    monkeypatch.setattr(EmbeddedWorkerBackend, "submit", submit)
+    return submitted
+
+
+def _record_runs(monkeypatch) -> list:
+    """The ``RunInformation`` of every ``FlowGraph.run_graph`` from here on."""
+    from flowfile_core.flowfile.flow_graph import FlowGraph
+
+    runs = []
+    real_run_graph = FlowGraph.run_graph
+
+    def run_graph(self, *args, **kwargs):
+        runs.append(real_run_graph(self, *args, **kwargs))
+        return runs[-1]
+
+    monkeypatch.setattr(FlowGraph, "run_graph", run_graph)
+    return runs
 
 
 def test_both_verbs_hand_the_backend_option_to_their_runner(monkeypatch):
@@ -279,15 +312,54 @@ def test_a_headless_run_with_no_backend_named_runs_a_saved_remote_flow_in_its_ow
 ):
     from flowfile_core.configs import settings
     from flowfile_core.flowfile.execution import registry
+    from flowfile_worker import spawner
 
     monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    monkeypatch.setattr(spawner, "in_process", False)
     flow_path = _save_group_by_flow(tmp_path / "flow.yaml")
     monkeypatch.setenv("FLOWFILE_COMPUTE_BACKEND", "counting")
+    submitted = _record_embedded_submits(monkeypatch)
+    worker_lookups: list[str] = []
+
+    def unreachable_worker() -> WorkerBackend:
+        worker_lookups.append(registry.WORKER_BACKEND_ID)
+        return WorkerBackend(url=_closed_port_url())
+
+    registry.register_backend(registry.WORKER_BACKEND_ID, unreachable_worker)
 
     assert runner(str(flow_path)) == 0
 
     assert registry.default_override() == registry.LOCAL_BACKEND_ID
     assert counting == []
+    assert worker_lookups == []
+    assert not registry.serving()
+    assert isinstance(registry.backend(registry.LOCAL_BACKEND_ID), EmbeddedWorkerBackend)
+    assert sorted(submitted) == [(registry.LOCAL_BACKEND_ID, 1), (registry.LOCAL_BACKEND_ID, 2)]
+    assert spawner.in_process
+
+
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+@pytest.mark.parametrize("runner", [_frozen_runner, _dev_runner], ids=["frozen-verb", "dev-cli"])
+def test_a_headless_run_on_a_saved_backend_id_whose_worker_is_unreachable_fails_with_compute_unavailable(
+    tmp_path, monkeypatch, in_process_run, runner, flag
+):
+    from flowfile_core.configs import settings
+    from flowfile_core.flowfile.execution import registry
+
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    monkeypatch.setattr(settings, "WORKER_URL", _closed_port_url())
+    flow_path = _save_group_by_flow(tmp_path / "flow.yaml", location=registry.WORKER_BACKEND_ID)
+    runs = _record_runs(monkeypatch)
+    registry.reset()
+    try:
+        assert runner(str(flow_path)) == 1
+    finally:
+        registry.reset()
+
+    assert registry.default_override() == registry.WORKER_BACKEND_ID
+    failed = [result for result in runs[0].node_step_result if not result.success]
+    assert failed and {result.compute_error for result in failed} == {"ComputeUnavailable"}, failed
+    assert all("Could not reach the worker" in result.error for result in failed), failed
 
 
 @pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
