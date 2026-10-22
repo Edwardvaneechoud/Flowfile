@@ -9,6 +9,8 @@ from multiprocessing.queues import Queue
 from time import monotonic, sleep
 from typing import Any
 
+from polars.exceptions import PanicException
+
 from flowfile_worker import funcs, models, mp_context, pool, status_dict, status_dict_lock
 from flowfile_worker.pool import PoolMember
 from flowfile_worker.process_manager import ProcessManager
@@ -230,10 +232,11 @@ def run_inline(task_id: str, target: Callable, kwargs: dict) -> None:
 
     The in-process mode a host chooses with ``in_process``: *target* gets the three primitives a child gets, its queue
     a ``pool._ResultSlot`` as in a pool member. With no child there is no monitor, no time limit and no cancel, given
-    up by design; a job a cancel marked ``Cancelled`` keeps that mark and runs to its end. An ``Exception`` that escapes
-    the target is recorded as a child records one, so the job ends ``Error`` with its description; a ``BaseException``
-    that is no ``Exception`` propagates, as it ends a child. A job that ends ``Error`` also keeps the exception it
-    recorded on its entry (``Status._raised``), which a child's parent never has.
+    up by design; a job a cancel marked ``Cancelled`` keeps that mark and runs to its end. An ``Exception`` or a Polars
+    ``PanicException`` that escapes the target is recorded as a child records one, so the job ends ``Error`` with its
+    description, as a child's panic ends its job; any other ``BaseException`` propagates, as it ends a child. A job
+    that ends ``Error`` also keeps the exception it recorded on its entry (``Status._raised``), which a child's parent
+    never has.
     """
     progress = mp_context.Value("i", 0)
     error_message = mp_context.Array("c", 1024)
@@ -244,7 +247,7 @@ def run_inline(task_id: str, target: Callable, kwargs: dict) -> None:
     with keeping_failures() as failures:
         try:
             target(**kwargs, progress=progress, error_message=error_message, queue=slot)
-        except Exception as e:
+        except (Exception, PanicException) as e:
             record_task_failure(error_message, progress, e)
     with progress.get_lock():
         final_progress = progress.value

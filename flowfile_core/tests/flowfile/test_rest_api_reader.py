@@ -2,8 +2,8 @@
 
 Covers schema inference from a sample, credential resolution (stored secret by
 name, or inline plaintext), worker-settings construction, and node execution.
-Local flows fetch in-process (mocked ``fetch_rest_api``); remote flows run the read on
-the worker backend (mocked ``WorkerBackend.run_op``) — the core never makes a real HTTP call.
+Local flows fetch on the worker embedded in this process (its reader's ``fetch_rest_api`` mocked); remote flows run
+the read on the worker backend (mocked ``WorkerBackend.run_op``) — the core never makes a real HTTP call.
 """
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ def _fake_worker_read(monkeypatch, tmp_path, rows: pl.DataFrame) -> list:
 
 
 def _patch_local_fetch(monkeypatch, result: pl.DataFrame) -> dict:
-    """Patch the in-process fetch engine (local execution path); returns a dict capturing the call."""
+    """Patch the embedded worker's REST reader's fetch (local execution path); returns a dict capturing the call."""
     captured: dict = {}
 
     def _fake(settings, *, secret=None):
@@ -76,7 +76,7 @@ def _patch_local_fetch(monkeypatch, result: pl.DataFrame) -> dict:
         captured["secret"] = secret
         return result
 
-    monkeypatch.setattr("shared.rest_api.fetch.fetch_rest_api", _fake)
+    monkeypatch.setattr("flowfile_worker.external_sources.rest_api_source.main.fetch_rest_api", _fake)
     return captured
 
 
@@ -166,7 +166,7 @@ def test_add_reader_clears_inline_plaintext_and_registers_node():
 
 
 def test_execution_local_fetches_in_process_and_stamps_schema(monkeypatch):
-    """Local execution fetches in-process via ``fetch_rest_api`` (no worker) and stamps the schema."""
+    """Local execution fetches in this process, on the embedded worker, via ``fetch_rest_api`` and stamps the schema."""
 
     def _no_worker(*args, **kwargs):
         raise AssertionError("local execution must not use the worker backend")
@@ -186,7 +186,7 @@ def test_execution_local_fetches_in_process_and_stamps_schema(monkeypatch):
 
     assert captured["settings"].url == "https://x/api"
     assert captured["settings"].auth.bearer_token_encrypted is not None
-    assert captured["secret"] == "tok"  # the encrypted token is decrypted before the in-process fetch
+    assert captured["secret"] == "tok"  # the embedded worker decrypts the token before the fetch
     assert df.height == 3
     assert sorted(df["id"].to_list()) == [1, 2, 3]
     assert node.fields is not None

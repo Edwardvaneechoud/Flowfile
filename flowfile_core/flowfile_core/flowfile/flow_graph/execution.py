@@ -13,6 +13,7 @@ from time import time
 from typing import Any, Literal
 
 import polars as pl
+from polars.exceptions import PanicException
 from polars_expr_transformer import simple_function_to_expr as to_expr
 
 from flowfile_core.configs import logger, settings
@@ -871,7 +872,7 @@ class ExecutionMixin(GraphMixinBase):
                             # Route from the actual result, never a stash: cache branches can skip the gate's function.
                             try:
                                 closed = self._formula_gate_is_closed(node, params or None)
-                            except Exception as e:
+                            except (Exception, PanicException) as e:
                                 node_result.success = False
                                 node_result.error = f"Gate formula evaluation failed: {e}"
                                 self.latest_run_info.nodes_completed -= 1

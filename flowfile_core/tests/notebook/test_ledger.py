@@ -28,6 +28,7 @@ from flowfile_core.notebook.push import seed_snapshot
 from flowfile_core.notebook.render import NotebookRendering, render
 from flowfile_frame import notebook
 from flowfile_frame.notebook_cells import seed_session
+from shared.storage_config import storage
 from tests.notebook.conftest import NOTEBOOK_OWNER_ID
 
 LEDGER_FILE = Path(__file__).parent / "ledger.json"
@@ -114,7 +115,9 @@ def test_every_flow_clean_runs(ledger_rows):
 
 
 def test_clean_runs_write_nothing_and_start_no_kernel(ledger_rows):
-    assert ledger_rows["__files__"] == set()
+    """Nothing outside the cache directory, where the worker stores a Polars Code or SQL result over rows in memory."""
+    cache = storage.cache_directory
+    assert {path for path in ledger_rows["__files__"] if cache not in path.parents} == set()
     assert ledger_rows["__kernel_calls__"] == []
 
 
