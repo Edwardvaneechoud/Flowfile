@@ -349,6 +349,24 @@ def test_status_follows_a_job_and_an_unknown_job_is_a_lookup_error(backend, kept
         backend.status(JobHandle("worker", result.handle.job_id))
 
 
+def test_a_task_s_reported_result_is_read_by_its_handle():
+    backend = EmbeddedWorkerBackend()
+    task_id = new_id()
+    with service.status_dict_lock:
+        service.status_dict[task_id] = service.models.Status(
+            background_task_id=task_id, status="Completed", file_ref="", results={"outputs": {"main": 3}}
+        )
+    try:
+        assert backend.task_result(JobHandle(backend.id, task_id)) == {"outputs": {"main": 3}}
+        with pytest.raises(ForeignRef):
+            backend.task_result(JobHandle("worker", task_id))
+    finally:
+        with service.status_dict_lock:
+            service.status_dict.pop(task_id, None)
+    with pytest.raises(LookupError, match=task_id):
+        backend.task_result(JobHandle(backend.id, task_id))
+
+
 def test_the_handshake_passes_with_its_probes_run_in_this_process(checked, inline_jobs):
     verdict = handshake.verify(checked)
 
