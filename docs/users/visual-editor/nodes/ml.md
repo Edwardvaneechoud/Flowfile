@@ -84,7 +84,7 @@ The input must contain every feature column the model was trained on; a missing 
 
 The output dtype is the algorithm's `output_dtype`: `Float64` for regression, `Int64` for classification. For binary logistic regression the prediction is the argmax of the sigmoid, so `1` when the linear combination is positive and `0` otherwise.
 
-Apply Model runs as one operation on the flow's backend, like Train Model: in the designer that is the worker.
+Apply Model runs as one operation on its backend, like Train Model: the flow's, unless the node names its own [Compute backend](../building-flows.md#a-nodes-own-backend). In the designer that is a worker.
 
 ## ![Evaluate Model](../../../assets/images/nodes/evaluate_model.svg){ width="44" height="44" } Evaluate Model
 
