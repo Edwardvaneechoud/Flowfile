@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from deltalake import DeltaTable
 from pyarrow import dataset as ds
+from requests.exceptions import RequestException
 from sqlalchemy.orm.attributes import flag_modified
 
 from flowfile_core.catalog.compute import uses_worker
@@ -49,7 +50,7 @@ from flowfile_core.catalog.storage_backend import (
 from flowfile_core.catalog.validators import format_full_name, validate_table_registration
 from flowfile_core.database.models import CatalogCdcCursor, CatalogNamespace, CatalogTable, TableFavorite
 from flowfile_core.flowfile.execution import registry
-from flowfile_core.flowfile.execution.errors import ComputeError
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_add_key_column,
     trigger_apply_table_edits,
@@ -274,21 +275,22 @@ class TableService:
     ) -> tuple[list[dict[str, str]], int, int, int]:
         """Read schema, row_count, column_count, size_bytes from a table.
 
-        When *storage* is set the table is in object storage; the read offloads to the
-        worker with no local fallback.
+        When *storage* is set the table is in object storage and the worker reads it; so it does a managed local table
+        when catalog I/O goes to the worker (``uses_worker``). A worker it cannot reach is ``ComputeUnavailable``,
+        never a read here instead. An external local table, whose bare name the worker's routes cannot resolve, is
+        read in this process.
         """
         is_cloud = storage is not None
-        if is_cloud or uses_worker():
+        if is_cloud or (uses_worker() and _is_managed_table_path(table_path)):
+            worker_url = registry.worker_url()
             try:
                 data = trigger_read_table_metadata(
-                    _catalog_table_dir_name(table_path), storage=storage, worker_url=registry.worker_url()
+                    _catalog_table_dir_name(table_path), storage=storage, worker_url=worker_url
                 )
-                schema_list = [{"name": c["name"], "dtype": c["dtype"]} for c in data["column_schema"]]
-                return schema_list, data["row_count"], data["column_count"], data["size_bytes"]
-            except (RuntimeError, OSError, ValueError, KeyError, ComputeError):
-                if is_cloud:
-                    raise
-                logger.warning("Worker metadata read failed, falling back to local read", exc_info=True)
+            except RequestException as exc:
+                raise ComputeUnavailable(f"Could not reach the worker at {worker_url}: {exc}") from exc
+            schema_list = [{"name": c["name"], "dtype": c["dtype"]} for c in data["column_schema"]]
+            return schema_list, data["row_count"], data["column_count"], data["size_bytes"]
 
         path = Path(table_path)
 
