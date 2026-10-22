@@ -104,10 +104,9 @@ def test_electron_store_path_defaults_to_app_data(tmp_path, monkeypatch):
 
 
 def _worker_store_path(env_overrides: dict[str, str]) -> str:
-    """Resolve flowfile_worker's store path in its own process.
+    """Resolve flowfile_worker's store path in a process of its own, from the environment given.
 
-    Importing flowfile_worker here would call multiprocessing.set_start_method(
-    "spawn", force=True) on the test process.
+    A worker started beside core resolves it the same way, from nothing but its environment.
     """
     env = {**os.environ, **env_overrides}
     for key, value in env_overrides.items():
