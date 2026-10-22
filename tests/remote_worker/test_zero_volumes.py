@@ -405,9 +405,11 @@ def _scheduled_flow() -> dict:
 
 
 def _worker_requests() -> list[str]:
-    """Every request the worker served so far, from its access log: each of its jobs starts with one."""
+    """Every request the worker served so far, from its access log, but the health probes on ``/docs``: each of its
+    jobs starts with one."""
     log = _compose("logs", "--no-color", "flowfile-worker").stdout
-    return [line for line in log.splitlines() if ' HTTP/1.1"' in line or '"WebSocket ' in line]
+    served = [line for line in log.splitlines() if ' HTTP/1.1"' in line or '"WebSocket ' in line]
+    return [line for line in served if '"GET /docs ' not in line]
 
 
 def _run_schedule_now(stack: Stack, schedule_id: int, timeout: float = 300) -> dict:
