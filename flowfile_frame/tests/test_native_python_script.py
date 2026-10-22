@@ -1157,7 +1157,7 @@ def test_selection_that_imports_flowfile_itself_works_on_its_first_run():
     selection = (
         "import flowfile_frame as ff\nimport polars as pl\n\n"
         + inspect.getsource(forecast.fn)
-        + '\nout = ff.from_dict({"amount": [1.0]}).with_columns('
+        + '\nout = ff.from_dict({"amount": [1.0, 2.0]}).with_columns('
         'ff.col("amount").map_elements(lambda x: x * 2, return_dtype=pl.Float64).alias("doubled"))\n'
     )
     script = "\n".join(

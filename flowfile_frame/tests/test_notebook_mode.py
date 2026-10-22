@@ -577,14 +577,15 @@ def installed_secret_node():
 
 def test_notebook_mode_defers_a_cloud_reader_and_a_custom_node_that_selects_a_secret(installed_secret_node):
     """Both resolve a stored connection or secret when built, which a kernel session cannot: they are seeded and
-    left to the canvas (a held run in a kernel session). In a script the custom node still builds."""
+    left to the canvas (a held run in a kernel session). In a script the custom node still builds, and its job takes
+    the secret it selects to the worker, so an unknown one fails the build."""
     with notebook.notebook_mode() as mode:
         cloud = ff.read_from_cloud_storage("/etc/hosts", file_format="csv")
         assert cloud._deferred is True and mode.graph.get_node(cloud.node_id).deferred_until_run is True
         node = ff.CustomNode(installed_secret_node, ff.from_dict(DATA), settings={"auth": {"token": "no_such"}})
         assert node.deferred is True
-    built = ff.CustomNode(installed_secret_node, ff.from_dict(DATA), settings={"auth": {"token": "no_such"}})
-    assert built.deferred is False, "a script builds it as before"
+    with pytest.raises(ff.NativeNodeError, match=r"Secret 'no_such' .*not found.*pass deferred=True"):
+        ff.CustomNode(installed_secret_node, ff.from_dict(DATA), settings={"auth": {"token": "no_such"}})
 
 
 def test_a_kernel_session_leaves_connection_sources_to_core(mode, monkeypatch):
