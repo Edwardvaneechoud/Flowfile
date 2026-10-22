@@ -119,14 +119,25 @@ class _Calls:
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[str, ...]]] = []
 
-    def record(self, monkeypatch, owner, name: str, *, label: str | None = None, ours_only: bool = False) -> None:
+    def record(
+        self,
+        monkeypatch,
+        owner,
+        name: str,
+        *,
+        label: str | None = None,
+        ours_only: bool = False,
+        unless_under: str | None = None,
+    ) -> None:
+        """Record each call, unless ``ours_only`` and no frame is ours, or a frame named ``unless_under`` made it."""
         original = getattr(owner, name)
         calls = self.calls
         label = label or name
 
         def recorded(*args, **kwargs):
             stack = traceback.extract_stack()[:-1]
-            if not ours_only or any(any(p in frame.filename.replace("\\", "/") for p in PACKAGES) for frame in stack):
+            mine = not ours_only or any(any(p in f.filename.replace("\\", "/") for p in PACKAGES) for f in stack)
+            if mine and all(frame.name != unless_under for frame in stack):
                 calls.append((label, tuple(frame.name for frame in stack)))
             return original(*args, **kwargs)
 
@@ -145,7 +156,8 @@ def _record_io(monkeypatch, calls: _Calls) -> list[str]:
     Returns the held nodes that ran.
     """
     for reader in READERS:
-        calls.record(monkeypatch, pl, reader, label=f"pl.{reader}")
+        # A backend's plan_for scans a result the worker stored; it reads nothing until a collect, recorded on its own.
+        calls.record(monkeypatch, pl, reader, label=f"pl.{reader}", unless_under="plan_for")
     calls.record(monkeypatch, pl.LazyFrame, "collect", label="collect")
     calls.record(monkeypatch, FlowDataEngine, "create_from_path")
     for eager in ("create_from_path_excel", "create_from_path_avro", "create_from_path_ipc_stream"):
