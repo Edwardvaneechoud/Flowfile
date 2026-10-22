@@ -15,12 +15,17 @@ job runs in the calling process, as a library host sets it; left unset, the work
 serving host leaves it. Nothing of the worker is imported until the first call (``_service``). Every ``HTTPException``
 a body raises is mapped to the typed errors (``_typed``): 404 is ``ResultMissing``, 422 ``PlanRejected``, a 500 that
 carries a child's ``status`` goes through ``errors.worker_failure``, and any other code is a ``TaskFailed`` naming it.
-The writes, the Delta operations and the visualisation session still run through the worker's task routes and are
-neither declared nor run here.
+The seven kinds the worker still serves on its task routes, the database, cloud and file writes, the Delta write,
+merge and SCD2 write and the visualisation session, run here through the worker's own job runner (``service._run``)
+with the operation and the keyword arguments those routes build, and through its session registry, so every kind the
+worker declares runs on this backend too. A custom node whose class has no node file, which exists in this process and
+nowhere else, runs its ``process`` here and its outputs are held as the worker holds a child's. The embedded worker is
+on core's host by definition, so it reads and writes ``file`` whatever ``FLOWFILE_WORKER_LOCAL_FILES`` says.
 """
 
 from __future__ import annotations
 
+import base64
 import io
 import uuid
 from collections.abc import Callable
@@ -32,10 +37,10 @@ from fastapi import HTTPException
 
 from flowfile_core.flowfile.execution.backends.worker import (
     _JOB_STATES,
-    _V1_OPERATIONS,
     _custom_node_request,
     _database_read_settings,
     _declared_outputs,
+    _delta_destination,
     _file_to_read,
     _flowfile_schema,
     _fuzzy_sides,
@@ -57,9 +62,15 @@ from flowfile_core.flowfile.execution.errors import (
     worker_failure,
 )
 from flowfile_core.flowfile.execution.payloads import (
+    CloudWritePayload,
     CustomNodePayload,
     DatabaseReadPayload,
+    DatabaseWritePayload,
+    DeltaMergePayload,
+    DeltaScd2Payload,
+    DeltaWritePayload,
     FileReadPayload,
+    FileWritePayload,
     FuzzyJoinPayload,
     GoogleAnalyticsReadPayload,
     KafkaReadPayload,
@@ -69,6 +80,7 @@ from flowfile_core.flowfile.execution.payloads import (
     RandomSplitPayload,
     RestApiReadPayload,
     SqlQueryPayload,
+    VizSessionPayload,
     unpack,
 )
 from flowfile_core.flowfile.execution.protocol import (
@@ -86,6 +98,9 @@ from flowfile_core.flowfile.execution.protocol import (
 from flowfile_core.flowfile.execution.registry import LOCAL_BACKEND_ID
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import safe_eval_pl_type
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import FuzzyJoinInput, PolarsOperation
+from flowfile_core.flowfile.flow_node.multi_output import output_handle
+from flowfile_core.flowfile.sources.external_sources.sql_source.models import DatabaseExternalWriteSettings
+from flowfile_core.schemas.cloud_storage_schemas import CloudStorageWriteSettingsWorkerInterface
 from shared import compute_protocol as wire
 from shared.compute_protocol import PROTOCOL_VERSION, Capabilities
 
@@ -106,9 +121,9 @@ class EmbeddedWorkerBackend:
     Its id is ``local``, the id of the compute a process without a worker beside it runs on; a reference or a job
     handle of any other id is refused with ``ForeignRef``. Its jobs run where the host set
     ``flowfile_worker.spawner.in_process``: in this process for a library host, in the worker's pool or a child for a
-    serving one. ``capabilities()`` is the embedded worker's own answer with ``operations`` cut to the twelve kinds
-    ``run_op`` runs; the writes, the Delta operations and the visualisation session are refused with
-    ``OperationUnsupported``, as they still run through the worker's task routes.
+    serving one. ``capabilities()`` is the embedded worker's own answer, every kind the worker declares among its
+    ``operations``, with ``file`` among its read and write schemes whatever ``FLOWFILE_WORKER_LOCAL_FILES`` says: the
+    embedded worker is on core's host.
 
     Materialisation policy: the worker's, applied by ``funcs.submit_result``: a plan is written to a file when
     ``hints.must_materialise`` is set, or when it is ``wide`` and a preview is asked for (``preview_rows`` is not
@@ -125,17 +140,26 @@ class EmbeddedWorkerBackend:
     ``polars_code`` and ``sql_query`` through the body of ``POST /v1/ops/<kind>``, the payload's ``job_id`` the job's,
     so ``status`` and ``cancel`` reach it; the refs are keyed as ``WorkerBackend`` keys them, each output the stored
     result ``<job_id>_<i>``, a training's model the blob ``<job_id>_0``, a Kafka read's offsets and a training's
-    digest, size and type as ``metadata``. ``cancel`` of a job that already ended, or of one running in this process,
-    which nothing stops, is left as it is.
+    digest, size and type as ``metadata``. The three writes and the three Delta kinds run as the job the payload's
+    ``job_id`` names through the worker's own job runner, with the operation and the keyword arguments their task
+    routes build, no refs and the Delta report as ``metadata``; ``viz_session`` is one request to the worker's session
+    registry, its answer the ``metadata`` in the shape the visualisation routes answer. A custom node whose class has
+    no node file runs ``process`` in this process and holds each output as a stored result ``<job_id>_<i>``. ``cancel``
+    of a job that already ended, or of one running in this process, which nothing stops, is left as it is.
     """
 
     id = LOCAL_BACKEND_ID
     protocol_version = PROTOCOL_VERSION
 
     def capabilities(self) -> Capabilities:
-        """The embedded worker's capabilities, its ``operations`` cut to the twelve kinds ``run_op`` runs."""
+        """The embedded worker's capabilities: every kind the worker declares, ``file`` among both scheme sets."""
         declared = _service().worker_capabilities()
-        return declared.model_copy(update={"operations": frozenset(kind.value for kind in _V1_OPERATIONS)})
+        return declared.model_copy(
+            update={
+                "read_schemes": declared.read_schemes | {"file"},
+                "write_schemes": declared.write_schemes | {"file"},
+            }
+        )
 
     def submit(
         self,
@@ -176,23 +200,90 @@ class EmbeddedWorkerBackend:
 
         The payload is unpacked before anything runs, so an empty one is a ``ValueError`` here too; the body is built
         as the worker's own request model. A training's ``metadata`` is the model's digest, size and type, a Kafka
-        read's the offsets to commit.
+        read's the offsets to commit, a Delta write's its report. The writes, the Delta kinds and ``viz_session``
+        take the worker's job runner and session registry (``_write``, ``_delta``, ``_viz_session``), a custom node
+        with no node file runs here (``_custom_node_here``).
 
         Raises:
             ForeignRef: An ``ml_apply`` model another backend minted.
-            OperationUnsupported: A kind the embedded worker does not run, or a custom node without a node file.
             PlanRejected: The worker could not load the operation's plan, or the body refused it before running.
             ResultMissing: An ``ml_apply`` model the worker no longer holds.
             TaskFailed: The operation failed.
-            ValueError: The worker did not return one of a custom node's declared outputs.
+            RuntimeError: The visualisation session could not answer, as the worker's route fails the request.
+            ValueError: A custom node did not return one of its declared outputs.
         """
-        if op not in _V1_OPERATIONS:
-            raise OperationUnsupported(
-                f"The embedded worker does not run the {op.value} operation; it stays on the worker's task routes"
-            )
         service = _service()
         args: tuple[Any, ...] = ()
         match op:
+            case OperationKind.file_write:
+                write = unpack(payload, FileWritePayload)
+                settings = write.settings
+                kwargs = {
+                    "data_type": settings.file_type,
+                    "path": settings.abs_file_path,
+                    "write_mode": settings.write_mode,
+                    "sheet_name": settings.sheet_name,
+                    "delimiter": settings.delimiter,
+                    "compression": settings.compression,
+                }
+                return self._write(write, write.plan.serialize(), "write_output", settings.abs_file_path, kwargs)
+            case OperationKind.database_write:
+                write = unpack(payload, DatabaseWritePayload)
+                reference = (
+                    write.connection if write.settings.database_write_settings.connection_mode == "reference" else None
+                )
+                sent = DatabaseExternalWriteSettings.create_from_from_node_database_writer(
+                    node_database_writer=write.settings,
+                    password=write.encrypted_password,
+                    table_name=write.table_name,
+                    lf=write.plan,
+                    database_reference_settings=reference,
+                ).model_copy(update={"flowfile_flow_id": write.flow_id, "flowfile_node_id": write.node_id})
+                body = service.models.DatabaseScriptWrite.model_validate_json(sent.model_dump_json())
+                kwargs = {"database_write_settings": body.get_database_write_settings()}
+                return self._write(write, body.polars_serializable_object(), "write_to_database", "", kwargs)
+            case OperationKind.cloud_write:
+                write = unpack(payload, CloudWritePayload)
+                sent = CloudStorageWriteSettingsWorkerInterface(
+                    operation=base64.b64encode(write.plan.serialize()).decode(),
+                    write_settings=write.settings.get_write_setting_worker_interface(),
+                    connection=write.connection,
+                    flowfile_flow_id=write.flow_id,
+                    flowfile_node_id=write.node_id,
+                )
+                body = service.models.CloudStorageScriptWrite.model_validate_json(sent.model_dump_json())
+                kwargs = {"cloud_write_settings": body.get_cloud_storage_write_settings()}
+                return self._write(write, body.polars_serializable_object(), "write_to_cloud_storage", "", kwargs)
+            case OperationKind.delta_write:
+                write = unpack(payload, DeltaWritePayload)
+                kwargs = {"mode": write.mode, "partition_by": write.partition_by, "enable_cdf": write.enable_cdf}
+                return self._delta(write, "write_delta", kwargs)
+            case OperationKind.delta_merge:
+                write = unpack(payload, DeltaMergePayload)
+                kwargs = {
+                    "merge_mode": write.merge_mode,
+                    "merge_keys": write.merge_keys,
+                    "partition_by": write.partition_by,
+                    "enable_cdf": write.enable_cdf,
+                }
+                return self._delta(write, "merge_delta", kwargs)
+            case OperationKind.delta_scd2:
+                write = unpack(payload, DeltaScd2Payload)
+                kwargs = {
+                    "run_timestamp": write.run_timestamp,
+                    "business_keys": write.business_keys,
+                    "compare_columns": write.compare_columns,
+                    "full_snapshot": write.full_snapshot,
+                    "surrogate_key_column": write.surrogate_key_column,
+                    "valid_from_column": write.valid_from_column,
+                    "valid_to_column": write.valid_to_column,
+                    "is_current_column": write.is_current_column,
+                    "partition_by": write.partition_by,
+                    "partition_on_current": write.partition_on_current,
+                }
+                return self._delta(write, "scd2_delta", kwargs)
+            case OperationKind.viz_session:
+                return self._viz_session(unpack(payload, VizSessionPayload))
             case OperationKind.database_read:
                 job = unpack(payload, DatabaseReadPayload)
                 body = service.DatabaseReadSettings.model_validate(_database_read_settings(job).model_dump(mode="json"))
@@ -231,6 +322,8 @@ class EmbeddedWorkerBackend:
                 run = service.fuzzy_join
             case OperationKind.custom_node:
                 job = unpack(payload, CustomNodePayload)
+                if job.node_source is None:
+                    return self._custom_node_here(job)
                 body = service.models.CustomNodeExecuteInput.model_validate(
                     _custom_node_request(job).model_dump(mode="json")
                 )
@@ -414,6 +507,121 @@ class EmbeddedWorkerBackend:
         except HTTPException as e:
             if e.status_code != 404:
                 raise _typed(e) from e
+
+    def _write(
+        self,
+        write: FileWritePayload | DatabaseWritePayload | CloudWritePayload,
+        plan: bytes,
+        operation: str,
+        file_ref: str,
+        kwargs: dict[str, Any],
+    ) -> OpResult:
+        """Run a write as the job ``write.job_id`` names through the worker's job runner; no refs, no metadata."""
+        self._job(write.job_id, plan, operation, file_ref, write.flow_id, write.node_id, kwargs)
+        return OpResult(refs={})
+
+    def _delta(
+        self, write: DeltaWritePayload | DeltaMergePayload | DeltaScd2Payload, operation: str, kwargs: dict[str, Any]
+    ) -> OpResult:
+        """Run a Delta ``operation`` over the payload's plan as the worker's task route would; its report is the
+        metadata.
+
+        The destination is ``_delta_destination``'s: a catalog table by identity, resolved under the worker's own
+        root, or the payload's path. The job is filed under the cache path the task route gives such a task.
+        """
+        file_ref = str(_service().result_path(write.flow_id, write.job_id))
+        kwargs = {**_delta_destination(write), **kwargs}
+        plan = write.plan.serialize()
+        reported = self._job(write.job_id, plan, operation, file_ref, write.flow_id, write.node_id, kwargs)
+        return OpResult(refs={}, metadata=reported if isinstance(reported, dict) else {})
+
+    def _job(
+        self,
+        job_id: str,
+        plan: bytes,
+        operation: str,
+        file_ref: str,
+        flow_id: int,
+        node_id: int | str,
+        kwargs: dict[str, Any],
+    ) -> Any:
+        """Run ``operation`` over ``plan`` as the job ``job_id`` through ``service._run``; what the job reported.
+
+        The job's end is stamped so its entry ages out like a held result's, and its ``results`` are taken out of the
+        entry once read. A job that did not complete raises the typed error its 500 maps to.
+        """
+        service = _service()
+        try:
+            status = service._run(job_id, plan, operation, file_ref, flow_id, node_id, kwargs)
+        finally:
+            service.results.mark_ended(job_id)
+        if status.status != "Completed":
+            raise _typed(service._failure(status))
+        with service.status_dict_lock:
+            reported, status.results = status.results, None
+        return reported
+
+    def _viz_session(self, request: VizSessionPayload) -> OpResult:
+        """Answer one Graphic Walker request in the worker's visualisation session over the payload's plan.
+
+        The session registry holds the plan lazily in a child of its own under the session key, as it does for a
+        worker's route; the answer is shaped as ``/catalog/visualize_fields`` and ``/catalog/visualize_query`` shape
+        theirs, a ``ValueError`` or any other failure of the request as its ``error``. A session that cannot be opened
+        or is busy fails the request as the route fails it, the ``RuntimeError`` the analysis routes answer as 502.
+        """
+        from flowfile_worker.viz_sessions import viz_session_registry
+
+        models = _service().models
+        plan = request.plan.serialize()
+        source = models.VizWorkerSource(kind="plan", session_key=request.session_key, plan_bytes=plan)
+        fields = request.request == "fields"
+        try:
+            if fields:
+                result, cache_hit = viz_session_registry.execute(source, "fields", None, None)
+                answer = models.VisualizeFieldsResponse(fields=result["fields"], cache_hit=cache_hit)
+            else:
+                result, _ = viz_session_registry.execute(source, "execute", request.query, request.max_rows)
+                answer = models.VisualizeQueryResponse(**result)
+        except HTTPException as e:
+            raise RuntimeError(f"Worker visualize_{'fields' if fields else 'query'} failed: {e.detail}") from e
+        except Exception as e:
+            answer = (models.VisualizeFieldsResponse if fields else models.VisualizeQueryResponse)(error=str(e))
+        return OpResult(refs={}, metadata=answer.model_dump())
+
+    def _custom_node_here(self, job: CustomNodePayload) -> OpResult:
+        """Run ``process`` of a custom node whose class has no node file in this process and hold its outputs.
+
+        The instance is built from the payload's ``settings_values`` and, when the payload names a user, reads that
+        user's secrets through core's secret store as ``process`` accesses them. The refs are ``{"result": ref}`` for
+        one frame, one per declared output keyed by its output handle for a dict of them, none otherwise; each frame is
+        written to the file the worker gives the output ``<job_id>_<i>`` and held with that file's columns and rows.
+
+        Raises:
+            ValueError: ``process`` returned a dict without one of the declared outputs.
+        """
+        instance = type(job.custom_node).from_settings(job.settings_values)
+        if job.user_id is not None:
+            instance.set_execution_context(job.user_id)
+        output = instance.process(*job.inputs)
+        if isinstance(output, dict):
+            for name in job.output_names:
+                if name not in output:
+                    raise ValueError(f"process() did not return declared output '{name}'")
+            frames = {output_handle(i): output[name] for i, name in enumerate(job.output_names)}
+        elif isinstance(output, pl.LazyFrame | pl.DataFrame):
+            frames = {"result": output}
+        else:
+            return OpResult(refs={})
+        service = _service()
+        refs = {}
+        for (name, frame), result_id in zip(frames.items(), service._op_outputs(job.job_id, len(frames)), strict=True):
+            path = service._output_file(job.flow_id, result_id)
+            frame.lazy().sink_ipc(path)
+            written = pl.scan_ipc(path)
+            row_count = written.select(pl.len()).collect().item()
+            held = service._hold_output(result_id, path, written.collect_schema(), row_count, job.flow_id, job.node_id)
+            refs[name] = self._ref_from_wire(held)
+        return OpResult(refs=refs)
 
     def _check(self, ref: ResultRef) -> None:
         if ref.backend_id != self.id:
