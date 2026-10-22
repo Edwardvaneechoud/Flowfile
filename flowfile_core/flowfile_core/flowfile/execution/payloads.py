@@ -18,9 +18,9 @@ The Delta writes (``DeltaWritePayload``, ``DeltaMergePayload``, ``DeltaScd2Paylo
 ``table_path``. A visualisation session request
 (``VizSessionPayload``) reports the session's answer as the metadata too.
 
-The transform payloads (``FuzzyJoinPayload``, ``RandomSplitPayload``, ``CustomNodePayload``, ``PolarsCodePayload``)
-carry their input rows as the ``pl.LazyFrame`` each input engine holds; a Polars Code node's code is the payload's
-text, which only the backend that runs the operation executes.
+The transform payloads (``FuzzyJoinPayload``, ``RandomSplitPayload``, ``CustomNodePayload``, ``PolarsCodePayload``,
+``SqlQueryPayload``) carry their input rows as the ``pl.LazyFrame`` each input engine holds; a Polars Code node's code
+and a SQL Query node's statement are the payload's text, which only the backend that runs the operation executes.
 """
 
 from __future__ import annotations
@@ -389,6 +389,24 @@ class PolarsCodePayload(OperationPayload):
     """
 
     code: str
+    inputs: tuple[pl.LazyFrame, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class SqlQueryPayload(OperationPayload):
+    """Translate a SQL Query node's statement once over its inputs on the backend that holds them.
+
+    The backend registers the inputs as ``input_1``, ``input_2``, … in a ``pl.SQLContext``. The operation's refs are
+    ``{"result": ref}``, carrying the schema of the frame the query answered.
+
+    Attributes:
+        sql_code: The node's statement as its settings hold it when the node runs.
+        inputs: The node's input rows in connection order, each the plan its input engine holds (a leaf over the
+            input's result); empty for a node with no input. The designer's prediction sends an empty frame of each
+            input's schema.
+    """
+
+    sql_code: str
     inputs: tuple[pl.LazyFrame, ...]
 
 

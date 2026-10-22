@@ -544,12 +544,6 @@ def test_a_promise_answers_only_whether_its_template_runs_on_a_kernel(template, 
         ("record_count", input_schema.NodeRecordCount(**_ids())),
         ("sample", input_schema.NodeSample(**_ids())),
         (
-            "sql_query",
-            input_schema.NodeSqlQuery(
-                **_ids(sql_query_input=transform_schema.SqlQueryInput(sql_code="SELECT * FROM input_1"))
-            ),
-        ),
-        (
             "manual_input",
             input_schema.NodeManualInput(**_ids(raw_data_format=input_schema.RawData(columns=[], data=[]))),
         ),
@@ -570,3 +564,11 @@ def test_a_polars_code_node_runs_the_polars_code_operation():
     )
 
     assert _requirements("polars_code", settings) == NodeRequirements(operation=OperationKind.polars_code)
+
+
+def test_a_sql_query_node_runs_the_sql_query_operation():
+    settings = input_schema.NodeSqlQuery(
+        **_ids(sql_query_input=transform_schema.SqlQueryInput(sql_code="SELECT * FROM input_1"))
+    )
+
+    assert _requirements("sql_query", settings) == NodeRequirements(operation=OperationKind.sql_query)

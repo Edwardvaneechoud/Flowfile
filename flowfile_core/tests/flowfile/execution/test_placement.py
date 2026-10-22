@@ -54,7 +54,7 @@ LOCAL_DISK = 'namespace "TestCat.TestSch" is on local disk; remote execution nee
 
 
 def everything() -> Capabilities:
-    """What core's own backend declares: its sixteen operations, ``file`` and object storage, every plugin."""
+    """What core's own backend declares: its seventeen operations, ``file`` and object storage, every plugin."""
     return LocalBackend().capabilities()
 
 
@@ -369,6 +369,26 @@ def test_a_polars_code_node_is_refused_on_a_backend_without_the_polars_code_oper
     run_info = graph.run_graph()
 
     assert_refused_before_any_node(graph, run_info, backend, {2: ["it runs the polars_code operation"]})
+
+
+def test_a_sql_query_node_is_refused_on_a_backend_without_the_sql_query_operation(protocol_on, declare):
+    backend = declare(without(everything(), operation="sql_query"))
+    graph = make_graph(8453)
+    add_manual_input(graph, 1, [{"id": 1, "name": "ada"}])
+    add_promise(graph, 2, "sql_query")
+    graph.add_sql_query(
+        input_schema.NodeSqlQuery(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_ids=[1],
+            sql_query_input=transform_schema.SqlQueryInput(sql_code="SELECT * FROM input_1"),
+        )
+    )
+    connect(graph, 1, 2)
+
+    run_info = graph.run_graph()
+
+    assert_refused_before_any_node(graph, run_info, backend, {2: ["it runs the sql_query operation"]})
 
 
 def test_a_fuzzy_match_is_refused_on_a_backend_without_its_plugin(protocol_on, declare):

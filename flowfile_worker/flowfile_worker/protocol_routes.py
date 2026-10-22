@@ -12,9 +12,10 @@ custom node, a model's training or its apply in the child its task route spawns,
 request's ``job_id`` names, and holds each output that child wrote as the materialised result
 ``<job_id>_<i>``, which the same routes read, count, probe and release. A training's output is the
 model it fitted, held as a blob; an apply scores with a model held here, named by its result id.
-``POST /v1/ops/polars_code`` runs a Polars Code node's code once in a pooled child and holds its
-result as ``<job_id>_0``: deferred, as its plan, when the code answered a LazyFrame over sources,
-materialised in its file when it answered a DataFrame or a LazyFrame over rows in memory.
+``POST /v1/ops/polars_code`` runs a Polars Code node's code, and ``POST /v1/ops/sql_query`` translates
+a SQL Query node's statement, once in a pooled child and holds the result as ``<job_id>_0``: deferred,
+as its plan, when the code answered a LazyFrame over sources, materialised in its file when it answered
+a DataFrame or a LazyFrame over rows in memory.
 ``POST /v1/results/{id}/export`` writes a held result to a URI as parquet in a
 ``funcs.export_result`` child; ``POST /v1/results/{id}/import`` holds a scan of a URI as a deferred
 result, with the columns and row count core sent and nothing read. A credential crosses either as a
@@ -111,13 +112,14 @@ OPERATIONS = frozenset(
         "delta_scd2",
         "viz_session",
         "polars_code",
+        "sql_query",
     }
 )
 """The operation kinds this worker runs, by ``OperationKind`` value; a kind is named while a route here runs it.
 
-Eleven are the ``POST /v1/ops/<kind>`` routes below: the reads, the fuzzy join, the custom node, the random split, ML
-training and apply, and Polars code. The other seven are served by the task routes in ``routes.py``: the database,
-cloud and file writes, the Delta write, merge and SCD2 write, and the visualisation sessions.
+Twelve are the ``POST /v1/ops/<kind>`` routes below: the reads, the fuzzy join, the custom node, the random split, ML
+training and apply, Polars code and SQL queries. The other seven are served by the task routes in ``routes.py``: the
+database, cloud and file writes, the Delta write, merge and SCD2 write, and the visualisation sessions.
 """
 
 # An operation's job id names its output files, so it holds no path separator.
@@ -225,6 +227,20 @@ class PolarsCodeInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     code: str
+    inputs: list[models.Base64Bytes]
+    flowfile_flow_id: int
+    flowfile_node_id: int | str = -1
+
+
+class SqlQueryInput(BaseModel):
+    """The body of a SQL Query run: the node's statement, its input plans in connection order, and its flow and node.
+
+    An unknown field is refused rather than dropped, because core builds this body by hand.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    sql_code: str
     inputs: list[models.Base64Bytes]
     flowfile_flow_id: int
     flowfile_node_id: int | str = -1
@@ -989,19 +1005,51 @@ def polars_code(body: PolarsCodeInput, job_id: JobId) -> OpOutputs:
         ),
         [path],
     )
+    return OpOutputs(outputs={"result": _hold_user_code_result(result_id, path, reported, flow_id, node_id)})
+
+
+@router.post("/ops/sql_query", response_model=OpOutputs)
+def sql_query(body: SqlQueryInput, job_id: JobId) -> OpOutputs:
+    """Translate a SQL Query node's statement once over its input plans in a child as job *job_id* and hold its result.
+
+    The child validates the statement itself and registers the inputs as ``input_1``, ``input_2``, …; the result is
+    held as a Polars Code result is: deferred as its plan over sources, materialised in its file over rows in memory.
+    Either is ``<job_id>_0``.
+    """
+    flow_id, node_id = body.flowfile_flow_id, body.flowfile_node_id
+    (result_id,) = _op_outputs(job_id, 1)
+    path = _output_file(flow_id, result_id)
+    reported, _ = _run_op(
+        job_id,
+        lambda: start_process(
+            b"",
+            task_id=job_id,
+            operation="sql_query",
+            file_ref=path,
+            flowfile_flow_id=flow_id,
+            flowfile_node_id=node_id,
+            kwargs={"sql_code": body.sql_code, "inputs": list(body.inputs)},
+        ),
+        [path],
+    )
+    return OpOutputs(outputs={"result": _hold_user_code_result(result_id, path, reported, flow_id, node_id)})
+
+
+def _hold_user_code_result(
+    result_id: str, path: str, reported: dict[str, Any], flow_id: int, node_id: int | str
+) -> ResultRef:
+    """Hold what a Polars Code or SQL Query child *reported* as *result_id*: deferred as its plan, else its file."""
     if reported["plan"] is None:
-        ref = _hold_output(result_id, path, reported["columns"], reported["row_count"], flow_id, node_id)
-    else:
-        record = ResultRecord(
-            result_id=result_id,
-            state="deferred",
-            columns=schema_to_wire(reported["columns"]),
-            row_count=None,
-            flow_id=flow_id,
-            node_id=node_id,
-            plan=reported["plan"],
-        )
-        results.put(record)
-        results.mark_ended(result_id)
-        ref = record.ref()
-    return OpOutputs(outputs={"result": ref})
+        return _hold_output(result_id, path, reported["columns"], reported["row_count"], flow_id, node_id)
+    record = ResultRecord(
+        result_id=result_id,
+        state="deferred",
+        columns=schema_to_wire(reported["columns"]),
+        row_count=None,
+        flow_id=flow_id,
+        node_id=node_id,
+        plan=reported["plan"],
+    )
+    results.put(record)
+    results.mark_ended(result_id)
+    return record.ref()

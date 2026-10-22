@@ -541,6 +541,15 @@ def _polars_code_body(code: str, inputs: list[pl.LazyFrame]) -> dict:
     }
 
 
+def _sql_query_body(sql_code: str, inputs: list[pl.LazyFrame]) -> dict:
+    return {
+        "sql_code": sql_code,
+        "inputs": [base64.b64encode(plan.serialize()).decode("ascii") for plan in inputs],
+        "flowfile_flow_id": FLOW_ID,
+        "flowfile_node_id": NODE_ID,
+    }
+
+
 def test_polars_code_holds_a_lazy_result_deferred_with_the_plans_columns(jobs, tmp_path):
     """The inputs scan files, as a held result's plan does, so the join's plan carries no rows and is held as it is."""
     job_id = jobs()
@@ -621,5 +630,68 @@ def test_polars_code_that_fails_answers_500_and_holds_nothing(jobs):
     assert (detail["status"], detail["error_kind"]) == ("Error", "task")
     assert "ColumnNotFoundError" in detail["error_message"]
     assert "missing" in detail["error_message"]
+    assert client.head(f"/v1/results/{job_id}_0").status_code == 404
+    assert not result_path(FLOW_ID, f"{job_id}_0").exists()
+
+
+def test_sql_query_holds_a_result_over_its_input_scans_as_a_plan_that_scans_them(jobs, tmp_path):
+    pl.DataFrame({"id": [1, 2, 3], "geom": [bytes([i]) for i in range(3)]}).write_ipc(tmp_path / "shapes.arrow")
+    pl.DataFrame({"id": [2, 3, 4], "name": ["b", "c", "d"]}).write_ipc(tmp_path / "names.arrow")
+    shapes = pl.scan_ipc(tmp_path / "shapes.arrow")
+    names = pl.scan_ipc(tmp_path / "names.arrow")
+    query = "SELECT a.id, b.name FROM input_1 a JOIN input_2 b ON a.id = b.id"
+    job_id = jobs()
+
+    answer = _answer(_post_op("sql_query", job_id, _sql_query_body(query, [shapes, names])))
+
+    ref = answer.outputs["result"]
+    assert list(answer.outputs) == ["result"]
+    assert (ref.result_id, ref.state, ref.row_count) == (f"{job_id}_0", "deferred", None)
+    context = pl.SQLContext(input_1=shapes, input_2=names)
+    assert ref.columns == schema_to_wire(context.execute(query).collect_schema())
+    location = _location(ref)
+    assert location.kind == "plan"
+    response = client.get(f"/v1/results/{ref.result_id}/sample", params={"n": 10})
+    assert response.status_code == 200, response.text
+    assert sorted(pl.read_ipc_stream(response.content)["name"].to_list()) == ["b", "c"]
+    plan = pl.LazyFrame.deserialize(io.BytesIO(location.plan))
+    (tmp_path / "names.arrow").unlink()
+    with pytest.raises(FileNotFoundError):
+        plan.collect()
+
+
+def test_sql_query_holds_a_result_over_rows_in_memory_as_a_file(jobs):
+    job_id = jobs()
+
+    answer = _answer(_post_op("sql_query", job_id, _sql_query_body("SELECT id, name FROM input_1", [PEOPLE.lazy()])))
+
+    ref = answer.outputs["result"]
+    assert (ref.result_id, ref.state, ref.row_count) == (f"{job_id}_0", "materialised", 5)
+    location = _location(ref)
+    assert (location.kind, location.plan) == ("file", None)
+    assert location.path == str(result_path(FLOW_ID, ref.result_id))
+    assert _rows(ref)["id"].to_list() == [1, 2, 3, 4, 5]
+
+
+def test_sql_query_that_fails_answers_500_and_holds_nothing(jobs):
+    job_id = jobs()
+
+    response = _post_op("sql_query", job_id, _sql_query_body("SELECT missing FROM input_1", [PEOPLE.lazy()]))
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert (detail["status"], detail["error_kind"]) == ("Error", "task")
+    assert "missing" in detail["error_message"]
+    assert client.head(f"/v1/results/{job_id}_0").status_code == 404
+    assert not result_path(FLOW_ID, f"{job_id}_0").exists()
+
+
+def test_a_sql_statement_the_worker_refuses_holds_nothing(jobs):
+    job_id = jobs()
+
+    response = _post_op("sql_query", job_id, _sql_query_body("DROP TABLE input_1", [PEOPLE.lazy()]))
+
+    assert response.status_code == 500
+    assert "Only SELECT queries are allowed" in response.json()["detail"]["error_message"]
     assert client.head(f"/v1/results/{job_id}_0").status_code == 404
     assert not result_path(FLOW_ID, f"{job_id}_0").exists()

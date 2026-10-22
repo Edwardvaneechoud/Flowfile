@@ -508,6 +508,24 @@ def _scans_rows_in_memory(lf: pl.LazyFrame) -> bool:
     return any(line.lstrip().startswith("DF [") for line in lf.explain(optimized=False).splitlines())
 
 
+def _user_code_result(result: pl.LazyFrame | pl.DataFrame, file_path: str) -> dict:
+    """What a Polars Code or SQL Query child queues for the frame the user's code answered.
+
+    A ``LazyFrame`` over sources is reported as its resolved ``pl.Schema`` and its serialised plan, with no row count,
+    nothing collected and nothing written. A ``DataFrame``, or a ``LazyFrame`` that reads a frame held in memory
+    (``_scans_rows_in_memory``), whose plan would carry those rows to core, is collected if lazy and written as IPC to
+    *file_path*, and its ``pl.Schema`` and height are reported. The schema is the result's own, never one read back
+    from a file (see ``submit_result``).
+    """
+    if isinstance(result, pl.LazyFrame) and _scans_rows_in_memory(result):
+        result = collect_lazy_frame(result)
+    if isinstance(result, pl.DataFrame):
+        with environment_failures():
+            result.write_ipc(file_path)
+        return {"columns": result.schema, "row_count": result.height, "plan": None}
+    return {"columns": result.collect_schema(), "row_count": None, "plan": result.serialize()}
+
+
 def polars_code(
     polars_serializable_object: bytes,
     progress: Value,
@@ -521,12 +539,10 @@ def polars_code(
 ):
     """Run a Polars Code node's code once over its input plans, for ``POST /v1/ops/polars_code``.
 
-    The code runs in the Polars Code sandbox (``shared.polars_code_parser``), given the plans of *inputs* in order. A
-    ``LazyFrame`` it returns over sources is queued as its resolved ``pl.Schema`` and its serialised plan, with no row
-    count, nothing collected and nothing written. A ``DataFrame``, or a ``LazyFrame`` that reads a frame held in memory
-    (``_scans_rows_in_memory``), whose plan would carry those rows to core, is collected if lazy and written as IPC to
-    *file_path*, and its ``pl.Schema`` and height are queued. The schema is the result's own, never one read back from
-    a file (see ``submit_result``). *polars_serializable_object* is not read: the plans come as *inputs*.
+    The code runs in the Polars Code sandbox (``shared.polars_code_parser``), given the plans of *inputs* in order, and
+    what it returns is queued as ``_user_code_result`` reports it: a ``LazyFrame`` over sources as its plan, a
+    ``DataFrame`` or a ``LazyFrame`` over rows in memory written to *file_path*. *polars_serializable_object* is not
+    read: the plans come as *inputs*.
     """
     from shared.polars_code_parser import polars_code_parser
 
@@ -535,16 +551,50 @@ def polars_code(
     try:
         frames = [_load_plan(plan) for plan in inputs]
         result = polars_code_parser.get_executable(code, num_inputs=len(inputs))(*frames)
-        if isinstance(result, pl.LazyFrame) and _scans_rows_in_memory(result):
-            result = collect_lazy_frame(result)
-        if isinstance(result, pl.DataFrame):
-            with environment_failures():
-                result.write_ipc(file_path)
-            reported = {"columns": result.schema, "row_count": result.height, "plan": None}
-        else:
-            reported = {"columns": result.collect_schema(), "row_count": None, "plan": result.serialize()}
+        reported = _user_code_result(result, file_path)
     except BaseException as e:
         flowfile_logger.error(f"Error during Polars code: {str(e)}")
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
+        return
+    # A dict, not a tuple: spawner.unpack_result reads a 2-tuple as (payload, row_count).
+    queue.put(reported)
+    with progress.get_lock():
+        progress.value = 100
+
+
+def sql_query(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,
+    flowfile_flow_id: int,
+    flowfile_node_id: int | str,
+    sql_code: str,
+    inputs: list[bytes],
+):
+    """Translate a SQL Query node's statement once over its input plans, for ``POST /v1/ops/sql_query``.
+
+    This is the SQL Query node's child, apart from the catalog SQL editor's ``execute_sql_query`` below. The statement
+    is validated here first, as the worker does not trust the core caller, then the plans of *inputs* are registered
+    in order as ``input_1``, ``input_2``, … in a ``pl.SQLContext`` and the statement is translated over them. What it
+    answers is queued as ``_user_code_result`` reports it: a plan over sources as its plan, one over rows in memory
+    written to *file_path*. *polars_serializable_object* is not read: the plans come as *inputs*.
+    """
+    from shared.sql_validation import validate_sql_query
+
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(f"Starting SQL query over {len(inputs)} inputs")
+    try:
+        validate_sql_query(sql_code)
+        ctx = pl.SQLContext()
+        for i, plan in enumerate(inputs):
+            ctx.register(f"input_{i + 1}", _load_plan(plan))
+        reported = _user_code_result(ctx.execute(sql_code), file_path)
+    except BaseException as e:
+        flowfile_logger.error(f"Error during SQL query: {str(e)}")
         record_task_failure(error_message, progress, e, limit=1024)
         if not isinstance(e, Exception):
             raise

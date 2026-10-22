@@ -39,6 +39,7 @@ OperationType = Literal[
     "merge_delta",
     "scd2_delta",
     "polars_code",
+    "sql_query",
 ]
 ResultType = Literal["polars", "other"]
 
