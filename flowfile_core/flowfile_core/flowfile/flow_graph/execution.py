@@ -1038,7 +1038,9 @@ class ExecutionMixin(GraphMixinBase):
         With an exchange store configured (``FLOWFILE_EXCHANGE_URI``) each node goes to the backend its own
         ``execution_location`` names, ``"auto"`` to the run's (``MixedPlacementPolicy``); without one every node goes
         to the run's backend whatever its own setting says, but the ones their builders pin to the worker
-        (``SingleBackendPolicy``). Each backend named is read through its handshake verdict (``handshake.verdict_for``,
+        (``SingleBackendPolicy``). In a process that serves (``registry.serving()``) ``local`` refuses every node
+        assigned to it, "this core serves; compute runs on its worker", before the registry or the handshake is asked
+        for it. Each other backend named is read through its handshake verdict (``handshake.verdict_for``,
         which checks it on its first use in this process). One whose verdict refuses it whole, or whose check raises a
         ``VersionMismatch``, refuses every node assigned to it with that error, as an id the registry does not know does
         with the registry's message; one whose check raises any other ``ComputeError`` is left out of the map ``place``
@@ -1068,6 +1070,9 @@ class ExecutionMixin(GraphMixinBase):
         absent: dict[str, dict[str, str]] = {}
         refused: dict[str, str] = {}
         for backend_id in dict.fromkeys(policy.backend_for(node) for node in nodes):
+            if backend_id == registry.LOCAL_BACKEND_ID and registry.serving():
+                refused[backend_id] = "this core serves; compute runs on its worker"
+                continue
             try:
                 verdict = handshake.verdict_for(registry.backend(backend_id))
             except VersionMismatch as e:

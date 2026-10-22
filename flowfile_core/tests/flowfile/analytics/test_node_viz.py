@@ -19,10 +19,9 @@ from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.analytics import node_viz
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import worker as worker_module
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
-from flowfile_core.flowfile.execution.errors import ComputeUnavailable, OperationUnsupported
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.execution.payloads import VizSessionPayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
@@ -260,11 +259,6 @@ def test_a_worker_error_answer_reaches_the_route_as_before():
         pytest.raises(RuntimeError, match="boom"),
     ):
         WorkerBackend(url=WORKER_URL).run_op(OperationKind.viz_session, op_payload(_viz_payload()))
-
-
-def test_core_refuses_a_viz_session():
-    with pytest.raises(OperationUnsupported, match="viz_session"):
-        LocalBackend().run_op(OperationKind.viz_session, op_payload(_viz_payload()))
 
 
 def test_a_viz_session_payload_is_frozen_and_keyword_only():

@@ -4,6 +4,7 @@ import importlib.machinery
 import multiprocessing
 import sys
 import threading
+from multiprocessing.context import SpawnContext
 from typing import TYPE_CHECKING
 
 from shared._version import get_version
@@ -16,18 +17,39 @@ if TYPE_CHECKING:
     status_dict: dict[str, Status]
 
 __version__ = get_version()
-multiprocessing.set_start_method("spawn", force=True)
-
-if multiprocessing.current_process().name == "MainProcess":
-    _main_mod = sys.modules.get("__main__")
-    if _main_mod is not None and getattr(_main_mod, "__spec__", None) is None:
-        # spawn's _fixup_main_from_name returns immediately for a ".__main__" name,
-        # so children skip re-executing the launcher (and its full app import).
-        _main_mod.__spec__ = importlib.machinery.ModuleSpec("flowfile_worker.__main__", None)
 
 from multiprocessing import get_context
 
-mp_context = get_context("spawn")
+
+def _prepare_spawn() -> None:
+    """Make ``spawn`` the start method and, in the main process, give a ``__main__`` without a spec this package's.
+
+    spawn's ``_fixup_main_from_name`` returns at once for a ``.__main__`` name, so a child skips re-executing the
+    launcher and its full app import. Safe to run again: the force is idempotent and a stamped spec is left alone.
+    """
+    multiprocessing.set_start_method("spawn", force=True)
+    if multiprocessing.current_process().name == "MainProcess":
+        main_mod = sys.modules.get("__main__")
+        if main_mod is not None and getattr(main_mod, "__spec__", None) is None:
+            main_mod.__spec__ = importlib.machinery.ModuleSpec("flowfile_worker.__main__", None)
+
+
+class SpawnProcess(SpawnContext.Process):
+    """A spawn child that prepares this process for spawning as it starts, so ``import flowfile_worker`` does not.
+
+    Named as the class it extends, so a child's default name stays ``SpawnProcess-<n>``.
+    """
+
+    def start(self) -> None:
+        _prepare_spawn()
+        super().start()
+
+
+class _SpawnContext(SpawnContext):
+    Process = SpawnProcess
+
+
+mp_context = _SpawnContext()
 
 status_dict = dict()
 process_dict = dict()

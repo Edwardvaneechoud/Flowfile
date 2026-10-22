@@ -35,7 +35,7 @@ from flowfile_core.configs import logger, settings
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager import db_connections
 from flowfile_core.flowfile.execution import registry
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, VersionMismatch
 from flowfile_core.flowfile.execution.placement import (
     MixedPlacementPolicy,
@@ -73,8 +73,9 @@ LOCAL_DISK = 'namespace "TestCat.TestSch" is on local disk; remote execution nee
 
 
 def everything() -> Capabilities:
-    """What core's own backend declares: its seventeen operations, ``file`` and object storage, every plugin."""
-    return LocalBackend().capabilities()
+    """What the worker embedded in this process declares: the nineteen operations, ``file`` and object storage,
+    every plugin."""
+    return EmbeddedWorkerBackend().capabilities()
 
 
 def ambient() -> Capabilities:
@@ -95,8 +96,8 @@ def without(capabilities: Capabilities, *, operation=None, scheme=None, plugin=N
     return capabilities.model_copy(update=update)
 
 
-class DeclaringBackend(LocalBackend):
-    """Core's own backend under another id, declaring the capabilities it is given.
+class DeclaringBackend(EmbeddedWorkerBackend):
+    """The worker embedded in this process under another id, declaring the capabilities it is given.
 
     Given an error instead, it is unreachable: ``capabilities()``, ``submit`` and ``run_op`` raise it. ``work`` records
     each ``submit`` and ``run_op`` it is sent but the handshake's probe jobs; ``asked`` counts its ``capabilities()``
@@ -835,6 +836,22 @@ def test_a_version_mismatch_refuses_every_node_of_the_backend_before_any_starts(
         assert result.compute_error == "Refusal"
     assert run_info.success is False
     assert backend.work == []
+
+
+def test_a_run_on_local_in_a_process_that_serves_is_refused_before_local_is_made(protocol_on, declare, monkeypatch):
+    monkeypatch.setattr(registry, "_serving", False)
+    registry.mark_serving()
+    local = DeclaringBackend(registry.LOCAL_BACKEND_ID, everything())
+    made = []
+    registry.register_backend(registry.LOCAL_BACKEND_ID, lambda: made.append(local) or local)
+    graph = make_graph(8451, execution_location="local")
+    add_manual_input(graph, 1, [{"a": 1}])
+
+    run_info = graph.run_graph()
+
+    assert_refused_before_any_node(graph, run_info, local, {1: ["this core serves; compute runs on its worker"]})
+    assert made == []
+    assert local.asked == 0
 
 
 def test_a_node_another_error_failed_carries_no_compute_error(protocol_off, declare):

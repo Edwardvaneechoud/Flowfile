@@ -23,8 +23,8 @@ def run_flow_cli(flow_path: str, run_id: int, backend: str | None = None) -> int
     importing from the top-level ``flowfile`` package.
 
     ``backend`` names the compute backend the run uses; without it, a backend id saved as the flow's
-    ``execution_location`` names one, and a flow saved ``local``, ``remote`` or ``auto`` runs in this process
-    (``LocalBackend``). A named backend becomes the process's default and the flow runs ``"remote"`` on it, so its
+    ``execution_location`` names one, and a flow saved ``local``, ``remote`` or ``auto`` runs on the worker embedded
+    in this process. A named backend becomes the process's default and the flow runs ``"remote"`` on it, so its
     execution context is the one the designer builds for that backend. The flow is closed when its run ends, so no
     result the run minted stays held on that backend after the process exits.
     """

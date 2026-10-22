@@ -2,13 +2,13 @@
 backend accepts.
 
 An operation's ``OpPayload`` is ``{"payload": <the kind's dataclass>}`` (``op_payload``); a backend takes it back out
-with ``unpack`` and builds what its transport needs from it: ``LocalBackend`` runs the operation in this process, a
-backend that crosses a process builds what its transport needs from the fields and serialises a plan when it sends it.
-A payload holds what the node knows: its settings model, the connection those settings resolve to, the credential as
-stored (the ``$ffsec$`` ciphertext, never a decrypted secret; a cloud connection as its worker interface, which the
-compute decrypts where the operation runs), the input rows of a write as the ``pl.LazyFrame`` itself, the flow and
-node the compute files the job under, the ``job_id`` that names the job while it runs, and the in-process hooks only
-a backend running in core calls (a cancel check, the node logger, the Kafka consumer).
+with ``unpack`` and builds what its transport needs from it: the worker embedded in this process calls the worker's
+bodies directly, a backend that crosses a process builds what its transport needs from the fields and serialises a
+plan when it sends it. A payload holds what the node knows: its settings model, the connection those settings resolve
+to, the credential as stored (the ``$ffsec$`` ciphertext, never a decrypted secret; a cloud connection as its worker
+interface, which the compute decrypts where the operation runs), the input rows of a write as the ``pl.LazyFrame``
+itself, the flow and node the compute files the job under, the ``job_id`` that names the job while it runs, and the
+in-process hooks the builders bind (a cancel check, the node logger, the Kafka consumer), which no backend reads now.
 
 The Delta writes (``DeltaWritePayload``, ``DeltaMergePayload``, ``DeltaScd2Payload``) report what they wrote as the
 ``OpResult.metadata``: ``{"skipped": True}`` when the write changed nothing, else the ``table_path``, the ``schema``

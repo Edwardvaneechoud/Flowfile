@@ -1,10 +1,12 @@
 """A result one backend holds crosses to another only through ``export`` and ``import_uri``.
 
-Node A runs on one backend and node B on the other: A's result is exported to a parquet file at a temporary URI, the
-other backend imports that URI, and B's plan, composed on the imported result, runs there. Both directions run, with A
-held deferred and as a required result. The protocol flag comes from the environment, as for the conformance package:
-with it on the worker exports in a child of its own and holds an import as a result of its own; with it off the worker
-exports in a task running that child and the worker backend holds an import in core, its rows read by worker tasks.
+Node A runs on one backend and node B on the other, the worker embedded in this process and the session worker:
+A's result is exported to a parquet file at a temporary URI, the other backend imports that URI, and B's plan,
+composed on the imported result, runs there. Both directions run, with A held deferred and as a required result. The
+protocol flag comes from the environment, as for the conformance package: with it on the worker exports in a child of
+its own and holds an import as a result of its own; with it off the worker exports in a task running that child and
+the worker backend holds an import in core, its rows read by worker tasks. The embedded worker exports and imports in
+this process in both states.
 """
 
 import uuid
@@ -14,7 +16,7 @@ import polars as pl
 import pytest
 
 from flowfile_core.flowfile.execution import registry
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ForeignRef
 from flowfile_core.flowfile.execution.protocol import ComputeBackend, ResultRef, SubmitHints
@@ -36,8 +38,9 @@ Held = list[tuple[ComputeBackend, ResultRef]]
 
 
 @pytest.fixture
-def local() -> LocalBackend:
-    return LocalBackend()
+def local() -> EmbeddedWorkerBackend:
+    """The worker embedded in this process, under its own id ``local``."""
+    return EmbeddedWorkerBackend()
 
 
 @pytest.fixture
@@ -101,7 +104,9 @@ def assert_nothing_crosses_implicitly(source: ComputeBackend, target: ComputeBac
 
 
 @STATES
-def test_a_local_result_crosses_to_the_worker_through_export(local, worker, kept, must_materialise, tmp_path):
+def test_an_embedded_worker_result_crosses_to_the_worker_through_export(
+    local, worker, kept, must_materialise, tmp_path
+):
     ref_a = node_a(local, kept, must_materialise)
 
     edge = cross(local, worker, ref_a, kept, tmp_path)
@@ -113,7 +118,7 @@ def test_a_local_result_crosses_to_the_worker_through_export(local, worker, kept
 
 
 @STATES
-def test_a_worker_result_crosses_to_core_through_export(local, worker, kept, must_materialise, tmp_path):
+def test_a_worker_result_crosses_to_the_embedded_worker_through_export(local, worker, kept, must_materialise, tmp_path):
     ref_a = node_a(worker, kept, must_materialise)
 
     edge = cross(worker, local, ref_a, kept, tmp_path)

@@ -71,9 +71,10 @@ test.describe("Compute backend picker", () => {
         'cannot run on backend "worker"',
         { timeout: 30_000 },
       );
-      await expect(page.locator('[data-testid=boundary-badge][data-edge="1-2"]')).toBeVisible({
-        timeout: 30_000,
-      });
+      const badge = page.locator('[data-testid=boundary-badge][data-edge="1-2"]');
+      await expect(badge).toBeVisible({ timeout: 30_000 });
+      await badge.hover();
+      await expect(badge.getByTestId("boundary-tooltip")).toContainText(/Node 1.*→.*Node 2/);
     } else {
       const run = await waitForRun(request, token, flowId, previousStart);
       expect(run.success).toBe(true);

@@ -10,7 +10,8 @@ it presigns for the worker are ``https`` ones. The secrets and the certificate r
 environment only. A second flow runs one node on the worker and the rest in core, its data crossing through an exchange
 store on MinIO, with the protocol flag on and then off; its flag-off case recreates core, which is why it comes last.
 The elaborate integration flow (``complex_flow.json``, its outputs written to MinIO) runs whole on the worker, and
-with its nodes alternating between the worker and core, so that its edges cross through the exchange store.
+with its nodes alternating between the worker and core, so that its edges cross through the exchange store. A scheduled
+run's child computes on the worker embedded in it, inside core's container, while the worker container serves nothing.
 """
 
 from __future__ import annotations
@@ -296,17 +297,20 @@ def _set_up_sources(stack: Stack) -> None:
     assert response.status_code == 201, response.text
 
 
-def _import_flow(stack: Stack, flow: dict) -> int:
-    """Copy the flow into core's container, as nothing is mounted there, and import it."""
+def _copy_to_core(flow: dict, path: str) -> None:
+    """Write the flow to ``path`` in core's container, as nothing is mounted there."""
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
         json.dump(flow, handle)
     try:
         container = _compose("ps", "-q", "flowfile-core").stdout.strip()
-        subprocess.run(
-            ["docker", "cp", handle.name, f"{container}:/app/zero_volumes_flow.json"], capture_output=True, check=True
-        )
+        subprocess.run(["docker", "cp", handle.name, f"{container}:{path}"], capture_output=True, check=True)
     finally:
         os.unlink(handle.name)
+
+
+def _import_flow(stack: Stack, flow: dict) -> int:
+    """Copy the flow into core's container and import it."""
+    _copy_to_core(flow, "/app/zero_volumes_flow.json")
     response = stack.http.get(f"{stack.core}/import_flow/", params={"flow_path": "/app/zero_volumes_flow.json"})
     assert response.status_code == 200, response.text
     return response.json()
@@ -368,6 +372,76 @@ def test_core_and_the_worker_have_no_mount(stack):
             ["docker", "inspect", "-f", "{{json .Mounts}}", container], capture_output=True, text=True, check=True
         )
         assert json.loads(inspected.stdout) == [], (service, inspected.stdout)
+
+
+SCHEDULED_FLOW = "/app/scheduled_flow.json"
+
+
+def _scheduled_flow() -> dict:
+    """Manual input 1 → group_by 2, the rows counted by region, saved ``remote`` as the designer saves a flow."""
+    columns = [{"name": "region", "data_type": "String"}]
+    aggregations = [{"old_name": "region", "agg": "groupby"}, {"old_name": "region", "agg": "count", "new_name": "n"}]
+    return {
+        "flowfile_version": "0.23.0",
+        "flowfile_id": 7406,
+        "flowfile_name": "scheduled",
+        "flowfile_settings": {"execution_mode": "Development", "execution_location": "remote"},
+        "nodes": [
+            {
+                "id": 1,
+                "type": "manual_input",
+                "is_start_node": True,
+                "outputs": [2],
+                "setting_input": {"raw_data_format": {"columns": columns, "data": [["north", "south", "north"]]}},
+            },
+            {
+                "id": 2,
+                "type": "group_by",
+                "input_ids": [1],
+                "setting_input": {"groupby_input": {"agg_cols": aggregations}},
+            },
+        ],
+    }
+
+
+def _worker_requests() -> list[str]:
+    """Every request the worker served so far, from its access log, but the health probes on ``/docs``: each of its
+    jobs starts with one."""
+    log = _compose("logs", "--no-color", "flowfile-worker").stdout
+    served = [line for line in log.splitlines() if ' HTTP/1.1"' in line or '"WebSocket ' in line]
+    return [line for line in served if '"GET /docs ' not in line]
+
+
+def _run_schedule_now(stack: Stack, schedule_id: int, timeout: float = 300) -> dict:
+    """Trigger the schedule as its tick would, a ``flowfile run flow`` child of core, and poll its run until it ends."""
+    response = stack.http.post(f"{stack.core}/catalog/schedules/{schedule_id}/run-now")
+    assert response.status_code == 200, response.text
+    run_id = response.json()["id"]
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        run = stack.http.get(f"{stack.core}/catalog/runs/{run_id}").json()
+        if run["ended_at"] is not None:
+            run["log"] = stack.http.get(f"{stack.core}/catalog/runs/{run_id}/log").json().get("log")
+            return run
+        time.sleep(1)
+    pytest.fail(f"run {run_id} did not finish within {timeout:.0f}s:\n{_logs()}")
+
+
+def test_a_scheduled_run_computes_in_core_s_container_and_leaves_the_worker_idle(stack):
+    _copy_to_core(_scheduled_flow(), SCHEDULED_FLOW)
+    response = stack.http.post(f"{stack.core}/catalog/flows", json={"name": "scheduled", "flow_path": SCHEDULED_FLOW})
+    assert response.status_code == 201, response.text
+    schedule = {"registration_id": response.json()["id"], "schedule_type": "interval", "interval_seconds": 3600}
+    response = stack.http.post(f"{stack.core}/catalog/schedules", json=schedule)
+    assert response.status_code == 201, response.text
+    served_before = _worker_requests()
+
+    run = _run_schedule_now(stack, response.json()["id"])
+
+    assert run["success"] is True and run["nodes_completed"] == 2, f"{run}\n{_logs()}"
+    node_results = json.loads(run["node_results_json"])
+    assert [result["success"] for result in node_results] == [True, True], node_results
+    assert _worker_requests() == served_before
 
 
 EXCHANGE_BUCKET = "flowfile-exchange"

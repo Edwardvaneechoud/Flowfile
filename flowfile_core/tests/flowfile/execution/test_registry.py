@@ -127,6 +127,20 @@ def no_override():
     registry.set_default_override(previous)
 
 
+@pytest.fixture
+def serving(monkeypatch):
+    """The test runs in a process its entry point marked as one that serves; the mark goes after it."""
+    monkeypatch.setattr(registry, "_serving", False)
+    registry.mark_serving()
+
+
+@pytest.fixture
+def single_file(monkeypatch, serving):
+    """The test runs in the pip server's process: serving, in single-file mode, the worker's routes at its mount."""
+    monkeypatch.setattr(settings.SINGLE_FILE_MODE, "value", True)
+    monkeypatch.setattr(settings, "WORKER_URL", "http://127.0.0.1:63578/worker")
+
+
 def test_a_registered_backend_is_made_once_and_shared():
     made, factory = counting_factory("probe")
     registry.register_backend("probe", factory)
@@ -299,6 +313,71 @@ def test_a_blank_backend_variable_counts_as_unset(monkeypatch, blank):
     assert registry.default_backend_id() == "local"
 
 
+@pytest.mark.parametrize("offload", [True, False])
+def test_a_process_that_serves_defaults_to_the_worker_whatever_the_offload_setting(monkeypatch, serving, offload):
+    monkeypatch.setattr(settings.OFFLOAD_TO_WORKER, "value", offload)
+
+    assert registry.serving() is True
+    assert registry.default_backend_id() == "worker"
+
+
+def test_a_process_that_serves_never_defaults_to_local_by_the_variable_or_the_override(
+    monkeypatch, serving, no_override
+):
+    monkeypatch.setenv("FLOWFILE_COMPUTE_BACKEND", "local")
+    assert registry.default_backend_id() == "worker"
+
+    registry.set_default_override("local")
+    assert registry.default_backend_id() == "worker"
+
+
+def test_a_process_that_serves_defaults_to_another_backend_its_variable_names(monkeypatch, serving):
+    monkeypatch.setenv("FLOWFILE_COMPUTE_BACKEND", "worker:team")
+
+    assert registry.default_backend_id() == "worker:team"
+
+
+def test_a_process_that_serves_leaves_the_embedded_worker_s_jobs_out_of_its_own_process(monkeypatch, serving):
+    from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
+    from flowfile_worker import spawner
+
+    monkeypatch.setattr(spawner, "in_process", False)
+
+    assert isinstance(registry.backend(registry.LOCAL_BACKEND_ID), EmbeddedWorkerBackend)
+    assert spawner.in_process is False
+
+
+def test_in_single_file_mode_the_worker_is_the_embedded_worker_its_jobs_left_to_its_pool(monkeypatch, single_file):
+    from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
+    from flowfile_worker import spawner
+
+    monkeypatch.setattr(spawner, "in_process", False)
+
+    worker = registry.backend(registry.WORKER_BACKEND_ID)
+
+    assert isinstance(worker, EmbeddedWorkerBackend)
+    assert worker.id == registry.WORKER_BACKEND_ID
+    assert registry.default_backend() is worker
+    assert spawner.in_process is False
+
+
+def test_in_single_file_mode_the_worker_url_is_the_mount_and_no_backend_is_made_for_it(single_file):
+    made, factory = counting_factory(registry.WORKER_BACKEND_ID)
+    registry.register_backend(registry.WORKER_BACKEND_ID, factory)
+
+    assert registry.worker_url() == "http://127.0.0.1:63578/worker"
+    assert made == []
+
+
+def test_in_single_file_mode_a_configured_worker_stays_a_worker_backend(single_file, configured_row):
+    from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+
+    team = registry.backend(configured_row)
+
+    assert isinstance(team, WorkerBackend)
+    assert team.url == TEAM_URL
+
+
 def test_the_default_backend_is_the_instance_of_the_default_id(monkeypatch):
     made, factory = counting_factory("cluster")
     registry.register_backend("cluster", factory)
@@ -308,13 +387,13 @@ def test_the_default_backend_is_the_instance_of_the_default_id(monkeypatch):
     assert len(made) == 1
 
 
-def test_the_built_in_backends_are_core_and_the_worker_at_the_configured_url():
-    from flowfile_core.flowfile.execution.backends.local import LocalBackend
+def test_the_built_in_backends_are_the_embedded_worker_and_the_worker_at_the_configured_url():
+    from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
     from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 
     local, worker = registry.backend(registry.LOCAL_BACKEND_ID), registry.backend(registry.WORKER_BACKEND_ID)
 
-    assert isinstance(local, LocalBackend)
+    assert isinstance(local, EmbeddedWorkerBackend)
     assert isinstance(worker, WorkerBackend)
     assert worker.url == settings.WORKER_URL
     assert registry.worker_url() == worker.url

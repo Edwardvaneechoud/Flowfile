@@ -23,7 +23,7 @@ from flowfile_core.configs import settings
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import worker as worker_module
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import (
     ComputeUnavailable,
@@ -617,11 +617,12 @@ def test_a_fuzzy_join_matches_on_the_worker_as_it_does_in_core(backend, kept):
     kept.append(ref)
 
     assert (ref.result_id, ref.state, ref.row_count) == (join.job_id, "materialised", 5)
-    in_core = LocalBackend()
-    local_ref = in_core.run_op(OperationKind.fuzzy_join, op_payload(join)).refs["result"]
+    embedded = EmbeddedWorkerBackend()
+    embedded_ref = embedded.run_op(OperationKind.fuzzy_join, op_payload(join)).refs["result"]
     columns = ["name", "name_right", "name_vs_name_right_levenshtein"]
     on_worker = backend.plan_for(ref).collect().sort(columns)
-    assert on_worker.equals(in_core.plan_for(local_ref).collect().sort(columns))
+    assert on_worker.equals(embedded.plan_for(embedded_ref).collect().sort(columns))
+    embedded.release(embedded_ref)
 
 
 def test_a_random_split_on_the_worker_partitions_like_core(backend, kept):
@@ -634,9 +635,13 @@ def test_a_random_split_on_the_worker_partitions_like_core(backend, kept):
 
         assert [(ref.state, ref.row_count) for ref in refs.values()] == [("deferred", 40), ("deferred", 10)]
         on_worker = {name: backend.plan_for(ref).collect()["n"].to_list() for name, ref in refs.items()}
-        in_core = LocalBackend()
-        local_refs = in_core.run_op(OperationKind.random_split, op_payload(split)).refs
-        assert on_worker == {name: in_core.plan_for(ref).collect()["n"].to_list() for name, ref in local_refs.items()}
+        embedded = EmbeddedWorkerBackend()
+        embedded_refs = embedded.run_op(OperationKind.random_split, op_payload(split)).refs
+        assert on_worker == {
+            name: embedded.plan_for(ref).collect()["n"].to_list() for name, ref in embedded_refs.items()
+        }
+        for embedded_ref in embedded_refs.values():
+            embedded.release(embedded_ref)
         assert backend.status(JobHandle("worker", split.job_id)).state == "done"
     finally:
         subops.clear_task_from_worker(split.job_id, worker_url=WORKER_URL)

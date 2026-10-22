@@ -6,7 +6,7 @@ import type { FlowNode, NodeFormulaSettings } from '../types'
  * this package must use it, so two nodes can never race different versions into
  * one Pyodide runtime. Keep in sync with tests/python/requirements.txt.
  */
-export const EXPR_TRANSFORMER_PACKAGE = 'polars-expr-transformer==0.6.0'
+export const EXPR_TRANSFORMER_PACKAGE = 'polars-expr-transformer==0.6.5'
 
 /**
  * Translate each formula node's expression to Polars code (to_polars_code).

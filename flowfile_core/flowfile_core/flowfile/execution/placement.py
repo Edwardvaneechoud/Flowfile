@@ -15,8 +15,6 @@ stored connection it names whose ``auth_method`` is not one a plan leaves to the
 (``_AMBIENT_AUTH_METHODS``). A backend declaring ``master_key`` or ``vended`` resolves a stored connection itself. A Run
 Flow node is placed with the flow it runs: that flow is built for the call, the nodes its run would run are placed on
 the node's backend by the same policy, and each of them refused there refuses the Run Flow node.
-An Explore Data node's ``viz_session`` is compared only on a configured worker (``worker:<name>``), its chart's session
-running on the default worker where its backend has none.
 Each node's needs are read from its settings with its flow's parameters in them, as the run puts them there before the
 node runs (``parameter_resolver.node_parameters_resolved``), and the settings are restored after, so a path on
 ``${dir}`` is placed by where ``dir`` points; a node that refers to a ``${name}`` its flow does not define claims
@@ -43,7 +41,6 @@ from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager import db_connections
 from flowfile_core.flowfile.execution import registry
-from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_node.requirements import NodeRequirements, requirements_for
 from flowfile_core.flowfile.param_types import coerce_param_value, stringify_param_value
 from flowfile_core.flowfile.parameter_resolver import node_parameters_resolved
@@ -186,9 +183,7 @@ def place(
     time: the filesystem store makes its two folders, the S3 store a client), for a Run Flow node, the flow it runs
     (``_child_refusals``: its registration and its file, built for the call) and, only on a backend whose
     ``credential_resolution`` is ``ambient``, the ``auth_method`` of each stored connection a cloud or catalog node
-    names (``_unresolvable_connections``, which reads the connection's row and decrypts nothing). An Explore Data node's
-    ``viz_session`` is compared only on a configured worker (``worker:<name>``), its chart's session running on the
-    default worker where its backend has none.
+    names (``_unresolvable_connections``, which reads the connection's row and decrypts nothing).
 
     Each node's needs are read with its flow's parameters in its settings, as the run puts them there before the node
     runs (``node_parameters_resolved``), and the settings are restored once they are read. A node that refers to a
@@ -237,11 +232,6 @@ def place(
                 )
                 refusals.append(Refusal(node_id=node.node_id, backend_id=backend_id, reason=reason))
                 continue
-        if requirements.operation is OperationKind.viz_session and not backend_id.startswith(
-            registry.CONFIGURED_WORKER_PREFIX
-        ):
-            # Elsewhere an Explore Data node charts on the default worker.
-            requirements = dataclasses.replace(requirements, operation=None)
         reasons = _unmet(requirements, capabilities, namespace, artifact_scheme, absent_here)
         if capabilities.credential_resolution == "ambient":
             reasons += _unresolvable_connections(node, requirements.credentials, namespace_id)

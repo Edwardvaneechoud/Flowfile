@@ -68,9 +68,9 @@ def extend_app(app: FastAPI):
 
     @app.get("/single_mode")
     async def in_single_mode() -> bool:
-        print("Checking if single file mode is enabled")
-        print(os.environ.get("FLOWFILE_SINGLE_FILE_MODE"))
-        return os.environ.get("FLOWFILE_SINGLE_FILE_MODE", "0") == "1"
+        from flowfile_core.configs.settings import SINGLE_FILE_MODE
+
+        return bool(SINGLE_FILE_MODE)
 
     @app.get("/ui", include_in_schema=False)
     async def web_ui_root():
@@ -114,6 +114,10 @@ def include_worker_routes(app: FastAPI):
     The worker mounted here runs in core's own process and sees core's files, so this sets
     ``FLOWFILE_WORKER_LOCAL_FILES`` and the worker declares ``file`` among the schemes it reads and
     writes, as the desktop shell and the single-host compose do for theirs.
+
+    Core's own compute does not go through the mount: in single-file mode the registry's ``worker`` is
+    that same worker, called directly. The mount serves the callers that still send work to a worker
+    URL themselves (``registry.worker_url()``, which answers this mount there).
     """
     try:
         from flowfile_worker import CACHE_DIR, mp_context
@@ -155,11 +159,15 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
     """
     Start the flowfile_core FastAPI app with the web UI routes and worker functionality.
     This function is a wrapper around flowfile_core.main.run().
+
+    It puts the process in single-file mode: flows compute on the worker embedded in this process, which
+    ``run`` marks as one that serves, so the worker's jobs run in its pool or a child, never in the
+    serving process. ``FLOWFILE_WORKER_POOL_SIZE`` sizes that pool.
     """
     if "FLOWFILE_MODE" not in os.environ:
         os.environ["FLOWFILE_MODE"] = "electron"
 
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+    from flowfile_core.configs import settings
     from flowfile_core.main import app as core_app
     from flowfile_core.main import run
 
@@ -167,7 +175,9 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
         raise NotImplementedError("Other then local host is not supported")
     if port != 63578:
         raise NotImplementedError("Service must run on port 63578")
-    OFFLOAD_TO_WORKER.value = True
+    settings.OFFLOAD_TO_WORKER.value = True
+    settings.SINGLE_FILE_MODE.value = True
+    settings.WORKER_URL = f"http://{host}:{port}/worker"
 
     extend_app(core_app)
 

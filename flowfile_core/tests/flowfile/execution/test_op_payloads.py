@@ -3,14 +3,14 @@
 The worker side is checked at the fetcher boundary: the worker backend's fetchers are replaced by stand-ins that keep
 what they were built with and write their result where a worker task writes it, so these tests show what each payload
 becomes on its way to the worker without one running (``test_worker_backend.py`` runs the same operations against a
-real worker). The local side runs in process. The builders are checked on a flow whose default backend is a recording
-in-process backend, so a remote flow's operations are seen arriving with their payloads.
+real worker). The embedded worker's side runs in this process. The builders are checked on a flow whose default
+backend is a recording embedded worker, so a remote flow's operations are seen arriving with their payloads.
 """
 
 import dataclasses
 import io
-import logging
 import os
+import sys
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,9 +27,8 @@ from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile import flow_graph as flow_graph_package
 from flowfile_core.flowfile.execution import registry
-from flowfile_core.flowfile.execution.backends import local as local_module
 from flowfile_core.flowfile.execution.backends import worker as worker_module
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import OperationUnsupported
 from flowfile_core.flowfile.execution.payloads import (
@@ -46,7 +45,6 @@ from flowfile_core.flowfile.execution.payloads import (
 )
 from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, OpResult, ResultRef
 from flowfile_core.flowfile.execution.payloads import FileWritePayload
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
     CustomNodeExecuteInput,
     custom_node_task_id,
@@ -62,7 +60,7 @@ pytestmark = pytest.mark.core
 
 
 def make(backend_type: type):
-    """An instance of ``backend_type``: the worker backend on the session worker, core's own backend as it is."""
+    """An instance of ``backend_type``: the worker backend on the session worker, the embedded worker as it is."""
     return backend_type(url=WORKER_URL) if backend_type is WorkerBackend else backend_type()
 
 
@@ -76,7 +74,29 @@ MATCHED_PAIRS = [
     ("edward", "eduward"),
     ("edward", "edward"),
 ]
-SPLITTER_SOURCE = "class Splitter(CustomNodeBase): ...\n"
+SPLITTER_SOURCE = """
+import polars as pl
+
+from flowfile_core.flowfile.node_designer import CustomNodeBase, NodeSettings, SecretSelector, Section, TextInput
+
+
+class Splitter(CustomNodeBase):
+    node_name: str = "Payload Test Splitter"
+    number_of_outputs: int = 2
+    output_names: list[str] = ["big", "small"]
+    settings_schema: NodeSettings = NodeSettings(
+        main=Section(
+            title="Main",
+            threshold=TextInput(label="Threshold", default="10"),
+            api_key=SecretSelector(label="API key"),
+        )
+    )
+
+    def process(self, *inputs):
+        threshold = int(self.settings_schema.main.threshold.value)
+        rows = inputs[0]
+        return {"big": rows.filter(pl.col("n") > threshold), "small": rows.filter(pl.col("n") <= threshold).collect()}
+"""
 
 
 class Splitter(CustomNodeBase):
@@ -216,14 +236,7 @@ PAYLOADS = {
     OperationKind.polars_code: polars_code,
     OperationKind.sql_query: sql_query,
 }
-LOCAL_KINDS = (
-    OperationKind.fuzzy_join,
-    OperationKind.random_split,
-    OperationKind.custom_node,
-    OperationKind.polars_code,
-    OperationKind.sql_query,
-)
-BACKEND_KINDS = [(LocalBackend, kind) for kind in LOCAL_KINDS] + [(WorkerBackend, kind) for kind in PAYLOADS]
+BACKEND_KINDS = [(backend, kind) for backend in (EmbeddedWorkerBackend, WorkerBackend) for kind in PAYLOADS]
 
 
 def kind_id(value) -> str:
@@ -408,52 +421,58 @@ def test_an_operation_given_another_payload_names_the_one_it_expects(backend_typ
     assert tasks.built == []
 
 
-# Core's own backend
+# The embedded worker
 
 
-def test_the_local_backend_fuzzy_joins_the_two_plans_and_reports_to_the_node_logger():
-    records: list[str] = []
-    node_logger = logging.getLogger(f"payload-test-{uuid.uuid4().hex}")
-    node_logger.setLevel(logging.INFO)
-    node_logger.addHandler(type("Collect", (logging.Handler,), {"emit": lambda self, r: records.append(r)})())
-    join = fuzzy_join(node_logger=SimpleNamespace(logger=node_logger))
+def test_the_embedded_worker_fuzzy_joins_the_two_plans():
+    join = fuzzy_join()
     settings_before = join.settings.join_input.model_dump()
-    backend = LocalBackend()
+    backend = EmbeddedWorkerBackend()
 
     ref = backend.run_op(OperationKind.fuzzy_join, op_payload(join)).refs["result"]
 
-    assert ref.state == "deferred"
-    matches = backend.plan_for(ref).collect().sort("name", "name_right")
-    assert matches.select("name", "name_right").rows() == MATCHED_PAIRS
-    assert records, "the matcher reports its progress to the payload's node logger"
-    assert join.settings.join_input.model_dump() == settings_before
+    try:
+        assert (ref.state, ref.row_count) == ("materialised", 5)
+        matches = backend.plan_for(ref).collect().sort("name", "name_right")
+        assert matches.select("name", "name_right").rows() == MATCHED_PAIRS
+        assert join.settings.join_input.model_dump() == settings_before
+    finally:
+        backend.release(ref)
 
 
-def test_the_local_backend_splits_one_shuffle_into_a_deferred_ref_per_split():
-    backend = LocalBackend()
+def test_the_embedded_worker_splits_one_shuffle_into_a_stored_ref_per_split():
+    backend = EmbeddedWorkerBackend()
 
     refs = backend.run_op(OperationKind.random_split, op_payload(random_split(seed=7))).refs
 
-    assert list(refs) == ["train", "test"]
-    assert {ref.state for ref in refs.values()} == {"deferred"}
-    train, test = (backend.plan_for(ref).collect()["n"].to_list() for ref in refs.values())
-    assert (len(train), len(test)) == (80, 20)
-    assert sorted(train + test) == list(range(100))
-    expected = FlowDataEngine(NUMBERS.lazy()).random_split([("train", 80.0), ("test", 20.0)], seed=7)
-    assert train == expected.outputs["train"].data_frame.collect()["n"].to_list()
+    try:
+        assert list(refs) == ["train", "test"]
+        assert [(ref.state, ref.row_count) for ref in refs.values()] == [("materialised", 80), ("materialised", 20)]
+        train, test = (backend.plan_for(ref).collect()["n"].to_list() for ref in refs.values())
+        assert (len(train), len(test)) == (80, 20)
+        assert sorted(train + test) == list(range(100))
+        again = backend.run_op(OperationKind.random_split, op_payload(random_split(seed=7))).refs
+        assert backend.plan_for(again["train"]).collect()["n"].to_list() == train, "the seed fixes the shuffle"
+    finally:
+        for ref in refs.values():
+            backend.release(ref)
 
 
-def test_the_local_backend_runs_a_custom_node_from_its_settings_values():
-    backend = LocalBackend()
+def test_the_embedded_worker_runs_a_class_with_no_node_file_from_its_settings_values():
+    backend = EmbeddedWorkerBackend()
 
-    refs = backend.run_op(OperationKind.custom_node, op_payload(custom_node())).refs
+    refs = backend.run_op(OperationKind.custom_node, op_payload(custom_node(node_source=None, class_name=None))).refs
 
-    assert list(refs) == ["output-0", "output-1"]
-    big, small = refs.values()
-    assert backend.plan_for(big).collect()["n"].to_list() == list(range(90, 100))
-    assert backend.plan_for(small).collect()["n"].to_list() == list(range(90))
-    assert (big.state, big.row_count) == ("deferred", None)
-    assert (small.state, small.row_count) == ("deferred", 90), "a computed output is held as a plan with its count"
+    try:
+        assert list(refs) == ["output-0", "output-1"]
+        big, small = refs.values()
+        assert backend.plan_for(big).collect()["n"].to_list() == list(range(90, 100))
+        assert backend.plan_for(small).collect()["n"].to_list() == list(range(90))
+        assert (big.state, big.row_count) == ("materialised", 10)
+        assert (small.state, small.row_count) == ("materialised", 90)
+    finally:
+        for ref in refs.values():
+            backend.release(ref)
 
 
 @pytest.mark.parametrize(
@@ -461,46 +480,29 @@ def test_the_local_backend_runs_a_custom_node_from_its_settings_values():
     [(Doubler, ["result"]), (Silent, [])],
     ids=["one-frame", "nothing"],
 )
-def test_the_local_backend_keys_a_custom_node_result_by_what_process_returned(node_class, expected):
-    backend = LocalBackend()
-    job = custom_node(node_class, settings_values={})
+def test_the_embedded_worker_keys_a_custom_node_result_by_what_process_returned(node_class, expected):
+    backend = EmbeddedWorkerBackend()
+    job = custom_node(node_class, settings_values={}, node_source=None, class_name=None)
 
     refs = backend.run_op(OperationKind.custom_node, op_payload(job)).refs
 
-    assert list(refs) == expected
-    if refs:
-        assert backend.plan_for(refs["result"]).collect()["n"].to_list()[:3] == [0, 2, 4]
+    try:
+        assert list(refs) == expected
+        if refs:
+            assert backend.plan_for(refs["result"]).collect()["n"].to_list()[:3] == [0, 2, 4]
+    finally:
+        for ref in refs.values():
+            backend.release(ref)
 
 
-def test_the_local_backend_refuses_a_dict_without_a_declared_output():
-    job = custom_node(output_names=["big", "small", "medium"])
+def test_the_embedded_worker_refuses_a_dict_without_a_declared_output():
+    job = custom_node(output_names=["big", "small", "medium"], node_source=None, class_name=None)
 
     with pytest.raises(ValueError, match="did not return declared output 'medium'"):
-        LocalBackend().run_op(OperationKind.custom_node, op_payload(job))
+        EmbeddedWorkerBackend().run_op(OperationKind.custom_node, op_payload(job))
 
 
-@pytest.mark.parametrize("user", [None, "local"], ids=["no-user", "user"])
-def test_the_local_backend_reads_no_secret_the_node_does_not_access(user, user_id):
-    """In core a secret is read when ``process`` reads it, so a selected secret that does not exist breaks nothing."""
-    job = custom_node(
-        settings_values={"main": {"threshold": "89", "api_key": "no_such_secret"}},
-        user_id=None if user is None else user_id,
-    )
-
-    refs = LocalBackend().run_op(OperationKind.custom_node, op_payload(job)).refs
-
-    assert list(refs) == ["output-0", "output-1"]
-
-
-def test_the_local_backend_writes_a_parquet_file_that_is_complete_on_return(tmp_path, monkeypatch):
-    synced = []
-    real_fsync = os.fsync
-
-    def recording_fsync(descriptor):
-        synced.append(os.fstat(descriptor).st_ino)
-        real_fsync(descriptor)
-
-    monkeypatch.setattr(local_module.os, "fsync", recording_fsync)
+def test_the_embedded_worker_writes_a_parquet_file_that_is_complete_on_return(tmp_path):
     target = tmp_path / "inputs" / "main_0.parquet"
     target.parent.mkdir()
     settings = input_schema.OutputSettings(
@@ -508,24 +510,9 @@ def test_the_local_backend_writes_a_parquet_file_that_is_complete_on_return(tmp_
     )
     write = FileWritePayload(plan=NUMBERS.lazy().filter(pl.col("n") % 2 == 0), settings=settings, flow_id=1, node_id=1)
 
-    LocalBackend().run_op(OperationKind.file_write, op_payload(write))
+    EmbeddedWorkerBackend().run_op(OperationKind.file_write, op_payload(write))
 
-    assert synced == [target.stat().st_ino]
     assert pl.read_parquet(target)["n"].to_list() == list(range(0, 100, 2))
-
-
-def test_the_local_backend_syncs_only_a_parquet_write(tmp_path, monkeypatch):
-    synced = []
-    monkeypatch.setattr(local_module.os, "fsync", lambda descriptor: synced.append(descriptor))
-    settings = input_schema.OutputSettings(
-        name="rows.csv", directory=str(tmp_path), file_type="csv", table_settings={"file_type": "csv"}
-    )
-    write = FileWritePayload(plan=NUMBERS.lazy(), settings=settings, flow_id=1, node_id=1)
-
-    LocalBackend().run_op(OperationKind.file_write, op_payload(write))
-
-    assert synced == []
-    assert pl.read_csv(tmp_path / "rows.csv").height == 100
 
 
 # The worker backend, at the fetcher boundary
@@ -588,9 +575,11 @@ def test_the_worker_backend_stores_one_shuffle_and_splits_it_like_core(tasks):
     assert [(ref.state, ref.row_count) for ref in refs.values()] == [("deferred", 80), ("deferred", 20)]
     assert [column.column_name for column in refs["train"].schema] == ["n"]
     on_worker = {name: backend.plan_for(ref).collect()["n"].to_list() for name, ref in refs.items()}
-    local = LocalBackend()
-    local_refs = local.run_op(OperationKind.random_split, op_payload(random_split(seed=7))).refs
-    assert on_worker == {name: local.plan_for(ref).collect()["n"].to_list() for name, ref in local_refs.items()}
+    embedded = EmbeddedWorkerBackend()
+    embedded_refs = embedded.run_op(OperationKind.random_split, op_payload(random_split(seed=7))).refs
+    assert on_worker == {name: embedded.plan_for(ref).collect()["n"].to_list() for name, ref in embedded_refs.items()}
+    for ref in embedded_refs.values():
+        embedded.release(ref)
 
     for ref in refs.values():
         backend.release(ref)
@@ -770,8 +759,8 @@ def test_cancelling_a_node_reaches_the_operation_it_is_waiting_on(
 # The builders
 
 
-class RecordingBackend(LocalBackend):
-    """Core's own process as a compute under another id, keeping every operation it is asked to run."""
+class RecordingBackend(EmbeddedWorkerBackend):
+    """The worker embedded in this process under another id, keeping every operation it is asked to run."""
 
     id = "recording"
 
@@ -782,6 +771,20 @@ class RecordingBackend(LocalBackend):
     def run_op(self, op, payload):
         self.operations.append((op, payload.get(PAYLOAD_KEY)))
         return super().run_op(op, payload)
+
+
+@pytest.fixture(autouse=True)
+def clean_import_aliases():
+    """Undo the SDK import aliases and finder a custom node run from its source in this process installs."""
+    from shared.node_designer.loading import _ForbiddenCoreImportFinder
+
+    modules_before = set(sys.modules)
+    yield
+    sys.meta_path[:] = [finder for finder in sys.meta_path if not isinstance(finder, _ForbiddenCoreImportFinder)]
+    for name in set(sys.modules) - modules_before:
+        root = name.split(".", 1)[0]
+        if root in {"flowfile_core", "flowfile"} and not getattr(sys.modules[name], "__file__", None):
+            del sys.modules[name]
 
 
 @pytest.fixture
@@ -880,19 +883,22 @@ def test_a_custom_node_without_a_node_file_runs_in_core_in_a_remote_flow(recordi
     assert OperationKind.custom_node not in dict(recording_default_backend.operations)
 
 
-def test_a_local_flow_runs_its_transforms_in_core_and_leaves_core_holding_only_node_results(
+def test_a_local_flow_runs_its_transforms_on_the_embedded_worker_which_holds_its_results(
     splitter_with_a_node_file, monkeypatch
 ):
+    from flowfile_worker.results import results
+
     def _no_worker(*args, **kwargs):
-        raise AssertionError("a local flow must not reach the worker")
+        raise AssertionError("a local flow must not reach the worker beside core")
 
     monkeypatch.setattr(WorkerBackend, "run_op", _no_worker)
     monkeypatch.setattr(WorkerBackend, "submit", _no_worker)
-    local = registry.backend(registry.LOCAL_BACKEND_ID)
-    held_before = set(local._results)
+    held_before = set(results._records)
     graph = build_transform_flow(95, "local")
 
     assert_transform_results(graph)
 
-    held_now = set(local._results) - held_before
-    assert held_now <= {node.hash for node in graph.nodes}, "an operation's results are released once read"
+    held_now = set(results._records) - held_before
+    node_results = {node.results.result_ref.result_id for node in graph.nodes if node.results.result_ref is not None}
+    stored_outputs = {ref.result_id for node in graph.nodes for ref in node._operation_refs.values()}
+    assert held_now == node_results | stored_outputs, "the node results and the operations' stored outputs are held"
