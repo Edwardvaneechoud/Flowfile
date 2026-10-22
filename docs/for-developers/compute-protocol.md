@@ -208,7 +208,7 @@ Consequences of resolving at the executor:
 - A GCS service-account key or an Azure service-principal secret is not among `PROVIDER_CREDENTIAL_KEYS`, so before the protocol it travelled in a plan's `storage_options` as plain text. With the protocol on, the worker exchanges it for a bearer token where the plan runs, and it travels in no plan; with the protocol off, it still travels in the options.
 - With the protocol on, an `aws-cli` read with no saved connection carries no credential and no provider, so Polars' default provider resolves the default credential chain of whichever process runs the plan.
 - A GCS connection with an endpoint is read on the executor like any other cloud read: a Polars-native scan naming the connection by its reference, the endpoint reached through object_store's `gcs_base_url` in a service-account key with no key material. The gcsfs read in core stays for the protocol off and for the writers.
-- With the protocol on, a read that names a connection the catalog does not hold for the user it runs as, or that runs as no user, is refused, never resolved in core: `Cloud connection "<name>" is not stored for user <id>: a read names a connection stored for the user it runs as`.
+- With the protocol on, a read that names a connection whose method holds a credential (any but `env_vars` and `managed_identity`, which carry no provider) and that the catalog does not hold for the user it runs as, or that runs as no user, is refused, never resolved in core: `Cloud connection "<name>" is not stored for user <id>: a read names a connection stored for the user it runs as`.
 
 ## Data locations
 
