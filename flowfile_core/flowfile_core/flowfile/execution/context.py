@@ -49,10 +49,11 @@ class ExecutionContext:
         """The context of a flow with these settings.
 
         An ``"auto"`` or ``"remote"`` flow runs on the default backend, a flow with any other location on the
-        backend of that id (``"local"`` on core's own, ``registry.LOCAL_BACKEND_ID``; ``"worker:team"`` on
-        ``worker:team``), which is not looked up here. On core's own backend a stage runs one node at a time, on any
-        other up to ``max_parallel_workers`` at once. Development mode keeps previews of ``DEFAULT_PREVIEW_ROWS``
-        rows, Performance mode none.
+        backend of that id (``"local"`` on the worker embedded in this process, ``registry.LOCAL_BACKEND_ID``;
+        ``"worker:team"`` on ``worker:team``), which is not looked up here. The embedded worker's jobs run in this
+        process, where the registry makes it, so a stage runs one node at a time on it; on any other backend up to
+        ``max_parallel_workers`` at once. Development mode keeps previews of ``DEFAULT_PREVIEW_ROWS`` rows, Performance
+        mode none.
         """
         location = settings.execution_location
         backend_id = registry.default_backend_id() if location in ("auto", "remote") else location

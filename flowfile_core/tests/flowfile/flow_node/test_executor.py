@@ -749,17 +749,20 @@ class TestBackendPathByLocation:
         assert graph.get_node(2).results.example_data_path is None
         assert (tmp_path / "out.csv").exists()
 
-    def test_local_mode_defers_every_plan_and_stores_a_cached_node_only_under_the_flag(self, protocol):
+    @pytest.mark.parametrize("cached", [False, True], ids=["select", "cached-select"])
+    def test_local_mode_stores_what_the_workers_policy_stores(self, protocol, cached):
+        """``local`` is the worker embedded in this process, so its policy holds in both flag states: a manual
+        input and a sort are wide and previewed, so stored; a select is narrow and stays deferred unless it caches."""
         graph = create_graph_with_sort_and_select(flow_id=47, execution_location="local")
-        graph.get_node(3).node_settings.cache_results = True
+        graph.get_node(3).node_settings.cache_results = cached
 
         assert graph.run_graph().success
 
         for node_id in (1, 2, 3):
             assert graph.get_node(node_id).results.result_ref.backend_id == "local"
-        assert _held_ref_state(graph, 1) == "deferred"
-        assert _held_ref_state(graph, 2) == "deferred"
-        assert _held_ref_state(graph, 3) == ("materialised" if protocol else "deferred")  # cached select
+        assert _held_ref_state(graph, 1) == "materialised"
+        assert _held_ref_state(graph, 2) == "materialised"
+        assert _held_ref_state(graph, 3) == ("materialised" if cached else "deferred")
         select_node = graph.get_node(3)
         assert select_node.results.example_data_path is None
         assert select_node.get_table_example(True).data == [{"Name": "Alice"}, {"Name": "Charlie"}]
@@ -1024,10 +1027,10 @@ class TestNodeColumnStats:
         """Outside a run the statistics of a flow on another backend than the default aggregate on the flow's own
         backend with the protocol on, and on the default backend with it off."""
         from flowfile_core.flowfile.execution import registry
-        from flowfile_core.flowfile.execution.backends.local import LocalBackend
+        from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
         from flowfile_core.flowfile.flow_data_engine import column_stats as column_stats_module
 
-        class TeamBackend(LocalBackend):
+        class TeamBackend(EmbeddedWorkerBackend):
             id = "worker:team"
 
         aggregated_on: list[str] = []

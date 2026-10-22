@@ -21,7 +21,7 @@ import requests
 from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import worker as worker_module
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, PlanRejected, VersionMismatch
 from flowfile_core.flowfile.execution.placement import PYTHON_FUNCTIONS, Refusal, SingleBackendPolicy, place
@@ -177,9 +177,9 @@ def team_on_other_polars(monkeypatch) -> tuple[WorkerBackend, list[int]]:
     return backend, asked
 
 
-class CoreAsTeam(LocalBackend):
-    """Core's own process as ``worker:team``, reporting core's capabilities with ``changes``, whose probe job
-    ``failing`` fails as a plan the compute cannot load."""
+class CoreAsTeam(EmbeddedWorkerBackend):
+    """The worker embedded in this process as ``worker:team``, reporting this process's capabilities with
+    ``changes``, whose probe job ``failing`` fails as a plan the compute cannot load."""
 
     id = TEAM
 
@@ -197,7 +197,7 @@ class CoreAsTeam(LocalBackend):
         return super().submit(plan, inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
 
 
-def register_team(backend: LocalBackend) -> LocalBackend:
+def register_team(backend: EmbeddedWorkerBackend) -> EmbeddedWorkerBackend:
     registry.register_backend(TEAM, lambda: backend)
     return backend
 

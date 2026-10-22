@@ -15,7 +15,7 @@ import polars as pl
 import pytest
 from polars.exceptions import ColumnNotFoundError
 
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, TaskFailed
 from flowfile_core.flowfile.execution.protocol import JobHandle, ResultRef, SubmitResult
 from flowfile_core.flowfile.flow_data_engine import column_stats as column_stats_module
@@ -330,10 +330,10 @@ def test_a_backend_that_cannot_compute_the_counts_leaves_the_stats_unavailable(m
     assert collects == [], "a failed backend is never replaced by a collect in core"
 
 
-def test_a_query_core_cannot_run_retries_counts_only_in_core(monkeypatch):
+def test_a_query_the_embedded_worker_cannot_run_retries_counts_only_there(monkeypatch):
     monkeypatch.setattr(column_stats_module, "build_stats_exprs", lambda name, dtype: [pl.col(name).str.len_chars()])
 
-    stats = compute_column_stats(lazy_engine({"a": [1, 2, None]}), "a", LocalBackend())
+    stats = compute_column_stats(lazy_engine({"a": [1, 2, None]}), "a", EmbeddedWorkerBackend())
 
     assert (stats.number_of_filled_values, stats.number_of_empty_values) == (2, 1)
     assert stats.number_of_unique_values is None

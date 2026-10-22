@@ -28,8 +28,7 @@ from flowfile_core.configs import settings
 from flowfile_core.configs.utils import MutableBool
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.execution import registry
-from flowfile_core.flowfile.execution.backends import local as local_module
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
 from flowfile_core.flowfile.execution.payloads import (
@@ -41,7 +40,6 @@ from flowfile_core.flowfile.execution.payloads import (
     op_payload,
 )
 from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, OpResult
-from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_graph.catalog_write import (
     CatalogDeltaWrite,
@@ -359,9 +357,13 @@ def test_an_scd2_config_without_the_creation_knob_partitions_on_the_current_flag
     assert write.partition_on_current is True
 
 
-def test_the_core_backend_opens_a_cloud_table_with_the_options_the_catalog_resolves(monkeypatch):
+def test_the_embedded_worker_opens_a_cloud_table_with_the_options_the_worker_resolves(monkeypatch):
+    from flowfile_worker.external_sources.s3_source.models import FullCloudStorageConnection as WorkerConnection
+
     received = []
-    monkeypatch.setattr(local_module, "write_delta", lambda *args, **kwargs: received.append(kwargs["storage_options"]))
+    monkeypatch.setattr(
+        "shared.delta_utils.write_delta", lambda *args, **kwargs: received.append(kwargs["storage_options"]) or False
+    )
     connection = s3_connection()
     _, write = _catalog_delta_op(
         "overwrite",
@@ -375,9 +377,11 @@ def test_the_core_backend_opens_a_cloud_table_with_the_options_the_catalog_resol
         node_id=2,
     )
 
-    LocalBackend().run_op(OperationKind.delta_write, op_payload(write))
+    EmbeddedWorkerBackend().run_op(OperationKind.delta_write, op_payload(write))
 
-    assert received == [CloudStorageReader.get_storage_options(connection)]
+    sent = WorkerConnection.model_validate(connection.get_worker_interface(1).model_dump())
+    assert received == [sent.get_storage_options()]
+    assert received[0]["aws_secret_access_key"] == "plain-s3-secret"
 
 
 def test_every_write_gets_its_own_job_id():
@@ -443,7 +447,7 @@ def test_a_skipped_report_registers_nothing_and_keeps_its_version(report, versio
     assert _catalog_delta_written(report) == CatalogDeltaWrite(None, version)
 
 
-# The writer's in-process write, through the local backend, reads as it did before
+# The writer's write on the embedded worker reads as it did before
 
 
 def run_locally(delta_mode, settings_, plan, path, scd2_config=None, run_timestamp=RUN_TIMESTAMP):
@@ -458,7 +462,7 @@ def run_locally(delta_mode, settings_, plan, path, scd2_config=None, run_timesta
         flow_id=1,
         node_id=2,
     )
-    return _catalog_delta_written(LocalBackend().run_op(operation, op_payload(write)).metadata)
+    return _catalog_delta_written(EmbeddedWorkerBackend().run_op(operation, op_payload(write)).metadata)
 
 
 def test_an_scd2_write_in_core_reads_as_before(tmp_path):
@@ -542,12 +546,12 @@ def test_a_plain_write_and_a_merge_in_core_read_as_before(tmp_path):
         scd2_version=None,
     )
     assert upserted == CatalogDeltaWrite(
-        meta={"schema": PEOPLE_SCHEMA, "row_count": 2, "column_count": 2, "size_bytes": upserted_size},
+        meta={"schema": PEOPLE_SCHEMA, "row_count": 4, "column_count": 2, "size_bytes": upserted_size},
         scd2_version=None,
-    )
+    ), "the worker reports a merge by the table after it"
     assert appended_nothing == CatalogDeltaWrite(meta=None, scd2_version=None)
     assert upserted_nothing == CatalogDeltaWrite(
-        meta={"schema": PEOPLE_SCHEMA, "row_count": 0, "column_count": 2, "size_bytes": upserted_size},
+        meta={"schema": PEOPLE_SCHEMA, "row_count": 4, "column_count": 2, "size_bytes": upserted_size},
         scd2_version=None,
     )
     assert pl.read_delta(path).sort("id").rows() == [(1, "ada"), (2, "grace"), (3, "dijkstra"), (4, "barbara")]
@@ -604,7 +608,7 @@ class Writes:
 @pytest.fixture
 def writes(monkeypatch) -> Writes:
     recorder = Writes()
-    for backend_type in (LocalBackend, WorkerBackend):
+    for backend_type in (EmbeddedWorkerBackend, WorkerBackend):
 
         def spy(self, op, payload, _run_op=backend_type.run_op):
             held = recorder.writer._submit_in_flight if recorder.writer is not None else None
@@ -672,8 +676,8 @@ def test_the_catalog_writer_upserts_on_the_flows_backend(execution_location, cle
     writes.take_one(backend_id, OperationKind.delta_merge, DeltaMergePayload)
     table = registered(namespace_id)
     assert pl.read_delta(table.file_path).sort("id").rows() == [(1, "ada"), (2, "hopper"), (3, "edsger")]
-    # Each backend reports a merge as it always has: core the rows merged, the worker the table's rows.
-    assert table.row_count == (2 if backend_id == registry.LOCAL_BACKEND_ID else 3)
+    # The worker reports a merge by the table's rows, embedded in this process or beside it.
+    assert table.row_count == 3
     assert table.size_bytes == get_delta_size_bytes(table.file_path)
 
 
@@ -805,7 +809,7 @@ def test_the_catalog_writer_names_a_local_table_by_identity_when_the_flag_is_on(
 def test_core_stores_and_reads_the_table_where_the_compute_answered(clean_catalog, monkeypatch, tmp_path):
     """The location the compute answers, not the one core resolved, is what core registers and reads back."""
     monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
-    run_op = LocalBackend.run_op
+    run_op = EmbeddedWorkerBackend.run_op
 
     def moved(self, op, payload):
         result = run_op(self, op, payload)
@@ -817,7 +821,7 @@ def test_core_stores_and_reads_the_table_where_the_compute_answered(clean_catalo
         shutil.move(answered, elsewhere)
         return OpResult(refs=result.refs, metadata={**result.metadata, "table_path": str(elsewhere)})
 
-    monkeypatch.setattr(LocalBackend, "run_op", moved)
+    monkeypatch.setattr(EmbeddedWorkerBackend, "run_op", moved)
     namespace_id = create_test_namespace()
     graph = create_test_graph(flow_id=9351, execution_location="local")
     add_test_manual_input(graph, [{"id": 1, "val": "a"}, {"id": 2, "val": "b"}], node_id=1)
@@ -886,7 +890,7 @@ def test_an_existing_table_stays_where_its_record_puts_it(protocol, same_place, 
         compute_root.symlink_to(Path(stored).parent, target_is_directory=True)
     else:
         compute_root.mkdir()
-    monkeypatch.setattr(local_module, "storage", types.SimpleNamespace(catalog_tables_directory=compute_root))
+    monkeypatch.setattr("flowfile_worker.funcs.storage", types.SimpleNamespace(catalog_tables_directory=compute_root))
 
     run = append(9392, [{"id": 3, "name": "edsger"}])
 

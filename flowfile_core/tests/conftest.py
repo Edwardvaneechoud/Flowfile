@@ -373,6 +373,20 @@ def managed_worker() -> Generator[None, None, None]:
 
 
 @pytest.fixture(scope="session", autouse=True)
+def embedded_worker_jobs_in_process():
+    """The test process is a library host: the worker embedded in it runs its jobs here.
+
+    The registry's ``local`` factory sets this when it makes the embedded worker; the backends tests make under
+    other ids, subclasses of ``EmbeddedWorkerBackend`` with factories of their own, rely on this instead.
+    """
+    from flowfile_worker import spawner
+
+    spawner.in_process = True
+    yield
+    spawner.in_process = False
+
+
+@pytest.fixture(scope="session", autouse=True)
 def core_log_sink():
     """Serve ``/raw_logs`` on the core port so worker log shipping stays fast.
 

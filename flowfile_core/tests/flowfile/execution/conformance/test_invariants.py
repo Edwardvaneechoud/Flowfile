@@ -1,5 +1,5 @@
-"""What every compute backend guarantees, checked on each backend in ``conftest.BACKENDS``: core's own process, the
-worker embedded in this process and the session worker.
+"""What every compute backend guarantees, checked on each backend in ``conftest.BACKENDS``: the worker embedded in
+this process and the session worker.
 
 - Core receives at most ``n`` rows of a result: ``sample`` and the sample ``submit`` returns are the only rows,
   ``count`` answers a number and ``plan_for`` a plan. With the protocol flag on, every backend returns that sample
@@ -76,14 +76,12 @@ DOWNSTREAM = [
 STATES = pytest.mark.parametrize("must_materialise", [False, True], ids=["deferred", "materialised"])
 
 POLICIES: dict[str, Callable[[SubmitHints], bool]] = {
-    "local": lambda given: given.must_materialise and bool(settings.FLOWFILE_COMPUTE_PROTOCOL),
     "embedded": lambda given: given.must_materialise or (given.wide and given.preview_rows is not None),
     "worker": lambda given: given.must_materialise or (given.wide and given.preview_rows is not None),
 }
 """Whether each backend in ``conftest.BACKENDS`` stores a submit with these hints, as its class docstring says."""
 
 INLINE: dict[str, Callable[[], bool]] = {
-    "local": lambda: bool(settings.FLOWFILE_COMPUTE_PROTOCOL),
     "embedded": lambda: True,
     "worker": lambda: True,
 }

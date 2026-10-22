@@ -26,7 +26,7 @@ from flowfile_core.artifacts.publish import fetch_artifact, publish_result
 from flowfile_core.configs import settings
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CatalogNamespace, FlowRegistration, GlobalArtifact
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ResultMissing
 from flowfile_core.schemas.artifact_schema import PrepareUploadRequest
@@ -92,7 +92,7 @@ def backend(request):
         if not settings.FLOWFILE_COMPUTE_PROTOCOL:
             pytest.skip("the worker backend holds a blob over its /v1 routes, with the protocol flag on")
         return WorkerBackend(url=settings.WORKER_URL)
-    return LocalBackend()
+    return EmbeddedWorkerBackend()
 
 
 @pytest.fixture
@@ -211,7 +211,7 @@ def test_a_store_under_a_folder_with_a_space_publishes_and_fetches(registration,
     root = tmp_path / "a b"
     store = SharedFilesystemStorage(staging_root=root / "staging", artifacts_root=root / "artifacts")
     monkeypatch.setattr(publish, "get_storage_backend", lambda: store)
-    backend = LocalBackend()
+    backend = EmbeddedWorkerBackend()
     name = _name()
 
     published = _publish(backend, hold(backend, MODEL), name, registration_id, MODEL)
@@ -226,7 +226,7 @@ def test_a_store_under_a_folder_with_a_space_publishes_and_fetches(registration,
 
 def test_an_unknown_model_is_not_found_and_nothing_is_held(registration, hold, monkeypatch):
     namespace_id, registration_id = registration
-    backend = LocalBackend()
+    backend = EmbeddedWorkerBackend()
     name = _name()
     _publish(backend, hold(backend, MODEL), name, registration_id, MODEL)
     imports = []
@@ -343,7 +343,7 @@ def test_a_held_blob_is_published_to_minio_and_fetched_through_presigned_urls(re
     from test_utils.s3.fixtures import get_minio_client
 
     namespace_id, registration_id = registration
-    backend = LocalBackend()
+    backend = EmbeddedWorkerBackend()
     model = os.urandom(3 * 1024 * 1024)
     name = _name()
 

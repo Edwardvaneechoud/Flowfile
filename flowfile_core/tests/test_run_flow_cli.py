@@ -17,7 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 import flowfile_core
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from shared.storage_config import storage
 
 MAIN_PY = Path(flowfile_core.__file__).resolve().parent / "main.py"
@@ -102,9 +102,9 @@ def test_a_headless_run_defaults_to_core_s_own_backend_and_leaves_the_offload_fl
     assert registry.default_backend_id() == default_before
 
 
-class CountingBackend(LocalBackend):
-    """Core's own backend under another id; ``submitted`` holds the node id of every plan submitted to it but the
-    handshake's probe jobs."""
+class CountingBackend(EmbeddedWorkerBackend):
+    """The worker embedded in this process under another id; ``submitted`` holds the node id of every plan submitted
+    to it but the handshake's probe jobs."""
 
     def __init__(self, backend_id: str):
         super().__init__()

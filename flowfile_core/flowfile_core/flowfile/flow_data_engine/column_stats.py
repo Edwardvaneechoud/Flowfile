@@ -2,10 +2,10 @@
 
 Runs one bounded, single-pass aggregate (len / null_count / n_unique / min /
 max / mean) over a node's cached result engine on the compute backend it is
-given, and reads back the one row it yields (``bounded.single_row``): through
-``LocalBackend`` the aggregate runs in core, through ``WorkerBackend`` in a
-worker child, over the scan of a stored result or the full upstream plan of a
-deferred one. The column's dtype comes from resolving the engine's plan, or
+given, and reads back the one row it yields (``bounded.single_row``): the
+aggregate runs as a job of the worker, in this process for the worker embedded
+here and in a child for one beside core, over the scan of a stored result or the
+full upstream plan of a deferred one. The column's dtype comes from resolving the engine's plan, or
 with ``FLOWFILE_COMPUTE_PROTOCOL`` on from the engine's cached schema, so core
 never opens a result a backend stored. The results are written into the
 engine's ``FlowfileColumn``, which stays the single source of truth for column

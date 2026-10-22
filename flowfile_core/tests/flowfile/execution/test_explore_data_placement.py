@@ -2,10 +2,10 @@
 ``viz_session``, else on the default worker.
 
 With an exchange store configured and the compute protocol flag on, that is the backend the node's own
-``execution_location`` names; with the flag off it is the default worker whatever holds the result. A configured worker
-that does not declare ``viz_session`` refuses the node before any node starts, while core's own backend, which declares
-none, runs it and charts it on the default worker. The backends are core's own under other ids, answering a session
-themselves, so no worker is needed.
+``execution_location`` names; with the flag off it is the default worker whatever holds the result. A backend that
+does not declare ``viz_session`` refuses the node before any node starts, as any operation is refused; ``local``, the
+worker embedded in this process, declares it and charts a node it holds itself with the flag on. The backends are the
+embedded worker under other ids, answering a session themselves, so no worker process is needed.
 """
 
 import pytest
@@ -15,7 +15,6 @@ from flowfile_core.flowfile.analytics import node_viz
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.protocol import OperationKind, OpResult
 from flowfile_core.schemas import input_schema
-from shared.compute_protocol import Capabilities
 from tests.flowfile.execution import test_placement
 from tests.flowfile.execution.test_placement import (
     BACKEND_ID,
@@ -26,6 +25,7 @@ from tests.flowfile.execution.test_placement import (
     connect,
     everything,
     make_graph,
+    without,
 )
 
 # The fixture these tests share with the placement tests, bound here.
@@ -47,14 +47,8 @@ class ChartingBackend(DeclaringBackend):
         return OpResult(refs={}, metadata={"fields": [], "cache_hit": False})
 
 
-def charting() -> Capabilities:
-    """``everything()`` with ``viz_session`` among its operations, as a worker declares."""
-    capabilities = everything()
-    return capabilities.model_copy(update={"operations": capabilities.operations | {"viz_session"}})
-
-
 def chart_on(backend_id: str) -> ChartingBackend:
-    backend = ChartingBackend(backend_id, charting())
+    backend = ChartingBackend(backend_id, everything())
     registry.register_backend(backend_id, lambda: backend)
     return backend
 
@@ -86,9 +80,9 @@ def test_a_chart_opens_on_the_second_worker_that_holds_the_explore_data_nodes_re
 
 
 @pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
-def test_a_chart_on_a_result_cores_own_backend_holds_opens_on_the_default_worker(declare, monkeypatch, flag):
+def test_a_chart_on_a_result_the_embedded_worker_holds_opens_there_under_the_flag(declare, monkeypatch, flag):
     monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
-    worker = chart_on(WORKER)
+    local, worker = chart_on(LOCAL), chart_on(WORKER)
     graph = make_graph(8652 + flag, LOCAL)
     explore(graph)
 
@@ -99,7 +93,8 @@ def test_a_chart_on_a_result_cores_own_backend_holds_opens_on_the_default_worker
     assert all(result.compute_error is None for result in run_info.node_step_result)
     assert graph.get_node(2).results.result_ref.backend_id == LOCAL
     assert node_viz.get_node_fields(graph, graph.get_node(2)).fields == []
-    assert worker.work == ["run_op viz_session"]
+    charted = LOCAL if flag else WORKER
+    assert [b.id for b in (local, worker) if "run_op viz_session" in b.work] == [charted]
 
 
 @pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
@@ -107,7 +102,7 @@ def test_an_explore_data_node_is_refused_on_a_configured_worker_without_the_viz_
     declare, monkeypatch, flag
 ):
     monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
-    second = declare(everything(), SECOND)
+    second = declare(without(everything(), operation="viz_session"), SECOND)
     graph = make_graph(8654 + flag, SECOND)
     explore(graph)
 

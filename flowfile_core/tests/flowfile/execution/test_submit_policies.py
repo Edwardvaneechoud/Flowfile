@@ -1,9 +1,9 @@
 """Each backend's materialisation policy: what ``submit`` holds for each combination of hints.
 
-``LocalBackend`` stores a plan that must be materialised when the protocol flag is on, by a streaming sink to a file
-under core's storage directory that ``release`` removes, holds every other plan lazily, and never samples inline.
-``WorkerBackend`` stores a plan on the worker when it must be materialised, or when it is wide and a preview is asked
-for; every other plan stays deferred in core, and its samples come from a worker sampler task.
+The worker's policy is the one policy: a plan is stored when it must be materialised, or when it is wide and a
+preview is asked for, and the sample comes inline from the same job. ``EmbeddedWorkerBackend`` stores it in a file
+under core's cache directory that ``release`` removes, in both flag states; ``WorkerBackend`` stores it on the worker,
+and with the flag off every other plan stays deferred in core, its samples from a worker sampler task.
 """
 
 import io
@@ -18,13 +18,13 @@ import pytest
 from flowfile_core.configs import settings
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution.backends import worker as worker_module
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ResultMissing, TaskFailed
 from flowfile_core.flowfile.execution.protocol import JobHandle, ResultRef, SubmitHints
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
-from shared.storage_config import storage
+from flowfile_worker.results import result_path
 
 PEOPLE = pl.DataFrame({"id": list(range(10)), "name": [f"n{i}" for i in range(10)]})
 HINT_COMBINATIONS = [
@@ -107,20 +107,25 @@ def sampler_tasks(monkeypatch) -> list[dict]:
 
 
 @pytest.mark.parametrize(("must_materialise", "wide", "preview_rows"), HINT_COMBINATIONS)
-def test_the_local_backend_stores_a_required_plan_under_the_flag_and_defers_the_rest(
+def test_the_embedded_worker_stores_what_must_be_materialised_or_is_wide_with_a_preview(
     must_materialise, wide, preview_rows
 ):
-    backend = LocalBackend()
-    stored = must_materialise and bool(settings.FLOWFILE_COMPUTE_PROTOCOL)
-    stored_file = storage.cache_directory / "local" / "1" / "hash.arrow"
+    backend = EmbeddedWorkerBackend()
+    stored = must_materialise or (wide and preview_rows is not None)
+    stored_file = result_path(1, "hash")
 
     result = backend.submit(plan(), [], hints(must_materialise, wide, preview_rows), "hash", flow_id=1, node_id=1)
 
     assert result.ref.state == ("materialised" if stored else "deferred")
     assert result.ref.result_id == "hash"
-    assert result.ref.row_count is None
-    assert result.sample is None
+    assert result.handle == JobHandle("local", "hash")
     assert stored_file.is_file() is stored
+    if preview_rows is None:
+        assert result.sample is None
+    else:
+        sample = rows(result.sample)
+        assert sample.num_rows == preview_rows
+        assert sample.column("id").to_pylist() == [0, 1, 2, 3]
     assert rows(backend.sample(result.ref, 3)).num_rows == 3
     assert rows(backend.sample(result.ref, 50)).num_rows == 10
     assert backend.count(result.ref) == 10
