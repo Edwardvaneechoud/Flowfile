@@ -36,6 +36,7 @@ from flowfile_worker import (
     mp_context,
     pool,
     protocol_routes,
+    service,
     spawner,
     status_dict,
     status_dict_lock,
@@ -454,13 +455,13 @@ def test_sample_and_count_of_an_unknown_result_are_404():
 def _record_children(monkeypatch) -> list[str]:
     """The operation of every child the routes run from here on, in order."""
     operations: list[str] = []
-    run = protocol_routes._run
+    run = service._run
 
     def recording(task_id, plan, operation, *args, **kwargs):
         operations.append(operation)
         return run(task_id, plan, operation, *args, **kwargs)
 
-    monkeypatch.setattr(protocol_routes, "_run", recording)
+    monkeypatch.setattr(service, "_run", recording)
     return operations
 
 
@@ -1035,14 +1036,14 @@ def test_a_finished_job_cannot_be_cancelled(held):
 def test_a_cancel_posted_while_a_submit_is_starting_stops_it_when_it_starts(held, monkeypatch, hints):
     """The submit is held in ``Starting`` before its child spawns."""
     result_id = held()
-    meta, real = _meta(result_id, **hints), protocol_routes.start_process
+    meta, real = _meta(result_id, **hints), service.start_process
     go = threading.Event()
 
     def held_back(*args, **kwargs):
         go.wait(30)
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(protocol_routes, "start_process", held_back)
+    monkeypatch.setattr(service, "start_process", held_back)
     answers = []
     submit = threading.Thread(target=lambda: answers.append(_post(_plan().serialize(), meta)))
     submit.start()
@@ -1228,7 +1229,7 @@ def test_a_submit_sweeps_results_and_jobs_whose_submit_ended_too_long_ago(held, 
     assert client.head(f"/v1/results/{kept}").status_code == 200
     assert client.get(f"/v1/jobs/{failed}").status_code == 200
 
-    monkeypatch.setattr(protocol_routes, "CACHE_EXPIRATION_TIME", 0)
+    monkeypatch.setattr(service, "CACHE_EXPIRATION_TIME", 0)
     _submit(last, _plan(), must_materialise=True)
 
     assert client.head(f"/v1/results/{kept}").status_code == 404
