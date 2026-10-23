@@ -1,24 +1,42 @@
-// The /compute_backends routes: every user lists the ids and last verdicts, the URL, adding, removing and the
-// handshake are an administrator's; the token and the CA certificate go in the add body once and are never answered.
+// The /compute_backends routes: every user lists the ids, kinds and last verdicts, the URL, adding, removing and the
+// handshake are an administrator's; a worker's token and CA certificate go in the add body once and are never answered.
 
 import axios from "../services/axios.config";
 
 const COMPUTE_BACKENDS_URL = "/compute_backends";
 
-/** `url` is null for a user who is no administrator; `verdict` is null until the backend was checked. */
+/** A Flowfile worker, or a Polars cluster the operator runs (reached at its scheduler's address). */
+export type ComputeBackendKind = "worker" | "polars-cloud";
+
+/**
+ * `url` is a worker's URL or a Polars cluster's scheduler URL, null for a user who is no administrator; `verdict` is
+ * null until the backend was checked.
+ */
 export interface ComputeBackend {
   id: string;
+  kind: ComputeBackendKind;
   url: string | null;
   verdict: HandshakeVerdict | null;
 }
 
-export interface ComputeBackendInput {
+export interface WorkerBackendInput {
+  kind?: "worker";
   name: string;
   url: string;
   token: string;
   /** PEM of the CA to trust for an https worker whose certificate is not public. */
   ca_cert?: string;
 }
+
+/** A self-run Polars cluster: no token; both addresses must be loopback or private. */
+export interface PolarsClusterInput {
+  kind: "polars-cloud";
+  name: string;
+  scheduler_url: string;
+  dashboard_url?: string;
+}
+
+export type ComputeBackendInput = WorkerBackendInput | PolarsClusterInput;
 
 export interface WorkerCapabilities {
   app_version: string;

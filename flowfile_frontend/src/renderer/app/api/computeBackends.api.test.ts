@@ -44,8 +44,8 @@ beforeEach(() => {
 describe("listComputeBackends", () => {
   it("gets exactly /compute_backends (no trailing slash) and returns the rows verbatim", async () => {
     const rows: ComputeBackend[] = [
-      { id: "worker:team", url: "https://team.example:63579", verdict: null },
-      { id: "worker:gpu", url: null, verdict: null },
+      { id: "worker:team", kind: "worker", url: "https://team.example:63579", verdict: null },
+      { id: "worker:gpu", kind: "worker", url: null, verdict: null },
     ];
     mocks.get.mockResolvedValue({ data: rows });
 
@@ -58,7 +58,12 @@ describe("listComputeBackends", () => {
 
 describe("addComputeBackend", () => {
   it("posts the name, URL and token as given and returns the row", async () => {
-    const row = { id: "worker:team", url: "https://team.example:63579", verdict: null };
+    const row = {
+      id: "worker:team",
+      kind: "worker",
+      url: "https://team.example:63579",
+      verdict: null,
+    };
     mocks.post.mockResolvedValue({ status: 201, data: row });
 
     const input = { name: "team", url: "https://team.example:63579/", token: "row-token" };
@@ -73,7 +78,10 @@ describe("addComputeBackend", () => {
   });
 
   it("posts a CA certificate as given", async () => {
-    mocks.post.mockResolvedValue({ status: 201, data: { id: "worker:team", url: "https://t" } });
+    mocks.post.mockResolvedValue({
+      status: 201,
+      data: { id: "worker:team", kind: "worker", url: "https://t" },
+    });
     const pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n";
 
     await addComputeBackend({ name: "team", url: "https://t", token: "x", ca_cert: pem });

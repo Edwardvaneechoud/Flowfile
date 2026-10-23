@@ -36,9 +36,19 @@ function detailOf(error: unknown, fallback: string): string {
   return fallback;
 }
 
+/** `input` without the optional fields left empty in the form, so the route stores none for them. */
+function withoutEmptyOptionals(input: ComputeBackendInput): ComputeBackendInput {
+  if (input.kind === "polars-cloud") {
+    const { dashboard_url, ...rest } = input;
+    return dashboard_url ? { ...rest, dashboard_url } : rest;
+  }
+  const { ca_cert, ...rest } = input;
+  return ca_cert ? { ...rest, ca_cert } : rest;
+}
+
 /**
- * The configured workers and the admin's actions on them; the caller loads, nothing polls. Loading seeds each
- * worker's verdict from the listing, so one a run produced shows without pressing Handshake.
+ * The configured backends and the admin's actions on them; the caller loads, nothing polls. Loading seeds each
+ * backend's verdict from the listing, so one a run produced shows without pressing Handshake.
  */
 export function useComputeBackends() {
   const backends: Ref<ComputeBackend[]> = ref([]);
@@ -57,7 +67,7 @@ export function useComputeBackends() {
       }
       loadError.value = "";
     } catch (error) {
-      loadError.value = detailOf(error, "Couldn't read the configured workers.");
+      loadError.value = detailOf(error, "Couldn't read the configured backends.");
     } finally {
       loading.value = false;
     }
@@ -65,13 +75,12 @@ export function useComputeBackends() {
 
   const add = async (input: ComputeBackendInput): Promise<ComputeBackend> => {
     adding.value = true;
-    const { ca_cert, ...rest } = input;
     try {
-      const row = await addComputeBackend(ca_cert ? { ...rest, ca_cert } : rest);
+      const row = await addComputeBackend(withoutEmptyOptionals(input));
       await load();
       return row;
     } catch (error) {
-      throw new Error(detailOf(error, "Couldn't add the worker."));
+      throw new Error(detailOf(error, "Couldn't add the backend."));
     } finally {
       adding.value = false;
     }
