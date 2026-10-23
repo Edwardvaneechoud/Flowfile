@@ -370,7 +370,7 @@ def test_a_closed_scheduler_port_is_unavailable_at_once_and_no_context_is_made(m
     with pytest.raises(ComputeUnavailable) as raised:
         unreachable.submit(ROWS, [], DEFERRED, "node-hash", flow_id=42, node_id=3)
 
-    assert time.monotonic() - started < 1
+    assert time.monotonic() - started < backend_module.PROBE_TIMEOUT
     assert made == []
     assert raised.value.backend_id == BACKEND_ID
     assert str(raised.value).startswith(f"Could not reach the Polars cluster at {url}")
