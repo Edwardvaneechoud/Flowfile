@@ -2,9 +2,12 @@
   "protocol_version": 1,
   "entries": {
     "catalog cloud_storage_connections": "d07b34d88d5d98f4dcefc5379e59f4654fa069a22f353e0d23453d3c802192e9",
+    "operation cloud_write": "017af5dd5184f5a1babe678a90ea46c34a51c9846b1c4a37601767d832b3d777",
     "operation custom_node": "b8ff0de7ef3eb29f6c9c278f543f5b257c3df2e52c7032a24aeeea3d11ec930e",
     "operation database_read": "5859c2dfaf52191b70be795ff625a613b675a7731135b8b2f1e0d2fa5e79bc29",
+    "operation database_write": "99a0efea2faa20640705aafb339840ae733f33bc62005c3ba50c51a2901efb8b",
     "operation file_read": "4c796bce97f0061b34ef6435f47eaf91a1b1e4351820fcb68dd703651c46b9fb",
+    "operation file_write": "9b14c79f21db51ecfaac13a5d8ef164b211d66c4baac085b1e61174e9e4aa5a3",
     "operation fuzzy_join": "7405361001d6e0f9e9a52a5d6d1c544d4b757c074f0782a32cd7f309e685d1c7",
     "operation google_analytics_read": "b03814ccc9b04355bab4f2637cfba4523bd97987b23b9d3f4930826128f597db",
     "operation kafka_read": "3f3983ce6d6daf111407b4655512fcd1b3b807bc88634a1e9696132752daf25a",

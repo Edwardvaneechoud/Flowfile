@@ -241,6 +241,24 @@ def ml_apply(body: MlApplyInput, job_id: JobId) -> OpOutputs:
     return service.ml_apply(body, job_id)
 
 
+@router.post("/ops/file_write", response_model=OpOutputs)
+def file_write(body: models.PolarsScriptWrite, job_id: JobId) -> OpOutputs:
+    """Write the body's plan to the file it names in a child as job *job_id*; nothing is held, so no outputs."""
+    return service.file_write(body, job_id)
+
+
+@router.post("/ops/database_write", response_model=OpOutputs)
+def database_write(body: models.DatabaseScriptWrite, job_id: JobId) -> OpOutputs:
+    """Write the body's plan to the database table it names in a child as job *job_id*; nothing is held."""
+    return service.database_write(body, job_id)
+
+
+@router.post("/ops/cloud_write", response_model=OpOutputs)
+def cloud_write(body: models.CloudStorageScriptWrite, job_id: JobId) -> OpOutputs:
+    """Write the body's plan to the object-storage path it names in a child as job *job_id*; nothing is held."""
+    return service.cloud_write(body, job_id)
+
+
 @router.post("/ops/polars_code", response_model=OpOutputs)
 def polars_code(body: PolarsCodeInput, job_id: JobId) -> OpOutputs:
     """Run a Polars Code node's code once over its input plans in a child as job *job_id* and hold its result."""
