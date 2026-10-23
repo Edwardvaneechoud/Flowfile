@@ -37,8 +37,9 @@ class _NativeCredentials:
 
 NATIVE_CREDENTIALS = _NativeCredentials()
 """The credential provider of a read with none of its own, for a backend that reaches storage with its own identity
-(``native_credentials``): the scan is given ``credential_provider=None``, so its plan holds no pickled Python provider,
-which a backend on another Python cannot load, and Polars' native chain finds the identity where the plan runs."""
+(``credential_resolution`` ``ambient``): the scan is given ``credential_provider=None``, so its plan holds no pickled
+Python provider, which a backend on another Python cannot load, and Polars' native chain finds the identity where the
+plan runs."""
 
 
 class CloudStorageReader:

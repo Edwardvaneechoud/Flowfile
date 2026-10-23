@@ -240,6 +240,26 @@ def _derived_schema(
     return convert_stats_to_column_info(FlowDataEngine._create_schema_stats_from_pl_schema(resolved))
 
 
+def _ambient(backend: ComputeBackend | None) -> bool:
+    """Whether ``backend`` declares ``ambient`` credential resolution, read from its cached handshake verdict.
+
+    Without a cached verdict the backend's ``capabilities()`` are asked once; a backend that cannot be reached or that
+    declares anything else is ``False``, so the read keeps its provider and fails where it would have failed anyway.
+    """
+    if backend is None:
+        return False
+    from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
+
+    verdict = handshake.last_verdict(backend.id)
+    reported = verdict.backend if verdict is not None else None
+    if reported is None:
+        try:
+            reported = backend.capabilities()
+        except ComputeError:
+            return False
+    return reported.credential_resolution == "ambient"
+
+
 @dataclass
 class FlowDataEngine:
     """The core data handling engine for Flowfile.
@@ -525,9 +545,10 @@ class FlowDataEngine:
         connection that the executing process resolves (``CredentialRefProvider``). With the flag on, an ``aws-cli``
         read with no saved connection carries no credential and no provider, so Polars' default provider resolves the
         default credential chain of whichever process runs the plan. A read with no provider of its own for a backend
-        whose ``native_credentials`` is set (a Polars cluster) gets ``credential_provider=None`` instead
-        (``NATIVE_CREDENTIALS``): its plan holds no pickled Python provider, and the cluster's native chain finds its
-        own identity.
+        that declares ``ambient`` credential resolution (a compute that reaches storage with its own identity, such as
+        a Polars cluster behind a gateway) gets ``credential_provider=None`` instead (``NATIVE_CREDENTIALS``): its plan
+        holds no pickled Python provider, which a compute on another Python could not load, and that compute's native
+        chain finds its own identity (``_ambient``).
 
         Given a ``backend``, the scan is held there as a deferred result with no preview while the reference's schema
         is read, then released, and the engine takes that schema: the backend resolves the read's connection, and core
@@ -561,7 +582,7 @@ class FlowDataEngine:
             storage_options, credential_provider = CloudStorageReader.get_read_credentials(connection, user_id)
         use_pyarrow = CloudStorageReader.use_pyarrow_for_gcs(connection) and not FLOWFILE_COMPUTE_PROTOCOL
         backend = None if use_pyarrow else backend
-        if credential_provider is None and getattr(backend, "native_credentials", False):
+        if credential_provider is None and _ambient(backend):
             credential_provider = NATIVE_CREDENTIALS
         if read_settings.file_format == "parquet":
             return cls._read_parquet_from_cloud(

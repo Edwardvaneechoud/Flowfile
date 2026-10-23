@@ -3,9 +3,9 @@
     <div class="mb-3">
       <h2 class="page-title">Compute backends</h2>
       <p class="page-description">
-        Workers and Polars clusters Flowfile can reach besides its built-in worker service, on this
-        host or another. A handshake checks a backend's versions against this server's, and which
-        plugins and Python functions it runs.
+        Workers Flowfile can reach besides its built-in worker service, on this host or another. A
+        handshake checks a worker's versions against this server's, and which plugins and Python
+        functions it runs.
       </p>
     </div>
 
@@ -15,22 +15,20 @@
         <span>{{ loadError }}</span>
       </div>
 
-      <h3 class="backends-card-title">Configured backends</h3>
+      <h3 class="backends-card-title">Configured workers</h3>
       <p class="backends-card-description">
         Each worker has its own URL and bearer token, and, when its TLS certificate is not public,
-        the CA certificate to trust; its id is <code>worker:&lt;name&gt;</code>. A Polars cluster
-        you run yourself is reached at its scheduler's address; its id is
-        <code>polars-cloud:&lt;name&gt;</code>. The built-in backends, <code>local</code> and
-        <code>worker</code>, are not listed. To change a backend, remove it and add it again.
+        the CA certificate to trust; its id is <code>worker:&lt;name&gt;</code>. The built-in
+        backends, <code>local</code> and <code>worker</code>, are not listed. To change a worker's
+        URL, token or CA certificate, remove it and add it again.
       </p>
 
-      <p v-if="loading && !backends.length" class="backends-loading">Loading backends…</p>
+      <p v-if="loading && !backends.length" class="backends-loading">Loading workers…</p>
 
       <table v-if="backends.length" class="backends-table">
         <thead>
           <tr>
             <th>Id</th>
-            <th>Kind</th>
             <th>URL</th>
             <th></th>
           </tr>
@@ -41,7 +39,6 @@
               <td>
                 <code>{{ backend.id }}</code>
               </td>
-              <td>{{ KIND_LABELS[backend.kind] ?? backend.kind }}</td>
               <td class="backends-url">{{ backend.url }}</td>
               <td class="backends-actions">
                 <el-button
@@ -63,14 +60,14 @@
               </td>
             </tr>
             <tr v-if="verdicts[backend.id]" class="backends-verdict-row">
-              <td colspan="4">
+              <td colspan="3">
                 <div
                   v-if="verdicts[backend.id].ok && verdicts[backend.id].backend"
                   class="backends-verdict backends-verdict--ok"
                 >
                   <i class="fa-solid fa-circle-check"></i>
                   <div>
-                    <div>{{ matchLine(verdicts[backend.id], backend.kind) }}</div>
+                    <div>{{ matchLine(verdicts[backend.id]) }}</div>
                     <div
                       v-for="difference in verdicts[backend.id].differences"
                       :key="difference"
@@ -109,71 +106,43 @@
 
       <div v-else-if="!loading && !loadError" class="backends-empty">
         <i class="fa-solid fa-network-wired"></i>
-        <div class="backends-empty__title">No backends configured</div>
-        <div class="backends-empty__hint">Add a worker or a Polars cluster below.</div>
+        <div class="backends-empty__title">No workers configured</div>
+        <div class="backends-empty__hint">Add one below with its name, URL and token.</div>
       </div>
 
       <div class="backends-add">
-        <h4 class="backends-add__title">Add a backend</h4>
-        <el-radio-group v-model="form.kind" size="small" class="backends-add__kind">
-          <el-radio-button value="worker">{{ KIND_LABELS.worker }}</el-radio-button>
-          <el-radio-button value="polars-cloud">{{ KIND_LABELS["polars-cloud"] }}</el-radio-button>
-        </el-radio-group>
-        <p v-if="form.kind === 'polars-cloud'" class="backends-add__note">
-          <i class="fa-solid fa-triangle-exclamation"></i>
-          A self-run Polars scheduler has no login, so keep it on a private network.
-        </p>
+        <h4 class="backends-add__title">Add a worker</h4>
         <div class="backends-add__fields">
           <label class="backends-field">
             <span class="backends-field__label">Name</span>
             <el-input v-model="form.name" v-bind="NO_AUTOFILL" placeholder="team">
-              <template #prepend>{{ form.kind }}:</template>
+              <template #prepend>worker:</template>
             </el-input>
           </label>
-          <template v-if="form.kind === 'polars-cloud'">
-            <label class="backends-field">
-              <span class="backends-field__label">Scheduler URL</span>
-              <el-input
-                v-model="form.scheduler_url"
-                v-bind="NO_AUTOFILL"
-                placeholder="http://10.0.0.5:5051"
-              />
-            </label>
-            <label class="backends-field">
-              <span class="backends-field__label">Dashboard URL (optional)</span>
-              <el-input
-                v-model="form.dashboard_url"
-                v-bind="NO_AUTOFILL"
-                placeholder="http://10.0.0.5:3001"
-              />
-            </label>
-          </template>
-          <template v-else>
-            <label class="backends-field">
-              <span class="backends-field__label">URL</span>
-              <el-input v-model="form.url" v-bind="NO_AUTOFILL" placeholder="https://…" />
-              <span v-if="plainHttp" class="backends-field__warning">
-                <i class="fa-solid fa-triangle-exclamation"></i>
-                Plain HTTP to another host: the token and every plan cross the network in clear, and
-                whoever holds the token can run code on the worker. Beyond a trusted network, use
-                https:// and, for a certificate that is not public, its CA certificate.
-              </span>
-            </label>
-            <label class="backends-field">
-              <span class="backends-field__label">Token</span>
-              <el-input v-model="form.token" v-bind="NO_AUTOFILL" type="password" show-password />
-            </label>
-            <label class="backends-field">
-              <span class="backends-field__label">CA certificate (PEM, optional)</span>
-              <el-input
-                v-model="form.ca_cert"
-                v-bind="NO_AUTOFILL"
-                type="textarea"
-                :rows="3"
-                placeholder="-----BEGIN CERTIFICATE-----"
-              />
-            </label>
-          </template>
+          <label class="backends-field">
+            <span class="backends-field__label">URL</span>
+            <el-input v-model="form.url" v-bind="NO_AUTOFILL" placeholder="https://…" />
+            <span v-if="plainHttp" class="backends-field__warning">
+              <i class="fa-solid fa-triangle-exclamation"></i>
+              Plain HTTP to another host: the token and every plan cross the network in clear, and
+              whoever holds the token can run code on the worker. Beyond a trusted network, use
+              https:// and, for a certificate that is not public, its CA certificate.
+            </span>
+          </label>
+          <label class="backends-field">
+            <span class="backends-field__label">Token</span>
+            <el-input v-model="form.token" v-bind="NO_AUTOFILL" type="password" show-password />
+          </label>
+          <label class="backends-field">
+            <span class="backends-field__label">CA certificate (PEM, optional)</span>
+            <el-input
+              v-model="form.ca_cert"
+              v-bind="NO_AUTOFILL"
+              type="textarea"
+              :rows="3"
+              placeholder="-----BEGIN CERTIFICATE-----"
+            />
+          </label>
         </div>
         <el-button type="primary" size="small" :loading="adding" :disabled="!canAdd" @click="onAdd">
           Add
@@ -185,8 +154,8 @@
       <i class="fa-solid fa-lock"></i>
       <h3>Administrator setting</h3>
       <p>
-        The backends Flowfile can reach are server-wide and managed by administrators. Your flows
-        use the worker service automatically.
+        The workers Flowfile can reach are server-wide and managed by administrators. Your flows use
+        the worker service automatically.
       </p>
     </div>
   </div>
@@ -195,11 +164,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import type {
-  ComputeBackendInput,
-  ComputeBackendKind,
-  HandshakeVerdict,
-} from "../../api/computeBackends.api";
+import type { HandshakeVerdict } from "../../api/computeBackends.api";
 import { useAuthStore } from "../../stores/auth-store";
 import { absentLabel } from "../../utils/executionLocation";
 import { NO_AUTOFILL } from "../../utils/noAutofill";
@@ -210,57 +175,32 @@ const isAdmin = computed(() => useAuthStore().isAdmin);
 const { backends, loading, loadError, adding, busy, verdicts, load, add, remove, handshake } =
   useComputeBackends();
 
-const KIND_LABELS: Record<ComputeBackendKind, string> = {
-  worker: "Worker",
-  "polars-cloud": "Polars cluster",
-};
-
-const form = reactive({
-  kind: "worker" as ComputeBackendKind,
-  name: "",
-  url: "",
-  token: "",
-  ca_cert: "",
-  scheduler_url: "",
-  dashboard_url: "",
-});
-const canAdd = computed(() =>
-  form.kind === "polars-cloud"
-    ? form.name !== "" && form.scheduler_url !== ""
-    : form.name !== "" && form.url !== "" && form.token !== "",
-);
+const form = reactive({ name: "", url: "", token: "", ca_cert: "" });
+const canAdd = computed(() => form.name !== "" && form.url !== "" && form.token !== "");
 const plainHttp = computed(() => plainHttpOffLoopback(form.url));
 
-const matchLine = (verdict: HandshakeVerdict, kind: ComputeBackendKind): string => {
+const matchLine = (verdict: HandshakeVerdict): string => {
   const backend = verdict.backend!;
   const exact = !verdict.differences.length && !Object.keys(verdict.absent).length;
-  const flowfile = kind === "worker" ? `Flowfile ${backend.app_version}, ` : "";
   return (
-    `${exact ? "Matches this server" : "Accepted by this server"}: ${flowfile}` +
+    `${exact ? "Matches this server" : "Accepted by this server"}: Flowfile ${backend.app_version}, ` +
     `Polars ${backend.polars_version}, Python ${backend.python_version}, ${backend.platform}`
   );
 };
 
-const formInput = (): ComputeBackendInput =>
-  form.kind === "polars-cloud"
-    ? {
-        kind: "polars-cloud",
-        name: form.name,
-        scheduler_url: form.scheduler_url,
-        dashboard_url: form.dashboard_url,
-      }
-    : { name: form.name, url: form.url, token: form.token, ca_cert: form.ca_cert };
-
 const onAdd = async () => {
   if (!canAdd.value) return;
   try {
-    const row = await add(formInput());
+    const row = await add({
+      name: form.name,
+      url: form.url,
+      token: form.token,
+      ca_cert: form.ca_cert,
+    });
     form.name = "";
     form.url = "";
     form.token = "";
     form.ca_cert = "";
-    form.scheduler_url = "";
-    form.dashboard_url = "";
     ElMessage.success(`Added ${row.id}`);
   } catch (error) {
     ElMessage.error((error as Error).message);
@@ -269,14 +209,11 @@ const onAdd = async () => {
 
 const onRemove = async (id: string) => {
   try {
-    const kept = id.startsWith("worker:")
-      ? " Its token and CA certificate are not kept; adding it again needs them."
-      : "";
-    await ElMessageBox.confirm(`Remove ${id}?${kept}`, "Remove backend", {
-      confirmButtonText: "Remove",
-      cancelButtonText: "Keep",
-      type: "warning",
-    });
+    await ElMessageBox.confirm(
+      `Remove ${id}? Its token and CA certificate are not kept; adding it again needs them.`,
+      "Remove worker",
+      { confirmButtonText: "Remove", cancelButtonText: "Keep", type: "warning" },
+    );
   } catch {
     return;
   }
@@ -460,25 +397,6 @@ onMounted(() => {
   font-size: var(--font-size-base);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
-}
-
-.backends-add__kind {
-  margin-bottom: var(--spacing-3);
-}
-
-.backends-add__note {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--spacing-2);
-  margin: 0 0 var(--spacing-3);
-  font-size: var(--font-size-xs);
-  line-height: var(--line-height-normal);
-  color: var(--color-warning);
-}
-
-.backends-add__note i {
-  margin-top: 2px;
-  flex-shrink: 0;
 }
 
 .backends-add__fields {

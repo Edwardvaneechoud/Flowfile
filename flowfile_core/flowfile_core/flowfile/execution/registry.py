@@ -8,16 +8,12 @@ holds the factory of each, which imports the backend's module when it first make
 first lookup of an id nothing registered; an entry point never shadows a built-in id. ``backend`` calls a factory
 once per process and hands out that instance from then on.
 
-A configured backend is a row of core's ``compute_backends`` table (``ConfiguredBackend``), built by the row's kind on
-the first lookup of an id with a configured prefix, ``worker:`` or ``polars-cloud:``, that nothing registered and no
-entry point names. A ``worker`` row, ``worker:<name>``, holds its URL, its bearer token, stored as secret-manager
-ciphertext, and the CA certificate to trust for it, if any: the lookup decrypts the token and makes a ``WorkerBackend``
-on that URL with that id, token and CA certificate. A ``polars-cloud`` row, ``polars-cloud:<name>``, holds a Polars
-cluster's scheduler URL as its ``url`` and, in its JSON ``settings``, how the backend reaches the compute (the
-scheduler's and the dashboard's URLs): the lookup makes a ``PolarsCloudBackend`` from those settings, which connects to
-nothing until it is first used. The instance is cached like every other. No row, or a row of a
-kind this core does not know, is a ``LookupError``. ``forget`` drops a cached instance, so the next lookup reads the row
-again, or fails once the row is gone.
+A configured worker, ``worker:<name>``, is a row of core's ``compute_backends`` table (``ConfiguredBackend``): its URL,
+its bearer token, stored as secret-manager ciphertext, and the CA certificate to trust for it, if any. The first lookup
+of such an id that nothing registered and no entry point names reads the row, decrypts the token and makes a
+``WorkerBackend`` on that URL with that id, token and CA certificate; the instance is cached like every other. No row
+is a ``LookupError``. ``forget`` drops a cached instance, so the next lookup reads the row again, or fails once the row
+is gone.
 
 ``default_backend_id`` names the default backend, the one a ``"remote"`` flow and a call without a graph use:
 the process-wide override a headless runner sets (``set_default_override``) when there is one, else
@@ -59,11 +55,6 @@ LEGACY_OFFLOAD_ENV_VAR = "FLOWFILE_OFFLOAD_TO_WORKER"
 LOCAL_BACKEND_ID = "local"
 WORKER_BACKEND_ID = "worker"
 CONFIGURED_WORKER_PREFIX = "worker:"
-WORKER_KIND = "worker"
-POLARS_CLOUD_KIND = "polars-cloud"
-POLARS_CLOUD_PREFIX = "polars-cloud:"
-CONFIGURED_PREFIXES = {WORKER_KIND: CONFIGURED_WORKER_PREFIX, POLARS_CLOUD_KIND: POLARS_CLOUD_PREFIX}
-"""Backend kind -> the prefix of the ids of its ``compute_backends`` rows."""
 
 
 def _local_backend() -> ComputeBackend:
@@ -96,35 +87,23 @@ def _worker_backend() -> ComputeBackend:
     return WorkerBackend(url=settings.WORKER_URL)
 
 
-def _configured_backend(backend_id: str) -> ComputeBackend:
-    """The backend the ``compute_backends`` row of ``backend_id`` configures, built by the row's kind.
-
-    A worker signs its calls with the row's token and trusts the row's CA certificate for its TLS, when the row has
-    one; a Polars cluster is reached at the row's scheduler URL, its dashboard the one the row's settings name.
+def _configured_worker_backend(backend_id: str) -> ComputeBackend:
+    """The worker the ``compute_backends`` row of ``backend_id`` configures, signing its calls with the row's token
+    and trusting the row's CA certificate for its TLS, when the row has one.
 
     Raises:
-        LookupError: No row configures ``backend_id``, or the row's kind is none this core knows.
+        LookupError: No row configures ``backend_id``.
     """
     from flowfile_core.database.connection import get_db_context
     from flowfile_core.database.models import ConfiguredBackend
+    from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+    from flowfile_core.secret_manager.secret_manager import decrypt_secret
 
     with get_db_context() as db:
         row = db.get(ConfiguredBackend, backend_id)
         if row is None:
             raise LookupError(f"Unknown compute backend {backend_id!r}; no compute_backends row has that id")
-        kind, url, ciphertext, ca_cert, row_settings = row.kind, row.url, row.token, row.ca_cert, row.settings
-    if kind == POLARS_CLOUD_KIND:
-        from flowfile_core.flowfile.execution.backends.polars_cloud import PolarsCloudBackend
-
-        try:
-            return PolarsCloudBackend.from_row(backend_id, row_settings)
-        except ValueError as e:
-            raise LookupError(f"Compute backend {backend_id!r} cannot be made from its row: {e}") from e
-    if kind != WORKER_KIND:
-        raise LookupError(f"Compute backend {backend_id!r} is of kind {kind!r}, which this core does not know")
-    from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
-    from flowfile_core.secret_manager.secret_manager import decrypt_secret
-
+        url, ciphertext, ca_cert = row.url, row.token, row.ca_cert
     return WorkerBackend(
         url=url, backend_id=backend_id, token=decrypt_secret(ciphertext).get_secret_value(), ca_cert=ca_cert
     )
@@ -157,12 +136,12 @@ def register_backend(backend_id: str, factory: BackendFactory) -> None:
 def backend(backend_id: str) -> ComputeBackend:
     """The process's instance of ``backend_id``, made by its factory on first use.
 
-    An id that nothing registered and no entry point names, starting with ``worker:`` or ``polars-cloud:``, is made
-    from its ``compute_backends`` row by the row's kind.
+    An id that nothing registered and no entry point names, starting with ``worker:``, is made from its
+    ``compute_backends`` row.
 
     Raises:
         LookupError: No factory is registered, built in or installed under ``backend_id``; the message lists the
-            known ids, built-in ones included. For a configured id, no row configures it or its kind is unknown.
+            known ids, built-in ones included. For a ``worker:`` id, no row configures it.
     """
     with _lock:
         instance = _instances.get(backend_id)
@@ -174,8 +153,8 @@ def backend(backend_id: str) -> ComputeBackend:
         factory = _factories.get(backend_id)
         if factory is not None:
             instance = factory()
-        elif backend_id.startswith(tuple(CONFIGURED_PREFIXES.values())):
-            instance = _configured_backend(backend_id)
+        elif backend_id.startswith(CONFIGURED_WORKER_PREFIX):
+            instance = _configured_worker_backend(backend_id)
         else:
             known = ", ".join(repr(known_id) for known_id in sorted(_factories.keys() | _BUILTIN.keys())) or "none"
             raise LookupError(f"Unknown compute backend {backend_id!r}; known backends: {known}")

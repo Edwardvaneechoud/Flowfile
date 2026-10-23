@@ -3744,7 +3744,6 @@ files = [
 ]
 
 [package.dependencies]
-cloudpickle = {version = "*", optional = true, markers = "extra == \"cloudpickle\""}
 polars-runtime-32 = "1.43.2"
 polars-runtime-64 = {version = "1.43.2", optional = true, markers = "extra == \"rt64\""}
 pyarrow = {version = ">=7.0.0", optional = true, markers = "extra == \"pyarrow\""}
@@ -3777,26 +3776,6 @@ style = ["great-tables (>=0.8.0)"]
 timezone = ["tzdata"]
 xlsx2csv = ["xlsx2csv (>=0.8.0)"]
 xlsxwriter = ["xlsxwriter"]
-
-[[package]]
-name = "polars-cloud"
-version = "0.10.0"
-description = "Run Polars remotely, either in the Cloud or On-Prem"
-optional = false
-python-versions = ">=3.10"
-files = [
-    {file = "polars_cloud-0.10.0-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:8bff0b40583f0328fccf9a9b0d9437a7261485c122687349ebfe59c38e53e2fd"},
-    {file = "polars_cloud-0.10.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:83db75b74be0a934fa12dd09ec8f0a41b7609d4713c4a425dd1c9e56770c17e9"},
-    {file = "polars_cloud-0.10.0-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:2247583461cc85d6b4e4109f3f260bb41f2329c1d07a1b60f0d8649da398252d"},
-    {file = "polars_cloud-0.10.0-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:b9a2a272a31bdc7d97978045355e96ab74763352d32bcfcb26cd4e13da663949"},
-    {file = "polars_cloud-0.10.0-cp310-abi3-win_amd64.whl", hash = "sha256:91fc9a1f572c71886f9210735e6fbc2b15823532142dba222ca2bce5ea526e61"},
-    {file = "polars_cloud-0.10.0-cp310-abi3-win_arm64.whl", hash = "sha256:f6044b68d76a2090969d189380adf5705bcad1195506e5efafecd0384af1f48a"},
-    {file = "polars_cloud-0.10.0.tar.gz", hash = "sha256:49438e9d73b1877130a4044647eb410132718bc54530f5d89768cccc5c238685"},
-]
-
-[package.dependencies]
-polars = {version = "1.43.2", extras = ["cloudpickle", "rt64"]}
-typing-extensions = {version = ">=4.0", markers = "python_full_version < \"3.13\""}
 
 [[package]]
 name = "polars-distance"
@@ -6511,4 +6490,4 @@ yxdb = ["yxdb"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.14"
-content-hash = "99c216b4dd32d1f041e46f49cf295125b0667089b7f339446c23329135a07a97"
+content-hash = "b004d4ebb1dda87146493e31f682de146260e79b8cbeb0c522b9547e24591019"

@@ -145,29 +145,23 @@ class Kernel(Base):
 
 
 class ConfiguredBackend(Base):
-    """One configured compute backend core reaches by id: a worker or a Polars cluster, by ``kind``.
+    """One configured worker: a compute backend core reaches by id, at its own URL, with its own token.
 
-    ``id`` is the backend id a flow saves, ``<kind>:<name>``; ``kind`` is ``worker`` (the default, every row made before
-    kinds existed) or ``polars-cloud``. ``url`` is the base URL without a trailing slash: a worker's, or a Polars
-    cluster's scheduler. ``token`` is a worker's bearer token as secret-manager ciphertext (``encrypt_secret``'s
-    ``$ffsec$1$<user>$…``), never the token itself, and ``None`` for a Polars row; ``ca_cert`` is the PEM of the
-    certificate authority core trusts for a worker's certificate when it is not public, ``None`` for a public
-    certificate or a plain ``http://`` worker. ``settings`` is how the kind reaches its compute, as JSON text (a Polars
-    row's ``scheduler_url`` and optional ``dashboard_url``), ``None`` for a worker; ``secret`` is a secret the kind
-    needs beyond a worker's token, as secret-manager ciphertext, ``None`` for every kind today. The built-in ``local``
-    and ``worker`` are never rows. The table shares its name with the ``flowfile.compute_backends`` entry-point group,
-    the other way to add a backend; the registry reads a row on the first lookup of its id and builds it by its kind.
+    ``id`` is the backend id a flow saves, ``worker:<name>``; ``url`` is the worker's base URL without a trailing
+    slash; ``token`` is the worker's bearer token as secret-manager ciphertext (``encrypt_secret``'s
+    ``$ffsec$1$<user>$…``), never the token itself; ``ca_cert`` is the PEM of the certificate authority core trusts
+    for the worker's certificate when it is not public (a self-signed worker certificate is its own), ``None`` for a
+    public certificate or a plain ``http://`` worker. The built-in ``local`` and ``worker`` are never rows. The table
+    shares its name with the ``flowfile.compute_backends`` entry-point group, the other way to add a backend; the
+    registry reads a row on the first lookup of its id.
     """
 
     __tablename__ = "compute_backends"
 
     id = Column(String, primary_key=True)
-    kind = Column(String, nullable=False, default="worker", server_default="worker")
     url = Column(String, nullable=False)
-    token = Column(Text, nullable=True)
+    token = Column(Text, nullable=False)
     ca_cert = Column(Text, nullable=True)
-    settings = Column(Text, nullable=True)
-    secret = Column(Text, nullable=True)
 
 
 # ==================== Catalog Models ====================
