@@ -487,7 +487,7 @@ class KNNClassifierTrainer:
             schema={**{f: pl.Float64 for f in features}, "__label": pl.Int64},
         ).with_columns(
             pl.lit(True).alias("__is_train"),
-            pl.lit(None, dtype=pl.UInt32).alias("__test_pos"),
+            pl.lit(None, dtype=pl.get_index_type()).alias("__test_pos"),
         )
 
         # One evaluation of the input: a second one could order its rows differently from the neighbour query.
