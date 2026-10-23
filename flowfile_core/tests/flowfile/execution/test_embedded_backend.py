@@ -1,8 +1,8 @@
 """The embedded worker backend: the worker's ``/v1`` bodies called in this process, with no port and no wire.
 
-Every case runs ``EmbeddedWorkerBackend`` with the worker's jobs in this process (``spawner.in_process``), no worker
-process started (``SKIP_WORKER_TESTS=1``) and nothing answering on the worker port before or after it; a socket that
-listens, a submit socket dialled or a request through the worker session fails the case. The error mapping is the
+Every case runs ``EmbeddedWorkerBackend`` with the worker's jobs in this process (``spawner.in_process``) and leaves
+the worker port as it found it, whether the session's worker listens there or none does; a socket that listens, a
+submit socket dialled or a request through the worker session fails the case. The error mapping is the
 adapter's: a child's failure is a ``TaskFailed`` naming the error, a plan this process cannot load a ``PlanRejected``,
 a result the worker does not hold a ``ResultMissing``, and what a body refuses before anything runs a ``PlanRejected``.
 The handshake passes with its probes run as in-process jobs, the plan crosses as bytes, each operation the adapter
@@ -132,7 +132,7 @@ def _worker_port_refused() -> bool:
 
 @pytest.fixture(autouse=True)
 def no_port(monkeypatch):
-    """No worker answers on the worker port before or after a case, and nothing listens, dials or sends meanwhile."""
+    """Nothing listens, dials or sends while a case runs, and the worker port is as it was before the case after it."""
 
     def refused(what: str):
         def fail(*args, **kwargs):
@@ -140,13 +140,13 @@ def no_port(monkeypatch):
 
         return fail
 
-    assert _worker_port_refused(), f"a worker answers on port {settings.WORKER_PORT} before the case"
+    port_refused_before = _worker_port_refused()
     monkeypatch.setattr(socket.socket, "listen", refused("a socket listened"))
     monkeypatch.setattr(websockets.sync.client, "connect", refused("a submit socket was dialled"))
     monkeypatch.setattr(worker_module, "connect", refused("a submit socket was dialled"))
     monkeypatch.setattr(subops._worker_session, "request", refused("a request went through the worker session"))
     yield
-    assert _worker_port_refused(), f"a worker answers on port {settings.WORKER_PORT} after the case"
+    assert _worker_port_refused() == port_refused_before, f"the case opened or closed port {settings.WORKER_PORT}"
 
 
 @pytest.fixture
