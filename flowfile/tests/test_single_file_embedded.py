@@ -7,6 +7,7 @@ it changes is restored after the test.
 
 import os
 import socket
+import sys
 
 import polars as pl
 import pytest
@@ -50,7 +51,12 @@ def single_file_app(monkeypatch) -> FastAPI:
 
 @pytest.fixture
 def no_worker_reached(monkeypatch) -> dict[str, list]:
-    """Fails any ``WorkerBackend`` made, any worker-session request sent and any socket listening in this process."""
+    """Fails any ``WorkerBackend`` made, any worker-session request sent and any socket listening in this process.
+
+    The one listen let through is the one ``socket.socketpair`` makes itself: Windows has no native socket pair, so
+    there it connects two sockets through a loopback listener, and every asyncio event loop, the test client's
+    included, makes its self-pipe that way.
+    """
     seen: dict[str, list] = {"worker_backends": [], "session_requests": [], "listening": []}
 
     def refuse(kind: str):
@@ -60,9 +66,17 @@ def no_worker_reached(monkeypatch) -> dict[str, list]:
 
         return call
 
+    listen = socket.socket.listen
+    refuse_listen = refuse("listening")
+
+    def listen_unless_pairing(sock, *args):
+        if sys._getframe(1).f_code is socket.socketpair.__code__:
+            return listen(sock, *args)
+        return refuse_listen(sock, *args)
+
     monkeypatch.setattr(WorkerBackend, "__init__", refuse("worker_backends"))
     monkeypatch.setattr(subprocess_operations._WorkerSession, "request", refuse("session_requests"))
-    monkeypatch.setattr(socket.socket, "listen", refuse("listening"))
+    monkeypatch.setattr(socket.socket, "listen", listen_unless_pairing)
     return seen
 
 

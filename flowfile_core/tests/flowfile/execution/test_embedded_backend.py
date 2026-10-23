@@ -392,7 +392,8 @@ def test_the_plan_crosses_as_bytes_and_plan_for_decodes_the_location(backend, ke
     held = location(materialised)
     assert held.kind == "file"
     assert Path(held.path).is_relative_to(storage.cache_directory)
-    assert held.path in backend.plan_for(materialised).explain()
+    # Polars prints a Windows path with forward slashes.
+    assert Path(held.path).as_posix() in backend.plan_for(materialised).explain()
     assert rows(backend.sample(materialised, 10)).equals(PEOPLE.filter(pl.col("id") > 3))
 
 
