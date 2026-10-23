@@ -532,7 +532,10 @@ def _core_with_protocol(stack: Stack, flag: str) -> Stack:
     return Stack(core=core, minio=stack.minio, http=_sign_in(core))
 
 
-REFUSED = 'cannot run on backend "local": this core serves; compute runs on its worker'
+REFUSED = (
+    'cannot run on backend "local": this core serves; compute runs on its worker. '
+    "To run it elsewhere, set its Compute backend under General Settings."
+)
 
 
 def _assert_refused_before_any_node(stack: Stack, run: dict, flow_id: int, refused: list[int]) -> None:
