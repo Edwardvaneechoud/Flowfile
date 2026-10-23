@@ -1,13 +1,16 @@
-"""The /compute_backends routes: list, add, remove and handshake the workers core reaches by id.
+"""The /compute_backends routes: list, add, remove and handshake the workers and Polars clusters core reaches by id.
 
-Every user lists the ids and the last verdicts; the URL, adding, removing and the handshake are an administrator's. A
-configured worker here is a fake: a small FastAPI app on a local uvicorn that answers ``GET /capabilities`` and
+Every user lists the ids, kinds and last verdicts; the URL, adding, removing and the handshake are an administrator's. A
+Polars cluster here is the fake of ``test_polars_cloud_backend.py``, reached through a real listening port so the
+backend's probe passes and ``polars_cloud.ClusterContext`` replaced so the context is the fake. A configured worker
+here is a fake: a small FastAPI app on a local uvicorn that answers ``GET /capabilities`` and
 ``GET /v1/capabilities`` only to the token it was started with, so a verdict that passes proves the row's own token was
 sent, not the process's; it answers nothing else, so no probe plan runs there. A row at the session worker's URL is a
 worker every probe runs on. The handshake cases, and the refusal of a token that is no header value, run under both
 states of the protocol flag. Auth fixtures mirror ``test_system_worker.py``.
 """
 
+import json
 import socket
 import ssl
 import threading
@@ -16,6 +19,7 @@ from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta, timezone
 
 import polars as pl
+import polars_cloud
 import pytest
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
@@ -34,6 +38,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handsh
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared.compute_protocol import EXPRESSION_PLUGINS, local_capabilities
+from tests.flowfile.execution.test_polars_cloud_backend import FakeCluster, FakeRemote
 
 ROUTE = "/compute_backends"
 NO_HEADER_VALUES = pytest.mark.parametrize(
@@ -183,13 +188,18 @@ def test_an_added_worker_is_listed_by_id_and_url_and_its_token_is_stored_encrypt
     added = add(admin_client, "http://team-worker.test:63579/")
 
     assert added.status_code == 201, added.text
-    assert added.json() == {"id": "worker:team", "url": "http://team-worker.test:63579", "verdict": None}
+    assert added.json() == {
+        "id": "worker:team",
+        "kind": "worker",
+        "url": "http://team-worker.test:63579",
+        "verdict": None,
+    }
     with get_db_context() as db:
         stored = db.get(ConfiguredBackend, "worker:team").token
     assert stored.startswith("$ffsec$")
     assert "row-token" not in stored
     listed = admin_client.get(ROUTE).json()
-    assert listed == [{"id": "worker:team", "url": "http://team-worker.test:63579", "verdict": None}]
+    assert listed == [{"id": "worker:team", "kind": "worker", "url": "http://team-worker.test:63579", "verdict": None}]
     assert "row-token" not in admin_client.get(ROUTE).text
 
 
@@ -200,7 +210,7 @@ def test_adding_an_id_that_exists_is_a_conflict(admin_client):
 
     assert again.status_code == 409, again.text
     assert admin_client.get(ROUTE).json() == [
-        {"id": "worker:team", "url": "http://team-worker.test:63579", "verdict": None}
+        {"id": "worker:team", "kind": "worker", "url": "http://team-worker.test:63579", "verdict": None}
     ]
 
 
@@ -231,11 +241,18 @@ def test_an_added_worker_keeps_its_ca_certificate_and_is_listed_without_it(admin
     added = add(admin_client, "https://team-worker.test:63579", ca_cert=pem)
 
     assert added.status_code == 201, added.text
-    assert added.json() == {"id": "worker:team", "url": "https://team-worker.test:63579", "verdict": None}
+    assert added.json() == {
+        "id": "worker:team",
+        "kind": "worker",
+        "url": "https://team-worker.test:63579",
+        "verdict": None,
+    }
     with get_db_context() as db:
         assert db.get(ConfiguredBackend, "worker:team").ca_cert == pem
     listed = admin_client.get(ROUTE)
-    assert listed.json() == [{"id": "worker:team", "url": "https://team-worker.test:63579", "verdict": None}]
+    assert listed.json() == [
+        {"id": "worker:team", "kind": "worker", "url": "https://team-worker.test:63579", "verdict": None}
+    ]
     assert "BEGIN CERTIFICATE" not in listed.text
 
 
@@ -327,7 +344,7 @@ def test_a_row_at_the_session_worker_passes_the_handshake_with_every_probe(admin
     assert verdict["absent"] == {}
     assert set(EXPRESSION_PLUGINS) <= verdict["offered"]["plugins"].keys()
     listed = admin_client.get(ROUTE).json()
-    assert listed == [{"id": "worker:team", "url": registry.worker_url(), "verdict": verdict}]
+    assert listed == [{"id": "worker:team", "kind": "worker", "url": registry.worker_url(), "verdict": verdict}]
 
 
 def test_a_worker_on_other_versions_fails_the_handshake_naming_both_sides(admin_client, fake_worker, flag):
@@ -444,8 +461,8 @@ def test_a_non_admin_lists_the_ids_and_last_verdicts_without_the_urls_and_is_ref
 
     assert listed.status_code == 200, listed.text
     assert listed.json() == [
-        {"id": "worker:team", "url": None, "verdict": verdict.model_dump(mode="json")},
-        {"id": "worker:unchecked", "url": None, "verdict": None},
+        {"id": "worker:team", "kind": "worker", "url": None, "verdict": verdict.model_dump(mode="json")},
+        {"id": "worker:unchecked", "kind": "worker", "url": None, "verdict": None},
     ]
     assert add(non_admin_client, "http://team-worker.test:63579").status_code == 403
     assert non_admin_client.delete(f"{ROUTE}/worker:team").status_code == 403
@@ -454,3 +471,134 @@ def test_a_non_admin_lists_the_ids_and_last_verdicts_without_the_urls_and_is_ref
 
 def test_an_unauthenticated_caller_gets_401():
     assert TestClient(main.app).get(ROUTE).status_code == 401
+
+
+def add_cluster(client: TestClient, scheduler_url: str, name: str = "lab", **fields):
+    return client.post(ROUTE, json={"kind": "polars-cloud", "name": name, "scheduler_url": scheduler_url, **fields})
+
+
+@pytest.fixture
+def fake_cluster(tmp_path, monkeypatch) -> Iterator[tuple[str, FakeCluster]]:
+    """A port that accepts, the scheduler URL on it, and the fake cluster ``polars_cloud.ClusterContext`` makes."""
+    cluster = FakeCluster(tmp_path / "cluster")
+    made: list = []
+
+    def context(*args, **kwargs):
+        made.append(kwargs)
+        return cluster
+
+    monkeypatch.setattr(polars_cloud, "ClusterContext", context)
+    monkeypatch.setattr(pl.LazyFrame, "remote", lambda plan, context=None, **_: FakeRemote(plan, cluster))
+    cluster.made = made
+    with socket.socket() as listening:
+        listening.bind(("127.0.0.1", 0))
+        listening.listen()
+        yield f"http://127.0.0.1:{listening.getsockname()[1]}", cluster
+
+
+def test_an_added_polars_cluster_is_stored_without_a_token_and_listed_with_its_kind(admin_client, fake_cluster):
+    scheduler, cluster = fake_cluster
+    assert add(admin_client, "http://team-worker.test:63579").status_code == 201
+
+    added = add_cluster(admin_client, f"{scheduler}/", dashboard_url="http://127.0.0.1:3001")
+
+    assert added.status_code == 201, added.text
+    assert added.json() == {"id": "polars-cloud:lab", "kind": "polars-cloud", "url": scheduler, "verdict": None}
+    with get_db_context() as db:
+        row = db.get(ConfiguredBackend, "polars-cloud:lab")
+        assert (row.kind, row.url, row.token, row.secret) == ("polars-cloud", scheduler, None, None)
+        assert json.loads(row.settings) == {"scheduler_url": scheduler, "dashboard_url": "http://127.0.0.1:3001"}
+    assert admin_client.get(ROUTE).json() == [
+        {"id": "polars-cloud:lab", "kind": "polars-cloud", "url": scheduler, "verdict": None},
+        {"id": "worker:team", "kind": "worker", "url": "http://team-worker.test:63579", "verdict": None},
+    ]
+    assert cluster.made == []
+
+
+@pytest.mark.parametrize(
+    "scheduler_url",
+    ["http://127.0.0.1:5051", "http://localhost:5051", "http://10.0.0.7:5051", "https://192.168.1.20:5051"],
+    ids=["loopback", "localhost", "ten-slash-eight", "https-private"],
+)
+def test_a_polars_cluster_on_loopback_or_a_private_address_is_accepted(admin_client, scheduler_url):
+    assert add_cluster(admin_client, scheduler_url).status_code == 201
+
+
+@pytest.mark.parametrize("scheduler_url", ["http://8.8.8.8:5051", "https://8.8.8.8:5051"], ids=["http", "https"])
+def test_a_polars_cluster_on_a_public_address_is_refused_with_the_reason(admin_client, scheduler_url):
+    response = add_cluster(admin_client, scheduler_url)
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert detail.startswith(
+        "The Polars scheduler address was not stored: 8.8.8.8 is neither loopback nor in a private range"
+    )
+    assert "a self-run Polars scheduler has no client authentication" in detail
+    assert admin_client.get(ROUTE).json() == []
+
+
+def test_a_public_dashboard_is_refused_too(admin_client):
+    response = add_cluster(admin_client, "http://10.0.0.7:5051", dashboard_url="http://8.8.8.8:3001")
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"].startswith("The Polars dashboard address was not stored: 8.8.8.8 is neither")
+
+
+def test_an_unknown_kind_is_refused_naming_the_kinds(admin_client):
+    response = admin_client.post(ROUTE, json={"kind": "spark", "name": "lab", "url": "http://10.0.0.7:7077"})
+
+    assert response.status_code == 422, response.text
+    assert response.json() == {"detail": "Unknown backend kind 'spark': the kinds are polars-cloud or worker"}
+
+
+def test_a_polars_cluster_takes_no_token_and_needs_its_scheduler(admin_client):
+    with_token = add_cluster(admin_client, "http://10.0.0.7:5051", token="row-token")
+    without_scheduler = admin_client.post(ROUTE, json={"kind": "polars-cloud", "name": "lab"})
+
+    assert with_token.status_code == 422, with_token.text
+    assert with_token.json() == {"detail": "A polars-cloud backend does not take token; nothing was stored"}
+    assert "row-token" not in with_token.text
+    assert without_scheduler.status_code == 422, without_scheduler.text
+    assert without_scheduler.json() == {
+        "detail": [{"type": "missing", "loc": ["body", "scheduler_url"], "msg": "Field required"}]
+    }
+    assert admin_client.get(ROUTE).json() == []
+
+
+def test_a_polars_cluster_passes_the_handshake_over_its_scheduler_and_is_forgotten_when_removed(
+    admin_client, fake_cluster
+):
+    scheduler, cluster = fake_cluster
+    add_cluster(admin_client, scheduler)
+
+    verdict = handshake(admin_client, "polars-cloud:lab")
+
+    assert verdict["ok"] is True, verdict
+    assert verdict["backend"]["polars_version"] == "1.43.2"
+    assert verdict["backend"]["credential_resolution"] == "ambient"
+    assert cluster.made == [{"uri": scheduler, "observatory": None}]
+    assert cluster.calls and all(call == ("show", 1) for call in cluster.calls)
+    assert admin_client.get(ROUTE).json() == [
+        {"id": "polars-cloud:lab", "kind": "polars-cloud", "url": scheduler, "verdict": verdict}
+    ]
+
+    assert admin_client.delete(f"{ROUTE}/polars-cloud:lab").status_code == 204
+    assert admin_client.get(ROUTE).json() == []
+    with pytest.raises(LookupError, match="polars-cloud:lab"):
+        registry.backend("polars-cloud:lab")
+    add_cluster(admin_client, scheduler)
+    assert admin_client.get(ROUTE).json()[0]["verdict"] is None
+
+
+def test_a_non_admin_sees_a_polars_clusters_kind_without_its_address(non_admin_client):
+    with get_db_context() as db:
+        settings = json.dumps({"scheduler_url": "http://10.0.0.7:5051"})
+        db.add(
+            ConfiguredBackend(id="polars-cloud:lab", kind="polars-cloud", url="http://10.0.0.7:5051", settings=settings)
+        )
+        db.commit()
+
+    listed = non_admin_client.get(ROUTE)
+
+    assert listed.json() == [{"id": "polars-cloud:lab", "kind": "polars-cloud", "url": None, "verdict": None}]
+    assert add_cluster(non_admin_client, "http://10.0.0.7:5051", name="other").status_code == 403

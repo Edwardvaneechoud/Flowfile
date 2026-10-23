@@ -1214,3 +1214,87 @@ class TestKernelMountedFoldersDropped:
 
         command.downgrade(_get_alembic_config(), "034")
         assert "mounted_folders" in self._columns(db_path, "kernels")
+
+
+class TestComputeBackendKinds:
+    """038 gives ``compute_backends`` a ``kind``, ``settings`` and ``secret``, and lets ``token`` be NULL."""
+
+    @staticmethod
+    def _columns(db_path: Path) -> dict[str, dict]:
+        engine = create_engine(f"sqlite:///{db_path}")
+        columns = {c["name"]: c for c in inspect(engine).get_columns("compute_backends")}
+        engine.dispose()
+        return columns
+
+    @staticmethod
+    def _rows(db_path: Path) -> list[tuple]:
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT * FROM compute_backends ORDER BY id")).mappings().all()
+        engine.dispose()
+        return [dict(row) for row in rows]
+
+    def test_a_worker_row_of_037_survives_as_kind_worker(self, tmp_path, monkeypatch):
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        command.upgrade(_get_alembic_config(), "037")
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO compute_backends (id, url, token, ca_cert) "
+                    "VALUES ('worker:team', 'https://team-worker.test:63579', '$ffsec$1$1$abc', 'PEM')"
+                )
+            )
+            conn.commit()
+        engine.dispose()
+
+        _run_migration(db_path, monkeypatch)
+
+        columns = self._columns(db_path)
+        assert {"kind", "settings", "secret"} <= columns.keys()
+        assert columns["token"]["nullable"] is True
+        assert self._rows(db_path) == [
+            {
+                "id": "worker:team",
+                "url": "https://team-worker.test:63579",
+                "token": "$ffsec$1$1$abc",
+                "ca_cert": "PEM",
+                "kind": "worker",
+                "settings": None,
+                "secret": None,
+            }
+        ]
+
+    def test_a_downgrade_keeps_the_workers_and_drops_the_polars_rows(self, tmp_path, monkeypatch):
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        _run_migration(db_path, monkeypatch)
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(text("INSERT INTO compute_backends (id, url, token) VALUES ('worker:team', 'http://w', 't')"))
+            conn.execute(
+                text(
+                    "INSERT INTO compute_backends (id, kind, url, settings) "
+                    "VALUES ('polars-cloud:lab', 'polars-cloud', 'http://10.0.0.7:5051', '{}')"
+                )
+            )
+            conn.commit()
+        engine.dispose()
+        cfg = _get_alembic_config()
+
+        command.downgrade(cfg, "037")
+
+        columns = self._columns(db_path)
+        assert not {"kind", "settings", "secret"} & columns.keys()
+        assert columns["token"]["nullable"] is False
+        assert [row["id"] for row in self._rows(db_path)] == ["worker:team"]
+        command.upgrade(cfg, "038")
+        assert [row["kind"] for row in self._rows(db_path)] == ["worker"]
