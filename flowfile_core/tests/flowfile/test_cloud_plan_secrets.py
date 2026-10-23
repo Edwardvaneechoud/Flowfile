@@ -1018,7 +1018,11 @@ class TestCatalogReadersOnObjectStorage:
 
 @requires_minio
 class TestPlanExecutesWhereItIsDecrypted:
-    """A core-built plan run in a fresh worker-shaped process, the way a spawned worker child runs it."""
+    """A core-built plan run in a fresh worker-shaped process, the way a spawned worker child runs it.
+
+    The graphs run in Performance mode: the worker holds a read it does not preview as the plan core sent, so the
+    node's leaf is that read. Previewed, the worker stores the rows and the leaf scans its file, which needs no key.
+    """
 
     @pytest.fixture
     def reader_plan(self, protocol, stored_connection, minio_prefix) -> bytes:
@@ -1027,9 +1031,11 @@ class TestPlanExecutesWhereItIsDecrypted:
             "access_key", aws_access_key_id=MINIO_ACCESS_KEY, aws_secret_access_key=SecretStr(MINIO_SECRET_KEY)
         )
         graph = create_test_graph(flow_id=7405, execution_location="local")
+        graph.flow_settings.execution_mode = "Performance"
         _add_reader(graph, 1, connection_name, resource_path=paths["single"], file_format="parquet")
         _assert_run_succeeded(graph.run_graph())
         plan = graph.get_node(1).get_resulting_data().data_frame.serialize()
+        assert paths["single"].encode() in plan
         assert SECRET not in plan
         return plan
 
@@ -1094,9 +1100,11 @@ class TestPlanExecutesWhereItIsDecrypted:
         paths = _seed_files(minio_prefix)
         connection_name = stored_connection("iam_role", aws_role_arn="arn:aws:iam::123456789012:role/flowfile-test")
         graph = create_test_graph(flow_id=7407, execution_location="local")
+        graph.flow_settings.execution_mode = "Performance"
         _add_reader(graph, 1, connection_name, resource_path=paths["single"], file_format="parquet")
         _assert_run_succeeded(graph.run_graph())
         plan = graph.get_node(1).get_resulting_data().data_frame.serialize()
+        assert paths["single"].encode() in plan
         no_profile = {"AWS_CONFIG_FILE": os.devnull, "AWS_SHARED_CREDENTIALS_FILE": os.devnull}
 
         with_role = self._run_in_worker_child(
