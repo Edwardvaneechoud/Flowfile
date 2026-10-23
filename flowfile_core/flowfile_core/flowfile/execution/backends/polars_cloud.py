@@ -3,14 +3,16 @@
 A ``compute_backends`` row of kind ``polars-cloud``, id ``polars-cloud:<name>``, names in its JSON settings the
 scheduler's URI and, optionally, its dashboard (Polars' observatory, which polars-cloud otherwise looks for on the
 scheduler's host at port 3001); the registry makes a ``PolarsCloudBackend`` from those settings on the first lookup of
-its id. Core hands the cluster plain
-Polars plans through ``polars_cloud.ClusterContext`` and ``LazyFrame.remote``; the cluster runs no operation, so
-``run_op`` raises ``OperationUnsupported`` and placement refuses every node that runs one. The cluster reads and writes
-``s3`` with its pods' own identity (``credential_resolution="ambient"``), so no plan it gets carries a credential: the
-storage options of a sink or scan the backend adds are the exchange store connection's plain ones (region, endpoint,
-plain HTTP, TLS; ``credential_ref_kwargs`` with every key and the provider dropped), and a plan core built names its
-reads' connections only as placement allows on an ambient backend. A self-run scheduler has no client authentication
-and its plans carry user code, so a row's addresses must be loopback or private (``address_refusal``).
+its id. Core hands the cluster plain Polars plans through ``polars_cloud.ClusterContext`` and ``LazyFrame.remote``; the
+cluster runs no operation, so ``run_op`` raises ``OperationUnsupported`` and placement refuses every node that runs one.
+The cluster reads and writes ``s3`` with its pods' own identity (``credential_resolution="ambient"``), so no plan it
+gets carries a credential: the storage options of a sink or scan the backend adds are the exchange store connection's
+plain ones (region, endpoint, plain HTTP, TLS; ``credential_ref_kwargs`` with every key and the provider dropped), and a
+plan core built names its reads' connections only as placement allows on an ambient backend. Neither carries a Python
+credential provider (``credential_provider=None``, and ``native_credentials`` for the reads core builds): a provider
+pickled under core's Python does not load on a cluster of another, and the cluster's native chain finds its own
+identity. A self-run scheduler has no client authentication and its plans carry user code, so a row's addresses must be
+loopback or private (``address_refusal``).
 
 The capabilities are constants of the Polars On-Prem 0.7.1 image, not asked of the cluster: Polars 1.43.2 on the 64-bit
 index runtime, Python 3.11.12, linux-x86_64, the plugins ``polars_ds`` 0.13.0, ``polars_grouper`` 0.6.1 and
@@ -174,6 +176,9 @@ class PolarsCloudBackend:
     """
 
     protocol_version = PROTOCOL_VERSION
+    native_credentials = True
+    """A read core builds for this backend names no Python credential provider (``NATIVE_CREDENTIALS``): the cluster's
+    native chain finds its own identity, and a provider pickled under core's Python would not load on the cluster's."""
 
     def __init__(self, backend_id: str, settings: Mapping[str, Any], *, connect: ContextFactory | None = None) -> None:
         if not settings.get("scheduler_url"):
@@ -262,7 +267,7 @@ class PolarsCloudBackend:
         else:
             schema, sample = self._show(plan, 0).schema, None
         if store is not None:
-            held = pl.scan_parquet(uri, schema=schema, storage_options=options)
+            held = pl.scan_parquet(uri, schema=schema, storage_options=options, credential_provider=None)
         with self._lock:
             self._results[result_id] = held
         ref = ResultRef(
@@ -329,7 +334,9 @@ class PolarsCloudBackend:
             raise ValueError("A table import needs its schema: it is the caller's, never read from the file")
         polars_schema = pl.Schema({column.column_name: safe_eval_pl_type(column.data_type) for column in schema})
         result_id = f"import_{uuid.uuid4().hex}"
-        scan = pl.scan_parquet(uri, schema=polars_schema, storage_options=_plain_options(credential))
+        scan = pl.scan_parquet(
+            uri, schema=polars_schema, storage_options=_plain_options(credential), credential_provider=None
+        )
         with self._lock:
             self._results[result_id] = scan
         return ResultRef(
@@ -378,7 +385,11 @@ class PolarsCloudBackend:
 
     def _sink(self, plan: pl.LazyFrame, uri: str, options: dict[str, str], kind: str) -> int | None:
         def sink() -> int | None:
-            query = plan.remote(self._ctx()).single_node().sink_parquet(uri, storage_options=options or None)
+            query = (
+                plan.remote(self._ctx())
+                .single_node()
+                .sink_parquet(uri, storage_options=options or None, credential_provider=None)
+            )
             return query.await_result(silent=True).n_rows_total
 
         return self._run(kind, sink)

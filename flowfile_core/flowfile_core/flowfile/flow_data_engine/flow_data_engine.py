@@ -32,6 +32,7 @@ from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine import utils
 from flowfile_core.flowfile.flow_data_engine.bounded import _deferred, count_rows, single_row, unique_values
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import (
+    NATIVE_CREDENTIALS,
     CloudStorageReader,
     ensure_path_has_wildcard_pattern,
     get_first_file_from_cloud_dir,
@@ -523,7 +524,10 @@ class FlowDataEngine:
         (``EncryptedCredentialProvider``), or with the compute protocol flag on as a reference to the stored
         connection that the executing process resolves (``CredentialRefProvider``). With the flag on, an ``aws-cli``
         read with no saved connection carries no credential and no provider, so Polars' default provider resolves the
-        default credential chain of whichever process runs the plan.
+        default credential chain of whichever process runs the plan. A read with no provider of its own for a backend
+        whose ``native_credentials`` is set (a Polars cluster) gets ``credential_provider=None`` instead
+        (``NATIVE_CREDENTIALS``): its plan holds no pickled Python provider, and the cluster's native chain finds its
+        own identity.
 
         Given a ``backend``, the scan is held there as a deferred result with no preview while the reference's schema
         is read, then released, and the engine takes that schema: the backend resolves the read's connection, and core
@@ -557,6 +561,8 @@ class FlowDataEngine:
             storage_options, credential_provider = CloudStorageReader.get_read_credentials(connection, user_id)
         use_pyarrow = CloudStorageReader.use_pyarrow_for_gcs(connection) and not FLOWFILE_COMPUTE_PROTOCOL
         backend = None if use_pyarrow else backend
+        if credential_provider is None and getattr(backend, "native_credentials", False):
+            credential_provider = NATIVE_CREDENTIALS
         if read_settings.file_format == "parquet":
             return cls._read_parquet_from_cloud(
                 read_settings.resource_path,

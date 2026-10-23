@@ -36,9 +36,16 @@ from flowfile_core.flowfile.execution.errors import (
 from flowfile_core.flowfile.execution.exchange import ExchangeStore
 from flowfile_core.flowfile.execution.placement import SingleBackendPolicy, place
 from flowfile_core.flowfile.execution.protocol import CredentialRef, OperationKind, SubmitHints
+from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import NATIVE_CREDENTIALS, CloudStorageReader
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import input_schema, transform_schema
+from flowfile_core.schemas.cloud_storage_schemas import (
+    CloudStorageReadSettings,
+    CloudStorageReadSettingsInternal,
+    FullCloudStorageConnection,
+)
 from shared.compute_protocol import local_capabilities
 from tests.flowfile.conftest import create_test_graph
 from tests.flowfile.execution.test_placement import add_cloud_reader, add_manual_input, add_promise, connect, fuzzy_flow
@@ -68,7 +75,8 @@ class FakeRemote:
     def single_node(self) -> "FakeRemote":
         return self
 
-    def sink_parquet(self, uri: str, *, storage_options=None):
+    def sink_parquet(self, uri: str, *, storage_options=None, credential_provider="auto"):
+        assert credential_provider is None, "a sink would carry a Python credential provider to the cluster"
         self.cluster.record(("sink", uri, storage_options))
         path = self.cluster.local_path(uri)
         self.plan.sink_parquet(path)
@@ -245,6 +253,7 @@ def test_a_cached_result_is_sunk_to_the_exchange_store_with_plain_options_and_he
     assert held is not ROWS
     assert uri.encode() in held.serialize()
     assert b"AKIA-NOT-FOR-PLANS" not in held.serialize()
+    assert b"CredentialProvider" not in held.serialize()
     assert backend.count(result.ref) == 3
     assert store == []
 
@@ -485,3 +494,33 @@ def test_a_public_address_is_refused_tls_or_not(url):
     assert refusal is not None
     assert "is neither loopback nor in a private range" in refusal
     assert "no client authentication" in refusal
+
+
+def test_a_cloud_read_built_for_the_cluster_carries_no_python_credential_provider(backend, monkeypatch):
+    """A provider pickled under core's Python would not load on the cluster's; the cluster finds its own identity."""
+    chosen: list = []
+    monkeypatch.setattr(
+        FlowDataEngine,
+        "_read_parquet_from_cloud",
+        classmethod(lambda cls, path, options, provider, *a, **k: chosen.append(provider)),
+    )
+    connection = FullCloudStorageConnection(
+        storage_type="s3",
+        auth_method="env_vars",
+        connection_name="ambient",
+        aws_region="nbg1",
+        endpoint_url=PLAIN["endpoint_url"],
+    )
+    settings = CloudStorageReadSettingsInternal(
+        read_settings=CloudStorageReadSettings(resource_path="s3://source/data.parquet", file_format="parquet"),
+        connection=connection,
+    )
+
+    FlowDataEngine.from_cloud_storage_obj(settings, user_id=1, backend=backend)
+    FlowDataEngine.from_cloud_storage_obj(settings, user_id=1, backend=None)
+
+    assert chosen == [NATIVE_CREDENTIALS, None]
+    kwargs = CloudStorageReader.get_scan_kwargs(PLAIN, NATIVE_CREDENTIALS)
+    assert kwargs == {"credential_provider": None, "storage_options": PLAIN}
+    assert b"CredentialProvider" not in pl.scan_parquet("s3://source/data.parquet", **kwargs).serialize()
+    assert b"CredentialProvider" in pl.scan_parquet("s3://source/data.parquet", storage_options=PLAIN).serialize()
