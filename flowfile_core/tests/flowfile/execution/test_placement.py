@@ -21,6 +21,7 @@ compute error that failed a node on that node's row, in both flag states, and ``
 import importlib.metadata
 import threading
 import uuid
+from types import SimpleNamespace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -36,7 +37,15 @@ from flowfile_core.flowfile.database_connection_manager import db_connections
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, VersionMismatch
-from flowfile_core.flowfile.execution.placement import Placement, Refusal, SingleBackendPolicy, _catalog_target, place
+from flowfile_core.flowfile.execution.placement import (
+    MixedPlacementPolicy,
+    Placement,
+    Refusal,
+    SingleBackendPolicy,
+    _catalog_target,
+    place,
+    remedy_for,
+)
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
@@ -50,6 +59,16 @@ from tests.flowfile.conftest import add_test_catalog_writer, create_test_namespa
 from tests.test_catalog_cloud_virtual import _create_cloud_schema, _ensure_connection
 
 BACKEND_ID = "declaring"
+FLOW_REMEDY = "To run it elsewhere, set the flow's Execution location under Flow Settings."
+OWN_REMEDY = "To run it elsewhere, set its Compute backend under General Settings."
+AUTO_REMEDY = (
+    "To run it elsewhere, set its Compute backend under General Settings, "
+    "or the flow's Execution location under Flow Settings."
+)
+OWN_WITHOUT_STORE_REMEDY = (
+    "To run it elsewhere, set the flow's Execution location under Flow Settings; "
+    "a node's own Compute backend applies only when an exchange store is configured."
+)
 LOCAL_DISK = 'namespace "TestCat.TestSch" is on local disk; remote execution needs an object-storage namespace'
 
 
@@ -787,6 +806,23 @@ def test_a_node_a_version_mismatch_failed_carries_the_error_s_class_on_its_row(p
     assert run_info.success is False
 
 
+@pytest.mark.parametrize(
+    "policy, node_type, location, remedy",
+    [
+        (SingleBackendPolicy(BACKEND_ID), "filter", "auto", FLOW_REMEDY),
+        (SingleBackendPolicy(BACKEND_ID), "filter", "local", OWN_WITHOUT_STORE_REMEDY),
+        (MixedPlacementPolicy(BACKEND_ID), "filter", "auto", AUTO_REMEDY),
+        (MixedPlacementPolicy(BACKEND_ID), "filter", "local", OWN_REMEDY),
+        (MixedPlacementPolicy(BACKEND_ID), "google_analytics_reader", "auto", None),
+    ],
+    ids=["no-store-auto", "no-store-own", "store-auto", "store-own", "pinned"],
+)
+def test_a_refusal_names_the_setting_that_moves_its_node(policy, node_type, location, remedy):
+    node = SimpleNamespace(node_type=node_type, setting_input=SimpleNamespace(execution_location=location))
+
+    assert remedy_for(node, policy) == remedy
+
+
 def test_a_version_mismatch_refuses_every_node_of_the_backend_before_any_starts(protocol_on, declare):
     backend = declare(VersionMismatch("polars_version: core 1, worker 2"))
     graph = fuzzy_flow(8414)
@@ -796,7 +832,7 @@ def test_a_version_mismatch_refuses_every_node_of_the_backend_before_any_starts(
     results = {result.node_id: result for result in run_info.node_step_result}
     assert results.keys() == {1, 2, 3}, results
     for result in results.values():
-        assert result.error == 'cannot run on backend "declaring": polars_version: core 1, worker 2', result.error
+        assert result.error == f'cannot run on backend "declaring": polars_version: core 1, worker 2. {FLOW_REMEDY}'
         assert result.compute_error == "Refusal"
     assert run_info.success is False
     assert backend.work == []

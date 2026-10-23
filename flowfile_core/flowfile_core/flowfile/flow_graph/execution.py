@@ -34,6 +34,7 @@ from flowfile_core.flowfile.execution.placement import (
     Refusal,
     SingleBackendPolicy,
     place,
+    remedy_for,
 )
 from flowfile_core.flowfile.execution.protocol import CredentialRef, ResultRef
 from flowfile_core.flowfile.flow_data_engine.bounded import DEFERRED_HINTS, head_rows
@@ -1056,7 +1057,7 @@ class ExecutionMixin(GraphMixinBase):
         an edge whose output core knows before the run to hold more rows than ``FLOWFILE_EXCHANGE_MAX_ROWS``
         (``BoundaryEdge.cost``), the message naming the rows, the columns and the limit, and a limit that is not a whole
         number; an edge whose count core does not know crosses whatever its size. A node is refused once, for the first
-        of its crossings refused.
+        of its crossings refused. Every refusal carries the settings that move its node elsewhere (``remedy_for``).
         """
         if not settings.FLOWFILE_COMPUTE_PROTOCOL:
             return None, []
@@ -1137,13 +1138,26 @@ class ExecutionMixin(GraphMixinBase):
                     edges.append(edge)
         if crossing_refusals:
             placement = replace(placement, refusals=[*placement.refusals, *crossing_refusals.values()])
+        if placement.refusals:
+            placement = replace(
+                placement,
+                refusals=[
+                    replace(refusal, remedy=remedy_for(self.get_node(refusal.node_id), policy))
+                    for refusal in placement.refusals
+                ],
+            )
         return placement, edges
 
     def _record_refusals(self, refusals: list[Refusal]) -> None:
-        """Record each refused node as a failed result of the run, which starts no node; called single-threaded."""
+        """Record each refused node as a failed result of the run, which starts no node; called single-threaded.
+
+        The node's error is ``cannot run on backend "<id>": <reason>``, then its remedy as a sentence when it has one.
+        """
         for refusal in refusals:
             node = self.get_node(refusal.node_id)
             error = f'cannot run on backend "{refusal.backend_id}": {refusal.reason}'
+            if refusal.remedy:
+                error += f"{'' if error.endswith('.') else '.'} {refusal.remedy}"
             self.flow_logger.get_node_logger(node.node_id).error(error)
             node_result = NodeResult(
                 node_id=node.node_id,
