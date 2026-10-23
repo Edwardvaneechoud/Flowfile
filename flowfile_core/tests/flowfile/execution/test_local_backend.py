@@ -18,6 +18,7 @@ import os
 import socket
 import sqlite3
 import uuid
+from pathlib import Path
 
 import polars as pl
 import pytest
@@ -263,7 +264,8 @@ def test_a_required_submit_is_a_file_under_the_cache_directory_and_the_sample_co
         assert submitted.sample is None
     else:
         assert rows(submitted.sample)["n"].to_list() == [0, 1, 2, 3]
-    assert held.path in backend.plan_for(ref).explain()
+    # Polars prints a Windows path with forward slashes.
+    assert Path(held.path).as_posix() in backend.plan_for(ref).explain()
     assert backend.count(ref) == 10
 
 
