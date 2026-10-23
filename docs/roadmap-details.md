@@ -70,8 +70,8 @@ something shipped · dimmed cards are planned.
 
 The diagram marks two gaps. Code export still has coverage gaps, including
 Google Analytics and API response nodes. A worker runs on its own host
-without a shared filesystem, but a flow with kernel nodes still runs on
-core's host, where the kernels read their inputs. Both need fixing.
+without a shared filesystem, but a kernel node still runs on core's host,
+where the kernel reads its inputs. Both need fixing.
 
 ## Implementation notes
 
@@ -120,15 +120,17 @@ replaced the local-or-remote branches, backends are entry-point plugins,
 and a flow that cannot run on its backend is refused before it starts,
 with the reason. CI runs a database read, a model trained and applied on
 the worker, and a catalog write with core and worker sharing no volume.
+With an exchange store configured, one flow's nodes run on different
+backends, each on the backend its own setting names, and data crosses
+between them through the store.
 [Remote workers](users/deployment/remote-worker.md) lists what a worker on
 another host needs; the [compute protocol](for-developers/compute-protocol.md)
 is the design.
 
-Flows with kernel nodes still run on core's host, because a kernel reads
-its inputs from a volume there. Next, one flow's nodes should run on two
-backends, with data crossing through an exchange store. That lets a flow
-with kernel nodes use a remote worker too, and makes room for Polars Cloud
-and kernels on a remote Docker host.
+A kernel node still runs on core's host, because a kernel reads its inputs
+from a volume there; the rest of its flow can use a remote worker. Next come
+Polars Cloud and kernels on a remote Docker host, under
+[Later options](#later-options).
 
 ### Open formats and catalogs
 
