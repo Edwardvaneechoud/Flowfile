@@ -7,13 +7,14 @@ worker does not declare local files. The flow reads the table, adds a column wit
 worker, scores with the model the worker holds, publishes the model to the artifact store and writes the scores to the
 catalog. The artifact store reaches MinIO through an HTTPS forwarder with a certificate made per run, because the URLs
 it presigns for the worker are ``https`` ones. The secrets and the certificate reach the services through the
-environment only. Core is configured with an exchange store on MinIO. A second flow puts one node on the worker and the
-rest on ``local``: with the protocol flag on, core, which serves, refuses every node on ``local`` before any node runs,
-and with the flag off the flow runs in core; its flag-off case recreates core, which is why it comes last. The
-elaborate integration flow (``complex_flow.json``, its outputs written to MinIO) runs whole on the worker, and with its
-nodes alternating between the worker and ``local`` is refused the same way. Data crossing between two backends needs a
-process that does not serve, as ``flowfile_core/tests/flowfile/execution/test_mixed_placement.py`` runs it. A scheduled
-run's child computes on the worker embedded in it, inside core's container, while the worker container serves nothing.
+environment only. Core is configured with an exchange store on MinIO. A second flow, one node on the worker, is posted
+onto ``local`` through its settings: with the protocol flag on, core, which serves, saves it as ``auto`` and the flow
+runs on the worker, and with the flag off it stays on ``local`` and runs in core; its flag-off case recreates core,
+which is why it comes last. The elaborate integration flow (``complex_flow.json``, its outputs written to MinIO) runs
+whole on the worker, and with its nodes alternating between the worker and ``local`` is refused before any node runs,
+core refusing every node on ``local``. Data crossing between two backends needs a process that does not serve, as
+``flowfile_core/tests/flowfile/execution/test_mixed_placement.py`` runs it. A scheduled run's child computes on the
+worker embedded in it, inside core's container, while the worker container serves nothing.
 """
 
 from __future__ import annotations
@@ -622,7 +623,7 @@ def test_the_elaborate_flow_with_its_nodes_alternating_between_worker_and_local_
 
 
 @pytest.mark.parametrize("protocol", ["1", "0"], ids=["flag-on", "flag-off"])
-def test_a_flow_with_one_node_on_the_worker_and_the_rest_on_local_is_refused_unless_the_flag_is_off(
+def test_a_flow_moved_onto_local_with_one_node_on_the_worker_runs_on_the_worker_unless_the_flag_is_off(
     stack, exchange, protocol
 ):
     stack = _core_with_protocol(stack, protocol)
@@ -631,12 +632,11 @@ def test_a_flow_with_one_node_on_the_worker_and_the_rest_on_local_is_refused_unl
     settings = stack.http.get(f"{stack.core}/flow_settings", params={"flow_id": flow_id}).json()
     response = stack.http.post(f"{stack.core}/flow_settings", json={**settings, "execution_location": "local"})
     assert response.status_code == 200, response.text
+    saved = stack.http.get(f"{stack.core}/flow_settings", params={"flow_id": flow_id}).json()
+    assert saved["execution_location"] == ("auto" if protocol == "1" else "local")
 
     run = _run(stack, flow_id)
 
-    if protocol == "1":
-        _assert_refused_before_any_node(stack, run, flow_id, [1, 3])
-        return
     failures = {result["node_id"]: result["error"] for result in run["node_step_result"] if not result["success"]}
     assert run["success"] is True and not failures, f"{failures}\n{_logs()}"
     assert run["nodes_completed"] == 3
@@ -647,5 +647,9 @@ def test_a_flow_with_one_node_on_the_worker_and_the_rest_on_local_is_refused_unl
     assert run["boundaries"] == []
     versions = stack.minio.list_object_versions(Bucket=EXCHANGE_BUCKET, Prefix=f"runs/{flow_id}/")
     assert "Versions" not in versions and "DeleteMarkers" not in versions, versions
-    worker_cache = f"/app/internal_storage/cache/{flow_id}/"
-    assert [path for path in _cache_files("flowfile-worker") if path.startswith(worker_cache)] == []
+    if protocol == "1":
+        core_cache = f"/app/internal_storage/cache/local/{flow_id}/"
+        assert [path for path in _cache_files("flowfile-core") if path.startswith(core_cache)] == []
+    else:
+        worker_cache = f"/app/internal_storage/cache/{flow_id}/"
+        assert [path for path in _cache_files("flowfile-worker") if path.startswith(worker_cache)] == []

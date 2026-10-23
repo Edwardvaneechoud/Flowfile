@@ -2737,9 +2737,13 @@ def update_flow_settings(flow_settings: schemas.FlowSettings, current_user=Depen
     tracking stay server-owned: renames, saves and runs have their own routes, and the
     settings form posts back whatever copy it last fetched. Flow settings are outside
     the undo scope, so this records no step; it runs as a transaction to serialize with
-    graph edits and refresh the dirty flag.
+    graph edits and refresh the dirty flag. In a process that serves, the execution location
+    is stored as a file saved with it opens (``schemas.loaded_execution_location``): a posted
+    ``local`` or ``remote`` is ``auto`` with ``FLOWFILE_COMPUTE_PROTOCOL`` on.
     """
     flow = get_flow_or_404(flow_settings.flow_id, current_user)
+    if compute_registry.serving():
+        flow_settings.execution_location = schemas.loaded_execution_location(flow_settings.execution_location)
     with flow.transaction("Update flow settings"):
         live = flow.flow_settings
         server_owned = {field: getattr(live, field) for field in _SERVER_OWNED_FLOW_SETTINGS}

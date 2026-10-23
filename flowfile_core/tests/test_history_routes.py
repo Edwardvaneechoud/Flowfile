@@ -16,7 +16,9 @@ from fastapi.testclient import TestClient
 
 from flowfile_core import flow_file_handler, main
 from flowfile_core.configs import node_store
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.flowfile import flow_graph as flow_graph_module
+from flowfile_core.flowfile.execution import registry as compute_registry
 from flowfile_core.flowfile.node_designer import CustomNodeBase, NodeSettings, Section, TextInput
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from tests.flowfile.history_graphs import edge_bookkeeping_errors, in_scope
@@ -706,6 +708,29 @@ class TestServerOwnedState:
         assert (live.name, live.path, live.source_registration_id) == ("history_routes_9240", "/tmp/owned.yaml", 77)
         assert (live.show_edge_labels, live.execution_mode) == (True, "Performance")
         live.is_running = False
+
+    @pytest.mark.parametrize("posted", ["local", "remote"])
+    @pytest.mark.parametrize("serving", [True, False], ids=["serving", "not-serving"])
+    @pytest.mark.parametrize("flag", [True, False], ids=["flag-on", "flag-off"])
+    def test_flow_settings_post_of_a_legacy_location_is_saved_as_auto_in_a_serving_core(
+        self, monkeypatch, flag, serving, posted
+    ):
+        """A serving core with the protocol on stores a posted ``local`` or ``remote`` as a saved file opens, ``auto``;
+        with the flag off, or in a process that does not serve, the location is the one the body validates to."""
+        monkeypatch.setattr(FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+        monkeypatch.setattr(compute_registry, "_serving", serving)
+        api = new_flow(9245)
+        body = api.flow_settings()
+        body.pop("has_unsaved_changes", None)
+        body.pop("display_name", None)
+        body["execution_location"] = posted
+        validated = schemas.FlowSettings.model_validate(body).execution_location
+        expected = "auto" if flag and serving else validated
+
+        assert client.post("/flow_settings", json=body).status_code == 200
+
+        assert api.flow.flow_settings.execution_location == expected
+        assert api.flow_settings()["execution_location"] == expected
 
     def test_delete_connection_on_a_missing_right_input_is_rejected(self):
         api = new_flow(9241)
