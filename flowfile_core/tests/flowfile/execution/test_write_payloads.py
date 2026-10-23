@@ -1,13 +1,16 @@
 """The write operations take one payload dataclass under ``"payload"``, and both backends unpack the same one.
 
-The worker side is checked at the fetcher boundary: the fetchers are replaced by recorders, so these tests show
-what each payload becomes on its way to the worker without one running. The embedded worker's side writes for real
-where the target is the local disk, and records what the worker's writer receives where it would need object storage.
+The worker side is checked at the fetcher boundary on the task routes and at the request boundary on ``/v1``: the
+fetchers, or the backend's ``/v1`` request, are replaced by recorders, so these tests show what each payload becomes on
+its way to the worker without one running; a file and a database write also run for real over ``/v1`` on the session
+worker. The embedded worker's side writes for real where the target is the local disk, and records what the worker's
+writer receives where it would need object storage.
 """
 
 import base64
 import dataclasses
 import io
+import json
 import shutil
 import sqlite3
 import uuid
@@ -16,6 +19,7 @@ import polars as pl
 import pytest
 from pydantic import SecretStr
 
+from flowfile_core.configs import settings as core_settings
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import worker as worker_module
@@ -172,6 +176,45 @@ def built(monkeypatch) -> list[RecordingFetcher]:
     return fetchers
 
 
+@pytest.fixture
+def task_routes(monkeypatch):
+    """The protocol flag off, so the worker backend sends the writes to the worker's task routes."""
+    monkeypatch.setattr(core_settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
+
+
+@pytest.fixture
+def protocol_on(monkeypatch):
+    monkeypatch.setattr(core_settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
+
+
+class V1Recorder:
+    """Stands in for the worker backend's ``/v1`` request: keeps each one and answers it as a write is answered."""
+
+    def __init__(self):
+        self.sent: list[dict] = []
+        self.on_op = None
+
+    def request(self, method: str, path: str, **kwargs):
+        self.sent.append({"method": method, "path": path, **kwargs})
+        if path.startswith("/ops/") and self.on_op is not None:
+            self.on_op()
+        return self
+
+    def json(self) -> dict:
+        return {"outputs": {}, "metadata": {}}
+
+
+@pytest.fixture
+def v1_sent(monkeypatch, protocol_on) -> V1Recorder:
+    """The ``/v1`` requests the worker backend sent, in order; no worker is contacted."""
+    recorder = V1Recorder()
+    monkeypatch.setattr(
+        WorkerBackend, "_v1", lambda backend, method, path, **kwargs: recorder.request(method, path, **kwargs)
+    )
+    return recorder
+
+
+@pytest.mark.usefixtures("task_routes")
 def test_the_worker_backend_sends_a_file_write_to_the_output_writer(built, tmp_path):
     settings = csv_settings(tmp_path, delimiter=";")
     write = FileWritePayload(plan=ROWS.lazy(), settings=settings, flow_id=7, node_id=3)
@@ -195,7 +238,7 @@ def test_the_worker_backend_sends_a_file_write_to_the_output_writer(built, tmp_p
     assert result == OpResult(refs={})
 
 
-def test_the_worker_backend_sends_a_referenced_database_write_with_the_stored_ciphertext(built):
+def referenced_database_write() -> DatabaseWritePayload:
     ciphertext = encrypt_secret("db-password", USER_ID)
     stored = input_schema.FullDatabaseConnection(
         connection_name="warehouse",
@@ -214,7 +257,7 @@ def test_the_worker_backend_sends_a_referenced_database_write_with_the_stored_ci
             connection_mode="reference", database_connection_name="warehouse", table_name="people", if_exists="replace"
         ),
     )
-    write = DatabaseWritePayload(
+    return DatabaseWritePayload(
         plan=ROWS.lazy(),
         settings=node_settings,
         connection=stored,
@@ -223,6 +266,21 @@ def test_the_worker_backend_sends_a_referenced_database_write_with_the_stored_ci
         flow_id=7,
         node_id=3,
     )
+
+
+def cloud_write() -> CloudWritePayload:
+    return CloudWritePayload(
+        plan=ROWS.lazy(),
+        settings=CloudStorageWriteSettings(resource_path="s3://bucket/people.parquet", file_format="parquet"),
+        connection=s3_connection().get_worker_interface(USER_ID),
+        flow_id=7,
+        node_id=3,
+    )
+
+
+@pytest.mark.usefixtures("task_routes")
+def test_the_worker_backend_sends_a_referenced_database_write_with_the_stored_ciphertext(built):
+    write = referenced_database_write()
 
     WorkerBackend(url=WORKER_URL).run_op(OperationKind.database_write, op_payload(write))
 
@@ -234,20 +292,15 @@ def test_the_worker_backend_sends_a_referenced_database_write_with_the_stored_ci
         "loader",
         "analytics",
     )
-    assert sent.connection.password == ciphertext
+    assert sent.connection.password == write.encrypted_password
     assert (sent.table_name, sent.if_exists) == ("public.people", "replace")
     assert (sent.flowfile_flow_id, sent.flowfile_node_id) == (7, 3)
     assert pl.LazyFrame.deserialize(io.BytesIO(sent.operation)).collect().equals(ROWS)
 
 
+@pytest.mark.usefixtures("task_routes")
 def test_the_worker_backend_sends_a_cloud_write_with_its_secrets_still_encrypted(built):
-    write = CloudWritePayload(
-        plan=ROWS.lazy(),
-        settings=CloudStorageWriteSettings(resource_path="s3://bucket/people.parquet", file_format="parquet"),
-        connection=s3_connection().get_worker_interface(USER_ID),
-        flow_id=7,
-        node_id=3,
-    )
+    write = cloud_write()
 
     WorkerBackend(url=WORKER_URL).run_op(OperationKind.cloud_write, op_payload(write))
 
@@ -259,6 +312,95 @@ def test_the_worker_backend_sends_a_cloud_write_with_its_secrets_still_encrypted
     assert sent.write_settings.resource_path == "s3://bucket/people.parquet"
     assert (sent.flowfile_flow_id, sent.flowfile_node_id) == (7, 3)
     assert pl.LazyFrame.deserialize(io.BytesIO(base64.b64decode(sent.operation))).collect().equals(ROWS)
+
+
+def test_the_worker_backend_posts_a_file_write_to_its_v1_route(v1_sent, built, tmp_path):
+    settings = csv_settings(tmp_path, delimiter=";")
+    write = FileWritePayload(plan=ROWS.lazy(), settings=settings, flow_id=7, node_id=3)
+
+    result = WorkerBackend(url=WORKER_URL).run_op(OperationKind.file_write, op_payload(write))
+
+    (request,) = v1_sent.sent
+    assert (request["method"], request["path"], request["params"]) == (
+        "POST",
+        "/ops/file_write",
+        {"job_id": write.job_id},
+    )
+    body = request["json"]
+    assert pl.LazyFrame.deserialize(io.BytesIO(base64.b64decode(body.pop("operation")))).collect().equals(ROWS)
+    assert body == {
+        "data_type": "csv",
+        "path": settings.abs_file_path,
+        "write_mode": "overwrite",
+        "sheet_name": None,
+        "delimiter": ";",
+        "compression": None,
+        "flowfile_flow_id": 7,
+        "flowfile_node_id": 3,
+    }
+    assert result == OpResult(refs={})
+    assert built == []
+
+
+def test_the_worker_backend_posts_a_referenced_database_write_with_the_stored_ciphertext(v1_sent, built):
+    write = referenced_database_write()
+
+    WorkerBackend(url=WORKER_URL).run_op(OperationKind.database_write, op_payload(write))
+
+    (request,) = v1_sent.sent
+    assert (request["path"], request["params"]) == ("/ops/database_write", {"job_id": write.job_id})
+    sent = DatabaseExternalWriteSettings.model_validate_json(json.dumps(request["json"]))
+    assert (sent.connection.host, sent.connection.username, sent.connection.database) == (
+        "db.internal",
+        "loader",
+        "analytics",
+    )
+    assert sent.connection.password == write.encrypted_password
+    assert (sent.table_name, sent.if_exists) == ("public.people", "replace")
+    assert (sent.flowfile_flow_id, sent.flowfile_node_id) == (7, 3)
+    assert pl.LazyFrame.deserialize(io.BytesIO(sent.operation)).collect().equals(ROWS)
+    assert "db-password" not in json.dumps(request["json"])
+    assert built == []
+
+
+def test_the_worker_backend_posts_a_cloud_write_with_its_secrets_still_encrypted(v1_sent, built):
+    write = cloud_write()
+
+    WorkerBackend(url=WORKER_URL).run_op(OperationKind.cloud_write, op_payload(write))
+
+    (request,) = v1_sent.sent
+    assert (request["path"], request["params"]) == ("/ops/cloud_write", {"job_id": write.job_id})
+    body = request["json"]
+    assert body["connection"] == write.connection.model_dump(mode="json")
+    assert body["connection"]["aws_secret_access_key"].startswith("$ffsec$")
+    assert body["write_settings"]["resource_path"] == "s3://bucket/people.parquet"
+    assert (body["flowfile_flow_id"], body["flowfile_node_id"]) == (7, 3)
+    assert pl.LazyFrame.deserialize(io.BytesIO(base64.b64decode(body["operation"]))).collect().equals(ROWS)
+    assert SECRET not in json.dumps(body)
+    assert built == []
+
+
+@pytest.mark.usefixtures("protocol_on")
+def test_the_session_worker_writes_a_file_over_its_v1_route(tmp_path):
+    write = FileWritePayload(plan=ROWS.lazy(), settings=csv_settings(tmp_path, delimiter=";"), flow_id=7, node_id=3)
+    backend = WorkerBackend(url=WORKER_URL)
+
+    result = backend.run_op(OperationKind.file_write, op_payload(write))
+
+    assert result == OpResult(refs={})
+    assert pl.read_csv(tmp_path / "people.csv", separator=";").equals(ROWS)
+    assert backend.status(JobHandle(backend.id, write.job_id)).state == "done"
+
+
+@pytest.mark.usefixtures("protocol_on")
+def test_the_session_worker_writes_a_database_table_over_its_v1_route(tmp_path):
+    write = sqlite_write(tmp_path / "people.db")
+
+    result = WorkerBackend(url=WORKER_URL).run_op(OperationKind.database_write, op_payload(write))
+
+    assert result == OpResult(refs={})
+    with sqlite3.connect(tmp_path / "people.db") as db:
+        assert db.execute("SELECT id, name FROM people ORDER BY id").fetchall() == list(ROWS.iter_rows())
 
 
 @pytest.mark.parametrize("with_connection", [True, False], ids=["object-storage", "local-table"])
@@ -388,8 +530,7 @@ def test_the_embedded_worker_writes_a_file_with_the_payload_settings(tmp_path):
     assert pl.read_csv(tmp_path / "people.csv", separator=";").equals(ROWS)
 
 
-def test_the_embedded_worker_writes_a_database_table(tmp_path):
-    database = tmp_path / "people.db"
+def sqlite_write(database) -> DatabaseWritePayload:
     connection = input_schema.DatabaseConnection(database_type="sqlite", database=f"sqlite:///{database}")
     node_settings = input_schema.NodeDatabaseWriter(
         flow_id=1,
@@ -399,7 +540,7 @@ def test_the_embedded_worker_writes_a_database_table(tmp_path):
             database_connection=connection, table_name="people", if_exists="replace"
         ),
     )
-    write = DatabaseWritePayload(
+    return DatabaseWritePayload(
         plan=ROWS.lazy(),
         settings=node_settings,
         connection=connection,
@@ -409,7 +550,14 @@ def test_the_embedded_worker_writes_a_database_table(tmp_path):
         node_id=2,
     )
 
-    EmbeddedWorkerBackend().run_op(OperationKind.database_write, op_payload(write))
+
+def test_the_embedded_worker_writes_a_database_table(tmp_path):
+    database = tmp_path / "people.db"
+    write = sqlite_write(database)
+
+    result = EmbeddedWorkerBackend().run_op(OperationKind.database_write, op_payload(write))
+
+    assert result == OpResult(refs={})
 
     with sqlite3.connect(database) as db:
         assert db.execute("SELECT id, name FROM people ORDER BY id").fetchall() == list(ROWS.iter_rows())
@@ -534,6 +682,7 @@ def node():
     return graph.get_node(1)
 
 
+@pytest.mark.usefixtures("task_routes")
 def test_cancelling_a_node_reaches_the_write_it_is_waiting_on(node, built, tmp_path, monkeypatch):
     backend = registry.backend(worker_module.WORKER_BACKEND_ID)
     write = FileWritePayload(plan=ROWS.lazy(), settings=csv_settings(tmp_path), flow_id=91, node_id=1)
@@ -550,6 +699,26 @@ def test_cancelling_a_node_reaches_the_write_it_is_waiting_on(node, built, tmp_p
     (fetcher,) = built
     assert seen == [JobHandle(backend.id, write.job_id)]
     assert fetcher.cancelled
+    assert node._submit_in_flight is None
+
+
+def test_cancelling_a_node_reaches_the_v1_write_job_it_is_waiting_on(node, v1_sent, tmp_path):
+    backend = registry.backend(worker_module.WORKER_BACKEND_ID)
+    write = FileWritePayload(plan=ROWS.lazy(), settings=csv_settings(tmp_path), flow_id=91, node_id=1)
+    seen = []
+
+    def cancel_while_waiting():
+        seen.append(node._submit_in_flight)
+        node.cancel()
+
+    v1_sent.on_op = cancel_while_waiting
+
+    node.run_op(backend, OperationKind.file_write, op_payload(write), job_id=write.job_id)
+
+    write_request, cancel_request = v1_sent.sent
+    assert write_request["path"] == "/ops/file_write"
+    assert (cancel_request["method"], cancel_request["path"]) == ("POST", f"/jobs/{write.job_id}/cancel")
+    assert seen == [JobHandle(backend.id, write.job_id)]
     assert node._submit_in_flight is None
 
 
