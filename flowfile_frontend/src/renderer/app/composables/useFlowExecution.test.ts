@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   notify: vi.fn(),
   getFlowSettings: vi.fn(),
   nodeState: {
+    flow_id: 1,
     nodeId: -1,
     vueFlowInstance: null,
     resetNodeResult: vi.fn(),
@@ -36,7 +37,7 @@ vi.mock("../stores/node-store", () => ({ useNodeStore: () => mocks.nodeState }))
 vi.mock("../stores/results-store", () => ({ useResultsStore: () => ({}) }));
 vi.mock("../stores/tutorial-store", () => ({ useTutorialStore: () => ({ notify: vi.fn() }) }));
 
-import { ref } from "vue";
+import { onUnmounted, ref } from "vue";
 import { useEditorStore } from "../stores/editor-store";
 import { useFlowSyncStore } from "../stores/flow-sync-store";
 import { useFlowExecution } from "./useFlowExecution";
@@ -65,6 +66,7 @@ describe("useFlowExecution.runFlow", () => {
     vi.useFakeTimers();
     setActivePinia(createPinia());
     mocks.calls.length = 0;
+    mocks.nodeState.flow_id = 1;
     mocks.nodeState.nodeId = -1;
     mocks.getFlowSettings.mockImplementation(async () => {
       mocks.calls.push("settings");
@@ -178,6 +180,30 @@ describe("useFlowExecution.runFlow", () => {
     expect(mocks.calls).toEqual(["settings", "/flow/run/"]);
   });
 
+  it("does not update another selected flow after its run button unmounts", async () => {
+    const props = { flowId: 1 };
+    const editor = useEditorStore();
+    const execution = useFlowExecution(() => props.flowId, undefined, { persistPolling: true });
+    mocks.get.mockResolvedValue({
+      status: 200,
+      data: { flow_id: 1, success: true, node_step_result: [] },
+    });
+
+    await execution.runFlow();
+    vi.mocked(onUnmounted).mock.calls.forEach(([cleanup]) => cleanup());
+    mocks.nodeState.flow_id = 2;
+    editor.isRunning = true;
+    mocks.notify.mockClear();
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(editor.isRunning).toBe(true);
+    expect(mocks.nodeState.insertRunResult).not.toHaveBeenCalled();
+    expect(editor.showFlowResult).toBe(false);
+    expect(editor.isShowingLogViewer).toBe(false);
+    expect(mocks.notify).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("keeps running until cancellation returns the terminal node results", async () => {
     const running = { flow_id: 1, node_step_result: [{ node_id: 3, is_running: true }] };
     const cancelled = {
@@ -210,6 +236,40 @@ describe("useFlowExecution.runFlow", () => {
     expect(editor.isRunning).toBe(false);
     expect(execution.isCancelling.value).toBe(false);
     expect(execution.isPollingActive()).toBe(false);
+  });
+
+  it.each([200, 202])("keeps panel focus when cancellation first returns %s", async (status) => {
+    const editor = useEditorStore();
+    const onComplete = vi.fn();
+    const panel = useFlowExecution(1, undefined, {
+      persistPolling: true,
+      pollingKey: "table_flow_1",
+    });
+    const header = useFlowExecution(1, undefined, { persistPolling: true });
+    const terminal = { flow_id: 1, success: false, node_step_result: [] };
+    mocks.get
+      .mockResolvedValueOnce({ status, data: terminal })
+      .mockResolvedValue({ status: 200, data: terminal });
+
+    try {
+      await panel.triggerNodeFetch(3, { focusResultPanels: false, onComplete });
+      await header.cancelFlow();
+
+      expect(editor.isRunning).toBe(status === 202);
+      expect(editor.showFlowResult).toBe(false);
+      expect(editor.isShowingLogViewer).toBe(false);
+      expect(onComplete).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(2000);
+
+      expect(editor.isRunning).toBe(false);
+      expect(editor.showFlowResult).toBe(false);
+      expect(editor.isShowingLogViewer).toBe(false);
+      expect(onComplete).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      panel.stopPolling("node_3");
+      header.stopPolling();
+    }
   });
 
   it("does not send another cancel request while one is pending", async () => {
@@ -266,6 +326,7 @@ describe("useFlowExecution.runFlow", () => {
 
     const cancellation = execution.cancelFlow();
     currentId.value = 2;
+    mocks.nodeState.flow_id = 2;
     editor.isCanceled = false;
     editor.isRunning = true; // Flow 2 is also running.
     acknowledge();
@@ -288,6 +349,7 @@ describe("useFlowExecution.runFlow", () => {
 
   it("completes a background node fetch without changing the selected flow UI", async () => {
     const currentId = ref(11);
+    mocks.nodeState.flow_id = 11;
     const editor = useEditorStore();
     const onComplete = vi.fn();
     const execution = useFlowExecution(currentId, undefined, { persistPolling: true });
@@ -295,6 +357,7 @@ describe("useFlowExecution.runFlow", () => {
 
     await execution.triggerNodeFetch(3, { focusResultPanels: false, onComplete });
     currentId.value = 12;
+    mocks.nodeState.flow_id = 12;
     editor.isRunning = true;
     mocks.notify.mockClear();
     expect(onComplete).not.toHaveBeenCalled();
@@ -312,6 +375,7 @@ describe("useFlowExecution.runFlow", () => {
     "preserves terminal callbacks when node-fetch pollers collide on rekey (%s)",
     async (order) => {
       const currentId = ref(21);
+      mocks.nodeState.flow_id = 21;
       const sourceComplete = vi.fn(() => useEditorStore().isRunning);
       const destinationComplete = vi.fn(() => useEditorStore().isRunning);
       const source = useFlowExecution(currentId, undefined, { persistPolling: true });
@@ -333,6 +397,7 @@ describe("useFlowExecution.runFlow", () => {
       });
       await Promise.resolve(); // Let the source POST start before the destination fetch.
       if (order === "pre-registered") await sourceFetch;
+      mocks.nodeState.flow_id = 22;
       await destination.triggerNodeFetch(3, {
         focusResultPanels: false,
         onComplete: destinationComplete,
@@ -382,6 +447,7 @@ describe("useFlowExecution.runFlow", () => {
     await execution.runFlow();
     const oldRequest = execution.checkRunStatus();
     currentId.value = 2;
+    mocks.nodeState.flow_id = 2;
     const restored = useFlowExecution(() => currentId.value, undefined, { persistPolling: true });
     restored.startStatusPolling(2);
     rekey(1, 2);

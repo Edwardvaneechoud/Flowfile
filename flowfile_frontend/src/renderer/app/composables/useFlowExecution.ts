@@ -154,6 +154,7 @@ export function useFlowExecution(
     if (typeof flowId === "function") return flowId();
     return typeof flowId === "number" ? flowId : flowId.value;
   };
+  const isSelectedFlow = (id: number) => nodeStore.flow_id === id;
   const isCancelling = computed(() => cancelTarget.value?.id === getFlowId());
 
   const getPollingKey = (suffix = "", id = getFlowId()) => {
@@ -261,10 +262,10 @@ export function useFlowExecution(
     return false;
   };
 
-  const startStatusPolling = (targetOrId: OperationTarget | number) => {
+  const startStatusPolling = (targetOrId: OperationTarget | number, focusResultPanels = true) => {
     const target = typeof targetOrId === "number" ? captureTarget(targetOrId) : targetOrId;
     target.polling = startPolling(
-      () => checkRunStatus(undefined, "", true, undefined, target),
+      () => checkRunStatus(undefined, "", focusResultPanels, undefined, target),
       "",
       target.id,
       target.stop,
@@ -314,7 +315,7 @@ export function useFlowExecution(
     const finish = () => {
       stopPolling(pollingKeySuffix, requestedId);
       targetId?.stop();
-      if (requestedId === getFlowId()) {
+      if (isSelectedFlow(requestedId)) {
         unFreezeFlow();
         editorStore.isRunning = false;
         editorStore.isCanceled = false;
@@ -330,12 +331,12 @@ export function useFlowExecution(
     try {
       const response = await getRunStatus(requestedId);
       if (requestedId !== getTargetId()) return;
-      if (isResponseSuccessful(response.status) && requestedId === getFlowId())
+      if (isResponseSuccessful(response.status) && isSelectedFlow(requestedId))
         nodeStore.insertRunResult(response.data);
 
       if (response.status === 200) {
         finish();
-        if (requestedId !== getFlowId()) return;
+        if (!isSelectedFlow(requestedId)) return;
         if (pollingKeySuffix === "") {
           useTutorialStore().notify({
             type: "flow-run-completed",
@@ -363,14 +364,14 @@ export function useFlowExecution(
         );
       } else if (response.status === 404) {
         finish();
-        if (requestedId === getFlowId()) resultsStore.resetRunResults();
+        if (isSelectedFlow(requestedId)) resultsStore.resetRunResults();
       }
     } catch (error) {
       if (requestedId !== getTargetId()) return;
       console.error("Error checking run status:", error);
       if ((error as { response?: { status?: number } })?.response?.status === 404) {
         finish();
-        if (requestedId === getFlowId()) resultsStore.resetRunResults();
+        if (isSelectedFlow(requestedId)) resultsStore.resetRunResults();
       }
       // A transient failure is not a terminal result; the existing timer retries.
     }
@@ -407,9 +408,9 @@ export function useFlowExecution(
 
   const startFlowRun = async (target: OperationTarget) => {
     if (editorStore.isRunning) return;
-    if (!(await saveOpenDrawer("Flow not started")) || target.id !== getFlowId()) return;
+    if (!(await saveOpenDrawer("Flow not started")) || !isSelectedFlow(target.id)) return;
     const flowSettings: FlowSettings | null = await FlowApi.getFlowSettings(target.id);
-    if (target.id !== getFlowId()) return;
+    if (!isSelectedFlow(target.id)) return;
     if (!flowSettings) {
       throw new Error("Failed to retrieve flow settings");
     }
@@ -440,7 +441,7 @@ export function useFlowExecution(
         headers: { accept: "application/json" },
       });
       // Core claimed the run before answering: the log viewer opens its stream on this flag.
-      if (target.id === getFlowId()) {
+      if (isSelectedFlow(target.id)) {
         editorStore.isRunning = true;
         useTutorialStore().notify({ type: "flow-run-started" });
         nodeStore.showLogViewer();
@@ -448,7 +449,7 @@ export function useFlowExecution(
       startStatusPolling(target);
     } catch (error: any) {
       console.error("Error starting run:", error);
-      if (target.id !== getFlowId()) return;
+      if (!isSelectedFlow(target.id)) return;
       unFreezeFlow();
       isExecuting.value = false;
       state.setExecutionState(getPollingKey(), false);
@@ -502,7 +503,7 @@ export function useFlowExecution(
       console.log(`Node ${nodeId} fetch already in progress`);
       return;
     }
-    if (!(await saveOpenDrawer("Node not run")) || target.id !== getFlowId()) return;
+    if (!(await saveOpenDrawer("Node not run")) || !isSelectedFlow(target.id)) return;
 
     freezeFlow();
     nodeStore.resetNodeResult();
@@ -526,7 +527,7 @@ export function useFlowExecution(
         },
         headers: { accept: "application/json" },
       });
-      if (target.id === getFlowId()) {
+      if (isSelectedFlow(target.id)) {
         editorStore.isRunning = true;
         if (focusResultPanels) nodeStore.showLogViewer();
       }
@@ -546,7 +547,7 @@ export function useFlowExecution(
       );
     } catch (error: any) {
       console.error("Error triggering node fetch:", error);
-      if (target.id !== getFlowId()) return;
+      if (!isSelectedFlow(target.id)) return;
       unFreezeFlow();
       isExecuting.value = false;
       state.setExecutionState(getPollingKey(pollingKeySuffix), false);
@@ -567,18 +568,19 @@ export function useFlowExecution(
         params: { flow_id: target.id },
         headers: { accept: "application/json" },
       });
-      if (target.id === getFlowId()) {
+      if (isSelectedFlow(target.id)) {
         editorStore.isCanceled = true;
         showNotification("Cancelling", "The operation is being cancelled");
       }
       cancelTarget.value = null;
-      startStatusPolling(target);
-      await checkRunStatus(undefined, "", true, undefined, target);
+      startStatusPolling(target, false);
+      await checkRunStatus(undefined, "", false, undefined, target);
     } catch (error) {
       cancelTarget.value = null;
-      if (target.id === getFlowId()) editorStore.isCanceled = false;
+      if (isSelectedFlow(target.id)) editorStore.isCanceled = false;
       console.error("Error cancelling run:", error);
-      showNotification("Error", "Failed to cancel the operation", "error");
+      if (isSelectedFlow(target.id))
+        showNotification("Error", "Failed to cancel the operation", "error");
     }
   };
 
