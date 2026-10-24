@@ -18,10 +18,11 @@
 
         <h3 class="backends-card-title">Configured workers</h3>
         <p class="backends-card-description">
-          Each worker has its own URL and bearer token, and, when its TLS certificate is not public,
-          the CA certificate to trust; its id is <code>worker:&lt;name&gt;</code>. The built-in
-          backends, <code>local</code> and <code>worker</code>, are not listed. To change a worker's
-          URL, token, CA certificate or local-files setting, remove it and add it again.
+          Each worker has its own URL and bearer token, when its TLS certificate is not public the
+          CA certificate to trust, and whether it sees this server's files; its id is
+          <code>worker:&lt;name&gt;</code>. The built-in backends, <code>local</code> and
+          <code>worker</code>, are not listed. To change any of these, remove the worker and add it
+          again.
         </p>
 
         <p v-if="loading && !backends.length" class="backends-loading">Loading workers…</p>
@@ -31,7 +32,7 @@
             <tr>
               <th>Id</th>
               <th>URL</th>
-              <th>Local files</th>
+              <th>Sees this server's files</th>
               <th></th>
             </tr>
           </thead>
@@ -42,8 +43,8 @@
                   <code>{{ backend.id }}</code>
                 </td>
                 <td class="backends-url">{{ backend.url }}</td>
-                <td data-testid="backend-shares-core-disk">
-                  {{ backend.shares_core_disk ? "Shared with this server" : "No" }}
+                <td :data-testid="`backend-server-files-${backend.id}`">
+                  {{ serverFilesLabel(backend, verdicts[backend.id]) }}
                 </td>
                 <td class="backends-actions">
                   <el-button
@@ -127,7 +128,7 @@
             <label class="backends-field">
               <span class="backends-field__label">URL</span>
               <el-input v-model="form.url" v-bind="NO_AUTOFILL" placeholder="https://…" />
-              <span v-if="plainHttp" class="backends-field__warning">
+              <span v-if="plainHttp" class="backends-field__note backends-field__note--warning">
                 <i class="fa-solid fa-triangle-exclamation"></i>
                 Plain HTTP to another host: the token and every plan cross the network in clear, and
                 whoever holds the token can run code on the worker. Beyond a trusted network, use
@@ -149,17 +150,20 @@
               />
             </label>
           </div>
-          <div class="backends-field backends-field--wide">
+          <div class="backends-field backends-option">
             <el-checkbox
               v-model="form.shares_core_disk"
-              data-testid="backend-shares-core-disk-input"
+              data-testid="backend-server-files-input"
+              aria-describedby="backend-server-files-hint"
             >
               Sees this server's files
             </el-checkbox>
-            <span class="backends-field__hint">
-              Tick only for a worker on this host or on a mount this server shares with it: flows
-              then read and write local files there. Elsewhere a local path would be written on the
-              worker's own disk.
+            <span id="backend-server-files-hint" class="backends-field__note">
+              Tick only when the worker sees this server's files at the same paths: on this host, or
+              with this server's data, flows and kernel shared folders mounted at the same paths.
+              Flows then read and write local paths there, and Python Script and kernel nodes may
+              run there. Leave it unticked for a worker that sets
+              <code>FLOWFILE_WORKER_LOCAL_FILES=1</code> itself.
             </span>
           </div>
           <el-button
@@ -196,14 +200,20 @@ import { useAuthStore } from "../../stores/auth-store";
 import { absentLabel } from "../../utils/executionLocation";
 import { NO_AUTOFILL } from "../../utils/noAutofill";
 import ExchangeStoreCard from "./ExchangeStoreCard.vue";
-import { plainHttpOffLoopback, useComputeBackends } from "./useComputeBackends";
+import {
+  backendInputFrom,
+  emptyBackendForm,
+  plainHttpOffLoopback,
+  serverFilesLabel,
+  useComputeBackends,
+} from "./useComputeBackends";
 
 const isAdmin = computed(() => useAuthStore().isAdmin);
 
 const { backends, loading, loadError, adding, busy, verdicts, load, add, remove, handshake } =
   useComputeBackends();
 
-const form = reactive({ name: "", url: "", token: "", ca_cert: "", shares_core_disk: false });
+const form = reactive(emptyBackendForm());
 const canAdd = computed(() => form.name !== "" && form.url !== "" && form.token !== "");
 const plainHttp = computed(() => plainHttpOffLoopback(form.url));
 
@@ -219,18 +229,8 @@ const matchLine = (verdict: HandshakeVerdict): string => {
 const onAdd = async () => {
   if (!canAdd.value) return;
   try {
-    const row = await add({
-      name: form.name,
-      url: form.url,
-      token: form.token,
-      ca_cert: form.ca_cert,
-      shares_core_disk: form.shares_core_disk,
-    });
-    form.name = "";
-    form.url = "";
-    form.token = "";
-    form.ca_cert = "";
-    form.shares_core_disk = false;
+    const row = await add(backendInputFrom(form));
+    Object.assign(form, emptyBackendForm());
     ElMessage.success(`Added ${row.id}`);
   } catch (error) {
     ElMessage.error((error as Error).message);
@@ -240,7 +240,8 @@ const onAdd = async () => {
 const onRemove = async (id: string) => {
   try {
     await ElMessageBox.confirm(
-      `Remove ${id}? Its token and CA certificate are not kept; adding it again needs them.`,
+      `Remove ${id}? Its token, CA certificate and "Sees this server's files" setting are not ` +
+        "kept; adding it again needs them, so tick the box again if it was ticked.",
       "Remove worker",
       { confirmButtonText: "Remove", cancelButtonText: "Keep", type: "warning" },
     );
@@ -451,19 +452,17 @@ onMounted(() => {
   color: var(--color-text-secondary);
 }
 
-.backends-field--wide {
+.backends-option {
   margin-bottom: var(--spacing-3);
 }
 
-.backends-field__hint {
+.backends-field__note {
   font-size: var(--font-size-xs);
   line-height: var(--line-height-normal);
   color: var(--color-text-tertiary);
 }
 
-.backends-field__warning {
-  font-size: var(--font-size-xs);
-  line-height: var(--line-height-normal);
+.backends-field__note--warning {
   color: var(--color-warning);
 }
 

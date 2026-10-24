@@ -24,6 +24,46 @@ export function plainHttpOffLoopback(url: string): boolean {
   return parsed.protocol === "http:" && !LOOPBACK_HOSTS.has(parsed.hostname);
 }
 
+export interface BackendForm {
+  name: string;
+  url: string;
+  token: string;
+  ca_cert: string;
+  shares_core_disk: boolean;
+}
+
+/** The add form as it opens and as it resets after an add: the server's files left unticked. */
+export function emptyBackendForm(): BackendForm {
+  return { name: "", url: "", token: "", ca_cert: "", shares_core_disk: false };
+}
+
+/** The add body the form sends, the "Sees this server's files" tick included. */
+export function backendInputFrom(form: BackendForm): ComputeBackendInput {
+  return {
+    name: form.name,
+    url: form.url,
+    token: form.token,
+    ca_cert: form.ca_cert,
+    shares_core_disk: form.shares_core_disk,
+  };
+}
+
+/**
+ * What a row's "Server's files" cell says: marked on its row, else declared by the worker itself (its last verdict
+ * offers `file`, as with `FLOWFILE_WORKER_LOCAL_FILES=1`), else no; a worker never checked reads "Not checked".
+ */
+export function serverFilesLabel(
+  backend: ComputeBackend,
+  verdict: HandshakeVerdict | null | undefined,
+): string {
+  if (backend.shares_core_disk) return "Yes, marked here";
+  const offered = verdict?.offered;
+  if (!offered) return verdict ? "No" : "Not checked";
+  return offered.read_schemes.includes("file") || offered.write_schemes.includes("file")
+    ? "Yes, declared by the worker"
+    : "No";
+}
+
 /**
  * The configured workers and the admin's actions on them; the caller loads, nothing polls. Loading seeds each
  * worker's verdict from the listing, so one a run produced shows without pressing Handshake.

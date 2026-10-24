@@ -5,9 +5,10 @@ import { applySettings, openFlow, openNodeSettings } from "./helpers/canvas";
 import { postEditor } from "./helpers/flows";
 
 /**
- * The Catalog Reader, Catalog Writer and Write Data drawers render the general settings section: a
- * compute backend picked there is saved with the drawer's own settings and shows again after a
- * reload. Core saves a node's execution_location in both flag states, so nothing skips.
+ * The Catalog Reader, Catalog Writer, Write Data and Explore Data drawers render the general
+ * settings section: a compute backend picked there is saved with the drawer's own settings and
+ * shows again after a reload. Core saves a node's execution_location in both flag states, so
+ * nothing skips.
  */
 const drawers = [
   {
@@ -31,6 +32,13 @@ const drawers = [
     nodeType: "output",
     ready: ".file-type-row",
     saved: (settings: any) => expect(settings.output_settings.directory).toBeTruthy(),
+  },
+  {
+    title: "Explore Data",
+    nodeType: "explore_data",
+    ready: ".explore-data-container",
+    saved: (settings: any) =>
+      expect(settings.graphic_walker_input?.dataModel?.fields ?? []).toEqual([]),
   },
 ];
 

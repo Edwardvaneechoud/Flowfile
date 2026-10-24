@@ -20,7 +20,13 @@ vi.mock("../../api/computeBackends.api", () => ({
   handshakeComputeBackend: mocks.handshake,
 }));
 
-import { plainHttpOffLoopback, useComputeBackends } from "./useComputeBackends";
+import {
+  backendInputFrom,
+  emptyBackendForm,
+  plainHttpOffLoopback,
+  serverFilesLabel,
+  useComputeBackends,
+} from "./useComputeBackends";
 
 const TEAM_URL = "https://team.example:63579";
 
@@ -341,5 +347,68 @@ describe("plainHttpOffLoopback", () => {
     ["", false],
   ])("warns for %s: %s", (url, warns) => {
     expect(plainHttpOffLoopback(url)).toBe(warns);
+  });
+});
+
+describe("the add form", () => {
+  it("opens and resets unticked", () => {
+    expect(emptyBackendForm()).toEqual({
+      name: "",
+      url: "",
+      token: "",
+      ca_cert: "",
+      shares_core_disk: false,
+    });
+  });
+
+  it.each([true, false])("sends the server's files tick as %s", (ticked) => {
+    const form = { ...emptyBackendForm(), name: "team", url: TEAM_URL, token: "t" };
+    form.shares_core_disk = ticked;
+    expect(backendInputFrom(form)).toEqual({
+      name: "team",
+      url: TEAM_URL,
+      token: "t",
+      ca_cert: "",
+      shares_core_disk: ticked,
+    });
+  });
+});
+
+describe("serverFilesLabel", () => {
+  const row = (shares_core_disk: boolean): ComputeBackend => ({
+    id: "worker:team",
+    url: TEAM_URL,
+    shares_core_disk,
+    verdict: null,
+  });
+  const verdict = (schemes: string[] | null): HandshakeVerdict => ({
+    id: "worker:team",
+    ok: schemes !== null,
+    core,
+    backend: schemes ? { ...core, read_schemes: schemes, write_schemes: schemes } : null,
+    offered: schemes ? { ...core, read_schemes: schemes, write_schemes: schemes } : null,
+    differences: [],
+    absent: {},
+    error: schemes ? null : "unreachable",
+  });
+
+  it("says a marked row sees the server's files whatever the verdict", () => {
+    expect(serverFilesLabel(row(true), null)).toBe("Yes, marked here");
+    expect(serverFilesLabel(row(true), verdict(["s3"]))).toBe("Yes, marked here");
+  });
+
+  it("says yes for an unmarked worker that declares file itself", () => {
+    expect(serverFilesLabel(row(false), verdict(["s3", "file"]))).toBe(
+      "Yes, declared by the worker",
+    );
+  });
+
+  it("says no for an unmarked worker that does not declare file, or was refused", () => {
+    expect(serverFilesLabel(row(false), verdict(["s3"]))).toBe("No");
+    expect(serverFilesLabel(row(false), verdict(null))).toBe("No");
+  });
+
+  it("says not checked for an unmarked worker with no verdict", () => {
+    expect(serverFilesLabel(row(false), undefined)).toBe("Not checked");
   });
 });
