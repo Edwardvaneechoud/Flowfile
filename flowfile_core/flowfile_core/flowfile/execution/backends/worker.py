@@ -307,11 +307,18 @@ class WorkerBackend:
     protocol_version = PROTOCOL_VERSION
 
     def __init__(
-        self, url: str, *, backend_id: str = WORKER_BACKEND_ID, token: str | None = None, ca_cert: str | None = None
+        self,
+        url: str,
+        *,
+        backend_id: str = WORKER_BACKEND_ID,
+        token: str | None = None,
+        ca_cert: str | None = None,
+        shares_core_disk: bool = False,
     ) -> None:
         self.url = url
         self.id = backend_id
         self.token = token
+        self.shares_core_disk = shares_core_disk
         trust_ca(url, ca_cert)
         owns(self)
         self._auth = _TokenAuth(token, backend_id) if token is not None else None
@@ -347,6 +354,10 @@ class WorkerBackend:
         session around the handshake gate (``gated=False``), signed with this backend's token and carrying its
         ``X-Protocol-Version``. Its ``operations`` are the kinds the worker runs, the ones ``run_op`` sends it.
 
+        A backend made with ``shares_core_disk`` adds ``file`` to both scheme sets whatever the worker declares: core
+        knows that worker sees its files (the built-in worker at its unconfigured address, a row marked so), which the
+        worker cannot know by itself.
+
         Raises:
             ComputeUnavailable: The worker could not be reached, or it answered with no ``Capabilities`` and no
                 ``app_version``, so the URL is no Flowfile worker (``capabilities_from_answer``, naming this backend).
@@ -376,7 +387,15 @@ class WorkerBackend:
             )
         if not response.ok:
             raise _v1_failure(response.status_code, response.content, response.reason)
-        return capabilities_from_answer(self.url, response, backend_id=self.id)
+        declared = capabilities_from_answer(self.url, response, backend_id=self.id)
+        if not self.shares_core_disk:
+            return declared
+        return declared.model_copy(
+            update={
+                "read_schemes": frozenset(declared.read_schemes) | {"file"},
+                "write_schemes": frozenset(declared.write_schemes) | {"file"},
+            }
+        )
 
     def submit(
         self,

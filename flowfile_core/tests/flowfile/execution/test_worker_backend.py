@@ -167,6 +167,32 @@ def test_capabilities_pass_the_workers_declaration_through(monkeypatch):
     assert WorkerBackend(url=WORKER_URL).capabilities() == declared
 
 
+def test_a_backend_sharing_cores_disk_offers_local_files_the_worker_does_not_declare(monkeypatch):
+    declared = local_capabilities().model_copy(
+        update={"read_schemes": frozenset({"s3", "http"}), "write_schemes": frozenset({"s3"})}
+    )
+    answer = requests.Response()
+    answer.status_code = 200
+    answer._content = declared.model_dump_json().encode()
+    monkeypatch.setattr(worker_module._worker_session, "get", lambda path, **kwargs: answer)
+
+    offered = WorkerBackend(url=WORKER_URL, shares_core_disk=True).capabilities()
+
+    assert offered.read_schemes == {"s3", "http", "file"}
+    assert offered.write_schemes == {"s3", "file"}
+    assert offered.model_copy(update={"read_schemes": declared.read_schemes, "write_schemes": {"s3"}}) == declared
+
+
+@pytest.mark.parametrize(("configured", "shares"), [(False, True), (True, False)], ids=["default", "configured"])
+def test_the_built_in_worker_shares_cores_disk_only_at_its_unconfigured_address(monkeypatch, configured, shares):
+    monkeypatch.setattr(settings, "WORKER_ADDRESS_CONFIGURED", configured)
+    registry.reset()
+    try:
+        assert registry.backend("worker").shares_core_disk is shares
+    finally:
+        registry.reset()
+
+
 @pytest.fixture
 def closed_port_url() -> str:
     with socket.socket() as probe:

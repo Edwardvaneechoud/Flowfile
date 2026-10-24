@@ -3,13 +3,14 @@
 Mounted at ``/compute_backends`` in :mod:`flowfile_core.main`. Every user may list the configured workers' ids, each
 with the last handshake verdict of its backend in this process (``handshake.last_verdict``, ``None`` until it was
 checked), which the node picker and the Flow Settings dialog show beside the id; the URL is answered to an administrator
-only, and adding, removing and the handshake are admin-only like the ``/system`` routes. A row is one configured
-worker: its id ``worker:<name>``, its base URL, its bearer token, stored as secret-manager ciphertext and never
-answered, and, for a worker whose TLS certificate is not public, the PEM of the CA core trusts for it. ``local`` and
-``worker`` are built in and never rows. A self-hoster fills the table through the settings page, a deployment's control
-plane over these routes; core manages no worker itself, and how one is hosted, registered or scaled is the control
-plane's. The registry makes a ``WorkerBackend`` from a row on the first lookup of its id (``registry.backend``), and
-removing the row forgets that instance and the verdicts of the backends on its URL.
+only, and adding, removing and the handshake are admin-only like the ``/system`` routes. A row is one configured worker:
+its id ``worker:<name>``, its base URL, its bearer token, stored as secret-manager ciphertext and never answered, for a
+worker whose TLS certificate is not public, the PEM of the CA core trusts for it, and whether the worker sees core's
+files (``shares_core_disk``: the same host or a shared mount), which makes core offer it ``file`` whatever the worker
+declares. ``local`` and ``worker`` are built in and never rows. A self-hoster fills the table through the settings page,
+a deployment's control plane over these routes; core manages no worker itself, and how one is hosted, registered or
+scaled is the control plane's. The registry makes a ``WorkerBackend`` from a row on the first lookup of its id
+(``registry.backend``), and removing the row forgets that instance and the verdicts of the backends on its URL.
 
 The token travels as an HTTP header value, so the add route refuses one that is no header value
 (``worker.is_header_value``) with a 422 whose detail states the rule and never the token. The route checks it itself:
@@ -44,13 +45,14 @@ router = APIRouter(prefix="/compute_backends", dependencies=[Depends(get_current
 
 
 class ComputeBackendInput(BaseModel):
-    """Request body for ``POST /compute_backends``: the worker's name, its base URL, its bearer token and, optionally,
-    the PEM of the CA to trust for its certificate."""
+    """Request body for ``POST /compute_backends``: the worker's name, its base URL, its bearer token, optionally the
+    PEM of the CA to trust for its certificate, and whether it sees core's files."""
 
     name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$", max_length=64)
     url: str
     token: SecretStr = Field(min_length=1)
     ca_cert: str | None = None
+    shares_core_disk: bool = False
 
     @field_validator("url")
     @classmethod
@@ -61,11 +63,13 @@ class ComputeBackendInput(BaseModel):
 
 
 class ComputeBackendOut(BaseModel):
-    """One configured worker as the routes answer it: its id, its URL (``None`` to a user who is no administrator)
-    and the last verdict of its handshake in this process (``None`` until it was checked), never its token."""
+    """One configured worker as the routes answer it: its id, its URL (``None`` to a user who is no administrator),
+    whether it sees core's files and the last verdict of its handshake in this process (``None`` until it was
+    checked), never its token."""
 
     id: str
     url: str | None
+    shares_core_disk: bool = False
     verdict: handshake.Verdict | None = None
 
 
@@ -84,7 +88,10 @@ def list_compute_backends(
     rows = db.query(ConfiguredBackend).order_by(ConfiguredBackend.id).all()
     return [
         ComputeBackendOut(
-            id=row.id, url=row.url if current_user.is_admin else None, verdict=handshake.last_verdict(row.id)
+            id=row.id,
+            url=row.url if current_user.is_admin else None,
+            shares_core_disk=bool(row.shares_core_disk),
+            verdict=handshake.last_verdict(row.id),
         )
         for row in rows
     ]
@@ -120,9 +127,13 @@ def add_compute_backend(
     if db.get(ConfiguredBackend, backend_id) is not None:
         raise HTTPException(status_code=409, detail=f"Compute backend {backend_id!r} already exists")
     token = encrypt_secret(body.token.get_secret_value(), current_user.id)
-    db.add(ConfiguredBackend(id=backend_id, url=body.url, token=token, ca_cert=ca_cert))
+    db.add(
+        ConfiguredBackend(
+            id=backend_id, url=body.url, token=token, ca_cert=ca_cert, shares_core_disk=body.shares_core_disk
+        )
+    )
     db.commit()
-    return ComputeBackendOut(id=backend_id, url=body.url)
+    return ComputeBackendOut(id=backend_id, url=body.url, shares_core_disk=body.shares_core_disk)
 
 
 @router.delete("/{backend_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(get_current_admin_user)])

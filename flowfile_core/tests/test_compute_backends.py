@@ -136,10 +136,19 @@ def fake_worker() -> Iterator[Callable[..., str]]:
         thread.join(timeout=15)
 
 
-def add(client: TestClient, url: str, name: str = "team", token: str = "row-token", ca_cert: str | None = None):
+def add(
+    client: TestClient,
+    url: str,
+    name: str = "team",
+    token: str = "row-token",
+    ca_cert: str | None = None,
+    shares_core_disk: bool | None = None,
+):
     body = {"name": name, "url": url, "token": token}
     if ca_cert is not None:
         body["ca_cert"] = ca_cert
+    if shares_core_disk is not None:
+        body["shares_core_disk"] = shares_core_disk
     return client.post(ROUTE, json=body)
 
 
@@ -183,13 +192,13 @@ def test_an_added_worker_is_listed_by_id_and_url_and_its_token_is_stored_encrypt
     added = add(admin_client, "http://team-worker.test:63579/")
 
     assert added.status_code == 201, added.text
-    assert added.json() == {"id": "worker:team", "url": "http://team-worker.test:63579", "verdict": None}
+    assert added.json() == {"id": "worker:team", "url": "http://team-worker.test:63579", "shares_core_disk": False, "verdict": None}
     with get_db_context() as db:
         stored = db.get(ConfiguredBackend, "worker:team").token
     assert stored.startswith("$ffsec$")
     assert "row-token" not in stored
     listed = admin_client.get(ROUTE).json()
-    assert listed == [{"id": "worker:team", "url": "http://team-worker.test:63579", "verdict": None}]
+    assert listed == [{"id": "worker:team", "url": "http://team-worker.test:63579", "shares_core_disk": False, "verdict": None}]
     assert "row-token" not in admin_client.get(ROUTE).text
 
 
@@ -200,7 +209,7 @@ def test_adding_an_id_that_exists_is_a_conflict(admin_client):
 
     assert again.status_code == 409, again.text
     assert admin_client.get(ROUTE).json() == [
-        {"id": "worker:team", "url": "http://team-worker.test:63579", "verdict": None}
+        {"id": "worker:team", "url": "http://team-worker.test:63579", "shares_core_disk": False, "verdict": None}
     ]
 
 
@@ -231,11 +240,11 @@ def test_an_added_worker_keeps_its_ca_certificate_and_is_listed_without_it(admin
     added = add(admin_client, "https://team-worker.test:63579", ca_cert=pem)
 
     assert added.status_code == 201, added.text
-    assert added.json() == {"id": "worker:team", "url": "https://team-worker.test:63579", "verdict": None}
+    assert added.json() == {"id": "worker:team", "url": "https://team-worker.test:63579", "shares_core_disk": False, "verdict": None}
     with get_db_context() as db:
         assert db.get(ConfiguredBackend, "worker:team").ca_cert == pem
     listed = admin_client.get(ROUTE)
-    assert listed.json() == [{"id": "worker:team", "url": "https://team-worker.test:63579", "verdict": None}]
+    assert listed.json() == [{"id": "worker:team", "url": "https://team-worker.test:63579", "shares_core_disk": False, "verdict": None}]
     assert "BEGIN CERTIFICATE" not in listed.text
 
 
@@ -245,6 +254,30 @@ def test_an_empty_ca_certificate_is_stored_as_none(admin_client):
     assert added.status_code == 201, added.text
     with get_db_context() as db:
         assert db.get(ConfiguredBackend, "worker:team").ca_cert is None
+
+
+def test_a_worker_marked_as_seeing_cores_files_is_stored_and_listed_so(admin_client):
+    added = add(admin_client, "http://team-worker.test:63579", shares_core_disk=True)
+
+    assert added.status_code == 201, added.text
+    assert added.json()["shares_core_disk"] is True
+    with get_db_context() as db:
+        assert db.get(ConfiguredBackend, "worker:team").shares_core_disk is True
+    assert admin_client.get(ROUTE).json() == [
+        {"id": "worker:team", "url": "http://team-worker.test:63579", "shares_core_disk": True, "verdict": None}
+    ]
+
+
+@pytest.mark.parametrize("shares_core_disk", [False, True], ids=["unmarked", "marked"])
+def test_a_marked_worker_is_offered_local_files_it_does_not_declare(admin_client, fake_worker, flag, shares_core_disk):
+    url = fake_worker("row-token", read_schemes=frozenset({"s3"}), write_schemes=frozenset({"s3"}))
+    add(admin_client, url, shares_core_disk=shares_core_disk)
+
+    verdict = handshake(admin_client)
+
+    assert verdict["ok"] is True, verdict
+    assert ("file" in verdict["offered"]["write_schemes"]) is shares_core_disk
+    assert ("file" in verdict["offered"]["read_schemes"]) is shares_core_disk
 
 
 def test_a_ca_certificate_that_is_no_pem_is_refused_and_nothing_is_stored(admin_client):
@@ -327,7 +360,7 @@ def test_a_row_at_the_session_worker_passes_the_handshake_with_every_probe(admin
     assert verdict["absent"] == {}
     assert set(EXPRESSION_PLUGINS) <= verdict["offered"]["plugins"].keys()
     listed = admin_client.get(ROUTE).json()
-    assert listed == [{"id": "worker:team", "url": registry.worker_url(), "verdict": verdict}]
+    assert listed == [{"id": "worker:team", "url": registry.worker_url(), "shares_core_disk": False, "verdict": verdict}]
 
 
 def test_a_worker_on_other_versions_fails_the_handshake_naming_both_sides(admin_client, fake_worker, flag):
@@ -444,8 +477,8 @@ def test_a_non_admin_lists_the_ids_and_last_verdicts_without_the_urls_and_is_ref
 
     assert listed.status_code == 200, listed.text
     assert listed.json() == [
-        {"id": "worker:team", "url": None, "verdict": verdict.model_dump(mode="json")},
-        {"id": "worker:unchecked", "url": None, "verdict": None},
+        {"id": "worker:team", "url": None, "shares_core_disk": False, "verdict": verdict.model_dump(mode="json")},
+        {"id": "worker:unchecked", "url": None, "shares_core_disk": False, "verdict": None},
     ]
     assert add(non_admin_client, "http://team-worker.test:63579").status_code == 403
     assert non_admin_client.delete(f"{ROUTE}/worker:team").status_code == 403

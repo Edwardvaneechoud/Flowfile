@@ -58,7 +58,12 @@ beforeEach(() => {
   rows = [];
   mocks.list.mockReset().mockImplementation(async () => rows.map((row) => ({ ...row })));
   mocks.add.mockReset().mockImplementation(async (input: ComputeBackendInput) => {
-    const row = { id: `worker:${input.name}`, url: input.url, verdict: null };
+    const row = {
+      id: `worker:${input.name}`,
+      url: input.url,
+      shares_core_disk: input.shares_core_disk ?? false,
+      verdict: null,
+    };
     rows.push(row);
     return { ...row };
   });
@@ -81,21 +86,28 @@ const checked: HandshakeVerdict = {
 
 describe("load", () => {
   it("fills the rows and clears an earlier error", async () => {
-    rows = [{ id: "worker:team", url: TEAM_URL, verdict: null }];
+    rows = [{ id: "worker:team", url: TEAM_URL, shares_core_disk: false, verdict: null }];
     const page = useComputeBackends();
     page.loadError.value = "stale";
 
     await page.load();
 
-    expect(page.backends.value).toEqual([{ id: "worker:team", url: TEAM_URL, verdict: null }]);
+    expect(page.backends.value).toEqual([
+      { id: "worker:team", url: TEAM_URL, shares_core_disk: false, verdict: null },
+    ]);
     expect(page.loadError.value).toBe("");
     expect(page.loading.value).toBe(false);
   });
 
   it("seeds each worker's verdict from the listing, so one a run produced shows without a handshake", async () => {
     rows = [
-      { id: "worker:team", url: TEAM_URL, verdict: checked },
-      { id: "worker:gpu", url: "https://gpu.example:63579", verdict: null },
+      { id: "worker:team", url: TEAM_URL, shares_core_disk: false, verdict: checked },
+      {
+        id: "worker:gpu",
+        url: "https://gpu.example:63579",
+        shares_core_disk: false,
+        verdict: null,
+      },
     ];
     const page = useComputeBackends();
 
@@ -106,7 +118,7 @@ describe("load", () => {
   });
 
   it("keeps the rows it had when the list is refused, and says why", async () => {
-    rows = [{ id: "worker:team", url: TEAM_URL, verdict: null }];
+    rows = [{ id: "worker:team", url: TEAM_URL, shares_core_disk: false, verdict: null }];
     const page = useComputeBackends();
     await page.load();
     mocks.list.mockRejectedValueOnce(new Error("Network Error"));
@@ -114,7 +126,9 @@ describe("load", () => {
     await page.load();
 
     expect(page.loadError.value).toBe("Couldn't read the configured workers.");
-    expect(page.backends.value).toEqual([{ id: "worker:team", url: TEAM_URL, verdict: null }]);
+    expect(page.backends.value).toEqual([
+      { id: "worker:team", url: TEAM_URL, shares_core_disk: false, verdict: null },
+    ]);
   });
 });
 
@@ -128,7 +142,12 @@ describe("add", () => {
     const row = await pending;
 
     expect(mocks.add).toHaveBeenCalledWith(input);
-    expect(row).toEqual({ id: "worker:team", url: TEAM_URL, verdict: null });
+    expect(row).toEqual({
+      id: "worker:team",
+      url: TEAM_URL,
+      shares_core_disk: false,
+      verdict: null,
+    });
     expect(page.backends.value.map((b) => b.id)).toEqual(["worker:team"]);
     expect(page.adding.value).toBe(false);
   });
@@ -144,6 +163,19 @@ describe("add", () => {
       url: TEAM_URL,
       token: "row-token",
       ca_cert: pem,
+    });
+  });
+
+  it("posts whether the worker sees this server's files", async () => {
+    const page = useComputeBackends();
+
+    await page.add({ name: "team", url: TEAM_URL, token: "row-token", shares_core_disk: true });
+
+    expect(mocks.add).toHaveBeenCalledWith({
+      name: "team",
+      url: TEAM_URL,
+      token: "row-token",
+      shares_core_disk: true,
     });
   });
 
@@ -226,7 +258,7 @@ describe("add", () => {
 
 describe("remove", () => {
   it("deletes by id, and the row and its verdict are gone", async () => {
-    rows = [{ id: "worker:team", url: TEAM_URL, verdict: null }];
+    rows = [{ id: "worker:team", url: TEAM_URL, shares_core_disk: false, verdict: null }];
     mocks.handshake.mockResolvedValueOnce(checked);
     const page = useComputeBackends();
     await page.load();

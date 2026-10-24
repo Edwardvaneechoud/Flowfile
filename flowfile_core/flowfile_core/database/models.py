@@ -151,9 +151,10 @@ class ConfiguredBackend(Base):
     slash; ``token`` is the worker's bearer token as secret-manager ciphertext (``encrypt_secret``'s
     ``$ffsec$1$<user>$…``), never the token itself; ``ca_cert`` is the PEM of the certificate authority core trusts
     for the worker's certificate when it is not public (a self-signed worker certificate is its own), ``None`` for a
-    public certificate or a plain ``http://`` worker. The built-in ``local`` and ``worker`` are never rows. The table
-    shares its name with the ``flowfile.compute_backends`` entry-point group, the other way to add a backend; the
-    registry reads a row on the first lookup of its id.
+    public certificate or a plain ``http://`` worker; ``shares_core_disk`` says the worker sees core's files (the same
+    host, a shared mount), so core offers it ``file`` whatever it declares. The built-in ``local`` and ``worker`` are
+    never rows. The table shares its name with the ``flowfile.compute_backends`` entry-point group, the other way to
+    add a backend; the registry reads a row on the first lookup of its id.
     """
 
     __tablename__ = "compute_backends"
@@ -162,6 +163,7 @@ class ConfiguredBackend(Base):
     url = Column(String, nullable=False)
     token = Column(Text, nullable=False)
     ca_cert = Column(Text, nullable=True)
+    shares_core_disk = Column(Boolean, nullable=False, default=False, server_default=sa.false())
 
 
 # ==================== Catalog Models ====================
