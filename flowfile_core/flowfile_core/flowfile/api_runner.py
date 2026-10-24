@@ -1,9 +1,14 @@
 """Synchronous in-process execution of a published flow for the HTTP data API.
 
 Loads a registered flow fresh per request, validates and injects typed query
-parameters, runs the graph in performance mode (offloading the single terminal
-collect to the worker when one is available, falling back to in-core otherwise), and
-serializes the data flowing into the flow's single ``api_response`` node.
+parameters, runs the graph in performance mode (with a remote execution location the
+single terminal collect runs on the worker, and a worker that cannot run it fails the
+request with a typed compute error), and serializes the data flowing into the flow's
+single ``api_response`` node. With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a remote run's
+response is instead a sample of the api_response node's result on the backend that
+holds it, bounded by the worker's sample cap. The flow is closed when the call ends,
+once the response is serialised or on any error, so every result the call minted is
+released on the backend that holds it.
 
 A freshly opened flow keeps the ``flow_id`` stored in its file, and that id keys
 *process-wide* scratch state: the singleton ``FlowLogger``, the kernel I/O dirs
@@ -22,11 +27,17 @@ through this seam and keep full expressivity.
 
 from __future__ import annotations
 
+import io
 import threading
 from pathlib import Path
 from typing import Any
 
-from flowfile_core.configs import logger
+import polars as pl
+import requests
+
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable, worker_failure
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import ExternalDfFetcher
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.flowfile.param_types import coerce_param_value, stringify_param_value
@@ -46,6 +57,13 @@ class ApiConfigError(Exception):
 class ApiExecutionError(Exception):
     """The flow ran but failed or produced no data (-> HTTP 500)."""
 
+
+# The most rows a worker answers for one sample; a published response is never larger.
+_SAMPLE_ROWS_CAP = 10_000
+
+# The typed compute errors by class name, as a run report row names the one that failed its node; not the base,
+# whose name Polars' own ComputeError shares.
+_COMPUTE_ERRORS = {error.__name__: error for error in ComputeError.__subclasses__()}
 
 _run_locks_guard = threading.Lock()
 _run_locks: dict[int, threading.Lock] = {}
@@ -133,21 +151,54 @@ def _first_error(run_info: RunInformation | None) -> str | None:
     return None
 
 
+def _first_compute_error(run_info: RunInformation | None) -> ComputeError | None:
+    """The typed compute error that failed the run's first failed node, rebuilt from its run report row, else None.
+
+    The row keeps the error's class name and its text. The row's text carries ``ComputeUnavailable``'s hint already,
+    and the class does not add it twice, so the rebuilt error reads as the row does.
+    """
+    if run_info is None:
+        return None
+    for node_result in run_info.node_step_result:
+        if node_result.success is False and node_result.error:
+            error_class = _COMPUTE_ERRORS.get(node_result.compute_error)
+            if error_class is None:
+                return None
+            return error_class(f"node {node_result.node_id}: {node_result.error}")
+    return None
+
+
 def _materialize(data: Any, max_rows: int | None, flow: Any, api_node: Any):
-    """Collect the api_response input, on the worker when one is available.
+    """Collect the api_response input, on the worker when the execution location is remote.
 
     The flow runs in performance mode, so the whole pipeline is a single lazy plan and
     this is the one collect that actually executes it. When ``execution_location`` is
     remote we ship that collect to the worker (it materializes Arrow IPC; the core only
     reads it back), so the core process does no heavy compute. The row cap is pushed in
-    first so the worker materializes only what's returned. Degrades to an in-core collect
-    when no worker is reachable, or the worker reports an environment failure (error code
-    -1: child killed, plan not loadable, result not writable), so a request still succeeds
-    rather than 500-ing. A plan that fails on its data raises :class:`ApiExecutionError`
-    without re-running it in core.
+    first so the worker materializes only what's returned. On the remote path the collect
+    never runs in core.
+
+    With ``FLOWFILE_COMPUTE_PROTOCOL`` on, the run already submitted every node to its
+    backend, so a remote response is ``sample(ref, n)`` of the api_response node's reference
+    on the backend that minted it, ``n`` being *max_rows* clamped to the worker's sample cap
+    (an unset *max_rows* too); core receives at most ``n`` rows and collects nothing. A local
+    run collects in core in both flag states.
+
+    Raises:
+        ComputeUnavailable: The worker could not be reached to submit the plan.
+        ComputeError: The worker could not run the plan (error code -1, typed by
+            :func:`~flowfile_core.flowfile.execution.errors.worker_failure`); with the flag
+            on, any typed failure of the sample.
+        ApiExecutionError: The plan could not be submitted (core cannot serialise it, or
+            the worker refused it), or it ran on the worker and failed on its data.
     """
     if flow.flow_settings.execution_location == "local":
         return data.collect(n_records=max_rows)
+
+    if FLOWFILE_COMPUTE_PROTOCOL:
+        ref = api_node.results.result_ref
+        n = _SAMPLE_ROWS_CAP if max_rows is None else min(max_rows, _SAMPLE_ROWS_CAP)
+        return pl.read_ipc_stream(io.BytesIO(registry.backend(ref.backend_id).sample(ref, n)))
 
     lf = data.data_frame
     if max_rows is not None:
@@ -159,30 +210,55 @@ def _materialize(data: Any, max_rows: int | None, flow: Any, api_node: Any):
             flow_id=flow.flow_id,
             node_id=api_node.node_id,
             wait_on_completion=False,
+            worker_url=registry.worker_url(),
         )
-    except Exception as exc:  # noqa: BLE001 - worker unreachable; degrade to in-core
-        logger.warning("API worker offload unavailable (%s); collecting response in core", exc)
-        return data.collect(n_records=max_rows)
+    except ComputeError:
+        # The handshake or the transport already typed it (unreachable, version mismatch).
+        raise
+    except requests.RequestException as exc:
+        raise ComputeUnavailable(str(exc)) from exc
+    except Exception as exc:
+        raise ApiExecutionError(str(exc) or "could not submit the plan to the worker") from exc
 
     try:
         result = fetcher.get_result()
     except Exception as exc:
-        # -1: the worker child died or its environment failed, not the plan on its data.
         if fetcher.error_code == -1:
-            logger.warning("API worker collect failed in the worker environment; collecting response in core")
-            return data.collect(n_records=max_rows)
+            raise worker_failure(fetcher.error_kind, fetcher.error_description) from exc
         raise ApiExecutionError(fetcher.error_description or str(exc) or "flow execution failed on worker") from exc
     return result.collect()
 
 
+def _truncated(df: pl.DataFrame, max_rows: int | None, flow: Any, api_node: Any) -> bool:
+    """Whether the worker's sample cap, not the node's *max_rows*, left rows out of a response.
+
+    Only a remote read with ``FLOWFILE_COMPUTE_PROTOCOL`` on is capped (``_materialize``). The result's row count is
+    read from its reference when it carries one, else counted on the backend that holds it.
+    """
+    if flow.flow_settings.execution_location == "local" or not FLOWFILE_COMPUTE_PROTOCOL:
+        return False
+    if df.height < _SAMPLE_ROWS_CAP or (max_rows is not None and max_rows <= _SAMPLE_ROWS_CAP):
+        return False
+    ref = api_node.results.result_ref
+    total = ref.row_count if ref.row_count is not None else registry.backend(ref.backend_id).count(ref)
+    return total > df.height
+
+
 def _serialize(data: Any, settings: Any, flow: Any, api_node: Any) -> dict[str, Any]:
+    """The response body: the rows, how many there are, the orientation, and whether the sample cap cut them."""
     orientation = getattr(settings, "orientation", "records")
     max_rows = getattr(settings, "max_rows", None)
     df = _materialize(data, max_rows, flow, api_node)
+    truncated = _truncated(df, max_rows, flow, api_node)
     if orientation == "columns":
-        return {"data": df.to_dict(as_series=False), "row_count": df.height, "orientation": "columns"}
+        return {
+            "data": df.to_dict(as_series=False),
+            "row_count": df.height,
+            "orientation": "columns",
+            "truncated": truncated,
+        }
     records = df.to_dicts()
-    return {"data": records, "row_count": len(records), "orientation": "records"}
+    return {"data": records, "row_count": len(records), "orientation": "records", "truncated": truncated}
 
 
 def _effective_specs(flow, overrides: list[ApiParamSpec]) -> list[ApiParamSpec]:
@@ -228,51 +304,61 @@ def run_flow_as_api(
         ApiParamError: A parameter is missing or fails type validation.
         ApiConfigError: The flow does not have exactly one api_response node.
         ApiExecutionError: The flow failed or produced no data.
+        ComputeError: The worker could not be reached (``ComputeUnavailable``) or could
+            not run the final collect; with ``FLOWFILE_COMPUTE_PROTOCOL`` on, also the typed
+            error that failed the run's first failed node, rebuilt from its run report row.
+            Nothing is collected in core instead.
     """
     flow = open_flow(Path(flow_path), user_id=owner_id)
-    # Machine traffic, not a user pressing Run.
-    flow._system_run = True
+    try:
+        # Machine traffic, not a user pressing Run.
+        flow._system_run = True
 
-    api_nodes = [n for n in flow.nodes if n.node_type == "api_response"]
-    if len(api_nodes) == 0:
-        raise ApiConfigError("flow has no API response node")
-    if len(api_nodes) > 1:
-        raise ApiConfigError("flow has more than one API response node")
-    api_node = api_nodes[0]
+        api_nodes = [n for n in flow.nodes if n.node_type == "api_response"]
+        if len(api_nodes) == 0:
+            raise ApiConfigError("flow has no API response node")
+        if len(api_nodes) > 1:
+            raise ApiConfigError("flow has more than one API response node")
+        api_node = api_nodes[0]
 
-    resolved = resolve_params(_effective_specs(flow, param_specs), query)
-    for param in flow.flow_settings.parameters:
-        if param.name in resolved:
-            param.default_value = resolved[param.name]
+        resolved = resolve_params(_effective_specs(flow, param_specs), query)
+        for param in flow.flow_settings.parameters:
+            if param.name in resolved:
+                param.default_value = resolved[param.name]
 
-    # Run in performance mode (one lazy plan; no per-node materialization or example
-    # data) and let compute go to the worker when one is available, so the core process
-    # does no heavy collect (the final collect is offloaded in _materialize). Tests pin
-    # execution_location="local" to stay hermetic.
-    flow.flow_settings.execution_location = execution_location or get_global_execution_location()
-    flow.flow_settings.execution_mode = "Performance"
+        # Run in performance mode (one lazy plan; no per-node materialization or example
+        # data) and send compute to the worker when the location is remote, so the core process
+        # does no heavy collect (the final collect is offloaded in _materialize). Tests pin
+        # execution_location="local" to stay hermetic.
+        flow.flow_settings.execution_location = execution_location or get_global_execution_location()
+        flow.flow_settings.execution_mode = "Performance"
 
-    # Serialize concurrent runs of the same published flow: the freshly opened flow
-    # keeps its saved flow_id, which keys process-wide scratch state (FlowLogger,
-    # kernel I/O dirs, cache dir) that overlapping runs would corrupt. Held through
-    # serialization too, since collecting the result reads the flow_id-keyed cache.
-    with _flow_run_lock(flow.flow_id):
-        run_info = flow.run_graph()
-        if run_info is None or not run_info.success:
-            raise ApiExecutionError(_first_error(run_info) or "flow execution failed")
+        # Serialize concurrent runs of the same published flow: the freshly opened flow
+        # keeps its saved flow_id, which keys process-wide scratch state (FlowLogger,
+        # kernel I/O dirs, cache dir) that overlapping runs would corrupt. Held through
+        # serialization too, since collecting the result reads the flow_id-keyed cache.
+        with _flow_run_lock(flow.flow_id):
+            run_info = flow.run_graph()
+            if run_info is None or not run_info.success:
+                compute_error = _first_compute_error(run_info) if FLOWFILE_COMPUTE_PROTOCOL else None
+                if compute_error is not None:
+                    raise compute_error
+                raise ApiExecutionError(_first_error(run_info) or "flow execution failed")
 
-        deliberately_skipped = {nr.node_id for nr in run_info.node_step_result if nr.skipped}
-        if api_node.node_id in deliberately_skipped:
-            # The response node sits behind a closed gate for these parameter
-            # values. Pulling it anyway would lazily execute the gated-off
-            # branch and serve its data as if the gate were open — refuse
-            # explicitly instead.
-            raise ApiExecutionError(
-                "API response node was gated off for these parameter values (a gate "
-                "condition upstream evaluated false)"
-            )
+            deliberately_skipped = {nr.node_id for nr in run_info.node_step_result if nr.skipped}
+            if api_node.node_id in deliberately_skipped:
+                # The response node sits behind a closed gate for these parameter
+                # values. Pulling it anyway would lazily execute the gated-off
+                # branch and serve its data as if the gate were open — refuse
+                # explicitly instead.
+                raise ApiExecutionError(
+                    "API response node was gated off for these parameter values (a gate "
+                    "condition upstream evaluated false)"
+                )
 
-        data = api_node.get_resulting_data()
-        if data is None:
-            raise ApiExecutionError("API response node produced no data")
-        return _serialize(data, api_node.setting_input, flow, api_node)
+            data = api_node.get_resulting_data()
+            if data is None:
+                raise ApiExecutionError("API response node produced no data")
+            return _serialize(data, api_node.setting_input, flow, api_node)
+    finally:
+        flow.close_flow()

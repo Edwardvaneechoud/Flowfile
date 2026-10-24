@@ -120,6 +120,30 @@ def test_collect_runs_the_graph_and_returns_real_rows():
     assert_frame_equal(frame.collect(), EXPECTED)
 
 
+@pytest.mark.parametrize("cache_results", [False, True], ids=["deferred", "stored"])
+def test_collect_answers_every_row_past_the_workers_sample_cap(monkeypatch, cache_results):
+    """The rows are the node's result read through ``plan_for`` and collected here, never a capped sample."""
+    from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
+    from flowfile_worker.service import SAMPLE_ROWS_CAP
+
+    def refuse_a_sample(self, ref, n):
+        raise AssertionError(f"collect sampled {n} rows of {ref.result_id}")
+
+    monkeypatch.setattr(EmbeddedWorkerBackend, "sample", refuse_a_sample)
+    rows = SAMPLE_ROWS_CAP + 2_345
+    source = ff.from_dict({"a": list(range(rows))})
+    node_id = _add_polars_code_node(source.flow_graph, source.node_id, TEN_X)
+    source.flow_graph.get_node(node_id).node_settings.cache_results = cache_results
+    frame = _defer(source.flow_graph, node_id, source.node_id)
+
+    collected = frame.collect()
+
+    expected = pl.DataFrame({"a": list(range(rows))}).with_columns((pl.col("a") * 10).alias("a10"))
+    assert_frame_equal(collected, expected)
+    held = frame.flow_graph.get_node(node_id).results.result_ref
+    assert (held.backend_id, held.state) == ("local", "materialised" if cache_results else "deferred")
+
+
 def test_describe_runs_the_graph():
     _, frame, _, _ = _deferred_frame()
     described = frame.describe()

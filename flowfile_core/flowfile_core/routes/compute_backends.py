@@ -1,0 +1,213 @@
+"""Routes over core's compute backends table: the workers core reaches by id, beside its built-in backends.
+
+Mounted at ``/compute_backends`` in :mod:`flowfile_core.main`. Every user may list the configured workers' ids, each
+with the last handshake verdict of its backend in this process (``handshake.last_verdict``, ``None`` until it was
+checked), which the node picker and the Flow Settings dialog show beside the id; the URL is answered to an administrator
+only, and so is the verdict as it stands: a user who is no administrator gets it without anything that can name the
+worker's or core's host (``_without_addresses``), its refusal as a reason word. Adding, removing and the handshake are
+admin-only like the ``/system`` routes. A row is one configured worker:
+its id ``worker:<name>``, its base URL, its bearer token, stored as secret-manager ciphertext and never answered, for a
+worker whose TLS certificate is not public, the PEM of the CA core trusts for it, and whether the worker sees core's
+files (``shares_core_disk``: the same host or a shared mount), which makes core offer it ``file`` whatever the worker
+declares. ``local`` and ``worker`` are built in and never rows. A self-hoster fills the table through the settings page,
+a deployment's control plane over these routes; core manages no worker itself, and how one is hosted, registered or
+scaled is the control plane's. The registry makes a ``WorkerBackend`` from a row on the first lookup of its id
+(``registry.backend``), and removing the row forgets that instance and the verdicts of the backends on its URL.
+
+The token travels as an HTTP header value, so the add route refuses one that is no header value
+(``worker.is_header_value``) with a 422 whose detail states the rule and never the token. The route checks it itself:
+a validator on the request model would fail with an error that echoes the field's input. A CA certificate the ``ssl``
+module cannot load as PEM (any text that is not ASCII PEM blocks), or one given with an ``http://`` URL, is a 422
+too, and an empty one is no CA.
+
+The handshake checks the backend now as its first use would (``handshake.verify``): the worker's capabilities read with
+the row's token and compared with this process's, then the probe plans run on it, and the verdict is kept as its last.
+The verdict is the answer, so a worker that cannot be reached, refuses the protocol version or refuses the token is a
+200 verdict with ``ok`` false and the error, not a 503 as from the ``/system/worker_pool`` proxy, which forwards a call;
+so is a row the registry cannot make a backend of (its token no longer decrypts with the master key).
+"""
+
+from __future__ import annotations
+
+import ssl
+
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import BaseModel, Field, SecretStr, field_validator
+from sqlalchemy.orm import Session
+
+from flowfile_core.auth.jwt import get_current_active_user, get_current_admin_user
+from flowfile_core.auth.models import User
+from flowfile_core.database.connection import get_db
+from flowfile_core.database.models import ConfiguredBackend
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.backends.worker import TOKEN_RULE, is_header_value
+from flowfile_core.flowfile.execution.errors import ComputeError
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
+from flowfile_core.secret_manager.secret_manager import encrypt_secret
+from shared.compute_protocol import Capabilities, local_capabilities
+
+router = APIRouter(prefix="/compute_backends", dependencies=[Depends(get_current_active_user)])
+
+
+class ComputeBackendInput(BaseModel):
+    """Request body for ``POST /compute_backends``: the worker's name, its base URL, its bearer token, optionally the
+    PEM of the CA to trust for its certificate, and whether it sees core's files."""
+
+    name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$", max_length=64)
+    url: str
+    token: SecretStr = Field(min_length=1)
+    ca_cert: str | None = None
+    shares_core_disk: bool = False
+
+    @field_validator("url")
+    @classmethod
+    def _http_url(cls, url: str) -> str:
+        if not url.startswith(("http://", "https://")):
+            raise ValueError("the worker URL must start with http:// or https://")
+        return url.rstrip("/")
+
+
+class ComputeBackendOut(BaseModel):
+    """One configured worker as the routes answer it: its id, its URL (``None`` to a user who is no administrator),
+    whether it sees core's files and the last verdict of its handshake in this process (``None`` until it was
+    checked), never its token."""
+
+    id: str
+    url: str | None
+    shares_core_disk: bool = False
+    verdict: handshake.Verdict | None = None
+
+
+_REFUSAL_REASONS = {"ComputeUnavailable": "unreachable", "VersionMismatch": "version mismatch"}
+
+
+def _without_host(capabilities: Capabilities | None) -> Capabilities | None:
+    """*capabilities* without the fields that describe a host: its ``platform`` and its plugins' library paths."""
+    if capabilities is None:
+        return None
+    return capabilities.model_copy(update={"platform": "", "plugin_libs": {}})
+
+
+def _without_addresses(verdict: handshake.Verdict | None) -> handshake.Verdict | None:
+    """*verdict* as a user who is no administrator sees it: what the picker shows, nothing that can name a host.
+
+    The refusal is a reason word for its kind (``unreachable``, ``version mismatch``, else ``refused``), since the
+    error text names the worker's URL and the transport's exception; each absence keeps the words before its
+    parenthesised detail, which names library paths and the probe's error; ``platform`` and plugin library paths are
+    dropped from the capabilities. The version differences stay: they name versions only.
+    """
+    if verdict is None:
+        return None
+    return verdict.model_copy(
+        update={
+            "core": _without_host(verdict.core),
+            "backend": _without_host(verdict.backend),
+            "offered": _without_host(verdict.offered),
+            "absent": {name: reason.split(" (", 1)[0] for name, reason in verdict.absent.items()},
+            "error": None if verdict.error is None else _REFUSAL_REASONS.get(verdict.error_kind, "refused"),
+        }
+    )
+
+
+def _configured(db: Session, backend_id: str) -> ConfiguredBackend:
+    row = db.get(ConfiguredBackend, backend_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"No compute backend {backend_id!r} is configured")
+    return row
+
+
+@router.get("", response_model=list[ComputeBackendOut])
+def list_compute_backends(
+    current_user: User = Depends(get_current_active_user), db: Session = Depends(get_db)
+) -> list[ComputeBackendOut]:
+    """The configured workers, ordered by id, each with its last verdict; the URLs, and the verdicts whole, to an
+    administrator only (``_without_addresses``)."""
+    rows = db.query(ConfiguredBackend).order_by(ConfiguredBackend.id).all()
+    return [
+        ComputeBackendOut(
+            id=row.id,
+            url=row.url if current_user.is_admin else None,
+            shares_core_disk=bool(row.shares_core_disk),
+            verdict=(
+                handshake.last_verdict(row.id)
+                if current_user.is_admin
+                else _without_addresses(handshake.last_verdict(row.id))
+            ),
+        )
+        for row in rows
+    ]
+
+
+@router.post("", response_model=ComputeBackendOut, status_code=status.HTTP_201_CREATED)
+def add_compute_backend(
+    body: ComputeBackendInput,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db),
+) -> ComputeBackendOut:
+    """Configure the worker ``worker:<name>``, its token encrypted for the admin who adds it; 409 when the id exists.
+
+    A token that is no header value is a 422 stating ``TOKEN_RULE``, and nothing is stored; so is a CA certificate that
+    is no PEM certificate or that comes with an ``http://`` URL.
+    """
+    if not is_header_value(body.token.get_secret_value()):
+        raise HTTPException(status_code=422, detail=f"The token was not stored: {TOKEN_RULE}")
+    ca_cert = body.ca_cert or None
+    if ca_cert is not None:
+        if not body.url.startswith("https://"):
+            raise HTTPException(
+                status_code=422, detail="The CA certificate was not stored: it applies to an https:// worker URL only"
+            )
+        try:
+            ssl.create_default_context(cadata=ca_cert)
+        except (ssl.SSLError, TypeError, ValueError):
+            raise HTTPException(
+                status_code=422,
+                detail="The CA certificate was not stored: it must be PEM, -----BEGIN CERTIFICATE----- blocks",
+            ) from None
+    backend_id = registry.CONFIGURED_WORKER_PREFIX + body.name
+    if db.get(ConfiguredBackend, backend_id) is not None:
+        raise HTTPException(status_code=409, detail=f"Compute backend {backend_id!r} already exists")
+    token = encrypt_secret(body.token.get_secret_value(), current_user.id)
+    db.add(
+        ConfiguredBackend(
+            id=backend_id, url=body.url, token=token, ca_cert=ca_cert, shares_core_disk=body.shares_core_disk
+        )
+    )
+    db.commit()
+    return ComputeBackendOut(id=backend_id, url=body.url, shares_core_disk=body.shares_core_disk)
+
+
+@router.delete("/{backend_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(get_current_admin_user)])
+def remove_compute_backend(backend_id: str, db: Session = Depends(get_db)) -> Response:
+    """Remove a configured worker, forget the registry's instance of it and the verdicts of the backends on its URL;
+    404 when no row has the id."""
+    row = _configured(db, backend_id)
+    url = row.url
+    db.delete(row)
+    db.commit()
+    registry.forget(backend_id)
+    handshake.reset_handshake(url)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/{backend_id}/handshake", response_model=handshake.Verdict, dependencies=[Depends(get_current_admin_user)]
+)
+def handshake_compute_backend(backend_id: str, db: Session = Depends(get_db)) -> handshake.Verdict:
+    """Check the worker now, the probe plans included, and answer the verdict; 404 when no row has the id.
+
+    A ``ComputeError`` while checking is the verdict the check kept: ``ok`` false, the message as ``error``. A row the
+    registry cannot make a backend of (``LookupError``: its token no longer decrypts) is a refused verdict with the
+    registry's message, never kept, since there is no backend to keep it for.
+    """
+    _configured(db, backend_id)
+    try:
+        backend = registry.backend(backend_id)
+    except LookupError as e:
+        return handshake.Verdict(
+            id=backend_id, ok=False, core=local_capabilities(), error=str(e), error_kind=type(e).__name__
+        )
+    try:
+        return handshake.verify(backend)
+    except ComputeError:
+        return handshake.last_verdict(backend_id)

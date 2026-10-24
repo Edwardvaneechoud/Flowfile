@@ -65,3 +65,23 @@ def test_reset_after_completion_clears_state():
     f.reset()
     assert not f.is_completed()
     assert f.get_result() is None
+
+
+def test_worker_thread_exits_once_the_call_has_run():
+    """A finished call leaves no executor thread parked for as long as the node holds the future."""
+    counter = {"n": 0}
+
+    def func():
+        counter["n"] += 1
+        return counter["n"]
+
+    f = SingleExecutionFuture(func)
+    assert f() == 1
+    workers = list(f._executor._threads)
+    assert workers
+    for worker in workers:
+        worker.join(timeout=5)
+    assert not any(worker.is_alive() for worker in workers)
+
+    f.reset()
+    assert f() == 2

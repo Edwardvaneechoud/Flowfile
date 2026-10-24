@@ -24,6 +24,7 @@ import httpx
 from flowfile_core.auth import sharing
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.events import publish
+from flowfile_core.flowfile.execution import registry as compute_registry
 
 # Re-exported: the image tags moved to a docker-free module so matching.py can
 # read them, but manager stays their public home for existing callers/tests.
@@ -411,7 +412,8 @@ def _rebase_to_posix(local_path: str, host_prefix: str, container_prefix: str) -
 def _notebook_env(kernel: KernelInfo) -> dict[str, str]:
     """A notebook kernel's flowfile never migrates, seeds or GCs anything and holds no catalog database: its engine
     refuses every connection (``flowfile_frame.notebook_kernel``). Its storage folder is the container's own: the
-    kernel mounts no host folder, and reads files, catalog tables, flow files and custom node sources through core."""
+    kernel mounts no host folder, and reads files, catalog tables, flow files and custom node sources through core.
+    It computes on its own process, with the variables the backend registry names for that (``child_env``)."""
     if sharing.sharing_enabled() or kernel.image_flavour != ImageFlavour.NOTEBOOK:
         return {}
     return {
@@ -419,7 +421,7 @@ def _notebook_env(kernel: KernelInfo) -> dict[str, str]:
         "FLOWFILE_SKIP_INIT_DB": "1",
         "FLOWFILE_KERNEL_GC": "0",
         "FLOWFILE_TELEMETRY": "0",
-        "FLOWFILE_OFFLOAD_TO_WORKER": "0",
+        **compute_registry.child_env(),
     }
 
 

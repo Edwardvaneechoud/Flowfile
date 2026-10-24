@@ -109,12 +109,16 @@ def _get_ff_repr(value: Any) -> str | None:
 
 
 def _membership_ff_repr(ff_repr: str | None, values: Any) -> str | None:
-    """``[col] in ("a", "b")`` when ``values`` is a plain sequence of scalar literals, else None."""
+    """``[col] in ("a", "b")`` when ``values`` is a plain sequence of scalar literals that each have a formula form
+    (a NaN or an infinity has none), else None."""
     if ff_repr is None or not isinstance(values, list | tuple | set | frozenset):
         return None
     if not all(isinstance(v, bool | int | float | str) for v in values):
         return None
-    return f"{ff_repr} in ({', '.join(_get_ff_repr(v) for v in values)})"
+    parts = [_get_ff_repr(v) for v in values]
+    if any(part is None for part in parts):
+        return None
+    return f"{ff_repr} in ({', '.join(parts)})"
 
 
 def _compute_cast_ff_repr(ff_repr: str | None, pl_dtype: pl.DataType | type, strict: bool = True) -> str | None:
@@ -146,20 +150,28 @@ _SCALAR_LITERAL_TYPES = (
 def _polars_expr_code(value: pl.Expr) -> str | None:
     """Source that rebuilds ``value``: ``pl.col(name)`` for a column, ``pl.lit(...)`` for a scalar literal, else its
     JSON plan (``str(value)`` is Polars' display form, not code). ``None`` when the plan carries a pickled Python
-    function, which no code rebuilds."""
+    function, which no code rebuilds, or one Polars cannot pickle at all (a closure over a lock)."""
     if value.meta.is_column():
         return f"pl.col({value.meta.output_name()!r})"
     literal = _literal_code(value) if value.meta.is_literal() else None
     if literal is not None:
         return literal
-    plan = value.meta.serialize(format="json")
+    try:
+        plan = value.meta.serialize(format="json")
+    except Exception:
+        return None
     if any(marker in plan for marker in _PYTHON_FUNCTION_MARKERS):
         return None
     return f"pl.Expr.deserialize(BytesIO({plan.encode()!r}), format='json')"
 
 
 def _literal_code(value: pl.Expr) -> str | None:
-    """``pl.lit(<scalar>[, dtype=pl.<dtype>])`` for a literal holding one scalar the sandbox can spell, else None."""
+    """``pl.lit(<scalar>[, dtype=pl.<dtype>])`` for a literal holding one scalar the sandbox can spell, else None.
+
+    The dtype is written whenever ``pl.lit(<scalar>)`` alone is another expression: a literal the caller typed
+    (``pl.lit(100, dtype=pl.Int32)``) keeps its type, while an untyped one stays dynamic and, as in Polars, takes the
+    type of the column it meets.
+    """
     try:
         frame = pl.select(value)
     except Exception:
@@ -170,7 +182,7 @@ def _literal_code(value: pl.Expr) -> str | None:
     if not isinstance(scalar, _SCALAR_LITERAL_TYPES) or getattr(scalar, "tzinfo", None) is not None:
         return None
     literal = python_literal(scalar, set())
-    if pl.select(pl.lit(scalar)).dtypes[0] == dtype:
+    if pl.lit(scalar).meta.eq(value):
         return f"pl.lit({literal})"
     return f"pl.lit({literal}, dtype=pl.{dtype!r})"
 
@@ -184,6 +196,16 @@ def _get_expr_and_repr(value: Any) -> tuple[pl.Expr | None, str]:
         return value.expr, value._repr_str
     # Assume literal
     return pl.lit(value), python_literal(value, set())
+
+
+def _wrapped_operand(method: Callable[[Expr, Any], Expr]) -> Callable[[Expr, Any], Expr]:
+    """``method`` given its operand with every Polars expression in it wrapped once, so each is serialised once."""
+
+    @wraps(method)
+    def wrapper(self: Expr, other: Any) -> Expr:
+        return method(self, _frame_value(other))
+
+    return wrapper
 
 
 def _map_nested(value: Any, leaf: Callable[[Any], Any]) -> Any:
@@ -923,26 +945,31 @@ class Expr:
         result.agg_func = "var"
         return result
 
+    @_wrapped_operand
     def __add__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr + other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr("+", other, res_expr)
 
+    @_wrapped_operand
     def __sub__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr - other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr("-", other, res_expr)
 
+    @_wrapped_operand
     def __mul__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr * other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr("*", other, res_expr)
 
+    @_wrapped_operand
     def __truediv__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr / other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr("/", other, res_expr)
 
+    @_wrapped_operand
     def __floordiv__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr // other_expr if self.expr is not None and other_expr is not None else None
@@ -950,6 +977,7 @@ class Expr:
         ff = f"floor(({self._ff_repr} / {other_ff}))" if self._ff_repr is not None and other_ff is not None else None
         return self._create_binary_op_expr("//", other, res_expr, ff_repr=ff)
 
+    @_wrapped_operand
     def __pow__(self, exponent) -> Expr:
         exp_expr, _ = _get_expr_and_repr(exponent)
         res_expr = self.expr.pow(exp_expr) if self.expr is not None and exp_expr is not None else None
@@ -957,6 +985,7 @@ class Expr:
         ff = f"power({self._ff_repr}, {exp_ff})" if self._ff_repr is not None and exp_ff is not None else None
         return self._create_binary_op_expr("**", exponent, res_expr, ff_repr=ff)
 
+    @_wrapped_operand
     def __mod__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr % other_expr if self.expr is not None and other_expr is not None else None
@@ -971,6 +1000,7 @@ class Expr:
             return f"({other_ff} {ff_op} {self._ff_repr})"
         return None
 
+    @_wrapped_operand
     def __radd__(self, other) -> Expr:
         other_expr, other_repr = _get_expr_and_repr(other)
         new_repr = f"({other_repr} + {self._repr_str})"
@@ -980,6 +1010,7 @@ class Expr:
                     convertable_to_code=convertable_to_code, _function_sources=function_sources,
                     ff_repr=self._create_reverse_binary_ff_repr("+", other))
 
+    @_wrapped_operand
     def __rsub__(self, other) -> Expr:
         other_expr, other_repr = _get_expr_and_repr(other)
         new_repr = f"({other_repr} - {self._repr_str})"
@@ -989,6 +1020,7 @@ class Expr:
                     convertable_to_code=convertable_to_code, _function_sources=function_sources,
                     ff_repr=self._create_reverse_binary_ff_repr("-", other))
 
+    @_wrapped_operand
     def __rmul__(self, other) -> Expr:
         other_expr, other_repr = _get_expr_and_repr(other)
         new_repr = f"({other_repr} * {self._repr_str})"
@@ -998,6 +1030,7 @@ class Expr:
                     convertable_to_code=convertable_to_code, _function_sources=function_sources,
                     ff_repr=self._create_reverse_binary_ff_repr("*", other))
 
+    @_wrapped_operand
     def __rtruediv__(self, other) -> Expr:
         other_expr, other_repr = _get_expr_and_repr(other)
         new_repr = f"({other_repr} / {self._repr_str})"
@@ -1007,6 +1040,7 @@ class Expr:
                     convertable_to_code=convertable_to_code, _function_sources=function_sources,
                     ff_repr=self._create_reverse_binary_ff_repr("/", other))
 
+    @_wrapped_operand
     def __rfloordiv__(self, other) -> Expr:
         other_expr, other_repr = _get_expr_and_repr(other)
         new_repr = f"({other_repr} // {self._repr_str})"
@@ -1017,6 +1051,7 @@ class Expr:
         return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True,
                     convertable_to_code=convertable_to_code, _function_sources=function_sources, ff_repr=ff)
 
+    @_wrapped_operand
     def __rmod__(self, other) -> Expr:
         other_expr, other_repr = _get_expr_and_repr(other)
         new_repr = f"({other_repr} % {self._repr_str})"
@@ -1026,6 +1061,7 @@ class Expr:
                     convertable_to_code=convertable_to_code, _function_sources=function_sources,
                     ff_repr=self._create_reverse_binary_ff_repr("%", other))
 
+    @_wrapped_operand
     def __rpow__(self, other) -> Expr:
         other_expr, other_repr = _get_expr_and_repr(other)
         new_repr = f"({other_repr} ** {self._repr_str})"
@@ -1038,31 +1074,37 @@ class Expr:
                     convertable_to_code=convertable_to_code, _function_sources=function_sources, ff_repr=ff)
 
     # --- Comparison operations ---
+    @_wrapped_operand
     def __eq__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr == other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr("==", other, res_expr)
 
+    @_wrapped_operand
     def __ne__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr != other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr("!=", other, res_expr)
 
+    @_wrapped_operand
     def __gt__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr > other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr(">", other, res_expr)
 
+    @_wrapped_operand
     def __lt__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr < other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr("<", other, res_expr)
 
+    @_wrapped_operand
     def __ge__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr >= other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr(">=", other, res_expr)
 
+    @_wrapped_operand
     def __le__(self, other) -> Expr:
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr <= other_expr if self.expr is not None and other_expr is not None else None
@@ -1077,6 +1119,7 @@ class Expr:
             "e.g. `(ff.col('a') > 0) & (ff.col('b') > 0)`."
         )
 
+    @_wrapped_operand
     def __and__(self, other) -> Expr:
         from flowfile_frame.selectors import Selector
 
@@ -1086,6 +1129,7 @@ class Expr:
         res_expr = self.expr & other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr("&", other, res_expr)
 
+    @_wrapped_operand
     def __or__(self, other) -> Expr:
         from flowfile_frame.selectors import Selector
 
@@ -1143,9 +1187,9 @@ class Expr:
                 _, pred_repr = _get_expr_and_repr(pred)
                 args_strs.append(pred_repr)
             else:
-                args_strs.append(repr(pred))
+                args_strs.append(python_literal(pred, set()))
 
-        constraints_strs = [f"{k}={repr(v)}" for k, v in constraints.items()]
+        constraints_strs = [f"{k}={_argument_code(v)}" for k, v in constraints.items()]
         all_args_str = ", ".join(args_strs + constraints_strs)
 
         processed_predicates = []
@@ -1634,7 +1678,7 @@ class When(Expr):
             col_obj = col(value)
             return col_obj.expr, f"'{value}'"
         else:
-            return value, repr(value)
+            return value, python_literal(value, set())
 
     @staticmethod
     def _get_branch_ff_repr(value) -> str | None:
@@ -1733,7 +1777,7 @@ def lit(value: Any) -> Expr:
     if isinstance(value, Parameter):
         return value.to_expr()
     # Literals don't have an agg_func
-    return Expr(pl.lit(value, allow_object=True), repr_str=f"pl.lit({repr(value)})", agg_func=None,
+    return Expr(pl.lit(value, allow_object=True), repr_str=f"pl.lit({python_literal(value, set())})", agg_func=None,
                 ff_repr=_get_ff_repr(value))
 
 

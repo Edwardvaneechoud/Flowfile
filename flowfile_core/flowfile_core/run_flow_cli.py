@@ -16,11 +16,17 @@ from flowfile_core import telemetry as core_telemetry
 _cli_logger = logging.getLogger("flowfile.run_flow_cli")
 
 
-def run_flow_cli(flow_path: str, run_id: int) -> int:
+def run_flow_cli(flow_path: str, run_id: int, backend: str | None = None) -> int:
     """Execute a flow in-process (used by PyInstaller builds via ``--run-flow``).
 
     Replicates the logic from ``flowfile/__main__.py:run_flow()`` without
     importing from the top-level ``flowfile`` package.
+
+    ``backend`` names the compute backend the run uses; without it, a backend id saved as the flow's
+    ``execution_location`` names one, and a flow saved ``local``, ``remote`` or ``auto`` runs on the worker embedded
+    in this process. A named backend becomes the process's default and the flow runs ``"remote"`` on it, so its
+    execution context is the one the designer builds for that backend. The flow is closed when its run ends, so no
+    result the run minted stays held on that backend after the process exits.
     """
     # Configure logging early so all messages are captured in the subprocess log file
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -28,9 +34,10 @@ def run_flow_cli(flow_path: str, run_id: int) -> int:
     _cli_logger.debug("run_flow_cli started: flow_path=%s, run_id=%s", flow_path, run_id)
     _cli_logger.debug("sys.executable=%s, frozen=%s", sys.executable, getattr(sys, "frozen", False))
 
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+    from flowfile_core.flowfile.execution import registry
 
-    OFFLOAD_TO_WORKER.set(False)
+    backend_id = backend or registry.LOCAL_BACKEND_ID
+    registry.set_default_override(backend_id)
 
     from flowfile_core.flowfile.manage.io_flowfile import open_flow
 
@@ -59,7 +66,10 @@ def run_flow_cli(flow_path: str, run_id: int) -> int:
         _complete_run(run_id, success=False, nodes_completed=0)
         return 1
 
-    flow.execution_location = "local"
+    if backend is None and flow.execution_location not in ("local", "remote", "auto"):
+        backend_id = flow.execution_location
+        registry.set_default_override(backend_id)
+    flow.execution_location = "local" if backend_id == registry.LOCAL_BACKEND_ID else "remote"
 
     # Remove explore_data nodes — they're UI-only and require a worker service
     explore_data_nodes = [n.node_id for n in flow.nodes if n.node_type == "explore_data"]
@@ -83,6 +93,8 @@ def run_flow_cli(flow_path: str, run_id: int) -> int:
         _cli_logger.exception("Error running flow: %s", e)
         _complete_run(run_id, success=False, nodes_completed=0)
         return 1
+    finally:
+        flow.close_flow()
 
     if result is None:
         _cli_logger.error("Flow execution returned no result")
@@ -167,17 +179,21 @@ def _complete_run(
 
 
 def main(argv: list[str]) -> int:
-    """Parse ``--run-flow <path> --run-id <id>`` from ``argv`` and run the flow."""
+    """Parse ``--run-flow <path> --run-id <id> [--backend <id>]`` from ``argv`` and run the flow."""
     idx = argv.index("--run-flow")
     flow_path = argv[idx + 1] if idx + 1 < len(argv) else None
     run_id = None
     if "--run-id" in argv:
         rid_idx = argv.index("--run-id")
         run_id = int(argv[rid_idx + 1]) if rid_idx + 1 < len(argv) else None
+    backend = None
+    if "--backend" in argv:
+        backend_idx = argv.index("--backend")
+        backend = argv[backend_idx + 1] if backend_idx + 1 < len(argv) else None
     if not flow_path:
-        print("Usage: flowfile_core --run-flow <path> --run-id <id>", file=sys.stderr)
+        print("Usage: flowfile_core --run-flow <path> --run-id <id> [--backend <id>]", file=sys.stderr)
         return 1
     if run_id is None:
         print("Error: --run-id is required", file=sys.stderr)
         return 1
-    return run_flow_cli(flow_path, run_id)
+    return run_flow_cli(flow_path, run_id, backend=backend)

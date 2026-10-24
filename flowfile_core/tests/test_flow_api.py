@@ -14,15 +14,21 @@ from uuid import uuid4
 
 import polars as pl
 import pytest
+import requests
 from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from flowfile_core.auth import api_key as api_key_mod
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.database import models as db_models
 from flowfile_core.flowfile import api_consumer_manager, api_runner
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable, PlanRejected
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import BaseFetcher
 from flowfile_core.flowfile.flow_graph import add_connection
+from flowfile_core.flowfile.flow_node.models import RemoteExecutionError
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.routes import flow_api
 from flowfile_core.schemas import input_schema, schemas, transform_schema
@@ -104,6 +110,12 @@ def _force_local_api_execution(monkeypatch):
     monkeypatch.setattr(api_runner, "get_global_execution_location", lambda: "local")
 
 
+@pytest.fixture
+def task_routes(monkeypatch):
+    """The protocol flag off: these tests read the response through the task routes' fetcher, which it replaces."""
+    monkeypatch.setattr(FLOWFILE_COMPUTE_PROTOCOL, "value", False)
+
+
 # Runner: execution + serialization + parameter filtering
 
 
@@ -152,7 +164,7 @@ def test_run_flow_as_api_columns(tmp_path):
     assert out["row_count"] == 1
 
 
-def test_serialize_offloads_final_collect_to_worker_when_remote(monkeypatch):
+def test_serialize_offloads_final_collect_to_worker_when_remote(task_routes, monkeypatch):
     """With a worker available, the terminal collect is shipped to it (ExternalDfFetcher),
     not run in core."""
     df = pl.DataFrame({"region": ["US"], "v": [2]})
@@ -163,8 +175,9 @@ def test_serialize_offloads_final_collect_to_worker_when_remote(monkeypatch):
         error_code = 0
         error_description = None
 
-        def __init__(self, *, lf, **_kwargs):
+        def __init__(self, *, lf, worker_url, **_kwargs):
             used["called"] = True
+            used["worker_url"] = worker_url
             self._lf = lf  # the (capped) lazy plan; stands in for the worker's IPC result
 
         def get_result(self):
@@ -183,32 +196,35 @@ def test_serialize_offloads_final_collect_to_worker_when_remote(monkeypatch):
 
     out = api_runner._serialize(data, settings, flow, api_node)
     assert used.get("called") is True  # offloaded to the worker
+    assert used["worker_url"] == registry.worker_url()
     assert used.get("local") is None  # core did not run the heavy collect
-    assert out == {"data": [{"region": "US", "v": 2}], "row_count": 1, "orientation": "records"}
+    assert out == {"data": [{"region": "US", "v": 2}], "row_count": 1, "orientation": "records", "truncated": False}
 
 
-def test_serialize_falls_back_to_local_when_worker_unreachable(monkeypatch):
-    """A worker that can't be reached degrades to an in-core collect, not a 500."""
-    df = pl.DataFrame({"region": ["EU"], "v": [1]})
+def _forbidden_core_collect():
+    """A ``collect`` for the api_response input that records every in-core call and fails it."""
+    calls = []
 
-    def _unreachable(*_a, **_k):
-        raise ConnectionError("worker down")
+    def _collect(n_records=None):
+        calls.append(n_records)
+        raise AssertionError("the response was collected in core")
+
+    return _collect, calls
+
+
+def test_serialize_raises_compute_unavailable_when_worker_unreachable(task_routes, monkeypatch):
+    """A worker that can't be reached fails the request typed; core does not collect instead."""
+
+    def _unreachable(**_kwargs):
+        raise requests.ConnectionError("worker down")
 
     monkeypatch.setattr(api_runner, "ExternalDfFetcher", _unreachable)
-    captured = {}
+    collect, core_collects = _forbidden_core_collect()
 
-    def _local_collect(n_records=None):
-        captured["local"] = True
-        return df
-
-    data = SimpleNamespace(data_frame=df.lazy(), collect=_local_collect)
-    flow = SimpleNamespace(flow_settings=SimpleNamespace(execution_location="remote"), flow_id=1)
-    api_node = SimpleNamespace(hash="abc", node_id=3)
-    settings = SimpleNamespace(orientation="records", max_rows=None)
-
-    out = api_runner._serialize(data, settings, flow, api_node)
-    assert captured.get("local") is True  # fell back to an in-core collect
-    assert out == {"data": [{"region": "EU", "v": 1}], "row_count": 1, "orientation": "records"}
+    with pytest.raises(ComputeUnavailable, match="worker down") as excinfo:
+        api_runner._serialize(*_remote_serialize_args(pl.LazyFrame({"region": ["EU"], "v": [1]}), collect))
+    assert isinstance(excinfo.value.__cause__, requests.ConnectionError)
+    assert core_collects == []
 
 
 def _remote_serialize_args(lf, local_collect):
@@ -219,7 +235,7 @@ def _remote_serialize_args(lf, local_collect):
     return data, settings, flow, api_node
 
 
-def test_serialize_surfaces_worker_task_failure_without_in_core_rerun():
+def test_serialize_surfaces_worker_task_failure_without_in_core_rerun(task_routes):
     """A plan that fails on its data on the (real) worker is an API error; core must not re-run it."""
     lf = pl.LazyFrame({"s": ["1", "not-a-number"]}).select(pl.col("s").cast(pl.Int64, strict=True))
     reran = {}
@@ -233,30 +249,29 @@ def test_serialize_surfaces_worker_task_failure_without_in_core_rerun():
     assert reran.get("local") is None
 
 
-def test_serialize_degrades_to_core_on_worker_environment_failure(monkeypatch):
-    """Error code -1 (dead child / environment failure) still falls back to an in-core collect."""
-    df = pl.DataFrame({"region": ["EU"], "v": [1]})
+class _PlanNotLoadedFetcher(BaseFetcher):
+    """A fetcher whose run finished with the worker unable to load the plan (code -1, kind "environment")."""
 
-    class _EnvFailedFetcher:
-        error_code = -1
-        error_description = "worker could not load the plan"
+    description = "ComputeError: failed to read incoming DSL_VERSION"
 
-        def __init__(self, **_kwargs):
-            pass
+    def __init__(self, *, file_ref, worker_url, **_kwargs):
+        super().__init__(file_ref=file_ref, worker_url=worker_url)
+        with self._lock:
+            self._started = True  # the run is over, so get_result must not start polling the worker
+        self._record_task_failure(self.description, -1, "environment")
 
-        def get_result(self):
-            raise RuntimeError(self.error_description)
 
-    monkeypatch.setattr(api_runner, "ExternalDfFetcher", _EnvFailedFetcher)
-    captured = {}
+def test_serialize_raises_plan_rejected_on_worker_environment_failure(task_routes, monkeypatch):
+    """Error code -1 with kind "environment" is a rejected plan; core does not collect instead."""
+    monkeypatch.setattr(api_runner, "ExternalDfFetcher", _PlanNotLoadedFetcher)
+    collect, core_collects = _forbidden_core_collect()
 
-    def _local_collect(n_records=None):
-        captured["local"] = True
-        return df
-
-    out = api_runner._serialize(*_remote_serialize_args(df.lazy(), _local_collect))
-    assert captured.get("local") is True
-    assert out == {"data": [{"region": "EU", "v": 1}], "row_count": 1, "orientation": "records"}
+    with pytest.raises(PlanRejected) as excinfo:
+        api_runner._serialize(*_remote_serialize_args(pl.LazyFrame({"region": ["EU"], "v": [1]}), collect))
+    assert str(excinfo.value) == _PlanNotLoadedFetcher.description
+    assert isinstance(excinfo.value.__cause__, RemoteExecutionError)
+    assert excinfo.value.__cause__.error_kind == "environment"
+    assert core_collects == []
 
 
 # Typed parameter validation

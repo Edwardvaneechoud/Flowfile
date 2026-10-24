@@ -197,7 +197,7 @@
               @change="pushFlowSettings"
             >
               <el-option
-                v-for="executionLocationOption in executionLocationOptions"
+                v-for="executionLocationOption in locationOptions"
                 :key="executionLocationOption.key"
                 :label="executionLocationOption.label"
                 :value="executionLocationOption.key"
@@ -223,8 +223,8 @@
               @change="pushFlowSettings"
             />
             <span class="form-hint">
-              Max threads for running independent nodes in parallel. Only applies when execution
-              location is Remote. Local execution always runs sequentially.
+              Max threads for running independent nodes in parallel on a worker. A flow that runs
+              locally runs one node at a time.
             </span>
           </div>
         </div>
@@ -295,10 +295,11 @@ import {
   FlowSettings,
   updateFlowSettings,
   ExecutionMode,
-  ExecutionLocation,
   updateRunStatus,
 } from "../../nodes/nodeLogic";
 import { MODIFIER_LABEL } from "../../../utils/shortcuts";
+import { executionLocationOptions, type BackendRow } from "../../../utils/executionLocation";
+import { listComputeBackends } from "../../../api/computeBackends.api";
 
 const nodeStore = useNodeStore();
 const flowStore = useFlowStore();
@@ -368,15 +369,18 @@ const recordCurrentFlowAsRecent = async (catalogRef?: string) => {
 
 const executionModes = ref<ExecutionMode[]>(["Development", "Performance"]);
 
-interface ExecutionLocationOption {
-  key: ExecutionLocation;
-  label: string;
-}
-
-const executionLocationOptions = ref<ExecutionLocationOption[]>([
-  { key: "local", label: "Local" },
-  { key: "remote", label: "Remote" },
-]);
+// A listing that fails leaves "auto" and the flow's value.
+const backendRows = ref<BackendRow[]>([]);
+const loadBackendRows = async () => {
+  try {
+    backendRows.value = await listComputeBackends();
+  } catch {
+    backendRows.value = [];
+  }
+};
+const locationOptions = computed(() =>
+  executionLocationOptions(flowSettings.value?.execution_location ?? "auto", backendRows.value),
+);
 
 const emit = defineEmits(["openFlow", "refreshFlow", "flowSaved", "logs-start", "logs-stop"]);
 
@@ -536,6 +540,7 @@ const runFlow = () => {
 
 const openSettingsModal = () => {
   modalVisibleForSettings.value = true;
+  void loadBackendRows();
   tutorialStore.notify({ type: "flow-settings-opened" });
 };
 

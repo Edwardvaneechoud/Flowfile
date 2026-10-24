@@ -32,6 +32,7 @@ from flowfile_core.flowfile.api_runner import (
     _effective_specs,
     run_flow_as_api,
 )
+from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.schemas.flow_api_schema import (
     ApiConsumerOut,
@@ -187,6 +188,13 @@ async def run_published_flow(
     await _API_RUN_SEMAPHORE.acquire()
     try:
         return await asyncio.wait_for(anyio.to_thread.run_sync(_run), timeout=_API_RUN_TIMEOUT)
+    except ComputeUnavailable as exc:
+        # Generic detail: the typed message can name the worker URL or the worker's load error.
+        logger.error("Published flow '%s' could not reach compute: %s", slug, exc)
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Compute unavailable") from exc
+    except ComputeError as exc:
+        logger.error("Published flow '%s' failed in compute (%s): %s", slug, type(exc).__name__, exc)
+        raise HTTPException(status_code=500, detail="Flow execution failed") from exc
     except ApiParamError as exc:
         # Parameter errors describe the caller's own input and are safe to return.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -405,6 +413,10 @@ async def test_endpoint(
 
     try:
         return await asyncio.wait_for(anyio.to_thread.run_sync(_run), timeout=_API_RUN_TIMEOUT)
+    except ComputeUnavailable as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except ComputeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     except ApiParamError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except (ApiConfigError, ApiExecutionError) as exc:

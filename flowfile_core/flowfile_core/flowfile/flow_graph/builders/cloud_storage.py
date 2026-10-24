@@ -3,21 +3,22 @@
 import polars as pl
 
 from flowfile_core.configs import logger
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.flowfile.catalog_cdc import (
     resolve_change_window,
 )
-from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.payloads import CloudWritePayload, op_payload
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-    ExternalCloudWriter,
-)
 from flowfile_core.flowfile.flow_graph._base import GraphMixinBase
 from flowfile_core.flowfile.flow_graph.catalog_resolution import _CDF_COLUMN_DTYPES
 from flowfile_core.flowfile.flow_graph.cloud import (
     _cloud_change_read_target,
+    _cloud_change_scan_kwargs,
     _cloud_write_uses_delta_ops,
     _is_cloud_change_read,
     _resolve_cloud_node_connection,
@@ -28,11 +29,7 @@ from flowfile_core.flowfile.schema_callbacks import (
     pl_schema_to_flowfile_columns,
 )
 from flowfile_core.schemas import input_schema
-from flowfile_core.schemas.cloud_storage_schemas import (
-    CloudStorageReadSettingsInternal,
-    CloudStorageWriteSettingsInternal,
-    get_cloud_storage_write_settings_worker_interface,
-)
+from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettingsInternal
 from flowfile_core.schemas.history_schema import (
     HistoryActionType,
 )
@@ -56,39 +53,22 @@ class CloudStorageBuildersMixin(GraphMixinBase):
 
         def _func(df: FlowDataEngine):
             df.lazy = True
-            execute_remote = self.execution_location != "local"
-            cloud_connection_settings = _resolve_cloud_node_connection(
-                node_cloud_storage_writer.cloud_storage_settings, node_cloud_storage_writer.user_id, role="writer"
-            )
-            full_cloud_storage_connection = cloud_connection_settings
-            if _cloud_write_uses_delta_ops(node_cloud_storage_writer.cloud_storage_settings):
-                _write_cloud_delta(
-                    self,
-                    node,
-                    df,
-                    node_cloud_storage_writer.cloud_storage_settings,
-                    full_cloud_storage_connection,
-                    node_cloud_storage_writer.user_id,
-                )
+            write_settings = node_cloud_storage_writer.cloud_storage_settings
+            user_id = node_cloud_storage_writer.user_id
+            connection = _resolve_cloud_node_connection(write_settings, user_id, role="writer")
+            if _cloud_write_uses_delta_ops(write_settings):
+                _write_cloud_delta(self, node, df, write_settings, connection, user_id)
                 return df
-            if execute_remote:
-                settings = get_cloud_storage_write_settings_worker_interface(
-                    write_settings=node_cloud_storage_writer.cloud_storage_settings,
-                    connection=full_cloud_storage_connection,
-                    lf=df.data_frame,
-                    user_id=node_cloud_storage_writer.user_id,
-                    flowfile_node_id=node_cloud_storage_writer.node_id,
-                    flowfile_flow_id=self.flow_id,
-                )
-                external_database_writer = ExternalCloudWriter(settings, wait_on_completion=False)
-                node._fetch_cached_df = external_database_writer
-                external_database_writer.get_result()
-            else:
-                cloud_storage_write_settings_internal = CloudStorageWriteSettingsInternal(
-                    connection=full_cloud_storage_connection,
-                    write_settings=node_cloud_storage_writer.cloud_storage_settings,
-                )
-                df.to_cloud_storage_obj(cloud_storage_write_settings_internal)
+            write = CloudWritePayload(
+                plan=df.data_frame,
+                settings=write_settings,
+                connection=connection.get_worker_interface(user_id),
+                flow_id=self.flow_id,
+                node_id=node_cloud_storage_writer.node_id,
+            )
+            node.run_op(
+                current_context(self).backend, OperationKind.cloud_write, op_payload(write), job_id=write.job_id
+            )
             return df
 
         def schema_callback():
@@ -113,6 +93,10 @@ class CloudStorageBuildersMixin(GraphMixinBase):
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_cloud_storage_reader(self, node_cloud_storage_reader: input_schema.NodeCloudStorageReader) -> None:
         """Adds a cloud storage read node to the flow graph.
+
+        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a plain read takes its schema from the backend the reader runs on, which
+        resolves the read's connection: a worker in its own process, the embedded worker in this one. A change read,
+        and every read with the flag off, resolves its schema in core.
 
         Args:
             node_cloud_storage_reader: The settings for the cloud storage read node.
@@ -156,7 +140,9 @@ class CloudStorageBuildersMixin(GraphMixinBase):
                     path,
                     starting_version,
                     head,
-                    **CloudStorageReader.get_secure_scan_kwargs(storage_options, node_cloud_storage_reader.user_id),
+                    **_cloud_change_scan_kwargs(
+                        cloud_storage_read_settings, node_cloud_storage_reader.user_id, storage_options
+                    ),
                     include_preimage=cloud_storage_read_settings.cdc_include_preimage,
                 )
             )
@@ -185,7 +171,10 @@ class CloudStorageBuildersMixin(GraphMixinBase):
                     cloud_storage_read_settings, node_cloud_storage_reader.user_id, role="reader"
                 ),
             )
-            fl = FlowDataEngine.from_cloud_storage_obj(settings, user_id=node_cloud_storage_reader.user_id)
+            backend = current_context(self).backend if FLOWFILE_COMPUTE_PROTOCOL else None
+            fl = FlowDataEngine.from_cloud_storage_obj(
+                settings, user_id=node_cloud_storage_reader.user_id, backend=backend
+            )
             return fl
 
         node = self.add_node_step(

@@ -5,6 +5,8 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
+from flowfile_core.flowfile.execution.registry import LOCAL_BACKEND_ID
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.kernel.execution import _assert_safe_name, write_inputs_to_parquet
 from flowfile_core.kernel.manager import KernelManager, ordered_input_files
@@ -18,6 +20,13 @@ def _local_manager(shared_volume: Path) -> KernelManager:
     mgr._catalog_tables_dir = "/__catalog_tables_unused__"
     mgr._kernel_volume = None
     return mgr
+
+
+@pytest.fixture
+def in_core():
+    """The inputs are written by core's own backend, as in a local flow's run."""
+    with use_context(ExecutionContext(LOCAL_BACKEND_ID, parallelism=1, preview_rows=None)) as context:
+        yield context
 
 
 def _input_dir(shared_volume: Path, flow_id: int, node_id: int) -> Path:
@@ -76,14 +85,14 @@ class TestInteractiveRequestMain:
         ]
         assert req.input_paths["orders"] == ["/shared/1/2/inputs/orders_0.parquet"]
 
-    def test_interactive_request_matches_flow_run_inputs(self, tmp_path: Path):
+    def test_interactive_request_matches_flow_run_inputs(self, tmp_path: Path, in_core):
         """The designer's rebuilt request lists the same files, in the same order, as the flow run."""
         mgr = _local_manager(tmp_path)
         input_dir = _input_dir(tmp_path, 1, 2)
         tables = tuple(FlowDataEngine(pl.LazyFrame({"position": [i]})) for i in range(11))
         names = [f"df_{i + 1}" for i in range(11)]
 
-        written = write_inputs_to_parquet(tables, mgr, str(input_dir), 1, 2, input_names=names, local=True)
+        written = write_inputs_to_parquet(tables, mgr, str(input_dir), 1, 2, input_names=names)
         req = ExecuteRequest(node_id=2, code="", flow_id=1)
         mgr.resolve_node_paths(req)
 
@@ -101,19 +110,19 @@ class TestReservedMainName:
         _assert_safe_name("main_orders")
         _assert_safe_name("mains")
 
-    def test_write_inputs_refuses_an_input_named_main(self, tmp_path: Path):
+    def test_write_inputs_refuses_an_input_named_main(self, tmp_path: Path, in_core):
         input_dir = _input_dir(tmp_path, 1, 2)
         tables = (FlowDataEngine(pl.LazyFrame({"a": [1]})), FlowDataEngine(pl.LazyFrame({"b": [2]})))
 
         with pytest.raises(ValueError, match="'main' is reserved"):
             write_inputs_to_parquet(
-                tables, _local_manager(tmp_path), str(input_dir), 1, 2, input_names=["orders", "main"], local=True
+                tables, _local_manager(tmp_path), str(input_dir), 1, 2, input_names=["orders", "main"]
             )
 
-    def test_unnamed_inputs_still_use_main(self, tmp_path: Path):
+    def test_unnamed_inputs_still_use_main(self, tmp_path: Path, in_core):
         input_dir = _input_dir(tmp_path, 1, 2)
         tables = (FlowDataEngine(pl.LazyFrame({"a": [1]})), FlowDataEngine(pl.LazyFrame({"b": [2]})))
 
-        result = write_inputs_to_parquet(tables, _local_manager(tmp_path), str(input_dir), 1, 2, local=True)
+        result = write_inputs_to_parquet(tables, _local_manager(tmp_path), str(input_dir), 1, 2)
 
         assert result == {"main": ["/shared/1/2/inputs/main_0.parquet", "/shared/1/2/inputs/main_1.parquet"]}

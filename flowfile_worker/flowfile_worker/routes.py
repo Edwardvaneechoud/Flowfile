@@ -6,7 +6,7 @@ import uuid
 from queue import Empty
 
 from deltalake.exceptions import DeltaError
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 
 from flowfile_worker import (
     CACHE_DIR,
@@ -29,6 +29,7 @@ from flowfile_worker.external_sources.rest_api_source.main import read_rest_api
 from flowfile_worker.external_sources.rest_api_source.models import RestApiReadSettings
 from flowfile_worker.external_sources.sql_source.main import read_sql_source
 from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings
+from flowfile_worker.protocol_routes import worker_capabilities
 from flowfile_worker.spawner import (
     process_manager,
     start_apply_model_process,
@@ -38,11 +39,28 @@ from flowfile_worker.spawner import (
     start_process,
     start_train_model_process,
 )
+from shared.compute_protocol import PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER, Capabilities
 from shared.delta_utils import validate_catalog_uri
 from shared.kafka.models import KafkaReadSettings
 from shared.storage_config import storage
 
-router = APIRouter(dependencies=[Depends(verify_internal_token)])
+
+def warn_on_foreign_protocol_version(request: Request) -> None:
+    """Log a client that speaks another protocol version; these routes still answer it."""
+    sent = request.headers.get(PROTOCOL_VERSION_HEADER)
+    if sent is not None and sent != str(PROTOCOL_VERSION):
+        logger.warning(
+            f"{request.method} {request.url.path} carries {PROTOCOL_VERSION_HEADER}: {sent}; "
+            f"this worker speaks protocol version {PROTOCOL_VERSION}"
+        )
+
+
+def deprecated_route(response: Response) -> None:
+    """Answer with ``Deprecation: true``: the worker's versioned ``/v1`` routes do this route's work."""
+    response.headers["Deprecation"] = "true"
+
+
+router = APIRouter(dependencies=[Depends(verify_internal_token), Depends(warn_on_foreign_protocol_version)])
 
 # Re-use the single validation helper from funcs (backed by shared.delta_utils).
 _validate_catalog_path = funcs._validate_catalog_path
@@ -69,6 +87,12 @@ def create_and_get_default_cache_dir(flowfile_flow_id: int) -> str:
     default_cache_dir = CACHE_DIR / str(flowfile_flow_id)
     default_cache_dir.mkdir(parents=True, exist_ok=True)
     return str(default_cache_dir)
+
+
+@router.get("/capabilities", response_model=Capabilities)
+async def capabilities() -> Capabilities:
+    """What this worker can run: versions, platform, plugins, and the operations and schemes it declares."""
+    return worker_capabilities()
 
 
 @router.post("/submit_query/")
@@ -118,7 +142,7 @@ async def submit_query(request: Request, background_tasks: BackgroundTasks) -> m
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/store_sample/")
+@router.post("/store_sample/", dependencies=[Depends(deprecated_route)])
 async def store_sample(request: Request, background_tasks: BackgroundTasks) -> models.Status:
     """Accept raw binary data with metadata in headers for efficient transfer."""
     try:
@@ -284,7 +308,7 @@ def write_results(polars_script_write: models.PolarsScriptWrite, background_task
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/store_database_read_result")
+@router.post("/store_database_read_result", dependencies=[Depends(deprecated_route)])
 def store_sql_db_result(
     database_read_settings: DatabaseReadSettings, background_tasks: BackgroundTasks
 ) -> models.Status:
@@ -324,7 +348,7 @@ def store_sql_db_result(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/store_kafka_read_result")
+@router.post("/store_kafka_read_result", dependencies=[Depends(deprecated_route)])
 def store_kafka_result(kafka_read_settings: KafkaReadSettings, background_tasks: BackgroundTasks) -> models.Status:
     """Consume messages from a Kafka topic and store the result as an IPC file.
 
@@ -361,7 +385,7 @@ def store_kafka_result(kafka_read_settings: KafkaReadSettings, background_tasks:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/store_google_analytics_read_result")
+@router.post("/store_google_analytics_read_result", dependencies=[Depends(deprecated_route)])
 def store_google_analytics_result(
     ga_read_settings: GoogleAnalyticsReadSettings, background_tasks: BackgroundTasks
 ) -> models.Status:
@@ -400,7 +424,7 @@ def store_google_analytics_result(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/store_rest_api_read_result")
+@router.post("/store_rest_api_read_result", dependencies=[Depends(deprecated_route)])
 def store_rest_api_result(
     rest_api_read_settings: RestApiReadSettings, background_tasks: BackgroundTasks
 ) -> models.Status:
@@ -435,7 +459,7 @@ def store_rest_api_result(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.get("/kafka_offsets/{task_id}")
+@router.get("/kafka_offsets/{task_id}", dependencies=[Depends(deprecated_route)])
 def get_kafka_offsets(task_id: str):
     """Return deferred Kafka offset data for a completed task.
 
@@ -456,7 +480,7 @@ def get_kafka_offsets(task_id: str):
     return None
 
 
-@router.post("/create_table/{file_type}")
+@router.post("/create_table/{file_type}", dependencies=[Depends(deprecated_route)])
 def create_table(
     file_type: FileType,
     received_table: ReceivedTable,
@@ -1073,7 +1097,7 @@ async def memory_usage(task_id: str):
     return {"task_id": task_id, "memory_usage": memory_usage}
 
 
-@router.post("/train_ml_model")
+@router.post("/train_ml_model", dependencies=[Depends(deprecated_route)])
 async def train_ml_model(polars_script: models.TrainModelInput, background_tasks: BackgroundTasks) -> models.Status:
     """Fit a regression model and write its serialised bytes to ``staging_path``.
 
@@ -1116,7 +1140,7 @@ async def train_ml_model(polars_script: models.TrainModelInput, background_tasks
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/apply_ml_model")
+@router.post("/apply_ml_model", dependencies=[Depends(deprecated_route)])
 async def apply_ml_model(polars_script: models.ApplyModelInput, background_tasks: BackgroundTasks) -> models.Status:
     """Score input data using a previously trained model artifact."""
     logger.info("Starting apply_ml_model task: model_path=%s", polars_script.model_path)
@@ -1151,7 +1175,7 @@ async def apply_ml_model(polars_script: models.ApplyModelInput, background_tasks
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/add_fuzzy_join")
+@router.post("/add_fuzzy_join", dependencies=[Depends(deprecated_route)])
 async def add_fuzzy_join(polars_script: models.FuzzyJoinInput, background_tasks: BackgroundTasks) -> models.Status:
     """Start a fuzzy join operation between two dataframes.
 

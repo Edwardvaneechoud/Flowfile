@@ -56,14 +56,19 @@ Settings:                                #<-- The FlowSettings object you provid
   -save_location: None                   #<-- Where the flow definition is saved.
   -name: My First Pipeline               #<-- The name of our flow.
   -path:                                 #<-- Path to the flow file.
-  -execution_mode: Development           #<-- 'Development' for debugging or 'Performance' for speed.
-  -execution_location: local             #<-- Where the flow runs ('local' or 'remote').
+  -source_registration_id: None          #<-- The catalog registration, when running a registered flow.
+  -execution_mode: Performance           #<-- 'Performance' (the default) for speed or 'Development' for debugging.
+  -execution_location: auto              #<-- Where the flow runs: 'auto' (the default backend) or a backend id.
+  -max_parallel_workers: 4               #<-- Most nodes of a stage that run at once.
+  -parameters: []                        #<-- Flow parameters, referenced as ${name}.
   -auto_save: False                      #<-- Auto-save changes (feature in development).
   -modified_on: None                     #<-- Last modified timestamp (feature in development).
   -show_detailed_progress: True          #<-- If True, shows detailed logs in the UI.
+  -show_edge_labels: False               #<-- Show named edge labels on connections.
   -is_running: False                     #<-- Is the flow currently running?
   -is_canceled: False                    #<-- Was a cancellation requested?
-)
+  -track_history: True                   #<-- Keep undo and redo history.
+  -validate_settings: True               #<-- Warn on settings that name missing input columns.
 ```
 </details>
 
@@ -379,131 +384,93 @@ This architecture combines flexibility, introspection, and performance, bridging
 
 ## Execution Strategy: How Nodes Decide Where to Run
 
-When a node executes, it doesn't just "run." It goes through a decision pipeline that determines **whether** to run and **how** to run. This is handled by the `NodeExecutor` class (`flowfile_core.flowfile.flow_node.executor`).
+When a node executes, two questions are answered in turn. **Whether** it runs is decided by the `NodeExecutor` class (`flowfile_core.flowfile.flow_node.executor`). **How** it runs is not decided in the node at all: the node builds its Polars plan and submits it, with a few hints, to the compute backend of the run's execution context, and that backend's materialisation policy decides whether the rows are computed and stored or the plan is kept as it is.
 
-The behavior depends on two settings visible in the frontend:
+Two flow settings, both visible in the frontend, shape the answers:
 
-- **Execution mode** — *Development* or *Performance* (set per flow)
-- **Execution location** — *local* or *remote* (derived from global settings)
+- **Execution mode**: *Development* or *Performance*
+- **Execution location**: *auto* or a backend id (`local`, `worker`, `worker:<name>`); the frontend offers *auto* and the configured `worker:<name>` ids. A new flow gets *auto*, and a flow file saved with *local* or *remote* opens as *auto*. With `FLOWFILE_COMPUTE_PROTOCOL=0` a flow keeps *local* or *remote*, and a new one gets *remote* unless the default backend is `local`
 
-### Execution Modes from the Frontend
+The [Technical Architecture page](architecture.md#execution-modes) describes what each mode is for; this section describes how a node runs under them.
 
-Users choose between **Development** and **Performance** mode in the UI. The [Technical Architecture page](architecture.md#execution-modes) is the canonical description of what each mode does; the section here focuses on how the mode maps to an execution *strategy* per node when running remotely.
+### The Execution Context
 
-#### Development Mode (remote)
+`ExecutionContext.for_flow` (`flowfile/execution/context.py`) turns a flow's settings into the context its runs execute in:
 
-Development mode is the interactive, debugging-friendly mode. It produces **preview data** (100-row samples) so the UI can show what each node outputs.
-
-| Node type | What happens |
+| Setting | Context |
 |---|---|
-| **Narrow transforms** (select, sample, union, filter) | Computation runs locally, only a 100-row sample is sent to the remote worker for preview (`LOCAL_WITH_SAMPLING`) |
-| **Wide transforms** (sort, record_count, join, group_by) | Entire computation runs on the remote worker (`REMOTE`) |
-| **Other nodes** (input nodes, manual_input) | Entire computation runs on the remote worker (`REMOTE`) |
-| **Any node with `cache_results` enabled** | Always fully remote regardless of transform type (`REMOTE`) |
+| `execution_location = "local"` | backend `local` (`EmbeddedWorkerBackend`, the worker embedded in this process; with the protocol on, refused in a process that serves), one node of a stage at a time |
+| `execution_location = "auto"` (or the legacy `"remote"`) | the registry's default backend (`default_backend_id()`), up to `max_parallel_workers` nodes of a stage at once, one at a time when that backend is `local` |
+| `execution_location = "worker"` or `"worker:<name>"` | that backend, up to `max_parallel_workers` nodes of a stage at once |
+| `execution_mode = "Development"` | `preview_rows = 100` (`DEFAULT_PREVIEW_ROWS`) |
+| `execution_mode = "Performance"` | `preview_rows = None` |
 
-#### Performance Mode (remote)
+The default backend is `worker` (`WorkerBackend`) unless `FLOWFILE_COMPUTE_BACKEND` names another, or, with that unset, the legacy `FLOWFILE_OFFLOAD_TO_WORKER=0` makes it `local`; in a process that serves (the desktop sidecar, the Docker image, the pip server, each marked by `main.run`) it is never `local`. The headless runners (`flowfile run flow`, `--run-flow`) make `local`, the worker embedded in their own process, the default of that process.
 
-Performance mode skips preview data generation — no sampling takes place, and no intermediate result is stored.
-
-Every node is still visited on every run: the performance-mode branch in `NodeExecutor._decide_execution` returns `should_run=True` unconditionally, ahead of the "has it already run?" check, so nothing is skipped on the basis of a previous execution. What changes is how much work a visit costs. An ordinary transform node only extends the Polars plan; it does not materialize and does not reach the worker. Only output nodes (in Core) and `cache_results` nodes (on the worker) produce a real result.
-
-#### Local Mode
-
-When `run_location = "local"` (e.g. no worker available), all nodes use **FULL_LOCAL** — everything runs in-process regardless of execution mode.
-
-### The Three Strategies
-
-Under the hood, the mode and location map to one of three execution strategies:
-
-| Strategy | What happens | When used |
-|---|---|---|
-| **FULL_LOCAL** | Everything runs in-process | `run_location = "local"` |
-| **LOCAL_WITH_SAMPLING** | Computation runs locally, remote worker generates a 100-row sample for UI preview | Development mode + narrow transforms |
-| **REMOTE** | Entire computation is offloaded to the remote worker | Development mode + wide/other transforms, or `cache_results` enabled |
-
-### How the Strategy Is Determined
-
-The decision lives in `_determine_strategy` and follows this priority:
-
-```
-1. local            → FULL_LOCAL
-2. cache_results    → REMOTE
-3. narrow transform → LOCAL_WITH_SAMPLING
-4. everything else  → REMOTE
-```
-
-**Why narrow transforms get LOCAL_WITH_SAMPLING:** Narrow transforms like `select` only operate on columns — dropping, renaming, filtering. They don't reshape or aggregate data, so they're cheap to compute locally. The only thing sent to the remote worker is a request to materialize 100 sample rows for the UI preview (`ExternalSampler` → `POST /store_sample/`).
-
-**Why cache overrides to REMOTE:** When `cache_results` is enabled on a node, the full result must be materialized and written to disk by the remote worker. A local computation with sampling wouldn't produce the cached artifact the downstream nodes expect.
-
-### The LOCAL_WITH_SAMPLING Flow
-
-This is the path taken by narrow transforms in Development mode:
-
-```
-LOCAL_WITH_SAMPLING (e.g. select node, Development mode):
-
-  ┌──────────────────┐              ┌─────────────────┐
-  │   Local process   │              │  Remote worker   │
-  │                   │              │                  │
-  │ 1. Compute full   │              │                  │
-  │    result locally  │──serialize──▶│ 2. Materialize   │
-  │    (LazyFrame)     │  LazyFrame   │    100 rows only │
-  │                   │              │    (POST /store_  │
-  │ 3. Store sample   │◀────done─────│     sample/)     │
-  │    for UI preview  │              │                  │
-  └──────────────────┘              └─────────────────┘
-```
-
-Compare this to **REMOTE**, used by wide transforms and other node types:
-
-```
-REMOTE (e.g. sort node, join node):
-
-  ┌──────────────────┐              ┌─────────────────┐
-  │   Local process   │              │  Remote worker   │
-  │                   │              │                  │
-  │ 1. Serialize the  │──serialize──▶│ 2. Compute full  │
-  │    LazyFrame plan  │  LazyFrame   │    result        │
-  │                   │              │ 3. Write to disk  │
-  │ 4. Fetch result   │◀────done─────│ 4. Generate      │
-  │    + sample data   │              │    sample data   │
-  └──────────────────┘              └─────────────────┘
-```
+`run_graph` enters the graph's context with `use_context`, and every stage thread runs under a copy of it, so a node finds its backend through `current_context()` on whichever thread executes it. A run started inside another run (a `run_flow` subflow) keeps the outer run's context, and a caller outside a run enters the graph's context the same way before it executes a node.
 
 ### The Decision Pipeline
 
-Before choosing a strategy, the executor decides **whether** to run at all:
+`NodeExecutor._decide_execution` is the one place that decides whether a node runs. It takes the first rule that matches:
 
 ```
-output node?                    → RUN
-forced refresh (reset_cache)?   → RUN
-never ran before?               → RUN (with strategy)
-source file changed? (read)     → RUN (with strategy)
-cache_results + cache present?  → SKIP
-cache_results + cache missing?  → RUN REMOTE (rebuild cache)
-already ran?                    → SKIP
+output group node, run_flow, gate routing on a formula  → RUN
+forced refresh (reset_cache)                           → RUN
+source file changed (read nodes)                       → RUN
+worker file the last run left (result or sample) gone  → RUN
+cache_results, nothing held under the current hash     → RUN
+cache_results, holds a stored result, last run failed  → RUN
+cache_results, stored result still on the backend      → SKIP
+cache_results, stored result gone from the backend     → RUN
+Performance mode                                       → RUN
+never ran with the current settings                    → RUN
+already ran                                            → SKIP
 ```
 
-If a node has already run (`has_run_with_current_setup = True`) and nothing invalidated it, it skips. Results from the previous execution are still available in memory. This applies to both Development and Performance mode.
+A `cache_results` node takes the result it holds under its current hash on the run's backend (`FlowNode.held_result`) and, when that is a stored result and its last run did not fail, asks that backend whether it still has it (`exists`). A result held as a deferred plan is no cache and matches none of the four cache rules, so a cached node holding one follows the rules below them. A cached node whose last run failed runs again even when its result is still stored, and `FlowNode._do_execute` then reads the stored result back instead of recomputing it. When asking the backend fails (a worker that cannot be reached, or one on other versions), the node fails with that error; it is never read as a missing cache.
+
+In Performance mode every node runs on every run unless it is a cached node whose stored result is still held and whose last run did not fail. An ordinary transform's run only builds its plan and submits it again: with no preview asked for, no backend computes it until a writer or a cached node downstream reads it.
+
+### Submit Hints
+
+`hints_for` (`flow_node/executor.py`) describes the node's plan as `SubmitHints`:
+
+| Hint | Value |
+|---|---|
+| `must_materialise` | `cache_results` is on and the node is not one of the `IN_CORE_NODE_TYPES` (`output`, `api_response`, `flow_output`, `run_flow`); or the node reads an input that crossed from another backend, whatever its type, so no result refers to the exchange store once the run removes its prefix |
+| `wide` | the node is not a narrow transform (`is_narrow_transform`) and not one of the `IN_CORE_NODE_TYPES` |
+| `fanout` | how many distinct downstream nodes read the result; no backend's policy reads it yet |
+| `preview_rows` | the context's `preview_rows`: 100 in Development mode, `None` in Performance mode, except for a `cache_results` node, which keeps a 100-row preview in every mode; always `None` for the `IN_CORE_NODE_TYPES` |
+
+`is_narrow_transform` reads the node's entry in `node_defaults`, which `configs/node_store/nodes.py` builds from the standard node templates and their `transform_type` (`narrow`, `wide` or `other`). Only `narrow` counts as narrow (select, filter, formula, sample, union and the like); `wide` and `other` nodes (join, group by, sort, record count, the readers, manual input) are submitted `wide`. A custom node has no entry there, so it is submitted `wide` whatever `transform_type` its manifest declares.
+
+`FlowNode._do_execute` builds the plan and submits it to `current_context().backend` under `result_id = self.hash`, with the results the upstream nodes hold on that backend as its inputs. The node keeps the returned `ResultRef` on `results.result_ref`, makes `resulting_data` from `plan_for(ref)`, and takes its preview from the sample `submit` returned inline, else, outside Performance mode, from `sample(ref, n)` the first time the preview is opened.
+
+### Materialisation Policies
+
+| Backend | Stores the rows when | Otherwise | Preview |
+|---|---|---|---|
+| `WorkerBackend` (`backends/worker.py`) | `must_materialise`, or `wide` with `preview_rows` set | deferred: core holds the plan object in its own process, unserialised | inline when `preview_rows` is set: read from the Arrow IPC file the worker stored, or, for a deferred plan, from a worker sampler task over it |
+| `EmbeddedWorkerBackend` (`backends/embedded.py`) | the worker's rule: it calls the worker's own submit (`funcs.submit_result`) | deferred: the worker in this process holds the plan | inline when `preview_rows` is set, as the worker answers it |
+
+Nothing computes a deferred result's rows before a consumer, a write or a preview reads them. A wide plan is stored in Development mode so its preview and its consumers read rows computed once; in Performance mode nothing reads it before the run's writers do, so it stays a plan. A stored result's `plan_for` is a scan of the file the worker wrote (`pl.scan_ipc`), which a consumer's plan composes on.
 
 ### Node Classification
 
-The strategy routing depends on how nodes are classified in the node store:
+What each kind of node becomes on a worker, the embedded one included:
 
-| Node | `transform_type` | Development + remote | Performance + remote |
+| Node | Hints | Development mode | Performance mode |
 |---|---|---|---|
-| select | narrow | LOCAL_WITH_SAMPLING | skip if already ran |
-| sample | narrow | LOCAL_WITH_SAMPLING | skip if already ran |
-| union | narrow | LOCAL_WITH_SAMPLING | skip if already ran |
-| filter | narrow | LOCAL_WITH_SAMPLING | skip if already ran |
-| sort | wide | REMOTE | skip if already ran |
-| record_count | wide | REMOTE | skip if already ran |
-| join | wide | REMOTE | skip if already ran |
-| group_by | wide | REMOTE | skip if already ran |
-| manual_input | other | REMOTE | skip if already ran |
+| narrow transform (select, filter, formula, sample, union) | not `wide` | deferred; sampled inline by a worker sampler task | deferred; no sample |
+| wide or other (join, group_by, sort, record_count, readers, manual_input) | `wide` | stored; sampled inline from its file | deferred; no sample |
+| any node with `cache_results` | `must_materialise` | stored; sampled inline | stored; sampled inline |
+| `output`, `api_response`, `flow_output`, `run_flow` | none; `preview_rows` is `None` | deferred; no inline sample, sampled when its preview is opened | deferred; no sample |
 
-Each node's `transform_type` (`narrow` / `wide` / `other`) is set in `configs/node_store/nodes.py`. Only `narrow` transforms take the `LOCAL_WITH_SAMPLING` path; `wide` and `other` go `REMOTE`.
+The embedded worker is the worker's code, so a node becomes the same there; only where its jobs run differs: in the process itself when it does not serve, in the worker's pool when it serves.
+
+### Operations
+
+Work that is not a plain Polars plan runs through the backend's `run_op` as an `OperationKind`, the closed enum in `flowfile/execution/protocol.py`: the database, Kafka, REST and Google Analytics reads and the file reads Polars cannot scan lazily; the database, cloud and file writes; fuzzy join; custom nodes; random split; Polars Code; model training and apply; the Delta writes; and visualisation sessions. A node's function calls `FlowNode.run_op` with the backend it runs on, the context's as a rule, and the references a read or a transform gets back become the frame the node then submits like any other plan. Some operations run outside that call: the read node's `file_read` goes through `run_operation`, the function `FlowNode.run_op` wraps, because a new read node's schema prefetch runs it before the node is bound; a `viz_session` is opened by no node's function but by the Explore data analysis routes (`analytics/node_viz.py`); and every `file_write` but the write node's calls `run_op` on the current context's backend directly: the parquet hand-off to a kernel (`write_parquet_for_kernel` in `kernel/execution.py`), which writes the inputs of a Python Script or kernel custom node, of the custom-node dry run and of the notebook kernel runner, and the CSV export route (`routes/routes.py`). A backend lists the kinds it runs in `capabilities().operations` and raises `OperationUnsupported` for the rest. The embedded worker runs every kind the worker does; the Google Analytics reader is pinned to the worker backend in every flow. With the protocol on, a Polars Code node runs its code as the `polars_code` operation on its backend, never in core, and the designer predicts its schema by the same operation over empty frames.
 
 ---
 

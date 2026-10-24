@@ -1,7 +1,9 @@
 """Tests for the custom-node dry-run backend.
 
 Error paths (syntax / no-sample-data / worker-down) run without a worker; the
-happy path and timeout stub the worker seam so no live worker is required.
+happy path and timeout stub the worker backend's transport (the status, cancel
+and clear helpers it calls) so no live worker is required while the run is
+followed through the backend itself.
 """
 
 import io
@@ -10,7 +12,14 @@ from types import SimpleNamespace
 
 import polars as pl
 import pytest
+import requests
 
+from flowfile_core.configs import settings
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.backends import worker as worker_module
+from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
+from flowfile_core.flowfile.execution.protocol import JobHandle, ResultRef, SubmitResult
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.node_designer.state import (
     DesignerState,
     EnvironmentState,
@@ -42,6 +51,12 @@ CODE_WITH_EXAMPLES = (
     "    def process(self, *inputs):\n"
     "        return inputs[0]\n"
 )
+
+
+@pytest.fixture(autouse=True)
+def task_routes(monkeypatch):
+    """The protocol flag off: these tests reach the worker through the task routes' fetcher, which the flag replaces."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
 
 
 def _designer_state() -> DesignerState:
@@ -122,7 +137,7 @@ def test_no_sample_data_runs_with_empty_inputs(monkeypatch):
     # No sample data no longer blocks: the node runs against one empty frame per input.
     captured = {}
 
-    def _capture(request):
+    def _capture(request, *, worker_url):
         captured["inputs"] = request.inputs
         raise ConnectionError("stop here")
 
@@ -135,7 +150,7 @@ def test_no_sample_data_runs_with_empty_inputs(monkeypatch):
 def test_zero_input_node_runs_without_sample_data(monkeypatch):
     captured = {}
 
-    def _capture(request):
+    def _capture(request, *, worker_url):
         captured["inputs"] = request.inputs
         raise ConnectionError("stop here")
 
@@ -158,7 +173,7 @@ def _capture_first_input_frame(monkeypatch, request: DryRunRequest) -> pl.DataFr
     """Run up to the worker seam and return the first serialized sample as a DataFrame."""
     captured = {}
 
-    def _capture(req):
+    def _capture(req, *, worker_url):
         captured["inputs"] = req.inputs
         raise ConnectionError("stop here")
 
@@ -207,7 +222,7 @@ def test_nested_example_inputs_with_null_reach_worker_typed(monkeypatch):
 def test_example_inputs_lifted_from_code(monkeypatch):
     captured = {}
 
-    def _capture(request):
+    def _capture(request, *, worker_url):
         captured["inputs"] = request.inputs
         raise ConnectionError("stop here")  # short-circuit after capturing
 
@@ -219,7 +234,7 @@ def test_example_inputs_lifted_from_code(monkeypatch):
 
 
 def test_worker_unavailable_is_load_error(monkeypatch):
-    def _refuse(request):
+    def _refuse(request, *, worker_url):
         raise ConnectionError("connection refused")
 
     monkeypatch.setattr(dr, "trigger_custom_node_operation", _refuse)
@@ -237,35 +252,50 @@ class _Status:
         self.background_task_id = task_id
 
 
-class _Resp:
-    def __init__(self, payload, status_code=200):
-        self._payload = payload
-        self.status_code = status_code
-        self.text = json.dumps(payload) if isinstance(payload, dict) else str(payload)
-
-    def json(self):
-        return self._payload
+def _status(payload: dict) -> SimpleNamespace:
+    """The worker's ``Status`` for a task, as the transport's ``get_status`` returns it."""
+    return SimpleNamespace(
+        status=payload["status"],
+        progress=payload.get("progress", 0),
+        error_message=payload.get("error_message"),
+        results=payload.get("results"),
+    )
 
 
 def _stub_worker(monkeypatch, status_payloads):
-    """status_payloads: list of dicts returned by successive /status GETs."""
-    monkeypatch.setattr(dr, "trigger_custom_node_operation", lambda request: _Status("task-1"))
-    calls = {"get": 0, "clear": 0, "cancel": 0}
+    """status_payloads: successive answers of the worker for the task's status: a dict, or an exception to raise."""
+    calls = {"get": 0, "clear": 0, "cancel": 0, "task_ids": set(), "worker_urls": set()}
 
-    def _get(url, timeout=10):
-        idx = min(calls["get"], len(status_payloads) - 1)
+    def _start(request, *, worker_url):
+        calls["worker_urls"].add(worker_url)
+        return _Status("task-1")
+
+    monkeypatch.setattr(dr, "trigger_custom_node_operation", _start)
+
+    def _get_status(task_id, *, worker_url):
+        calls["task_ids"].add(task_id)
+        calls["worker_urls"].add(worker_url)
+        answer = status_payloads[min(calls["get"], len(status_payloads) - 1)]
         calls["get"] += 1
-        return _Resp(status_payloads[idx])
+        if isinstance(answer, Exception):
+            raise answer
+        return _status(answer)
 
-    def _delete(url, timeout=10):
+    def _clear(task_id, *, worker_url):
+        calls["task_ids"].add(task_id)
+        calls["worker_urls"].add(worker_url)
         calls["clear"] += 1
-        return _Resp({"ok": True})
+        return True
 
-    def _post(url, timeout=10):
+    def _cancel(task_id, *, worker_url):
+        calls["task_ids"].add(task_id)
+        calls["worker_urls"].add(worker_url)
         calls["cancel"] += 1
-        return _Resp({"ok": True})
+        return True
 
-    monkeypatch.setattr(dr, "_worker_session", SimpleNamespace(get=_get, delete=_delete, post=_post))
+    monkeypatch.setattr(worker_module, "get_status", _get_status)
+    monkeypatch.setattr(worker_module, "cancel_task", _cancel)
+    monkeypatch.setattr(dr, "clear_task_from_worker", _clear)
     return calls
 
 
@@ -302,6 +332,7 @@ def test_happy_path_maps_preview(monkeypatch):
     assert resp.logs == ["INFO: ran"]
     assert resp.duration_ms == 12.5
     assert calls["clear"] == 1  # best-effort cleanup ran
+    assert calls["worker_urls"] == {registry.worker_url()}
 
 
 def test_execution_error_carries_traceback(monkeypatch):
@@ -353,6 +384,84 @@ def test_multi_output_designer_state_maps_all_outputs(monkeypatch):
     assert resp.outputs[1].row_count == 1
 
 
+def test_the_run_is_followed_until_it_completes_and_cleared_once(monkeypatch):
+    completed = {"status": "Completed", "results": {"outputs": {"main": {"row_count": 1}}, "preview": {}}}
+    calls = _stub_worker(monkeypatch, [{"status": "Starting"}, {"status": "Processing", "progress": 50}, completed])
+    monkeypatch.setattr(dr, "_POLL_INTERVAL", 0)
+
+    resp = run_dry_run(DryRunRequest(code=CODE_OK, sample_inputs=[{"a": [1]}]), user_id=1)
+
+    assert resp.success is True, resp.error
+    assert resp.outputs[0].row_count == 1
+    assert calls["get"] == 4, "three status polls, then the result of the finished task"
+    assert (calls["clear"], calls["cancel"]) == (1, 0)
+    assert calls["task_ids"] == {"task-1"}
+
+
+def test_a_run_past_its_time_limit_is_cancelled_through_the_backend(monkeypatch):
+    calls = _stub_worker(monkeypatch, [{"status": "Processing"}])
+    monkeypatch.setattr(dr, "_POLL_INTERVAL", 0.05)
+
+    resp = run_dry_run(DryRunRequest(code=CODE_OK, sample_inputs=[{"a": [1]}], timeout_seconds=1), user_id=1)
+
+    assert (resp.success, resp.error_kind) == (False, "timeout")
+    assert resp.error == "Dry run exceeded the time limit and was cancelled."
+    assert (calls["cancel"], calls["clear"]) == (1, 1)
+
+
+def test_a_cancel_the_worker_cannot_receive_still_answers_timeout(monkeypatch):
+    calls = _stub_worker(monkeypatch, [{"status": "Processing"}])
+    monkeypatch.setattr(dr, "_POLL_INTERVAL", 0.05)
+
+    def _unreachable(task_id, *, worker_url):
+        calls["cancel"] += 1
+        raise Exception("Failed to cancel task: connection refused")
+
+    monkeypatch.setattr(worker_module, "cancel_task", _unreachable)
+
+    resp = run_dry_run(DryRunRequest(code=CODE_OK, sample_inputs=[{"a": [1]}], timeout_seconds=1), user_id=1)
+
+    assert resp.error_kind == "timeout"
+    assert calls["cancel"] == 1
+
+
+def test_a_run_the_worker_cancelled_answers_timeout(monkeypatch):
+    calls = _stub_worker(monkeypatch, [{"status": "Cancelled"}])
+
+    resp = run_dry_run(DryRunRequest(code=CODE_OK, sample_inputs=[{"a": [1]}]), user_id=1)
+
+    assert (resp.error_kind, resp.error) == ("timeout", "Dry run was cancelled.")
+    assert calls["clear"] == 1
+
+
+def test_a_worker_lost_while_polled_is_a_load_error(monkeypatch):
+    calls = _stub_worker(monkeypatch, [requests.ConnectionError("connection refused")])
+
+    resp = run_dry_run(DryRunRequest(code=CODE_OK, sample_inputs=[{"a": [1]}]), user_id=1)
+
+    assert (resp.success, resp.error_kind) == (False, "load")
+    assert resp.error.startswith("The compute worker is unavailable:")
+    assert "connection refused" in resp.error
+    assert calls["clear"] == 1
+
+
+def test_a_task_the_worker_no_longer_knows_is_an_execution_error(monkeypatch):
+    _stub_worker(monkeypatch, [Exception('Could not fetch the status, {"detail":"Task not found"}')])
+
+    resp = run_dry_run(DryRunRequest(code=CODE_OK, sample_inputs=[{"a": [1]}]), user_id=1)
+
+    assert (resp.success, resp.error_kind) == (False, "execution")
+    assert "Task not found" in resp.error
+
+
+def test_a_failure_without_a_message_still_names_the_failure(monkeypatch):
+    _stub_worker(monkeypatch, [{"status": "Unknown Error"}])
+
+    resp = run_dry_run(DryRunRequest(code=CODE_OK, sample_inputs=[{"a": [1]}]), user_id=1)
+
+    assert (resp.error_kind, resp.error) == ("execution", "Unknown Error")
+
+
 # -- kernel-environment routing ------------------------------------------------
 
 
@@ -395,7 +504,8 @@ def test_kernel_output_read_rejects_path_traversal(tmp_path):
     pl.DataFrame({"secret": [42]}).write_parquet(victim_dir / "main.parquet")
 
     traversal = "../../victim/outputs/main"
-    outputs, err = dr._read_kernel_output_previews(str(output_dir), ["main", traversal], object(), 100)
+    with use_context(ExecutionContext(backend_id=registry.LOCAL_BACKEND_ID, parallelism=1, preview_rows=None)):
+        outputs, err = dr._read_kernel_output_previews(str(output_dir), ["main", traversal], object(), 100)
 
     assert err is None
     by_name = {o.name: o for o in outputs}
@@ -404,6 +514,61 @@ def test_kernel_output_read_rejects_path_traversal(tmp_path):
     assert by_name[traversal].rows == []
     assert by_name[traversal].columns == []
     assert by_name[traversal].row_count == 0
+
+
+class _AnsweringBackend:
+    """Answers bounded reads from a frame of its own and records what core asked of it."""
+
+    id = "answering"
+
+    def __init__(self, frame: pl.DataFrame):
+        self.frame = frame
+        self.calls: list[str] = []
+
+    def submit(self, plan, inputs, hints, result_id, *, flow_id, node_id):
+        self.calls.append("submit")
+        ref = ResultRef(self.id, result_id, [], None, "deferred", result_id.encode())
+        return SubmitResult(ref=ref, sample=None, handle=JobHandle(self.id, result_id))
+
+    def sample(self, ref, n):
+        self.calls.append(f"sample {n}")
+        buffer = io.BytesIO()
+        self.frame.head(n).write_ipc_stream(buffer)
+        return buffer.getvalue()
+
+    def count(self, ref):
+        self.calls.append("count")
+        return self.frame.height
+
+    def release(self, ref):
+        self.calls.append("release")
+
+
+def _no_read_in_core(*args, **kwargs):
+    raise AssertionError("core read the kernel's output itself")
+
+
+@pytest.mark.parametrize("flag", [True, False], ids=["flag_on", "flag_off"])
+def test_kernel_outputs_are_sampled_and_counted_by_the_backend_and_never_read_in_core(tmp_path, monkeypatch, flag):
+    """The rows, the columns and the count are the backend's answers; core collects nothing of the file."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    output_dir = tmp_path / "outputs"
+    output_dir.mkdir()
+    pl.DataFrame({"a": [1, 2, 3]}).write_parquet(output_dir / "main.parquet")
+    backend = _AnsweringBackend(pl.DataFrame({"a": [7, 8, 9], "b": ["x", "y", "z"]}))
+    monkeypatch.setattr(dr, "current_context", lambda: SimpleNamespace(backend=backend))
+    monkeypatch.setattr(pl.LazyFrame, "collect", _no_read_in_core)
+    monkeypatch.setattr(pl.LazyFrame, "collect_schema", _no_read_in_core)
+
+    outputs, err = dr._read_kernel_output_previews(str(output_dir), ["main"], object(), 2)
+
+    assert err is None
+    (main,) = outputs
+    assert [(c.name, c.data_type) for c in main.columns] == [("a", "Int64"), ("b", "String")]
+    assert main.rows == [[7, "x"], [8, "y"]]
+    assert main.row_count == 3
+    assert main.truncated is True
+    assert backend.calls == ["submit", "sample 2", "release", "submit", "count", "release"]
 
 
 def test_dry_run_kernel_request_disables_log_callback():
@@ -589,3 +754,34 @@ def test_dry_run_executes_on_kernel(monkeypatch):
     assert resp.executed_in == "kernel"
     assert resp.outputs[0].row_count == 3
     assert "added" in [c.name for c in resp.outputs[0].columns]
+
+
+# -- a worker that fails core's handshake while the run is polled ---------------
+
+
+def test_worker_failing_the_handshake_while_polled_answers_500_with_the_message(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from flowfile_core import main
+    from flowfile_core.auth.jwt import get_current_active_user
+    from flowfile_core.auth.models import User
+    from shared.compute_protocol import local_capabilities
+
+    admin = User(username="local_user", id=1, disabled=False, is_admin=True, must_change_password=False)
+    reported = local_capabilities().model_copy(update={"polars_version": "0.0.1"})
+    monkeypatch.setattr(dr, "trigger_custom_node_operation", lambda request, *, worker_url: _Status("task-1"))
+    monkeypatch.setattr(worker_module.WorkerBackend, "capabilities", lambda self: reported)
+    handshake.reset_handshake()
+    main.app.dependency_overrides[get_current_active_user] = lambda: admin
+    try:
+        response = TestClient(main.app).post(
+            "/user_defined_components/dry-run", json={"code": CODE_OK, "sample_inputs": [{"a": [1, 2, 3]}]}
+        )
+    finally:
+        main.app.dependency_overrides.pop(get_current_active_user, None)
+        handshake.reset_handshake()
+
+    assert response.status_code == 500, response.text
+    assert response.json()["detail"] == (
+        f'Backend "worker" does not match core (polars_version: core {pl.__version__}, backend 0.0.1)'
+    )

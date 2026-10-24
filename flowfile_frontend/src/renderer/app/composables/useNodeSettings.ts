@@ -136,14 +136,20 @@ export function useNodeSettings<T extends NodeBase>(
   const nodeStore = useNodeStore();
   const isSaving = ref(false);
 
-  // The settings as last loaded or saved; reassigning nodeRef is a load, in-place changes are edits.
+  // The settings as last loaded or saved; another node in nodeRef is a load, the same node reassigned (v-model) an edit.
   const snapshot = (): string | null => (nodeRef.value ? JSON.stringify(nodeRef.value) : null);
+  const identity = (): string | null =>
+    nodeRef.value ? `${nodeRef.value.flow_id}:${nodeRef.value.node_id}` : null;
   let cleanSnapshot: string | null = null;
+  let cleanIdentity: string | null = null;
   // "Discard mine" on a conflict: the draft is gone, so a leave no longer waits on it.
   let discarded = false;
   watch(
     nodeRef,
     () => {
+      const current = identity();
+      if (current === cleanIdentity) return;
+      cleanIdentity = current;
       cleanSnapshot = snapshot();
     },
     { immediate: true },
@@ -174,6 +180,7 @@ export function useNodeSettings<T extends NodeBase>(
 
     const saved = async (): Promise<boolean> => {
       cleanSnapshot = snapshot();
+      cleanIdentity = identity();
       // Covers saves outside a leave, such as the request-save on the output-schema tab.
       useEditorStore().disarmRefusedSave();
       if (onAfterSave) {
@@ -252,6 +259,9 @@ export function useNodeSettings<T extends NodeBase>(
     nodeRef.value.cache_results = updatedNode.cache_results;
     nodeRef.value.description = updatedNode.description;
     nodeRef.value.output_field_config = updatedNode.output_field_config;
+    if (updatedNode.execution_location !== undefined) {
+      nodeRef.value.execution_location = updatedNode.execution_location;
+    }
 
     // Position is managed by the store during save, but sync if provided
     if (updatedNode.pos_x !== undefined) {
@@ -267,6 +277,7 @@ export function useNodeSettings<T extends NodeBase>(
         key !== "cache_results" &&
         key !== "description" &&
         key !== "output_field_config" &&
+        key !== "execution_location" &&
         key !== "pos_x" &&
         key !== "pos_y"
       ) {

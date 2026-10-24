@@ -3,17 +3,23 @@ import os
 import queue as _queue
 import threading
 from base64 import b64encode
+from collections.abc import Callable
 from multiprocessing import Process
 from multiprocessing.queues import Queue
 from time import monotonic, sleep
 from typing import Any
 
+from polars.exceptions import PanicException
+
 from flowfile_worker import funcs, models, mp_context, pool, status_dict, status_dict_lock
 from flowfile_worker.pool import PoolMember
 from flowfile_worker.process_manager import ProcessManager
-from flowfile_worker.task_errors import split_failure
+from flowfile_worker.task_errors import keeping_failures, record_task_failure, split_failure
 
 process_manager = ProcessManager()
+
+# The host's choice: True runs every job in the calling process (a library host), False in a child (a serving host).
+in_process: bool = False
 
 flowfile_node_id_type = int | str
 
@@ -104,13 +110,18 @@ def handle_task(
 
     Notes:
         - Updates task status in status_dict while process is running
+        - An entry a cancel marked ``Cancelled`` while the job was still ``Starting`` stays so, and the loop's
+          first pass stops the child
+        - A failure ends ``Error`` with progress -1 whether or not the loop saw the -1 before the child exited,
+          its description decoded with a character cut at the buffer's end replaced
         - Handles task cancellation, completion, and error states
         - Cleans up process resources after completion
     """
     envelope_received = False
     try:
         with status_dict_lock:
-            status_dict[task_id].status = "Processing"
+            if status_dict[task_id].status != "Cancelled":
+                status_dict[task_id].status = "Processing"
 
         delay = _POLL_INITIAL_DELAY
         deadline = (monotonic() + _TASK_TIMEOUT) if _TASK_TIMEOUT else None
@@ -129,7 +140,7 @@ def handle_task(
                 with status_dict_lock:
                     status_dict[task_id].status = "Error"
                     with error_message.get_lock():
-                        kind, msg = split_failure(error_message.value.decode().rstrip("\x00"))
+                        kind, msg = split_failure(error_message.value.decode(errors="replace").rstrip("\x00"))
                     status_dict[task_id].error_message = msg
                     status_dict[task_id].error_kind = kind
                 break
@@ -195,6 +206,7 @@ def handle_task(
                     # it (a child can die before we read progress == -1). Surface a terminal
                     # Error so the core poller doesn't wait on "Processing" forever.
                     status.status = "Error"
+                    status.progress = -1
                     if not status.error_message:
                         with error_message.get_lock():
                             decoded = error_message.value.decode(errors="replace").rstrip("\x00")
@@ -213,6 +225,53 @@ def handle_task(
         process_manager.remove_process(task_id)
         del p, progress, error_message
         gc.collect(0)
+
+
+def run_inline(task_id: str, target: Callable, kwargs: dict) -> None:
+    """Run *target* in this process as job *task_id* and write how it ended in ``status_dict`` as ``handle_task`` does.
+
+    The in-process mode a host chooses with ``in_process``: *target* gets the three primitives a child gets, its queue
+    a ``pool._ResultSlot`` as in a pool member. With no child there is no monitor, no time limit and no cancel, given
+    up by design; a job a cancel marked ``Cancelled`` keeps that mark and runs to its end. An ``Exception`` or a Polars
+    ``PanicException`` that escapes the target is recorded as a child records one, so the job ends ``Error`` with its
+    description, as a child's panic ends its job; any other ``BaseException`` propagates, as it ends a child. A job
+    that ends ``Error`` also keeps the exception it recorded on its entry (``Status._raised``), which a child's parent
+    never has.
+    """
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+    slot = pool._ResultSlot()
+    with status_dict_lock:
+        if status_dict[task_id].status != "Cancelled":
+            status_dict[task_id].status = "Processing"
+    with keeping_failures() as failures:
+        try:
+            target(**kwargs, progress=progress, error_message=error_message, queue=slot)
+        except (Exception, PanicException) as e:
+            record_task_failure(error_message, progress, e)
+    with progress.get_lock():
+        final_progress = progress.value
+    with status_dict_lock:
+        status = status_dict[task_id]
+        if status.status == "Cancelled":
+            return
+        status.progress = final_progress
+        if final_progress == 100:
+            status.status = "Completed"
+            result, number_of_records = unpack_result(slot.item)
+            if number_of_records is not None:
+                status.number_of_records = number_of_records
+            if result is not None:
+                status.results = b64encode(result).decode("ascii") if isinstance(result, bytes) else result
+        elif final_progress == -1:
+            status.status = "Error"
+            with error_message.get_lock():
+                decoded = error_message.value.decode(errors="replace").rstrip("\x00")
+            status.error_kind, decoded = split_failure(decoded)
+            status.error_message = decoded or "Task failed"
+            status._raised = failures[-1] if failures else None
+        else:
+            status.status = "Unknown Error"
 
 
 def start_process(
@@ -237,6 +296,7 @@ def start_process(
         flowfile_node_id: id of the node that started the process
 
     Notes:
+        - Runs the operation in this process instead (``run_inline``) when the host set ``in_process``
         - Leases a warm pool member when the pool is on and the operation is poolable
         - Otherwise creates shared memory objects and spawns a fresh process (default)
         - Delegates to handle_task for process monitoring either way
@@ -247,6 +307,10 @@ def start_process(
     kwargs["file_path"] = file_ref
     kwargs["flowfile_flow_id"] = flowfile_flow_id
     kwargs["flowfile_node_id"] = flowfile_node_id
+
+    if in_process:
+        run_inline(task_id, getattr(funcs, operation), kwargs)
+        return
 
     member = pool.task_pool.acquire(operation)
     if member is not None:
@@ -307,12 +371,17 @@ def start_generic_process(
     """
     kwargs = {} if kwargs is None else kwargs
     kwargs["func"] = func_ref
-    kwargs["progress"] = mp_context.Value("i", 0)
-    kwargs["error_message"] = mp_context.Array("c", 1024)
-    kwargs["queue"] = mp_context.Queue(maxsize=1)
     kwargs["file_path"] = file_ref
     kwargs["flowfile_flow_id"] = flowfile_flow_id
     kwargs["flowfile_node_id"] = flowfile_node_id
+
+    if in_process:
+        run_inline(task_id, funcs.generic_task, kwargs)
+        return
+
+    kwargs["progress"] = mp_context.Value("i", 0)
+    kwargs["error_message"] = mp_context.Array("c", 1024)
+    kwargs["queue"] = mp_context.Queue(maxsize=1)
 
     process_task = funcs.generic_task
     p: Process = mp_context.Process(target=process_task, kwargs=kwargs)
@@ -342,15 +411,8 @@ def start_train_model_process(
     *staging_path*; ``handle_task`` will surface ``{sha256, size_bytes, model_type}``
     via the queue so core can finalise the artifact upload.
     """
-    progress = mp_context.Value("i", 0)
-    error_message = mp_context.Array("c", 1024)
-    q = mp_context.Queue(maxsize=1)
-
     kwargs = {
         "polars_serializable_object": polars_serializable_object,
-        "progress": progress,
-        "error_message": error_message,
-        "queue": q,
         "file_path": file_ref,
         "model_type": model_type,
         "target_column": target_column,
@@ -360,6 +422,15 @@ def start_train_model_process(
         "flowfile_flow_id": flowfile_flow_id,
         "flowfile_node_id": flowfile_node_id,
     }
+
+    if in_process:
+        run_inline(task_id, funcs.train_model_task, kwargs)
+        return
+
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+    q = mp_context.Queue(maxsize=1)
+    kwargs.update(progress=progress, error_message=error_message, queue=q)
 
     p: Process = mp_context.Process(target=funcs.train_model_task, kwargs=kwargs)
     p.start()
@@ -381,21 +452,23 @@ def start_apply_model_process(
     Writes the scored data to *file_ref* (IPC). ``handle_task`` will surface the
     serialised LazyFrame via the queue so core can deserialise it.
     """
-    progress = mp_context.Value("i", 0)
-    error_message = mp_context.Array("c", 1024)
-    q = mp_context.Queue(maxsize=1)
-
     kwargs = {
         "polars_serializable_object": polars_serializable_object,
-        "progress": progress,
-        "error_message": error_message,
-        "queue": q,
         "file_path": file_ref,
         "model_path": model_path,
         "output_column": output_column,
         "flowfile_flow_id": flowfile_flow_id,
         "flowfile_node_id": flowfile_node_id,
     }
+
+    if in_process:
+        run_inline(task_id, funcs.apply_model_task, kwargs)
+        return
+
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+    q = mp_context.Queue(maxsize=1)
+    kwargs.update(progress=progress, error_message=error_message, queue=q)
 
     p: Process = mp_context.Process(target=funcs.apply_model_task, kwargs=kwargs)
     p.start()
@@ -428,6 +501,21 @@ def start_fuzzy_process(
         - Initializes and starts a new process for fuzzy joining operation
         - Delegates to handle_task for process monitoring
     """
+    if in_process:
+        run_inline(
+            task_id,
+            funcs.fuzzy_join_task,
+            {
+                "left_serializable_object": left_serializable_object,
+                "right_serializable_object": right_serializable_object,
+                "fuzzy_maps": fuzzy_maps,
+                "file_path": file_ref,
+                "flowfile_flow_id": flowfile_flow_id,
+                "flowfile_node_id": flowfile_node_id,
+            },
+        )
+        return
+
     progress = mp_context.Value("i", 0)
     error_message = mp_context.Array("c", 1024)
     q = mp_context.Queue(maxsize=1)
@@ -474,10 +562,6 @@ def start_custom_node_process(
     """
     from flowfile_worker import custom_node_runner
 
-    progress = mp_context.Value("i", 0)
-    error_message = mp_context.Array("c", 1024)
-    q = mp_context.Queue(maxsize=1)
-
     kwargs = {
         "node_source": custom_node_input.node_source,
         "class_name": custom_node_input.class_name,
@@ -488,13 +572,19 @@ def start_custom_node_process(
         "dry_run": custom_node_input.dry_run,
         "row_limit": custom_node_input.row_limit,
         "user_id": custom_node_input.user_id,
-        "progress": progress,
-        "error_message": error_message,
-        "queue": q,
         "file_path": file_ref,
         "flowfile_flow_id": custom_node_input.flowfile_flow_id,
         "flowfile_node_id": custom_node_input.flowfile_node_id,
     }
+
+    if in_process:
+        run_inline(task_id, custom_node_runner.execute_custom_node_task, kwargs)
+        return
+
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+    q = mp_context.Queue(maxsize=1)
+    kwargs.update(progress=progress, error_message=error_message, queue=q)
 
     p: Process = mp_context.Process(target=custom_node_runner.execute_custom_node_task, kwargs=kwargs)
     p.start()

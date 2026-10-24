@@ -1,13 +1,21 @@
+from __future__ import annotations
+
 import os
 from collections.abc import Callable, Iterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
 from flowfile_core.configs import logger
 from flowfile_core.configs.settings import AVAILABLE_RAM
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations import ExternalDfFetcher
+from flowfile_core.flowfile.flow_data_engine.bounded import single_row
 from shared.excel_writer import write_excel_output
+
+if TYPE_CHECKING:
+    from flowfile_core.flowfile.execution.protocol import ComputeBackend
+
+SCHEMA_STATS_MAX_ROWS = 1_000_000
+"""The rows ``calculate_schema`` takes its statistics over: the first million, all of a smaller frame."""
 
 
 def get_data_type(vals: Iterable[Any]):
@@ -20,14 +28,86 @@ def get_data_type(vals: Iterable[Any]):
         return "str"
 
 
-def calculate_schema(lf: pl.LazyFrame) -> list[dict]:
-    r = ExternalDfFetcher(lf=lf, operation_type="calculate_schema", wait_on_completion=False, flow_id=-1, node_id=-1)
-    schema_stats: list[dict] = r.get_result()
+def calculate_schema(
+    lf: pl.LazyFrame | pl.DataFrame, backend: ComputeBackend, schema: pl.Schema | None = None
+) -> list[dict]:
+    """The schema of ``lf`` with the statistics of each column, as the ``PlType`` fields a ``FlowfileColumn`` reads.
 
-    for schema_stat in schema_stats:
-        schema_stat["pl_datatype"] = getattr(pl.datatypes, schema_stat["pl_datatype"])
+    One statistics plan, built here over the first ``SCHEMA_STATS_MAX_ROWS`` rows, yields every column's statistics
+    as a single row, which ``backend`` computes (``bounded.single_row``); only that row reaches core. Each entry
+    holds ``column_name``, ``col_index`` and ``pl_datatype`` (the column's dtype), ``count`` (values that are not
+    null), ``null_count``, ``mean``, ``std``, ``min``, ``max``, ``n_unique`` (approximate; ``None`` for nested and
+    object columns, which Polars cannot count distinct values of) and ``examples`` (the distinct texts of ``min`` and
+    ``max``, ``min`` first).
 
-    return schema_stats
+    The statistics are those of Polars' ``describe``: a mean for numeric, temporal and boolean columns, a standard
+    deviation for numeric ones, and a minimum and maximum for every column but nested, extension, categorical,
+    enum, null, object and unknown ones. A numeric, boolean, nested or null column states its mean, minimum and
+    maximum as the text of their float value, any other column as the text of the value; a statistic a column has
+    none of is ``None``. A frame without columns has no statistics. The columns and dtypes are ``schema`` when the
+    caller passes ``lf``'s, which then is not resolved in core, else ``lf``'s resolved schema.
+
+    Raises:
+        ComputeError: ``backend`` could not compute the statistics.
+    """
+    lazy = lf.lazy()
+    schema = lazy.collect_schema() if schema is None else schema
+    if not schema:
+        return []
+    exprs = [expr for index, (name, dtype) in enumerate(schema.items()) for expr in _stat_exprs(index, name, dtype)]
+    row = single_row(
+        backend,
+        lazy.head(SCHEMA_STATS_MAX_ROWS).select(exprs),
+        empty_message="The schema statistics aggregation returned no row.",
+    )
+    return [_column_stats(index, name, dtype, row) for index, (name, dtype) in enumerate(schema.items())]
+
+
+_STATS = ("count", "null_count", "mean", "std", "min", "max", "n_unique")
+_NO_MIN_MAX = (pl.Categorical, pl.Enum, pl.Null, pl.Object, pl.Unknown)
+
+
+def _stat_exprs(index: int, name: str, dtype: pl.DataType) -> list[pl.Expr]:
+    """One column's statistics, named ``<index>:<statistic>`` so no column name can collide."""
+    column = pl.col(name)
+    is_numeric = dtype.is_numeric()
+    has_mean = is_numeric or dtype.is_temporal() or dtype == pl.Boolean
+    skip_min_max = dtype.is_nested() or dtype.is_extension() or dtype in _NO_MIN_MAX
+    stats = {
+        "count": column.count(),
+        "null_count": column.null_count(),
+        "mean": column.mean() if has_mean else pl.lit(None),
+        "std": column.std() if is_numeric else pl.lit(None),
+        "min": pl.lit(None) if skip_min_max else column.min(),
+        "max": pl.lit(None) if skip_min_max else column.max(),
+        "n_unique": pl.lit(None) if dtype.is_nested() or dtype == pl.Object else column.approx_n_unique(),
+    }
+    if _states_floats(dtype):
+        for stat in ("mean", "min", "max"):
+            stats[stat] = stats[stat].cast(pl.Float64).cast(pl.String)
+    return [stats[stat].alias(f"{index}:{stat}") for stat in _STATS]
+
+
+def _states_floats(dtype: pl.DataType) -> bool:
+    """Whether a column states its mean, minimum and maximum as float text, as ``describe`` does."""
+    return dtype.is_numeric() or dtype.is_nested() or dtype in (pl.Null, pl.Boolean)
+
+
+def _column_stats(index: int, name: str, dtype: pl.DataType, row: dict[str, Any]) -> dict:
+    """The ``PlType`` fields of one column from the statistics row."""
+    stat = {stat: row[f"{index}:{stat}"] for stat in _STATS}
+    as_text = {key: None if stat[key] is None else str(stat[key]) for key in ("mean", "min", "max")}
+    return {
+        "column_name": name,
+        "col_index": index,
+        "pl_datatype": dtype,
+        "count": int(stat["count"]),
+        "null_count": int(stat["null_count"]),
+        "std": None if stat["std"] is None else float(stat["std"]),
+        "n_unique": None if stat["n_unique"] is None else int(stat["n_unique"]),
+        "examples": ", ".join(dict.fromkeys([str(as_text["min"]), str(as_text["max"])])),
+        **as_text,
+    }
 
 
 def write_polars_frame(

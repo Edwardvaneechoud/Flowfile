@@ -152,6 +152,14 @@ STARTUP_CHECK_INTERVAL = 2  # seconds
 SHUTDOWN_TIMEOUT = int(os.environ.get("FLOWFILE_SHUTDOWN_TIMEOUT", 15))  # seconds
 
 
+@pytest.fixture(autouse=True)
+def exchange_store_file_in_tmp(tmp_path, monkeypatch):
+    """A store saved on the developer's machine never reaches a test: each test starts with no saved exchange store."""
+    from flowfile_core.configs import exchange_config
+
+    monkeypatch.setattr(exchange_config, "_settings_file", lambda: tmp_path / "exchange_store.yaml")
+
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_db():
     """Setup the test database and clean up after tests"""
@@ -241,6 +249,8 @@ def start_worker() -> tuple[subprocess.Popen, bool]:
         Tuple containing the process object and a success flag
     """
     logger.info("Starting flowfile_worker process on port %s...", WORKER_PORT)
+    # The worker runs on this host and reads the suite's local files, so it declares the file scheme.
+    env = {**os.environ, "FLOWFILE_WORKER_LOCAL_FILES": "1"}
 
     if platform.system() == "Windows":
         # Use shell=True on Windows
@@ -250,6 +260,7 @@ def start_worker() -> tuple[subprocess.Popen, bool]:
             stdout=sys.stdout,
             stderr=sys.stderr,
             universal_newlines=True,
+            env=env,
             # On Windows, CREATE_NEW_PROCESS_GROUP flag allows sending Ctrl+C to child process
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP') else 0
         )
@@ -262,6 +273,7 @@ def start_worker() -> tuple[subprocess.Popen, bool]:
             stdout=sys.stdout,
             stderr=sys.stderr,
             universal_newlines=True,
+            env=env,
             # On Unix, start in a new process group for clean signal handling
             preexec_fn=os.setsid if hasattr(os, 'setsid') else None
         )
@@ -366,6 +378,20 @@ def managed_worker() -> Generator[None, None, None]:
     finally:
         if proc is not None and proc.poll() is None:
             stop_worker(proc)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def embedded_worker_jobs_in_process():
+    """The test process is a library host: the worker embedded in it runs its jobs here.
+
+    The registry's ``local`` factory sets this when it makes the embedded worker; the backends tests make under
+    other ids, subclasses of ``EmbeddedWorkerBackend`` with factories of their own, rely on this instead.
+    """
+    from flowfile_worker import spawner
+
+    spawner.in_process = True
+    yield
+    spawner.in_process = False
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -596,3 +622,63 @@ def cleanup_global_artifacts():
     _cleanup()
     yield
     _cleanup()
+
+
+def _default_backend_state() -> tuple:
+    """What decides which backend a ``remote`` flow runs on, as one comparable value."""
+    from flowfile_core.configs import settings
+    from flowfile_core.flowfile.execution import context, registry
+
+    current = context._current.get()
+    return (
+        registry.default_backend_id(),
+        os.environ.get(registry.BACKEND_ENV_VAR),
+        bool(settings.OFFLOAD_TO_WORKER),
+        settings.OFFLOAD_TO_WORKER,
+        None if current is None else current.backend_id,
+        registry.default_override(),
+    )
+
+
+_default_backend_at_start: tuple | None = None
+
+
+def pytest_sessionstart(session):
+    global _default_backend_at_start
+    _default_backend_at_start = _default_backend_state()
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_runtest_teardown(item, nextitem):
+    """A test leaves the default compute backend as it found it.
+
+    The registry reads its default override, ``FLOWFILE_COMPUTE_BACKEND`` and the offload setting live, so a test
+    that leaves an override set (an in-process headless run sets one), swaps the setting object, clears the flag,
+    sets the variable or leaves an execution context behind and does not undo it would silently move every later
+    ``remote`` flow onto the local backend. This runs after every fixture teardown, puts the state back, and fails
+    the test that changed it, so the culprit is named where it happened.
+    """
+    if _default_backend_at_start is None:
+        return
+    state = _default_backend_state()
+    rebound = state[3] is not _default_backend_at_start[3]
+    if state[:3] == _default_backend_at_start[:3] and state[4:] == _default_backend_at_start[4:] and not rebound:
+        return
+    from flowfile_core.configs import settings
+    from flowfile_core.flowfile.execution import context, registry
+
+    backend_id, env_value, flag, flag_object, _, override = _default_backend_at_start
+    registry.set_default_override(override)
+    settings.OFFLOAD_TO_WORKER = flag_object
+    flag_object.set(flag)
+    if env_value is None:
+        os.environ.pop(registry.BACKEND_ENV_VAR, None)
+    else:
+        os.environ[registry.BACKEND_ENV_VAR] = env_value
+    context._current.set(None)
+    what = "rebound the offload setting object" if rebound else "left the default compute backend changed"
+    pytest.fail(
+        f"{item.nodeid} {what}: {state[:3] + state[4:]} "
+        f"instead of {_default_backend_at_start[:3] + _default_backend_at_start[4:]}; restored.",
+        pytrace=False,
+    )

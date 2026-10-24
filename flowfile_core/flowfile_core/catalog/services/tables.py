@@ -12,8 +12,10 @@ from uuid import uuid4
 
 from deltalake import DeltaTable
 from pyarrow import dataset as ds
+from requests.exceptions import RequestException
 from sqlalchemy.orm.attributes import flag_modified
 
+from flowfile_core.catalog.compute import uses_worker
 from flowfile_core.catalog.delta_utils import (
     delete_table_storage,
     get_delta_table_size_bytes,
@@ -47,6 +49,8 @@ from flowfile_core.catalog.storage_backend import (
 )
 from flowfile_core.catalog.validators import format_full_name, validate_table_registration
 from flowfile_core.database.models import CatalogCdcCursor, CatalogNamespace, CatalogTable, TableFavorite
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_add_key_column,
     trigger_apply_table_edits,
@@ -115,13 +119,6 @@ def _is_managed_table_path(file_path: str) -> bool:
         return True
     except (ValueError, OSError):
         return False
-
-
-def _should_offload() -> bool:
-    """Return True when heavy I/O should be delegated to the worker process."""
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-
-    return OFFLOAD_TO_WORKER.value
 
 
 def _project_sync_tables(owner_id: int) -> None:
@@ -278,19 +275,22 @@ class TableService:
     ) -> tuple[list[dict[str, str]], int, int, int]:
         """Read schema, row_count, column_count, size_bytes from a table.
 
-        When *storage* is set the table is in object storage; the read offloads to the
-        worker with no local fallback.
+        When *storage* is set the table is in object storage and the worker reads it; so it does a managed local table
+        when catalog I/O goes to the worker (``uses_worker``). A worker it cannot reach is ``ComputeUnavailable``,
+        never a read here instead. An external local table, whose bare name the worker's routes cannot resolve, is
+        read in this process.
         """
         is_cloud = storage is not None
-        if is_cloud or _should_offload():
+        if is_cloud or (uses_worker() and _is_managed_table_path(table_path)):
+            worker_url = registry.worker_url()
             try:
-                data = trigger_read_table_metadata(_catalog_table_dir_name(table_path), storage=storage)
-                schema_list = [{"name": c["name"], "dtype": c["dtype"]} for c in data["column_schema"]]
-                return schema_list, data["row_count"], data["column_count"], data["size_bytes"]
-            except (RuntimeError, OSError, ValueError, KeyError):
-                if is_cloud:
-                    raise
-                logger.warning("Worker metadata read failed, falling back to local read", exc_info=True)
+                data = trigger_read_table_metadata(
+                    _catalog_table_dir_name(table_path), storage=storage, worker_url=worker_url
+                )
+            except RequestException as exc:
+                raise ComputeUnavailable(f"Could not reach the worker at {worker_url}: {exc}") from exc
+            schema_list = [{"name": c["name"], "dtype": c["dtype"]} for c in data["column_schema"]]
+            return schema_list, data["row_count"], data["column_count"], data["size_bytes"]
 
         path = Path(table_path)
 
@@ -613,6 +613,7 @@ class TableService:
             source_file_path=source_file_path,
             table_name=table_name,
             storage=storage,
+            worker_url=registry.worker_url(),
         )
         if response.ok:
             data = response.json()
@@ -916,11 +917,12 @@ class TableService:
         target = resolve_for_namespace(table.namespace_id) if is_cloud else None
         storage_options = target.storage_options if target else None
 
-        if _should_offload():
+        if uses_worker():
             result = trigger_optimize_catalog_table(
                 _catalog_table_dir_name(data_path),
                 z_order_columns,
                 storage=target.to_worker_payload() if target else None,
+                worker_url=registry.worker_url(),
             )
             metrics, size_bytes = result.get("metrics", {}), result.get("size_bytes")
         else:
@@ -959,12 +961,13 @@ class TableService:
         target = resolve_for_namespace(table.namespace_id) if is_cloud else None
         storage_options = target.storage_options if target else None
 
-        if _should_offload():
+        if uses_worker():
             result = trigger_vacuum_catalog_table(
                 _catalog_table_dir_name(data_path),
                 retention_hours,
                 dry_run,
                 storage=target.to_worker_payload() if target else None,
+                worker_url=registry.worker_url(),
             )
             files, size_bytes = result.get("files_removed", []), result.get("size_bytes")
         else:
@@ -1181,7 +1184,7 @@ class TableService:
         # registered path's basename could collide with a managed table and the edit
         # would land on the wrong table. External local tables run in-process — their
         # payloads are UI-sized and this mirrors how local previews read in core.
-        offload = _should_offload() and (is_cloud or _is_managed_table_path(data_path))
+        offload = uses_worker() and (is_cloud or _is_managed_table_path(data_path))
 
         try:
             if offload:
@@ -1198,6 +1201,7 @@ class TableService:
                         "commit_metadata": commit_metadata,
                     },
                     storage=target.to_worker_payload() if target else None,
+                    worker_url=registry.worker_url(),
                 )
             else:
                 from shared.delta_utils import DeltaEditError, DeltaEditStaleError, apply_delta_edits
@@ -1267,7 +1271,7 @@ class TableService:
 
         # Same offload gate as apply_table_edits: bare-name resolution is only
         # unambiguous for managed catalog directories.
-        offload = _should_offload() and (is_cloud or _is_managed_table_path(data_path))
+        offload = uses_worker() and (is_cloud or _is_managed_table_path(data_path))
 
         try:
             if offload:
@@ -1277,6 +1281,7 @@ class TableService:
                     column_name,
                     expected_version=expected_version,
                     storage=target.to_worker_payload() if target else None,
+                    worker_url=registry.worker_url(),
                 )
             else:
                 from shared.delta_utils import DeltaEditError, DeltaEditStaleError, add_delta_row_id_column

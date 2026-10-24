@@ -112,6 +112,8 @@ jobs:
         # Telemetry off: an undecided consent renders a modal over the designer.
         env:
           FLOWFILE_TELEMETRY: '0'
+          # An exchange store with no connection named, so each node is placed by its own setting: placement-picker.spec.ts's flow, posted onto local, is saved as auto by this serving core and runs with its picked node on the worker, so nothing crosses and no S3 call is made.
+          FLOWFILE_EXCHANGE_URI: s3://flowfile-e2e/placement-exchange
         run: |
           poetry -P "$GITHUB_WORKSPACE" run flowfile_core > "$RUNNER_TEMP/core.log" 2>&1 &
           echo "Waiting for backend to start..."
@@ -161,7 +163,7 @@ jobs:
           TEST_URL: http://localhost:4173
           API_URL: http://localhost:63578
           E2E_AWS_PROFILE_CONFIGURED: '1'
-        run: npx playwright test tests/web-flow.spec.ts tests/two-tabs-sync.spec.ts tests/notebook-popout.spec.ts tests/drawer-conflict.spec.ts tests/tutorial.spec.ts tests/node-handle-labels.spec.ts tests/catalog-artifact-versions.spec.ts tests/notebook-interactions.spec.ts tests/csp.spec.ts tests/group-by.spec.ts tests/pivot-unpivot.spec.ts tests/output-drawer.spec.ts tests/cloud-storage-flow.spec.ts --reporter=html
+        run: npx playwright test tests/web-flow.spec.ts tests/two-tabs-sync.spec.ts tests/notebook-popout.spec.ts tests/drawer-conflict.spec.ts tests/tutorial.spec.ts tests/node-handle-labels.spec.ts tests/catalog-artifact-versions.spec.ts tests/notebook-interactions.spec.ts tests/csp.spec.ts tests/group-by.spec.ts tests/pivot-unpivot.spec.ts tests/output-drawer.spec.ts tests/cloud-storage-flow.spec.ts tests/compute-banner.spec.ts tests/placement-picker.spec.ts tests/drawer-general-settings.spec.ts --reporter=html
 
       # A server that writes into its working directory resolved a path it should have refused.
       - name: Check the servers wrote nothing into their working directories

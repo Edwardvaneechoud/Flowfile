@@ -5,10 +5,12 @@ Each case is built on an ``ff`` receiver, once with ``ff`` arguments and once wi
 collected next to plain Polars. The result keeps its Polars expression, so a later method still applies.
 """
 
+import threading
 from datetime import date, time
 
 import polars as pl
 import pytest
+from polars.expr.meta import ExprMetaNameSpace
 from polars.testing import assert_frame_equal
 
 import flowfile_frame as ff
@@ -66,7 +68,7 @@ CASES = {
     "head": lambda b, m: b.col("x").head(m.lit(2)),
     "slice": lambda b, m: b.col("x").slice(m.lit(1), m.lit(2)),
     "top_k": lambda b, m: b.col("x").top_k(m.lit(2)),
-    "top_k_by": lambda b, m: b.col("x").top_k_by(m.col("n"), 2),
+    "top_k_by": lambda b, m: b.col("x").top_k_by(m.col("srt"), 2),
     "sort_by": lambda b, m: b.col("x").sort_by(m.col("n")),
     "sort_by-list": lambda b, m: b.col("x").sort_by([m.col("n"), m.col("srt")]),
     "max_by": lambda b, m: b.col("x").max_by(m.col("n")),
@@ -116,6 +118,8 @@ CASES = {
     "list.count_matches": lambda b, m: b.col("l").list.count_matches(m.lit(1)),
     "list.gather_every": lambda b, m: b.col("l").list.gather_every(m.col("n") + 1),
 }
+UNORDERED = {CASES["top_k"], CASES["top_k_by"]}
+"""The cases whose rows Polars answers in no particular order (``top_k_by`` sorts by ``srt``, which has no ties)."""
 
 
 def _node(frame: ff.FlowFrame):
@@ -136,7 +140,8 @@ def test_an_expression_argument_matches_polars(build, args):
     expr = build(ff, args)
     assert expr.expr is not None
     out = ff.from_dict(DATA).select(expr.alias("out"))
-    assert_frame_equal(out.collect(), pl.LazyFrame(DATA).select(build(pl, pl).alias("out")).collect())
+    expected = pl.LazyFrame(DATA).select(build(pl, pl).alias("out")).collect()
+    assert_frame_equal(out.collect(), expected, check_row_order=build not in UNORDERED)
 
 
 def test_a_method_and_an_operator_still_apply_after_an_expression_argument():
@@ -162,6 +167,46 @@ def test_a_literal_argument_renders_as_code_not_as_its_plan():
     assert repr(ff.col("x").clip(pl.lit(5, dtype=pl.Int8))) == "pl.col('x').clip(pl.lit(5, dtype=pl.Int8))"
     assert repr(ff.col("x").fill_null(float("nan"))) == """pl.col('x').fill_null(float("nan"))"""
     assert repr(ff.col("x").clip(float("-inf"), 6.0)) == """pl.col('x').clip(float("-inf"), 6.0)"""
+
+
+@pytest.mark.parametrize(
+    ("literal", "code"),
+    [(pl.lit(100, dtype=pl.Int32), "pl.lit(100, dtype=pl.Int32)"), (pl.lit(100), "pl.lit(100)")],
+    ids=["typed", "untyped"],
+)
+def test_a_literal_operand_keeps_the_type_its_caller_gave_it(literal, code):
+    data = pl.DataFrame({"a": [100]}, schema={"a": pl.Int8})
+    expr = ff.col("a") + literal
+    assert repr(expr) == f"(pl.col('a') + {code})"
+    out = ff.FlowFrame(data).with_columns(expr.alias("b"))
+    assert_frame_equal(out.collect(), data.with_columns((pl.col("a") + literal).alias("b")))
+
+
+def test_a_polars_expression_polars_cannot_serialise_is_run_instead_of_written():
+    lock = threading.Lock()
+    argument = pl.col("lo").map_elements(lambda value: (lock, value * 2)[1], return_dtype=pl.Float64)
+    expr = ff.col("x") + argument
+    assert not expr.convertable_to_code
+    out = ff.from_dict(DATA).select(expr.alias("out"))
+    assert_frame_equal(out.collect(), pl.LazyFrame(DATA).select((pl.col("x") + argument).alias("out")).collect())
+
+
+@pytest.mark.parametrize(
+    "combine",
+    [lambda a, b: a + b, lambda a, b: a > b, lambda a, b: a & b, lambda a, b: a // b],
+    ids=["add", "gt", "and", "floordiv"],
+)
+def test_a_polars_operand_is_serialised_once(monkeypatch, combine):
+    calls = []
+    serialize = ExprMetaNameSpace.serialize
+
+    def counted(self, *args, **kwargs):
+        calls.append(kwargs.get("format"))
+        return serialize(self, *args, **kwargs)
+
+    monkeypatch.setattr(ExprMetaNameSpace, "serialize", counted)
+    combine(ff.col("x"), pl.col("lo") * 2)
+    assert calls == ["json"]
 
 
 @pytest.mark.parametrize(

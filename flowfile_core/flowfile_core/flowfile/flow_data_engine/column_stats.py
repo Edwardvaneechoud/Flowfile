@@ -1,10 +1,14 @@
 """On-demand single-column statistics for node result previews.
 
 Runs one bounded, single-pass aggregate (len / null_count / n_unique / min /
-max / mean) over a node's cached result engine — locally for remote-run
-results (a scan over the worker's cache), in the worker for locally-run
-results (the full upstream plan). The results are written into the engine's
-``FlowfileColumn``, which stays the single source of truth for column
+max / mean) over a node's cached result engine on the compute backend it is
+given, and reads back the one row it yields (``bounded.single_row``): the
+aggregate runs as a job of the worker, in this process for the worker embedded
+here and in a child for one beside core, over the scan of a stored result or the
+full upstream plan of a deferred one. The column's dtype comes from resolving the engine's plan, or
+with ``FLOWFILE_COMPUTE_PROTOCOL`` on from the engine's cached schema, so core
+never opens a result a backend stored. The results are written into the
+engine's ``FlowfileColumn``, which stays the single source of truth for column
 statistics; the endpoint just returns that column's existing ``FileColumn``
 representation.
 """
@@ -14,19 +18,18 @@ from __future__ import annotations
 import copy
 import time
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
 import polars as pl
 
-from flowfile_core.configs import logger
+from flowfile_core.configs import logger, settings
+from flowfile_core.flowfile.execution.errors import ComputeError
+from flowfile_core.flowfile.flow_data_engine.bounded import single_row
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-    ExternalDfFetcher,
-    clear_task_from_worker,
-)
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.schemas.output_model import FileColumn
 
 if TYPE_CHECKING:
+    from flowfile_core.flowfile.execution.protocol import ComputeBackend
     from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 
 
@@ -68,73 +71,47 @@ def _count_only_exprs(column_name: str) -> list[pl.Expr]:
     return [pl.len().alias("total_rows"), pl.col(column_name).null_count().alias("null_count")]
 
 
-def run_stats_query(engine: FlowDataEngine, exprs: list[pl.Expr]) -> dict:
-    """Runs the one collect for the stats expressions and logs its duration."""
-    lf = engine.data_frame.lazy()
-    start = time.perf_counter()
-    row = lf.select(exprs).collect(engine="streaming" if engine._streamable else "auto").row(0, named=True)
-    elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
-    logger.info(f"column_stats collect finished elapsed_ms={elapsed_ms}")
-    return row
+def run_stats_query(backend: ComputeBackend, engine: FlowDataEngine, exprs: list[pl.Expr]) -> dict:
+    """Runs the stats aggregate on ``backend``, reads back its one row and logs the duration.
 
-
-def run_stats_query_in_worker(engine: FlowDataEngine, exprs: list[pl.Expr]) -> dict:
-    """Ships the stats plan to the worker; core only reads back the 1-row result.
-
-    Used for locally-run nodes, whose cached engine is the full upstream plan —
-    collecting that in core would execute the whole pipeline in the API process.
-    The worker's spawned child collects ``plan.select(exprs)`` into its cache;
-    core then reads a single row from the cached file (bounded, like a preview),
-    then best-effort clears the worker-side task so per-request refs don't
-    accumulate in a long-lived worker.
+    The aggregate always yields one row; the backend computes it and only that
+    row reaches core.
     """
     start = time.perf_counter()
-    fetcher = ExternalDfFetcher(
-        flow_id=-1,
-        node_id=-1,
-        lf=engine.data_frame.lazy().select(exprs),
-        file_ref=f"column_stats_{uuid4().hex}",
-        wait_on_completion=True,
+    row = single_row(
+        backend,
+        engine.data_frame.lazy().select(exprs),
+        empty_message="The column statistics aggregate returned no row.",
     )
-    try:
-        row = fetcher.get_result().collect().row(0, named=True)
-    finally:
-        try:
-            clear_task_from_worker(fetcher.file_ref)
-        except Exception:
-            logger.debug("column_stats worker task cleanup failed", exc_info=True)
     elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
-    logger.info(f"column_stats worker collect finished elapsed_ms={elapsed_ms}")
+    logger.info(f"column_stats on backend {backend.id!r} finished elapsed_ms={elapsed_ms}")
     return row
 
 
-def _execute_stats_query(engine: FlowDataEngine, column_name: str, dtype: pl.DataType, offload_to_worker: bool) -> dict:
-    """Runs the aggregate at one execution site, degrading to counts only.
+def _execute_stats_query(engine: FlowDataEngine, column_name: str, dtype: pl.DataType, backend: ComputeBackend) -> dict:
+    """Runs the aggregate on ``backend``, degrading to counts only.
 
-    The site is chosen once and never switched: a failed worker offload must
-    not re-run in core — for locally-run flows the engine is the full upstream
-    plan, and collecting it in-process is exactly what the offload exists to
-    prevent. Worker failures all surface as plain exceptions (a dead worker is
-    indistinguishable from a dtype error), so the count-only retry settles it:
-    it is valid for every dtype and fails fast when the worker is down.
+    The site is the backend and is never switched: a failed query on the
+    worker must not re-run in core, where for a locally-run node the engine is
+    the full upstream plan. A failed full query (a ``ComputeError`` from the
+    backend, or a Polars error such as a dtype the aggregate cannot take)
+    retries with the count-only expressions on the same backend: they are
+    valid for every dtype and fail fast when the worker is down. When that
+    retry fails with a ``ComputeError`` the statistics are unavailable; any
+    other error of the retry propagates.
     """
-    full_exprs = build_stats_exprs(column_name, dtype)
-    if offload_to_worker:
-        try:
-            return run_stats_query_in_worker(engine, full_exprs)
-        except Exception as full_error:
-            logger.warning(f"column_stats worker full query failed ({full_error}); retrying with counts only")
-            try:
-                return run_stats_query_in_worker(engine, _count_only_exprs(column_name))
-            except Exception as retry_error:
-                raise ColumnStatsUnavailable(
-                    "Could not compute column statistics in the worker. Is the worker running?"
-                ) from retry_error
     try:
-        return run_stats_query(engine, full_exprs)
-    except pl.exceptions.PolarsError:
-        logger.warning(f"column_stats full query failed for {column_name!r}; retrying with counts only")
-        return run_stats_query(engine, _count_only_exprs(column_name))
+        return run_stats_query(backend, engine, build_stats_exprs(column_name, dtype))
+    except (ComputeError, pl.exceptions.PolarsError) as full_error:
+        logger.warning(
+            f"column_stats full query failed on backend {backend.id!r} ({full_error}); retrying with counts only"
+        )
+    try:
+        return run_stats_query(backend, engine, _count_only_exprs(column_name))
+    except ComputeError as retry_error:
+        raise ColumnStatsUnavailable(
+            f"Could not compute column statistics on the {backend.id!r} backend: {retry_error}"
+        ) from retry_error
 
 
 def _memoized_stats(engine: FlowDataEngine, column_name: str, dtype: pl.DataType) -> FileColumn | None:
@@ -182,27 +159,35 @@ def _apply_stats_to_schema(engine: FlowDataEngine, column_name: str, dtype: pl.D
     return flow_column
 
 
-def compute_column_stats(engine: FlowDataEngine, column_name: str, offload_to_worker: bool = False) -> FileColumn:
-    """Computes stats for one column and applies them to the engine's schema.
+def compute_column_stats(engine: FlowDataEngine, column_name: str, backend: ComputeBackend) -> FileColumn:
+    """Computes stats for one column on ``backend`` and applies them to the engine's schema.
 
     The engine's ``FlowfileColumn`` is the single source of truth: results are
     written onto it (so later previews of this run carry them too, and repeat
     requests answer from it without recomputing) and returned as its ordinary
     ``FileColumn`` representation. Raises
     ``pl.exceptions.ColumnNotFoundError`` for an unknown column and
-    ``ColumnStatsUnavailable`` when the worker offload fails. Also memoizes
-    the exact row count onto the engine.
+    ``ColumnStatsUnavailable`` when the backend cannot compute even the
+    counts. Also memoizes the exact row count onto the engine. The column's
+    dtype is resolved from the engine's plan, or with
+    ``FLOWFILE_COMPUTE_PROTOCOL`` on read from the engine's cached schema.
     """
-    schema = engine.data_frame.lazy().collect_schema()
-    if column_name not in schema:
-        raise pl.exceptions.ColumnNotFoundError(column_name)
-    dtype = schema[column_name]
+    if settings.FLOWFILE_COMPUTE_PROTOCOL:
+        column = engine.get_schema_column(column_name)
+        if column is None:
+            raise pl.exceptions.ColumnNotFoundError(column_name)
+        dtype = cast_str_to_polars_type(column.data_type)
+    else:
+        schema = engine.data_frame.lazy().collect_schema()
+        if column_name not in schema:
+            raise pl.exceptions.ColumnNotFoundError(column_name)
+        dtype = schema[column_name]
 
     memoized = _memoized_stats(engine, column_name, dtype)
     if memoized is not None:
         return memoized
 
-    raw = _execute_stats_query(engine, column_name, dtype, offload_to_worker)
+    raw = _execute_stats_query(engine, column_name, dtype, backend)
     flow_column = _apply_stats_to_schema(engine, column_name, dtype, raw)
     if engine.known_record_count() is None:
         engine.number_of_records = raw["total_rows"]

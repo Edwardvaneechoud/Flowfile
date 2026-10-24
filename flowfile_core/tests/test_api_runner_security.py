@@ -242,7 +242,7 @@ def test_columns_orientation_pushes_limit_into_collect():
 
     # The limit was pushed into collect(), not applied by slicing afterwards.
     assert capture["n_records"] == 2
-    assert out == {"data": {"a": [1, 2], "b": ["v", "w"]}, "row_count": 2, "orientation": "columns"}
+    assert out == {"data": {"a": [1, 2], "b": ["v", "w"]}, "row_count": 2, "orientation": "columns", "truncated": False}
 
 
 def test_columns_orientation_without_limit_collects_all():
@@ -254,7 +254,7 @@ def test_columns_orientation_without_limit_collects_all():
     out = api_runner._serialize(_RecordingData(df, capture), settings, flow, None)
 
     assert capture["n_records"] is None
-    assert out == {"data": {"a": [1, 2, 3]}, "row_count": 3, "orientation": "columns"}
+    assert out == {"data": {"a": [1, 2, 3]}, "row_count": 3, "orientation": "columns", "truncated": False}
 
 
 # #4 — per-flow_id serialization

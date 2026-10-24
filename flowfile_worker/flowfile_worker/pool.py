@@ -1,8 +1,9 @@
 """Warm process pool for worker task execution.
 
-Opt-in via ``FLOWFILE_WORKER_POOL_SIZE`` (int, default ``0`` = off): keeps up to N
-spawned children alive between tasks so each task skips the interpreter boot and
-import chain (~0.2s on macOS, ~0.4-0.7s on Windows). The wire protocol, the funcs
+On by default with ``default_pool_size()`` members; ``FLOWFILE_WORKER_POOL_SIZE``
+(int, ``0`` = off) overrides it. It keeps up to N spawned children alive between
+tasks so each task skips the interpreter boot and import chain (~0.2s on macOS,
+~0.4-0.7s on Windows). The wire protocol, the funcs
 task signatures, and the spawn-per-task path are untouched - when the pool is off,
 saturated, or the operation is not poolable, callers fall back to today's spawn.
 
@@ -25,7 +26,6 @@ imports must stay light: no models/pydantic, no funcs, no polars.
 
 import os
 import queue as _queue
-import sys
 import threading
 from dataclasses import dataclass, field
 from multiprocessing import Process
@@ -38,14 +38,17 @@ from flowfile_worker import mp_context
 from flowfile_worker.configs import logger
 from shared.storage_config import storage
 
-# Ops dispatched via spawner.start_process / streaming that are safe to reuse a
-# child for. Deliberately excluded: custom nodes (exec user code - never pool),
-# fuzzy (positional-arg spawn + heavy pl_fuzzy_frame_match import), train/apply
-# model (huge allocator footprints), generic_task connectors (state not audited).
+# Ops safe to reuse a child for. Excluded: custom nodes and polars_code (user Python runs there,
+# so a patched global must never outlive one task), fuzzy (positional-arg spawn), train/apply model
+# (allocator footprints), generic_task connectors (state not audited). sql_query is pooled: it runs
+# no user Python, only Polars' SQL translation over plans.
 POOLABLE_OPERATIONS = frozenset(
     {
         "store",
         "store_sample",
+        "submit_result",
+        "export_result",
+        "split_result",
         "calculate_schema",
         "calculate_number_of_records",
         "write_output",
@@ -55,6 +58,7 @@ POOLABLE_OPERATIONS = frozenset(
         "write_delta",
         "merge_delta",
         "scd2_delta",
+        "sql_query",
     }
 )
 
@@ -415,12 +419,12 @@ def _int_env(name: str, default: int) -> int:
 
 
 def default_pool_size() -> int:
-    """Platform default when neither the env var nor a saved UI setting exists.
+    """The size when neither the env var nor a saved UI setting exists: four members on every platform.
 
-    Windows pays 0.4-0.7s (desktop) to 11s+ (CI runners) per spawn, so the pool
-    is on by default there; elsewhere spawn is cheap enough to stay opt-in.
+    Every spawn pays the interpreter boot and import chain, ~0.2s on macOS and 0.4-0.7s (desktop) to 11s+
+    (CI runners) on Windows, and a previewed or stored node spawns one per submit.
     """
-    return 4 if sys.platform == "win32" else 0
+    return 4
 
 
 def _settings_file() -> Path:

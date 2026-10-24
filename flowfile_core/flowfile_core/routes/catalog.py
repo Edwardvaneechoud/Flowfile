@@ -65,6 +65,7 @@ from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db
 from flowfile_core.database.models import RunType, SchedulerLock
 from flowfile_core.fileExplorer import validate_path_under_cwd
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
 from flowfile_core.schemas.catalog_schema import (
@@ -171,6 +172,9 @@ def get_catalog_service(
 
 # Exception → HTTP mapping
 
+COMPUTE_UNAVAILABLE_DETAIL = "Compute unavailable"
+"""The detail of a catalog 503: the typed message names the worker's address, so it goes to the log only."""
+
 _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     NamespaceNotFoundError: (404, "Namespace not found"),
     NamespaceExistsError: (409, "Namespace with this name already exists at this level"),
@@ -186,7 +190,8 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     TableNotFoundError: (404, "Catalog table not found"),
     TableVersionUnavailableError: (410, None),
     NotAVirtualTableError: (400, None),
-    WorkerUnavailableError: (503, None),
+    WorkerUnavailableError: (503, COMPUTE_UNAVAILABLE_DETAIL),
+    ComputeUnavailable: (503, COMPUTE_UNAVAILABLE_DETAIL),
     TableExistsError: (409, "A table with this name already exists in this namespace"),
     AmbiguousTableError: (409, None),
     RunNotFoundError: (404, "Run not found"),
@@ -240,6 +245,8 @@ def handle_catalog_exceptions(**overrides: str):
                 for exc_type in type(exc).__mro__:
                     if exc_type in _CATALOG_EXCEPTION_MAP:
                         status_code, default_msg = _CATALOG_EXCEPTION_MAP[exc_type]
+                        if status_code == 503:
+                            logger.error("Catalog request %s could not reach compute: %s", func.__name__, exc)
                         msg = override_map.get(exc_type, default_msg)
                         if msg is None:
                             msg = str(exc)

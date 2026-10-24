@@ -70,6 +70,8 @@ pub fn build_child_env(core_port: u16, worker_port: u16) -> HashMap<String, Stri
     // Without this, core's settings.py builds the worker client URL with
     // host="0.0.0.0" on Unix, which is fragile as a connect target.
     env_vars.insert("WORKER_HOST".into(), "127.0.0.1".into());
+    // The worker shares this machine's disk, so it declares `file`, which core then offers it.
+    env_vars.insert("FLOWFILE_WORKER_LOCAL_FILES".into(), "1".into());
 
     #[cfg(target_os = "windows")]
     {

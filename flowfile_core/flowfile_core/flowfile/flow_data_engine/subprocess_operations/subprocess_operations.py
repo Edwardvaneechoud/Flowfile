@@ -1,7 +1,19 @@
-# Standard library imports
+"""Core's transport to a worker: the REST calls, the task fetchers and the worker session they go through.
+
+Nothing here knows which worker to call. Every function and fetcher takes ``worker_url``, the worker's base URL,
+from its caller: ``WorkerBackend`` passes its own ``url``, and a caller outside it that sends work to the worker
+asks the backend registry for it (``registry.worker_url()``). Whether to call the worker at all is the caller's
+decision too.
+
+A worker whose TLS certificate is not public is trusted through ``trust_ca``, which the backend made for it calls with
+its configured CA certificate: the worker session then verifies that worker's URL against it, and both WebSocket clients
+take it from ``ssl_context_for``. Every other worker is verified against the public CAs.
+"""
+
 import io
 import json
 import os
+import ssl
 import threading
 from base64 import b64decode
 from time import monotonic
@@ -11,10 +23,17 @@ from uuid import uuid4
 import polars as pl
 import requests
 from pl_fuzzy_frame_match.models import FuzzyMapping
+from requests.adapters import HTTPAdapter
+from websockets.exceptions import ConnectionClosed
 
 from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.configs import logger
-from flowfile_core.configs.settings import OFFLOAD_TO_WORKER, WORKER_URL
+from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import (
+    ensure_handshake,
+    fetch_worker_capabilities,
+    reset_handshake,
+)
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
     ApplyModelInput,
     CustomNodeExecuteInput,
@@ -38,7 +57,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.models import (
 from flowfile_core.schemas.catalog_schema import CatalogTablePreview, DeltaTableHistory
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageWriteSettingsWorkerInterface
 from flowfile_core.schemas.input_schema import ReceivedTable
-from flowfile_core.utils.arrow_reader import read
+from shared.compute_protocol import Capabilities
 from shared.viz_protocol import HTTP_TIMEOUT_SECONDS
 
 
@@ -63,8 +82,75 @@ class _WorkerAuth(requests.auth.AuthBase):
         return r
 
 
-_worker_session = requests.Session()
+class _WorkerSession(requests.Session):
+    """The session every REST call from core to a worker goes through.
+
+    A call names the worker it is for with the keyword ``worker_url``, the worker's base URL, and the route on it
+    as its path (``_worker_session.get("/status/abc", worker_url=...)``); the module never holds a worker URL of
+    its own, its callers pass the one of the backend they serve. Each call first passes ``ensure_handshake``, which
+    checks each backend once per process, on its first use: a worker whose versions differ from core's is refused
+    before it is sent anything. A call that cannot reach the worker re-arms the check of the backends on its URL,
+    because the worker that comes back there may be another one. A caller that knows which
+    backend the worker is names it with the keyword ``backend_id``, which the check's ``ComputeUnavailable`` names.
+    ``gated=False`` sends a call around the check, neither passing nor re-arming it: the gate's own
+    ``GET /capabilities`` and ``WorkerBackend.capabilities``, which read a worker's versions to compare them.
+    """
+
+    def request(
+        self, method, path, *args, worker_url: str, backend_id: str | None = None, gated: bool = True, **kwargs
+    ):
+        if gated:
+            ensure_handshake(worker_url, backend_id=backend_id)
+        try:
+            return super().request(method, f"{worker_url}{path}", *args, **kwargs)
+        except requests.ConnectionError:
+            if gated:
+                reset_handshake(worker_url)
+            raise
+
+
+class _TrustedCa(HTTPAdapter):
+    """Verifies a worker's certificate against the CA core was given for it, in place of the public CAs."""
+
+    def __init__(self, context: ssl.SSLContext) -> None:
+        self._context = context
+        super().__init__()
+
+    def init_poolmanager(self, *args, **kwargs):
+        kwargs["ssl_context"] = self._context
+        return super().init_poolmanager(*args, **kwargs)
+
+
+_worker_session = _WorkerSession()
 _worker_session.auth = _WorkerAuth()
+
+_trusted_cas: dict[str, ssl.SSLContext] = {}
+
+
+def trust_ca(worker_url: str, ca_cert: str | None) -> None:
+    """Verify the worker at ``worker_url`` against ``ca_cert``, a PEM, from now on, in place of the public CAs.
+
+    The PEM is the CA that signed the worker's certificate, or a self-signed certificate itself. The worker session
+    uses it for every call under ``worker_url``, and ``ssl_context_for`` hands it to both WebSocket clients; a later
+    call for the same URL replaces it, and one with no PEM drops it, so the worker is verified against the public CAs
+    again. Nothing is written to disk.
+
+    Raises:
+        ssl.SSLError: ``ca_cert`` holds no PEM certificate.
+    """
+    if not ca_cert:
+        if _trusted_cas.pop(worker_url, None) is not None:
+            _worker_session.adapters.pop(f"{worker_url}/", None)
+        return
+    context = ssl.create_default_context(cadata=ca_cert)
+    _trusted_cas[worker_url] = context
+    _worker_session.mount(f"{worker_url}/", _TrustedCa(context))
+
+
+def ssl_context_for(worker_url: str) -> ssl.SSLContext | None:
+    """The context ``trust_ca`` made for ``worker_url``; ``None`` for a worker verified against the public CAs."""
+    return _trusted_cas.get(worker_url)
+
 
 _JSON_HEADERS = {"Content-Type": "application/json"}
 
@@ -79,12 +165,14 @@ _POLL_DEADLINE_SECONDS = float(os.getenv("FLOWFILE_WORKER_POLL_TIMEOUT", "3600")
 def trigger_df_operation(
     flow_id: int,
     node_id: int | str,
-    lf: pl.LazyFrame,
+    plan_bytes: bytes,
     file_ref: str,
     operation_type: OperationType = "store",
     kwargs: dict | None = None,
+    *,
+    worker_url: str,
 ) -> Status:
-    # Send raw bytes directly - no base64 encoding overhead
+    """Submit task ``file_ref`` running ``plan_bytes``, a ``pl.LazyFrame.serialize()`` output, sent as is."""
     headers = {
         "Content-Type": "application/octet-stream",
         "X-Task-Id": file_ref,
@@ -95,7 +183,7 @@ def trigger_df_operation(
     if kwargs:
         headers["X-Kwargs"] = json.dumps(kwargs)
     v = _worker_session.post(
-        url=f"{WORKER_URL}/submit_query/", data=lf.serialize(), headers=headers, timeout=_WORKER_TIMEOUT
+        "/submit_query/", worker_url=worker_url, data=plan_bytes, headers=headers, timeout=_WORKER_TIMEOUT
     )
     if not v.ok:
         raise Exception(f"trigger_df_operation: Could not cache the data, {v.text}")
@@ -103,7 +191,7 @@ def trigger_df_operation(
 
 
 def trigger_sample_operation(
-    lf: pl.LazyFrame, file_ref: str, flow_id: int, node_id: str | int, sample_size: int = 100
+    lf: pl.LazyFrame, file_ref: str, flow_id: int, node_id: str | int, sample_size: int = 100, *, worker_url: str
 ) -> Status:
     # Send raw bytes directly - no base64 encoding overhead
     headers = {
@@ -115,7 +203,7 @@ def trigger_sample_operation(
         "X-Node-Id": str(node_id),
     }
     v = _worker_session.post(
-        url=f"{WORKER_URL}/store_sample/", data=lf.serialize(), headers=headers, timeout=_WORKER_TIMEOUT
+        "/store_sample/", worker_url=worker_url, data=lf.serialize(), headers=headers, timeout=_WORKER_TIMEOUT
     )
     if not v.ok:
         raise Exception(f"trigger_sample_operation: Could not cache the data, {v.text}")
@@ -129,6 +217,8 @@ def trigger_fuzzy_match_operation(
     file_ref: str,
     flow_id: int,
     node_id: int | str,
+    *,
+    worker_url: str,
 ) -> Status:
     # Use raw bytes - Pydantic will handle single base64 encoding for JSON transport
     left_serializable_object = PolarsOperation(operation=left_df.serialize())
@@ -142,16 +232,17 @@ def trigger_fuzzy_match_operation(
         flowfile_node_id=node_id,
     )
     v = _worker_session.post(
-        f"{WORKER_URL}/add_fuzzy_join", data=fuzzy_join_input.model_dump_json(), headers=_JSON_HEADERS
+        "/add_fuzzy_join", worker_url=worker_url, data=fuzzy_join_input.model_dump_json(), headers=_JSON_HEADERS
     )
     if not v.ok:
         raise Exception(f"trigger_fuzzy_match_operation: Could not cache the data, {v.text}")
     return Status(**v.json())
 
 
-def trigger_custom_node_operation(request: CustomNodeExecuteInput) -> Status:
+def trigger_custom_node_operation(request: CustomNodeExecuteInput, *, worker_url: str) -> Status:
     v = _worker_session.post(
-        f"{WORKER_URL}/execute_custom_node",
+        "/execute_custom_node",
+        worker_url=worker_url,
         data=request.model_dump_json(),
         headers=_JSON_HEADERS,
     )
@@ -170,6 +261,8 @@ def trigger_train_model_operation(
     file_ref: str,
     flow_id: int,
     node_id: int | str,
+    *,
+    worker_url: str,
 ) -> Status:
     """Submit a training job to the worker.
 
@@ -187,7 +280,9 @@ def trigger_train_model_operation(
         flowfile_flow_id=flow_id,
         flowfile_node_id=node_id,
     )
-    v = _worker_session.post(f"{WORKER_URL}/train_ml_model", data=payload.model_dump_json(), headers=_JSON_HEADERS)
+    v = _worker_session.post(
+        "/train_ml_model", worker_url=worker_url, data=payload.model_dump_json(), headers=_JSON_HEADERS
+    )
     if not v.ok:
         raise Exception(f"trigger_train_model_operation: Could not start training, {v.text}")
     return Status(**v.json())
@@ -200,6 +295,8 @@ def trigger_apply_model_operation(
     file_ref: str,
     flow_id: int,
     node_id: int | str,
+    *,
+    worker_url: str,
 ) -> Status:
     """Submit an apply-model job to the worker."""
     payload = ApplyModelInput(
@@ -210,7 +307,9 @@ def trigger_apply_model_operation(
         flowfile_flow_id=flow_id,
         flowfile_node_id=node_id,
     )
-    v = _worker_session.post(f"{WORKER_URL}/apply_ml_model", data=payload.model_dump_json(), headers=_JSON_HEADERS)
+    v = _worker_session.post(
+        "/apply_ml_model", worker_url=worker_url, data=payload.model_dump_json(), headers=_JSON_HEADERS
+    )
     if not v.ok:
         raise Exception(f"trigger_apply_model_operation: Could not start scoring, {v.text}")
     return Status(**v.json())
@@ -221,9 +320,12 @@ def trigger_create_operation(
     node_id: int | str,
     received_table: ReceivedTable,
     file_type: str = Literal["csv", "parquet", "json", "excel", "ipc", "ndjson", "avro", "ipc_stream"],
+    *,
+    worker_url: str,
 ):
     f = _worker_session.post(
-        url=f"{WORKER_URL}/create_table/{file_type}",
+        f"/create_table/{file_type}",
+        worker_url=worker_url,
         data=received_table.model_dump_json(),
         headers=_JSON_HEADERS,
         params={"flowfile_flow_id": flow_id, "flowfile_node_id": node_id},
@@ -233,9 +335,10 @@ def trigger_create_operation(
     return Status(**f.json())
 
 
-def trigger_database_read_collector(database_external_read_settings: DatabaseExternalReadSettings):
+def trigger_database_read_collector(database_external_read_settings: DatabaseExternalReadSettings, *, worker_url: str):
     f = _worker_session.post(
-        url=f"{WORKER_URL}/store_database_read_result",
+        "/store_database_read_result",
+        worker_url=worker_url,
         data=database_external_read_settings.model_dump_json(),
         headers=_JSON_HEADERS,
     )
@@ -244,24 +347,27 @@ def trigger_database_read_collector(database_external_read_settings: DatabaseExt
     return Status(**f.json())
 
 
-def trigger_kafka_read(kafka_read_settings) -> Status:
+def trigger_kafka_read(kafka_read_settings, *, worker_url: str) -> Status:
     """Send a Kafka read request to the worker service."""
     f = _worker_session.post(
-        url=f"{WORKER_URL}/store_kafka_read_result", data=kafka_read_settings.model_dump_json(), headers=_JSON_HEADERS
+        "/store_kafka_read_result",
+        worker_url=worker_url,
+        data=kafka_read_settings.model_dump_json(),
+        headers=_JSON_HEADERS,
     )
     if not f.ok:
         raise Exception(f"trigger_kafka_read: Could not read from Kafka, {f.text}")
     return Status(**f.json())
 
 
-def fetch_kafka_offsets(task_id: str) -> dict | None:
+def fetch_kafka_offsets(task_id: str, *, worker_url: str) -> dict | None:
     """Fetch deferred Kafka offset data from the worker for a completed task.
 
     Returns a dict with ``new_offsets``, ``messages_consumed``, etc. from the
     KafkaReadResult that was saved as a sidecar file, or ``None`` if no
     offsets were recorded (e.g. empty topic).
     """
-    f = _worker_session.get(f"{WORKER_URL}/kafka_offsets/{task_id}")
+    f = _worker_session.get(f"/kafka_offsets/{task_id}", worker_url=worker_url)
     if not f.ok:
         logger.warning("Failed to fetch Kafka offsets for task %s: %s", task_id, f.text)
         return None
@@ -269,10 +375,11 @@ def fetch_kafka_offsets(task_id: str) -> dict | None:
     return data
 
 
-def trigger_google_analytics_read(ga_read_settings) -> Status:
+def trigger_google_analytics_read(ga_read_settings, *, worker_url: str) -> Status:
     """Send a Google Analytics 4 read request to the worker service."""
     f = _worker_session.post(
-        url=f"{WORKER_URL}/store_google_analytics_read_result",
+        "/store_google_analytics_read_result",
+        worker_url=worker_url,
         data=ga_read_settings.model_dump_json(),
         headers=_JSON_HEADERS,
     )
@@ -281,10 +388,11 @@ def trigger_google_analytics_read(ga_read_settings) -> Status:
     return Status(**f.json())
 
 
-def trigger_rest_api_read(settings) -> Status:
+def trigger_rest_api_read(settings, *, worker_url: str) -> Status:
     """Send a REST API read request to the worker service."""
     f = _worker_session.post(
-        url=f"{WORKER_URL}/store_rest_api_read_result",
+        "/store_rest_api_read_result",
+        worker_url=worker_url,
         data=settings.model_dump_json(),
         headers=_JSON_HEADERS,
         timeout=_WORKER_TIMEOUT,
@@ -294,9 +402,10 @@ def trigger_rest_api_read(settings) -> Status:
     return Status(**f.json())
 
 
-def trigger_database_write(database_external_write_settings: DatabaseExternalWriteSettings):
+def trigger_database_write(database_external_write_settings: DatabaseExternalWriteSettings, *, worker_url: str):
     f = _worker_session.post(
-        url=f"{WORKER_URL}/store_database_write_result",
+        "/store_database_write_result",
+        worker_url=worker_url,
         data=database_external_write_settings.model_dump_json(),
         headers=_JSON_HEADERS,
     )
@@ -305,9 +414,12 @@ def trigger_database_write(database_external_write_settings: DatabaseExternalWri
     return Status(**f.json())
 
 
-def trigger_cloud_storage_write(database_external_write_settings: CloudStorageWriteSettingsWorkerInterface):
+def trigger_cloud_storage_write(
+    database_external_write_settings: CloudStorageWriteSettingsWorkerInterface, *, worker_url: str
+):
     f = _worker_session.post(
-        url=f"{WORKER_URL}/write_data_to_cloud",
+        "/write_data_to_cloud",
+        worker_url=worker_url,
         data=database_external_write_settings.model_dump_json(),
         headers=_JSON_HEADERS,
     )
@@ -326,12 +438,15 @@ def trigger_write_output(
     sheet_name: str | None = None,
     delimiter: str | None = None,
     compression: str | None = None,
+    *,
+    worker_url: str,
 ) -> Status:
     from base64 import encodebytes
 
     serializable_df = lf.serialize()
     r = _worker_session.post(
-        f"{WORKER_URL}/write_results/",
+        "/write_results/",
+        worker_url=worker_url,
         json={
             "operation": encodebytes(serializable_df).decode(),
             "data_type": data_type,
@@ -353,6 +468,8 @@ def trigger_catalog_materialize(
     source_file_path: str,
     table_name: str | None = None,
     storage: dict | None = None,
+    *,
+    worker_url: str,
 ):
     payload = {
         "source_file_path": source_file_path,
@@ -360,7 +477,7 @@ def trigger_catalog_materialize(
     }
     if storage is not None:
         payload["storage"] = storage
-    response = _worker_session.post(f"{WORKER_URL}/catalog/materialize", json=payload)
+    response = _worker_session.post("/catalog/materialize", worker_url=worker_url, json=payload)
     return response
 
 
@@ -369,6 +486,8 @@ def trigger_resolve_virtual_table(
     plan_bytes: bytes,
     source_versions_hash: str,
     target: str = "virtual_results",
+    *,
+    worker_url: str,
 ) -> dict:
     """Ask the worker to materialise a flow-virtual table to its IPC cache.
 
@@ -386,7 +505,7 @@ def trigger_resolve_virtual_table(
         "source_versions_hash": source_versions_hash,
         "target": target,
     }
-    response = _worker_session.post(f"{WORKER_URL}/flow/resolve_virtual_table", json=payload, timeout=300)
+    response = _worker_session.post("/flow/resolve_virtual_table", worker_url=worker_url, json=payload, timeout=300)
     if not response.ok:
         raise RuntimeError(f"Worker resolve_virtual_table failed: {response.text}")
     return response.json()
@@ -398,6 +517,8 @@ def trigger_sql_query(
     max_rows: int = 10_000,
     virtual_refs: dict[str, str] | None = None,
     storage: dict | None = None,
+    *,
+    worker_url: str,
 ) -> dict:
     """Ask the worker to execute a SQL query against catalog tables.
 
@@ -412,13 +533,13 @@ def trigger_sql_query(
         payload["virtual_refs"] = virtual_refs
     if storage is not None:
         payload["storage"] = storage
-    response = _worker_session.post(f"{WORKER_URL}/catalog/sql_query", json=payload)
+    response = _worker_session.post("/catalog/sql_query", worker_url=worker_url, json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker SQL query execution failed: {response.text}")
     return response.json()
 
 
-def trigger_visualize_query(worker_source: dict, payload: dict, max_rows: int) -> dict:
+def trigger_visualize_query(worker_source: dict, payload: dict, max_rows: int, *, worker_url: str) -> dict:
     """Ask the worker to compute a Graphic Walker chart payload.
 
     *worker_source* is a dict matching the worker's ``VizWorkerSource`` model.
@@ -435,7 +556,9 @@ def trigger_visualize_query(worker_source: dict, payload: dict, max_rows: int) -
         max_rows,
     )
     body = {"source": worker_source, "payload": payload, "max_rows": max_rows}
-    response = _worker_session.post(f"{WORKER_URL}/catalog/visualize_query", json=body, timeout=HTTP_TIMEOUT_SECONDS)
+    response = _worker_session.post(
+        "/catalog/visualize_query", worker_url=worker_url, json=body, timeout=HTTP_TIMEOUT_SECONDS
+    )
     if not response.ok:
         logger.warning(
             "[viz] <- worker /catalog/visualize_query session_key=%s status=%d body=%s",
@@ -456,7 +579,7 @@ def trigger_visualize_query(worker_source: dict, payload: dict, max_rows: int) -
     return data
 
 
-def trigger_visualize_fields(worker_source: dict) -> dict:
+def trigger_visualize_fields(worker_source: dict, *, worker_url: str) -> dict:
     """Ask the worker for the Graphic Walker field schema of a source."""
     session_key = worker_source.get("session_key")
     logger.info(
@@ -465,7 +588,7 @@ def trigger_visualize_fields(worker_source: dict) -> dict:
         worker_source.get("kind"),
     )
     body = {"source": worker_source}
-    response = _worker_session.post(f"{WORKER_URL}/catalog/visualize_fields", json=body, timeout=30)
+    response = _worker_session.post("/catalog/visualize_fields", worker_url=worker_url, json=body, timeout=30)
     if not response.ok:
         logger.warning(
             "[viz] <- worker /catalog/visualize_fields session_key=%s status=%d body=%s",
@@ -485,7 +608,7 @@ def trigger_visualize_fields(worker_source: dict) -> dict:
     return data
 
 
-def trigger_visualize_column_stats(worker_source: dict, column: str, limit: int) -> dict:
+def trigger_visualize_column_stats(worker_source: dict, column: str, limit: int, *, worker_url: str) -> dict:
     """Ask the worker for distinct values + min/max of a single column."""
     session_key = worker_source.get("session_key")
     logger.info(
@@ -497,7 +620,7 @@ def trigger_visualize_column_stats(worker_source: dict, column: str, limit: int)
     )
     body = {"source": worker_source, "column": column, "limit": limit}
     response = _worker_session.post(
-        f"{WORKER_URL}/catalog/visualize_column_stats", json=body, timeout=HTTP_TIMEOUT_SECONDS
+        "/catalog/visualize_column_stats", worker_url=worker_url, json=body, timeout=HTTP_TIMEOUT_SECONDS
     )
     if not response.ok:
         logger.warning(
@@ -520,7 +643,7 @@ def trigger_visualize_column_stats(worker_source: dict, column: str, limit: int)
     return data
 
 
-def trigger_read_table_metadata(table_name: str, storage: dict | None = None) -> dict:
+def trigger_read_table_metadata(table_name: str, storage: dict | None = None, *, worker_url: str) -> dict:
     """Ask the worker to read table metadata (schema, row_count, size_bytes).
 
     *table_name* is the bare directory name inside the catalog tables
@@ -531,7 +654,7 @@ def trigger_read_table_metadata(table_name: str, storage: dict | None = None) ->
     payload = {"table_path": table_name}
     if storage is not None:
         payload["storage"] = storage
-    response = _worker_session.post(f"{WORKER_URL}/catalog/table_metadata", json=payload)
+    response = _worker_session.post("/catalog/table_metadata", worker_url=worker_url, json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker table metadata read failed: {response.text}")
     return response.json()
@@ -541,6 +664,8 @@ def trigger_delta_history(
     table_name: str,
     limit: int | None = None,
     storage: dict | None = None,
+    *,
+    worker_url: str,
 ) -> DeltaTableHistory:
     """Ask the worker to read Delta table version history.
 
@@ -550,7 +675,7 @@ def trigger_delta_history(
     payload = {"table_path": table_name, "limit": limit}
     if storage is not None:
         payload["storage"] = storage
-    response = _worker_session.post(f"{WORKER_URL}/catalog/delta_history", json=payload)
+    response = _worker_session.post("/catalog/delta_history", worker_url=worker_url, json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker delta history read failed: {response.text}")
     return DeltaTableHistory.model_validate(response.json())
@@ -561,6 +686,8 @@ def trigger_delta_version_preview(
     version: int,
     n_rows: int = 100,
     storage: dict | None = None,
+    *,
+    worker_url: str,
 ) -> CatalogTablePreview:
     """Ask the worker to preview a Delta table at a specific version.
 
@@ -570,7 +697,7 @@ def trigger_delta_version_preview(
     payload = {"table_path": table_name, "version": version, "n_rows": n_rows}
     if storage is not None:
         payload["storage"] = storage
-    response = _worker_session.post(f"{WORKER_URL}/catalog/delta_version_preview", json=payload)
+    response = _worker_session.post("/catalog/delta_version_preview", worker_url=worker_url, json=payload)
     if response.status_code == 404:
         from flowfile_core.catalog.exceptions import TableVersionUnavailableError
 
@@ -584,6 +711,8 @@ def trigger_delta_preview(
     table_name: str,
     n_rows: int = 100,
     storage: dict | None = None,
+    *,
+    worker_url: str,
 ) -> CatalogTablePreview:
     """Ask the worker to preview a Delta table (latest version).
 
@@ -593,7 +722,7 @@ def trigger_delta_preview(
     payload = {"table_path": table_name, "n_rows": n_rows}
     if storage is not None:
         payload["storage"] = storage
-    response = _worker_session.post(f"{WORKER_URL}/catalog/delta_preview", json=payload)
+    response = _worker_session.post("/catalog/delta_preview", worker_url=worker_url, json=payload)
     if not response.ok:
         raise RuntimeError(f"Worker delta preview failed: {response.text}")
     return CatalogTablePreview.model_validate(response.json())
@@ -603,6 +732,8 @@ def trigger_optimize_catalog_table(
     table_name: str,
     z_order_columns: list[str] | None = None,
     storage: dict | None = None,
+    *,
+    worker_url: str,
 ) -> dict:
     """Ask the worker to optimize (compact / Z-order) a Delta catalog table.
 
@@ -612,7 +743,7 @@ def trigger_optimize_catalog_table(
     payload = {"table_path": table_name, "z_order_columns": z_order_columns}
     if storage is not None:
         payload["storage"] = storage
-    response = _worker_session.post(f"{WORKER_URL}/catalog/optimize", json=payload, timeout=600)
+    response = _worker_session.post("/catalog/optimize", worker_url=worker_url, json=payload, timeout=600)
     if not response.ok:
         raise RuntimeError(f"Worker optimize failed: {response.text}")
     return response.json()
@@ -623,6 +754,8 @@ def trigger_vacuum_catalog_table(
     retention_hours: int = 168,
     dry_run: bool = True,
     storage: dict | None = None,
+    *,
+    worker_url: str,
 ) -> dict:
     """Ask the worker to vacuum tombstoned files from a Delta catalog table.
 
@@ -632,7 +765,7 @@ def trigger_vacuum_catalog_table(
     payload = {"table_path": table_name, "retention_hours": retention_hours, "dry_run": dry_run}
     if storage is not None:
         payload["storage"] = storage
-    response = _worker_session.post(f"{WORKER_URL}/catalog/vacuum", json=payload, timeout=600)
+    response = _worker_session.post("/catalog/vacuum", worker_url=worker_url, json=payload, timeout=600)
     if not response.ok:
         raise RuntimeError(f"Worker vacuum failed: {response.text}")
     return response.json()
@@ -648,9 +781,7 @@ def _raise_for_edit_response(response, table_id: int) -> None:
             detail = response.json().get("detail", {}) or {}
         except ValueError:
             pass
-        raise StaleWriteError(
-            "catalog_table", table_id, expected=detail.get("expected"), current=detail.get("current")
-        )
+        raise StaleWriteError("catalog_table", table_id, expected=detail.get("expected"), current=detail.get("current"))
     if response.status_code == 422:
         try:
             detail = response.json().get("detail", {}) or {}
@@ -665,6 +796,8 @@ def trigger_apply_table_edits(
     table_id: int,
     edits: dict,
     storage: dict | None = None,
+    *,
+    worker_url: str,
 ) -> dict:
     """Ask the worker to apply keyed row edits to a Delta catalog table.
 
@@ -676,11 +809,11 @@ def trigger_apply_table_edits(
     if storage is not None:
         payload["storage"] = storage
     try:
-        response = _worker_session.post(f"{WORKER_URL}/catalog/apply_edits", json=payload, timeout=600)
-    except requests.RequestException as exc:
+        response = _worker_session.post("/catalog/apply_edits", worker_url=worker_url, json=payload, timeout=600)
+    except (requests.RequestException, ComputeError) as exc:
         from flowfile_core.catalog.exceptions import WorkerUnavailableError
 
-        raise WorkerUnavailableError(f"worker unreachable while applying table edits: {exc}") from exc
+        raise WorkerUnavailableError(f"worker unavailable while applying table edits: {exc}") from exc
     _raise_for_edit_response(response, table_id)
     if not response.ok:
         raise RuntimeError(f"Worker apply_edits failed: {response.text}")
@@ -693,69 +826,73 @@ def trigger_add_key_column(
     column_name: str,
     expected_version: int | None = None,
     storage: dict | None = None,
+    *,
+    worker_url: str,
 ) -> dict:
     """Ask the worker to rewrite a Delta catalog table with a sequential row-id column."""
     payload = {"table_path": table_name, "column_name": column_name, "expected_version": expected_version}
     if storage is not None:
         payload["storage"] = storage
     try:
-        response = _worker_session.post(f"{WORKER_URL}/catalog/add_key_column", json=payload, timeout=600)
-    except requests.RequestException as exc:
+        response = _worker_session.post("/catalog/add_key_column", worker_url=worker_url, json=payload, timeout=600)
+    except (requests.RequestException, ComputeError) as exc:
         from flowfile_core.catalog.exceptions import WorkerUnavailableError
 
-        raise WorkerUnavailableError(f"worker unreachable while adding a key column: {exc}") from exc
+        raise WorkerUnavailableError(f"worker unavailable while adding a key column: {exc}") from exc
     _raise_for_edit_response(response, table_id)
     if not response.ok:
         raise RuntimeError(f"Worker add_key_column failed: {response.text}")
     return response.json()
 
 
-def get_results(file_ref: str) -> Status | None:
-    f = _worker_session.get(f"{WORKER_URL}/status/{file_ref}", timeout=_WORKER_TIMEOUT)
+def get_results(file_ref: str, *, worker_url: str) -> Status | None:
+    f = _worker_session.get(f"/status/{file_ref}", worker_url=worker_url, timeout=_WORKER_TIMEOUT)
     if f.status_code == 200:
         return Status(**f.json())
     else:
         raise Exception(f"get_results: Could not fetch the data, {f.text}")
 
 
-def results_exists(file_ref: str):
-    if not OFFLOAD_TO_WORKER:
-        return False
+def results_exists(file_ref: str, *, worker_url: str) -> bool:
+    """Whether the worker at ``worker_url`` holds task ``file_ref`` as completed.
 
+    ``False`` means only that the worker answered and the task is not there (or not finished); the caller decides
+    whether to ask at all.
+
+    Raises:
+        ComputeUnavailable: The worker could not be reached; the message names ``worker_url``.
+    """
     try:
-        f = _worker_session.get(f"{WORKER_URL}/status/{file_ref}", timeout=_WORKER_TIMEOUT)
+        f = _worker_session.get(f"/status/{file_ref}", worker_url=worker_url, timeout=_WORKER_TIMEOUT)
         if f.status_code == 200:
             if f.json()["status"] == "Completed":
                 return True
         return False
     except requests.RequestException as e:
-        logger.error(f"Failed to check results existence: {str(e)}")
-        if "Connection refused" in str(e):
-            logger.info("")
-        return False
+        raise ComputeUnavailable(f"Could not reach the worker at {worker_url}: {e}") from e
 
 
-def clear_task_from_worker(file_ref: str) -> bool:
+def clear_task_from_worker(file_ref: str, *, worker_url: str) -> bool:
     """
     Clears a task from the worker service by making a DELETE request. It also removes associated cached files.
     Args:
         file_ref (str): The unique identifier of the task to clear.
+        worker_url (str): The base URL of the worker that holds the task.
 
     Returns:
-        bool: True if the task was successfully cleared, False otherwise.
+        bool: True if the task was successfully cleared, False otherwise. Best-effort cleanup:
+        a worker this core cannot use (``ComputeError``) is logged and never fails the caller.
     """
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-
-    if not OFFLOAD_TO_WORKER:
-        return False
-
     try:
-        f = _worker_session.delete(f"{WORKER_URL}/clear_task/{file_ref}", timeout=_WORKER_TIMEOUT)
+        f = _worker_session.delete(f"/clear_task/{file_ref}", worker_url=worker_url, timeout=_WORKER_TIMEOUT)
         if f.status_code == 200:
             return True
         return False
     except requests.RequestException as e:
         logger.error(f"Failed to remove results: {str(e)}")
+        return False
+    except ComputeError as e:
+        logger.warning(f"Did not remove results for {file_ref} from the worker: {e}")
         return False
 
 
@@ -764,8 +901,8 @@ def get_df_result(result_b64: str) -> pl.LazyFrame:
     return pl.LazyFrame.deserialize(io.BytesIO(b64decode(result_b64)))
 
 
-def get_external_df_result(file_ref: str) -> pl.LazyFrame | None:
-    status = get_results(file_ref)
+def get_external_df_result(file_ref: str, *, worker_url: str) -> pl.LazyFrame | None:
+    status = get_results(file_ref, worker_url=worker_url)
     if status.status != "Completed":
         raise Exception(f"Status is not completed, {status.status}")
     if status.result_type == "polars":
@@ -774,45 +911,59 @@ def get_external_df_result(file_ref: str) -> pl.LazyFrame | None:
         raise Exception(f"Result type is not polars, {status.result_type}")
 
 
-def get_status(file_ref: str) -> Status:
-    status_response = _worker_session.get(f"{WORKER_URL}/status/{file_ref}", timeout=_WORKER_TIMEOUT)
+def get_status(file_ref: str, *, worker_url: str) -> Status:
+    status_response = _worker_session.get(f"/status/{file_ref}", worker_url=worker_url, timeout=_WORKER_TIMEOUT)
     if status_response.status_code == 200:
         return Status(**status_response.json())
     else:
         raise Exception(f"Could not fetch the status, {status_response.text}")
 
 
-def cancel_task(file_ref: str) -> bool:
+def get_worker_capabilities(*, worker_url: str) -> Capabilities:
+    """What the worker at ``worker_url`` reports from ``GET /capabilities``, without the handshake's comparison."""
+    return fetch_worker_capabilities(worker_url)
+
+
+def cancel_task(file_ref: str, *, worker_url: str) -> bool:
     """
     Cancels a running task by making a request to the worker service.
 
     Args:
         file_ref: The unique identifier of the task to cancel
+        worker_url: The base URL of the worker that runs the task
 
     Returns:
-        bool: True if cancellation was successful, False otherwise
+        bool: True if cancellation was successful, False otherwise; also False, logged, when the
+        worker is one this core cannot use (``ComputeError``)
 
     Raises:
         Exception: If there's an error communicating with the worker service
     """
     try:
-        response = _worker_session.post(f"{WORKER_URL}/cancel_task/{file_ref}", timeout=_WORKER_TIMEOUT)
+        response = _worker_session.post(f"/cancel_task/{file_ref}", worker_url=worker_url, timeout=_WORKER_TIMEOUT)
         if response.ok:
             return True
         return False
     except requests.RequestException as e:
         raise Exception(f"Failed to cancel task: {str(e)}") from e
+    except ComputeError as e:
+        logger.warning(f"Did not cancel task {file_ref} on the worker: {e}")
+        return False
 
 
 class BaseFetcher:
     """
     Thread-safe fetcher for polling worker status and retrieving results.
+
+    Every fetcher follows its task on the worker at ``worker_url``, the base URL its caller passes: the status
+    polls, the WebSocket submit and the cancel all go there.
     """
 
     status: Status | None = None
 
-    def __init__(self, file_ref: str = None):
+    def __init__(self, file_ref: str = None, *, worker_url: str):
         self.file_ref = file_ref if file_ref else str(uuid4())
+        self.worker_url = worker_url
 
         # Thread synchronization
         self._lock = threading.Lock()
@@ -829,6 +980,7 @@ class BaseFetcher:
         self._running: bool = False
         self._error_code: int = 0
         self._error_description: str | None = None
+        self._error_kind: str | None = None
 
     # Public properties for compatibility with subclasses
     @property
@@ -865,6 +1017,12 @@ class BaseFetcher:
         with self._lock:
             return self._error_description
 
+    @property
+    def error_kind(self) -> str | None:
+        """The worker's failure kind ("environment", "task"), "connection" for a socket lost mid-task, or None."""
+        with self._lock:
+            return self._error_kind
+
     def _start_thread(self):
         """Internal method to start thread (must be called under lock)."""
         if not self._started:
@@ -881,7 +1039,7 @@ class BaseFetcher:
         try:
             while not self._stop_event.is_set():
                 try:
-                    r = _worker_session.get(f"{WORKER_URL}/status/{self.file_ref}", timeout=10)
+                    r = _worker_session.get(f"/status/{self.file_ref}", worker_url=self.worker_url, timeout=10)
 
                     if r.status_code == 200:
                         status = Status(**r.json())
@@ -890,7 +1048,9 @@ class BaseFetcher:
                             self._handle_completion(status)
                             return
                         elif status.status == "Error":
-                            self._handle_error(error_code_for_kind(status.error_kind), status.error_message)
+                            self._handle_error(
+                                error_code_for_kind(status.error_kind), status.error_message, status.error_kind
+                            )
                             return
                         elif status.status == "Unknown Error":
                             self._handle_error(
@@ -903,7 +1063,11 @@ class BaseFetcher:
                         self._handle_error(2, f"HTTP {r.status_code}: {r.text}")
                         return
 
-                except requests.RequestException as e:
+                except (requests.ConnectionError, requests.Timeout, ComputeUnavailable) as e:
+                    lost = f"Lost the worker at {self.worker_url} while following task {self.file_ref}: {e}"
+                    self._handle_error(-1, lost, "connection")
+                    return
+                except (requests.RequestException, ComputeError) as e:
                     self._handle_error(2, f"Request failed: {e}")
                     return
 
@@ -945,11 +1109,12 @@ class BaseFetcher:
                 self._running = False
                 self._condition.notify_all()
 
-    def _handle_error(self, code: int, description: str):
+    def _handle_error(self, code: int, description: str, kind: str | None = None):
         """Handle error state. Must be called from fetch thread."""
         with self._condition:
             self._error_code = code
             self._error_description = description
+            self._error_kind = kind
             self._running = False
             self._condition.notify_all()
 
@@ -998,7 +1163,7 @@ class BaseFetcher:
                 pass
 
         try:
-            cancel_task(self.file_ref)
+            cancel_task(self.file_ref, worker_url=self.worker_url)
         except Exception as e:
             logger.error(f"Failed to cancel task on worker: {str(e)}")
 
@@ -1035,7 +1200,10 @@ class BaseFetcher:
 
         with self._lock:
             if self._error_description is not None:
-                raise RemoteExecutionError(self._error_description, recover_error_class(None, self._error_description))
+                description = self._error_description
+                raise RemoteExecutionError(
+                    description, recover_error_class(None, description), error_kind=self._error_kind
+                )
             return self._result
 
     @property
@@ -1083,6 +1251,7 @@ class BaseFetcher:
                 node_id=node_id,
                 lf_bytes=lf_bytes,
                 kwargs=kwargs,
+                worker_url=self.worker_url,
             )
             # Store the socket so cancel() can close it mid-receive, and pass the
             # stop event so the bounded receive loop observes cancellation too.
@@ -1093,7 +1262,7 @@ class BaseFetcher:
             try:
                 result, status = streaming_receive(ws, self.file_ref, should_abort=self._stop_event.is_set)
             except WorkerTaskError as e:
-                self._record_task_failure(str(e), e.error_code)
+                self._record_task_failure(str(e), e.error_code, e.kind)
                 return
             except Exception:
                 # Reset to pristine: the caller's REST fallback (generic errors
@@ -1117,6 +1286,7 @@ class BaseFetcher:
                 node_id=node_id,
                 lf_bytes=lf_bytes,
                 kwargs=kwargs,
+                worker_url=self.worker_url,
             )
             with self._lock:
                 self._ws = ws
@@ -1129,13 +1299,14 @@ class BaseFetcher:
                 )
                 self._thread.start()
 
-    def _record_task_failure(self, description: str, error_code: int) -> None:
+    def _record_task_failure(self, description: str, error_code: int, kind: str | None) -> None:
         """Record a task the worker ran and reported failed, with the code the REST path would give it."""
         with self._lock:
             self._ws = None
             self._running = False
             self._error_code = error_code
             self._error_description = description
+            self._error_kind = kind
 
     def _raise_recorded_failure(self) -> None:
         """Raise a recorded failure the way the REST path's blocking ``get_result()`` does."""
@@ -1158,17 +1329,16 @@ class BaseFetcher:
             else:
                 logger.exception("Error in WebSocket receive thread")
             with self._condition:
-                # -1 means "worker child died" and lets the node degrade
-                # gracefully; -2 means stalled-or-canceled and makes the node
-                # fail fast (the executor's state.is_canceled check then
-                # disambiguates a user cancel from a genuine stall). The
-                # _stop_event disjunct catches cancel-time teardown exceptions
-                # that surface as types other than WorkerStreamInterrupted.
+                # -2: stalled, or canceled (a cancel can tear down with any error type); -1: error_kind says why.
                 interrupted = isinstance(e, WorkerStreamInterrupted) or self._stop_event.is_set()
                 if interrupted:
                     self._error_code = -2
+                elif isinstance(e, WorkerTaskError):
+                    self._error_code = e.error_code
+                    self._error_kind = e.kind
                 else:
-                    self._error_code = e.error_code if isinstance(e, WorkerTaskError) else -1
+                    self._error_code = -1
+                    self._error_kind = "connection" if isinstance(e, ConnectionClosed) else None
                 self._error_description = str(e)
                 self._running = False
                 self._ws = None
@@ -1180,28 +1350,42 @@ class ExternalDfFetcher(BaseFetcher):
         self,
         flow_id: int,
         node_id: int | str,
-        lf: pl.LazyFrame | pl.DataFrame,
+        lf: pl.LazyFrame | pl.DataFrame | None = None,
         file_ref: str = None,
         wait_on_completion: bool = True,
         operation_type: OperationType = "store",
         offload_to_worker: bool = True,
         kwargs: dict | None = None,
+        plan_bytes: bytes | None = None,
+        *,
+        worker_url: str,
     ):
-        super().__init__(file_ref=file_ref)
-        lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
+        """Run a plan on the worker at ``worker_url`` as task ``file_ref`` (a new id when omitted).
+
+        The plan is ``lf``, serialised here, or ``plan_bytes``, the output of ``pl.LazyFrame.serialize()``
+        sent as is so the caller never has to deserialise it; pass exactly one of the two.
+        """
+        super().__init__(file_ref=file_ref, worker_url=worker_url)
+        if (lf is None) == (plan_bytes is None):
+            raise ValueError("ExternalDfFetcher takes exactly one of lf and plan_bytes")
+        if plan_bytes is None:
+            plan_bytes = (lf.lazy() if isinstance(lf, pl.DataFrame) else lf).serialize()
 
         try:
             self._execute_streaming(
                 operation_type=operation_type,
                 flow_id=flow_id,
                 node_id=node_id,
-                lf_bytes=lf.serialize(),
+                lf_bytes=plan_bytes,
                 kwargs=kwargs,
                 blocking=wait_on_completion,
             )
         except WorkerStreamInterrupted:
             # The task already reached the worker; re-submitting via REST would
             # duplicate work against a wedged worker or a cancelled run.
+            raise
+        except ComputeError:
+            # The handshake refused this worker; the REST path would refuse it again.
             raise
         except Exception as e:
             logger.debug(f"WebSocket streaming unavailable ({e}), falling back to REST")
@@ -1212,17 +1396,18 @@ class ExternalDfFetcher(BaseFetcher):
 
         # REST fallback (original behavior)
         r = trigger_df_operation(
-            lf=lf,
+            plan_bytes=plan_bytes,
             file_ref=self.file_ref,
             operation_type=operation_type,
             node_id=node_id,
             flow_id=flow_id,
             kwargs=kwargs,
+            worker_url=worker_url,
         )
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
-        self.status = get_status(self.file_ref)
+        self.status = get_status(self.file_ref, worker_url=worker_url)
 
 
 class ExternalSampler(BaseFetcher):
@@ -1234,8 +1419,10 @@ class ExternalSampler(BaseFetcher):
         file_ref: str = None,
         wait_on_completion: bool = True,
         sample_size: int = 100,
+        *,
+        worker_url: str,
     ):
-        super().__init__(file_ref=file_ref)
+        super().__init__(file_ref=file_ref, worker_url=worker_url)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
 
         try:
@@ -1247,8 +1434,8 @@ class ExternalSampler(BaseFetcher):
                 kwargs={"sample_size": sample_size},
                 blocking=wait_on_completion,
             )
-        except WorkerStreamInterrupted:
-            # See ExternalDfFetcher: never re-submit after a successful submit.
+        except (WorkerStreamInterrupted, ComputeError):
+            # See ExternalDfFetcher: never re-submit after a successful submit or a refused handshake.
             raise
         except Exception as e:
             logger.debug(f"WebSocket streaming unavailable ({e}), falling back to REST")
@@ -1259,12 +1446,17 @@ class ExternalSampler(BaseFetcher):
 
         # REST fallback (original behavior)
         r = trigger_sample_operation(
-            lf=lf, file_ref=self.file_ref, sample_size=sample_size, node_id=node_id, flow_id=flow_id
+            lf=lf,
+            file_ref=self.file_ref,
+            sample_size=sample_size,
+            node_id=node_id,
+            flow_id=flow_id,
+            worker_url=worker_url,
         )
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
-        self.status = get_status(self.file_ref)
+        self.status = get_status(self.file_ref, worker_url=worker_url)
 
 
 class ExternalFuzzyMatchFetcher(BaseFetcher):
@@ -1277,8 +1469,10 @@ class ExternalFuzzyMatchFetcher(BaseFetcher):
         node_id: int | str,
         file_ref: str = None,
         wait_on_completion: bool = True,
+        *,
+        worker_url: str,
     ):
-        super().__init__(file_ref=file_ref)
+        super().__init__(file_ref=file_ref, worker_url=worker_url)
 
         r = trigger_fuzzy_match_operation(
             left_df=left_df,
@@ -1287,6 +1481,7 @@ class ExternalFuzzyMatchFetcher(BaseFetcher):
             file_ref=file_ref,
             flow_id=flow_id,
             node_id=node_id,
+            worker_url=worker_url,
         )
         self.file_ref = r.background_task_id
         self.running = r.status == "Processing"
@@ -1314,8 +1509,10 @@ class MLTrainFetcher(BaseFetcher):
         node_id: int | str,
         file_ref: str,
         wait_on_completion: bool = True,
+        *,
+        worker_url: str,
     ):
-        super().__init__(file_ref=file_ref)
+        super().__init__(file_ref=file_ref, worker_url=worker_url)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
         r = trigger_train_model_operation(
             lf=lf,
@@ -1327,6 +1524,7 @@ class MLTrainFetcher(BaseFetcher):
             file_ref=file_ref,
             flow_id=flow_id,
             node_id=node_id,
+            worker_url=worker_url,
         )
         self.file_ref = r.background_task_id
         self.running = r.status == "Processing"
@@ -1346,8 +1544,10 @@ class MLApplyFetcher(BaseFetcher):
         node_id: int | str,
         file_ref: str,
         wait_on_completion: bool = True,
+        *,
+        worker_url: str,
     ):
-        super().__init__(file_ref=file_ref)
+        super().__init__(file_ref=file_ref, worker_url=worker_url)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
         r = trigger_apply_model_operation(
             lf=lf,
@@ -1356,6 +1556,7 @@ class MLApplyFetcher(BaseFetcher):
             file_ref=file_ref,
             flow_id=flow_id,
             node_id=node_id,
+            worker_url=worker_url,
         )
         self.file_ref = r.background_task_id
         self.running = r.status == "Processing"
@@ -1367,10 +1568,10 @@ class ExternalCustomNodeFetcher(BaseFetcher):
     """Runs a custom node's process() in the worker; result is the JSON payload
     with per-output IPC paths and row counts (result_type="other")."""
 
-    def __init__(self, request: CustomNodeExecuteInput, wait_on_completion: bool = False):
-        super().__init__(file_ref=request.task_id)
+    def __init__(self, request: CustomNodeExecuteInput, wait_on_completion: bool = False, *, worker_url: str):
+        super().__init__(file_ref=request.task_id, worker_url=worker_url)
         request.task_id = self.file_ref
-        r = trigger_custom_node_operation(request)
+        r = trigger_custom_node_operation(request, worker_url=worker_url)
         self.file_ref = r.background_task_id
         self.running = r.status in ("Processing", "Starting")
         if wait_on_completion:
@@ -1389,20 +1590,30 @@ class ExternalCreateFetcher(BaseFetcher):
         flow_id: int,
         file_type: str = "csv",
         wait_on_completion: bool = True,
+        *,
+        worker_url: str,
     ):
         r = trigger_create_operation(
-            received_table=received_table, file_type=file_type, node_id=node_id, flow_id=flow_id
+            received_table=received_table, file_type=file_type, node_id=node_id, flow_id=flow_id, worker_url=worker_url
         )
-        super().__init__(file_ref=r.background_task_id)
+        super().__init__(file_ref=r.background_task_id, worker_url=worker_url)
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
 
 
 class ExternalDatabaseFetcher(BaseFetcher):
-    def __init__(self, database_external_read_settings: DatabaseExternalReadSettings, wait_on_completion: bool = True):
-        r = trigger_database_read_collector(database_external_read_settings=database_external_read_settings)
-        super().__init__(file_ref=r.background_task_id)
+    def __init__(
+        self,
+        database_external_read_settings: DatabaseExternalReadSettings,
+        wait_on_completion: bool = True,
+        *,
+        worker_url: str,
+    ):
+        r = trigger_database_read_collector(
+            database_external_read_settings=database_external_read_settings, worker_url=worker_url
+        )
+        super().__init__(file_ref=r.background_task_id, worker_url=worker_url)
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
@@ -1411,9 +1622,9 @@ class ExternalDatabaseFetcher(BaseFetcher):
 class ExternalKafkaFetcher(BaseFetcher):
     """Fetches data from Kafka via the worker service. Same pattern as ExternalDatabaseFetcher."""
 
-    def __init__(self, kafka_read_settings, wait_on_completion: bool = True):
-        r = trigger_kafka_read(kafka_read_settings=kafka_read_settings)
-        super().__init__(file_ref=r.background_task_id)
+    def __init__(self, kafka_read_settings, wait_on_completion: bool = True, *, worker_url: str):
+        r = trigger_kafka_read(kafka_read_settings=kafka_read_settings, worker_url=worker_url)
+        super().__init__(file_ref=r.background_task_id, worker_url=worker_url)
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
@@ -1422,9 +1633,9 @@ class ExternalKafkaFetcher(BaseFetcher):
 class ExternalGoogleAnalyticsFetcher(BaseFetcher):
     """Fetches GA4 data via the worker service. Same pattern as ExternalDatabaseFetcher."""
 
-    def __init__(self, ga_read_settings, wait_on_completion: bool = True):
-        r = trigger_google_analytics_read(ga_read_settings=ga_read_settings)
-        super().__init__(file_ref=r.background_task_id)
+    def __init__(self, ga_read_settings, wait_on_completion: bool = True, *, worker_url: str):
+        r = trigger_google_analytics_read(ga_read_settings=ga_read_settings, worker_url=worker_url)
+        super().__init__(file_ref=r.background_task_id, worker_url=worker_url)
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
@@ -1433,9 +1644,9 @@ class ExternalGoogleAnalyticsFetcher(BaseFetcher):
 class ExternalRestApiFetcher(BaseFetcher):
     """Fetches REST API data via the worker service. Same pattern as ExternalDatabaseFetcher."""
 
-    def __init__(self, settings, wait_on_completion: bool = True):
-        r = trigger_rest_api_read(settings=settings)
-        super().__init__(file_ref=r.background_task_id)
+    def __init__(self, settings, wait_on_completion: bool = True, *, worker_url: str):
+        r = trigger_rest_api_read(settings=settings, worker_url=worker_url)
+        super().__init__(file_ref=r.background_task_id, worker_url=worker_url)
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
@@ -1443,10 +1654,16 @@ class ExternalRestApiFetcher(BaseFetcher):
 
 class ExternalDatabaseWriter(BaseFetcher):
     def __init__(
-        self, database_external_write_settings: DatabaseExternalWriteSettings, wait_on_completion: bool = True
+        self,
+        database_external_write_settings: DatabaseExternalWriteSettings,
+        wait_on_completion: bool = True,
+        *,
+        worker_url: str,
     ):
-        r = trigger_database_write(database_external_write_settings=database_external_write_settings)
-        super().__init__(file_ref=r.background_task_id)
+        r = trigger_database_write(
+            database_external_write_settings=database_external_write_settings, worker_url=worker_url
+        )
+        super().__init__(file_ref=r.background_task_id, worker_url=worker_url)
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
@@ -1454,10 +1671,16 @@ class ExternalDatabaseWriter(BaseFetcher):
 
 class ExternalCloudWriter(BaseFetcher):
     def __init__(
-        self, cloud_storage_write_settings: CloudStorageWriteSettingsWorkerInterface, wait_on_completion: bool = True
+        self,
+        cloud_storage_write_settings: CloudStorageWriteSettingsWorkerInterface,
+        wait_on_completion: bool = True,
+        *,
+        worker_url: str,
     ):
-        r = trigger_cloud_storage_write(database_external_write_settings=cloud_storage_write_settings)
-        super().__init__(file_ref=r.background_task_id)
+        r = trigger_cloud_storage_write(
+            database_external_write_settings=cloud_storage_write_settings, worker_url=worker_url
+        )
+        super().__init__(file_ref=r.background_task_id, worker_url=worker_url)
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
@@ -1482,6 +1705,8 @@ class ExternalOutputWriter(BaseFetcher):
         delimiter: str | None = None,
         compression: str | None = None,
         wait_on_completion: bool = True,
+        *,
+        worker_url: str,
     ):
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
         r = trigger_write_output(
@@ -1494,55 +1719,9 @@ class ExternalOutputWriter(BaseFetcher):
             compression=compression,
             flow_id=flow_id,
             node_id=node_id,
+            worker_url=worker_url,
         )
-        super().__init__(file_ref=r.background_task_id)
+        super().__init__(file_ref=r.background_task_id, worker_url=worker_url)
         self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
-
-
-def fetch_unique_values(lf: pl.LazyFrame) -> list[str]:
-    """
-    Fetches unique values from a specified column in a LazyFrame, attempting first via an external fetcher
-    and falling back to direct LazyFrame computation if that fails.
-
-    Args:
-        lf: A Polars LazyFrame containing the data
-        column: Name of the column to extract unique values from
-
-    Returns:
-        List[str]: List of unique values from the specified column cast to strings
-
-    Raises:
-        ValueError: If no unique values are found or if the fetch operation fails
-
-    Example:
-        >>> lf = pl.LazyFrame({'category': ['A', 'B', 'A', 'C']})
-        >>> unique_vals = fetch_unique_values(lf)
-        >>> print(unique_vals)
-        ['A', 'B', 'C']
-    """
-    try:
-        try:
-            external_df_fetcher = ExternalDfFetcher(lf=lf, flow_id=1, node_id=-1)
-            if external_df_fetcher.status.status == "Completed":
-                unique_values = read(external_df_fetcher.status.file_ref).column(0).to_pylist()
-                if logger:
-                    logger.info(f"Got {len(unique_values)} unique values from external source")
-                return unique_values
-        except Exception as e:
-            if logger:
-                logger.debug(f"Failed reading external file: {str(e)}")
-
-        unique_values = lf.unique().collect(engine="streaming")[:, 0].to_list()
-
-        if not unique_values:
-            raise ValueError("No unique values found in lazyframe")
-
-        return unique_values
-
-    except Exception as e:
-        error_msg = f"Failed to fetch unique values: {str(e)}"
-        if logger:
-            logger.error(error_msg)
-        raise ValueError(error_msg) from e

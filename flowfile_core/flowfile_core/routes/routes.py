@@ -18,10 +18,10 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
+# External dependencies
+import polars as pl
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, JSONResponse, Response
-
-# External dependencies
 from polars.exceptions import ColumnNotFoundError
 from polars_expr_transformer.function_overview import get_all_expressions, get_expression_overview
 from pydantic import BaseModel, Field, ValidationError
@@ -42,7 +42,7 @@ from flowfile_core.catalog.exceptions import (
 )
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import check_if_has_default_setting, nodes_list
-from flowfile_core.configs.settings import OFFLOAD_TO_WORKER, is_electron_mode
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL, is_electron_mode
 from flowfile_core.database.connection import get_db, get_db_context
 
 # File handling
@@ -87,18 +87,22 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     store_database_connection,
     update_database_connection,
 )
+from flowfile_core.flowfile.execution import registry as compute_registry
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.payloads import FileWritePayload, RestApiReadPayload, op_payload
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.extensions import (
     get_formula_chain_check,
     get_formula_chain_instant_result,
     get_instant_func_results,
 )
+from flowfile_core.flowfile.flow_data_engine.bounded import head_rows
 from flowfile_core.flowfile.flow_data_engine.column_stats import ColumnStatsUnavailable
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-    ExternalOutputWriter,
     ExternalRestApiFetcher,
 )
-from flowfile_core.flowfile.flow_data_engine.utils import local_write_output
 from flowfile_core.flowfile.flow_graph import GraphTransaction, add_connection, delete_connection, insert_node_on_edge
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.settings_validation import FlowSettingsValidation, validate_flow_settings
@@ -1889,12 +1893,13 @@ def fetch_rest_api_sample(
 ) -> RestApiSampleResponse:
     """Fetch a small sample from the configured REST API and infer its schema.
 
-    Runs one capped request through the worker (so all network I/O stays
-    sandboxed off the core event loop), infers the output columns with Polars,
+    Runs one capped request through the worker the worker backend runs on (so
+    all network I/O stays sandboxed off the core event loop), infers the output columns with Polars,
     caches them on the node's ``fields`` (so downstream schema prediction needs
     no network), and returns the inferred columns. This powers the node's
     "Fetch sample" button. Defined as a sync endpoint so the blocking worker
-    round-trip runs in FastAPI's threadpool rather than the event loop.
+    round-trip runs in FastAPI's threadpool rather than the event loop. With
+    ``FLOWFILE_COMPUTE_PROTOCOL`` on, the rows come from ``_rest_api_sample_rows``.
     """
     input_data["user_id"] = current_user.id
     try:
@@ -1913,10 +1918,15 @@ def fetch_rest_api_sample(
     auth.secret = None
 
     sample_size = max(1, sample_size)
-    worker_settings = build_rest_api_worker_settings(node, secret_encrypted, sample_size=sample_size)
     try:
-        fetcher = ExternalRestApiFetcher(worker_settings, wait_on_completion=True)
-        sample_df = fetcher.get_result().head(sample_size).collect()
+        if FLOWFILE_COMPUTE_PROTOCOL:
+            sample_df = _rest_api_sample_rows(node, secret_encrypted, sample_size)
+        else:
+            worker_settings = build_rest_api_worker_settings(node, secret_encrypted, sample_size=sample_size)
+            fetcher = ExternalRestApiFetcher(
+                worker_settings, wait_on_completion=True, worker_url=compute_registry.worker_url()
+            )
+            sample_df = fetcher.get_result().head(sample_size).collect()
     except Exception as e:
         raise HTTPException(422, f"Failed to fetch sample from REST API: {e}") from e
 
@@ -1926,6 +1936,29 @@ def fetch_rest_api_sample(
     if live is not None and isinstance(live.setting_input, input_schema.NodeRestApiReader):
         live.setting_input.fields = fields
     return RestApiSampleResponse(fields=fields)
+
+
+def _rest_api_sample_rows(
+    node: input_schema.NodeRestApiReader, secret_encrypted: str | None, sample_size: int
+) -> pl.DataFrame:
+    """The first page of *node*'s request, at most *sample_size* records, read on the worker and released there.
+
+    The node's pagination is capped at one page of *sample_size* records, the request a sample fetch makes. The read
+    is ``run_op(rest_api_read)`` on the worker backend; its result is sampled, then released whether or not the
+    sample was read.
+    """
+    settings = node.rest_api_settings
+    one_page = settings.pagination.model_copy(update={"max_pages": 1, "max_records": sample_size})
+    capped = node.model_copy(update={"rest_api_settings": settings.model_copy(update={"pagination": one_page})})
+    read = RestApiReadPayload(
+        flow_id=node.flow_id, node_id=node.node_id, settings=capped, encrypted_secret=secret_encrypted
+    )
+    backend = compute_registry.backend(compute_registry.WORKER_BACKEND_ID)
+    ref = backend.run_op(OperationKind.rest_api_read, op_payload(read)).refs["result"]
+    try:
+        return pl.read_ipc_stream(backend.sample(ref, sample_size))
+    finally:
+        backend.release(ref)
 
 
 @router.get("/files/available_flow_files", tags=["editor"], response_model=list[FileInfo])
@@ -2201,6 +2234,11 @@ def get_node_column_stats(
     Runs a single bounded aggregate (counts, uniques, min/max) over the result
     the last run left behind — it never re-executes the node — and returns the
     column's updated ``FileColumn``, the same shape ``table_schema`` ships.
+    With ``FLOWFILE_COMPUTE_PROTOCOL`` on the aggregate runs on the flow's
+    backend, and with it off on the default compute backend whatever the
+    flow's location, the worker whenever one is configured
+    (``FlowNode.get_column_stats``); core reads back only the one-row result,
+    and a failure there is a 409, never an in-process collect.
     Query parameters (not path segments): column names contain ``/`` and ``.``.
     """
     flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
@@ -2209,13 +2247,8 @@ def get_node_column_stats(
         raise HTTPException(404, "Could not find the node")
     if flow.flow_settings.execution_mode == "Performance":
         raise HTTPException(409, "Column statistics are not computed in Performance mode.")
-    # Core must not run pipeline compute: whenever offloading is on, the stats
-    # aggregate runs in the worker and core reads back only the 1-row result
-    # (a failed offload raises → 409, never an in-process collect). In-process
-    # is reserved for worker-less deployments (single-file mode).
-    offload = bool(OFFLOAD_TO_WORKER)
     try:
-        return node.get_column_stats(column_name, output_handle=output_handle, offload_to_worker=offload)
+        return node.get_column_stats(column_name, output_handle=output_handle)
     except ColumnStatsUnavailable as e:
         raise HTTPException(409, str(e)) from None
     except ColumnNotFoundError:
@@ -2236,30 +2269,46 @@ def export_node_data(
 ):
     """Downloads up to 10,000 rows of a node's cached result as CSV/TSV without re-executing it.
 
-    TSV is also capped at 100,000 cells. Larger exports belong in a write node.
+    TSV is also capped at 100,000 cells. Larger exports belong in a write node. The file is written by a
+    ``file_write`` on the flow's backend in both flag states; with ``FLOWFILE_COMPUTE_PROTOCOL`` on, the schema
+    checks read the engine's cached schema and the rows are read through ``bounded.head_rows`` on the backend that
+    holds the node's result (``FlowNode.result_backend``), else the flow's, so core reads no result a backend stored.
     """
-    _, node = _get_analysis_node(flow_id, node_id, current_user)
+    flow, node = _get_analysis_node(flow_id, node_id, current_user)
     try:
         engine = node.get_cached_result(output_handle)
     except ColumnStatsUnavailable as e:
         raise HTTPException(409, str(e)) from None
     data = engine.data_frame
-    try:
-        schema = data.collect_schema()
-    except Exception:
-        raise HTTPException(409, "The cached result is no longer available. Run the flow again.") from None
+    if FLOWFILE_COMPUTE_PROTOCOL:
+        schema = pl.Schema(
+            [(column.column_name, cast_str_to_polars_type(column.data_type)) for column in engine.schema]
+        )
+    else:
+        try:
+            schema = data.collect_schema()
+        except Exception:
+            raise HTTPException(409, "The cached result is no longer available. Run the flow again.") from None
     if any(dtype.is_nested() for dtype in schema.dtypes()):
         raise HTTPException(422, "CSV cannot hold list or struct columns.")
     n = min(limit, 100_000 // max(len(schema), 1)) if file_format == "tsv" else limit
-    sep = "\t" if file_format == "tsv" else ","
-    path = storage.temp_directory / f"export_{uuid4().hex}.{file_format}"
+    output_settings = input_schema.OutputSettings(
+        name=f"export_{uuid4().hex}.{file_format}",
+        directory=str(storage.temp_directory),
+        file_type="csv",
+        write_mode="create",
+        table_settings=input_schema.OutputCsvTable(delimiter="\t" if file_format == "tsv" else ","),
+    )
+    path = Path(output_settings.abs_file_path)
     try:
-        # head before lazy(): an in-memory DataFrame is sliced so only n rows get serialized.
-        lf = data.head(n).lazy()
-        writer = ExternalOutputWriter if OFFLOAD_TO_WORKER else local_write_output
-        writer(
-            lf, data_type="csv", path=str(path), write_mode="create", delimiter=sep, flow_id=flow_id, node_id=node_id
-        )
+        backend = current_context(flow).backend
+        if FLOWFILE_COMPUTE_PROTOCOL:
+            rows = pl.from_arrow(head_rows(node.result_backend(output_handle) or backend, data, n)).lazy()
+        else:
+            # head before lazy(): an in-memory DataFrame is sliced so only n rows get serialized.
+            rows = data.head(n).lazy()
+        write = FileWritePayload(plan=rows, settings=output_settings, flow_id=flow_id, node_id=node_id)
+        backend.run_op(OperationKind.file_write, op_payload(write))
     except Exception as e:
         path.unlink(missing_ok=True)
         logger.error(f"Failed to export data for node {node_id}: {e}")
@@ -2688,9 +2737,13 @@ def update_flow_settings(flow_settings: schemas.FlowSettings, current_user=Depen
     tracking stay server-owned: renames, saves and runs have their own routes, and the
     settings form posts back whatever copy it last fetched. Flow settings are outside
     the undo scope, so this records no step; it runs as a transaction to serialize with
-    graph edits and refresh the dirty flag.
+    graph edits and refresh the dirty flag. In a process that serves, the execution location
+    is stored as a file saved with it opens (``schemas.loaded_execution_location``): a posted
+    ``local`` or ``remote`` is ``auto`` with ``FLOWFILE_COMPUTE_PROTOCOL`` on.
     """
     flow = get_flow_or_404(flow_settings.flow_id, current_user)
+    if compute_registry.serving():
+        flow_settings.execution_location = schemas.loaded_execution_location(flow_settings.execution_location)
     with flow.transaction("Update flow settings"):
         live = flow.flow_settings
         server_owned = {field: getattr(live, field) for field in _SERVER_OWNED_FLOW_SETTINGS}

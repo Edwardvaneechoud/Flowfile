@@ -7,6 +7,7 @@ import tempfile
 from passlib.context import CryptContext
 from starlette.config import Config
 
+from flowfile_core.configs import exchange_config
 from flowfile_core.configs.utils import MutableBool
 from shared.storage_config import storage
 
@@ -15,7 +16,7 @@ DEFAULT_SERVER_HOST = "0.0.0.0"
 DEFAULT_SERVER_PORT = 63578
 DEFAULT_WORKER_PORT = 63579
 
-# Single file mode flag, this determines where worker requests are being send to.
+# Single-file mode, which the pip server's start_server sets: its worker is the one embedded in this process.
 SINGLE_FILE_MODE: MutableBool = MutableBool(os.environ.get("FLOWFILE_SINGLE_FILE_MODE", "0") == "1")
 
 # Offload to worker flag, this determines if the worker should handle processing tasks.
@@ -55,6 +56,12 @@ FLOWFILE_CUSTOM_NODE_HOT_RELOAD: MutableBool = MutableBool(
     os.environ.get("FLOWFILE_CUSTOM_NODE_HOT_RELOAD", "1").strip().lower() in ("true", "1", "yes", "on")
 )
 
+# Unset or true/1/yes/on: the worker backend uses the worker's versioned /v1 routes; anything else, its task routes.
+FLOWFILE_COMPUTE_PROTOCOL: MutableBool = MutableBool(
+    os.environ.get("FLOWFILE_COMPUTE_PROTOCOL", "1").strip().lower() in ("true", "1", "yes", "on")
+)
+
+
 def get_catalog_storage_uri() -> str | None:
     """Object-storage root for catalog table data, e.g. ``s3://bucket/catalog``.
 
@@ -70,6 +77,35 @@ def get_catalog_storage_connection() -> str | None:
     Only consulted when ``get_catalog_storage_uri()`` is set; required in that case.
     """
     return os.environ.get("FLOWFILE_CATALOG_STORAGE_CONNECTION") or None
+
+
+def get_exchange_uri() -> str | None:
+    """Object-storage root of the exchange store results cross between backends through, e.g. ``s3://bucket/exchange``.
+
+    ``FLOWFILE_EXCHANGE_URI`` when set, else what the Backends page saved (``exchange_config``); read per call, as
+    ``get_catalog_storage_uri`` is. ``None`` ⇒ no exchange store.
+    """
+    return exchange_config.effective_store().uri
+
+
+def get_exchange_connection() -> str | None:
+    """Name of the ``CloudStorageConnection`` that opens the exchange store, from the environment or the saved store.
+
+    Only consulted when ``get_exchange_uri()`` is set; required in that case.
+    """
+    return exchange_config.effective_store().connection
+
+
+def get_exchange_max_rows() -> int | None:
+    """The most rows a result may cross between backends with through the exchange store; ``None`` ⇒ no limit.
+
+    ``FLOWFILE_EXCHANGE_MAX_ROWS`` when set, else what the Backends page saved; read per call, as ``get_exchange_uri``
+    is.
+
+    Raises:
+        ValueError: ``FLOWFILE_EXCHANGE_MAX_ROWS`` is set to something other than a whole number.
+    """
+    return exchange_config.effective_max_rows()
 
 
 COMMUNITY_DEFAULT_REPO = "edwardvaneechoud/flowfile-community-nodes"
@@ -191,7 +227,6 @@ def get_default_worker_url(worker_port=None):
         worker_url = f"http://127.0.0.1:{worker_port}"
     else:
         worker_url = f"http://0.0.0.0:{worker_port}"
-    worker_url += "/worker" if SINGLE_FILE_MODE else ""
     return worker_url
 
 
@@ -209,6 +244,8 @@ DEBUG: bool = config("DEBUG", cast=bool, default=False)
 FILE_LOCATION = config("FILE_LOCATION", cast=str, default=".\\files\\")
 AVAILABLE_RAM = config("AVAILABLE_RAM", cast=int, default=8)
 WORKER_URL = config("FLOWFILE_WORKER_URL", cast=str, default=get_default_worker_url(WORKER_PORT))
+# No FLOWFILE_WORKER_URL and no WORKER_HOST: the built-in worker is the one beside core, on this host.
+WORKER_ADDRESS_CONFIGURED = bool(config("FLOWFILE_WORKER_URL", cast=str, default="")) or bool(os.getenv("WORKER_HOST"))
 TEMP_DIR = storage.temp_directory
 
 # FLOWFILE_MODE: Determines the runtime environment

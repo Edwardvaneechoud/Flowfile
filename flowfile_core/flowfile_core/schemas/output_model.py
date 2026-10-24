@@ -27,6 +27,14 @@ class NodeResult(BaseModel):
     # skipped because of an upstream *failure* still produce no result at all.
     skipped: bool = False
     error: str = ""
+    compute_error: str | None = Field(
+        default=None,
+        description=(
+            "The class name of the typed compute error that failed the node (ComputeUnavailable, VersionMismatch, "
+            "... as execution/errors.py names them), or 'Refusal' when placement refused the node before the run "
+            "started; None for any other outcome."
+        ),
+    )
     run_time_ms: int = Field(
         default=-1,
         description="Run time in milliseconds",
@@ -56,6 +64,13 @@ class RunInformation(BaseModel):
     number_of_nodes: int = 0
     node_step_result: list[NodeResult]
     run_type: Literal["fetch_one", "full_run", "init"]
+    boundaries: list[tuple[int, int]] = Field(
+        default_factory=list,
+        description=(
+            "The run's Placement.boundaries: (source node id, target node id) of each edge whose two nodes were "
+            "placed on different backends; empty when nothing was placed."
+        ),
+    )
 
 
 class BaseItem(BaseModel):

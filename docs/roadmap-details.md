@@ -69,10 +69,9 @@ you need to.
 something shipped · dimmed cards are planned.
 
 The diagram marks two gaps. Code export still has coverage gaps, including
-Google Analytics and API response nodes. The worker has its
-own URL and authentication, but returns results as a path on its local
-disk. Core needs to read that file, so the two still need a shared
-filesystem. Both need fixing.
+Google Analytics and API response nodes. A worker runs on its own host
+without a shared filesystem, but a kernel node still runs on core's host,
+where the kernel reads its inputs. Both need fixing.
 
 ## Implementation notes
 
@@ -111,19 +110,27 @@ they don't require an external catalog or an organization identity provider.
 ### Remote workers
 
 Run a flow on your laptop, a VM in your own account or a managed Polars
-cluster without changing it. The worker is already a separate service with
-its own URL and authentication. The remaining dependency is its result
-file: core opens it to read the schema and preview.
+cluster without changing it.
 
-The first step is to return a limited sample, schema and row count over the
-network, behind a feature flag. Core should no longer need access to the
-worker's files. We'll verify this by running the end-to-end suite with core
-and worker on separate hosts and no shared filesystem.
+Core and a worker now run on separate hosts with no shared filesystem. The
+worker returns a bounded sample, the schema and the row count over the
+network, so core never opens a file the worker wrote, and a plan names a
+stored connection instead of carrying credentials. One execution interface
+replaced the local-or-remote branches, backends are entry-point plugins,
+and a flow that cannot run on its backend is refused before it starts,
+with the reason. CI runs a database read, a model trained and applied on
+the worker, and a catalog write with core and worker sharing no volume.
+With an exchange store configured, one flow's nodes run on different
+backends, each on the backend its own setting names, and data crosses
+between them through the store.
+[Remote workers](users/deployment/remote-worker.md) lists what a worker on
+another host needs; the [compute protocol](for-developers/compute-protocol.md)
+is the design.
 
-After that, we'll replace the scattered local-or-remote branches with one
-execution interface and support backends as entry-point plugins. That makes
-room for Polars Cloud, with no credentials in submitted plans, and kernels
-running on a remote Docker host.
+A kernel node still runs on core's host, because a kernel reads its inputs
+from a volume there; the rest of its flow can use a remote worker. Next come
+Polars Cloud and kernels on a remote Docker host, under
+[Later options](#later-options).
 
 ### Open formats and catalogs
 
@@ -200,10 +207,10 @@ the planner hands work to the executor.
 
 ### Later options
 
-Once remote execution works, a common execution interface can support
-backend plugins and a Polars Cloud experiment behind a feature flag. A
-stable backend depends on that experiment, including keeping credentials
-out of submitted plans.
+The common execution interface and its backend plugins now exist. A
+Polars Cloud experiment behind a feature flag comes next; a stable backend
+depends on it, including running a plan core built unchanged with no
+credentials in it.
 
 Other follow-ups include Lakekeeper in delegate mode, custom nodes and
 connections shared through the catalog, and kernels on a remote Docker

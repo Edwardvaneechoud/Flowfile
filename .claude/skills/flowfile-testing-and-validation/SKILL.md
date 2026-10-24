@@ -46,7 +46,7 @@ markers = [
 | `worker` | No (marker only) | flowfile_worker package tests |
 | `core` | No (marker only) | flowfile_core package tests |
 | `kernel` | **Yes** | `flowfile_core/tests -m kernel` (76 tests); builds/runs kernel containers |
-| `docker_integration` | **Yes** | `tests/integration` — full docker-compose E2E |
+| `docker_integration` | **Yes** | `tests/integration` — full docker-compose E2E; `tests/remote_worker/test_zero_volumes.py` — core and a worker in containers that share no volume |
 | `kafka` | **Yes** | `tests/kafka`, `shared/tests/kafka` — needs Redpanda |
 | `lsp` | No | `flowfile_core/tests/lsp/test_lsp_routes.py` (hermetic); `test_lsp_kernel_integration.py` also carries `@pytest.mark.kernel` |
 | `slow` | No | `flowfile_worker/tests/test_catalog_visualize.py`, `flowfile_core/tests/test_kernel_dependency_gate.py` |
@@ -69,7 +69,8 @@ All commands run from the repo root through the single Poetry env; there is **no
 | shared (no kafka) | `poetry run pytest shared/tests --ignore=shared/tests/kafka` | ~89 collected. |
 | shared kafka | `poetry run pytest shared/tests/kafka/ -v` | session-autouse conftest starts/reuses Redpanda; skips without Docker. |
 | kafka integration | `poetry run pytest tests/kafka -m kafka` | Needs Redpanda (auto-managed) + a running worker. |
-| cloud storage E2E | `poetry run pytest tests/cloud_e2e -m cloud_e2e` | MinIO on :9000 (started if Docker is up). Spawns its own core + worker stacks per session on free ports with an isolated DB, storage, secure store, `HOME` and AWS profile (safe next to a live stack; never imports `flowfile_core`). Connection-based tests run on a stack whose ambient `AWS_ENDPOINT_URL` is a dead port, so only a connection's own endpoint/allow-HTTP/profile reaches MinIO; "No connection" tests run on a second stack whose ambient profile and endpoint are MinIO's. Asserts the servers' working directories stay empty. A couple of minutes. POSIX only. |
+| remote worker | `poetry run pytest tests/remote_worker -m docker_integration` (CI form, `test-remote-worker.yml`: `test_zero_volumes.py`); `poetry run pytest tests/remote_worker/test_two_storage_dirs.py` | `test_zero_volumes.py` runs core, a worker, Postgres and MinIO from `docker-compose.remote-worker.yml`, sharing no volume. `test_two_storage_dirs.py` carries no marker: it starts core and a worker as processes on storage directories of their own, its MinIO cases skipping without Docker; POSIX only. |
+| cloud storage E2E | `poetry run pytest tests/cloud_e2e -m cloud_e2e` (protocol off: the same with `FLOWFILE_COMPUTE_PROTOCOL=0` in front) | MinIO on :9000 (started if Docker is up). Spawns its own core + worker stacks per session on free ports with an isolated DB, storage, secure store, `HOME` and AWS profile (safe next to a live stack; never imports `flowfile_core`). Connection-based tests run on a stack whose ambient `AWS_ENDPOINT_URL` is a dead port, so only a connection's own endpoint/allow-HTTP/profile reaches MinIO; "No connection" tests run on a second stack whose ambient profile and endpoint are MinIO's. The stacks take `FLOWFILE_COMPUTE_PROTOCOL` from the test process, so the suite follows the flag. Asserts the servers' working directories stay empty. A couple of minutes. POSIX only. |
 | kernel (core-side) | `poetry run pytest flowfile_core/tests -m kernel -v` | Builds `flowfile-kernel` image unless `FLOWFILE_KERNEL_IMAGE` is preset; needs Docker. ~76 tests. |
 | kernel_runtime unit | `poetry run pytest kernel_runtime/tests` | No Docker — `TestClient` only. ~327 collected. |
 | docker E2E | `poetry run pytest tests/integration -m docker_integration -v` | Docker + compose v2; ports 63578/63579 must be **free** or tests skip; builds core+worker+kernel images (minutes). |

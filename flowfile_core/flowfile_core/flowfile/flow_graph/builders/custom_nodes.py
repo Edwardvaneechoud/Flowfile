@@ -9,15 +9,15 @@ import polars as pl
 
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, register_missing_node_template
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.payloads import CustomNodePayload, op_payload
+from flowfile_core.flowfile.execution.protocol import ComputeBackend, OperationKind
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import custom_node_task_id
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-    CustomNodeExecuteInput,
-    ExternalCustomNodeFetcher,
-)
 from flowfile_core.flowfile.flow_graph._base import GraphMixinBase
 from flowfile_core.flowfile.flow_graph._root import root
 from flowfile_core.flowfile.flow_graph.execution import ambient_kernel_hold
@@ -36,7 +36,6 @@ from flowfile_core.flowfile.parameter_resolver import (
 from flowfile_core.flowfile.schema_callbacks import (
     pl_schema_to_flowfile_columns,
 )
-from flowfile_core.flowfile.user_defined.dispatch import resolve_secret_payload
 from flowfile_core.flowfile.user_defined.kernel_codegen import generate_kernel_script
 from flowfile_core.flowfile.user_defined.registry import (
     KernelDependencyError,
@@ -324,72 +323,61 @@ class CustomNodeBuildersMixin(GraphMixinBase):
     ) -> Callable:
         """Create the execution function for a non-kernel custom node.
 
-        Offloads process() to the worker (which owns dataset memory in a
-        killable subprocess) whenever the flow doesn't run in local mode and
-        the node came from the registry; otherwise runs in-process (the
-        --run-flow / offload-disabled fallback, and inline test classes that
-        have no source file on disk). Both read the settings when the node
+        A node that came from the registry runs as the ``custom_node`` operation
+        on the execution context's backend: a worker runs ``process()`` in a
+        killable subprocess that owns the dataset memory, the worker embedded in
+        this process runs it here. A class with no node file on disk (an inline
+        test class, one registered in process) exists in this process and
+        nowhere else, so it always runs on the worker embedded here, the one
+        compute that has the class. Both read the settings when the node
         executes, so ``${name}`` references arrive resolved.
+
+        The operation's refs become the node's outputs the same way for every
+        backend: ``{"result": ref}`` is the node's one output; refs keyed by
+        output handle are its declared outputs, registered on
+        ``_named_outputs``, the first being the primary. A deferred ref is
+        released at once, since the engine holds its plan; a stored one stays
+        held, since its plan reads the stored file.
         """
         resolved_output_names = output_names or custom_node.output_names or ["main"]
 
-        def _run_in_core(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
-            instance = type(custom_node).from_settings(user_defined_node_settings.settings or {})
-            user_id = user_defined_node_settings.user_id
-            if user_id is not None:
-                instance.set_execution_context(user_id)
-
-            output = instance.process(*(fde.data_frame.lazy() for fde in flow_data_engine))
-
-            accessed_secrets = instance.get_accessed_secrets()
-            if accessed_secrets:
-                logger.info(f"Node '{user_defined_node_settings.node_id}' accessed secrets: {accessed_secrets}")
-            if isinstance(output, dict):
-                node = self.get_node(user_defined_node_settings.node_id)
-                primary = None
-                for i, name in enumerate(resolved_output_names):
-                    if name not in output:
-                        raise ValueError(f"process() did not return declared output '{name}'")
-                    fde = FlowDataEngine(output[name])
-                    node._named_outputs[f"output-{i}"] = fde
-                    if i == 0:
-                        primary = fde
-                return primary
-            if isinstance(output, pl.LazyFrame | pl.DataFrame):
-                return FlowDataEngine(output)
-            return None
-
-        def _func(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
-            if self.execution_location == "local" or registry_entry is None or registry_entry.source_text is None:
-                return _run_in_core(*flow_data_engine)
-
+        def _run(backend: ComputeBackend, flow_data_engine: tuple[FlowDataEngine, ...]) -> FlowDataEngine | None:
             node = self.get_node(user_defined_node_settings.node_id)
-            request = CustomNodeExecuteInput(
-                task_id=custom_node_task_id(node.hash),
-                node_source=registry_entry.source_text,
-                class_name=registry_entry.class_name,
+            has_source = registry_entry is not None and registry_entry.source_text is not None
+            job = CustomNodePayload(
+                inputs=tuple(engine.data_frame.lazy() for engine in flow_data_engine),
+                custom_node=custom_node,
+                node_source=registry_entry.source_text if has_source else None,
+                class_name=registry_entry.class_name if has_source else None,
                 settings_values=user_defined_node_settings.settings or {},
-                secrets=resolve_secret_payload(custom_node, user_defined_node_settings.user_id),
-                inputs=[fde.data_frame.lazy().serialize() for fde in flow_data_engine],
                 output_names=resolved_output_names,
                 user_id=user_defined_node_settings.user_id,
-                flowfile_flow_id=self.flow_id,
-                flowfile_node_id=user_defined_node_settings.node_id,
+                flow_id=self.flow_id,
+                node_id=user_defined_node_settings.node_id,
+                job_id=custom_node_task_id(node.hash),
             )
-            fetcher = ExternalCustomNodeFetcher(request)
-            node._fetch_cached_df = fetcher
-            payload = fetcher.get_payload()
+            refs = node.run_op(backend, OperationKind.custom_node, op_payload(job), job_id=job.job_id).refs
+            engines = {
+                key: FlowDataEngine(backend.plan_for(ref), schema=ref.schema, number_of_records=ref.row_count)
+                for key, ref in refs.items()
+            }
+            for ref in refs.values():
+                if ref.state == "deferred":
+                    backend.release(ref)
+            if "result" in engines:
+                return engines["result"]
+            if not engines:
+                return None
+            node._named_outputs.update(engines)
+            return engines[DEFAULT_OUTPUT_HANDLE]
 
-            primary: FlowDataEngine | None = None
-            for i, name in enumerate(resolved_output_names):
-                info = payload["outputs"].get(name)
-                if info is None:
-                    raise ValueError(f"Worker did not return declared output '{name}'")
-                fde = FlowDataEngine(pl.scan_ipc(info["path"]), number_of_records=info["row_count"])
-                node._named_outputs[f"output-{i}"] = fde
-                if i == 0:
-                    primary = fde
-            return primary
+        def _run_on_the_embedded_worker(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
+            return _run(registry.backend(registry.LOCAL_BACKEND_ID), flow_data_engine)
+
+        def _func(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
+            if registry_entry is None or registry_entry.source_text is None:
+                return _run_on_the_embedded_worker(*flow_data_engine)
+            return _run(current_context(self).backend, flow_data_engine)
 
         return _func
 
@@ -450,7 +438,7 @@ class CustomNodeBuildersMixin(GraphMixinBase):
             flow_id,
             node_id,
             input_names=input_names,
-            local=self.execution_location == "local",
+            graph=self,
         )
 
         request = build_execute_request(

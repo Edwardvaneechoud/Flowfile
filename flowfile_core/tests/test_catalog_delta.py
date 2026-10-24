@@ -136,7 +136,12 @@ class TestFormatDeltaTimestamp:
 class TestParseDeltaHistory:
     def test_parses_history_list(self):
         raw = [
-            {"version": 0, "timestamp": "2024-01-01T00:00:00", "operation": "WRITE", "operationParameters": {"mode": "Overwrite"}},
+            {
+                "version": 0,
+                "timestamp": "2024-01-01T00:00:00",
+                "operation": "WRITE",
+                "operationParameters": {"mode": "Overwrite"},
+            },
             {"version": 1, "timestamp": 1700000000000, "operation": "WRITE", "operationParameters": None},
         ]
         result = _parse_delta_history(raw)
@@ -261,7 +266,11 @@ class TestRegisterTableFromData:
                 owner_id=1,
                 namespace_id=schema_id,
                 storage_format="delta",
-                schema=[{"name": "a", "dtype": "Int64"}, {"name": "b", "dtype": "Float64"}, {"name": "c", "dtype": "String"}],
+                schema=[
+                    {"name": "a", "dtype": "Int64"},
+                    {"name": "b", "dtype": "Float64"},
+                    {"name": "c", "dtype": "String"},
+                ],
                 row_count=50,
                 column_count=None,
                 size_bytes=2000,
@@ -281,10 +290,17 @@ class TestRegisterTableFromParquetAlias:
 
         def fake_register_from_data(self_, **kwargs):
             calls.append(kwargs)
-            return type("FakeOut", (), {
-                "name": kwargs["name"], "row_count": 0, "column_count": 0,
-                "size_bytes": 0, "schema_columns": [],
-            })()
+            return type(
+                "FakeOut",
+                (),
+                {
+                    "name": kwargs["name"],
+                    "row_count": 0,
+                    "column_count": 0,
+                    "size_bytes": 0,
+                    "schema_columns": [],
+                },
+            )()
 
         monkeypatch.setattr(CatalogService, "register_table_from_data", fake_register_from_data)
 
@@ -785,6 +801,7 @@ class TestGetTableHistory:
             # Disable worker offload so it reads locally
             import flowfile_core.configs.settings
             from flowfile_core.configs.utils import MutableBool
+
             orig = getattr(flowfile_core.configs.settings, "OFFLOAD_TO_WORKER", False)
             flowfile_core.configs.settings.OFFLOAD_TO_WORKER = MutableBool(False)
 
@@ -805,6 +822,53 @@ class TestGetTableHistory:
             svc = CatalogService(repo)
             with pytest.raises(TableNotFoundError):
                 svc.get_table_history(999999)
+
+    def test_worker_on_other_versions_is_refused_and_the_history_not_read_in_core(self, monkeypatch):
+        """A worker that fails core's handshake is refused with the mismatch; core does not read the history itself."""
+        import shutil
+        import uuid
+
+        import flowfile_core.configs.settings
+        from flowfile_core.configs.utils import MutableBool
+        from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+        from flowfile_core.flowfile.execution.errors import VersionMismatch
+        from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
+        from shared.compute_protocol import local_capabilities
+        from shared.storage_config import storage
+
+        _, schema_id = _make_namespace()
+        delta_dir = storage.catalog_tables_directory / f"hist_delta_mismatch_{uuid.uuid4().hex[:8]}"
+        pl.DataFrame({"x": [1, 2, 3]}).write_delta(str(delta_dir), mode="error")
+        monkeypatch.setattr(DeltaTable, "history", lambda *args, **kwargs: pytest.fail("core read the history"))
+        fetches = []
+        reported = local_capabilities().model_copy(update={"polars_version": "0.0.1"})
+
+        def fetch(self):
+            fetches.append(1)
+            return reported
+
+        monkeypatch.setattr(flowfile_core.configs.settings, "OFFLOAD_TO_WORKER", MutableBool(True))
+        monkeypatch.setattr(WorkerBackend, "capabilities", fetch)
+        handshake.reset_handshake()
+        with get_db_context() as db:
+            table = CatalogTable(
+                name="delta_hist_mismatch",
+                namespace_id=schema_id,
+                owner_id=1,
+                file_path=str(delta_dir),
+                storage_format="delta",
+            )
+            db.add(table)
+            db.commit()
+            db.refresh(table)
+            try:
+                with pytest.raises(VersionMismatch, match="polars_version"):
+                    CatalogService(SQLAlchemyCatalogRepository(db)).get_table_history(table.id)
+            finally:
+                handshake.reset_handshake()
+                shutil.rmtree(delta_dir, ignore_errors=True)
+
+        assert fetches == [1]
 
 
 # get_table_preview (delta + version)
@@ -985,7 +1049,9 @@ class TestTriggerDeltaVersionPreviewMapping:
         monkeypatch.setattr(subops._worker_session, "post", lambda *a, **kw: _FakeResponse())
 
         with pytest.raises(TableVersionUnavailableError):
-            subops.trigger_delta_version_preview("some_table", version=99, n_rows=100)
+            subops.trigger_delta_version_preview(
+                "some_table", version=99, n_rows=100, worker_url="http://worker.invalid"
+            )
 
 
 # table_exists in _table_to_out (delta-aware)
@@ -1493,7 +1559,7 @@ class TestOptimizeVacuumService:
     def test_optimize_local(self, tmp_path, monkeypatch):
         import flowfile_core.catalog.services.tables as tables_mod
 
-        monkeypatch.setattr(tables_mod, "_should_offload", lambda: False)
+        monkeypatch.setattr(tables_mod, "uses_worker", lambda: False)
         _, schema_id = _make_namespace()
         with get_db_context() as db:
             svc = CatalogService(SQLAlchemyCatalogRepository(db))
@@ -1505,7 +1571,7 @@ class TestOptimizeVacuumService:
     def test_vacuum_local_dry_run(self, tmp_path, monkeypatch):
         import flowfile_core.catalog.services.tables as tables_mod
 
-        monkeypatch.setattr(tables_mod, "_should_offload", lambda: False)
+        monkeypatch.setattr(tables_mod, "uses_worker", lambda: False)
         _, schema_id = _make_namespace()
         with get_db_context() as db:
             svc = CatalogService(SQLAlchemyCatalogRepository(db))
@@ -1558,7 +1624,7 @@ class TestOptimizeVacuumService:
         """Maintenance must not bump updated_at: table-trigger schedules fire on it."""
         import flowfile_core.catalog.services.tables as tables_mod
 
-        monkeypatch.setattr(tables_mod, "_should_offload", lambda: False)
+        monkeypatch.setattr(tables_mod, "uses_worker", lambda: False)
         _, schema_id = _make_namespace()
         past = datetime(2020, 1, 1, 12, 0, 0)
         with get_db_context() as db:

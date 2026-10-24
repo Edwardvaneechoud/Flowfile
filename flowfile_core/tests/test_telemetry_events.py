@@ -926,7 +926,7 @@ def _record_node_error(error: Exception) -> str:
     executor = NodeExecutor.__new__(NodeExecutor)
     executor.node = node
     executor.state_provider = None
-    executor._handle_error(_FakeState(), error, "remote", False, False, _QuietLogger())
+    executor._handle_error(_FakeState(), error, False, False, _QuietLogger())
     return node._last_exception_class
 
 
@@ -956,11 +956,15 @@ def test_flow_as_api_runs_are_marked_as_system_runs(monkeypatch) -> None:
             seen["skipped_by_telemetry"] = glue._skip(self)
             return _Bag(success=True, node_step_result=[])
 
+        def close_flow(self) -> None:
+            seen["closed"] = True
+
     monkeypatch.setattr(api_runner, "open_flow", lambda *args, **kwargs: _Flow())
     with pytest.raises(api_runner.ApiExecutionError):
         api_runner.run_flow_as_api("/tmp/published.yaml", owner_id=1, param_specs=[], query={})
 
     assert seen["skipped_by_telemetry"] is True
+    assert seen["closed"] is True
 
 
 def test_a_panic_publishes_a_crash_and_still_propagates(sent, subscribed, monkeypatch) -> None:
@@ -1082,7 +1086,7 @@ def test_spawn_flow_run_forwards_the_suppression_flag(monkeypatch) -> None:
     FlowRunService(FakeSpawnRepo()).spawn_flow_run(
         FakeRegistration(), user_id=1, run_type="on_demand", schedule_id=3, suppress_telemetry=True
     )
-    assert calls[-1][1] == {"suppress_telemetry": True}
+    assert calls[-1][1] == {"suppress_telemetry": True, "backend": None}
 
 
 def test_spawn_flow_run_does_not_suppress_by_default(monkeypatch) -> None:
@@ -1091,7 +1095,7 @@ def test_spawn_flow_run_does_not_suppress_by_default(monkeypatch) -> None:
 
     calls = _spawn_recorder(monkeypatch)
     FlowRunService(FakeSpawnRepo()).spawn_flow_run(FakeRegistration(), user_id=1, run_type="scheduled")
-    assert calls[-1][1] == {"suppress_telemetry": False}
+    assert calls[-1][1] == {"suppress_telemetry": False, "backend": None}
 
 
 def test_spawn_flow_subprocess_kills_telemetry_without_touching_the_parent(monkeypatch, tmp_path) -> None:

@@ -3454,37 +3454,50 @@ def test_get_node_column_stats():
     assert body["is_unique"] is True
 
 
-def test_get_node_column_stats_offload_decision():
-    """Whenever offloading is on the stats collect goes to the worker, whatever
-    the flow's execution location — core must not run pipeline compute.
-    In-process only when no worker exists (offloading disabled)."""
+def test_get_node_column_stats_offload_decision(monkeypatch):
+    """With the protocol flag off the stats aggregate runs on the default compute
+    backend whatever the flow's execution location: on the worker whenever
+    offloading is on, in core only when no worker exists (offloading disabled).
+    With it on the aggregate runs on the flow's own backend, so a local flow's
+    in core and a remote flow's on the default backend."""
     from unittest.mock import patch
 
+    import polars as pl
+
+    from flowfile_core.configs import settings
+    from flowfile_core.flowfile.execution import registry
+    from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+    from flowfile_core.flowfile.flow_node import flow_node as flow_node_module
     from flowfile_core.flowfile.flow_node.flow_node import FlowNode
-    from flowfile_core.routes import routes as routes_module
     from flowfile_core.schemas.output_model import FileColumn
 
+    monkeypatch.delenv(registry.BACKEND_ENV_VAR, raising=False)
     flow_id = create_flow_with_manual_input_and_select()
     flow = flow_file_handler.get_flow(flow_id)
     flow.flow_settings.execution_mode = "Development"
     dummy = FileColumn(name="name", data_type="String")
     params = {"flow_id": flow_id, "node_id": 2, "column_name": "name"}
-    offload_was_on = bool(routes_module.OFFLOAD_TO_WORKER)
+    offload_was_on = bool(settings.OFFLOAD_TO_WORKER)
     try:
-        routes_module.OFFLOAD_TO_WORKER.set(True)
-        with patch.object(FlowNode, "get_column_stats", return_value=dummy) as mock_stats:
+        settings.OFFLOAD_TO_WORKER.set(True)
+        with (
+            patch.object(FlowNode, "get_cached_result", return_value=FlowDataEngine(pl.LazyFrame({"name": ["a"]}))),
+            patch.object(flow_node_module, "compute_column_stats", return_value=dummy) as mock_stats,
+        ):
             for location in ("local", "remote"):
                 flow.flow_settings.execution_location = location
                 assert client.get("/node/column_stats", params=params).status_code == 200
-                assert mock_stats.call_args.kwargs["offload_to_worker"] is True
+                aggregates_in_core = settings.FLOWFILE_COMPUTE_PROTOCOL and location == "local"
+                expected = registry.LOCAL_BACKEND_ID if aggregates_in_core else registry.WORKER_BACKEND_ID
+                assert mock_stats.call_args.kwargs["backend"].id == expected
 
-            routes_module.OFFLOAD_TO_WORKER.set(False)
+            settings.OFFLOAD_TO_WORKER.set(False)
             assert client.get("/node/column_stats", params=params).status_code == 200
-            assert mock_stats.call_args.kwargs["offload_to_worker"] is False, (
+            assert mock_stats.call_args.kwargs["backend"].id == registry.LOCAL_BACKEND_ID, (
                 "no worker exists when offloading is disabled"
             )
     finally:
-        routes_module.OFFLOAD_TO_WORKER.set(offload_was_on)
+        settings.OFFLOAD_TO_WORKER.set(offload_was_on)
 
 
 def test_get_node_column_stats_blocked_in_performance_mode():
@@ -3545,9 +3558,11 @@ def _run_export_flow(node_id: int = 2) -> FlowId:
     return flow_id
 
 
-def test_export_node_data_csv():
+def test_export_node_data_csv(execution_location):
     flow_id = create_flow_with_manual_input_and_select()
-    flow_file_handler.get_flow(flow_id).flow_settings.execution_mode = "Development"
+    flow_settings = flow_file_handler.get_flow(flow_id).flow_settings
+    flow_settings.execution_mode = "Development"
+    flow_settings.execution_location = execution_location
     assert _export_node_data(flow_id).status_code == 409, "Nothing to export before the node has run"
 
     client.post("/node/trigger_fetch_data", params={"flow_id": flow_id, "node_id": 2})

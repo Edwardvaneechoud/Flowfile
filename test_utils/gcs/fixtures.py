@@ -171,6 +171,7 @@ def start_fake_gcs_container() -> bool:
                 "-scheme", "http",
                 "-port", "4443",
                 "-external-url", GCS_EXTERNAL_URL,
+                "-public-host", f"{GCS_HOST}:{GCS_PORT}",
             ],
             check=True,
         )

@@ -11,10 +11,12 @@ import {
   fetchNodeVisualizationFields,
 } from "./vueGraphicWalker/utils";
 import EmptyState from "../../../../common/EmptyState/EmptyState.vue";
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { useEditorStore } from "../../../../../stores/editor-store";
 import { useItemStore } from "../../../../common/DraggableItem/stateStore";
 import { useFlowExecution } from "../../../../../composables/useFlowExecution";
+import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { useGraphicWalkerCompute } from "../../../../../composables/useGraphicWalkerCompute";
 import { useGraphicWalkerAppearance } from "../../../../../composables/useGraphicWalkerAppearance";
 
@@ -23,7 +25,7 @@ type Status = "loading" | "not-run" | "fetching" | "failed" | "ready";
 const status = ref<Status>("loading");
 const failureDetail = ref("");
 const fetchAttempted = ref(false);
-const nodeData = ref<NodeGraphicWalker | null>(null);
+const nodeSettings = ref<NodeGraphicWalker | null>(null);
 const chartList = ref<IChart[]>([]);
 const fields = ref<IMutField[]>([]);
 const globalNodeId = ref(-1);
@@ -34,6 +36,20 @@ const windowStore = useItemStore();
 const vueGraphicWalkerRef = ref<InstanceType<typeof VueGraphicWalker> | null>(null);
 
 const graphicWalkerAppearance = useGraphicWalkerAppearance();
+
+const {
+  saveSettings,
+  pushNodeData: pushSettings,
+  handleGenericSettingsUpdate,
+} = useNodeSettings({
+  nodeRef: nodeSettings,
+  // The chart builder reads fields and rows from the worker; the node stores only its specs.
+  onBeforeSave: () => {
+    if (nodeSettings.value?.graphic_walker_input) {
+      nodeSettings.value.graphic_walker_input.dataModel = { data: [], fields: [] };
+    }
+  },
+});
 
 // Default polling key (`flow_<id>`) on purpose: the header's Cancel sweeps
 // `flow_<id>_node_<n>`, so cancelling also stops our completion poll.
@@ -66,6 +82,21 @@ const notRunDescription = computed(() => {
   return "Run this step to open its data in the chart builder.";
 });
 
+const loadSettings = async (nodeId: number) => {
+  const data = await nodeStore.getNodeData(nodeId, false);
+  nodeSettings.value = (data?.setting_input as NodeGraphicWalker | undefined) ?? null;
+  if (!nodeSettings.value) throw new Error("Couldn't read this step's settings.");
+};
+
+// Core reconciles the saved specs on this read, so the settings (and their fingerprint) load after it.
+const readSpecs = async (nodeId: number) => {
+  try {
+    return await fetchGraphicWalkerData(nodeStore.flow_id, nodeId);
+  } finally {
+    await loadSettings(nodeId);
+  }
+};
+
 const loadNodeData = async (nodeId: number) => {
   if (nodeId !== globalNodeId.value) {
     fetchAttempted.value = false;
@@ -73,23 +104,21 @@ const loadNodeData = async (nodeId: number) => {
   status.value = "loading";
   failureDetail.value = "";
   globalNodeId.value = nodeId;
-  nodeData.value = null;
   fields.value = [];
   chartList.value = [];
 
+  // Specs come from the node's settings; the field schema from polars-gw.
+  const [specs, fieldsResult] = await Promise.allSettled([
+    readSpecs(nodeId),
+    fetchNodeVisualizationFields(nodeStore.flow_id, nodeId),
+  ]);
   try {
-    // Specs come from the node's settings; the field schema from polars-gw.
-    const [fetchedNodeData, fieldsResponse] = await Promise.all([
-      fetchGraphicWalkerData(nodeStore.flow_id, nodeId),
-      fetchNodeVisualizationFields(nodeStore.flow_id, nodeId),
-    ]);
-    if (!fetchedNodeData?.graphic_walker_input)
-      throw new Error("Received invalid data structure from backend.");
-    if (fieldsResponse.error) throw new Error(fieldsResponse.error);
+    if (specs.status === "rejected") throw specs.reason;
+    if (fieldsResult.status === "rejected") throw fieldsResult.reason;
+    if (fieldsResult.value.error) throw new Error(fieldsResult.value.error);
 
-    nodeData.value = fetchedNodeData;
-    fields.value = (fieldsResponse.fields as IMutField[]) ?? [];
-    chartList.value = fetchedNodeData.graphic_walker_input.specList || [];
+    fields.value = (fieldsResult.value.fields as IMutField[]) ?? [];
+    chartList.value = specs.value.graphic_walker_input.specList || [];
     status.value = "ready";
   } catch (error: any) {
     // 422 means the step hasn't produced data yet: an empty state, not a failure.
@@ -115,6 +144,8 @@ let disposed = false;
 const handleFetchData = async () => {
   const nodeId = globalNodeId.value;
   if (nodeId === -1 || status.value === "fetching" || isPollingActive(`node_${nodeId}`)) return;
+  // The fetch places the node by its saved Compute backend, so a pick made here goes first.
+  if (!(await saveSettings())) return;
 
   fetchAttempted.value = true;
   status.value = "fetching";
@@ -170,44 +201,18 @@ const getCurrentSpec = async (): Promise<IChart[] | null> => {
   }
 };
 
-const saveSpecToNodeStore = async (specsToSave: IChart[]) => {
-  if (!nodeData.value) {
-    ElMessage.error({
-      message: "Cannot save: the node data is no longer available.",
-      duration: 5000,
-    });
-    return false;
+// The charts on screen join the General Settings in one save; a spec that cannot be read
+// toasts and leaves the saved specs as they are, since losing the chart builder is worse.
+const pushNodeData = async (): Promise<boolean> => {
+  const walkerInput = nodeSettings.value?.graphic_walker_input;
+  if (showWalker.value && vueGraphicWalkerRef.value && walkerInput) {
+    const currentSpec = await getCurrentSpec();
+    if (currentSpec !== null && currentSpec.length > 0) walkerInput.specList = currentSpec;
   }
-  try {
-    const saveData: NodeGraphicWalker = {
-      ...nodeData.value,
-      graphic_walker_input: {
-        ...nodeData.value.graphic_walker_input,
-        specList: specsToSave,
-        dataModel: { data: [], fields: [] },
-      },
-    };
-
-    await nodeStore.updateSettingsDirectly(saveData);
-    return true;
-  } catch (error: any) {
-    console.error("Error saving spec to node store:", error);
-    ElMessage.error({
-      message: `Failed to save the chart configuration: ${error?.message ?? "unknown error"}`,
-      duration: 5000,
-    });
-    return false;
-  }
+  return pushSettings();
 };
 
-// Save failures toast rather than take over the panel: losing the chart builder
-// is worse than a failed save.
-const pushNodeData = async () => {
-  if (!vueGraphicWalkerRef.value) return;
-  const currentSpec = await getCurrentSpec();
-  if (currentSpec === null || currentSpec.length === 0) return;
-  return await saveSpecToNodeStore(currentSpec);
-};
+const canApply = computed(() => nodeSettings.value !== null);
 
 // Close/minimize paths hide the drawer (unmounting it) before the async
 // drawCloseFunction cleanup can run, so pushNodeData never fires — restore the
@@ -220,36 +225,85 @@ onBeforeUnmount(() => {
 defineExpose({
   loadNodeData,
   pushNodeData,
-  canApply: showWalker,
+  saveSettings,
+  canApply,
 });
 </script>
 
 <template>
-  <div class="explore-data-container">
-    <CodeLoader v-if="status === 'loading'" />
+  <generic-node-settings
+    v-if="nodeSettings"
+    v-model="nodeSettings"
+    @update:model-value="handleGenericSettingsUpdate"
+    @request-save="saveSettings"
+  >
+    <div class="explore-data-container">
+      <CodeLoader v-if="status === 'loading'" />
 
-    <EmptyState
-      v-else-if="status === 'fetching'"
-      icon="fa-solid fa-spinner fa-spin"
-      title="Fetching data…"
-      description="Running this step and everything it depends on. This screen refreshes when it's done."
-    />
+      <EmptyState
+        v-else-if="status === 'fetching'"
+        icon="fa-solid fa-spinner fa-spin"
+        title="Fetching data…"
+        description="Running this step and everything it depends on. This screen refreshes when it's done."
+      />
 
-    <EmptyState
-      v-else-if="status === 'not-run'"
-      icon="fa-solid fa-chart-column"
-      title="No data to explore yet"
-      :description="notRunDescription"
-    >
-      <template #actions>
-        <el-button type="primary" size="small" :disabled="!canFetch" @click="handleFetchData">
-          {{ fetchAttempted ? "Try again" : "Fetch data" }}
-        </el-button>
-      </template>
-    </EmptyState>
+      <EmptyState
+        v-else-if="status === 'not-run'"
+        icon="fa-solid fa-chart-column"
+        title="No data to explore yet"
+        :description="notRunDescription"
+      >
+        <template #actions>
+          <el-button type="primary" size="small" :disabled="!canFetch" @click="handleFetchData">
+            {{ fetchAttempted ? "Try again" : "Fetch data" }}
+          </el-button>
+        </template>
+      </EmptyState>
 
+      <EmptyState
+        v-else-if="status === 'failed'"
+        icon="fa-solid fa-triangle-exclamation"
+        title="Couldn't load the data"
+        :description="failureDetail"
+      >
+        <template #actions>
+          <el-button size="small" @click="loadNodeData(globalNodeId)">Try again</el-button>
+        </template>
+      </EmptyState>
+
+      <div v-else-if="showWalker" class="graphic-walker-wrapper">
+        <el-alert
+          v-if="computeError"
+          :title="computeError"
+          type="error"
+          :closable="false"
+          show-icon
+        />
+        <VueGraphicWalker
+          ref="vueGraphicWalkerRef"
+          :appearance="graphicWalkerAppearance"
+          :computation="computation"
+          :fields="fields"
+          :spec-list="chartList"
+        />
+      </div>
+
+      <EmptyState
+        v-else
+        icon="fa-solid fa-table"
+        title="This step has no columns to chart"
+        description="The run produced an empty schema. Check the steps upstream of this one."
+      >
+        <template #actions>
+          <el-button type="primary" size="small" :disabled="!canFetch" @click="handleFetchData">
+            Fetch again
+          </el-button>
+        </template>
+      </EmptyState>
+    </div>
+  </generic-node-settings>
+  <div v-else-if="status === 'failed'" class="explore-data-container">
     <EmptyState
-      v-else-if="status === 'failed'"
       icon="fa-solid fa-triangle-exclamation"
       title="Couldn't load the data"
       :description="failureDetail"
@@ -258,42 +312,14 @@ defineExpose({
         <el-button size="small" @click="loadNodeData(globalNodeId)">Try again</el-button>
       </template>
     </EmptyState>
-
-    <div v-else-if="showWalker" class="graphic-walker-wrapper">
-      <el-alert
-        v-if="computeError"
-        :title="computeError"
-        type="error"
-        :closable="false"
-        show-icon
-      />
-      <VueGraphicWalker
-        ref="vueGraphicWalkerRef"
-        :appearance="graphicWalkerAppearance"
-        :computation="computation"
-        :fields="fields"
-        :spec-list="chartList"
-      />
-    </div>
-
-    <EmptyState
-      v-else
-      icon="fa-solid fa-table"
-      title="This step has no columns to chart"
-      description="The run produced an empty schema. Check the steps upstream of this one."
-    >
-      <template #actions>
-        <el-button type="primary" size="small" :disabled="!canFetch" @click="handleFetchData">
-          Fetch again
-        </el-button>
-      </template>
-    </EmptyState>
   </div>
+  <CodeLoader v-else />
 </template>
 
 <style scoped>
 .explore-data-container {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background-color: var(--color-background-primary);

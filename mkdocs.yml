@@ -222,6 +222,7 @@ nav:
     - Desktop App: users/deployment/desktop.md
     - Python Package: users/deployment/python.md
     - Docker: users/deployment/docker.md
+    - Remote Workers: users/deployment/remote-worker.md
     - Users, Groups & Sharing: users/deployment/sharing.md
     - Headless Runs & CLI: users/deployment/cli.md
     - Privacy & Telemetry: users/telemetry.md
@@ -232,6 +233,7 @@ nav:
     - Design Philosophy: for-developers/design-philosophy.md
     - Architecture: for-developers/architecture.md
     - Core Internals: for-developers/flowfile-core.md
+    - Compute Protocol: for-developers/compute-protocol.md
     - Internal API Reference: for-developers/python-api-reference.md
     - Catalog Architecture: for-developers/catalog-architecture.md
     - Kernel Architecture: for-developers/kernel-architecture.md

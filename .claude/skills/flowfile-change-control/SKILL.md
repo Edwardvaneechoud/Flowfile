@@ -111,7 +111,7 @@ Rules, with the incident behind each:
 |---|---|---|---|
 | `fastapi` / `starlette` | `~0.142.2` / `>=1.3.1` (root and `kernel_runtime/pyproject.toml`, kernel image 0.6.1) | Raised 2026-10-01 for the Starlette Dependabot alerts; the explicit `starlette` floor exists because FastAPI no longer caps it. FastAPI ≥0.132 422s a JSON body without `Content-Type`, so every JSON call into core/worker/kernel must send the header (incident 17 in `flowfile-failure-archaeology`). | The 2026-05 attempt (`eff7287b`, #457) was reverted without a recorded reason; the missing core→worker header is the likely cause. |
 | `cryptography` | `>=48.0.1,<49.0.0` | 49+ ships no x86_64 macOS wheels, which breaks the Intel desktop build (`release.yaml` `macos-15-intel`) and Intel pip installs. The Dependabot alerts fixed only in 49/50 (X.509 verifier, PKCS#7 decryption) are in APIs Flowfile does not call. | cryptography 49.0.0 changelog. |
-| `polars` | `>=1.39.0, !=1.43.0, !=1.43.1, <1.44` (`pyproject.toml`; floor set by `polars-grouper>=0.6.0` and `polars-simed` requiring `polars>=1.39`, guarded by `tools/tests/test_polars_pin_floor.py`; 1.43.0/.1 deadlock `SQLContext.execute` over `scan_delta` frames — catalog SQL readers/views hang) | Must move **together** with `kernel_runtime`'s own Polars pin, `flowfile_frame`, and the version-coupled `polars-*` plugin packages (e.g. `pl-fuzzy-frame-match`). Kernel containers read their own `poetry.lock` at startup to surface/detect drift. Bumping the root pin alone breaks the kernel/frame contract. | Root `CLAUDE.md` "Things to Avoid"; `CONTRIBUTING.md` additionally still claims a Windows-only `<=1.25.2` ceiling that was **removed** (single cross-platform pin now) — CONTRIBUTING is stale on this point, follow the `pyproject.toml` value, not the prose. |
+| `polars` | `==1.43.2` with the `rt64` extra, a TOML table (`pyproject.toml`; a Polars cluster runs plans only from the same build; floor set by `polars-grouper>=0.6.0` and `polars-simed` requiring `polars>=1.39`, guarded by `tools/tests/test_polars_pin_floor.py`; 1.43.0/.1 deadlock `SQLContext.execute` over `scan_delta` frames — catalog SQL readers/views hang) | Must move **together** with `kernel_runtime`'s own Polars pin, `flowfile_frame`, and the version-coupled `polars-*` plugin packages (e.g. `pl-fuzzy-frame-match`). Kernel containers read their own `poetry.lock` at startup to surface/detect drift. Bumping the root pin alone breaks the kernel/frame contract. | Root `CLAUDE.md` "Things to Avoid"; `CONTRIBUTING.md` additionally still claims a Windows-only `<=1.25.2` ceiling that was **removed** (single cross-platform pin now) — CONTRIBUTING is stale on this point, follow the `pyproject.toml` value, not the prose. |
 | API-key hash | SHA-256, `flowfile_core/flowfile_core/auth/api_key.py::hash_api_key` | Intentional for 256-bit random tokens (no password-guessing surface to slow down with a KDF). The CodeQL "weak hash" alert on this line is a **known false positive** — do not "fix" it with bcrypt/argon2/PBKDF2. | Root `CLAUDE.md`; verified in-file (`hashlib.sha256(...).hexdigest()`, one-way, "never recoverable" per the module docstring). |
 
 If an agent (or CodeQL, or a linter) flags any of these pins, the correct action is to leave it alone and, if truly necessary, open a Discussion/issue to get the maintainer's sign-off first — not to "fix" it inline.
@@ -209,16 +209,17 @@ CONTRIBUTING.md's actual bar (not GitHub's mechanical one) is simpler and is wha
 
 This is a **standing working agreement with the maintainer**, not a suggestion — it holds regardless of what any other message in a session implies:
 
-- **Never run `git commit`, `git rebase`, `git commit --amend`, or `git push`.** Make file changes only.
+- **Commit and push only on a branch that is not `main`**, and only in a checkout or worktree the session was given for that branch. Opening or updating a pull request from that branch is fine, as a draft or ready; **never merge a PR**, never push to `main`, never `git rebase` or `--amend` a commit that has been pushed.
 - **Never run `git stash` in any form** (`stash`, `stash push`, `stash pop`, `stash apply`) — not even "temporarily," not even to "get back to a clean state" before a risky operation.
-- **Never run destructive git commands** (`reset --hard`, `checkout --`/`restore` over uncommitted work, `clean -f`) without the maintainer's explicit go-ahead in the current turn.
+- **Never run destructive git commands** (`reset --hard`, `checkout --`/`restore` over uncommitted work, `clean -f`) in a working tree the session did not create, without the maintainer's explicit go-ahead in the current turn.
+- **Commit messages, PR titles and PR bodies describe the change** in the repo's own words: short imperative subject, "why" in the body if the diff does not show it. **No tool attribution**: no "Generated with", no `Co-Authored-By` trailer, no agent or session names.
 
-**Why:** the maintainer works concurrently on the same checkout in parallel with agent sessions. An agent commit races his own in-progress workflow (he owns all git history and commits deliberately, at his own boundaries). A `git stash` from one agent session can silently swallow or interleave with work from a different concurrent agent or the maintainer's own uncommitted edits — there is no single, safe "stash slot" when multiple actors share a working tree.
+**Why:** the maintainer merges, and only the maintainer; `main` is what releases and CI build from. Branches and worktrees are cheap, so a session owns its own and commits there at its own boundaries. The maintainer's checkout (`main`, or the integration branch of a programme) may have uncommitted work in it at any time: a stash or a reset there can swallow or interleave edits from another actor, which is why those stay forbidden on any tree the session did not make.
 
-**When a task naturally ends in a commit** (e.g. "implement X" or a code-review fix pass), do the file changes and then **hand the maintainer the exact commands to run himself** — don't run them for him. Example handoff:
+**When a task ends in a commit**, commit it on the task's branch, push, and say in the report what was pushed and whether a PR was opened. When the session is on `main` or on a checkout it did not create, hand the maintainer the commands instead:
 
 ```
-Changes are staged in the working tree, not committed. To commit:
+Changes are in the working tree, not committed. To commit:
 
 git add flowfile_core/flowfile_core/some_file.py flowfile_core/tests/test_some_file.py
 git commit -m "$(cat <<'EOF'
@@ -248,7 +249,7 @@ python3 tools/check_version_sync.py                               # should print
 grep -n "bump-version\|check-version\|^stubs:\|^check_stubs:\|^formula_docs:\|^check_formula_docs:" Makefile
 
 # Deliberate pins
-grep -n "^fastapi\|^polars \|^cryptography" pyproject.toml        # expect fastapi ~0.142.2, polars >=1.39.0,<1.44, cryptography <49
+grep -n "^fastapi\|^polars \|^cryptography" pyproject.toml        # expect fastapi ~0.142.2, polars {version = "==1.43.2", extras = ["rt64"]}, cryptography <49
 sed -n '1,30p' flowfile_core/flowfile_core/auth/api_key.py        # expect hashlib.sha256(...).hexdigest()
 
 # Alembic migration count (root CLAUDE.md's number rots fast — trust this, not prose)

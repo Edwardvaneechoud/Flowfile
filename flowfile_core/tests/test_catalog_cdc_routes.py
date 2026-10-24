@@ -265,7 +265,7 @@ class TestVacuumCursorGuard:
     def _local_execution(self, monkeypatch):
         import flowfile_core.catalog.services.tables as tables_mod
 
-        monkeypatch.setattr(tables_mod, "_should_offload", lambda: False)
+        monkeypatch.setattr(tables_mod, "uses_worker", lambda: False)
 
     def test_stale_cursor_blocks_vacuum(self, client, schema_id, tmp_path):
         table_id, _ = _register_delta(schema_id, "cdc_vac_block", tmp_path, commits=3)
