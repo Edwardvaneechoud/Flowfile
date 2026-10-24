@@ -475,10 +475,15 @@ def test_a_direct_read_of_a_connection_not_stored_for_its_user_is_refused_with_t
 
 
 class _SubmitRaises:
-    """A backend whose submit raises ``error``."""
+    """A backend whose submit raises ``error``, and that cannot be asked for its capabilities."""
+
+    id = "submit-raises"
 
     def __init__(self, error: Exception):
         self.error = error
+
+    def capabilities(self):
+        raise ComputeUnavailable("not asked")
 
     def submit(self, *args, **kwargs):
         raise self.error

@@ -621,7 +621,7 @@ class FlowFrame:
             return "fitted when the flow runs" + ("" if current() is not None else "; read_model() runs it")
         try:
             summary = _trained_model_summary(self.flow_graph, self.node_id)
-        except (OSError, ValueError, KeyError, TypeError, ComputeError) as exc:
+        except (OSError, ValueError, LookupError, TypeError, ComputeError) as exc:
             return f"unreadable ({type(exc).__name__})"
         return "not fitted yet" if summary is None else summary.replace("\n", "\n  ")
 

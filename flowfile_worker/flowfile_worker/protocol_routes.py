@@ -4,13 +4,18 @@ Every route needs the internal token, then an ``X-Protocol-Version`` equal to th
 ``PROTOCOL_VERSION``: a request without one, or with another, is answered 426. The bodies live in
 ``service.py``, one function per route over the wire models, which core's embedded worker adapter calls
 directly when the worker runs in core's own process; each route here reads its request, calls its function
-and answers what it returns, or the ``HTTPException`` it raises. ``run_submit`` is the submit itself, which
+and answers what it returns, or the ``HTTPException`` it raises. The submit, the reads and the operations are sync
+routes that wait for their child in the threadpool; the short routes (``HEAD`` and ``DELETE`` of a result, a job's
+status and its cancel) and the router's dependencies are ``async``, their blocking part on threads of their own
+(``_QUICK``), so they answer while every thread of the pool waits on a child. ``run_submit`` is the submit itself, which
 ``streaming.py``'s ``/v1/ws/submit`` runs too. The names importers take from here (``run_submit``,
 ``worker_capabilities``, ``sweep_expired``, the sample caps, ``OPERATIONS`` and the request and answer models)
 are re-exported from ``service``. The legacy routes in ``routes.py`` stay as they are; the two share only
 ``status_dict``.
 """
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response
@@ -80,8 +85,16 @@ ARROW_STREAM = "application/vnd.apache.arrow.stream"
 # An operation's job id names its output files, so it holds no path separator.
 JobId = Annotated[str, Query(pattern=r"^[A-Za-z0-9_-]+$")]
 
+_QUICK = ThreadPoolExecutor(max_workers=4, thread_name_prefix="v1-quick")
+"""The threads the short routes block in: stopping a job's child and removing a file, never waiting on one."""
 
-def require_protocol_version(connection: HTTPConnection) -> None:
+
+async def _quick(func, *args):
+    """Call *func* with *args* on ``_QUICK`` and answer what it returns."""
+    return await asyncio.get_running_loop().run_in_executor(_QUICK, func, *args)
+
+
+async def require_protocol_version(connection: HTTPConnection) -> None:
     """Answer 426 when the request's ``X-Protocol-Version`` is missing or is not this worker's.
 
     It takes an ``HTTPConnection`` so the WebSocket submit can call it before accepting.
@@ -136,7 +149,7 @@ def count(result_id: str) -> dict[str, int]:
 
 
 @router.head("/results/{result_id}")
-def exists(result_id: str) -> Response:
+async def exists(result_id: str) -> Response:
     """200 while the result is held and, when materialised, its file is still there; 404 otherwise."""
     if not service.exists(result_id):
         raise _not_held(result_id)
@@ -144,9 +157,9 @@ def exists(result_id: str) -> Response:
 
 
 @router.delete("/results/{result_id}", status_code=204)
-def release(result_id: str) -> Response:
-    """Forget a held result: its file, its record and its job entry."""
-    if not service.release(result_id):
+async def release(result_id: str) -> Response:
+    """Forget a held result: its file, its record and its job entry; a job still running under the id is stopped."""
+    if not await _quick(service.release, result_id):
         raise _not_held(result_id)
     return Response(status_code=204)
 
@@ -164,15 +177,15 @@ def import_uri(result_id: str, body: ImportBody) -> ResultRef:
 
 
 @router.get("/jobs/{job_id}", response_model=models.Status)
-def job_status(job_id: str) -> models.Status:
+async def job_status(job_id: str) -> models.Status:
     """The status of a job; a submit's job id is its result id, an operation's the ``job_id`` it was posted with."""
     return service.job_status(job_id)
 
 
 @router.post("/jobs/{job_id}/cancel")
-def cancel_job(job_id: str) -> dict[str, str]:
+async def cancel_job(job_id: str) -> dict[str, str]:
     """Stop a running job's child and mark the job cancelled; a job still ``Starting`` ends as a cancel as it starts."""
-    service.cancel_job(job_id)
+    await _quick(service.cancel_job, job_id)
     return {"message": f"Job {job_id} has been cancelled."}
 
 

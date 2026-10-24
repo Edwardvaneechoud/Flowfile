@@ -144,6 +144,7 @@ class NodeExecutor:
         performance_mode: bool = False,
         retry: bool = True,
         node_logger: NodeLogger = None,
+        unreachable: Exception | None = None,
     ) -> None:
         """
         Main execution entry point.
@@ -170,6 +171,8 @@ class NodeExecutor:
             performance_mode: Skip example data generation for speed
             retry: Allow retry on recoverable errors
             node_logger: Logger for this node's execution
+            unreachable: The error the handshake of the node's placed backend raised: the node fails with it through
+                the same path, nothing is decided or sent.
         """
         if node_logger is None:
             raise ValueError("node_logger is required")
@@ -178,6 +181,11 @@ class NodeExecutor:
 
         if reset_cache:
             self._clear_cache(state)
+
+        if unreachable is not None:
+            self._prepare_for_execution(state)
+            self._handle_error(state, unreachable, performance_mode, False, node_logger)
+            return
 
         try:
             decision = self._decide_execution(state, performance_mode, reset_cache)
@@ -405,8 +413,11 @@ class NodeExecutor:
             self.node._named_schemas = {}
 
     def _clear_cache(self, state: NodeExecutionState) -> None:
-        """Clear cached results."""
+        """Clear cached results; when that released operation outputs, the nodes downstream drop theirs too."""
+        minted_outputs = bool(self.node._operation_refs)
         self.node.remove_cache()
+        if minted_outputs:
+            self.node.drop_downstream_results()
         state.has_run_with_current_setup = False
         state.has_completed_last_run = False
 

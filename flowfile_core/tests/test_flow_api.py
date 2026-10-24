@@ -198,7 +198,7 @@ def test_serialize_offloads_final_collect_to_worker_when_remote(task_routes, mon
     assert used.get("called") is True  # offloaded to the worker
     assert used["worker_url"] == registry.worker_url()
     assert used.get("local") is None  # core did not run the heavy collect
-    assert out == {"data": [{"region": "US", "v": 2}], "row_count": 1, "orientation": "records"}
+    assert out == {"data": [{"region": "US", "v": 2}], "row_count": 1, "orientation": "records", "truncated": False}
 
 
 def _forbidden_core_collect():

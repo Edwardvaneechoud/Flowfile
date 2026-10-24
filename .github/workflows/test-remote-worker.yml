@@ -14,7 +14,7 @@ jobs:
   zero-volume-compose:
     name: Zero-volume compose
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 75
 
     env:
       COMPOSE_PROJECT_NAME: flowfile-remote-worker-${{ github.run_id }}
@@ -47,10 +47,15 @@ jobs:
           poetry config virtualenvs.in-project true
           poetry install --no-interaction --no-ansi
 
+      - name: Run core and a worker on storage dirs of their own
+        run: poetry run pytest tests/remote_worker -m "not docker_integration" -vv --tb=long
+        timeout-minutes: 15
+
+      # The fixture's image build alone may take 25 minutes.
       - name: Run the zero-volume compose test
         run: poetry run pytest tests/remote_worker -m docker_integration -vv --tb=long
-        timeout-minutes: 20
+        timeout-minutes: 45
 
       - name: Remove the compose project
         if: always()
-        run: docker compose -p "$COMPOSE_PROJECT_NAME" down -v --remove-orphans || true
+        run: docker compose -f docker-compose.remote-worker.yml -p "$COMPOSE_PROJECT_NAME" down -v --remove-orphans || true

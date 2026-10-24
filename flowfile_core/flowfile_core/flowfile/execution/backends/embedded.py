@@ -29,6 +29,7 @@ import io
 import uuid
 from collections.abc import Callable
 from dataclasses import asdict
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import polars as pl
@@ -43,25 +44,18 @@ from flowfile_core.flowfile.execution.backends.worker import (
     _declared_outputs,
     _delta_destination,
     _file_to_read,
-    _flowfile_schema,
     _fuzzy_sides,
     _google_analytics_read_settings,
     _kafka_offsets,
     _kafka_read_settings,
     _rest_api_read_settings,
     _shuffled_rows,
+    _v1_error,
     _wire_columns,
     _wire_credential,
+    _WorkerReferences,
 )
-from flowfile_core.flowfile.execution.errors import (
-    ComputeError,
-    ForeignRef,
-    OperationUnsupported,
-    PlanRejected,
-    ResultMissing,
-    TaskFailed,
-    worker_failure,
-)
+from flowfile_core.flowfile.execution.errors import ComputeError, OperationUnsupported
 from flowfile_core.flowfile.execution.payloads import (
     CloudWritePayload,
     CustomNodePayload,
@@ -97,7 +91,6 @@ from flowfile_core.flowfile.execution.protocol import (
     SubmitResult,
 )
 from flowfile_core.flowfile.execution.registry import LOCAL_BACKEND_ID
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import safe_eval_pl_type
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import FuzzyJoinInput, PolarsOperation
 from flowfile_core.flowfile.flow_node.multi_output import output_handle
 from shared import compute_protocol as wire
@@ -114,7 +107,7 @@ def _service() -> worker_service:
     return service
 
 
-class EmbeddedWorkerBackend:
+class EmbeddedWorkerBackend(_WorkerReferences):
     """``ComputeBackend`` for the worker embedded in this process, reached by a direct call to its ``/v1`` bodies.
 
     Its id is ``local``, the id of the compute a process without a worker beside it runs on; a reference or a job
@@ -587,6 +580,8 @@ class EmbeddedWorkerBackend:
         user's secrets through core's secret store as ``process`` accesses them. The refs are ``{"result": ref}`` for
         one frame, one per declared output keyed by its output handle for a dict of them, none otherwise; each frame is
         written to the file the worker gives the output ``<job_id>_<i>`` and held with that file's columns and rows.
+        An output that fails to be written releases the outputs held before it and removes what it wrote, so a failed
+        node holds nothing.
 
         Raises:
             ValueError: ``process`` returned a dict without one of the declared outputs.
@@ -608,54 +603,20 @@ class EmbeddedWorkerBackend:
         refs = {}
         for (name, frame), result_id in zip(frames.items(), service._op_outputs(job.job_id, len(frames)), strict=True):
             path = service._output_file(job.flow_id, result_id)
-            frame.lazy().sink_ipc(path)
-            written = pl.scan_ipc(path)
-            row_count = written.select(pl.len()).collect().item()
-            held = service._hold_output(result_id, path, written.collect_schema(), row_count, job.flow_id, job.node_id)
+            try:
+                frame.lazy().sink_ipc(path)
+                written = pl.scan_ipc(path)
+                row_count = written.select(pl.len()).collect().item()
+                held = service._hold_output(
+                    result_id, path, written.collect_schema(), row_count, job.flow_id, job.node_id
+                )
+            except BaseException:
+                for earlier in refs.values():
+                    service.release(earlier.result_id)
+                Path(path).unlink(missing_ok=True)
+                raise
             refs[name] = self._ref_from_wire(held)
         return OpResult(refs=refs)
-
-    def _check(self, ref: ResultRef) -> None:
-        if ref.backend_id != self.id:
-            raise ForeignRef(f"Result {ref.result_id!r} belongs to backend {ref.backend_id!r}, not {self.id!r}")
-
-    def _table(self, ref: ResultRef) -> None:
-        """``_check``, then ``OperationUnsupported`` for a blob, which has no rows to plan over, sample or count."""
-        self._check(ref)
-        if ref.kind == "blob":
-            raise OperationUnsupported(
-                f"Result {ref.result_id} is a blob: it has no rows to plan over, sample or count"
-            )
-
-    def _own(self, handle: JobHandle) -> None:
-        if handle.backend_id != self.id:
-            raise ForeignRef(f"Job {handle.job_id!r} belongs to backend {handle.backend_id!r}, not {self.id!r}")
-
-    def _from_wire(self, answer: wire.SubmitResult) -> SubmitResult:
-        """Core's ``SubmitResult`` for the worker's answer, its reference through ``_ref_from_wire``."""
-        return SubmitResult(
-            ref=self._ref_from_wire(answer.ref),
-            sample=answer.sample,
-            handle=JobHandle(self.id, answer.job_id),
-        )
-
-    def _ref_from_wire(self, ref: wire.ResultRef) -> ResultRef:
-        """Core's ``ResultRef`` for a worker's reference: this backend's id stamped, the columns read as dtypes.
-
-        A bare class (``"Categorical"``, how Polars writes ``pl.Categorical()``) is made an instance first, since
-        ``pl.Schema`` refuses a class whose constructor takes arguments.
-        """
-        dtypes = [(column.name, safe_eval_pl_type(column.data_type)) for column in ref.columns]
-        columns = pl.Schema([(name, dtype() if isinstance(dtype, type) else dtype) for name, dtype in dtypes])
-        return ResultRef(
-            backend_id=self.id,
-            result_id=ref.result_id,
-            schema=_flowfile_schema(columns),
-            row_count=ref.row_count,
-            state=ref.state,
-            location=ref.location,
-            kind=ref.kind,
-        )
 
 
 def _call(body: Callable[..., Any], *args: Any) -> Any:
@@ -667,18 +628,7 @@ def _call(body: Callable[..., Any], *args: Any) -> Any:
 
 
 def _typed(exc: HTTPException) -> ComputeError:
-    """The typed error for the ``HTTPException`` a ``/v1`` body raised, as ``WorkerBackend`` reads the route's answer.
-
-    404 is a result, an input or a model the worker does not hold; 422 is what a body refuses before anything runs
-    (a sample above the cap, a directory scan, a table where a model was expected, a blob's scheme); a 500 carrying a
-    child's ``status``, ``error_message`` and ``error_kind`` goes through ``worker_failure`` as a failed task does; any
-    other code is a ``TaskFailed`` naming it.
-    """
-    detail = exc.detail
-    if exc.status_code == 404:
-        return ResultMissing(str(detail))
-    if exc.status_code == 422:
-        return PlanRejected(str(detail))
-    if exc.status_code == 500 and isinstance(detail, dict) and "status" in detail:
-        return worker_failure(detail.get("error_kind"), detail.get("error_message") or detail["status"])
-    return TaskFailed(f"The embedded worker answered {exc.status_code}: {detail}")
+    """The typed error for the ``HTTPException`` a ``/v1`` body raised, as ``WorkerBackend`` reads the route's answer
+    (``_v1_error``): 404 ``ResultMissing``, 422 ``PlanRejected``, a child's 500 through ``worker_failure``, any other
+    code a ``TaskFailed`` naming it."""
+    return _v1_error(exc.status_code, exc.detail, answered_by="The embedded worker")

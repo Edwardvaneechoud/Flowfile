@@ -322,6 +322,7 @@ class TestFallbacks:
         assert warm_pool.acquire("fuzzy") is None
         assert warm_pool.acquire("execute_custom_node") is None
         assert warm_pool.acquire("generic_task") is None
+        assert warm_pool.acquire("polars_code") is None
 
     def test_saturated_pool_returns_none(self, warm_pool):
         member = warm_pool.acquire("store")
@@ -613,3 +614,9 @@ class TestModuleHygiene:
 
         for operation in POOLABLE_OPERATIONS:
             assert callable(getattr(funcs, operation, None)), f"{operation} is not a funcs target"
+
+    def test_user_python_ops_are_never_pooled(self):
+        """polars_code and custom nodes run user Python, so each gets a fresh child (no patched global survives)."""
+        assert "polars_code" not in POOLABLE_OPERATIONS
+        assert "execute_custom_node" not in POOLABLE_OPERATIONS
+        assert "sql_query" in POOLABLE_OPERATIONS

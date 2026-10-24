@@ -2,16 +2,101 @@ import __future__
 
 import ast
 import base64
+import datetime as _datetime
 import decimal
 import re
 import textwrap
 import time
+import types
 import zoneinfo
 from collections.abc import Callable
 from io import BytesIO
 from typing import Any
 
 import polars as pl
+
+
+def _namespace(**members: Any) -> types.SimpleNamespace:
+    """A read-only stand-in for a module that exposes only ``members``.
+
+    The sandbox hands user code these in place of whole modules: a real module carries imported
+    submodules (``datetime.sys``, ``pl.config.os``) that a plain attribute walk reaches the ``os``
+    module through, so only the names listed here are ever exposed.
+    """
+    return types.SimpleNamespace(**members)
+
+
+def _module_namespace(module: types.ModuleType) -> types.SimpleNamespace:
+    """A namespace of ``module``'s public, non-module attributes, used for ``pl`` and its subpackages.
+
+    Polars' public API is functions, classes and dtypes; its submodules (``pl.config``, ``pl.plugins``)
+    are what reach ``os``/``sys``, so they are dropped. ``shared/tests`` proves no module survives.
+    """
+    members = {}
+    for name in dir(module):
+        if name.startswith("_"):
+            continue
+        try:
+            value = getattr(module, name)
+        except Exception:
+            continue
+        if isinstance(value, types.ModuleType):
+            continue
+        members[name] = value
+    return _namespace(**members)
+
+
+_PL_SELECTORS = _module_namespace(pl.selectors)
+_PL_EXPR = _module_namespace(pl.expr)
+_PL = _module_namespace(pl)
+_PL.selectors = _PL_SELECTORS
+_PL.expr = _PL_EXPR
+
+_DATETIME = _namespace(
+    datetime=_datetime.datetime,
+    date=_datetime.date,
+    time=_datetime.time,
+    timedelta=_datetime.timedelta,
+    timezone=_datetime.timezone,
+)
+_ZONEINFO = _namespace(ZoneInfo=zoneinfo.ZoneInfo, ZoneInfoNotFoundError=zoneinfo.ZoneInfoNotFoundError)
+_BASE64 = _namespace(
+    b64encode=base64.b64encode,
+    b64decode=base64.b64decode,
+    urlsafe_b64encode=base64.urlsafe_b64encode,
+    urlsafe_b64decode=base64.urlsafe_b64decode,
+    b32encode=base64.b32encode,
+    b32decode=base64.b32decode,
+    b16encode=base64.b16encode,
+    b16decode=base64.b16decode,
+)
+_DECIMAL = _namespace(
+    Decimal=decimal.Decimal,
+    Context=decimal.Context,
+    getcontext=decimal.getcontext,
+    localcontext=decimal.localcontext,
+    InvalidOperation=decimal.InvalidOperation,
+    ROUND_HALF_UP=decimal.ROUND_HALF_UP,
+    ROUND_HALF_EVEN=decimal.ROUND_HALF_EVEN,
+    ROUND_DOWN=decimal.ROUND_DOWN,
+    ROUND_UP=decimal.ROUND_UP,
+    ROUND_FLOOR=decimal.ROUND_FLOOR,
+    ROUND_CEILING=decimal.ROUND_CEILING,
+)
+_TIME = _namespace(
+    time=time.time,
+    time_ns=time.time_ns,
+    perf_counter=time.perf_counter,
+    perf_counter_ns=time.perf_counter_ns,
+    monotonic=time.monotonic,
+    monotonic_ns=time.monotonic_ns,
+    sleep=time.sleep,
+    strftime=time.strftime,
+    strptime=time.strptime,
+    gmtime=time.gmtime,
+    localtime=time.localtime,
+    struct_time=time.struct_time,
+)
 
 
 def remove_comments_and_docstrings(source: str) -> str:
@@ -198,6 +283,21 @@ def _count(number: int, noun: str) -> str:
     return f"{number} {noun}" if number == 1 else f"{number or 'no'} {noun}s"
 
 
+def _assigns_attribute(target: ast.AST) -> bool:
+    """Whether an assignment target rebinds an attribute (``pl.X = …``, ``lf.sink = …``), unpacking included.
+
+    Item assignment (``d['k'] = …``) stays allowed; only attribute rebinding is refused, which is how
+    user code would otherwise patch a shared Polars function for a later pooled task.
+    """
+    if isinstance(target, ast.Attribute):
+        return True
+    if isinstance(target, ast.Tuple | ast.List):
+        return any(_assigns_attribute(element) for element in target.elts)
+    if isinstance(target, ast.Starred):
+        return _assigns_attribute(target.value)
+    return False
+
+
 class PolarsCodeParser:
     """
     Securely executes Polars code with restricted access to Python functionality.
@@ -205,16 +305,14 @@ class PolarsCodeParser:
     """
 
     def __init__(self):
-        import datetime
-
         self.safe_globals = {
             "__builtins__": {},
-            # Polars functionality
-            "pl": pl,
-            "cs": pl.selectors,
+            # Polars functionality (narrow namespaces, never the raw modules)
+            "pl": _PL,
+            "cs": _PL_SELECTORS,
             "col": pl.col,
             "lit": pl.lit,
-            "expr": pl.expr,
+            "expr": _PL_EXPR,
             # Polars datatypes - added directly
             "Int8": pl.Int8,
             "Int16": pl.Int16,
@@ -262,12 +360,13 @@ class PolarsCodeParser:
             "True": True,
             "False": False,
             "None": None,
-            "time": time,
+            "time": _TIME,
             "BytesIO": BytesIO,
-            "base64": base64,
-            "datetime": datetime,
-            "decimal": decimal,
-            "zoneinfo": zoneinfo,
+            "base64": _BASE64,
+            "datetime": _DATETIME,
+            "decimal": _DECIMAL,
+            "zoneinfo": _ZONEINFO,
+            "ZoneInfo": zoneinfo.ZoneInfo,
         }
 
     @staticmethod
@@ -309,8 +408,14 @@ class PolarsCodeParser:
                             raise ValueError(f"Function '{node.func.id}' is not allowed")
 
                 if isinstance(node, ast.Attribute):
-                    if node.attr.startswith("__"):
+                    if node.attr.startswith("_"):
                         raise ValueError(f"Access to '{node.attr}' is not allowed")
+
+                if isinstance(node, ast.Assign | ast.AugAssign | ast.AnnAssign | ast.Delete):
+                    targets = node.targets if isinstance(node, ast.Assign | ast.Delete) else [node.target]
+                    for target in targets:
+                        if _assigns_attribute(target):
+                            raise ValueError("Assigning to an attribute is not allowed")
 
                 if isinstance(node, ast.Constant) and isinstance(node.value, str):
                     if re.search(r"__\w+__", node.value):

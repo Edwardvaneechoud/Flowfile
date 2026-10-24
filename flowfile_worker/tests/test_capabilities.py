@@ -122,7 +122,7 @@ def test_capabilities_name_the_operations_this_worker_runs(route_client, path):
 def test_every_v1_operation_route_is_among_the_operations(route_client, path):
     routed = {p.removeprefix("/v1/ops/") for p in main.app.openapi()["paths"] if p.startswith("/v1/ops/")}
 
-    assert len(routed) == 12
+    assert len(routed) == 15
     assert routed <= declared(route_client, path).operations
 
 

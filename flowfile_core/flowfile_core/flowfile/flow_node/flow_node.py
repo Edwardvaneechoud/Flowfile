@@ -250,6 +250,8 @@ class FlowNode:
     _stored_outputs: dict[str, ResultRef]
     # output name -> a materialised result the node's operation minted (run_op), released with the node's result
     _operation_refs: dict[str, ResultRef]
+    # the stored results of a run_flow child graph's nodes this node took over (adopt_results), released with its own
+    _adopted_refs: list[ResultRef]
     # the exception the last run failed with; a read raises it while results.errors is set
     _last_run_error: BaseException | None
 
@@ -353,6 +355,7 @@ class FlowNode:
         self._boundary_inputs = {}
         self._stored_outputs = {}
         self._operation_refs = {}
+        self._adopted_refs = []
 
         self.user_provided_schema_callback = None
         self._schema_callback = None
@@ -1631,28 +1634,75 @@ class FlowNode:
         each id released once. ``results.model_ref`` is forgotten with the model it names when that model is among the
         operation's outputs; one the node did not fit (carried onto a combined graph's node, held by the node it was
         carried from) is left as it is. It is called on a rerun under another hash or on another backend, on removal,
-        when the graph closes and when the node fails after storing part of its outputs. A release whose backend
-        cannot be reached (``ComputeUnavailable``) is logged and the reference dropped; any other release error raises.
+        when the graph closes and when the node fails after storing part of its outputs. A release that fails (an
+        unreachable backend, one removed or of another version, a refused task) is logged and the reference dropped,
+        never raised: releasing is cleanup, and a close, a delete or a run's end must not stop on it.
         """
         ref = self.results.result_ref
         self.results.result_ref = None
         self.results.job_handle = None
         stored, self._stored_outputs = list(self._stored_outputs.values()), {}
         minted, self._operation_refs = list(self._operation_refs.values()), {}
+        adopted, self._adopted_refs = self._adopted_refs, []
         if self.results.model_ref in minted:
             self.results.model_ref = None
         released: set[tuple[str, str]] = set()
-        for held in [ref, *stored, *minted]:
+        for held in [ref, *stored, *minted, *adopted]:
             if held is None or (held.backend_id, held.result_id) in released:
                 continue
             released.add((held.backend_id, held.result_id))
-            try:
-                registry.backend(held.backend_id).release(held)
-            except ComputeUnavailable as e:
-                logger.warning(
-                    f"Node {self.node_id}: dropped result {held.result_id} without releasing it, "
-                    f"backend {held.backend_id!r} cannot be reached: {e}"
-                )
+            self._release_or_drop(held)
+
+    def _release_or_drop(self, held: ResultRef) -> None:
+        """Release ``held`` on its backend; any failure is logged and the reference dropped."""
+        try:
+            registry.backend(held.backend_id).release(held)
+        except ComputeUnavailable as e:
+            logger.warning(
+                f"Node {self.node_id}: dropped result {held.result_id} without releasing it, "
+                f"backend {held.backend_id!r} cannot be reached: {e}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Node {self.node_id}: dropped result {held.result_id} without releasing it on backend "
+                f"{held.backend_id!r}: {type(e).__name__}: {e}"
+            )
+
+    def adopt_results(self, other: "FlowNode") -> None:
+        """Takes over every result ``other`` holds, released with this node's own (``release_result``).
+
+        For a ``run_flow`` child graph's node once the child run ended: the parent's output may scan the child's
+        stored results, so they live as long as the Run Flow node's result does, not as long as the child graph.
+        """
+        held = [other.results.result_ref, *other._stored_outputs.values(), *other._operation_refs.values()]
+        other.results.result_ref = None
+        other.results.job_handle = None
+        other._stored_outputs, other._operation_refs = {}, {}
+        if other.results.model_ref in held:
+            other.results.model_ref = None
+        self._adopted_refs.extend(ref for ref in held if ref is not None)
+
+    def drop_downstream_results(self) -> None:
+        """Every node downstream releases what it holds and counts as not run with its current setup.
+
+        For a node whose operation outputs were just released under a rerun of its own (a preview fetch): those
+        outputs come back under new ids, so a plan downstream built over the old ones can no longer be read, and the
+        next read or run of those nodes computes them again.
+        """
+        seen: set[int] = set()
+        stack = list(self.leads_to_nodes)
+        while stack:
+            node = stack.pop()
+            if id(node) in seen:
+                continue
+            seen.add(id(node))
+            node.release_result()
+            node.results.reset()
+            node.node_stats.has_run_with_current_setup = False
+            node.node_stats.has_completed_last_run = False
+            node._execution_state.has_run_with_current_setup = False
+            node._execution_state.has_completed_last_run = False
+            stack.extend(node.leads_to_nodes)
 
     def release_deferred_result(self) -> None:
         """Releases the held result when it is a deferred plan; a stored one is left to whatever scans its file.
@@ -1667,13 +1717,7 @@ class FlowNode:
             return
         self.results.result_ref = None
         self.results.job_handle = None
-        try:
-            registry.backend(ref.backend_id).release(ref)
-        except ComputeUnavailable as e:
-            logger.warning(
-                f"Node {self.node_id}: dropped result {ref.result_id} without releasing it, "
-                f"backend {ref.backend_id!r} cannot be reached: {e}"
-            )
+        self._release_or_drop(ref)
 
     def held_result(self, backend_id: str) -> ResultRef | None:
         """The result this node holds on backend ``backend_id`` under its current hash, else ``None``."""
@@ -1681,6 +1725,12 @@ class FlowNode:
         if ref is None or ref.backend_id != backend_id or ref.result_id != self.hash:
             return None
         return ref
+
+    def result_backend(self, handle: str = DEFAULT_OUTPUT_HANDLE) -> ComputeBackend | None:
+        """The backend that holds the result of output ``handle``, else ``None``; a plan over it runs there."""
+        held = self.results.result_ref if handle == DEFAULT_OUTPUT_HANDLE else None
+        held = held or self.held_output(handle)
+        return None if held is None else registry.backend(held.backend_id)
 
     def held_output(self, handle: str) -> ResultRef | None:
         """The stored result this node holds for its output ``handle``, else ``None``.
@@ -1926,7 +1976,9 @@ class FlowNode:
         runs, ``cancel`` hands ``JobHandle(backend.id, job_id)`` to ``backend.cancel``, as it does for a submit.
         Each stored result the operation answers is the node's from then on (``_operation_refs``, by output name),
         released with its result (``release_result``); a deferred one stays the caller's to release, since the
-        engine built over it holds its plan.
+        engine built over it holds its plan. One it replaces under the same output name with another id (a rerun
+        under the same hash whose operation mints fresh ids, as a random split or a database read does) is released
+        first, so no earlier generation stays held untracked.
 
         Failures follow ``run_operation``'s rule, which is ``_submit``'s.
         """
@@ -1935,7 +1987,14 @@ class FlowNode:
             result = run_operation(backend, op, payload)
         finally:
             self._submit_in_flight = None
-        self._operation_refs.update({name: ref for name, ref in result.refs.items() if ref.state == "materialised"})
+        minted = {name: ref for name, ref in result.refs.items() if ref.state == "materialised"}
+        for name, ref in minted.items():
+            replaced = self._operation_refs.get(name)
+            if replaced is not None and (replaced.backend_id, replaced.result_id) != (ref.backend_id, ref.result_id):
+                if self.results.model_ref == replaced:
+                    self.results.model_ref = None
+                self._release_or_drop(replaced)
+        self._operation_refs.update(minted)
         return result
 
     def _input_refs(self, backend_id: str) -> list[ResultRef]:
@@ -2037,6 +2096,7 @@ class FlowNode:
         performance_mode: bool = False,
         retry: bool = True,
         node_logger: NodeLogger | None = None,
+        unreachable: Exception | None = None,
     ) -> None:
         """Execute the node based on its current state and settings.
 
@@ -2051,6 +2111,8 @@ class FlowNode:
             performance_mode: Skip example data generation for speed
             retry: Allow retry on recoverable errors
             node_logger: Logger for this node's execution
+            unreachable: The error the handshake of the backend placement assigned the node raised; the node fails
+                with it and nothing runs.
         """
         if node_logger is None:
             raise ValueError("node_logger is required")
@@ -2063,6 +2125,7 @@ class FlowNode:
             performance_mode=performance_mode,
             retry=retry,
             node_logger=node_logger,
+            unreachable=unreachable,
         )
 
     def needs_reset(self) -> bool:
@@ -2381,9 +2444,10 @@ class FlowNode:
         source of truth), so this run's later previews carry them too; the
         return value is that column's ordinary ``FileColumn`` representation.
         The aggregate runs on ``backend``, by default the current execution
-        context's. With ``FLOWFILE_COMPUTE_PROTOCOL`` on that is read in the
-        context of the node's graph: the run's during a run, the flow's own
-        outside one, and the default backend only for a node with no graph.
+        context's. With ``FLOWFILE_COMPUTE_PROTOCOL`` on it is the backend that
+        holds the output's result, else the one read in the context of the
+        node's graph: the run's during a run, the flow's own outside one, and
+        the default backend only for a node with no graph.
         With it off, outside a run it is the default backend, not the flow's,
         so with the worker configured a locally-run node's result (its full
         upstream plan) is aggregated on the worker, and in core only when the
@@ -2397,8 +2461,10 @@ class FlowNode:
         engine = self.get_cached_result(output_handle)
         if backend is None:
             if settings.FLOWFILE_COMPUTE_PROTOCOL:
-                with self._in_execution_context():
-                    backend = current_context().backend
+                backend = self.result_backend(output_handle)
+                if backend is None:
+                    with self._in_execution_context():
+                        backend = current_context().backend
             else:
                 backend = current_context().backend
         stats = compute_column_stats(engine, column_name, backend=backend)

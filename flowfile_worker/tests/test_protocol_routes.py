@@ -1245,3 +1245,178 @@ def test_a_submit_sweeps_results_and_jobs_whose_submit_ended_too_long_ago(held, 
     assert client.head(f"/v1/results/{later}").status_code == 404
     assert client.head(f"/v1/results/{last}").status_code == 200
     assert client.get(f"/v1/jobs/{last}").json()["status"] == "Completed"
+
+
+def _slow_plan() -> bytes:
+    """A plan whose child sleeps 30 s as it loads, long enough to be replaced or released while it runs."""
+    sleeper = _SleepWhenLoaded(30)
+    return _plan().with_columns(pl.col("id").map_batches(lambda s, _=sleeper: s, return_dtype=pl.Int64)).serialize()
+
+
+def _wait_for_job(result_id: str, status: str, on: TestClient = client) -> None:
+    deadline = time.monotonic() + 30
+    while (job := on.get(f"/v1/jobs/{result_id}")).status_code != 200 or job.json()["status"] != status:
+        assert time.monotonic() < deadline, f"the job never reached {status}"
+        time.sleep(0.01)
+
+
+def test_a_submit_under_an_id_a_job_still_runs_under_replaces_that_job(held, one_member_pool):
+    """A rerun after core's socket dropped: the first child would otherwise write the same file as the second."""
+    result_id = held()
+    answers = []
+    first = threading.Thread(
+        target=lambda: answers.append(_post(_slow_plan(), _meta(result_id, must_materialise=True)))
+    )
+    first.start()
+    try:
+        _wait_for_job(result_id, "Processing")
+
+        replacement = _submit(result_id, pl.LazyFrame({"y": ["b"]}), must_materialise=True)
+
+        first.join(30)
+        assert not first.is_alive(), "the replaced submit did not answer"
+    finally:
+        first.join(60)
+    [response] = answers
+    assert response.status_code == 500
+    assert response.json()["detail"]["status"] == "Cancelled"
+    assert [column.name for column in replacement.ref.columns] == ["y"]
+    assert pl.read_ipc(_location(replacement).path).columns == ["y"]
+    assert client.head(f"/v1/results/{result_id}").status_code == 200
+    assert client.get(f"/v1/jobs/{result_id}").json()["status"] == "Completed"
+
+
+def test_a_release_of_an_id_a_submit_still_runs_under_stops_it_and_holds_nothing(held, one_member_pool):
+    result_id = held()
+    answers = []
+    submit = threading.Thread(
+        target=lambda: answers.append(_post(_slow_plan(), _meta(result_id, must_materialise=True)))
+    )
+    submit.start()
+    try:
+        _wait_for_job(result_id, "Processing")
+
+        assert client.delete(f"/v1/results/{result_id}").status_code == 204
+
+        submit.join(30)
+        assert not submit.is_alive(), "the released submit did not answer"
+    finally:
+        submit.join(60)
+    [response] = answers
+    assert response.status_code == 500
+    assert response.json()["detail"]["status"] == "Cancelled"
+    assert client.head(f"/v1/results/{result_id}").status_code == 404
+    assert not result_path(FLOW_ID, result_id).exists()
+
+
+def test_a_submit_released_before_its_job_registers_never_starts(held, monkeypatch):
+    """The release lands between the submit's claim on the id and its job's entry."""
+    result_id = held()
+    go, started = threading.Event(), []
+    real_materialise, real_start = service._materialise, service.start_process
+
+    def held_back(hints):
+        go.wait(30)
+        return real_materialise(hints)
+
+    monkeypatch.setattr(service, "_materialise", held_back)
+    monkeypatch.setattr(service, "start_process", lambda *a, **k: started.append(1) or real_start(*a, **k))
+    answers = []
+    submit = threading.Thread(target=lambda: answers.append(_post(_plan().serialize(), _meta(result_id))))
+    submit.start()
+    try:
+        deadline = time.monotonic() + 30
+        while result_id not in service._claims:
+            assert time.monotonic() < deadline, "the submit never claimed its id"
+            time.sleep(0.01)
+
+        assert client.delete(f"/v1/results/{result_id}").status_code == 204
+    finally:
+        go.set()
+        submit.join(60)
+    [response] = answers
+    assert response.status_code == 500
+    assert response.json()["detail"]["status"] == "Cancelled"
+    assert started == []
+    assert client.head(f"/v1/results/{result_id}").status_code == 404
+
+
+def test_a_job_that_completes_without_reporting_its_result_is_a_failed_task(held, monkeypatch):
+    """A pool member that died after its last progress leaves the job ``Completed`` with nothing reported."""
+    result_id = held()
+
+    def completes_empty(*args, task_id: str, **kwargs):
+        with status_dict_lock:
+            status_dict[task_id].status = "Completed"
+            status_dict[task_id].progress = 100
+
+    monkeypatch.setattr(service, "start_process", completes_empty)
+
+    response = _post(_plan().serialize(), _meta(result_id, must_materialise=True))
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert detail["status"] == "Error"
+    assert detail["error_kind"] == "task"
+    assert "without reporting its result" in detail["error_message"]
+    assert client.get(f"/v1/jobs/{result_id}").json()["status"] == "Error"
+    assert client.head(f"/v1/results/{result_id}").status_code == 404
+    assert not result_path(FLOW_ID, result_id).exists()
+
+
+@pytest.mark.parametrize("result_id", ["a.b", "..%5Cescaped", "has%20space"])
+def test_an_import_under_an_id_that_could_name_another_file_is_422(result_id, tmp_path):
+    body = {"uri": file_uri(tmp_path / "x.parquet"), "credential": None, "columns": [], "row_count": None}
+
+    assert client.post(f"/v1/results/{result_id}/import", json=body).status_code == 422
+
+
+def _one_pool_thread() -> None:
+    import anyio.to_thread
+
+    anyio.to_thread.current_default_thread_limiter().total_tokens = 1
+
+
+def test_the_short_routes_answer_while_every_pool_thread_waits_on_a_child(held, monkeypatch):
+    """A submit holds the only thread of the pool; a job's status, a probe, a release and a cancel still answer."""
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    app.include_router(protocol_routes.router)
+    result_id, other = held(), held()
+    go = threading.Event()
+    real = service.start_process
+
+    def held_back(*args, **kwargs):
+        go.wait(30)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(service, "start_process", held_back)
+    headers = {**INTERNAL_AUTH_HEADERS, PROTOCOL_VERSION_HEADER: str(PROTOCOL_VERSION)}
+    answers: dict[str, int] = {}
+    with TestClient(app, headers=headers) as one_loop:
+        one_loop.portal.call(_one_pool_thread)
+        files = {"plan": ("plan", _plan().serialize(), "application/octet-stream")}
+        submit = threading.Thread(
+            target=lambda: one_loop.post("/v1/submit", files=files, data={"meta": _meta(result_id)})
+        )
+        submit.start()
+
+        def probe() -> None:
+            answers["status"] = one_loop.get(f"/v1/jobs/{result_id}").status_code
+            answers["head"] = one_loop.head(f"/v1/results/{other}").status_code
+            answers["delete"] = one_loop.delete(f"/v1/results/{other}").status_code
+            answers["cancel"] = one_loop.post(f"/v1/jobs/{other}/cancel").status_code
+
+        prober = threading.Thread(target=probe)
+        try:
+            _wait_for_job(result_id, "Starting", on=one_loop)
+            prober.start()
+            prober.join(10)
+            assert not prober.is_alive(), "a short route waited for the pool thread the submit holds"
+        finally:
+            go.set()
+            submit.join(60)
+            if prober.is_alive():
+                prober.join(60)
+    assert answers == {"status": 200, "head": 404, "delete": 404, "cancel": 404}

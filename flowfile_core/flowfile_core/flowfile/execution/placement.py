@@ -31,7 +31,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Mapping
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from flowfile_core.catalog import CatalogService
@@ -93,11 +93,14 @@ class Placement:
         assignment: Node id -> the id of the backend that runs it.
         boundaries: The edges whose data crosses from one backend to another, as (source node id, target node id).
         refusals: The nodes their backend cannot run.
+        unreachable: Backend id -> the error its handshake raised, for the backends that could not be asked; their
+            nodes are assigned to them unchecked and fail with that error when they run.
     """
 
     assignment: dict[int, str]
     boundaries: list[tuple[int, int]]
     refusals: list[Refusal]
+    unreachable: dict[str, Exception] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -163,6 +166,43 @@ def remedy_for(node: FlowNode, policy: PlacementPolicy) -> str | None:
     return f"To run it elsewhere, set {_FLOW_SETTING}."
 
 
+def _model_elsewhere(flow: FlowGraph, node: FlowNode, backend_id: str, policy: PlacementPolicy) -> list[str]:
+    """An Apply Model node scoring an upstream Train Model node's model runs where that model is fitted and held."""
+    apply_input = node.setting_input.apply_input
+    if apply_input.source != "upstream" or apply_input.upstream_node_id is None:
+        return []
+    train = flow.get_node(apply_input.upstream_node_id)
+    if train is None or policy.backend_for(train) == backend_id:
+        return []
+    return [
+        f"it scores the model Train Model node {train.node_id} fits and holds on backend "
+        f'"{policy.backend_for(train)}"; place both on one backend'
+    ]
+
+
+def _probe_elsewhere(
+    node: FlowNode,
+    backend_id: str,
+    policy: PlacementPolicy,
+    requirements: NodeRequirements,
+    backends: Mapping[str, Capabilities],
+    absent: Mapping[str, Mapping[str, str]] | None,
+) -> list[str]:
+    """A formula gate checks its formula on the backend of the input it probes, which must meet the gate's needs too."""
+    gate_input = getattr(node.setting_input, "gate_input", None)
+    if gate_input is None or gate_input.condition_source != "formula":
+        return []
+    source = node.node_inputs.right_input or next(iter(node.node_inputs.main_inputs or []), None)
+    probe_backend_id = None if source is None else policy.backend_for(source)
+    if probe_backend_id in (None, backend_id) or probe_backend_id not in backends:
+        return []
+    unmet = _unmet(requirements, backends[probe_backend_id], None, None, (absent or {}).get(probe_backend_id, {}))
+    return [
+        f'its formula is checked on backend "{probe_backend_id}", where node {source.node_id} runs: {reason}'
+        for reason in unmet
+    ]
+
+
 def place(
     flow: FlowGraph,
     backends: Mapping[str, Capabilities],
@@ -170,12 +210,15 @@ def place(
     *,
     nodes: list[FlowNode] | None = None,
     absent: Mapping[str, Mapping[str, str]] | None = None,
+    unreachable: Mapping[str, Exception] | None = None,
 ) -> Placement:
     """Assign each of ``nodes`` (default all of the flow's) its backend by ``policy``, refusing each it cannot run.
 
-    ``backends`` holds the capabilities in hand of the backends the policy names for them. A node whose backend is not
-    among them (one that could not be asked) is neither assigned nor refused: reaching a backend is the handshake's
-    concern, and the node meets that backend's typed error when it runs. ``absent`` maps a backend id to what its
+    ``backends`` holds the capabilities in hand of the backends the policy names for them. A node whose backend is in
+    ``unreachable`` (its handshake raised that error) is assigned to it unchecked, so it fails with that error when it
+    runs and never runs anywhere else; a node whose backend is in neither map is neither assigned nor refused. An Apply
+    Model node is refused on another backend than the Train Model node whose model it scores, and a formula gate where
+    the backend of the input it probes lacks what the formula needs. ``absent`` maps a backend id to what its
     handshake found it does not offer, a plugin's name or ``PYTHON_FUNCTIONS``, and the reason, in words that follow
     "which"; a plugin a backend lacks with no reason there is one ``this backend does not have``. Nothing is asked of a
     backend; the four lookups are where a catalog reader's or writer's namespace keeps its tables
@@ -205,6 +248,8 @@ def place(
         backend_id = policy.backend_for(node)
         capabilities = backends.get(backend_id)
         if capabilities is None:
+            if unreachable and backend_id in unreachable:
+                assignment[node.node_id] = backend_id
             continue
         absent_here = (absent or {}).get(backend_id, {})
         assignment[node.node_id] = backend_id
@@ -238,6 +283,9 @@ def place(
             reasons += _unresolvable_connections(node, requirements.credentials, namespace_id)
         if isinstance(node.setting_input, input_schema.NodeRunFlow):
             reasons += _child_refusals(flow, node, backend_id, backends, policy, absent)
+        if isinstance(node.setting_input, input_schema.NodeApplyModel):
+            reasons += _model_elsewhere(flow, node, backend_id, policy)
+        reasons += _probe_elsewhere(node, backend_id, policy, requirements, backends, absent)
         if reasons:
             refusals.append(Refusal(node_id=node.node_id, backend_id=backend_id, reason="; ".join(reasons)))
     boundaries: list[tuple[int, int]] = []
@@ -250,7 +298,9 @@ def place(
             edge = (source.node_id, node.node_id)
             if source_backend_id is not None and source_backend_id != backend_id and edge not in boundaries:
                 boundaries.append(edge)
-    return Placement(assignment=assignment, boundaries=boundaries, refusals=refusals)
+    return Placement(
+        assignment=assignment, boundaries=boundaries, refusals=refusals, unreachable=dict(unreachable or {})
+    )
 
 
 def _unmet(

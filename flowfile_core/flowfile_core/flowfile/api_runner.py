@@ -61,8 +61,9 @@ class ApiExecutionError(Exception):
 # The most rows a worker answers for one sample; a published response is never larger.
 _SAMPLE_ROWS_CAP = 10_000
 
-# The typed compute errors by class name, as a run report row names the one that failed its node.
-_COMPUTE_ERRORS = {error.__name__: error for error in (ComputeError, *ComputeError.__subclasses__())}
+# The typed compute errors by class name, as a run report row names the one that failed its node; not the base,
+# whose name Polars' own ComputeError shares.
+_COMPUTE_ERRORS = {error.__name__: error for error in ComputeError.__subclasses__()}
 
 _run_locks_guard = threading.Lock()
 _run_locks: dict[int, threading.Lock] = {}
@@ -228,14 +229,36 @@ def _materialize(data: Any, max_rows: int | None, flow: Any, api_node: Any):
     return result.collect()
 
 
+def _truncated(df: pl.DataFrame, max_rows: int | None, flow: Any, api_node: Any) -> bool:
+    """Whether the worker's sample cap, not the node's *max_rows*, left rows out of a response.
+
+    Only a remote read with ``FLOWFILE_COMPUTE_PROTOCOL`` on is capped (``_materialize``). The result's row count is
+    read from its reference when it carries one, else counted on the backend that holds it.
+    """
+    if flow.flow_settings.execution_location == "local" or not FLOWFILE_COMPUTE_PROTOCOL:
+        return False
+    if df.height < _SAMPLE_ROWS_CAP or (max_rows is not None and max_rows <= _SAMPLE_ROWS_CAP):
+        return False
+    ref = api_node.results.result_ref
+    total = ref.row_count if ref.row_count is not None else registry.backend(ref.backend_id).count(ref)
+    return total > df.height
+
+
 def _serialize(data: Any, settings: Any, flow: Any, api_node: Any) -> dict[str, Any]:
+    """The response body: the rows, how many there are, the orientation, and whether the sample cap cut them."""
     orientation = getattr(settings, "orientation", "records")
     max_rows = getattr(settings, "max_rows", None)
     df = _materialize(data, max_rows, flow, api_node)
+    truncated = _truncated(df, max_rows, flow, api_node)
     if orientation == "columns":
-        return {"data": df.to_dict(as_series=False), "row_count": df.height, "orientation": "columns"}
+        return {
+            "data": df.to_dict(as_series=False),
+            "row_count": df.height,
+            "orientation": "columns",
+            "truncated": truncated,
+        }
     records = df.to_dicts()
-    return {"data": records, "row_count": len(records), "orientation": "records"}
+    return {"data": records, "row_count": len(records), "orientation": "records", "truncated": truncated}
 
 
 def _effective_specs(flow, overrides: list[ApiParamSpec]) -> list[ApiParamSpec]:

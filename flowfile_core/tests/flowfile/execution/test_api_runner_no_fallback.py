@@ -417,3 +417,24 @@ def test_with_the_protocol_flag_max_rows_is_clamped_to_the_workers_sample_cap(
 
     assert sampled == [(ref.result_id, n)]
     assert response.equals(plan.head(n).collect())
+
+
+@pytest.mark.parametrize(
+    "max_rows, truncated", [(None, True), (20_000, True), (10_000, False), (5, False)], ids=str
+)
+def test_with_the_protocol_flag_a_response_the_sample_cap_cut_says_so(
+    protocol_on, running_worker, max_rows, truncated
+):
+    backend = registry.backend(registry.WORKER_BACKEND_ID)
+    plan = pl.LazyFrame({"v": range(10_005)})
+    ref = backend.submit(plan, [], DEFERRED_HINTS, f"api_{uuid4().hex}", flow_id=-1, node_id=-1).ref
+    remote_flow = SimpleNamespace(flow_settings=SimpleNamespace(execution_location="remote"))
+    api_node = SimpleNamespace(results=SimpleNamespace(result_ref=ref))
+    settings_ = SimpleNamespace(orientation="records", max_rows=max_rows)
+    try:
+        out = api_runner._serialize(None, settings_, remote_flow, api_node)
+    finally:
+        backend.release(ref)
+
+    assert out["row_count"] == min(max_rows or 10_000, 10_000)
+    assert out["truncated"] is truncated

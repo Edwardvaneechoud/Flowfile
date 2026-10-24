@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Literal
 
 from flowfile_worker import CACHE_DIR
+from flowfile_worker.configs import logger
 from shared.compute_protocol import ResultRef, WireColumn, WorkerLocation
 
 
@@ -98,7 +99,8 @@ class ResultRegistry:
     def expire(self, max_age: float) -> list[str]:
         """Forget every id whose submit ended *max_age* seconds ago or more, with its record and file.
 
-        The files are deleted after the registry's lock is released. Returns the ids.
+        The files are deleted after the registry's lock is released, each on its own: one that cannot be removed is
+        logged and the sweep goes on. Returns the ids.
         """
         cutoff = time.monotonic() - max_age
         with self._lock:
@@ -112,12 +114,14 @@ class ResultRegistry:
 
 
 def _remove_file(record: ResultRecord | None) -> None:
-    """Delete a materialised record's file; a file that is already gone is fine."""
+    """Delete a materialised record's file; one already gone is fine, one that cannot be removed is logged and left."""
     if record is not None and record.path:
         try:
             os.remove(record.path)
         except FileNotFoundError:
             pass
+        except OSError as e:
+            logger.warning(f"Could not remove the file of result {record.result_id}: {e}")
 
 
 results = ResultRegistry()

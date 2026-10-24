@@ -1,188 +1,195 @@
 <template>
   <div class="backends-container">
-    <div class="mb-3">
-      <h2 class="page-title">Compute backends</h2>
-      <p class="page-description">
-        Workers Flowfile can reach besides its built-in worker service, on this host or another. A
-        handshake checks a worker's versions against this server's, and which plugins and Python
-        functions it runs.
-      </p>
-    </div>
+    <header class="backends-heading">
+      <div class="backends-heading__icon">
+        <i class="fa-solid fa-network-wired" aria-hidden="true"></i>
+      </div>
+      <div>
+        <h2 class="page-title">Compute backends</h2>
+        <p class="page-description">
+          Connect workers, check compatibility, and share results between backends.
+        </p>
+      </div>
+    </header>
 
     <template v-if="isAdmin">
-      <div class="backends-card">
-        <div v-if="loadError" class="backends-banner">
-          <i class="fa-solid fa-circle-exclamation"></i>
-          <span>{{ loadError }}</span>
-        </div>
-
-        <h3 class="backends-card-title">Configured workers</h3>
-        <p class="backends-card-description">
-          Each worker has its own URL and bearer token, when its TLS certificate is not public the
-          CA certificate to trust, and whether it sees this server's files; its id is
-          <code>worker:&lt;name&gt;</code>. The built-in backends, <code>local</code> and
-          <code>worker</code>, are not listed. To change any of these, remove the worker and add it
-          again.
-        </p>
-
-        <p v-if="loading && !backends.length" class="backends-loading">Loading workers…</p>
-
-        <table v-if="backends.length" class="backends-table">
-          <thead>
-            <tr>
-              <th>Id</th>
-              <th>URL</th>
-              <th>Sees this server's files</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            <template v-for="backend in backends" :key="backend.id">
-              <tr>
-                <td>
-                  <code>{{ backend.id }}</code>
-                </td>
-                <td class="backends-url">{{ backend.url }}</td>
-                <td :data-testid="`backend-server-files-${backend.id}`">
-                  {{ serverFilesLabel(backend, verdicts[backend.id]) }}
-                </td>
-                <td class="backends-actions">
+      <section class="compute-card" aria-labelledby="configured-workers-title">
+        <header class="compute-card__header">
+          <span class="compute-card__icon"
+            ><i class="fa-solid fa-server" aria-hidden="true"></i
+          ></span>
+          <div class="compute-card__intro">
+            <h3 id="configured-workers-title" class="compute-card__title">Configured workers</h3>
+            <p class="compute-card__description">
+              Additional workers for your flows. Built-in <code>local</code> and
+              <code>worker</code> backends are not listed.
+            </p>
+          </div>
+          <span v-if="!loading" class="backends-count"
+            >{{ backends.length }} {{ backends.length === 1 ? "worker" : "workers" }}</span
+          >
+        </header>
+        <div class="compute-card__body">
+          <div v-if="loadError" class="backends-banner" role="alert">
+            <i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i
+            ><span>{{ loadError }}</span>
+          </div>
+          <p v-if="loading && !backends.length" class="backends-loading">Loading workers…</p>
+          <ul v-if="backends.length" class="backends-list" aria-label="Configured workers">
+            <li v-for="backend in backends" :key="backend.id" class="backend-worker">
+              <div class="backend-worker__header">
+                <div class="backend-worker__identity">
+                  <h4 class="backend-worker__name">
+                    <code>{{ backend.id }}</code>
+                  </h4>
+                  <div class="backends-url">{{ backend.url }}</div>
+                </div>
+                <div
+                  class="backend-worker__files"
+                  :data-testid="`backend-server-files-${backend.id}`"
+                >
+                  <span>Sees this server's files</span>
+                  <strong>{{ serverFilesLabel(backend, verdicts[backend.id]) }}</strong>
+                </div>
+                <div class="backends-actions">
                   <el-button
                     size="small"
                     :loading="busy[backend.id]"
+                    :aria-label="`Handshake ${backend.id}`"
                     @click="onHandshake(backend.id)"
                   >
-                    Handshake
+                    <i class="fa-solid fa-rotate" aria-hidden="true"></i> Handshake
                   </el-button>
                   <el-button
                     size="small"
                     type="danger"
                     plain
                     :loading="busy[backend.id]"
+                    :aria-label="`Remove ${backend.id}`"
                     @click="onRemove(backend.id)"
+                    >Remove</el-button
                   >
-                    Remove
-                  </el-button>
-                </td>
-              </tr>
-              <tr v-if="verdicts[backend.id]" class="backends-verdict-row">
-                <td colspan="4">
-                  <div
-                    v-if="verdicts[backend.id].ok && verdicts[backend.id].backend"
-                    class="backends-verdict backends-verdict--ok"
-                  >
-                    <i class="fa-solid fa-circle-check"></i>
-                    <div>
-                      <div>{{ matchLine(verdicts[backend.id]) }}</div>
-                      <div
-                        v-for="difference in verdicts[backend.id].differences"
-                        :key="difference"
-                        class="backends-difference"
-                      >
-                        {{ difference }}
-                      </div>
-                      <div
-                        v-for="(reason, name) in verdicts[backend.id].absent"
-                        :key="name"
-                        class="backends-difference"
-                      >
-                        offered without: {{ absentLabel(String(name)) }} — {{ reason }}
-                      </div>
-                    </div>
-                  </div>
-                  <div v-else class="backends-verdict backends-verdict--error">
-                    <i class="fa-solid fa-circle-xmark"></i>
-                    <span v-if="verdicts[backend.id].error">{{ verdicts[backend.id].error }}</span>
-                    <div v-else>
-                      <div>Does not match this server:</div>
-                      <div
-                        v-for="difference in verdicts[backend.id].differences"
-                        :key="difference"
-                        class="backends-difference"
-                      >
-                        {{ difference }}
-                      </div>
-                    </div>
-                  </div>
-                </td>
-              </tr>
-            </template>
-          </tbody>
-        </table>
-
-        <div v-else-if="!loading && !loadError" class="backends-empty">
-          <i class="fa-solid fa-network-wired"></i>
-          <div class="backends-empty__title">No workers configured</div>
-          <div class="backends-empty__hint">Add one below with its name, URL and token.</div>
-        </div>
-
-        <div class="backends-add">
-          <h4 class="backends-add__title">Add a worker</h4>
-          <div class="backends-add__fields">
-            <label class="backends-field">
-              <span class="backends-field__label">Name</span>
-              <el-input v-model="form.name" v-bind="NO_AUTOFILL" placeholder="team">
-                <template #prepend>worker:</template>
-              </el-input>
-            </label>
-            <label class="backends-field">
-              <span class="backends-field__label">URL</span>
-              <el-input v-model="form.url" v-bind="NO_AUTOFILL" placeholder="https://…" />
-              <span v-if="plainHttp" class="backends-field__note backends-field__note--warning">
-                <i class="fa-solid fa-triangle-exclamation"></i>
-                Plain HTTP to another host: the token and every plan cross the network in clear, and
-                whoever holds the token can run code on the worker. Beyond a trusted network, use
-                https:// and, for a certificate that is not public, its CA certificate.
-              </span>
-            </label>
-            <label class="backends-field">
-              <span class="backends-field__label">Token</span>
-              <el-input v-model="form.token" v-bind="NO_AUTOFILL" type="password" show-password />
-            </label>
-            <label class="backends-field">
-              <span class="backends-field__label">CA certificate (PEM, optional)</span>
-              <el-input
-                v-model="form.ca_cert"
-                v-bind="NO_AUTOFILL"
-                type="textarea"
-                :rows="3"
-                placeholder="-----BEGIN CERTIFICATE-----"
-              />
-            </label>
+                </div>
+              </div>
+              <BackendHandshakeStatus :verdict="verdicts[backend.id]" />
+            </li>
+          </ul>
+          <div v-else-if="!loading && !loadError" class="backends-empty">
+            <i class="fa-solid fa-server" aria-hidden="true"></i>
+            <div class="backends-empty__title">No workers configured</div>
+            <p>Add your first worker below to make it available to your flows.</p>
           </div>
-          <div class="backends-field backends-option">
-            <el-checkbox
-              v-model="form.shares_core_disk"
-              data-testid="backend-server-files-input"
-              aria-describedby="backend-server-files-hint"
+        </div>
+      </section>
+
+      <section class="compute-card" aria-labelledby="add-worker-title">
+        <header class="compute-card__header">
+          <span class="compute-card__icon"
+            ><i class="fa-solid fa-plus" aria-hidden="true"></i
+          ></span>
+          <div class="compute-card__intro">
+            <h3 id="add-worker-title" class="compute-card__title">Add a worker</h3>
+            <p class="compute-card__description">
+              Connect a worker using its URL and bearer token.
+            </p>
+          </div>
+        </header>
+        <form @submit.prevent="onAdd">
+          <div class="compute-card__body">
+            <div class="backends-add__fields">
+              <label class="compute-field">
+                <span class="compute-field__label">Name</span>
+                <el-input v-model="form.name" v-bind="NO_AUTOFILL" placeholder="team"
+                  ><template #prepend>worker:</template></el-input
+                >
+              </label>
+              <label class="compute-field">
+                <span class="compute-field__label">Worker URL</span>
+                <el-input
+                  v-model="form.url"
+                  v-bind="NO_AUTOFILL"
+                  placeholder="https://worker.example.com"
+                />
+                <span v-if="plainHttp" class="compute-field__hint backends-field__warning">
+                  Plain HTTP sends the token and plans unencrypted. Anyone with the token can run
+                  code on the worker. Outside a trusted network, use HTTPS.
+                </span>
+              </label>
+              <label class="compute-field">
+                <span class="compute-field__label">Bearer token</span>
+                <el-input
+                  v-model="form.token"
+                  v-bind="NO_AUTOFILL"
+                  type="password"
+                  show-password
+                  placeholder="Worker access token"
+                />
+              </label>
+            </div>
+
+            <div class="backends-options">
+              <div class="backends-option">
+                <el-checkbox
+                  v-model="form.shares_core_disk"
+                  data-testid="backend-server-files-input"
+                  aria-describedby="backend-server-files-hint"
+                  >Sees this server's files</el-checkbox
+                >
+                <p id="backend-server-files-hint" class="compute-field__hint">
+                  Enable only when the worker can access this server's files at the same paths, on
+                  this host or through shared folders.
+                </p>
+                <details class="compute-disclosure">
+                  <summary>About shared file access</summary>
+                  <p class="compute-field__hint">
+                    Mount the server's data, flows and kernel shared folders at the same paths.
+                    Flows can then read and write local paths, and Python Script and kernel nodes
+                    may run there. Leave this off for a worker that sets
+                    <code>FLOWFILE_WORKER_LOCAL_FILES=1</code> itself.
+                  </p>
+                </details>
+              </div>
+              <details
+                class="compute-disclosure backends-certificate"
+                :open="form.ca_cert ? true : undefined"
+              >
+                <summary>
+                  <i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Private TLS
+                  certificate <span class="backends-optional">Optional</span>
+                </summary>
+                <label class="compute-field">
+                  <span class="compute-field__label">CA certificate (PEM)</span>
+                  <span class="compute-field__hint"
+                    >For a certificate that isn't publicly trusted, paste the CA certificate this
+                    server should trust.</span
+                  >
+                  <el-input
+                    v-model="form.ca_cert"
+                    v-bind="NO_AUTOFILL"
+                    type="textarea"
+                    :rows="4"
+                    placeholder="-----BEGIN CERTIFICATE-----"
+                  />
+                </label>
+              </details>
+            </div>
+          </div>
+          <footer class="compute-card__footer">
+            <p class="compute-field__hint">
+              To change an existing worker, remove it and add it again.
+            </p>
+            <el-button type="primary" native-type="submit" :loading="adding" :disabled="!canAdd"
+              ><i class="fa-solid fa-plus" aria-hidden="true"></i> Add worker</el-button
             >
-              Sees this server's files
-            </el-checkbox>
-            <span id="backend-server-files-hint" class="backends-field__note">
-              Tick only when the worker sees this server's files at the same paths: on this host, or
-              with this server's data, flows and kernel shared folders mounted at the same paths.
-              Flows then read and write local paths there, and Python Script and kernel nodes may
-              run there. Leave it unticked for a worker that sets
-              <code>FLOWFILE_WORKER_LOCAL_FILES=1</code> itself.
-            </span>
-          </div>
-          <el-button
-            type="primary"
-            size="small"
-            :loading="adding"
-            :disabled="!canAdd"
-            @click="onAdd"
-          >
-            Add
-          </el-button>
-        </div>
-      </div>
+          </footer>
+        </form>
+      </section>
 
-      <ExchangeStoreCard class="backends-card backends-card--below" />
+      <ExchangeStoreCard />
     </template>
 
     <div v-else class="backends-locked">
-      <i class="fa-solid fa-lock"></i>
+      <i class="fa-solid fa-lock" aria-hidden="true"></i>
       <h3>Administrator setting</h3>
       <p>
         The workers Flowfile can reach are server-wide and managed by administrators. Your flows use
@@ -193,12 +200,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive } from "vue";
+import { computed, reactive, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import type { HandshakeVerdict } from "../../api/computeBackends.api";
 import { useAuthStore } from "../../stores/auth-store";
-import { absentLabel } from "../../utils/executionLocation";
 import { NO_AUTOFILL } from "../../utils/noAutofill";
+import BackendHandshakeStatus from "./BackendHandshakeStatus.vue";
 import ExchangeStoreCard from "./ExchangeStoreCard.vue";
 import {
   backendInputFrom,
@@ -217,17 +223,8 @@ const form = reactive(emptyBackendForm());
 const canAdd = computed(() => form.name !== "" && form.url !== "" && form.token !== "");
 const plainHttp = computed(() => plainHttpOffLoopback(form.url));
 
-const matchLine = (verdict: HandshakeVerdict): string => {
-  const backend = verdict.backend!;
-  const exact = !verdict.differences.length && !Object.keys(verdict.absent).length;
-  return (
-    `${exact ? "Matches this server" : "Accepted by this server"}: Flowfile ${backend.app_version}, ` +
-    `Polars ${backend.polars_version}, Python ${backend.python_version}, ${backend.platform}`
-  );
-};
-
 const onAdd = async () => {
-  if (!canAdd.value) return;
+  if (!canAdd.value || adding.value) return;
   try {
     const row = await add(backendInputFrom(form));
     Object.assign(form, emptyBackendForm());
@@ -264,216 +261,222 @@ const onHandshake = async (id: string) => {
   }
 };
 
-onMounted(() => {
-  if (isAdmin.value) void load();
-});
+watch(
+  isAdmin,
+  (allowed) => {
+    if (allowed) void load();
+  },
+  { immediate: true },
+);
 </script>
 
+<style scoped src="./computeSettings.css"></style>
 <style scoped>
 .backends-container {
-  max-width: 1320px;
+  container: compute-backends / inline-size;
+  width: 100%;
+  max-width: 1180px;
   margin: 0 auto;
-  padding: var(--spacing-5);
+  padding: var(--spacing-6);
+  display: grid;
+  gap: var(--spacing-5);
 }
-
-.backends-card {
-  background: var(--color-background-primary);
-  border: 1px solid var(--color-border-light);
+.backends-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+}
+.backends-heading__icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
   border-radius: var(--border-radius-lg);
-  box-shadow: var(--shadow-xs);
-  padding: var(--spacing-4) var(--spacing-5);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent-dark);
+  font-size: 20px;
 }
-
-.backends-card--below {
-  margin-top: var(--spacing-4);
+.backends-heading .page-title {
+  margin: 0 0 var(--spacing-1);
 }
-
+.backends-heading .page-description {
+  margin: 0;
+}
+.backends-count {
+  flex-shrink: 0;
+  padding: var(--spacing-1) var(--spacing-2);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-full);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  background: var(--color-background-primary);
+}
 .backends-banner {
   display: flex;
-  align-items: flex-start;
   gap: var(--spacing-2);
-  padding: var(--spacing-3) var(--spacing-4);
+  padding: var(--spacing-3);
   border-radius: var(--border-radius-md);
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-normal);
-  background-color: var(--color-danger-light);
-  color: var(--color-danger);
-  border: 1px solid var(--color-danger);
+  background: var(--color-danger-light);
+  color: var(--color-danger-dark);
   margin-bottom: var(--spacing-3);
 }
-
-.backends-banner i {
-  margin-top: 2px;
-  flex-shrink: 0;
+.backends-loading {
+  color: var(--color-text-secondary);
+  margin: 0;
 }
-
-.backends-card-title {
+.backends-list {
+  display: grid;
+  gap: var(--spacing-4);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.backend-worker {
+  min-width: 0;
+}
+.backend-worker + .backend-worker {
+  padding-top: var(--spacing-4);
+  border-top: 1px solid var(--color-border-primary);
+}
+.backend-worker__header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-4);
+  margin-bottom: var(--spacing-4);
+}
+.backend-worker__identity {
+  flex: 1;
+  min-width: min(100%, 220px);
+}
+.backend-worker__name {
   margin: 0 0 var(--spacing-1);
   font-size: var(--font-size-base);
   font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
 }
-
-.backends-card-description {
-  margin: 0;
-  font-size: var(--font-size-md);
-  color: var(--color-text-secondary);
-  text-wrap: pretty;
-}
-
-.backends-loading {
-  margin: var(--spacing-4) 0 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-tertiary);
-}
-
-.backends-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: var(--spacing-4);
-}
-
-.backends-table th {
-  text-align: left;
-  font-weight: var(--font-weight-semibold);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-  padding: var(--spacing-1) var(--spacing-2);
-  border-bottom: 1px solid var(--color-border-light);
-}
-
-.backends-table td {
-  font-size: var(--font-size-md);
-  color: var(--color-text-primary);
-  padding: var(--spacing-1-5) var(--spacing-2);
-  border-bottom: 1px solid var(--color-border-light);
-}
-
 .backends-url {
   font-family: var(--font-family-mono);
   font-size: var(--font-size-sm);
-  word-break: break-all;
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
 }
-
-.backends-actions {
-  text-align: right;
-  white-space: nowrap;
-}
-
-.backends-verdict-row td {
-  padding-top: 0;
-}
-
-.backends-verdict {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--spacing-2);
-  padding: var(--spacing-2) var(--spacing-3);
-  border-radius: var(--border-radius-md);
-  font-size: var(--font-size-sm);
-}
-
-.backends-verdict i {
-  margin-top: 2px;
-  flex-shrink: 0;
-}
-
-.backends-verdict--ok {
-  background: var(--color-success-light);
-  color: var(--color-success-dark);
-}
-
-.backends-verdict--error {
-  background: var(--color-danger-light);
-  color: var(--color-danger);
-}
-
-.backends-difference {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
-  word-break: break-all;
-}
-
-.backends-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  padding: var(--spacing-6) var(--spacing-4);
+.backend-worker__files {
+  display: grid;
   gap: var(--spacing-1);
-}
-
-.backends-empty i {
-  font-size: 20px;
-  color: var(--color-text-muted);
-  margin-bottom: var(--spacing-1);
-}
-
-.backends-empty__title {
   font-size: var(--font-size-sm);
+}
+.backend-worker__files span {
+  color: var(--color-text-tertiary);
+}
+.backend-worker__files strong {
+  color: var(--color-text-primary);
   font-weight: var(--font-weight-medium);
+}
+.backends-actions {
+  display: flex;
+  gap: var(--spacing-2);
+}
+.backends-actions .el-button + .el-button {
+  margin-left: 0;
+}
+.backends-empty {
+  display: grid;
+  justify-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-5);
+  text-align: center;
   color: var(--color-text-secondary);
 }
-
-.backends-empty__hint {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-  max-width: 46ch;
+.backends-empty > i {
+  font-size: 24px;
+  color: var(--color-accent-dark);
 }
-
-.backends-add {
-  margin-top: var(--spacing-4);
-  padding-top: var(--spacing-3);
-  border-top: 1px solid var(--color-border-light);
-}
-
-.backends-add__title {
-  margin: 0 0 var(--spacing-3);
-  font-size: var(--font-size-base);
-  font-weight: var(--font-weight-semibold);
+.backends-empty__title {
+  font-weight: var(--font-weight-medium);
   color: var(--color-text-primary);
 }
-
+.backends-empty p {
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
 .backends-add__fields {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: var(--spacing-3);
-  margin-bottom: var(--spacing-3);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: var(--spacing-4);
+  align-items: start;
 }
-
-.backends-field {
+.backends-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--spacing-5);
+  margin-top: var(--spacing-5);
+  padding-top: var(--spacing-4);
+  border-top: 1px solid var(--color-border-light);
+}
+.backends-option,
+.backends-certificate {
+  min-width: 0;
+}
+.backends-option > p {
+  margin: var(--spacing-1) 0;
+}
+.backends-option .el-checkbox {
+  height: auto;
+  white-space: normal;
+}
+.backends-certificate summary {
   display: flex;
-  flex-direction: column;
-  gap: var(--spacing-1);
+  align-items: center;
+  gap: var(--spacing-2);
+  list-style: none;
 }
-
-.backends-field__label {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+.backends-certificate summary::-webkit-details-marker {
+  display: none;
 }
-
-.backends-option {
-  margin-bottom: var(--spacing-3);
+.backends-certificate summary::before {
+  content: "›";
+  font-size: 18px;
+  line-height: 1;
+  transition: transform 0.15s;
 }
-
-.backends-field__note {
+.backends-certificate[open] summary::before {
+  transform: rotate(90deg);
+}
+.backends-certificate .compute-field {
+  margin-top: var(--spacing-3);
+}
+.backends-optional {
+  margin-left: auto;
   font-size: var(--font-size-xs);
-  line-height: var(--line-height-normal);
   color: var(--color-text-tertiary);
+  font-weight: normal;
 }
-
-.backends-field__note--warning {
-  color: var(--color-warning);
+.backends-field__warning {
+  color: var(--color-warning-dark);
 }
-
 .backends-locked {
   text-align: center;
-  padding: var(--spacing-8) var(--spacing-4);
+  padding: var(--spacing-8);
   color: var(--color-text-secondary);
 }
-
 .backends-locked i {
   font-size: 2em;
   opacity: 0.4;
+}
+@media (max-width: 760px) {
+  .backends-container {
+    padding: var(--spacing-4);
+  }
+}
+@container compute-backends (max-width: 700px) {
+  .backends-add__fields,
+  .backends-options {
+    grid-template-columns: 1fr;
+  }
+  .backends-heading {
+    align-items: flex-start;
+  }
 }
 </style>

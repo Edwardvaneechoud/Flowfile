@@ -10,7 +10,7 @@ plan, or works in core, needs none of these.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 from flowfile_core.flowfile.execution.protocol import OperationKind
@@ -47,7 +47,7 @@ class NodeRequirements:
         credentials: The names of the stored connections the node uses. Secret names are not connections.
         python_function: The node's plan may carry a Python function serialised under core's Python, which runs
             only where core's Python functions do: a formula-family node, whose formulas may compile to one, and a
-            cloud change read until it is an operation of its own.
+            cloud or catalog change read until it is an operation of its own.
         needs_kernel: The node runs its code on a notebook kernel, which reads the node's inputs from the
             kernel shared volume, a ``file`` location on core's Docker host.
     """
@@ -102,7 +102,8 @@ def requirements_for(
     if template.custom_node:
         return _custom_node(template, settings)
     if template.item == "catalog_reader":
-        return _catalog_storage(catalog_target, write=False)
+        # A change read's plan carries a Python function, its change-feed source, as a cloud change read's does.
+        return replace(_catalog_storage(catalog_target, write=False), python_function=settings.cdc_mode != "off")
     if template.item == "catalog_writer":
         return _catalog_writer(settings, catalog_target)
     if template.item == "train_model":

@@ -10,7 +10,9 @@ what the body refuses before anything runs, and a 500 carrying a child's ``statu
 to a file or deferred as ``_materialise`` decides; a deferred submit with no preview runs in the child too, which
 resolves the plan's columns and collects nothing. ``sample``, ``count``, ``exists`` and ``release`` read, count, probe
 and release what it holds. A submit's job id is its result id, and every submit first drops what has been held for
-``CACHE_EXPIRATION_TIME``. The operations run a read, a fuzzy join, a random split, a custom node, a model's training
+``CACHE_EXPIRATION_TIME``. One job runs under an id at a time (``_claim``): a submit, an import or an operation under an
+id a job still runs under replaces that job, which is stopped and holds nothing, and a release of the id stops it too.
+The operations run a read, a fuzzy join, a random split, a custom node, a model's training
 or its apply in the child its task route spawns, as the job the ``job_id`` names, and hold each output that child wrote
 as the materialised result ``<job_id>_<i>``, which the same functions read, count, probe and release; the file,
 database and cloud writes run the child their task routes spawn and hold nothing. A training's output is the model it
@@ -29,11 +31,16 @@ its own authorisation, so neither takes a credential. ``cancel_job`` stops a job
 ``spawner.in_process`` set, every job here runs in the calling process instead.
 """
 
+import functools
 import io
 import json
 import os
+import re
+import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -85,6 +92,9 @@ SAMPLE_ROWS_CAP = 10_000
 
 SAMPLE_ROWS_IN_PARENT = 1_000
 """The most rows of a materialised result a sample reads in this process; more are read in a child."""
+
+RESULT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+"""What an id the worker names a file after may hold: no path separator, no dot."""
 
 OPERATIONS = frozenset(
     {
@@ -298,7 +308,7 @@ def _not_held(result_id: str) -> HTTPException:
     return HTTPException(status_code=404, detail=f"No result {result_id} is held by this worker")
 
 
-def _release(result_id: str) -> bool:
+def _forget(result_id: str) -> bool:
     """Forget a held result with its file and its job entry; ``False`` when nothing was held under the id."""
     if results.pop(result_id) is None:
         return False
@@ -306,6 +316,90 @@ def _release(result_id: str) -> bool:
         status_dict.pop(result_id, None)
         PROCESS_MEMORY_USAGE.pop(result_id, None)
     return True
+
+
+_STOP_POLL_SECONDS = 0.1
+"""How often a job waiting for an earlier job under its id tries again to stop it."""
+
+
+@dataclass
+class _Claim:
+    """The job running under ``job_id``: the result ids it is to hold, and whether its result is still wanted.
+
+    ``unwanted`` is set by a release of the id or of one it is to hold, and by a later job under the id; such a job is
+    stopped, and forgets what it holds when it ends. ``done`` is set once it ended and let go of the id.
+    """
+
+    job_id: str
+    holds: tuple[str, ...] = ()
+    unwanted: bool = False
+    done: threading.Event = field(default_factory=threading.Event)
+
+
+_claims: dict[str, _Claim] = {}
+"""Every submit, import and operation running here, by job id; read and changed under ``status_dict_lock``."""
+
+
+def _stop(job_id: str) -> bool:
+    """Stop the job running under *job_id*; ``False`` when there is none to stop.
+
+    A job still ``Starting`` has no child yet: its entry is marked ``Cancelled`` under ``status_dict_lock`` and the
+    job ends as a cancel when it starts, its child stopped on the monitor's first pass. The check comes first because
+    the spawner registers a job's process before its monitor writes ``Processing`` under that lock, so a job seen
+    ``Processing`` has one to stop. A job that ended, or one running in this process, has nothing to stop.
+    """
+    with status_dict_lock:
+        status = status_dict.get(job_id)
+        if status is not None and status.status == "Starting":
+            status.status = "Cancelled"
+            return True
+    if not process_manager.cancel_process(job_id):
+        return False
+    with status_dict_lock:
+        if job_id in status_dict:
+            status_dict[job_id].status = "Cancelled"
+    return True
+
+
+@contextmanager
+def _claim(job_id: str) -> Iterator[_Claim]:
+    """Hold *job_id* for the block, so no other submit, import or operation runs under it meanwhile.
+
+    A job still running under the id is replaced, as a submit replaces what an id held: it is marked unwanted and
+    stopped (one running in this process cannot be stopped and runs to its end), and the block starts only once that
+    job ended and forgot what it held, since the two would write the same files and the same job entry. A claim marked
+    unwanted while the block ran forgets, as the block ends, every id its job holds.
+    """
+    while True:
+        with status_dict_lock:
+            running = _claims.get(job_id)
+            if running is None:
+                claim = _claims[job_id] = _Claim(job_id)
+                break
+            running.unwanted = True
+        _stop(job_id)
+        while not running.done.wait(_STOP_POLL_SECONDS):
+            _stop(job_id)
+    try:
+        yield claim
+    finally:
+        if claim.unwanted:
+            for result_id in (job_id, *claim.holds):
+                _forget(result_id)
+        with status_dict_lock:
+            del _claims[job_id]
+        claim.done.set()
+
+
+def _claimed(op: Callable[..., OpOutputs]) -> Callable[..., OpOutputs]:
+    """Run the operation *op* under a claim on its job id, the argument after its body (``_claim``)."""
+
+    @functools.wraps(op)
+    def run(body: Any, job_id: str, *args: Any, **kwargs: Any) -> OpOutputs:
+        with _claim(job_id):
+            return op(body, job_id, *args, **kwargs)
+
+    return run
 
 
 def sweep_expired() -> None:
@@ -337,12 +431,19 @@ def _failure(status: models.Status) -> HTTPException:
 
 
 def _run_job(task_id: str, start: Callable[[], None]) -> models.Status:
-    """Register *task_id* as a starting job, call *start*, which returns once its child ended, and return its status."""
+    """Register *task_id* as a starting job, call *start*, which returns once its child ended, and return its status.
+
+    A job whose result is no longer wanted by the time it registers (``_Claim.unwanted``) is registered ``Cancelled``
+    and never started.
+    """
     with status_dict_lock:
+        claim = _claims.get(task_id)
+        unwanted = claim is not None and claim.unwanted
         status_dict[task_id] = models.Status(
-            background_task_id=task_id, status="Starting", file_ref="", result_type="other"
+            background_task_id=task_id, status="Cancelled" if unwanted else "Starting", file_ref="", result_type="other"
         )
-    start()
+    if not unwanted:
+        start()
     with status_dict_lock:
         return status_dict[task_id]
 
@@ -388,12 +489,17 @@ def _op_outputs(job_id: str, count: int) -> list[str]:
     """The ids the *count* outputs of operation *job_id* are held under, ``<job_id>_<i>``, none of them held yet.
 
     Expired results are swept first. What an earlier run under the job id held is released and the job's end stamp
-    dropped, so a rerun replaces its outputs and is not swept while it runs.
+    dropped, so a rerun replaces its outputs and is not swept while it runs. The ids are recorded on the job's claim,
+    when it has one, so a release of one of them while the job runs stops it.
     """
     sweep_expired()
     output_ids = [f"{job_id}_{i}" for i in range(count)]
+    with status_dict_lock:
+        claim = _claims.get(job_id)
+        if claim is not None:
+            claim.holds = tuple(output_ids)
     for result_id in (job_id, *output_ids):
-        _release(result_id)
+        _forget(result_id)
     return output_ids
 
 
@@ -502,8 +608,10 @@ def run_submit(submit_meta: SubmitMeta, plan: bytes) -> SubmitResult:
 
     ``POST /v1/submit``, ``/v1/ws/submit`` and the embedded worker's adapter call this and answer what it returns
     or raises: 404 for an input that is not held, 500 when the child did not complete. Expired results are
-    swept first; a result already held under the id is released. The end of the submit is stamped
-    whether or not it completed, so its job entry ages out like a held result.
+    swept first; a submit still running under the id is replaced (``_claim``) and a result already held under the id
+    is released. The end of the submit is stamped whether or not it completed, so its job entry ages out like a held
+    result. A job that completed without reporting its result (a pool member that died after its last progress) is
+    the 500 of a failed task, and holds nothing.
 
     A deferred submit with no preview runs in the child too, which loads the plan and resolves its
     columns, so its UDF modules and plugin libraries never load here, and collects nothing.
@@ -514,45 +622,53 @@ def run_submit(submit_meta: SubmitMeta, plan: bytes) -> SubmitResult:
             raise HTTPException(status_code=404, detail=f"Input result {input_id} is not held by this worker")
 
     result_id = submit_meta.result_id
-    _release(result_id)
-    materialise = _materialise(submit_meta.hints)
-    path = None
-    if materialise:
-        target = result_path(submit_meta.flow_id, result_id)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        path = str(target)
-    logger.info(f"Submitting result {result_id} ({'materialised' if materialise else 'deferred'})")
-    try:
-        status = _run(
-            result_id,
-            plan,
-            "submit_result",
-            path or "",
-            submit_meta.flow_id,
-            submit_meta.node_id,
-            {"materialise": materialise, "preview_rows": submit_meta.hints.preview_rows},
-        )
-    finally:
-        results.mark_ended(result_id)
-    if status.status != "Completed":
-        if path:
-            Path(path).unlink(missing_ok=True)
-        raise _failure(status)
+    with _claim(result_id) as claim:
+        claim.holds = (result_id,)
+        _forget(result_id)
+        materialise = _materialise(submit_meta.hints)
+        path = None
+        if materialise:
+            target = result_path(submit_meta.flow_id, result_id)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            path = str(target)
+        logger.info(f"Submitting result {result_id} ({'materialised' if materialise else 'deferred'})")
+        try:
+            status = _run(
+                result_id,
+                plan,
+                "submit_result",
+                path or "",
+                submit_meta.flow_id,
+                submit_meta.node_id,
+                {"materialise": materialise, "preview_rows": submit_meta.hints.preview_rows},
+            )
+        finally:
+            results.mark_ended(result_id)
+        if status.status != "Completed":
+            if path:
+                Path(path).unlink(missing_ok=True)
+            raise _failure(status)
 
-    payload = status.results
-    with status_dict_lock:
-        status.results = None
-    record = ResultRecord(
-        result_id=result_id,
-        state="materialised" if materialise else "deferred",
-        columns=schema_to_wire(payload["columns"]),
-        row_count=payload["row_count"],
-        flow_id=submit_meta.flow_id,
-        node_id=submit_meta.node_id,
-        path=path,
-        plan=None if materialise else plan,
-    )
-    results.put(record)
+        with status_dict_lock:
+            payload, status.results = status.results, None
+            if payload is None:
+                status.status, status.error_kind = "Error", "task"
+                status.error_message = f"The job {result_id} ended without reporting its result"
+        if payload is None:
+            if path:
+                Path(path).unlink(missing_ok=True)
+            raise _failure(status)
+        record = ResultRecord(
+            result_id=result_id,
+            state="materialised" if materialise else "deferred",
+            columns=schema_to_wire(payload["columns"]),
+            row_count=payload["row_count"],
+            flow_id=submit_meta.flow_id,
+            node_id=submit_meta.node_id,
+            path=path,
+            plan=None if materialise else plan,
+        )
+        results.put(record)
     return SubmitResult(ref=record.ref(), sample=payload["sample"], job_id=result_id)
 
 
@@ -593,8 +709,21 @@ def exists(result_id: str) -> bool:
 
 
 def release(result_id: str) -> bool:
-    """Forget a held result: its file, its record and its job entry; ``False`` when nothing was held under the id."""
-    return _release(result_id)
+    """Forget a held result: its file, its record and its job entry; ``False`` when nothing was held under the id.
+
+    A job still running under the id, or running to hold it as one of its outputs, is stopped and holds nothing once
+    it ended (``_claim``); that is ``True`` too.
+    """
+    with status_dict_lock:
+        claim = next(
+            (claim for job_id, claim in _claims.items() if result_id == job_id or result_id in claim.holds), None
+        )
+        if claim is not None:
+            claim.unwanted = True
+    if claim is None:
+        return _forget(result_id)
+    _stop(claim.job_id)
+    return True
 
 
 def export(result_id: str, body: ExportBody) -> str:
@@ -628,17 +757,28 @@ def import_uri(result_id: str, body: ImportBody) -> ResultRef:
     and the columns and row count are the ones core sent. A credential's connection is read from the catalog here for
     its endpoint and region (``credential_ref_kwargs``); its secrets are resolved by the child that runs the scan. A
     catalog that cannot be read is the 500 an export's child answers for the same error, and nothing is held.
-    Expired results are swept first and a result held under the id is released; the record is stamped now, so it ages
-    out with the rest. ``count`` answers the given row count without a child, ``sample`` and ``export`` run the scan
-    in one, and ``release`` forgets the record and leaves the file, which is not this worker's.
+    Expired results are swept first, a job still running under the id is replaced (``_claim``) and a result held under
+    the id is released; the record is stamped now, so it ages out with the rest. ``count`` answers the given row count
+    without a child, ``sample`` and ``export`` run the scan in one, and ``release`` forgets the record and leaves the
+    file, which is not this worker's. An id that is not a ``RESULT_ID`` is 422 before anything runs, as it would name
+    a blob's file.
 
     With ``kind="blob"`` the bytes at ``body.uri`` are copied from a ``file://`` URI or fetched from a presigned
     ``https://`` URL here (``get_blob``) into ``result_path(-1, id)`` with a ``.blob`` suffix, and held as a blob
     record of that file, whose ``release`` removes it. Another scheme is 422 and a fetch that fails the 500; either way
     nothing is held and nothing is left of the file.
     """
+    if not RESULT_ID.match(result_id):
+        raise HTTPException(status_code=422, detail=f"A result id holds letters, digits, _ and -, not {result_id!r}")
     sweep_expired()
-    _release(result_id)
+    with _claim(result_id) as claim:
+        claim.holds = (result_id,)
+        _forget(result_id)
+        return _hold_import(result_id, body)
+
+
+def _hold_import(result_id: str, body: ImportBody) -> ResultRef:
+    """Hold what ``import_uri`` imports under *result_id*, which holds nothing yet; its reference."""
     if body.kind == "blob":
         path = result_path(-1, result_id).with_suffix(".blob")
         _copy_blob(lambda: get_blob(body.uri, path))
@@ -691,31 +831,23 @@ def job_status(job_id: str) -> models.Status:
 
 
 def cancel_job(job_id: str) -> None:
-    """Stop a running job's child and mark the job cancelled.
+    """Stop a running job's child and mark the job cancelled, as ``_stop`` does.
 
-    A job still ``Starting`` has no child yet: its entry is marked ``Cancelled`` under ``status_dict_lock`` and the
-    job ends as a cancel when it starts, its child stopped on the monitor's first pass. The check comes first because
-    the spawner registers a job's process before its monitor writes ``Processing`` under that lock, so a job seen
-    ``Processing`` has one to stop. A job with no child to stop, one that ended or one running in this process, is 404.
+    A job still ``Starting`` ends as a cancel when it starts. A job with no child to stop, one that ended or one
+    running in this process, is 404.
     """
-    with status_dict_lock:
-        status = status_dict.get(job_id)
-        if status is not None and status.status == "Starting":
-            status.status = "Cancelled"
-            return
-    if not process_manager.cancel_process(job_id):
+    if not _stop(job_id):
         raise HTTPException(status_code=404, detail=f"No job {job_id} is running on this worker")
-    with status_dict_lock:
-        if job_id in status_dict:
-            status_dict[job_id].status = "Cancelled"
 
 
+@_claimed
 def database_read(settings: DatabaseReadSettings, job_id: str) -> OpOutputs:
     """Read a database query in a child as job *job_id* and hold the rows as the one output, ``result``."""
     kwargs = {"database_read_settings": settings}
     return _read(job_id, read_sql_source, kwargs, settings.flowfile_flow_id, settings.flowfile_node_id)
 
 
+@_claimed
 def kafka_read(settings: KafkaReadSettings, job_id: str) -> OpOutputs:
     """Consume a Kafka topic in a child as job *job_id*, without committing, and hold the rows as ``result``.
 
@@ -733,18 +865,21 @@ def kafka_read(settings: KafkaReadSettings, job_id: str) -> OpOutputs:
     return OpOutputs(outputs={"result": ref}, metadata=metadata)
 
 
+@_claimed
 def google_analytics_read(settings: GoogleAnalyticsReadSettings, job_id: str) -> OpOutputs:
     """Fetch a Google Analytics 4 report in a child as job *job_id* and hold its rows as ``result``."""
     kwargs = {"ga_read_settings": settings}
     return _read(job_id, read_google_analytics, kwargs, settings.flowfile_flow_id, settings.flowfile_node_id)
 
 
+@_claimed
 def rest_api_read(settings: RestApiReadSettings, job_id: str) -> OpOutputs:
     """Fetch from a REST API in a child as job *job_id* and hold the rows as ``result``."""
     kwargs = {"settings": settings}
     return _read(job_id, read_rest_api, kwargs, settings.flowfile_flow_id, settings.flowfile_node_id)
 
 
+@_claimed
 def file_read(
     received_table: ReceivedTable, job_id: str, flowfile_flow_id: int = 1, flowfile_node_id: int | str = -1
 ) -> OpOutputs:
@@ -759,6 +894,7 @@ def file_read(
     return _read(job_id, reader, {"received_table": received_table}, flowfile_flow_id, flowfile_node_id)
 
 
+@_claimed
 def fuzzy_join(body: models.FuzzyJoinInput, job_id: str) -> OpOutputs:
     """Fuzzy-match two plans in a child as job *job_id* and hold the matched rows as ``result``.
 
@@ -787,6 +923,7 @@ def fuzzy_join(body: models.FuzzyJoinInput, job_id: str) -> OpOutputs:
     )
 
 
+@_claimed
 def custom_node(body: models.CustomNodeExecuteInput, job_id: str) -> OpOutputs:
     """Run a custom node's ``process`` in a child as job *job_id* and hold each declared output, keyed by its name.
 
@@ -809,6 +946,7 @@ def custom_node(body: models.CustomNodeExecuteInput, job_id: str) -> OpOutputs:
     return OpOutputs(outputs=refs)
 
 
+@_claimed
 def random_split(body: RandomSplitInput, job_id: str) -> OpOutputs:
     """Slice shuffled rows into their splits in a child as job *job_id* and hold each split, keyed by its name.
 
@@ -840,6 +978,7 @@ def random_split(body: RandomSplitInput, job_id: str) -> OpOutputs:
     return OpOutputs(outputs=refs)
 
 
+@_claimed
 def ml_train(body: MlTrainInput, job_id: str) -> OpOutputs:
     """Fit a model to the body's rows in a child as job *job_id* and hold it as the blob ``model``.
 
@@ -880,6 +1019,7 @@ def ml_train(body: MlTrainInput, job_id: str) -> OpOutputs:
     return OpOutputs(outputs={"model": record.ref()}, metadata=reported)
 
 
+@_claimed
 def ml_apply(body: MlApplyInput, job_id: str) -> OpOutputs:
     """Score the body's rows with a held model in a child as job *job_id* and hold the scored rows as ``result``.
 
@@ -940,6 +1080,7 @@ def _write(
     return OpOutputs(outputs={})
 
 
+@_claimed
 def file_write(body: models.PolarsScriptWrite, job_id: str) -> OpOutputs:
     """Write the body's plan to its ``path`` as its ``data_type`` in a child as job *job_id*; nothing is held."""
     kwargs = {
@@ -954,6 +1095,7 @@ def file_write(body: models.PolarsScriptWrite, job_id: str) -> OpOutputs:
     return _write(job_id, plan, "write_output", body.path, body.flowfile_flow_id, body.flowfile_node_id, kwargs)
 
 
+@_claimed
 def database_write(body: models.DatabaseScriptWrite, job_id: str) -> OpOutputs:
     """Write the body's plan to its database table in a child as job *job_id*; nothing is held.
 
@@ -964,6 +1106,7 @@ def database_write(body: models.DatabaseScriptWrite, job_id: str) -> OpOutputs:
     return _write(job_id, plan, "write_to_database", "", body.flowfile_flow_id, body.flowfile_node_id, kwargs)
 
 
+@_claimed
 def cloud_write(body: models.CloudStorageScriptWrite, job_id: str) -> OpOutputs:
     """Write the body's plan to its object-storage path in a child as job *job_id*; nothing is held.
 
@@ -974,6 +1117,7 @@ def cloud_write(body: models.CloudStorageScriptWrite, job_id: str) -> OpOutputs:
     return _write(job_id, plan, "write_to_cloud_storage", "", body.flowfile_flow_id, body.flowfile_node_id, kwargs)
 
 
+@_claimed
 def polars_code(body: PolarsCodeInput, job_id: str) -> OpOutputs:
     """Run a Polars Code node's code once over its input plans in a child as job *job_id* and hold its result.
 
@@ -1001,6 +1145,7 @@ def polars_code(body: PolarsCodeInput, job_id: str) -> OpOutputs:
     return OpOutputs(outputs={"result": _hold_user_code_result(result_id, path, reported, flow_id, node_id)})
 
 
+@_claimed
 def sql_query(body: SqlQueryInput, job_id: str) -> OpOutputs:
     """Translate a SQL Query node's statement once over its input plans in a child as job *job_id* and hold its result.
 

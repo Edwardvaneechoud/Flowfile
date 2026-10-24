@@ -1,11 +1,13 @@
 """Nodes that run user code: Polars code, SQL query and the kernel-backed Python script."""
 
+from dataclasses import replace
+
 import polars as pl
 
 from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.execution.payloads import PolarsCodePayload, SqlQueryPayload, op_payload
-from flowfile_core.flowfile.execution.protocol import OperationKind
+from flowfile_core.flowfile.execution.protocol import ComputeBackend, OperationKind
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
     execute_polars_code,
@@ -15,6 +17,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import Flowfi
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flow_graph._base import GraphMixinBase
 from flowfile_core.flowfile.flow_graph.history import with_history_capture
+from flowfile_core.flowfile.flow_node.flow_node import FlowNode, run_operation
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE, output_handle
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
     validate_sql_query,
@@ -25,6 +28,30 @@ from flowfile_core.schemas.history_schema import (
 )
 
 
+def _user_code_engine(
+    backend: ComputeBackend,
+    node: FlowNode,
+    op: OperationKind,
+    job: PolarsCodePayload | SqlQueryPayload,
+    predicting: bool,
+) -> FlowDataEngine:
+    """The engine over what a Polars Code or SQL Query job answers on ``backend``.
+
+    A run's result is the node's (``FlowNode.run_op``), released at once when deferred, since the engine holds its
+    plan. A schema prediction runs as the job ``<job_id>-schema``, so it never replaces the run's result on the
+    backend; its result is not the node's and is released once its columns are read.
+    """
+    if predicting:
+        ref = run_operation(backend, op, op_payload(replace(job, job_id=f"{job.job_id}-schema"))).refs["result"]
+        backend.release(ref)
+        return FlowDataEngine.create_from_schema(list(ref.schema))
+    ref = node.run_op(backend, op, op_payload(job), job_id=job.job_id).refs["result"]
+    engine = FlowDataEngine(backend.plan_for(ref), schema=ref.schema, number_of_records=ref.row_count)
+    if ref.state == "deferred":
+        backend.release(ref)
+    return engine
+
+
 class CodeBuildersMixin(GraphMixinBase):
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_polars_code(self, node_polars_code: input_schema.NodePolarsCode):
@@ -33,8 +60,10 @@ class CodeBuildersMixin(GraphMixinBase):
         With ``FLOWFILE_COMPUTE_PROTOCOL`` on, the code runs once as the ``polars_code`` operation on the execution
         context's backend, over the plans its input engines hold, and core never executes it; the node's engine is a
         plan over the reference the backend answers, with that reference's schema. The designer's prediction is the
-        same call over empty frames of the inputs' predicted schemas, so the backend answers the columns and no rows.
-        With the flag off the code runs in core to build the plan.
+        same call over empty frames of the inputs' predicted schemas, so the backend answers the columns and no rows;
+        a call while the node holds its result is such a prediction, since a run calls the function only while the
+        node holds none, and runs under a job id of its own (``_user_code_engine``). With the flag off the code runs in
+        core to build the plan.
 
         Args:
             node_polars_code: The settings for the Polars code node.
@@ -51,12 +80,8 @@ class CodeBuildersMixin(GraphMixinBase):
                 node_id=node_polars_code.node_id,
                 job_id=f"{node.hash}-polars-code",
             )
-            backend = current_context(self).backend
-            ref = node.run_op(backend, OperationKind.polars_code, op_payload(job), job_id=job.job_id).refs["result"]
-            engine = FlowDataEngine(backend.plan_for(ref), schema=ref.schema, number_of_records=ref.row_count)
-            if ref.state == "deferred":
-                backend.release(ref)
-            return engine
+            predicting = node.results.resulting_data is not None
+            return _user_code_engine(current_context(self).backend, node, OperationKind.polars_code, job, predicting)
 
         self.add_node_step(
             node_id=node_polars_code.node_id,
@@ -80,13 +105,15 @@ class CodeBuildersMixin(GraphMixinBase):
         execution context's backend, over the plans its input engines hold, and core translates no SQL; the node's
         engine is a plan over the reference the backend answers, with that reference's schema. The designer's
         prediction is the same call over empty frames of the inputs' predicted schemas, so the backend answers the
-        columns and no rows. With the flag off the query is translated in core to build the plan.
+        columns and no rows, under a job id of its own (``_user_code_engine``): the node's schema callback, and a call
+        while the node holds its result, since a run calls the function only while the node holds none. With the flag
+        off the query is translated in core to build the plan.
 
         Args:
             node_sql_query: The settings for the SQL query node.
         """
 
-        def _func(*flowfile_tables: FlowDataEngine) -> FlowDataEngine:
+        def _query(*flowfile_tables: FlowDataEngine, predicting: bool) -> FlowDataEngine:
             if not FLOWFILE_COMPUTE_PROTOCOL:
                 return execute_sql_query(*flowfile_tables, sql_code=node_sql_query.sql_query_input.sql_code)
             node = self.get_node(node_sql_query.node_id)
@@ -97,12 +124,11 @@ class CodeBuildersMixin(GraphMixinBase):
                 node_id=node_sql_query.node_id,
                 job_id=f"{node.hash}-sql-query",
             )
-            backend = current_context(self).backend
-            ref = node.run_op(backend, OperationKind.sql_query, op_payload(job), job_id=job.job_id).refs["result"]
-            engine = FlowDataEngine(backend.plan_for(ref), schema=ref.schema, number_of_records=ref.row_count)
-            if ref.state == "deferred":
-                backend.release(ref)
-            return engine
+            predicting = predicting or node.results.resulting_data is not None
+            return _user_code_engine(current_context(self).backend, node, OperationKind.sql_query, job, predicting)
+
+        def _func(*flowfile_tables: FlowDataEngine) -> FlowDataEngine:
+            return _query(*flowfile_tables, predicting=False)
 
         self.add_node_step(
             node_id=node_sql_query.node_id,
@@ -120,7 +146,7 @@ class CodeBuildersMixin(GraphMixinBase):
                 v.get_predicted_resulting_data(src_handle) if v is not None else FlowDataEngine()
                 for v, src_handle in node._slot_input_pairs()
             ]
-            return _func(*inputs).schema
+            return _query(*inputs, predicting=True).schema
 
         node.schema_callback = schema_callback
 

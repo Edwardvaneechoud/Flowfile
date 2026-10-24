@@ -1,5 +1,7 @@
 """``FlowFrame.read_model``: the model a Train Model node fitted, as a ``TrainedModel``."""
 
+import dataclasses
+
 import pytest
 
 import flowfile_frame as ff
@@ -101,3 +103,16 @@ def test_a_model_survives_a_merge_of_its_frame_onto_another_graph():
 
     assert trained.read_model().coefficients == {"x": pytest.approx(2.0)}
     assert "Coefficients: x=2" in repr(trained)
+
+
+def test_a_train_model_frame_whose_backend_is_gone_prints_as_unreadable():
+    trained = ff.from_dict(LINE).train_model(target="y", features=["x"])
+    node = trained.flow_graph.get_node(trained.node_id)
+    ref = node.results.model_ref
+    node.results.model_ref = dataclasses.replace(ref, backend_id="worker:gone")
+    try:
+        display = repr(trained)
+    finally:
+        node.results.model_ref = ref
+
+    assert display.endswith("Model: unreadable (LookupError)")

@@ -37,11 +37,22 @@ describe("the exchange store API", () => {
       uri: "s3://bucket/flowfile",
       connection: "exchange",
       maxRows: 1000,
+      maxRowsError: null,
       source: "saved",
       envOverride: false,
       saved: { uri: "s3://bucket/flowfile", connection: "exchange", maxRows: 1000 },
       connections: ["exchange", "other"],
     });
+  });
+
+  it("reads why the environment's row limit is refused", async () => {
+    const detail = "FLOWFILE_EXCHANGE_MAX_ROWS must be a whole number of rows, not 'ten'";
+    mocks.get.mockResolvedValue({ data: { ...answer, max_rows: null, max_rows_error: detail } });
+
+    const state = await getExchangeStore();
+
+    expect(state.maxRows).toBeNull();
+    expect(state.maxRowsError).toBe(detail);
   });
 
   it("posts the store in the route's field names", async () => {

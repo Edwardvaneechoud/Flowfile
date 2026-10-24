@@ -45,8 +45,7 @@ PLUGIN_PACKAGES = (
     "pl_fuzzy_frame_match",
     "polars_expr_transformer",
 )
-# The subset that registers Polars expression plugins: a plan that uses one carries the
-# plugin's library path as Polars resolved it, relative to the sending process's sys.prefix.
+# The subset that registers Polars expression plugins (a plan carries each one's resolved library path).
 EXPRESSION_PLUGINS = ("polars_grouper", "polars_ds")
 
 # The object-storage schemes every Flowfile process reads and writes; ``file`` and ``https`` are the declarer's to add.

@@ -170,6 +170,20 @@ def test_the_environment_wins_and_the_page_is_told(admin_client, no_env, s3_conn
         settings.get_exchange_max_rows()
 
 
+def test_a_row_limit_that_is_not_a_whole_number_is_reported_not_a_500(admin_client, no_env, s3_connection, monkeypatch):
+    admin_client.post("/system/exchange_store", json={"uri": "s3://saved/x", "connection": s3_connection})
+    monkeypatch.setenv("FLOWFILE_EXCHANGE_MAX_ROWS", "1e6")
+
+    response = admin_client.get("/system/exchange_store")
+
+    assert response.status_code == 200, response.text
+    state = response.json()
+    assert state["uri"] == "s3://saved/x" and state["max_rows"] is None
+    assert "FLOWFILE_EXCHANGE_MAX_ROWS" in state["max_rows_error"] and "'1e6'" in state["max_rows_error"]
+    assert settings.get_exchange_uri() == "s3://saved/x", "a bad row limit leaves the store readable"
+    assert settings.get_exchange_connection() == s3_connection
+
+
 def test_an_unreadable_file_is_no_store(no_env):
     exchange_config._settings_file().write_text("- not: [a mapping", encoding="utf-8")
 

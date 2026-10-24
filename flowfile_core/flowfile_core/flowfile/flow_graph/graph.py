@@ -176,6 +176,8 @@ class FlowGraph(
         self._comment_id_seq: int = 0
         # The bare check-then-set on is_running raced from non-asyncio threads.
         self._run_claim_lock = threading.Lock()
+        # Set by a close_flow that found a run in flight: release_run closes the flow when the run ends.
+        self._close_when_released = False
         # Serializes graph mutations, undo/redo and saves; always taken before _run_claim_lock.
         self._edit_lock = threading.RLock()
         self._transaction_depth = 0

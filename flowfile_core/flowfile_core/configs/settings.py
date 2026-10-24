@@ -85,7 +85,7 @@ def get_exchange_uri() -> str | None:
     ``FLOWFILE_EXCHANGE_URI`` when set, else what the Backends page saved (``exchange_config``); read per call, as
     ``get_catalog_storage_uri`` is. ``None`` ⇒ no exchange store.
     """
-    return exchange_config.effective().uri
+    return exchange_config.effective_store().uri
 
 
 def get_exchange_connection() -> str | None:
@@ -93,7 +93,7 @@ def get_exchange_connection() -> str | None:
 
     Only consulted when ``get_exchange_uri()`` is set; required in that case.
     """
-    return exchange_config.effective().connection
+    return exchange_config.effective_store().connection
 
 
 def get_exchange_max_rows() -> int | None:
@@ -105,7 +105,7 @@ def get_exchange_max_rows() -> int | None:
     Raises:
         ValueError: ``FLOWFILE_EXCHANGE_MAX_ROWS`` is set to something other than a whole number.
     """
-    return exchange_config.effective().max_rows
+    return exchange_config.effective_max_rows()
 
 
 COMMUNITY_DEFAULT_REPO = "edwardvaneechoud/flowfile-community-nodes"

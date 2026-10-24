@@ -2271,8 +2271,8 @@ def export_node_data(
 
     TSV is also capped at 100,000 cells. Larger exports belong in a write node. The file is written by a
     ``file_write`` on the flow's backend in both flag states; with ``FLOWFILE_COMPUTE_PROTOCOL`` on, the schema
-    checks read the engine's cached schema and the rows are read through ``bounded.head_rows`` on that backend, which
-    then writes them, so core reads no result a backend stored.
+    checks read the engine's cached schema and the rows are read through ``bounded.head_rows`` on the backend that
+    holds the node's result (``FlowNode.result_backend``), else the flow's, so core reads no result a backend stored.
     """
     flow, node = _get_analysis_node(flow_id, node_id, current_user)
     try:
@@ -2303,7 +2303,7 @@ def export_node_data(
     try:
         backend = current_context(flow).backend
         if FLOWFILE_COMPUTE_PROTOCOL:
-            rows = pl.from_arrow(head_rows(backend, data, n)).lazy()
+            rows = pl.from_arrow(head_rows(node.result_backend(output_handle) or backend, data, n)).lazy()
         else:
             # head before lazy(): an in-memory DataFrame is sliced so only n rows get serialized.
             rows = data.head(n).lazy()

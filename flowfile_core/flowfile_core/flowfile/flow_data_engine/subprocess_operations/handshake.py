@@ -4,9 +4,10 @@ A backend is checked through its own interface, the same for every kind (``verif
 ``local_capabilities()`` of this process, then each probe plan run on it as an ordinary job: ``submit`` with the
 cheapest hints and a one-row preview, ``sample`` when the answer carries no sample inline, and ``release``. The answer
 is a ``Verdict``, cached per backend instance and kept as the last verdict of its id (``last_verdict``). Placement reads
-it (``verdict_for``), and so does the gate in front of every worker call (``ensure_handshake``), so a backend is checked
-once per core process, on its first use, and again after a call could not reach it (``reset_handshake``); a verdict that
-refuses it is checked again on its next use.
+it (``verdict_for``), and so does the gate in front of every worker call (``ensure_handshake``), so each backend is
+checked once per core process, on its first use, and again after a call could not reach it (``reset_handshake``); a
+verdict that refuses it is checked again on its next use. Calls that find a backend unchecked at once share one check:
+the first runs it and the others wait for its outcome.
 
 Only what no probe covers refuses a backend whole, a difference in any of these fields making the verdict refuse it,
 and the gate raise ``VersionMismatch`` naming both sides before the backend is sent any work:
@@ -38,6 +39,7 @@ contract numbers when they differ and both app versions, else a ``ComputeUnavail
 
 from __future__ import annotations
 
+import copy
 import threading
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -64,6 +66,7 @@ _verdicts: dict[int, tuple[ComputeBackend, Verdict]] = {}
 _by_id: dict[str, ComputeBackend] = {}
 _by_url: dict[str, WorkerBackend] = {}
 _stand_ins: dict[str, WorkerBackend] = {}
+_flights: dict[int, tuple[ComputeBackend, _Flight]] = {}
 
 
 class Verdict(BaseModel):
@@ -79,6 +82,9 @@ class Verdict(BaseModel):
         absent: What it does not offer, by plugin name or ``placement.PYTHON_FUNCTIONS``, and why, in words that
             follow "which".
         error: Why the backend is refused whole; ``None`` when it is not.
+        error_kind: The class of the error that refused it (``ComputeUnavailable``, ``VersionMismatch``,
+            …), so the refusal can be told without its message, which may name the worker's address; ``None`` when
+            it is not refused.
     """
 
     id: str
@@ -89,6 +95,17 @@ class Verdict(BaseModel):
     offered: Capabilities | None = None
     absent: dict[str, str] = {}
     error: str | None = None
+    error_kind: str | None = None
+
+
+class _Flight:
+    """The one check of a backend that calls finding it unchecked share: the lock the check runs under, how many
+    checks have ended, and the last one's outcome, its verdict or the ``ComputeError`` it raised."""
+
+    def __init__(self) -> None:
+        self.lock = threading.RLock()
+        self.ended = 0
+        self.outcome: Verdict | ComputeError | None = None
 
 
 def fetch_worker_capabilities(worker_url: str) -> Capabilities:
@@ -208,13 +225,21 @@ def verify(backend: ComputeBackend) -> Verdict:
     try:
         reported = backend.capabilities()
     except ComputeError as e:
-        _record(backend, Verdict(id=backend.id, ok=False, core=core, error=str(e)))
+        _record(backend, Verdict(id=backend.id, ok=False, core=core, error=str(e), error_kind=type(e).__name__))
         raise
     differences = capability_differences(core, reported)
     refusing = [difference for difference in differences if difference.split(":", 1)[0] in _REFUSING_FIELDS]
     if refusing:
         error = f'Backend "{backend.id}" does not match core ({"; ".join(refusing)})'
-        verdict = Verdict(id=backend.id, ok=False, core=core, backend=reported, differences=differences, error=error)
+        verdict = Verdict(
+            id=backend.id,
+            ok=False,
+            core=core,
+            backend=reported,
+            differences=differences,
+            error=error,
+            error_kind=VersionMismatch.__name__,
+        )
         _record(backend, verdict)
         return verdict
     absent: dict[str, str] = {}
@@ -256,7 +281,8 @@ def verify(backend: ComputeBackend) -> Verdict:
                         f"{reported.plugin_libs.get(name, _NOT_INSTALLED)}): {e}"
                     )
     except ComputeUnavailable as e:
-        _record(backend, verdict.model_copy(update={"ok": False, "offered": None, "error": str(e)}))
+        refused = {"ok": False, "offered": None, "error": str(e), "error_kind": type(e).__name__}
+        _record(backend, verdict.model_copy(update=refused))
         raise
     except BaseException:
         _drop(backend)
@@ -288,13 +314,30 @@ def _run_probe(backend: ComputeBackend, name: str, plan: pl.LazyFrame) -> None:
 def verdict_for(backend: ComputeBackend) -> Verdict:
     """The verdict cached for *backend* when it passed, else a fresh one (``verify``).
 
+    Calls that find no passing verdict at once share one check: the first runs it, and each call that waited for it
+    answers its outcome, the verdict or a copy of the error it raised, instead of checking again.
+
     Raises:
         ComputeError: As ``verify``.
     """
     verdict = _cached(backend)
     if verdict is not None and verdict.ok:
         return verdict
-    return verify(backend)
+    flight = _flight(backend)
+    seen = flight.ended
+    with flight.lock:
+        if flight.ended != seen:
+            outcome = flight.outcome
+            if isinstance(outcome, ComputeError):
+                raise copy.copy(outcome) from outcome
+            return outcome
+        try:
+            outcome = verify(backend)
+        except ComputeError as e:
+            flight.outcome, flight.ended = e, flight.ended + 1
+            raise
+        flight.outcome, flight.ended = outcome, flight.ended + 1
+        return outcome
 
 
 def ensure_verdict(backend: ComputeBackend) -> Verdict:
@@ -375,6 +418,15 @@ def reset_handshake(worker_url: str | None = None) -> None:
         for key, (backend, _) in list(_verdicts.items()):
             if getattr(backend, "url", None) == worker_url:
                 del _verdicts[key]
+
+
+def _flight(backend: ComputeBackend) -> _Flight:
+    """The flight *backend*'s checks share, made on its first check."""
+    with _lock:
+        entry = _flights.get(id(backend))
+        if entry is None or entry[0] is not backend:
+            entry = _flights[id(backend)] = (backend, _Flight())
+        return entry[1]
 
 
 def _cached(backend: ComputeBackend) -> Verdict | None:

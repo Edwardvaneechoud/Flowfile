@@ -521,7 +521,7 @@ async def ws_submit_v1(websocket: WebSocket):
         await websocket.close(code=1008)
         return
     try:
-        require_protocol_version(websocket)
+        await require_protocol_version(websocket)
     except HTTPException as e:
         await websocket.send_denial_response(JSONResponse({"detail": e.detail}, status_code=e.status_code))
         return

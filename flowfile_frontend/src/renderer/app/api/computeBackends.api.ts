@@ -1,13 +1,12 @@
-// The /compute_backends routes: every user lists the ids and last verdicts, the URL, adding, removing and the
-// handshake are an administrator's; the token and the CA certificate go in the add body once and are never answered.
+// The /compute_backends routes: every user lists them, an administrator adds, removes and handshakes.
 
 import axios from "../services/axios.config";
 
 const COMPUTE_BACKENDS_URL = "/compute_backends";
 
 /**
- * `url` is null for a user who is no administrator; `verdict` is null until the backend was checked;
- * `shares_core_disk` means core offers the worker local files whatever it declares.
+ * A configured worker as every user lists it: `url` is null for a user who is no administrator; `verdict` is null
+ * until the backend was checked; `shares_core_disk` means core offers the worker local files whatever it declares.
  */
 export interface ComputeBackend {
   id: string;
@@ -16,6 +15,7 @@ export interface ComputeBackend {
   verdict: HandshakeVerdict | null;
 }
 
+/** The add body, an administrator's; the token and the CA certificate are sent once and never answered. */
 export interface ComputeBackendInput {
   name: string;
   url: string;

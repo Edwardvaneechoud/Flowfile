@@ -1329,16 +1329,17 @@ def test_a_plan_the_socket_could_not_send_is_posted_instead(backend, kept, sent,
 
 
 @SOCKET_ONLY
-def test_a_silent_worker_fails_the_submit_without_posting_it(backend, sent, monkeypatch, clock):
+def test_a_silent_worker_fails_the_submit_without_posting_it_and_cancels_its_job(backend, sent, monkeypatch, clock):
     monkeypatch.setattr(worker_module, "_WS_INACTIVITY_TIMEOUT", 0.05)
     socket = FakeSocket(clock=clock, gap=0.01)
     dial_into(monkeypatch, socket)
+    result_id = new_result_id()
 
     with pytest.raises(TaskFailed, match="FLOWFILE_WORKER_WS_TIMEOUT"):
-        backend.submit(people(), [], hints(True), new_result_id(), flow_id=-1, node_id=-1)
+        backend.submit(people(), [], hints(True), result_id, flow_id=-1, node_id=-1)
 
     assert socket.closed
-    assert sent == []
+    assert [(method, path) for method, path, _ in sent] == [("POST", f"/v1/jobs/{result_id}/cancel")]
 
 
 @SOCKET_ONLY
@@ -1361,15 +1362,48 @@ def test_progress_frames_keep_the_socket_alive(backend, monkeypatch, clock):
 
 
 @SOCKET_ONLY
-def test_a_socket_closed_after_the_plan_is_unavailable_and_not_posted(backend, sent, monkeypatch):
+def test_a_socket_closed_after_the_plan_is_unavailable_naming_the_backend_and_not_posted(backend, sent, monkeypatch):
     socket = FakeSocket([ConnectionClosedError(Close(1011, "internal error"), None)])
     dial_into(monkeypatch, socket)
+    assert handshake.last_verdict(backend.id) is not None
 
-    with pytest.raises(ComputeUnavailable, match=re.escape(settings.WORKER_URL)):
+    with pytest.raises(ComputeUnavailable, match=re.escape(settings.WORKER_URL)) as excinfo:
         backend.submit(people(), [], hints(True), new_result_id(), flow_id=-1, node_id=-1)
 
+    assert excinfo.value.backend_id == backend.id
+    assert handshake.last_verdict(backend.id) is None, "the worker that comes back is checked again"
     assert socket.closed
     assert sent == []
+
+
+def test_a_sample_above_the_workers_cap_is_refused_before_anything_runs(backend, kept):
+    from flowfile_worker.service import SAMPLE_ROWS_CAP
+
+    ref = submit(backend, kept, must_materialise=True).ref
+
+    with pytest.raises(PlanRejected, match=str(SAMPLE_ROWS_CAP)):
+        backend.sample(ref, SAMPLE_ROWS_CAP + 1)
+
+
+@pytest.mark.parametrize("transport", ["rest"], indirect=True)
+def test_a_submit_past_the_poll_deadline_fails_as_a_timeout_and_cancels_its_job(backend, sent, monkeypatch):
+    monkeypatch.setattr(worker_module, "_POLL_DEADLINE_SECONDS", 1.0)
+    slow = pl.LazyFrame({"a": [1]}).select(
+        pl.col("a").map_batches(lambda s: (time.sleep(5), s)[1], return_dtype=pl.Int64)
+    )
+    result_id = new_result_id()
+
+    with pytest.raises(TaskFailed, match="poll deadline") as excinfo:
+        backend.submit(slow, [], hints(True), result_id, flow_id=-1, node_id=-1)
+
+    assert "FLOWFILE_WORKER_POLL_TIMEOUT" in str(excinfo.value)
+    assert ("POST", f"/v1/jobs/{result_id}/cancel") in [(method, path) for method, path, _ in sent]
+    assert handshake.last_verdict(backend.id).ok is True, "a slow job is no unreachable worker"
+    deadline = time.monotonic() + 15
+    while backend.status(JobHandle(backend.id, result_id)).state == "running" and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert backend.status(JobHandle(backend.id, result_id)).state in ("cancelled", "failed")
+    assert backend.exists(v1_ref(result_id)) is False
 
 
 @SOCKET_ONLY

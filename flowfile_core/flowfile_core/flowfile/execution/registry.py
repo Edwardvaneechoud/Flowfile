@@ -95,8 +95,11 @@ def _configured_worker_backend(backend_id: str) -> ComputeBackend:
     a backend offering ``file``.
 
     Raises:
-        LookupError: No row configures ``backend_id``.
+        LookupError: No row configures ``backend_id``, or its token no longer decrypts (the master key changed since
+            it was stored), so the backend cannot be used until it is added again.
     """
+    from cryptography.fernet import InvalidToken
+
     from flowfile_core.database.connection import get_db_context
     from flowfile_core.database.models import ConfiguredBackend
     from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
@@ -107,12 +110,15 @@ def _configured_worker_backend(backend_id: str) -> ComputeBackend:
         if row is None:
             raise LookupError(f"Unknown compute backend {backend_id!r}; no compute_backends row has that id")
         url, ciphertext, ca_cert, shares_core_disk = row.url, row.token, row.ca_cert, bool(row.shares_core_disk)
+    try:
+        token = decrypt_secret(ciphertext).get_secret_value()
+    except (InvalidToken, ValueError) as e:
+        raise LookupError(
+            f"Compute backend {backend_id!r} cannot be used: its stored token does not decrypt with this core's master "
+            "key. Remove it and add it again on the Backends page"
+        ) from e
     return WorkerBackend(
-        url=url,
-        backend_id=backend_id,
-        token=decrypt_secret(ciphertext).get_secret_value(),
-        ca_cert=ca_cert,
-        shares_core_disk=shares_core_disk,
+        url=url, backend_id=backend_id, token=token, ca_cert=ca_cert, shares_core_disk=shares_core_disk
     )
 
 
@@ -148,7 +154,8 @@ def backend(backend_id: str) -> ComputeBackend:
 
     Raises:
         LookupError: No factory is registered, built in or installed under ``backend_id``; the message lists the
-            known ids, built-in ones included. For a ``worker:`` id, no row configures it.
+            known ids, built-in ones included. For a ``worker:`` id, no row configures it, or its token no longer
+            decrypts.
     """
     with _lock:
         instance = _instances.get(backend_id)

@@ -49,17 +49,19 @@ export function backendInputFrom(form: BackendForm): ComputeBackendInput {
 }
 
 /**
- * What a row's "Server's files" cell says: marked on its row, else declared by the worker itself (its last verdict
- * offers `file`, as with `FLOWFILE_WORKER_LOCAL_FILES=1`), else no; a worker never checked reads "Not checked".
+ * What a row's "Server's files" cell says: marked on its row, else declared by the worker itself (the schemes its last
+ * verdict offers, or for a refused worker the ones it reported, as with `FLOWFILE_WORKER_LOCAL_FILES=1`), else no; a
+ * worker never checked reads "Not checked", and one whose handshake reached no worker "Unknown".
  */
 export function serverFilesLabel(
   backend: ComputeBackend,
   verdict: HandshakeVerdict | null | undefined,
 ): string {
   if (backend.shares_core_disk) return "Yes, marked here";
-  const offered = verdict?.offered;
-  if (!offered) return verdict ? "No" : "Not checked";
-  return offered.read_schemes.includes("file") || offered.write_schemes.includes("file")
+  if (!verdict) return "Not checked";
+  const declared = verdict.offered ?? verdict.backend;
+  if (!declared) return "Unknown, the handshake failed";
+  return declared.read_schemes.includes("file") || declared.write_schemes.includes("file")
     ? "Yes, declared by the worker"
     : "No";
 }
@@ -95,7 +97,7 @@ export function useComputeBackends() {
     adding.value = true;
     const { ca_cert, ...rest } = input;
     try {
-      const row = await addComputeBackend(ca_cert ? { ...rest, ca_cert } : rest);
+      const row = await addComputeBackend(ca_cert?.trim() ? { ...rest, ca_cert } : rest);
       await load();
       return row;
     } catch (error) {

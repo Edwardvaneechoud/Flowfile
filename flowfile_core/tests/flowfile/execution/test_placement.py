@@ -774,7 +774,59 @@ def test_a_backend_missing_from_the_map_leaves_its_nodes_unplaced_and_unrefused(
     assert placement == Placement(assignment={}, boundaries=[], refusals=[])
 
 
-def test_the_nodes_of_a_backend_that_cannot_be_asked_meet_its_error_when_they_run(protocol_on, declare):
+def test_a_formula_gate_is_refused_when_the_backend_of_the_input_it_probes_lacks_the_formula_library():
+    graph = make_graph(8474, execution_location=registry.LOCAL_BACKEND_ID)
+    add_manual_input(graph, 1, [{"a": 1}, {"a": 2}])
+    graph.get_node(1).setting_input.execution_location = registry.WORKER_BACKEND_ID
+    add_promise(graph, 2, "gate")
+    graph.add_gate(
+        input_schema.NodeGate(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            gate_input=transform_schema.GateInput(condition_source="formula", formula="[a] > 1"),
+        )
+    )
+    connect(graph, 1, 2)
+    capabilities = {
+        registry.LOCAL_BACKEND_ID: everything(),
+        registry.WORKER_BACKEND_ID: without(everything(), plugin="polars_expr_transformer"),
+    }
+
+    placement = place(graph, capabilities, MixedPlacementPolicy(registry.LOCAL_BACKEND_ID))
+
+    [refusal] = placement.refusals
+    assert (refusal.node_id, refusal.backend_id) == (2, registry.LOCAL_BACKEND_ID)
+    assert refusal.reason.startswith(f'its formula is checked on backend "{registry.WORKER_BACKEND_ID}", where node 1')
+    assert "polars_expr_transformer" in refusal.reason
+
+
+def test_an_apply_model_node_on_another_backend_than_its_train_model_is_refused():
+    graph = model_flow(8473, registry.WORKER_BACKEND_ID)
+    graph.get_node(3).setting_input.execution_location = registry.LOCAL_BACKEND_ID
+    capabilities = {registry.WORKER_BACKEND_ID: everything(), registry.LOCAL_BACKEND_ID: everything()}
+
+    placement = place(graph, capabilities, MixedPlacementPolicy(registry.WORKER_BACKEND_ID))
+
+    [refusal] = placement.refusals
+    assert (refusal.node_id, refusal.backend_id) == (3, registry.LOCAL_BACKEND_ID)
+    assert f'Train Model node 2 fits and holds on backend "{registry.WORKER_BACKEND_ID}"' in refusal.reason
+
+
+def test_a_backend_that_cannot_be_asked_keeps_its_nodes_assigned_unchecked_and_unrefused():
+    graph = model_flow(8472)
+    down = ComputeUnavailable("Connection refused")
+
+    placement = place(
+        graph, {}, SingleBackendPolicy(registry.WORKER_BACKEND_ID), unreachable={registry.WORKER_BACKEND_ID: down}
+    )
+
+    assert placement.assignment == {node.node_id: registry.WORKER_BACKEND_ID for node in graph.nodes}
+    assert placement.refusals == []
+    assert placement.unreachable == {registry.WORKER_BACKEND_ID: down}
+
+
+def test_the_nodes_of_a_backend_that_cannot_be_asked_fail_with_its_error_and_send_nothing(protocol_on, declare):
     backend = declare(ComputeUnavailable("Connection refused"))
     graph = fuzzy_flow(8412)
 
@@ -787,7 +839,7 @@ def test_the_nodes_of_a_backend_that_cannot_be_asked_meet_its_error_when_they_ru
     assert {result.compute_error for result in run_info.node_step_result} == {"ComputeUnavailable"}
     assert graph.get_node(3).results.errors is None
     assert run_info.success is False
-    assert sorted(backend.work) == ["submit 1", "submit 2"]
+    assert backend.work == []
     assert backend.asked == 1
 
 
@@ -867,6 +919,19 @@ def test_a_node_another_error_failed_carries_no_compute_error(protocol_off, decl
         assert "boom" in result.error, result.error
         assert result.compute_error is None
     assert run_info.success is False
+
+
+def test_a_node_polars_own_compute_error_failed_carries_no_compute_error(protocol_off, declare):
+    declare(pl.exceptions.ComputeError("could not decode the json"))
+    graph = fuzzy_flow(8471)
+
+    run_info = graph.run_graph()
+
+    results = {result.node_id: result for result in run_info.node_step_result}
+    assert results.keys() == {1, 2}, results
+    for result in results.values():
+        assert result.success is False
+        assert result.compute_error is None, result.compute_error
 
 
 @pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])

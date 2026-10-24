@@ -1,7 +1,4 @@
-// The flow's execution location as the Flow Settings dialog offers it and the run notification names it.
-// Core answers "local" or "remote" only with the compute protocol off, so such a flow keeps that pair.
-// A node's own location, as its drawer offers it, is "auto" (the flow's backend) or a backend id.
-// A configured backend is offered with its last handshake verdict beside its id.
+// Execution locations as the Flow Settings dialog and the node drawer offer them, verdicts beside backend ids.
 
 import type { ComputeBackend, HandshakeVerdict } from "../api/computeBackends.api";
 import type { ExecutionLocation } from "../types";
@@ -49,7 +46,10 @@ function withVerdicts(
   }));
 }
 
-/** "auto" and the configured backends, then the flow's own value when it is neither; never "local". */
+/**
+ * "auto" and the configured backends, then the flow's own value when it is neither; never "local". Core answers
+ * "local" or "remote" only with the compute protocol off, so such a flow keeps that pair.
+ */
 export function executionLocationOptions(
   current: ExecutionLocation,
   rows: BackendRow[],

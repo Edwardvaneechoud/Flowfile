@@ -4,7 +4,7 @@
 a deployment's compose file pins the store. Without the URI variable, the store is what the page saved to
 ``exchange_store.yaml`` under core's internal storage, read per call as the variables are, so a save takes effect on
 the next run with no restart; the row limit comes from its variable when set, else from the file.
-``settings.get_exchange_uri`` and its siblings answer from ``effective``.
+``settings.get_exchange_uri`` and its siblings answer from ``effective_store`` and ``effective_max_rows``.
 """
 
 from __future__ import annotations
@@ -86,6 +86,28 @@ def save(config: ExchangeConfig) -> None:
     os.replace(tmp, target)
 
 
+def effective_store(stored: ExchangeConfig | None = None) -> ExchangeConfig:
+    """The store's URI and connection a run uses, with no row limit; never raises, so a bad limit stops no run."""
+    if env_pins_store():
+        return ExchangeConfig(uri=os.environ.get(URI_VAR) or None, connection=os.environ.get(CONNECTION_VAR) or None)
+    stored = saved() if stored is None else stored
+    return ExchangeConfig(uri=stored.uri, connection=stored.connection)
+
+
+def effective_max_rows(stored: ExchangeConfig | None = None) -> int | None:
+    """The row limit a crossing is held to: ``FLOWFILE_EXCHANGE_MAX_ROWS`` when set, else the saved one.
+
+    Raises:
+        ValueError: ``FLOWFILE_EXCHANGE_MAX_ROWS`` is set to something other than a whole number.
+    """
+    if env_pins_max_rows():
+        value = os.environ[MAX_ROWS_VAR]
+        if not value.isdecimal():
+            raise ValueError(f"{MAX_ROWS_VAR} must be a whole number of rows, not {value!r}")
+        return int(value)
+    return (saved() if stored is None else stored).max_rows
+
+
 def effective() -> ExchangeConfig:
     """The store a run uses: the environment where it pins, the saved file otherwise.
 
@@ -93,15 +115,5 @@ def effective() -> ExchangeConfig:
         ValueError: ``FLOWFILE_EXCHANGE_MAX_ROWS`` is set to something other than a whole number.
     """
     stored = saved()
-    if env_pins_store():
-        uri, connection = os.environ.get(URI_VAR) or None, os.environ.get(CONNECTION_VAR) or None
-    else:
-        uri, connection = stored.uri, stored.connection
-    if env_pins_max_rows():
-        value = os.environ[MAX_ROWS_VAR]
-        if not value.isdecimal():
-            raise ValueError(f"{MAX_ROWS_VAR} must be a whole number of rows, not {value!r}")
-        max_rows: int | None = int(value)
-    else:
-        max_rows = stored.max_rows
-    return ExchangeConfig(uri=uri, connection=connection, max_rows=max_rows)
+    store = effective_store(stored)
+    return ExchangeConfig(uri=store.uri, connection=store.connection, max_rows=effective_max_rows(stored))

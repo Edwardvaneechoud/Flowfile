@@ -313,16 +313,21 @@ def register_physical(namespace_id: int, file_path: str) -> int:
 
 
 @pytest.mark.parametrize("route", ["/history", "/preview?version=0"])
-def test_a_catalog_route_on_a_stopped_worker_answers_503_with_the_typed_message(
-    route, catalog_api, delta_table, stopped_worker
+def test_a_catalog_route_on_a_stopped_worker_answers_503_naming_no_address(
+    route, catalog_api, delta_table, stopped_worker, caplog, monkeypatch
 ):
+    from flowfile_core.configs import logger
+
+    monkeypatch.setattr(logger, "propagate", True)
     client, namespace_id = catalog_api
     table_id = register_physical(namespace_id, delta_table)
 
     response = client.get(f"/catalog/tables/{table_id}{route}")
 
     assert response.status_code == 503
-    assert response.json()["detail"].startswith(f"Could not reach the worker at {stopped_worker}")
+    assert response.json() == {"detail": "Compute unavailable"}
+    assert stopped_worker.split("://", 1)[1] not in response.text
+    assert f"Could not reach the worker at {stopped_worker}" in caplog.text
 
 
 # The catalog writer's operation and payload

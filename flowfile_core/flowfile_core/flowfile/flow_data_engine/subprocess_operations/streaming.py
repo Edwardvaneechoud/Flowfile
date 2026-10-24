@@ -240,10 +240,10 @@ def streaming_start(
     manually.
 
     Raises immediately on connection failure or send error. Before connecting it
-    passes ``ensure_handshake`` like every REST call, so the first worker this process
-    calls is refused before the task is sent when its versions differ from core's (the
-    check is once per process, not per worker); a connect that fails re-arms that check,
-    because the worker that comes back may be another one. A ``wss://`` socket verifies the
+    passes ``ensure_handshake`` like every REST call, so a worker whose versions differ
+    from core's is refused before the task is sent (each backend is checked on its first
+    use); a connect that fails re-arms the check of the backends on ``worker_url``, because
+    the worker that comes back there may be another one. A ``wss://`` socket verifies the
     worker against the CA core trusts for it (``ssl_context_for``), else the public CAs.
     """
     # imported here: subprocess_operations imports this module
@@ -258,7 +258,7 @@ def streaming_start(
             ws_url, additional_headers={"X-Flowfile-Internal": get_internal_token()}, ssl=ssl_context_for(worker_url)
         )
     except OSError:
-        reset_handshake()
+        reset_handshake(worker_url)
         raise
     try:
         ws.send(json.dumps(metadata))

@@ -132,7 +132,9 @@ class CloudStorageReader:
         The connection's region, endpoint, plain-HTTP, TLS, account and project settings; S3 is built as ``env_vars``,
         whose branch resolves no credential, and the Azure and GCS builders add a credential only when given one. A
         GCS endpoint is reached through object_store's ``gcs_base_url``, which only a service-account key carries: a
-        key with no key material and OAuth off, so the plan sends the provider's bearer or, with none, no token.
+        key with no key material and OAuth off, so the plan sends the provider's bearer or, with none, no token. An
+        ``aws-cli`` connection with no region of its own takes its profile's (``_profile_region``), as core's own read
+        of it does, since a Delta read finds no region otherwise.
         """
         if CloudStorageReader.use_pyarrow_for_gcs(connection):
             stub = {
@@ -143,11 +145,14 @@ class CloudStorageReader:
                 "private_key_id": "",
             }
             return {"service_account_key": json.dumps(stub)}
+        region = connection.aws_region
+        if not region and connection.storage_type == "s3" and connection.auth_method == "aws-cli":
+            region = _profile_region(connection.aws_profile)
         return build_storage_options(
             storage_type=connection.storage_type,
             auth_method="env_vars" if connection.storage_type == "s3" else connection.auth_method,
             connection_name=connection.connection_name,
-            aws_region=connection.aws_region,
+            aws_region=region,
             aws_allow_unsafe_html=connection.aws_allow_unsafe_html,
             azure_account_name=connection.azure_account_name,
             gcs_project_id=connection.gcs_project_id,
@@ -215,6 +220,18 @@ class CloudStorageReader:
         return CloudStorageReader.get_scan_kwargs(
             storage_options, CloudStorageReader.get_credential_provider(storage_options, user_id)
         )
+
+
+def _profile_region(profile: str | None) -> str | None:
+    """The region the AWS profile *profile* (blank: the default chain) configures; ``None`` when it names none or
+    the profile does not exist. No credential is resolved."""
+    import boto3
+    from botocore.exceptions import BotoCoreError
+
+    try:
+        return boto3.Session(profile_name=(profile or "").strip() or None).region_name
+    except BotoCoreError:
+        return None
 
 
 def _decrypt_plan_credentials(encrypted: str) -> str:

@@ -88,9 +88,9 @@ class _WorkerSession(requests.Session):
     A call names the worker it is for with the keyword ``worker_url``, the worker's base URL, and the route on it
     as its path (``_worker_session.get("/status/abc", worker_url=...)``); the module never holds a worker URL of
     its own, its callers pass the one of the backend they serve. Each call first passes ``ensure_handshake``, which
-    is once per process, not per worker: the first call's worker is refused before it is sent anything when its
-    versions differ from core's, and later calls pass whichever worker they name. A call that cannot reach the
-    worker re-arms that check, because the worker that comes back may be another one. A caller that knows which
+    checks each backend once per process, on its first use: a worker whose versions differ from core's is refused
+    before it is sent anything. A call that cannot reach the worker re-arms the check of the backends on its URL,
+    because the worker that comes back there may be another one. A caller that knows which
     backend the worker is names it with the keyword ``backend_id``, which the check's ``ComputeUnavailable`` names.
     ``gated=False`` sends a call around the check, neither passing nor re-arming it: the gate's own
     ``GET /capabilities`` and ``WorkerBackend.capabilities``, which read a worker's versions to compare them.
@@ -105,7 +105,7 @@ class _WorkerSession(requests.Session):
             return super().request(method, f"{worker_url}{path}", *args, **kwargs)
         except requests.ConnectionError:
             if gated:
-                reset_handshake()
+                reset_handshake(worker_url)
             raise
 
 
@@ -1063,6 +1063,10 @@ class BaseFetcher:
                         self._handle_error(2, f"HTTP {r.status_code}: {r.text}")
                         return
 
+                except (requests.ConnectionError, requests.Timeout, ComputeUnavailable) as e:
+                    lost = f"Lost the worker at {self.worker_url} while following task {self.file_ref}: {e}"
+                    self._handle_error(-1, lost, "connection")
+                    return
                 except (requests.RequestException, ComputeError) as e:
                     self._handle_error(2, f"Request failed: {e}")
                     return

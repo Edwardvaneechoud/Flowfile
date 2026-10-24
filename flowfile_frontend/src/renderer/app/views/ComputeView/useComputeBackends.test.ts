@@ -185,14 +185,21 @@ describe("add", () => {
     });
   });
 
-  it("leaves an empty CA certificate out of the body", async () => {
-    const page = useComputeBackends();
+  it.each(["", "  \n\t "])(
+    "leaves an empty or blank CA certificate out of the body: %j",
+    async (ca_cert) => {
+      const page = useComputeBackends();
 
-    await page.add({ name: "team", url: TEAM_URL, token: "row-token", ca_cert: "" });
+      await page.add({ name: "team", url: "http://10.0.0.5:63579", token: "row-token", ca_cert });
 
-    expect(mocks.add).toHaveBeenCalledWith({ name: "team", url: TEAM_URL, token: "row-token" });
-    expect(mocks.add.mock.calls[0][0]).not.toHaveProperty("ca_cert");
-  });
+      expect(mocks.add).toHaveBeenCalledWith({
+        name: "team",
+        url: "http://10.0.0.5:63579",
+        token: "row-token",
+      });
+      expect(mocks.add.mock.calls[0][0]).not.toHaveProperty("ca_cert");
+    },
+  );
 
   it("rejects with the route's detail when the id exists, and reloads nothing", async () => {
     mocks.add.mockRejectedValueOnce(httpError(409, "Compute backend 'worker:team' already exists"));
@@ -403,9 +410,24 @@ describe("serverFilesLabel", () => {
     );
   });
 
-  it("says no for an unmarked worker that does not declare file, or was refused", () => {
+  it("says no for an unmarked worker that does not declare file", () => {
     expect(serverFilesLabel(row(false), verdict(["s3"]))).toBe("No");
-    expect(serverFilesLabel(row(false), verdict(null))).toBe("No");
+  });
+
+  it("reads a refused worker's own declaration", () => {
+    const refused = (schemes: string[]): HandshakeVerdict => ({
+      ...verdict(null),
+      backend: { ...core, read_schemes: schemes, write_schemes: schemes },
+      differences: ["polars_version: core 1.39.3, backend 0.20.31"],
+    });
+    expect(serverFilesLabel(row(false), refused(["s3", "file"]))).toBe(
+      "Yes, declared by the worker",
+    );
+    expect(serverFilesLabel(row(false), refused(["s3"]))).toBe("No");
+  });
+
+  it("says unknown for an unmarked worker the handshake did not reach", () => {
+    expect(serverFilesLabel(row(false), verdict(null))).toBe("Unknown, the handshake failed");
   });
 
   it("says not checked for an unmarked worker with no verdict", () => {

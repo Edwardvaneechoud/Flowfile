@@ -85,6 +85,7 @@ const notRunDescription = computed(() => {
 const loadSettings = async (nodeId: number) => {
   const data = await nodeStore.getNodeData(nodeId, false);
   nodeSettings.value = (data?.setting_input as NodeGraphicWalker | undefined) ?? null;
+  if (!nodeSettings.value) throw new Error("Couldn't read this step's settings.");
 };
 
 // Core reconciles the saved specs on this read, so the settings (and their fingerprint) load after it.
@@ -301,6 +302,17 @@ defineExpose({
       </EmptyState>
     </div>
   </generic-node-settings>
+  <div v-else-if="status === 'failed'" class="explore-data-container">
+    <EmptyState
+      icon="fa-solid fa-triangle-exclamation"
+      title="Couldn't load the data"
+      :description="failureDetail"
+    >
+      <template #actions>
+        <el-button size="small" @click="loadNodeData(globalNodeId)">Try again</el-button>
+      </template>
+    </EmptyState>
+  </div>
   <CodeLoader v-else />
 </template>
 

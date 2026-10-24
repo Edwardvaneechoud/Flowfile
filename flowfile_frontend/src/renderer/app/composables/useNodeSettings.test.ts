@@ -82,6 +82,35 @@ describe("useNodeSettings.saveSettings", () => {
     expect(await pushNodeData()).toBe(false);
   });
 
+  it.each([
+    ["compute backend", { execution_location: "worker:team" }],
+    ["description", { description: "edited" }],
+  ])(
+    "keeps a %s picked through v-model when the save is refused during a run",
+    async (_, change) => {
+      mocks.updateSettings.mockRejectedValue({ response: { data: { detail: "Flow is running" } } });
+      const nodeRef = ref<NodeBase | null>(null);
+      const { pushNodeData } = useNodeSettings({ nodeRef });
+      nodeRef.value = loadedNode();
+      await nextTick();
+
+      nodeRef.value = { ...nodeRef.value, ...change } as NodeBase;
+      await nextTick();
+
+      expect(await pushNodeData()).toBe(false);
+    },
+  );
+
+  it("takes a fresh snapshot when another node loads into the drawer", async () => {
+    const nodeRef = ref<NodeBase | null>(loadedNode());
+    const { pushNodeData } = useNodeSettings({ nodeRef, onBeforeSave: () => false });
+
+    nodeRef.value = { ...loadedNode(), node_id: 5, description: "other" } as NodeBase;
+    await nextTick();
+
+    expect(await pushNodeData()).toBe(true);
+  });
+
   it("refuses when onBeforeSave returns false", async () => {
     const { saveSettings } = useNodeSettings({
       nodeRef: ref<NodeBase | null>(loadedNode()),

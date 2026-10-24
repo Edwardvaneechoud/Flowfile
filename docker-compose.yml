@@ -34,6 +34,8 @@ services:
       - FLOWFILE_ENABLE_PROJECTS=${FLOWFILE_ENABLE_PROJECTS:-true}
       # Compute protocol: core reaches the worker over its versioned /v1 routes (on by default). See .env.example.
       - FLOWFILE_COMPUTE_PROTOCOL=${FLOWFILE_COMPUTE_PROTOCOL:-1}
+      # The backend flows run on when they name none; empty means the worker below. See .env.example.
+      - FLOWFILE_COMPUTE_BACKEND=${FLOWFILE_COMPUTE_BACKEND:-}
       - WORKER_HOST=flowfile-worker
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data

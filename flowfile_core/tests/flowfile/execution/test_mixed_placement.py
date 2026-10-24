@@ -360,6 +360,55 @@ def test_the_store_is_the_operators_whatever_user_the_upstream_node_is_stamped(
     assert no_s3_client == []
 
 
+DOWN = "worker:down"
+
+
+@pytest.mark.parametrize("flow_location", [BACKEND_ID, LOCAL])
+def test_a_node_on_a_backend_that_cannot_be_asked_fails_with_its_error_and_runs_nowhere_else(
+    protocol_on, declare, no_s3_client, connection_name, monkeypatch, flow_location
+):
+    """The chain's filter is on a backend whose handshake cannot reach it: it fails with that error, before anything is
+    sent, and its group by is skipped, whether the flow runs on the declaring backend or on ``local``."""
+    up = declare(everything())
+    down = declare(ComputeUnavailable("Connection refused", backend_id=DOWN), DOWN)
+    monkeypatch.setenv("FLOWFILE_EXCHANGE_URI", f"s3://{_BUCKET}/exchange")
+    monkeypatch.setenv("FLOWFILE_EXCHANGE_CONNECTION", connection_name)
+    graph = chain(make_graph(8530, execution_location=flow_location), filter_on=DOWN, user_id=1)
+    try:
+        run_info = graph.run_graph()
+
+        rows = {result.node_id: result for result in run_info.node_step_result}
+        assert rows[2].success is False and rows[2].compute_error == "ComputeUnavailable", rows[2].error
+        assert rows[2].error.startswith("Connection refused"), rows[2].error
+        assert 3 not in rows or rows[3].success is not True
+        assert graph.get_node(3).results.resulting_data is None
+        assert run_info.success is False
+        assert down.work == []
+        assert "submit 2" not in up.work
+        assert graph.get_node(2).results.result_ref is None
+    finally:
+        graph.close_flow()
+
+
+def test_a_node_fetched_on_a_backend_that_cannot_be_asked_fails_with_its_error(
+    protocol_on, declare, no_s3_client, connection_name, monkeypatch
+):
+    up = declare(everything())
+    down = declare(ComputeUnavailable("Connection refused", backend_id=DOWN), DOWN)
+    monkeypatch.setenv("FLOWFILE_EXCHANGE_URI", f"s3://{_BUCKET}/exchange")
+    monkeypatch.setenv("FLOWFILE_EXCHANGE_CONNECTION", connection_name)
+    graph = chain(make_graph(8531), filter_on=DOWN, user_id=1)
+    try:
+        run_info = graph.trigger_fetch_node(2)
+
+        [row] = run_info.node_step_result
+        assert (row.node_id, row.success, row.compute_error) == (2, False, "ComputeUnavailable"), row.error
+        assert down.work == []
+        assert "submit 2" not in up.work
+    finally:
+        graph.close_flow()
+
+
 @requires_minio
 def test_a_node_on_the_worker_takes_its_input_from_core_and_hands_its_rows_back_through_the_store(root, worker):
     local = registry.backend(LOCAL)

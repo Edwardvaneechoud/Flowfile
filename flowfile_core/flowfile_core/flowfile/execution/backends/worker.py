@@ -57,6 +57,7 @@ from flowfile_core.flowfile.execution.errors import (
     ComputeUnavailable,
     ForeignRef,
     OperationUnsupported,
+    PlanRejected,
     ResultMissing,
     TaskFailed,
     VersionMismatch,
@@ -220,7 +221,56 @@ class _DeferredPlan:
     sample_file: str | None = None
 
 
-class WorkerBackend:
+class _WorkerReferences:
+    """The references and job handles of a worker's ``/v1`` half, as ``WorkerBackend`` and ``EmbeddedWorkerBackend``
+    both mint and check them: each subclass sets ``id``, which they carry and are checked against."""
+
+    id: str
+
+    def _check(self, ref: ResultRef) -> None:
+        if ref.backend_id != self.id:
+            raise ForeignRef(f"Result {ref.result_id!r} belongs to backend {ref.backend_id!r}, not {self.id!r}")
+
+    def _table(self, ref: ResultRef) -> None:
+        """``_check``, then ``OperationUnsupported`` for a blob, which has no rows to plan over, sample or count."""
+        self._check(ref)
+        if ref.kind == "blob":
+            raise OperationUnsupported(
+                f"Result {ref.result_id} is a blob: it has no rows to plan over, sample or count"
+            )
+
+    def _own(self, handle: JobHandle) -> None:
+        if handle.backend_id != self.id:
+            raise ForeignRef(f"Job {handle.job_id!r} belongs to backend {handle.backend_id!r}, not {self.id!r}")
+
+    def _from_wire(self, answer: wire.SubmitResult) -> SubmitResult:
+        """Core's ``SubmitResult`` for the worker's answer, its reference through ``_ref_from_wire``."""
+        return SubmitResult(
+            ref=self._ref_from_wire(answer.ref),
+            sample=answer.sample,
+            handle=JobHandle(self.id, answer.job_id),
+        )
+
+    def _ref_from_wire(self, ref: wire.ResultRef) -> ResultRef:
+        """Core's ``ResultRef`` for a worker's reference: this backend's id stamped, the columns read as dtypes.
+
+        A bare class (``"Categorical"``, how Polars writes ``pl.Categorical()``) is made an instance first, since
+        ``pl.Schema`` refuses a class whose constructor takes arguments.
+        """
+        dtypes = [(column.name, safe_eval_pl_type(column.data_type)) for column in ref.columns]
+        columns = pl.Schema([(name, dtype() if isinstance(dtype, type) else dtype) for name, dtype in dtypes])
+        return ResultRef(
+            backend_id=self.id,
+            result_id=ref.result_id,
+            schema=_flowfile_schema(columns),
+            row_count=ref.row_count,
+            state=ref.state,
+            location=ref.location,
+            kind=ref.kind,
+        )
+
+
+class WorkerBackend(_WorkerReferences):
     """``ComputeBackend`` for ``flowfile_worker``, built on the worker's existing routes.
 
     ``url`` is the base URL of the worker this backend runs on; every transport call it makes goes there. The registry's
@@ -294,8 +344,8 @@ class WorkerBackend:
     its results stay on the task routes, but ``polars_code`` and ``sql_query``, which go over ``POST /v1/ops/<kind>``
     with the flag off too. ``status`` and ``cancel`` of a job no fetcher waits on use ``/v1/jobs/{id}``.
     Every ``/v1`` request and the socket's upgrade carry ``X-Protocol-Version``. A REST answer, a refused upgrade and
-    an ``error`` frame map alike (``_v1_error``): 426 is ``VersionMismatch``, a 404 ``ResultMissing``, and a failed
-    child's 500 goes through ``worker_failure``.
+    an ``error`` frame map alike (``_v1_error``): 426 is ``VersionMismatch``, a 404 ``ResultMissing``, a 422
+    ``PlanRejected``, and a failed child's 500 goes through ``worker_failure``.
 
     A blob (``ResultRef.kind == "blob"``) has no rows: ``plan_for``, ``sample`` and ``count`` raise
     ``OperationUnsupported`` for one, as ``submit`` does for one among its inputs, before the worker is called, while
@@ -365,17 +415,18 @@ class WorkerBackend:
         Raises:
             ComputeUnavailable: The worker could not be reached, or it answered with no ``Capabilities`` and no
                 ``app_version``, so the URL is no Flowfile worker (``capabilities_from_answer``, naming this backend).
-            VersionMismatch: With the flag off, the worker has no ``/capabilities`` route, so it predates core; with
-                it on, the worker refused this protocol version (426); in either, its answer carries an
-                ``app_version`` but is no ``Capabilities``, so it is of another release.
+            VersionMismatch: The worker has no route for the capabilities it is asked (a 404 on ``/capabilities``, or
+                on ``/v1/capabilities`` with the flag on), so it predates core; with the flag on, it refused this
+                protocol version (426); in either, its answer carries an ``app_version`` but is no ``Capabilities``,
+                so it is of another release.
             TaskFailed: This backend's token is no header value (``is_header_value``); nothing was sent.
             ComputeError: Any other answer that is no success (``_v1_failure``): a refused token is a ``TaskFailed``
                 naming 401.
         """
-        protocol = bool(settings.FLOWFILE_COMPUTE_PROTOCOL)
+        route = f"{'/v1' if settings.FLOWFILE_COMPUTE_PROTOCOL else ''}/capabilities"
         try:
             response = _worker_session.get(
-                f"{'/v1' if protocol else ''}/capabilities",
+                route,
                 worker_url=self.url,
                 gated=False,
                 auth=self._auth or _WorkerAuth(),
@@ -384,9 +435,9 @@ class WorkerBackend:
             )
         except requests.RequestException as e:
             raise ComputeUnavailable(f"Could not reach the worker at {self.url}: {e}", backend_id=self.id) from e
-        if response.status_code == 404 and not protocol:
+        if response.status_code == 404:
             raise VersionMismatch(
-                f"The worker at {self.url} does not report its capabilities (GET /capabilities answered 404), "
+                f"The worker at {self.url} does not report its capabilities (GET {route} answered 404), "
                 "so it is an older release than core"
             )
         if not response.ok:
@@ -443,7 +494,7 @@ class WorkerBackend:
             meta = json.dumps(
                 {
                     "hints": wire.SubmitHints.model_validate(asdict(hints)).model_dump(),
-                    "inputs": [ref.result_id for ref in inputs if self._v1_location(ref) is not None],
+                    "inputs": [ref.result_id for ref in inputs if self._is_v1(ref)],
                     "result_id": result_id,
                     "flow_id": flow_id,
                     "node_id": node_id,
@@ -456,6 +507,7 @@ class WorkerBackend:
                     "POST",
                     "/submit",
                     waits=True,
+                    job_id=result_id,
                     files={"plan": ("plan", plan_bytes, "application/octet-stream")},
                     data={"meta": meta},
                 )
@@ -556,7 +608,7 @@ class WorkerBackend:
         answer to ``GET /v1/results/{id}/sample``. A blob is refused with ``OperationUnsupported`` before any call.
         """
         self._table(ref)
-        if self._v1_location(ref) is not None:
+        if self._is_v1(ref):
             return self._v1("GET", f"/results/{ref.result_id}/sample", waits=True, params={"n": n}).content
         if ref.state == "deferred":
             held = self._held_plan(ref)
@@ -571,7 +623,7 @@ class WorkerBackend:
         with ``OperationUnsupported`` before any call.
         """
         self._table(ref)
-        if self._v1_location(ref) is not None:
+        if self._is_v1(ref):
             return self._v1("GET", f"/results/{ref.result_id}/count", waits=True).json()["row_count"]
         if ref.state == "deferred":
             held = self._held_plan(ref)
@@ -597,7 +649,7 @@ class WorkerBackend:
         For a ``/v1`` result, whether the worker still holds it (``HEAD /v1/results/{id}``). A task-route blob is held
         while its file is there.
         """
-        if self._v1_location(ref) is not None:
+        if self._is_v1(ref):
             return self._v1("HEAD", f"/results/{ref.result_id}", missing_ok=True).status_code == 200
         if ref.state == "deferred":
             self._check(ref)
@@ -614,7 +666,7 @@ class WorkerBackend:
         Clearing a task deletes the file it registered. A ``/v1`` result is released on the worker
         (``DELETE /v1/results/{id}``); one it no longer holds is left as it is.
         """
-        if self._v1_location(ref) is not None:
+        if self._is_v1(ref):
             self._v1("DELETE", f"/results/{ref.result_id}", missing_ok=True)
             return
         if ref.state == "deferred":
@@ -663,7 +715,7 @@ class WorkerBackend:
         through it and treats a file that vanished as a result to compute again. ``None`` for a ``/v1`` result, whose
         file core never opens.
         """
-        if self._v1_location(ref) is not None:
+        if self._is_v1(ref):
             return None
         if ref.state == "deferred":
             self._check(ref)
@@ -694,13 +746,14 @@ class WorkerBackend:
             OSError: The copy of a task-route blob failed.
             ResultMissing: The worker, or this backend, no longer holds ``ref``; for a task-route blob, its file is
                 gone, found before the copy.
-            TaskFailed: The worker's sink or copy failed, or it refused the URI's scheme for a blob (422).
+            PlanRejected: The worker refused the URI's scheme for a blob (422).
+            TaskFailed: The worker's sink or copy failed.
             ValueError: ``ref`` is a blob and ``credential`` is set; nothing was sent.
         """
-        location = self._v1_location(ref)
+        v1 = self._is_v1(ref)
         if ref.kind == "blob" and credential is not None:
             raise ValueError("A blob is copied to a URI that carries its own authorisation; it takes no credential")
-        if location is not None:
+        if v1:
             body = {"uri": uri, "credential": _wire_credential(credential)}
             return self._v1("POST", f"/results/{ref.result_id}/export", waits=True, json=body).json()["uri"]
         if ref.kind == "blob":
@@ -754,7 +807,8 @@ class WorkerBackend:
         Raises:
             ComputeUnavailable: Over ``/v1``, the worker could not be reached.
             OperationUnsupported: A blob with the protocol flag off whose URI is not ``file://``; nothing was sent.
-            TaskFailed: The worker refused the URI's scheme for a blob (422), or its copy or fetch failed.
+            PlanRejected: The worker refused the URI's scheme for a blob (422).
+            TaskFailed: The worker's copy or fetch failed.
             ValueError: A table without ``schema``, or a blob with a ``schema``, a ``row_count`` or a ``credential``;
                 nothing was sent.
         """
@@ -852,25 +906,9 @@ class WorkerBackend:
         else:
             cancel_task(handle.job_id, worker_url=self.url)
 
-    def _check(self, ref: ResultRef) -> None:
-        if ref.backend_id != self.id:
-            raise ForeignRef(f"Result {ref.result_id!r} belongs to backend {ref.backend_id!r}, not {self.id!r}")
-
-    def _table(self, ref: ResultRef) -> None:
-        """``_check``, then ``OperationUnsupported`` for a blob, which has no rows to plan over, sample or count."""
-        self._check(ref)
-        if ref.kind == "blob":
-            raise OperationUnsupported(
-                f"Result {ref.result_id} is a blob: it has no rows to plan over, sample or count"
-            )
-
     def _file(self, ref: ResultRef) -> str:
         self._check(ref)
         return ref.location.decode()
-
-    def _own(self, handle: JobHandle) -> None:
-        if handle.backend_id != self.id:
-            raise ForeignRef(f"Job {handle.job_id!r} belongs to backend {handle.backend_id!r}, not {self.id!r}")
 
     def _held_plan(self, ref: ResultRef) -> _DeferredPlan:
         self._check(ref)
@@ -881,18 +919,28 @@ class WorkerBackend:
         return held
 
     def _v1(
-        self, method: str, path: str, *, missing_ok: bool = False, waits: bool = False, **kwargs: Any
+        self,
+        method: str,
+        path: str,
+        *,
+        missing_ok: bool = False,
+        waits: bool = False,
+        job_id: str | None = None,
+        **kwargs: Any,
     ) -> requests.Response:
         """Send one request to the worker's ``/v1`` route ``path`` with this backend's protocol version and token.
 
         ``waits`` is for a call that waits on a worker child (a submit, a sample, a count): its read timeout is the
-        deadline the task routes' poll honours. A 2xx answer is returned, a 404 too with ``missing_ok``. The request
-        goes through the worker session, so the handshake gates it; this backend's token, when it has one, signs it
-        in place of the session's process token.
+        deadline the task routes' poll honours (``FLOWFILE_WORKER_POLL_TIMEOUT``), and an answer that does not come
+        within it fails the call as the poll fails a task, with the job ``job_id`` names cancelled first, when it
+        names one. A 2xx answer is returned, a 404 too with ``missing_ok``. The request goes through the worker
+        session, so the handshake gates it; this backend's token, when it has one, signs it in place of the session's
+        process token.
 
         Raises:
             ComputeUnavailable: The worker could not be reached.
-            TaskFailed: This backend's token is no header value (``is_header_value``); nothing was sent.
+            TaskFailed: This backend's token is no header value (``is_header_value``); nothing was sent. Or a waiting
+                call had no answer within the poll deadline; the handshake stands.
             ComputeError: The worker answered anything else (``_v1_failure``).
         """
         timeout = (_WORKER_TIMEOUT[0], _POLL_DEADLINE_SECONDS or None) if waits else _WORKER_TIMEOUT
@@ -907,11 +955,27 @@ class WorkerBackend:
                 auth=self._auth,
                 **kwargs,
             )
+        except requests.ReadTimeout as e:
+            if not waits:
+                raise ComputeUnavailable(f"Could not reach the worker at {self.url}: {e}", backend_id=self.id) from e
+            if job_id is not None:
+                self._give_up(job_id)
+            raise TaskFailed(
+                f"The {self.id} backend gave no answer to {method} /v1{path} within the {_POLL_DEADLINE_SECONDS:.0f}s "
+                "poll deadline (FLOWFILE_WORKER_POLL_TIMEOUT); giving up"
+            ) from e
         except requests.RequestException as e:
             raise ComputeUnavailable(f"Could not reach the worker at {self.url}: {e}", backend_id=self.id) from e
         if response.ok or (missing_ok and response.status_code == 404):
             return response
         raise _v1_failure(response.status_code, response.content, response.reason)
+
+    def _give_up(self, job_id: str) -> None:
+        """Cancel the ``/v1`` job ``job_id`` core stopped waiting on, so it holds no child or output; best effort."""
+        try:
+            self._v1("POST", f"/jobs/{job_id}/cancel", missing_ok=True)
+        except ComputeError as e:
+            logger.warning(f"Could not cancel job {job_id!r} on the {self.id} backend after giving up on it: {e}")
 
     def _v1_socket_submit(self, meta: str, plan: bytes, result_id: str) -> wire.SubmitResult | None:
         """The worker's answer to a submit over ``WS /v1/ws/submit``, or ``None`` for ``submit`` to post it instead.
@@ -925,9 +989,11 @@ class WorkerBackend:
         for every backend. Once the plan is sent the answer is the final frame's, and nothing is resent.
 
         Raises:
-            ComputeUnavailable: The socket closed after the plan was sent.
-            TaskFailed: The worker sent nothing for longer than ``FLOWFILE_WORKER_WS_TIMEOUT``, or this backend's
-                token is no header value (``is_header_value``), found before the socket is dialled.
+            ComputeUnavailable: The socket closed after the plan was sent; the handshake of the backends on ``url`` is
+                re-armed.
+            TaskFailed: The worker sent nothing for longer than ``FLOWFILE_WORKER_WS_TIMEOUT``, and the job is
+                cancelled; or this backend's token is no header value (``is_header_value``), found before the socket
+                is dialled.
             VersionMismatch: The worker refused the upgrade with 426.
             ComputeError: The handshake failed, or the worker's ``error`` frame (``_v1_error``).
         """
@@ -960,7 +1026,10 @@ class WorkerBackend:
             logger.debug(f"The plan could not be sent over the /v1 submit socket ({e}); posting it instead")
             return None
         try:
-            frame = _final_frame(ws, self.url, result_id)
+            frame = _final_frame(ws, self.url, result_id, backend_id=self.id)
+        except TaskFailed:
+            self._give_up(result_id)
+            raise
         finally:
             ws.close()
         if frame["type"] == "error":
@@ -975,8 +1044,8 @@ class WorkerBackend:
         """
         return _sendable_token(self.token, self.id) if self.token is not None else get_internal_token()
 
-    def _v1_location(self, ref: ResultRef) -> wire.WorkerLocation | None:
-        """The ``WorkerLocation`` of a result ``/v1`` minted; ``None`` for a task-route result.
+    def _is_v1(self, ref: ResultRef) -> bool:
+        """Whether ``/v1`` minted ``ref``: its location is a ``WorkerLocation`` JSON, which is not decoded here.
 
         A task-route result's location is a file path or its result id, never JSON.
 
@@ -984,35 +1053,18 @@ class WorkerBackend:
             ForeignRef: Another backend minted ``ref``.
         """
         self._check(ref)
-        if not ref.location.startswith(b"{"):
+        return ref.location.startswith(b"{")
+
+    def _v1_location(self, ref: ResultRef) -> wire.WorkerLocation | None:
+        """The ``WorkerLocation`` of a result ``/v1`` minted, decoded (a deferred one's carries its plan); ``None`` for
+        a task-route result.
+
+        Raises:
+            ForeignRef: Another backend minted ``ref``.
+        """
+        if not self._is_v1(ref):
             return None
         return wire.WorkerLocation.model_validate_json(ref.location)
-
-    def _from_wire(self, answer: wire.SubmitResult) -> SubmitResult:
-        """Core's ``SubmitResult`` for the worker's answer, its reference through ``_ref_from_wire``."""
-        return SubmitResult(
-            ref=self._ref_from_wire(answer.ref),
-            sample=answer.sample,
-            handle=JobHandle(self.id, answer.job_id),
-        )
-
-    def _ref_from_wire(self, ref: wire.ResultRef) -> ResultRef:
-        """Core's ``ResultRef`` for a worker's reference: this backend's id stamped, the columns read as dtypes.
-
-        A bare class (``"Categorical"``, how Polars writes ``pl.Categorical()``) is made an instance first, since
-        ``pl.Schema`` refuses a class whose constructor takes arguments.
-        """
-        dtypes = [(column.name, safe_eval_pl_type(column.data_type)) for column in ref.columns]
-        columns = pl.Schema([(name, dtype() if isinstance(dtype, type) else dtype) for name, dtype in dtypes])
-        return ResultRef(
-            backend_id=self.id,
-            result_id=ref.result_id,
-            schema=_flowfile_schema(columns),
-            row_count=ref.row_count,
-            state=ref.state,
-            location=ref.location,
-            kind=ref.kind,
-        )
 
     def _v1_op(self, op: OperationKind, payload: OpPayload) -> OpResult:
         """Run ``op`` over the worker's ``POST /v1/ops/{kind}`` and key its refs as the task-route method does.
@@ -1123,7 +1175,12 @@ class WorkerBackend:
                     "splits": [[group.name, group.percentage] for group in job.settings.splits],
                 }
         answer = self._v1(
-            "POST", f"/ops/{op.value}", waits=True, params={"job_id": job.job_id, **params}, json=body
+            "POST",
+            f"/ops/{op.value}",
+            waits=True,
+            job_id=job.job_id,
+            params={"job_id": job.job_id, **params},
+            json=body,
         ).json()
         refs = {
             name: self._ref_from_wire(wire.ResultRef.model_validate(raw)) for name, raw in answer["outputs"].items()
@@ -1332,7 +1389,7 @@ class WorkerBackend:
     def _ml_apply(self, payload: OpPayload) -> OpResult:
         apply = unpack(payload, MlApplyPayload)
         model = apply.model
-        if self._v1_location(model) is not None or not os.path.isfile(model.location.decode()):
+        if self._is_v1(model) or not os.path.isfile(model.location.decode()):
             raise ResultMissing(f"The worker's task routes do not hold model {model.result_id!r}")
         return self._read(
             lambda: MLApplyFetcher(
@@ -1525,7 +1582,8 @@ def _run(
     while the task is started is a ``ComputeUnavailable`` naming ``backend_id``, except one the handshake gate
     raised for ``start``'s call, which carries a URL only and so names none. A failed task raises a typed
     error: error code -1 goes through ``worker_failure``, whose ``error_kind`` tells a plan the worker could not
-    load (``PlanRejected``) from a lost connection and a killed child; every other code is a ``TaskFailed`` with
+    load (``PlanRejected``) from a lost connection (``ComputeUnavailable`` naming ``backend_id``: the socket closed,
+    or the status poll lost the worker) and a killed child; every other code is a ``TaskFailed`` with
     the fetcher's description, raised from the fetcher's ``RemoteExecutionError`` so the worker-side class
     stays recoverable from the chain.
     """
@@ -1540,19 +1598,23 @@ def _run(
     except Exception as e:
         description = fetcher.error_description or str(e)
         if fetcher.error_code == -1:
-            raise worker_failure(fetcher.error_kind, description) from e
+            failure = worker_failure(fetcher.error_kind, description)
+            if isinstance(failure, ComputeUnavailable):
+                failure.backend_id = backend_id
+            raise failure from e
         raise TaskFailed(description) from e
     return fetcher
 
 
-def _final_frame(ws: ClientConnection, worker_url: str, result_id: str) -> dict[str, Any]:
+def _final_frame(ws: ClientConnection, worker_url: str, result_id: str, *, backend_id: str) -> dict[str, Any]:
     """The first ``complete`` or ``error`` frame the worker sends on the ``/v1`` submit socket ``ws``.
 
     Progress frames are read past. Every frame resets the silence clock that the task routes' socket keeps too:
     nothing received for longer than ``FLOWFILE_WORKER_WS_TIMEOUT`` (0 disables) means the worker is presumed wedged.
 
     Raises:
-        ComputeUnavailable: The socket closed before a final frame.
+        ComputeUnavailable: The socket closed before a final frame; it names ``backend_id``, and the next use of each
+            backend on ``worker_url`` checks it again, since the worker that comes back may be another one.
         TaskFailed: The worker went silent past the timeout.
     """
     last_frame_at = monotonic()
@@ -1568,8 +1630,10 @@ def _final_frame(ws: ClientConnection, worker_url: str, result_id: str) -> dict[
                 ) from None
             continue
         except ConnectionClosed as e:
+            reset_handshake(worker_url)
             raise ComputeUnavailable(
-                f"The worker at {worker_url} closed the connection before it answered submit {result_id}: {e}"
+                f"The worker at {worker_url} closed the connection before it answered submit {result_id}: {e}",
+                backend_id=backend_id,
             ) from e
         last_frame_at = monotonic()
         frame = json.loads(message)
@@ -1614,21 +1678,26 @@ class _TokenAuth(requests.auth.AuthBase):
         return request
 
 
-def _v1_error(status_code: int, detail: Any) -> ComputeError:
+def _v1_error(status_code: int, detail: Any, *, answered_by: str = "The worker") -> ComputeError:
     """The typed error for a ``/v1`` failure the worker answered with ``status_code`` and ``detail``.
 
-    A REST answer, a refused socket upgrade and an ``error`` frame on the socket all come here. 426 is a protocol
-    version the worker refuses, 404 a result or input it does not hold, and a 500 carrying a child's ``status``,
-    ``error_message`` and ``error_kind`` goes through ``worker_failure`` as a failed task does. Any other code (a token
-    the worker refuses, a meta it cannot read) is a ``TaskFailed`` naming the code.
+    A REST answer, a refused socket upgrade, an ``error`` frame on the socket and an ``HTTPException`` a ``/v1`` body
+    raised in this process (``EmbeddedWorkerBackend``) all come here, so both backends type a failure alike. 426 is a
+    protocol version the worker refuses, 404 a result or input it does not hold, 422 what a body refuses before
+    anything runs (a sample above the cap, a directory scan, a table where a model was expected, a blob's scheme), and
+    a 500 carrying a child's ``status``, ``error_message`` and ``error_kind`` goes through ``worker_failure`` as a
+    failed task does. Any other code (a token the worker refuses, a meta it cannot read) is a ``TaskFailed`` naming
+    the code, as ``answered_by`` answered it.
     """
     if status_code == 426:
         return VersionMismatch(str(detail))
     if status_code == 404:
         return ResultMissing(str(detail))
+    if status_code == 422:
+        return PlanRejected(str(detail))
     if status_code == 500 and isinstance(detail, dict) and "status" in detail:
         return worker_failure(detail.get("error_kind"), detail.get("error_message") or detail["status"])
-    return TaskFailed(f"The worker answered {status_code}: {detail}")
+    return TaskFailed(f"{answered_by} answered {status_code}: {detail}")
 
 
 def _v1_failure(status_code: int, body: bytes, reason: str) -> ComputeError:

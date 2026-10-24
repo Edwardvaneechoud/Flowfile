@@ -29,6 +29,7 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.worker import TOKEN_RULE
+from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.execution.placement import PYTHON_FUNCTIONS
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake as checks
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
@@ -476,10 +477,23 @@ def test_a_non_admin_lists_the_ids_and_last_verdicts_without_the_urls_and_is_ref
     listed = non_admin_client.get(ROUTE)
 
     assert listed.status_code == 200, listed.text
+    without_host = {"platform": "", "plugin_libs": {}}
+    seen = verdict.model_copy(
+        update={
+            "core": verdict.core.model_copy(update=without_host),
+            "backend": verdict.backend.model_copy(update=without_host),
+            "offered": verdict.offered.model_copy(update=without_host),
+            "absent": {
+                **{plugin: "this backend could not load from the path core's plans carry" for plugin in EXPRESSION_PLUGINS},
+                PYTHON_FUNCTIONS: "core's Python functions do not run on this backend",
+            },
+        }
+    )
     assert listed.json() == [
-        {"id": "worker:team", "url": None, "shares_core_disk": False, "verdict": verdict.model_dump(mode="json")},
+        {"id": "worker:team", "url": None, "shares_core_disk": False, "verdict": seen.model_dump(mode="json")},
         {"id": "worker:unchecked", "url": None, "shares_core_disk": False, "verdict": None},
     ]
+    assert url.split("://", 1)[1] not in listed.text
     assert add(non_admin_client, "http://team-worker.test:63579").status_code == 403
     assert non_admin_client.delete(f"{ROUTE}/worker:team").status_code == 403
     assert non_admin_client.post(f"{ROUTE}/worker:team/handshake").status_code == 403
@@ -487,3 +501,65 @@ def test_a_non_admin_lists_the_ids_and_last_verdicts_without_the_urls_and_is_ref
 
 def test_an_unauthenticated_caller_gets_401():
     assert TestClient(main.app).get(ROUTE).status_code == 401
+
+
+@pytest.mark.parametrize(
+    ("changes", "reason"),
+    [(None, "unreachable"), ({"polars_version": "0.0.1"}, "version mismatch")],
+    ids=["unreachable", "other-polars"],
+)
+def test_a_non_admin_sees_a_refusal_as_a_reason_naming_no_address(non_admin_client, fake_worker, flag, changes, reason):
+    url = f"http://127.0.0.1:{free_port()}" if changes is None else fake_worker("row-token", **changes)
+    with get_db_context() as db:
+        db.add(ConfiguredBackend(id="worker:team", url=url, token=encrypt_secret("row-token", 1)))
+        db.commit()
+    try:
+        checks.verify(registry.backend("worker:team"))
+    except ComputeError:
+        pass
+    whole = checks.last_verdict("worker:team")
+    assert whole.ok is False
+    assert url in whole.error or whole.error_kind == "VersionMismatch"
+
+    listed = non_admin_client.get(ROUTE)
+
+    assert listed.status_code == 200, listed.text
+    (row,) = listed.json()
+    assert row["verdict"]["ok"] is False
+    assert row["verdict"]["error"] == reason
+    assert "://" not in listed.text
+    assert url.split("://", 1)[1] not in listed.text
+
+
+def test_a_ca_certificate_that_is_not_ascii_is_refused_and_nothing_is_stored(admin_client):
+    pem = "-----BEGIN CERTIFICATE-----\nMIIB\u00e9\n-----END CERTIFICATE-----\n"
+
+    response = add(admin_client, "https://team-worker.test:63579", ca_cert=pem)
+
+    assert response.status_code == 422, response.text
+    assert response.json() == {
+        "detail": "The CA certificate was not stored: it must be PEM, -----BEGIN CERTIFICATE----- blocks"
+    }
+    assert admin_client.get(ROUTE).json() == []
+
+
+def test_a_row_whose_token_no_longer_decrypts_is_refused_naming_it_and_never_a_500(admin_client, monkeypatch):
+    """A master key changed since the row was stored: the registry refuses the backend, the handshake answers that."""
+    from cryptography.fernet import Fernet
+
+    from flowfile_core.secret_manager import secret_manager
+
+    stored = encrypt_secret("row-token", 1)
+    with get_db_context() as db:
+        db.add(ConfiguredBackend(id="worker:team", url=f"http://127.0.0.1:{free_port()}", token=stored))
+        db.commit()
+    monkeypatch.setattr(secret_manager, "derive_user_key", lambda user_id: Fernet.generate_key())
+
+    with pytest.raises(LookupError, match="'worker:team' cannot be used: its stored token does not decrypt"):
+        registry.backend("worker:team")
+    verdict = handshake(admin_client)
+
+    assert verdict["ok"] is False
+    assert verdict["backend"] is None
+    assert verdict["error"].startswith("Compute backend 'worker:team' cannot be used")
+    assert verdict["error_kind"] == "LookupError"

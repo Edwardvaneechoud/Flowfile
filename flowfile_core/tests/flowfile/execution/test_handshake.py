@@ -12,6 +12,8 @@ only.
 
 import json
 import socket
+import threading
+import time
 from urllib.parse import urlsplit
 
 import polars as pl
@@ -363,6 +365,86 @@ def test_a_call_that_cannot_reach_the_worker_rearms_its_check(flag, monkeypatch)
     assert asked == [1, 1]
 
 
+def test_a_call_that_cannot_reach_one_worker_leaves_another_workers_check_standing(flag, monkeypatch):
+    worker = registry.backend(registry.WORKER_BACKEND_ID)
+    other = WorkerBackend(same_worker_by_another_name(), backend_id=TEAM)
+    asked = counted(monkeypatch, other)
+    assert handshake.verify(other).ok is True
+    real_send = requests.Session.send
+
+    def refused_once(self, request, **kwargs):
+        monkeypatch.setattr(requests.Session, "send", real_send)
+        raise requests.ConnectionError("[Errno 61] Connection refused")
+
+    counted(monkeypatch, worker)
+    handshake.ensure_handshake(WORKER_URL)
+    monkeypatch.setattr(requests.Session, "send", refused_once)
+    with pytest.raises(ComputeUnavailable):
+        subops.results_exists("no-such-task", worker_url=WORKER_URL)
+
+    assert handshake.last_verdict(registry.WORKER_BACKEND_ID) is None
+    assert handshake.last_verdict(TEAM).ok is True
+    assert asked == [1]
+
+
+def test_calls_that_find_a_backend_unchecked_at_once_share_one_check(protocol_on, monkeypatch):
+    worker = registry.backend(registry.WORKER_BACKEND_ID)
+    asked: list[int] = []
+    release = threading.Event()
+
+    def slow_capabilities():
+        asked.append(1)
+        release.wait(5)
+        return local_capabilities()
+
+    monkeypatch.setattr(worker, "capabilities", slow_capabilities)
+    monkeypatch.setattr(handshake, "_run_probe", lambda backend, name, plan: None)
+    verdicts: list = []
+    callers = [threading.Thread(target=lambda: verdicts.append(handshake.verdict_for(worker))) for _ in range(8)]
+    for caller in callers:
+        caller.start()
+    time.sleep(0.3)
+    release.set()
+    for caller in callers:
+        caller.join(10)
+
+    assert asked == [1]
+    assert len(verdicts) == 8
+    assert all(verdict.ok for verdict in verdicts)
+
+
+def test_calls_that_wait_on_a_check_of_an_unreachable_backend_each_raise_its_error(closed_port_url):
+    backend = WorkerBackend(closed_port_url, backend_id=TEAM)
+    asked: list[int] = []
+    real = backend.capabilities
+
+    def slow_capabilities():
+        asked.append(1)
+        time.sleep(0.3)
+        return real()
+
+    backend.capabilities = slow_capabilities
+    raised: list[BaseException] = []
+
+    def call():
+        try:
+            handshake.verdict_for(backend)
+        except ComputeUnavailable as e:
+            raised.append(e)
+
+    callers = [threading.Thread(target=call) for _ in range(5)]
+    for caller in callers:
+        caller.start()
+    for caller in callers:
+        caller.join(10)
+
+    assert asked == [1]
+    assert len(raised) == 5
+    assert len({id(e) for e in raised}) == 5
+    assert {e.backend_id for e in raised} == {TEAM}
+    assert handshake.last_verdict(TEAM).error_kind == "ComputeUnavailable"
+
+
 def test_a_submit_socket_that_cannot_be_opened_rearms_the_check_of_its_url(protocol_on, monkeypatch):
     worker = registry.backend(registry.WORKER_BACKEND_ID)
     asked = counted(monkeypatch, worker)
@@ -621,17 +703,18 @@ def test_a_node_on_an_earlier_release_or_on_no_worker_fails_with_the_typed_error
     assert row(run_info, 1).compute_error == ("Refusal" if refused_at_placement else error.__name__)
 
 
-def test_a_worker_without_a_capabilities_route_is_an_older_release(monkeypatch):
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
+def test_a_worker_without_a_capabilities_route_is_an_older_release(flag):
     older_worker = f"{WORKER_URL}/no-such-prefix"
+    route = "/v1/capabilities" if flag else "/capabilities"
 
-    with pytest.raises(VersionMismatch) as excinfo:
-        subops.get_status("no-such-task", worker_url=older_worker)
+    for _ in range(2):
+        with pytest.raises(VersionMismatch) as excinfo:
+            subops.get_status("no-such-task", worker_url=older_worker)
 
-    assert str(excinfo.value) == (
-        f"The worker at {older_worker} does not report its capabilities (GET /capabilities answered 404), "
-        "so it is an older release than core"
-    )
+        assert str(excinfo.value) == (
+            f"The worker at {older_worker} does not report its capabilities (GET {route} answered 404), "
+            "so it is an older release than core"
+        )
 
 
 def test_cleanup_calls_to_a_mismatched_worker_return_false(flag, monkeypatch, sent):

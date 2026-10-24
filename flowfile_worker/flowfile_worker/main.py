@@ -11,6 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from flowfile_worker import mp_context
+from flowfile_worker.auth import carries_internal_token
 from flowfile_worker.configs import FLOWFILE_CORE_URI, SERVICE_HOST, SERVICE_PORT, logger
 from flowfile_worker.pool import task_pool
 from flowfile_worker.protocol_routes import router as protocol_router
@@ -72,20 +73,32 @@ async def request_validation_without_input(request: Request, exc: RequestValidat
     return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
 
 
-@app.post("/shutdown")
-async def shutdown(request: Request):
-    """Endpoint to handle graceful shutdown, answered only for a loopback transport peer.
+def _supervising_shell(request: Request) -> bool:
+    """Whether the caller can be the desktop shell that runs this worker: a loopback peer, when a shell supervises it.
 
-    The peer is the socket address, never a forwarded header; a missing client or a host that
-    is not an IP address is refused with 403.
+    The shell sets ``FLOWFILE_SUPERVISOR_PID`` for its sidecars only. The peer is the one uvicorn reports, which its
+    proxy-headers middleware takes from ``X-Forwarded-For`` when the socket peer is a trusted proxy (loopback by
+    default), so behind a proxy on the same host that sends no such header every client reads as loopback: no worker
+    a shell does not supervise trusts the peer. A missing client or a host that is not an IP address is never it.
     """
+    if not os.environ.get("FLOWFILE_SUPERVISOR_PID"):
+        return False
     host = request.client.host if request.client else ""
     try:
-        is_loopback = ipaddress.ip_address(host).is_loopback
+        return ipaddress.ip_address(host).is_loopback
     except ValueError:
-        is_loopback = False
-    if not is_loopback:
-        raise HTTPException(status_code=403, detail="Shutdown is only accepted from a loopback address")
+        return False
+
+
+@app.post("/shutdown")
+async def shutdown(request: Request):
+    """Shut the worker down gracefully, for a caller with the internal token or for the desktop shell that runs it.
+
+    The internal token is accepted from any peer; without it only the supervising shell is (``_supervising_shell``),
+    which posts from the same host and holds no token. Anything else is 403.
+    """
+    if not (carries_internal_token(request) or _supervising_shell(request)):
+        raise HTTPException(status_code=403, detail="Shutdown needs the internal token")
     if server_instance:
         await asyncio.create_task(trigger_shutdown())
     return {"message": "Shutting down"}

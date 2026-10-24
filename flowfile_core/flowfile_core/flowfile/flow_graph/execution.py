@@ -84,7 +84,8 @@ executes, so a graph opened in-process during the run (a virtual table's produce
 Schema prefetches copy their starting context, so they carry it as well.
 """
 
-_COMPUTE_ERRORS = frozenset(error.__name__ for error in (ComputeError, *ComputeError.__subclasses__()))
+# Subclasses only: the base's name is also Polars' own ComputeError, a node's data error.
+_COMPUTE_ERRORS = frozenset(error.__name__ for error in ComputeError.__subclasses__())
 
 
 def _compute_error(node: FlowNode) -> str | None:
@@ -409,14 +410,21 @@ class ExecutionMixin(GraphMixinBase):
         return True
 
     def release_run(self) -> None:
-        """Release the single-run slot claimed by try_claim_run (idempotent)."""
+        """Release the single-run slot claimed by try_claim_run (idempotent).
+
+        A flow closed while the run was in flight (``close_flow``) is closed now, so what the run minted is released.
+        """
         with self._run_claim_lock:
             was_running = self.flow_settings.is_running
+            close = self._close_when_released
+            self._close_when_released = False
             self._kernel_hold = None
             self._commit_sources = True
             self.flow_settings.is_running = False
         if was_running:
             self._bump_revision("run_ended")
+        if close:
+            self.close_flow()
 
     def trigger_fetch_node(
         self,
@@ -486,6 +494,7 @@ class ExecutionMixin(GraphMixinBase):
             backend_id = None if placement is None else placement.assignment.get(flow_node.node_id)
             if backend_id is not None and backend_id != context.backend_id:
                 context = replace(context, backend_id=backend_id)
+            unreachable = None if placement is None else placement.unreachable.get(backend_id)
             edges_into = [
                 edge
                 for edge in edges
@@ -498,6 +507,7 @@ class ExecutionMixin(GraphMixinBase):
                         performance_mode=performance_mode,
                         node_logger=node_logger,
                         reset_cache=reset_cache,
+                        unreachable=unreachable,
                     )
             finally:
                 _release_boundary_inputs(flow_node, edges_into)
@@ -628,6 +638,7 @@ class ExecutionMixin(GraphMixinBase):
         run_info_lock: threading.Lock,
         backend_id: str | None,
         edges: Sequence[BoundaryEdge],
+        unreachable: ComputeError | None = None,
     ) -> tuple[NodeResult, FlowNode]:
         """Executes a single node, records its result, and returns both.
 
@@ -641,6 +652,8 @@ class ExecutionMixin(GraphMixinBase):
                 backend than the run's runs under the run's context on that backend.
             edges: The run's boundary edges into the node, which it reads those inputs through while it runs; every
                 import is released once it ran.
+            unreachable: The error the handshake of the node's backend raised, when it could not be asked; the node
+                fails with it and nothing is sent.
 
         Returns:
             A (NodeResult, FlowNode) tuple for post-stage failure propagation.
@@ -672,7 +685,7 @@ class ExecutionMixin(GraphMixinBase):
                 return node_result, node
 
             logger.info(f"Starting to run: node {node.node_id}, start time: {node_result.start_timestamp}")
-            node.execute_node(performance_mode=performance_mode, node_logger=node_logger)
+            node.execute_node(performance_mode=performance_mode, node_logger=node_logger, unreachable=unreachable)
         try:
             errors = node.results.errors
             if self.flow_settings.is_canceled:
@@ -790,6 +803,7 @@ class ExecutionMixin(GraphMixinBase):
             skip_node_ids.add(node_id)
 
         assignment = {} if placement is None else placement.assignment
+        unreachable = {} if placement is None else placement.unreachable
         edges_into: dict[str | int, list[BoundaryEdge]] = {}
         for edge in edges:
             edges_into.setdefault(edge.target.node_id, []).append(edge)
@@ -843,6 +857,7 @@ class ExecutionMixin(GraphMixinBase):
                             run_info_lock,
                             assignment.get(node.node_id),
                             edges_into.get(node.node_id, []),
+                            unreachable.get(assignment.get(node.node_id)),
                         )
                         for node in nodes_to_run
                     ]
@@ -860,6 +875,7 @@ class ExecutionMixin(GraphMixinBase):
                                 run_info_lock,
                                 assignment.get(node.node_id),
                                 edges_into.get(node.node_id, []),
+                                unreachable.get(assignment.get(node.node_id)),
                             ): node
                             for node in nodes_to_run
                         }
@@ -1044,10 +1060,11 @@ class ExecutionMixin(GraphMixinBase):
         for it. Each other backend named is read through its handshake verdict (``handshake.verdict_for``,
         which checks it on its first use in this process). One whose verdict refuses it whole, or whose check raises a
         ``VersionMismatch``, refuses every node assigned to it with that error, as an id the registry does not know does
-        with the registry's message; one whose check raises any other ``ComputeError`` is left out of the map ``place``
-        is given, so its nodes are not placed and meet that typed error when they run. Every other backend's offered
-        capabilities go into that map and what its verdict found it does not offer into ``place``'s ``absent``, so a
-        node that needs it is refused there with the reason.
+        with the registry's message; one whose check raises any other ``ComputeError`` (``ComputeUnavailable``) keeps
+        its nodes, unchecked, and each fails with that error when it runs, before anything is sent, never running on
+        another backend (``Placement.unreachable``). Every other backend's offered capabilities go into that map and
+        what its verdict found it does not offer into ``place``'s ``absent``, so a node that needs it is refused there
+        with the reason.
 
         Every boundary crosses through the run's prefix in the exchange store (the ``exchange_run`` given), resolved
         once per run as the operator's connection: one ``BoundaryEdge`` per output of the upstream node that the
@@ -1070,6 +1087,7 @@ class ExecutionMixin(GraphMixinBase):
         declared: dict[str, Capabilities] = {}
         absent: dict[str, dict[str, str]] = {}
         refused: dict[str, str] = {}
+        unreachable: dict[str, ComputeError] = {}
         for backend_id in dict.fromkeys(policy.backend_for(node) for node in nodes):
             if backend_id == registry.LOCAL_BACKEND_ID and registry.serving():
                 refused[backend_id] = "this core serves; compute runs on its worker"
@@ -1079,7 +1097,8 @@ class ExecutionMixin(GraphMixinBase):
             except VersionMismatch as e:
                 refused[backend_id] = str(e)
                 continue
-            except ComputeError:
+            except ComputeError as e:
+                unreachable[backend_id] = e
                 continue
             except LookupError as e:
                 refused[backend_id] = str(e)
@@ -1089,7 +1108,7 @@ class ExecutionMixin(GraphMixinBase):
                 absent[backend_id] = verdict.absent
             else:
                 refused[backend_id] = verdict.error
-        placement = place(self, declared, policy, nodes=nodes, absent=absent)
+        placement = place(self, declared, policy, nodes=nodes, absent=absent, unreachable=unreachable)
         if refused:
             refusals = [
                 Refusal(node.node_id, policy.backend_for(node), refused[policy.backend_for(node)])
@@ -1100,6 +1119,7 @@ class ExecutionMixin(GraphMixinBase):
                 assignment={**placement.assignment, **{refusal.node_id: refusal.backend_id for refusal in refusals}},
                 boundaries=placement.boundaries,
                 refusals=[*refusals, *placement.refusals],
+                unreachable=placement.unreachable,
             )
         edges: list[BoundaryEdge] = []
         crossing_refusals: dict[int, Refusal] = {}
@@ -1565,10 +1585,22 @@ class ExecutionMixin(GraphMixinBase):
             node.cancel()
 
     def close_flow(self):
-        """Performs cleanup operations, such as clearing node caches."""
+        """Releases every result the flow's nodes hold; never raises.
 
+        A flow with a run in flight is closed when the run releases its slot (``release_run``): the run finishes as it
+        would have, no result is released under a node that still reads it, and none it mints after this call is left
+        held.
+        """
+        with self._run_claim_lock:
+            running = self.flow_settings.is_running
+            self._close_when_released = running
+        if running:
+            return
         for node in self.nodes:
-            node.remove_cache()
+            try:
+                node.remove_cache()
+            except Exception as e:
+                logger.warning(f"Flow {self.flow_id}: node {node.node_id}'s results were not released: {e}")
 
     def reset(self):
         """Forces a deep reset on all nodes in the graph."""

@@ -43,6 +43,9 @@ class ExchangeStoreState(BaseModel):
     uri: str | None
     connection: str | None
     max_rows: int | None
+    max_rows_error: str | None = Field(
+        default=None, description="Why FLOWFILE_EXCHANGE_MAX_ROWS cannot be read; each crossing is refused until fixed."
+    )
     source: Literal["env", "saved", "none"]
     env_override: bool = Field(description="FLOWFILE_EXCHANGE_URI is set and overrides the saved URI and connection.")
     saved: ExchangeStoreSaved
@@ -65,10 +68,12 @@ def _eligible_connections() -> list[str]:
 
 def _state() -> ExchangeStoreState:
     stored = exchange_config.saved()
+    effective = exchange_config.effective_store(stored)
+    max_rows_error = None
     try:
-        effective = exchange_config.effective()
+        max_rows = exchange_config.effective_max_rows(stored)
     except ValueError as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        max_rows, max_rows_error = None, str(e)
     if exchange_config.env_pins_store():
         source: Literal["env", "saved", "none"] = "env"
     elif effective.uri:
@@ -78,7 +83,8 @@ def _state() -> ExchangeStoreState:
     return ExchangeStoreState(
         uri=effective.uri,
         connection=effective.connection,
-        max_rows=effective.max_rows,
+        max_rows=max_rows,
+        max_rows_error=max_rows_error,
         source=source,
         env_override=exchange_config.env_pins_store(),
         saved=ExchangeStoreSaved(uri=stored.uri, connection=stored.connection, max_rows=stored.max_rows),

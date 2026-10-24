@@ -10,7 +10,7 @@ import {
   readNodeSettings,
   waitForRun,
 } from "./helpers/api";
-import { applySettings, clickRun, openFlow, openNodeSettings } from "./helpers/canvas";
+import { applySettings, clickRun, nodeStatus, openFlow, openNodeSettings } from "./helpers/canvas";
 import { buildSalaryFlow } from "./helpers/flows";
 
 /**
@@ -73,6 +73,9 @@ test.describe("Compute backend picker", () => {
     await clickRun(page);
     const run = await waitForRun(request, token, flowId, previousStart);
     expect(run.success).toBe(true);
+    // The badges come from the same run report as the node statuses, so wait until the canvas shows it.
+    await expect(nodeStatus(page, "1")).toHaveClass(/success/);
+    await expect(nodeStatus(page, "2")).toHaveClass(/success/);
     await expect(page.locator("[data-testid=boundary-badge]")).toHaveCount(0);
   });
 });

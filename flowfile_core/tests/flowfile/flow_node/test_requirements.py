@@ -216,6 +216,15 @@ def test_a_catalog_read_takes_its_scheme_and_connection_from_the_storage_target(
     assert _requirements("catalog_reader", settings, catalog_target=target) == expected
 
 
+@pytest.mark.parametrize("cdc_mode", ["since_last_run", "since_version"])
+def test_a_catalog_change_read_is_a_plan_that_may_carry_a_python_function(cdc_mode):
+    settings = input_schema.NodeCatalogReader(**_ids(catalog_table_id=7, cdc_mode=cdc_mode, cdc_from_version=1))
+
+    assert _requirements("catalog_reader", settings, catalog_target=CLOUD_CATALOG) == NodeRequirements(
+        read_schemes=frozenset({"s3"}), credentials=frozenset({"lake"}), python_function=True
+    )
+
+
 @pytest.mark.parametrize(
     ("write", "operation"),
     [

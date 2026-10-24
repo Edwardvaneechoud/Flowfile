@@ -17,6 +17,7 @@ const none: ExchangeStoreState = {
   uri: null,
   connection: null,
   maxRows: null,
+  maxRowsError: null,
   source: "none",
   envOverride: false,
   saved: { uri: null, connection: null, maxRows: null },

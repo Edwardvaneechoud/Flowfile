@@ -247,9 +247,24 @@ def _annotation_roots(entry: ast.FunctionDef) -> set[str]:
     }
 
 
+# The sandbox hands user code narrow namespaces in place of these modules; exported code, which runs
+# outside the sandbox, imports the real module (or polars subpackage) the namespace was built from.
+_SANDBOX_NAMESPACE_IMPORTS = {
+    "cs": "import polars.selectors as cs",
+    "expr": "import polars.expr as expr",
+    "datetime": "import datetime",
+    "zoneinfo": "import zoneinfo",
+    "base64": "import base64",
+    "decimal": "import decimal",
+    "time": "import time",
+}
+
+
 def _sandbox_import(name: str, value) -> str:
-    """The import binding ``name`` to ``value`` as ``PolarsCodeParser.safe_globals`` does: a module by its name, a
-    Polars export from ``polars``, anything else from the public module that defines it."""
+    """The import binding ``name`` to ``value`` as ``PolarsCodeParser.safe_globals`` does: a narrow namespace by its
+    real module, a module by its name, a Polars export from ``polars``, anything else from the public module."""
+    if name in _SANDBOX_NAMESPACE_IMPORTS:
+        return _SANDBOX_NAMESPACE_IMPORTS[name]
     if inspect.ismodule(value):
         return f"import {value.__name__}" + ("" if value.__name__ == name else f" as {name}")
     if getattr(pl, name, None) is value:

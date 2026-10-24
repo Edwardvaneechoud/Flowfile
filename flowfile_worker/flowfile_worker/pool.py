@@ -38,12 +38,10 @@ from flowfile_worker import mp_context
 from flowfile_worker.configs import logger
 from shared.storage_config import storage
 
-# Ops dispatched via spawner.start_process / streaming that are safe to reuse a
-# child for. Deliberately excluded: custom nodes (arbitrary Python with imports -
-# never pool), fuzzy (positional-arg spawn + heavy pl_fuzzy_frame_match import),
-# train/apply model (huge allocator footprints), generic_task connectors (state
-# not audited). Polars code is pooled: its sandbox allows no import and no dunder access.
-# A SQL query is pooled too: it runs no Python of the user's, only Polars' SQL translation over plans.
+# Ops safe to reuse a child for. Excluded: custom nodes and polars_code (user Python runs there,
+# so a patched global must never outlive one task), fuzzy (positional-arg spawn), train/apply model
+# (allocator footprints), generic_task connectors (state not audited). sql_query is pooled: it runs
+# no user Python, only Polars' SQL translation over plans.
 POOLABLE_OPERATIONS = frozenset(
     {
         "store",
@@ -60,7 +58,6 @@ POOLABLE_OPERATIONS = frozenset(
         "write_delta",
         "merge_delta",
         "scd2_delta",
-        "polars_code",
         "sql_query",
     }
 )
