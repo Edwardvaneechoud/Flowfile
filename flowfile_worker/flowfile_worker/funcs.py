@@ -405,7 +405,7 @@ def calculate_schema(
         with progress.get_lock():
             progress.value = 100
     except BaseException as e:
-        flowfile_logger.error("error", e)
+        flowfile_logger.error(f"Error during schema calculation: {e}")
         record_task_failure(error_message, progress, e, limit=256)
         if not isinstance(e, Exception):
             raise
@@ -432,7 +432,7 @@ def calculate_number_of_records(
         with progress.get_lock():
             progress.value = 100
     except BaseException as e:
-        flowfile_logger.error("error", e)
+        flowfile_logger.error(f"Error during record count calculation: {e}")
         record_task_failure(error_message, progress, e, limit=256)
         if not isinstance(e, Exception):
             raise

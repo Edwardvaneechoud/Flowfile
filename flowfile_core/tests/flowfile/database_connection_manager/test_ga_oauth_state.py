@@ -48,7 +48,7 @@ def test_wrong_type_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     """A JWT signed with the same secret but a different ``type`` claim must
     not be accepted as a GA OAuth state (guards against token confusion with
     the regular access/refresh tokens)."""
-    from jose import jwt
+    import jwt
 
     from flowfile_core.auth.jwt import get_jwt_secret
     from flowfile_core.configs.settings import ALGORITHM
