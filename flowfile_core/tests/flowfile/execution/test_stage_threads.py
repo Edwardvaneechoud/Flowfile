@@ -14,9 +14,11 @@ from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.context import ExecutionContext, current_context, use_context
 from flowfile_core.flowfile.execution.protocol import ComputeBackend
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
+from flowfile_core.flowfile.flow_graph import execution as graph_execution
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+from flowfile_core.flowfile.manage import io_flowfile
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
-from flowfile_core.schemas import input_schema, schemas
+from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.schemas import get_global_execution_location
 
 
@@ -212,7 +214,8 @@ def test_a_subflow_runs_under_the_context_of_the_flow_that_runs_it(counting, rec
 
     assert run_info.success is True
     assert parent.execution_context.backend_id == "counting"
-    assert open_flow(local_subflow["path"]).execution_context.backend_id == "local"
+    reopened = open_flow(local_subflow["path"]).execution_context.backend_id
+    assert reopened == ("counting" if settings.FLOWFILE_COMPUTE_PROTOCOL else "local")
     parent_calls = {call.node_id: call for call in recorder.calls if call.graph_uuid == parent.uuid}
     child_calls = [call for call in recorder.calls if call.graph_uuid != parent.uuid]
     assert sorted(parent_calls) == [1, 2]
@@ -221,6 +224,53 @@ def test_a_subflow_runs_under_the_context_of_the_flow_that_runs_it(counting, rec
     assert {call.thread for call in child_calls} == {parent_calls[2].thread}
     assert parent_calls[2].thread != threading.current_thread().name
     assert parent.get_node(2).get_output("output-0").collect().height == 2
+
+
+@pytest.fixture
+def opened_flows(monkeypatch) -> list[FlowGraph]:
+    """Every graph ``open_flow`` returns from here on; a run_flow node opens its child through it."""
+    opened: list[FlowGraph] = []
+    real_open_flow = io_flowfile.open_flow
+
+    def recording_open_flow(*args, **kwargs):
+        opened.append(real_open_flow(*args, **kwargs))
+        return opened[-1]
+
+    monkeypatch.setattr(io_flowfile, "open_flow", recording_open_flow)
+    return opened
+
+
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+@pytest.mark.parametrize("location", ["remote", "local"])
+def test_a_subflow_child_takes_its_parent_s_location_with_the_protocol_on(
+    monkeypatch, counting, local_subflow, opened_flows, location, flag
+):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    parent = make_graph(9207, execution_location=location)
+    add_manual_input(parent, 1)
+    add_promise(parent, 2, "run_flow")
+    parent.add_run_flow(
+        input_schema.NodeRunFlow(
+            flow_id=parent.flow_id,
+            node_id=2,
+            user_id=1,
+            flow_reference=input_schema.SubflowReference(registration_id=local_subflow["registration_id"]),
+            input_slots=["rows"],
+            output_slots=["result"],
+            parameter_bindings=[],
+            iteration_mode="first_value",
+            append_run_metadata=False,
+        )
+    )
+
+    run_info = parent.run_graph()
+
+    assert run_info.success is True
+    children = [graph for graph in opened_flows if graph._subflow_depth == 1]
+    assert len(children) == 1
+    child_location = location if flag else "local"
+    assert children[0].execution_location == child_location
+    assert children[0].execution_context.backend_id == ("counting" if child_location == "remote" else "local")
 
 
 @pytest.mark.parametrize(
@@ -242,7 +292,7 @@ def test_a_call_site_without_a_graph_resolves_the_default_backend(
     monkeypatch.setattr(settings.OFFLOAD_TO_WORKER, "value", offload)
 
     assert get_global_execution_location() == location
-    assert schemas.FlowGraphConfig().execution_location == location
+    assert schemas.FlowGraphConfig().execution_location == ("auto" if settings.FLOWFILE_COMPUTE_PROTOCOL else location)
     assert current_context().backend_id == backend_id
 
 
@@ -253,3 +303,39 @@ def test_a_flow_asking_for_remote_runs_locally_when_the_default_backend_is_local
 
     assert flow_settings.execution_location == "local"
     assert FlowGraph(flow_settings).execution_context.backend_id == "local"
+
+
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+@pytest.mark.parametrize(
+    ("location", "graph_backend", "run_backend"), [("local", "local", "counting"), ("remote", "counting", "local")]
+)
+def test_a_formula_gate_probed_outside_a_run_reads_on_its_graph_s_backend(
+    monkeypatch, counting, location, graph_backend, run_backend, flag
+):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    probes: list[str] = []
+    real_head_rows = graph_execution.head_rows
+
+    def recording_head_rows(backend, plan, n):
+        probes.append(backend.id)
+        return real_head_rows(backend, plan, n)
+
+    monkeypatch.setattr(graph_execution, "head_rows", recording_head_rows)
+    graph = make_graph(9208, execution_location=location)
+    add_manual_input(graph, 1)
+    add_promise(graph, 2, "gate")
+    graph.add_gate(
+        input_schema.NodeGate(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            gate_input=transform_schema.GateInput(condition_source="formula", formula="[rank] > 2"),
+        )
+    )
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    gate = graph.get_node(2)
+
+    assert graph._formula_gate_is_closed(gate) is False
+    with use_context(ExecutionContext(backend_id=run_backend, parallelism=1, preview_rows=None)):
+        assert graph._formula_gate_is_closed(gate) is False
+    assert probes == ([graph_backend, run_backend] if flag else [])

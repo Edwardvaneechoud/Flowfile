@@ -58,7 +58,7 @@ WASM frontend (Pyodide) runs fully in-browser — no core/worker/kernel.
 - **flowfile_frame**: Polars-like Python API (lazy evaluation, column expressions in `expr.py`, DB/cloud connectors). **Not standalone** — it imports `flowfile_core` directly to build in-process `FlowGraph` objects and ships in the same monorepo distribution.
 - **Flow graph engine**: `flowfile_core/flowfile_core/flowfile/flow_graph/` — a package; `graph.py` is `FlowGraph`, composed from concern mixins, and `__init__.py` is the import facade (layout in `flowfile_core/CLAUDE.md`).
 
-**Core/worker contract:** core must **not** materialise LazyFrames (no `.collect()` on the hot path). A node submits its plan to the backend of its flow's execution context: core's own process (`LocalBackend`) for a `local` flow, the registry's default backend for a `remote` one, which is the worker unless `FLOWFILE_COMPUTE_BACKEND` names another or, with that unset, the legacy `FLOWFILE_OFFLOAD_TO_WORKER=0` makes it `local` (see Environment Variables). `WorkerBackend` serialises the plan when it sends it to the worker at `FLOWFILE_WORKER_URL`, else `WORKER_HOST:FLOWFILE_WORKER_PORT`, and the worker holds the resulting dataset in its spawned children. Core ships plans and JSON, not in-memory frames. The **scheduler** is embedded in core (no separate service/port) and only auto-starts when `FLOWFILE_SCHEDULER_ENABLED` is set.
+**Core/worker contract:** core must **not** materialise LazyFrames (no `.collect()` on the hot path). A node submits its plan to the backend of its flow's execution context: core's own process (`LocalBackend`) for a `local` flow, the registry's default backend for a `remote` one, which is the worker unless `FLOWFILE_COMPUTE_BACKEND` names another or, with that unset, the legacy `FLOWFILE_OFFLOAD_TO_WORKER=0` makes it `local` (see Environment Variables). `WorkerBackend` serialises the plan when it sends it to the worker at `FLOWFILE_WORKER_URL`, else `WORKER_HOST:FLOWFILE_WORKER_PORT`, and the worker holds the resulting dataset in its spawned children. Core ships plans and JSON, not in-memory frames. The protocol's design is `docs/for-developers/compute-protocol.md`; what a worker on another host needs is `docs/users/deployment/remote-worker.md`. The **scheduler** is embedded in core (no separate service/port) and only auto-starts when `FLOWFILE_SCHEDULER_ENABLED` is set.
 
 ## Subsystems & Cross-Package Contracts
 
@@ -196,11 +196,14 @@ poetry run pytest -m kernel
 # Cloud storage E2E: spawns its own core + worker on free ports, drives them over HTTP against MinIO (Docker)
 poetry run pytest tests/cloud_e2e -m cloud_e2e
 
-# The same with the compute protocol flag on, the one FLOWFILE_* variable the suite takes from the shell
-FLOWFILE_COMPUTE_PROTOCOL=1 poetry run pytest tests/cloud_e2e -m cloud_e2e
+# The same with the compute protocol flag off (the worker's task routes), the one FLOWFILE_* variable the suite takes from the shell
+FLOWFILE_COMPUTE_PROTOCOL=0 poetry run pytest tests/cloud_e2e -m cloud_e2e
 
 # Core and a worker on storage dirs of their own (no Docker): with the protocol flag on, core opens no file the worker wrote
-poetry run pytest tests/remote_worker
+poetry run pytest tests/remote_worker -m "not docker_integration"
+
+# Core and a worker in containers that share no volume (docker-compose.remote-worker.yml): database read to catalog write
+poetry run pytest tests/remote_worker -m docker_integration
 ```
 
 **Markers** (registered in `pyproject.toml` `[tool.pytest.ini_options]`):
@@ -362,6 +365,7 @@ npm run lint          # eslint --fix ./src/**/*.{ts,vue} (renderer TS/Vue only)
 | `e2e-tests.yml` | Push/PR to `main` (`flowfile_frontend/**`, `flowfile_core/**`, `flowfile_worker/**`, `shared/**`, `test_utils/s3/**`) | Build frontend, start and seed MinIO, start core + worker from empty working dirs with a MinIO-only AWS profile (`AWS_ENDPOINT_URL` exported, so nothing reaches AWS), run Playwright web E2E incl. `cloud-storage-flow.spec.ts`; fails if a server wrote into its working dir |
 | `test-docker-auth.yml` | Push/PR to `main` (auth code + core Dockerfile) | Docker-based auth E2E tests |
 | `test-docker-kernel-e2e.yml` | Push/PR to `main` (kernel_runtime, kernel code, Dockerfiles, compose) | Docker kernel E2E tests |
+| `test-remote-worker.yml` | Push/PR to `main` (no path filter) | Builds core and worker and runs a flow on a worker that shares no volume with core (`docker-compose.remote-worker.yml`) |
 | `test-kernel-integration.yml` | Push/PR to `main` (kernel_runtime, kernel/artifacts code + tests) | Kernel integration tests |
 | `test-notebook-kernel.yml` | Push/PR to `main` (`flowfile_frame/**`, notebook + kernel code and tests, `kernel_runtime/**`, `shared/**`, the lock) | Builds `flowfile-kernel-lite:local` + `flowfile-kernel-notebook:local` from the checkout's wheel and runs `tests/notebook/test_kernel_notebook_docker.py` (`FLOWFILE_REQUIRE_NOTEBOOK_KERNEL` makes a skip a failure) |
 | `test-kafka-integration.yml` | Push/PR to `main` (kafka code + tests) | Kafka integration tests |
@@ -396,7 +400,7 @@ environment in local/desktop runs.
 | `FLOWFILE_INTERNAL_TOKEN` | Shared secret for kernel/worker → core (`X-Internal-Token`, e.g. `/raw_logs`) **and** core → worker service auth (worker expects it as `X-Flowfile-Internal`). Required in docker; in electron core mints and persists it to the shared secure store, which the worker also reads. |
 | `WORKER_HOST` / `CORE_HOST` | Service discovery between core and worker (default `0.0.0.0`, `127.0.0.1` on Windows; `flowfile-worker`/`flowfile-core` in compose). |
 | `CORE_PORT` | The port core bound. Read by the worker for service discovery, and by core itself as the fallback for `SERVER_PORT` when no `--port` is passed — that is what lets a `--run-flow` subprocess build kernel callback URLs for the right process. An explicit `--port` still wins. Set by the Tauri shell (which port-scans), unset in compose. |
-| `FLOWFILE_COMPUTE_BACKEND` | Id of the default compute backend, the one a `remote` flow runs on (`flowfile_core/flowfile_core/flowfile/execution/registry.py::default_backend_id`). Unset or empty ⇒ the legacy `FLOWFILE_OFFLOAD_TO_WORKER` flag decides: `worker` when on, `local` when off. `local` also makes new flows default to local execution. A headless flow run (`flowfile run flow`, `--run-flow`) makes `local` its process's default through the registry's override (`set_default_override`), which wins over the variable; a notebook kernel container gets `FLOWFILE_COMPUTE_BACKEND=local` (with the legacy flag `0`) from `registry.child_env()`. |
+| `FLOWFILE_COMPUTE_BACKEND` | Id of the default compute backend, the one a `remote` flow runs on (`flowfile_core/flowfile_core/flowfile/execution/registry.py::default_backend_id`). Unset or empty ⇒ the legacy `FLOWFILE_OFFLOAD_TO_WORKER` flag decides: `worker` when on, `local` when off. `local` also makes new flows default to local execution. A headless flow run (`flowfile run flow`, `--run-flow`) makes its backend its process's default through the registry's override (`set_default_override`), which wins over the variable: `--backend <id>`, else a backend id saved as the flow's location, else `local`, so a flow saved `remote` runs in the runner's own process unless a backend is named; a notebook kernel container gets `FLOWFILE_COMPUTE_BACKEND=local` (with the legacy flag `0`) from `registry.child_env()`. |
 | `FLOWFILE_DATABASE_URL` | Full SQLAlchemy URL for the catalog DB (e.g. `postgresql+psycopg2://…`); wins over `FLOWFILE_DB_PATH`. Unset ⇒ SQLite under internal storage. |
 | `FLOWFILE_STORAGE_DIR` | Internal storage path. Default `~/.flowfile` (local) / `/app/internal_storage` (docker). |
 | `FLOWFILE_USER_DATA_DIR` | User data path. Default home dir (local) / `/app/user_data` (compose). |
@@ -416,8 +420,9 @@ environment in local/desktop runs.
 **Local-dev tunables (read from env, not all in `.env.example`):**
 
 - `FLOWFILE_WORKER_PORT` (default `63579`), `FLOWFILE_WORKER_URL` (full URL override).
+- `FLOWFILE_WORKER_LOCAL_FILES` (default unset; only `1` enables) — the worker declares `file` among its read and write schemes in its capabilities, beside `s3`, `az` and `gs`; read on each request. The desktop shell (`env.rs`), `docker-compose.yml` and single-file mode (`flowfile/web/__init__.py::include_worker_routes`, in core's process for the worker it co-hosts) set it for a worker on core's host; a worker on another host must leave it unset.
 - `FLOWFILE_OFFLOAD_TO_WORKER` (default `1`) — legacy switch for where heavy compute goes, read only by the backend registry: with `FLOWFILE_COMPUTE_BACKEND` unset the default backend is the worker while it is `1` and core's own process otherwise. The worker the worker backend reaches is `FLOWFILE_WORKER_URL`, else `WORKER_HOST`:`FLOWFILE_WORKER_PORT`.
-- `FLOWFILE_COMPUTE_PROTOCOL` (default `0`; `1`/`true`/`yes`/`on` enables) — the worker backend submits plans and reads results over the worker's versioned `/v1` routes instead of its task routes; read on each call (`settings.FLOWFILE_COMPUTE_PROTOCOL`, a `MutableBool`).
+- `FLOWFILE_COMPUTE_PROTOCOL` (default on; `0`/`false`/`no`/`off`, or any value but `1`/`true`/`yes`/`on`, switches core to the worker's task routes) — the worker backend submits plans and reads results over the worker's versioned `/v1` routes instead of its task routes; read on each call (`settings.FLOWFILE_COMPUTE_PROTOCOL`, a `MutableBool`). `docker-compose.yml` passes it to core (`${FLOWFILE_COMPUTE_PROTOCOL:-1}`).
 - `FLOWFILE_WORKER_POOL_SIZE` (explicit operator override; when unset the default is `4` on Windows, `0` = off elsewhere) — warm worker process pool: keep up to N spawned children alive between tasks so each offloaded node skips the interpreter boot + import chain (int-parsed, unlike `FLOWFILE_OFFLOAD_TO_WORKER`'s literal-`"1"` check; Windows pays 0.4s+ per spawn, hence default-on there). Runtime-resizable via the admin proxy `GET/POST /system/worker_pool` → worker `GET/POST /pool` (a live dashboard on the frontend under Settings → Execution → Performance, admin-only); **UI resizes persist** in `<internal storage>/worker_pool.yaml`, so the boot precedence is env var > saved UI setting > platform default (the UI warns when the env var pins the value). CI sets `"2"` on the Linux/macOS backend jobs so the pooled path is what tests exercise. Companions: `FLOWFILE_WORKER_POOL_MAX_TASKS` (default `100`, tasks per member before recycling), `FLOWFILE_WORKER_POOL_IDLE_TTL` (default `300`s, idle reap to zero), `FLOWFILE_WORKER_POOL_RSS_MB` (default `2048`, RSS watermark recycle; skipped without psutil). See `flowfile_worker/flowfile_worker/pool.py`.
 - `FLOWFILE_SINGLE_FILE_MODE` (default `0`) — co-host the worker on the core port; the bundled CLI sets this with `FLOWFILE_WORKER_PORT=63578`.
 - `FLOWFILE_DB_BACKUP_KEEP` (default `10`) — how many catalog-DB snapshots to keep in `db_backups/` next to the DB file (pre-migration, pre-update and manual snapshots share the budget); `0` disables snapshotting.
@@ -458,6 +463,7 @@ environment in local/desktop runs.
 - `flowfile_frontend/src/renderer/app/App.vue` - Vue root component
 - `Makefile` - Build/test orchestration (all `make` targets)
 - `docker-compose.yml` - Full-stack service definitions (core 63578, worker 63579, frontend 8080)
+- `docker-compose.remote-worker.yml` - Core, a worker, Postgres and MinIO with no shared volume, for `tests/remote_worker/test_zero_volumes.py`
 - `CONTRIBUTING.md` - Contributor guide (dev setup, style, tests, PR process)
 - `docs/community.md` - Community hub (Discussions, Issues, release feedback)
 

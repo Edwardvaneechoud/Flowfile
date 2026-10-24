@@ -42,6 +42,8 @@ class ResultRef:
         state: ``"materialised"`` when the backend holds the rows, ``"deferred"`` when it holds a plan
             that computes them on read.
         location: Where the backend keeps the result. Opaque to core: only the minting backend reads it.
+        kind: ``"table"`` for rows; ``"blob"`` for a fitted model or another result that is not rows, a file of bytes
+            held ``"materialised"`` with no columns and no row count, which no backend plans over, samples or counts.
     """
 
     backend_id: str
@@ -50,6 +52,7 @@ class ResultRef:
     row_count: int | None
     state: Literal["materialised", "deferred"]
     location: bytes
+    kind: Literal["table", "blob"] = "table"
 
 
 @dataclass(frozen=True)
@@ -168,7 +171,9 @@ class ComputeBackend(Protocol):
 
     A ``ResultRef`` is valid only on the backend whose ``id`` it carries: every method that takes one
     raises ``ForeignRef`` for a reference another backend minted, and ``ResultMissing`` for one this
-    backend no longer holds.
+    backend no longer holds. A blob result (``kind="blob"``) has no rows: ``plan_for``, ``sample`` and ``count``
+    refuse it with ``OperationUnsupported``, as does ``submit`` among its inputs, while ``exists`` and ``release``
+    treat it like any result, and its bytes cross between backends through ``export`` and ``import_uri``.
 
     Attributes:
         id: The id the registry knows this backend by.
@@ -211,11 +216,14 @@ class ComputeBackend(Protocol):
         ...
 
     def sample(self, ref: ResultRef, n: int) -> bytes:
-        """At most ``n`` rows of ``ref`` as an Arrow IPC stream; with ``submit``'s sample, the only rows core sees."""
+        """At most ``n`` rows of ``ref`` as an Arrow IPC stream; with ``submit``'s sample, the only rows core sees.
+
+        A blob is refused with ``OperationUnsupported``.
+        """
         ...
 
     def count(self, ref: ResultRef) -> int:
-        """The number of rows in ``ref``."""
+        """The number of rows in ``ref``; a blob is refused with ``OperationUnsupported``."""
         ...
 
     def exists(self, ref: ResultRef) -> bool:
@@ -227,17 +235,34 @@ class ComputeBackend(Protocol):
         ...
 
     def plan_for(self, ref: ResultRef) -> pl.LazyFrame:
-        """A LazyFrame leaf that reads ``ref``, valid in plans this backend runs and nowhere else."""
+        """A LazyFrame leaf that reads ``ref``, valid in plans this backend runs and nowhere else.
+
+        A blob is refused with ``OperationUnsupported``: it has no rows to plan over.
+        """
         ...
 
     def export(self, ref: ResultRef, uri: str, credential: CredentialRef | None) -> str:
-        """Write ``ref`` to ``uri``, through ``credential`` when the target needs one, and return the URI written."""
+        """Write ``ref`` to ``uri``, through ``credential`` when the target needs one, and return the URI written.
+
+        A table is written as parquet. A blob's bytes are copied as they are to a ``file://`` URI or ``PUT`` to a
+        presigned ``https://`` URL, which carries its own authorisation, so a blob takes no ``credential``.
+        """
         ...
 
     def import_uri(
-        self, uri: str, schema: Schema, row_count: int | None, credential: CredentialRef | None
+        self,
+        uri: str,
+        schema: Schema | None,
+        row_count: int | None,
+        credential: CredentialRef | None,
+        kind: Literal["table", "blob"] = "table",
     ) -> ResultRef:
-        """A reference on this backend to the data at ``uri``, which has ``schema`` and ``row_count`` rows."""
+        """A reference on this backend to the data at ``uri``, which has ``schema`` and ``row_count`` rows.
+
+        A table's schema is the caller's and required. With ``kind="blob"`` the bytes at a ``file://`` URI or a
+        presigned ``https://`` URL are copied into a blob this backend holds; a blob import has no schema, no row
+        count and no credential.
+        """
         ...
 
     def status(self, handle: JobHandle) -> JobStatus:

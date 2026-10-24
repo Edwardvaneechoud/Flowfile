@@ -1,0 +1,56 @@
+name: Remote Worker Tests
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  zero-volume-compose:
+    name: Zero-volume compose
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      COMPOSE_PROJECT_NAME: flowfile-remote-worker-${{ github.run_id }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Cache Poetry dependencies
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: poetry-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          poetry config virtualenvs.create true
+          poetry config virtualenvs.in-project true
+          poetry install --no-interaction --no-ansi
+
+      - name: Run the zero-volume compose test
+        run: poetry run pytest tests/remote_worker -m docker_integration -vv --tb=long
+        timeout-minutes: 20
+
+      - name: Remove the compose project
+        if: always()
+        run: docker compose -p "$COMPOSE_PROJECT_NAME" down -v --remove-orphans || true

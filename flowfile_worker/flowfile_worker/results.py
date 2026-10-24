@@ -2,7 +2,9 @@
 
 A result is either materialised (an Arrow IPC file the submit child wrote under ``CACHE_DIR``)
 or deferred (the submitted plan, run again when rows or a count are asked for). Both keep the
-columns the child read from the plan's schema. The registry lives in the FastAPI process only;
+columns the child read from the plan's schema. A blob is a materialised record of another kind: a
+file of bytes under ``CACHE_DIR``, such as a fitted model, with no columns and no row count, which
+the routes copy and never read as rows. The registry lives in the FastAPI process only;
 nothing a spawned child imports reaches it, and like ``status_dict`` it does not survive a restart.
 It also stamps when the submit under an id ended, failed ones included, so ``expire`` can drop
 what has been held for too long.
@@ -24,7 +26,8 @@ class ResultRecord:
     """One held result: a file at ``path`` when materialised, the serialised ``plan`` when deferred.
 
     ``flow_id`` and ``node_id`` are those of the submit, so a later sample or count of a deferred
-    result logs under the node that produced it.
+    result logs under the node that produced it. A ``kind="blob"`` record is a path and nothing
+    else: materialised, the file of its bytes at ``path``, no columns and no row count.
     """
 
     result_id: str
@@ -35,10 +38,13 @@ class ResultRecord:
     node_id: int | str
     path: str | None = None
     plan: bytes | None = None
+    kind: Literal["table", "blob"] = "table"
 
     def ref(self) -> ResultRef:
         """The wire reference core keeps for this result; its ``location`` is a ``WorkerLocation``'s JSON."""
-        if self.state == "materialised":
+        if self.kind == "blob":
+            location = WorkerLocation(kind="blob", path=self.path)
+        elif self.state == "materialised":
             location = WorkerLocation(kind="file", path=self.path)
         else:
             location = WorkerLocation(kind="plan", plan=self.plan)
@@ -48,6 +54,7 @@ class ResultRecord:
             row_count=self.row_count,
             state=self.state,
             location=location.model_dump_json().encode(),
+            kind=self.kind,
         )
 
 

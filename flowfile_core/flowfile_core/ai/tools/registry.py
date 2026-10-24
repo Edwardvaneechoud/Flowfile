@@ -202,7 +202,7 @@ def _node_settings_to_tool_spec(node_type: str, settings_cls: type) -> ToolSpec:
 #   dependency fields on ``NodeSingleInput`` / ``NodeMultiInput``; resolver
 #   canonicalises against ``InsertionContext.upstream_node_ids`` so the LLM
 #   does not need to fill them.
-# * ``cache_results`` / ``pos_x`` / ``pos_y`` / ``group_id`` / ``is_setup``
+# * ``cache_results`` / ``execution_location`` / ``pos_x`` / ``pos_y`` / ``group_id`` / ``is_setup``
 #   / ``description`` / ``node_reference`` / ``user_id`` / ``is_flow_output``
 #   / ``is_user_defined`` / ``output_field_config`` — NodeBase metadata not
 #   needed for stage-3 settings authoring. All have safe defaults; positions
@@ -219,6 +219,7 @@ _PLANNER_INJECTED_SETTINGS_FIELDS: Final[frozenset[str]] = frozenset(
         "depending_on_id",
         "depending_on_ids",
         "cache_results",
+        "execution_location",
         "pos_x",
         "pos_y",
         "group_id",

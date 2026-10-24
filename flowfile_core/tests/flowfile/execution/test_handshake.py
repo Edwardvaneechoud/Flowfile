@@ -6,6 +6,7 @@ import polars as pl
 import pytest
 import requests
 
+from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, VersionMismatch
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake, streaming
@@ -20,6 +21,12 @@ HINT = ". Is the worker running? Start it, or switch the flow to local execution
 
 WORKER_URL = registry.worker_url()
 """The session worker's URL: the one the registry's worker backend, and so a remote flow, calls."""
+
+
+@pytest.fixture(autouse=True)
+def task_routes(monkeypatch):
+    """The protocol flag off: these tests reach the worker through the task routes' fetcher, which the flag replaces."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
 
 
 @pytest.fixture(autouse=True)

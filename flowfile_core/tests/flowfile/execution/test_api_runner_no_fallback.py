@@ -28,6 +28,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import BaseFetcher
 from flowfile_core.flowfile.flow_graph import add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
+from flowfile_core.routes import flow_api
 from flowfile_core.schemas import input_schema, schemas
 
 PUBLIC_UNAVAILABLE_DETAIL = "Compute unavailable"
@@ -173,6 +174,23 @@ def protocol_on(monkeypatch):
 
 
 @pytest.fixture
+def api_raised(monkeypatch) -> list[Exception]:
+    """Every exception the published run raised to the route, ``_materialize``'s or the run's own."""
+    raised: list[Exception] = []
+    real_run = flow_api.run_flow_as_api
+
+    def _recording_run(*args, **kwargs):
+        try:
+            return real_run(*args, **kwargs)
+        except Exception as exc:
+            raised.append(exc)
+            raise
+
+    monkeypatch.setattr(flow_api, "run_flow_as_api", _recording_run)
+    return raised
+
+
+@pytest.fixture
 def sampled(monkeypatch) -> list[tuple[str, int]]:
     """Every ``WorkerBackend.sample`` as ``(result id, n)``; the task routes' fetcher fails the test if it is built."""
     calls: list[tuple[str, int]] = []
@@ -304,6 +322,60 @@ def test_with_the_protocol_flag_a_worker_gone_before_the_read_answers_503(
     assert type(raised) is ComputeUnavailable
     assert f"port={port}" in str(raised)
     assert response.json()["detail"] == PUBLIC_UNAVAILABLE_DETAIL
+    assert run_record.core_collects == 0
+
+
+@pytest.mark.parametrize("route", ["public", "owner"])
+def test_with_the_protocol_flag_a_worker_unreachable_when_the_run_starts_answers_503(
+    client, endpoint, protocol_on, run_record, closed_worker_port, api_raised, route
+):
+    response = _call(client, endpoint, route)
+
+    assert response.status_code == 503, response.text
+    [raised] = api_raised
+    assert type(raised) is ComputeUnavailable
+    assert str(raised).startswith("node 1: ")
+    assert f"port={closed_worker_port}" in str(raised)
+    assert str(raised).count("Is the worker running?") == 1
+    expected_detail = PUBLIC_UNAVAILABLE_DETAIL if route == "public" else str(raised)
+    assert response.json()["detail"] == expected_detail
+    assert run_record.raised == []
+    assert run_record.core_collects == 0
+
+
+@pytest.mark.parametrize("route", ["public", "owner"])
+@pytest.mark.parametrize(
+    "error, status, public_detail",
+    [
+        (ComputeUnavailable("Connection refused"), 503, PUBLIC_UNAVAILABLE_DETAIL),
+        (PlanRejected("the worker could not load the plan"), 500, PUBLIC_FAILED_DETAIL),
+    ],
+    ids=["unavailable", "rejected"],
+)
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+def test_with_the_protocol_flag_a_compute_error_that_fails_a_node_reaches_the_route_typed(
+    client, endpoint, run_record, api_raised, monkeypatch, flag, error, status, public_detail, route
+):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+
+    def _fail(self, *args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(WorkerBackend, "submit", _fail)
+
+    response = _call(client, endpoint, route)
+
+    [raised] = api_raised
+    assert str(raised) == f"node 1: {error}"
+    if flag:
+        assert response.status_code == status, response.text
+        assert type(raised) is type(error)
+    else:
+        assert response.status_code == 500, response.text
+        assert type(raised) is ApiExecutionError
+        public_detail = PUBLIC_FAILED_DETAIL
+    assert response.json()["detail"] == (public_detail if route == "public" else str(raised))
+    assert run_record.raised == []
     assert run_record.core_collects == 0
 
 

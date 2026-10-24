@@ -15,13 +15,13 @@ from polars.testing import assert_frame_equal
 from starlette.testclient import WebSocketDenialResponse
 
 from flowfile.web import include_worker_routes
-from flowfile_worker import internal_token
+from flowfile_worker import internal_token, models, status_dict, status_dict_lock
+from flowfile_worker.protocol_routes import worker_capabilities
 from shared.compute_protocol import (
     PROTOCOL_VERSION,
     PROTOCOL_VERSION_HEADER,
     Capabilities,
     SubmitResult,
-    local_capabilities,
 )
 
 TOKEN = "single-file-test-token"
@@ -31,9 +31,13 @@ FLOW_ID = 4343
 
 @pytest.fixture
 def app(monkeypatch) -> FastAPI:
-    """A bare app given the worker routes single-file mode mounts, with the worker's token set for this test."""
+    """A bare app given the worker routes single-file mode mounts, with the worker's token set for this test.
+
+    ``FLOWFILE_WORKER_LOCAL_FILES`` starts off and the mount turns it on; setting it here lets teardown restore it.
+    """
     monkeypatch.setenv("FLOWFILE_INTERNAL_TOKEN", TOKEN)
     monkeypatch.setattr(internal_token, "_token", None)
+    monkeypatch.setenv("FLOWFILE_WORKER_LOCAL_FILES", "0")
     app = FastAPI()
     include_worker_routes(app)
     return app
@@ -77,10 +81,33 @@ def test_capabilities_answer_under_worker_behind_the_token_and_the_version(app, 
     response = client.get("/worker/v1/capabilities")
 
     assert response.status_code == 200
-    assert Capabilities.model_validate(response.json()) == local_capabilities()
+    assert Capabilities.model_validate(response.json()) == worker_capabilities()
     assert TestClient(app).get("/worker/v1/capabilities").status_code == 401
     foreign = TestClient(app, headers={TOKEN_HEADER: TOKEN, PROTOCOL_VERSION_HEADER: "2"})
     assert foreign.get("/worker/v1/capabilities").status_code == 426
+
+
+def test_the_co_hosted_worker_declares_local_files(client):
+    capabilities = Capabilities.model_validate(client.get("/worker/v1/capabilities").json())
+
+    assert "file" in capabilities.read_schemes
+    assert "file" in capabilities.write_schemes
+
+
+def test_a_deprecated_task_route_under_worker_answers_with_the_header(client, tmp_path):
+    task_id = uuid.uuid4().hex
+    with status_dict_lock:
+        status_dict[task_id] = models.Status(
+            background_task_id=task_id, status="Completed", file_ref=str(tmp_path / "result.arrow")
+        )
+    try:
+        response = client.get(f"/worker/kafka_offsets/{task_id}")
+    finally:
+        with status_dict_lock:
+            status_dict.pop(task_id, None)
+
+    assert response.status_code == 200
+    assert response.headers["Deprecation"] == "true"
 
 
 def test_a_materialised_submit_is_held_and_released_under_worker(client, held):

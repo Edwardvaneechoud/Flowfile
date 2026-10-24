@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from flowfile_frame.catalog_reference import SchemaReference
     from flowfile_frame.run_flow import FlowOutput
 
+from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import (
@@ -619,8 +620,8 @@ class FlowFrame:
         if self._deferred or self._below_a_gate():
             return "fitted when the flow runs" + ("" if current() is not None else "; read_model() runs it")
         try:
-            summary = _trained_model_summary(self.flow_graph.flow_id, self.node_id)
-        except (OSError, ValueError, KeyError, TypeError) as exc:
+            summary = _trained_model_summary(self.flow_graph, self.node_id)
+        except (OSError, ValueError, KeyError, TypeError, ComputeError) as exc:
             return f"unreadable ({type(exc).__name__})"
         return "not fitted yet" if summary is None else summary.replace("\n", "\n  ")
 
@@ -1798,10 +1799,10 @@ class FlowFrame:
         """
         Fit an ML model (regression or classification) and optionally publish it to the catalog.
 
-        The model is fitted where the flow runs: in the core process for a local
-        flow (a new graph is local), or on the worker for a remote one. Catalog
-        publishing requires the flow to be registered (so the artifact has a
-        ``source_registration_id``); see
+        The model is fitted and held where the flow runs: in the core process
+        for a local flow (a new graph is local), or on the worker for a remote
+        one. Catalog publishing requires the flow to be registered (so the
+        artifact has a ``source_registration_id``); see
         :class:`flowfile_core.flowfile.flow_graph.FlowGraph.add_train_model`.
 
         Parameters
@@ -1832,9 +1833,9 @@ class FlowFrame:
         Returns
         -------
         FlowFrame
-            A new FlowFrame whose data is the input pass-through. Read the
-            fitted model with :meth:`read_model`; with ``publish_to_catalog``
-            it is also recorded in the catalog.
+            A new FlowFrame whose data is the input pass-through. Its node
+            holds the model for :meth:`apply_model` and :meth:`read_model`, and
+            publishes it to the catalog when *publish_to_catalog* is set.
         """
         from flowfile_frame.catalog_reference import _resolve_namespace_id
 
@@ -1909,7 +1910,7 @@ class FlowFrame:
             self._materialised_lazyframe()
             if self._routed_away(self.flow_graph.latest_run_info):
                 raise NativeNodeError(f"Train Model node {self.node_id} did not run (a gate routed it away)")
-        model = _read_trained_model(self.flow_graph.flow_id, self.node_id)
+        model = _read_trained_model(self.flow_graph, self.node_id)
         if model is None:
             raise NativeNodeError(f"Train Model node {self.node_id} has not fitted a model yet")
         return model
@@ -1974,8 +1975,8 @@ class FlowFrame:
         Two model sources are supported:
 
         - Pass an *upstream* :class:`FlowFrame` whose backing node is a
-          ``train_model`` — the trained model is read from the flow's local
-          cache, no catalog round-trip required. This is the natural way to
+          ``train_model`` — the model that node holds is used by reference,
+          no catalog round-trip required. This is the natural way to
           chain Train Model → Apply Model in the same flow.
         - Or pass *model_name* (and optionally *version* / *schema*) to
           look the model up from the catalog.
@@ -1984,7 +1985,7 @@ class FlowFrame:
         ----------
         upstream:
             FlowFrame returned by :meth:`train_model`. When provided, the apply
-            node reads from that train node's flow-scoped output.
+            node scores with the model that train node holds.
         model_name:
             Catalog name of the trained model. Used only when *upstream* is None.
         output_column:

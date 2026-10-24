@@ -2,7 +2,8 @@
 
 ``current_context`` resolves in this order: the context a ``use_context`` block set in the calling context,
 else the context of the graph passed in, else a default on ``default_backend_id()``. A ``FlowGraph`` derives
-its own from its settings on each access; ``run_graph`` sets it for the run, and every stage thread runs under
+its own from its settings on each access, on the backend its ``execution_location`` names (``"auto"`` and
+``"remote"`` name the default one); ``run_graph`` sets it for the run, and every stage thread runs under
 a copy of the run's context, so a node sees it on whichever thread executes it.
 """
 
@@ -47,14 +48,17 @@ class ExecutionContext:
     def for_flow(cls, settings: FlowSettings) -> ExecutionContext:
         """The context of a flow with these settings.
 
-        A ``"local"`` flow runs in core (``registry.LOCAL_BACKEND_ID``) one node at a time, a ``"remote"`` one on
-        the default backend with up to ``max_parallel_workers`` nodes of a stage at once. Development mode keeps
-        previews of ``DEFAULT_PREVIEW_ROWS`` rows, Performance mode none.
+        An ``"auto"`` or ``"remote"`` flow runs on the default backend, a flow with any other location on the
+        backend of that id (``"local"`` on core's own, ``registry.LOCAL_BACKEND_ID``; ``"worker:team"`` on
+        ``worker:team``), which is not looked up here. On core's own backend a stage runs one node at a time, on any
+        other up to ``max_parallel_workers`` at once. Development mode keeps previews of ``DEFAULT_PREVIEW_ROWS``
+        rows, Performance mode none.
         """
-        local = settings.execution_location == "local"
+        location = settings.execution_location
+        backend_id = registry.default_backend_id() if location in ("auto", "remote") else location
         return cls(
-            backend_id=registry.LOCAL_BACKEND_ID if local else registry.default_backend_id(),
-            parallelism=1 if local else settings.max_parallel_workers,
+            backend_id=backend_id,
+            parallelism=1 if backend_id == registry.LOCAL_BACKEND_ID else settings.max_parallel_workers,
             preview_rows=DEFAULT_PREVIEW_ROWS if settings.execution_mode == "Development" else None,
         )
 

@@ -26,7 +26,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
-from flowfile_core.flowfile.execution.protocol import OpPayload
+from flowfile_core.flowfile.execution.protocol import OpPayload, ResultRef
 
 if TYPE_CHECKING:
     import polars as pl
@@ -368,11 +368,13 @@ class CustomNodePayload(OperationPayload):
 
 @dataclass(frozen=True, kw_only=True)
 class MlTrainPayload(OperationPayload):
-    """Fit a model on a plan's rows and write it to a file.
+    """Fit a model on a plan's rows; the backend that fits it holds it.
+
+    The operation's refs are ``{"model": <blob ref>}``, the model as a result of kind ``"blob"`` on the backend that
+    ran it, and its ``OpResult.metadata`` the model's ``sha256``, ``size_bytes`` and ``model_type``.
 
     Attributes:
         plan: The training rows.
-        staging_path: The file the trained model is written to.
         model_type: The trainer to fit (``shared.ml.trainers``).
         target_column: The column the model predicts.
         feature_columns: The columns the model reads.
@@ -380,7 +382,6 @@ class MlTrainPayload(OperationPayload):
     """
 
     plan: pl.LazyFrame
-    staging_path: str
     model_type: str
     target_column: str
     feature_columns: list[str]
@@ -389,16 +390,17 @@ class MlTrainPayload(OperationPayload):
 
 @dataclass(frozen=True, kw_only=True)
 class MlApplyPayload(OperationPayload):
-    """Score a plan's rows with a trained model, adding its prediction as a column.
+    """Score a plan's rows with a model a backend holds, adding its prediction as a column.
 
     Attributes:
         plan: The rows to score.
-        model_path: The model file to score them with.
+        model: The model, a blob held by the backend that runs the operation: the one a training answered, or a
+            catalog artifact fetched onto that backend.
         output_column: The column the prediction is written to.
     """
 
     plan: pl.LazyFrame
-    model_path: str
+    model: ResultRef
     output_column: str
 
 

@@ -110,6 +110,10 @@ def include_worker_routes(app: FastAPI):
     Under ``/worker`` it mounts the legacy REST routes, the versioned ``/v1`` routes and their
     ``/v1/ws/submit`` WebSocket, each behind its own token and version checks. The legacy
     ``/ws/submit`` WebSocket is not mounted here.
+
+    The worker mounted here runs in core's own process and sees core's files, so this sets
+    ``FLOWFILE_WORKER_LOCAL_FILES`` and the worker declares ``file`` among the schemes it reads and
+    writes, as the desktop shell and the single-host compose do for theirs.
     """
     try:
         from flowfile_worker import CACHE_DIR, mp_context
@@ -138,6 +142,7 @@ def include_worker_routes(app: FastAPI):
         app.include_router(worker_router, prefix="/worker")
         app.include_router(protocol_router, prefix="/worker")
         app.include_router(v1_streaming_router, prefix="/worker")
+        os.environ["FLOWFILE_WORKER_LOCAL_FILES"] = "1"
 
         print("Worker functionality included in unified API")
 

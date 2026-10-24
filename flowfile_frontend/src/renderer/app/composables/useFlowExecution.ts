@@ -9,6 +9,7 @@ import { useTutorialStore } from "../stores/tutorial-store";
 import { VueFlowStore } from "@vue-flow/core";
 import type { RunInformation, FlowSettings } from "../types";
 import { FlowApi } from "../api";
+import { executionLocationLabel } from "../utils/executionLocation";
 
 interface PollingConfig {
   interval?: number;
@@ -324,7 +325,9 @@ export function useFlowExecution(
     editorStore.hideLogViewerForThisRun = false;
     state.setExecutionState(getPollingKey(), true);
 
-    const executionLocationText = flowSettings.execution_location === "local" ? "Local" : "Remote";
+    const executionLocationText = escapeHtml(
+      executionLocationLabel(flowSettings.execution_location),
+    );
     // display_name is the registration's name; settings.name is the file stem.
     const escapedFlowName = escapeHtml(flowSettings.display_name?.trim() || flowSettings.name);
 

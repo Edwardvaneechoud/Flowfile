@@ -4,8 +4,12 @@
   ``count`` answers a number and ``plan_for`` a plan.
 - Only the backend that minted a result reads it: every other backend refuses its reference with ``ForeignRef``, in
   every method that takes one, and leaves the result where it is.
-- Core learns a result's schema from its reference: every result carries the columns of its rows, core predicts the
-  columns downstream from them, and a stored result whose file core cannot open is still known by its reference.
+- Core learns a result's schema from its reference: every table result carries the columns of its rows, core predicts
+  the columns downstream from them, and a stored result whose file core cannot open is still known by its reference. A
+  blob result has none: it is held as bytes, crosses as bytes and is never planned over, sampled or counted.
+- Data crosses a backend boundary only through ``export`` and ``import_uri``: ``export`` writes a result to a URI and
+  answers the URI, no rows, and ``import_uri`` holds what is at a URI as a deferred result of the importing backend,
+  known by the schema and row count it was given; releasing it leaves the file.
 - Materialising is the backend's choice except where core marks it required: a required result is computed once and
   answers the same rows on every read, a plan that need not be materialised stays deferred, and a wide plan follows
   the backend's documented policy.
@@ -40,6 +44,7 @@ from flowfile_core.flowfile.execution.protocol import (
 )
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from shared.compute_protocol import file_uri
 
 PEOPLE = pl.DataFrame({"id": list(range(10)), "name": [f"n{i}" for i in range(10)]})
 
@@ -77,12 +82,16 @@ POLICIES: dict[str, Callable[[SubmitHints], bool]] = {
 SHUFFLED = pl.LazyFrame({"id": list(range(1000))}).select(pl.col("id").shuffle())
 """A plan whose rows come in another order each time it runs."""
 
+BLOB = bytes(range(256)) * 64
+"""Bytes that are no rows and no UTF-8, as a fitted model's are."""
+
 CALLS_WITH_A_REF: dict[str, Callable[[ComputeBackend, ResultRef], object]] = {
     "plan_for": lambda backend, ref: backend.plan_for(ref),
     "sample": lambda backend, ref: backend.sample(ref, 1),
     "count": lambda backend, ref: backend.count(ref),
     "exists": lambda backend, ref: backend.exists(ref),
     "release": lambda backend, ref: backend.release(ref),
+    "export": lambda backend, ref: backend.export(ref, "file:///nowhere/out.parquet", None),
 }
 
 
@@ -168,12 +177,43 @@ def test_another_backend_refuses_a_result_it_did_not_mint(backend, minted_elsewh
 
 
 @STATES
-def test_every_result_carries_the_schema_of_its_rows(backend, submitted, must_materialise):
+def test_every_table_result_carries_the_schema_of_its_rows(backend, submitted, must_materialise):
     ref = submitted(frame=MIXED, must_materialise=must_materialise).ref
     expected = polars_columns(MIXED.schema)
 
     assert flowfile_columns(ref.schema) == expected
     assert polars_columns(pl.read_ipc_stream(backend.sample(ref, 0)).schema) == expected
+
+
+def test_a_blob_is_held_as_bytes_crosses_as_bytes_and_is_never_read_as_rows(backend, backend_name, tmp_path):
+    """The source is removed once imported, so what the backend exports is the copy it holds."""
+    if backend_name == "worker" and not settings.FLOWFILE_COMPUTE_PROTOCOL:
+        pytest.skip("the worker backend holds a blob over its /v1 routes, with the protocol flag on")
+    source = tmp_path / "model.bin"
+    source.write_bytes(BLOB)
+    target = tmp_path / "copy.bin"
+
+    ref = backend.import_uri(file_uri(source), None, None, None, kind="blob")
+
+    try:
+        assert (ref.backend_id, ref.kind, ref.state, ref.schema, ref.row_count) == (
+            backend.id,
+            "blob",
+            "materialised",
+            [],
+            None,
+        )
+        assert backend.exists(ref)
+        source.unlink()
+        for read in (backend.plan_for, backend.count, lambda blob: backend.sample(blob, 1)):
+            with pytest.raises(OperationUnsupported):
+                read(ref)
+        assert backend.export(ref, file_uri(target), None) == file_uri(target)
+        assert target.read_bytes() == BLOB
+    finally:
+        backend.release(ref)
+    assert backend.exists(ref) is False
+    assert target.read_bytes() == BLOB
 
 
 @STATES
@@ -198,6 +238,27 @@ def test_a_stored_result_is_known_by_its_reference_where_core_cannot_open_it(unr
     assert flowfile_columns(engine.schema) == polars_columns(MIXED.schema)
     assert unreadable.count(ref) == MIXED.height
     assert rows(unreadable.sample(ref, 2)) == 2
+
+
+@STATES
+def test_a_result_crosses_a_boundary_only_through_export_and_import_uri(backend, submitted, must_materialise, tmp_path):
+    ref = submitted(frame=MIXED, must_materialise=must_materialise).ref
+    target = file_uri(tmp_path / "out.parquet")
+
+    uri = backend.export(ref, target, None)
+
+    assert isinstance(uri, str) and uri == target
+    assert pl.read_parquet(tmp_path / "out.parquet").equals(MIXED)
+    imported = backend.import_uri(uri, ref.schema, MIXED.height, None)
+    try:
+        assert (imported.backend_id, imported.state) == (backend.id, "deferred")
+        assert flowfile_columns(imported.schema) == polars_columns(MIXED.schema)
+        assert backend.count(imported) == MIXED.height
+        assert rows(backend.sample(imported, 2)) == 2
+    finally:
+        backend.release(imported)
+    assert backend.exists(imported) is False
+    assert (tmp_path / "out.parquet").is_file()
 
 
 def test_a_required_result_is_computed_once_and_read_the_same_twice(backend, backend_name, submitted):

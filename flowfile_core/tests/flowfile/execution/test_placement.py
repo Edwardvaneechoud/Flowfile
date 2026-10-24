@@ -1,0 +1,527 @@
+"""A run whose node needs what its backend does not declare is refused before any node starts.
+
+With the compute protocol flag on, ``run_graph`` places the nodes it will run, each on the run's backend, the model
+nodes included, and compares what each needs with the ``Capabilities`` that backend declares; a model that crosses the
+artifact store needs the store's scheme. A refused node is a failed row on the run report naming the backend and the
+reason; no node runs and the backend is sent no work. A backend that cannot be asked for its capabilities is not in
+the map placement is given: its nodes are not refused and meet its typed error when they run. The backends here are
+core's own under another id, declaring what each test hands them, so no worker is needed. With the flag off nothing
+is placed.
+
+A row's ``compute_error`` says what kind of failure it is: ``"Refusal"`` on a refused row, the class name of the typed
+compute error that failed a node on that node's row, in both flag states, and ``None`` for any other failure.
+"""
+
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import polars as pl
+import pytest
+
+from flowfile_core.artifacts import reset_storage_backend
+from flowfile_core.configs import settings
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable, VersionMismatch
+from flowfile_core.flowfile.execution.placement import Placement, Refusal, SingleBackendPolicy, place
+from flowfile_core.flowfile.execution.protocol import OperationKind
+from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
+from flowfile_core.schemas import input_schema, schemas
+from shared.compute_protocol import Capabilities
+from tests.flowfile.conftest import add_test_catalog_writer, create_test_namespace
+
+BACKEND_ID = "declaring"
+LOCAL_DISK = 'namespace "TestCat.TestSch" is on local disk; remote execution needs an object-storage namespace'
+
+
+def everything() -> Capabilities:
+    """What core's own backend declares: its fifteen operations, ``file`` and object storage, every plugin."""
+    return LocalBackend().capabilities()
+
+
+def without(capabilities: Capabilities, *, operation=None, scheme=None, plugin=None) -> Capabilities:
+    """``capabilities`` less one operation, one scheme from both scheme sets, or one plugin."""
+    update = {}
+    if operation is not None:
+        update["operations"] = capabilities.operations - {operation}
+    if scheme is not None:
+        update["read_schemes"] = capabilities.read_schemes - {scheme}
+        update["write_schemes"] = capabilities.write_schemes - {scheme}
+    if plugin is not None:
+        update["plugins"] = {name: version for name, version in capabilities.plugins.items() if name != plugin}
+    return capabilities.model_copy(update=update)
+
+
+class DeclaringBackend(LocalBackend):
+    """Core's own backend under another id, declaring the capabilities it is given.
+
+    Given an error instead, it is unreachable: ``capabilities()``, ``submit`` and ``run_op`` raise it. ``work`` records
+    each ``submit`` and ``run_op`` it is sent; ``asked`` counts its ``capabilities()`` calls.
+    """
+
+    def __init__(self, backend_id: str, declared: Capabilities | Exception):
+        super().__init__()
+        self.id = backend_id
+        self.declared = declared
+        self.asked = 0
+        self.work: list[str] = []
+        self._work_lock = threading.Lock()
+
+    def capabilities(self) -> Capabilities:
+        self.asked += 1
+        if isinstance(self.declared, Exception):
+            raise self.declared
+        return self.declared
+
+    def submit(self, plan, inputs, hints, result_id, *, flow_id, node_id):
+        with self._work_lock:
+            self.work.append(f"submit {node_id}")
+        if isinstance(self.declared, Exception):
+            raise self.declared
+        return super().submit(plan, inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
+
+    def run_op(self, op, payload):
+        with self._work_lock:
+            self.work.append(f"run_op {op.value}")
+        if isinstance(self.declared, Exception):
+            raise self.declared
+        return super().run_op(op, payload)
+
+
+@pytest.fixture
+def protocol_on(monkeypatch):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
+
+
+@pytest.fixture
+def protocol_off(monkeypatch):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
+
+
+@pytest.fixture
+def declare(monkeypatch):
+    """``declare(declared, backend_id)`` registers a ``DeclaringBackend`` under the id and returns it.
+
+    ``declaring`` is the default backend, the one a ``"remote"`` flow runs on.
+    """
+    registry.reset()
+    monkeypatch.setenv("FLOWFILE_COMPUTE_BACKEND", BACKEND_ID)
+
+    def register(declared: Capabilities | Exception, backend_id: str = BACKEND_ID) -> DeclaringBackend:
+        backend = DeclaringBackend(backend_id, declared)
+        registry.register_backend(backend_id, lambda: backend)
+        return backend
+
+    yield register
+    registry.reset()
+
+
+def make_graph(flow_id: int, execution_location: str = "remote") -> FlowGraph:
+    flow_settings = schemas.FlowSettings(
+        flow_id=flow_id,
+        name=f"placement_{flow_id}",
+        path=".",
+        execution_location=execution_location,
+        execution_mode="Development",
+    )
+    return FlowGraph(flow_settings)
+
+
+def add_promise(graph: FlowGraph, node_id: int, node_type: str) -> None:
+    graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type=node_type))
+
+
+def connect(graph: FlowGraph, from_id: int, to_id: int, input_type: str = "main") -> None:
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id, to_id, input_type=input_type))
+
+
+def add_manual_input(graph: FlowGraph, node_id: int, rows: list[dict]) -> None:
+    add_promise(graph, node_id, "manual_input")
+    graph.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=graph.flow_id, node_id=node_id, raw_data_format=input_schema.RawData.from_pylist(rows)
+        )
+    )
+
+
+def fuzzy_flow(flow_id: int) -> FlowGraph:
+    """Manual inputs 1 and 2 → fuzzy match 3 on ``name``."""
+    graph = make_graph(flow_id)
+    add_manual_input(graph, 1, [{"name": "eduward"}, {"name": "edward"}, {"name": "courtney"}])
+    add_manual_input(graph, 2, [{"name": "edward"}, {"name": "courtney"}])
+    add_promise(graph, 3, "fuzzy_match")
+    graph.add_fuzzy_match(
+        input_schema.NodeFuzzyMatch.model_validate(
+            {
+                "flow_id": flow_id,
+                "node_id": 3,
+                "depending_on_ids": [1, 2],
+                "join_input": {
+                    "join_mapping": [
+                        {"left_col": "name", "right_col": "name", "threshold_score": 75, "fuzzy_type": "levenshtein"}
+                    ],
+                    "left_select": {"renames": [{"old_name": "name", "new_name": "name", "join_key": True}]},
+                    "right_select": {"renames": [{"old_name": "name", "new_name": "name", "join_key": True}]},
+                    "how": "inner",
+                },
+            }
+        )
+    )
+    connect(graph, 1, 3)
+    connect(graph, 2, 3, input_type="right")
+    return graph
+
+
+def model_flow(
+    flow_id: int, execution_location: str = "local", *, publish: str | None = None, catalog: str | None = None
+) -> FlowGraph:
+    """Manual input 1 → Train Model 2 → Apply Model 3, scoring with node 2's model into ``pred``.
+
+    With ``publish`` Train Model publishes its model under that name; with ``catalog`` Apply Model scores with the
+    catalog model of that name instead.
+    """
+    graph = make_graph(flow_id, execution_location=execution_location)
+    add_manual_input(graph, 1, [{"x": float(i), "y": 2.0 * i} for i in range(10)])
+    add_promise(graph, 2, "train_model")
+    train_input = input_schema.TrainModelSettings(target_column="y", feature_columns=["x"])
+    if publish is not None:
+        train_input = train_input.model_copy(update={"publish_to_catalog": True, "model_name": publish})
+    graph.add_train_model(
+        input_schema.NodeTrainModel(flow_id=flow_id, node_id=2, depending_on_id=1, train_input=train_input)
+    )
+    connect(graph, 1, 2)
+    add_promise(graph, 3, "apply_model")
+    apply_input = input_schema.ApplyModelSettings(source="upstream", upstream_node_id=2, output_column="pred")
+    if catalog is not None:
+        apply_input = apply_input.model_copy(update={"source": "catalog", "model_name": catalog})
+    graph.add_apply_model(
+        input_schema.NodeApplyModel(flow_id=flow_id, node_id=3, depending_on_id=2, apply_input=apply_input)
+    )
+    connect(graph, 2, 3)
+    return graph
+
+
+def assert_refused_before_any_node(
+    graph: FlowGraph, run_info, backend: DeclaringBackend, refused: dict[int, list[str]]
+):
+    """The run failed with exactly ``refused`` (node id -> phrases its error holds) and nothing ran or holds the run."""
+    errors = {result.node_id: result.error for result in run_info.node_step_result}
+    assert errors.keys() == refused.keys(), errors
+    for node_id, phrases in refused.items():
+        assert errors[node_id].startswith(f'cannot run on backend "{backend.id}": '), errors[node_id]
+        for phrase in phrases:
+            assert phrase in errors[node_id], errors[node_id]
+    assert all(result.success is False for result in run_info.node_step_result)
+    assert all(result.compute_error == "Refusal" for result in run_info.node_step_result)
+    assert run_info.success is False
+    assert run_info.nodes_completed == 0
+    assert run_info.is_running is False
+    assert graph.flow_settings.is_running is False
+    assert backend.work == []
+
+
+def test_a_catalog_write_to_a_local_disk_namespace_is_refused_on_a_backend_without_local_files(
+    protocol_on, declare, catalog_clean_state
+):
+    backend = declare(without(everything(), scheme="file"))
+    graph = make_graph(8401)
+    add_manual_input(graph, 1, [{"id": 1, "name": "ada"}])
+    add_test_catalog_writer(graph, node_id=2, depending_on_id=1, table_name="dim", namespace_id=create_test_namespace())
+
+    run_info = graph.run_graph()
+
+    assert_refused_before_any_node(graph, run_info, backend, {2: [LOCAL_DISK]})
+
+
+def test_a_fuzzy_match_is_refused_on_a_backend_without_the_fuzzy_join_operation(protocol_on, declare):
+    backend = declare(without(everything(), operation="fuzzy_join"))
+    graph = fuzzy_flow(8402)
+
+    run_info = graph.run_graph()
+
+    assert_refused_before_any_node(graph, run_info, backend, {3: ["it runs the fuzzy_join operation"]})
+
+
+def test_a_fuzzy_match_is_refused_on_a_backend_without_its_plugin(protocol_on, declare):
+    backend = declare(without(everything(), plugin="polars_simed"))
+    graph = fuzzy_flow(8403)
+
+    run_info = graph.run_graph()
+
+    assert_refused_before_any_node(
+        graph, run_info, backend, {3: ["it needs plugins this backend does not have: polars_simed"]}
+    )
+
+
+def test_a_python_script_node_is_refused_on_a_backend_off_cores_host(protocol_on, declare):
+    backend = declare(without(everything(), scheme="file"))
+    graph = make_graph(8404)
+    add_manual_input(graph, 1, [{"id": 1}])
+    add_promise(graph, 2, "python_script")
+    graph.add_python_script(
+        input_schema.NodePythonScript(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_ids=[1],
+            python_script_input=input_schema.PythonScriptInput(code="print(1)", kernel_id="k"),
+        )
+    )
+    connect(graph, 1, 2)
+
+    run_info = graph.run_graph()
+
+    assert_refused_before_any_node(
+        graph, run_info, backend, {2: ["it runs on a notebook kernel", "the kernel shared volume on core's host"]}
+    )
+
+
+def test_a_flow_its_backend_can_run_runs_as_it_does_unplaced(declare, monkeypatch):
+    backend = declare(everything())
+    rows = {}
+    for flag, flow_id in ((True, 8405), (False, 8406)):
+        monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+        graph = fuzzy_flow(flow_id)
+
+        run_info = graph.run_graph()
+
+        assert run_info.success is True, [result.error for result in run_info.node_step_result]
+        assert run_info.nodes_completed == 3
+        rows[flag] = graph.get_node(3).get_resulting_data().collect().sort(pl.all()).rows()
+    assert rows[True] == rows[False]
+    assert len(rows[True]) == 3
+    assert backend.asked == 1
+    assert "run_op fuzzy_join" in backend.work
+
+
+def test_with_the_flag_off_nothing_is_placed(protocol_off, declare):
+    backend = declare(without(everything(), operation="fuzzy_join"))
+    graph = fuzzy_flow(8407)
+
+    run_info = graph.run_graph()
+
+    assert run_info.success is True, [result.error for result in run_info.node_step_result]
+    assert backend.asked == 0
+    assert "run_op fuzzy_join" in backend.work
+
+
+def test_a_backend_missing_from_the_map_leaves_its_nodes_unplaced_and_unrefused():
+    graph = model_flow(8408)
+
+    placement = place(graph, {registry.LOCAL_BACKEND_ID: everything()}, SingleBackendPolicy(registry.WORKER_BACKEND_ID))
+
+    assert placement == Placement(assignment={}, boundaries=[], refusals=[])
+
+
+def test_the_nodes_of_a_backend_that_cannot_be_asked_meet_its_error_when_they_run(protocol_on, declare):
+    backend = declare(ComputeUnavailable("Connection refused"))
+    graph = fuzzy_flow(8412)
+
+    run_info = graph.run_graph()
+
+    errors = {result.node_id: result.error for result in run_info.node_step_result}
+    assert errors.keys() == {1, 2}, errors
+    for error in errors.values():
+        assert error.startswith("Connection refused"), error
+    assert {result.compute_error for result in run_info.node_step_result} == {"ComputeUnavailable"}
+    assert graph.get_node(3).results.errors is None
+    assert run_info.success is False
+    assert sorted(backend.work) == ["submit 1", "submit 2"]
+    assert backend.asked == 1
+
+
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+def test_a_node_a_version_mismatch_failed_carries_the_error_s_class_on_its_row(declare, monkeypatch, flag):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    declare(VersionMismatch("polars_version: core 1, worker 2"))
+    graph = fuzzy_flow(8414 if flag else 8413)
+
+    run_info = graph.run_graph()
+
+    results = {result.node_id: result for result in run_info.node_step_result}
+    assert results.keys() == {1, 2}, results
+    for result in results.values():
+        assert result.success is False
+        assert result.error.startswith("polars_version: core 1, worker 2"), result.error
+        assert result.compute_error == "VersionMismatch"
+    assert run_info.success is False
+
+
+def test_a_node_another_error_failed_carries_no_compute_error(protocol_off, declare):
+    declare(RuntimeError("boom"))
+    graph = fuzzy_flow(8415)
+
+    run_info = graph.run_graph()
+
+    results = {result.node_id: result for result in run_info.node_step_result}
+    assert results.keys() == {1, 2}, results
+    for result in results.values():
+        assert result.success is False
+        assert "boom" in result.error, result.error
+        assert result.compute_error is None
+    assert run_info.success is False
+
+
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+def test_a_fetched_node_a_compute_error_failed_carries_the_error_s_class_on_its_row(declare, monkeypatch, flag):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    declare(ComputeUnavailable("Connection refused"))
+    graph = fuzzy_flow(8417 if flag else 8416)
+
+    run_info = graph.trigger_fetch_node(1)
+
+    [result] = run_info.node_step_result
+    assert result.node_id == 1
+    assert result.success is False
+    assert result.error.startswith("Connection refused"), result.error
+    assert result.compute_error == "ComputeUnavailable"
+
+
+def test_a_node_the_run_skips_is_not_placed(protocol_on, declare):
+    backend = declare(without(everything(), operation="fuzzy_join"))
+    graph = fuzzy_flow(8409)
+    add_promise(graph, 4, "select")
+    connect(graph, 3, 4)
+
+    run_info = graph.run_graph()
+
+    assert_refused_before_any_node(graph, run_info, backend, {3: ["it runs the fuzzy_join operation"]})
+    assert run_info.number_of_nodes == 3
+
+
+def test_the_model_nodes_are_placed_on_the_run_s_backend():
+    graph = model_flow(8410)
+    worker = everything().model_copy(update={"operations": frozenset(kind.value for kind in OperationKind)})
+    backends = {registry.LOCAL_BACKEND_ID: everything(), registry.WORKER_BACKEND_ID: worker}
+
+    placement = place(graph, backends, SingleBackendPolicy(registry.LOCAL_BACKEND_ID))
+
+    assert placement == Placement(
+        assignment={1: registry.LOCAL_BACKEND_ID, 2: registry.LOCAL_BACKEND_ID, 3: registry.LOCAL_BACKEND_ID},
+        boundaries=[],
+        refusals=[],
+    )
+
+
+def test_a_model_published_to_or_fetched_from_a_filesystem_store_is_refused_off_cores_host(protocol_on, declare):
+    backend = declare(without(everything(), scheme="file"))
+    graph = model_flow(8411, "remote", publish="m", catalog="m")
+
+    run_info = graph.run_graph()
+
+    assert_refused_before_any_node(
+        graph,
+        run_info,
+        backend,
+        {
+            2: ["it writes storage this backend does not write: file"],
+            3: ["it reads storage this backend does not read: file"],
+        },
+    )
+    assert not any("operation" in result.error for result in run_info.node_step_result)
+    assert backend.asked == 1
+
+
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+def test_a_flow_scoped_model_runs_on_a_backend_off_cores_host(declare, monkeypatch, flag):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    backend = declare(without(everything(), scheme="file"))
+    graph = model_flow(8419 if flag else 8418, "remote")
+
+    run_info = graph.run_graph()
+
+    assert run_info.success is True, [result.error for result in run_info.node_step_result]
+    assert {"run_op ml_train", "run_op ml_apply"} <= set(backend.work)
+    assert backend.asked == (1 if flag else 0)
+    scored = graph.get_node(3).get_resulting_data().collect()
+    assert scored["pred"].to_list() == pytest.approx(scored["y"].to_list())
+    backend.release(graph.get_node(2).results.model_ref)
+
+
+@pytest.fixture
+def s3_artifact_store(monkeypatch):
+    """The S3 artifact store, made for the test and dropped after it."""
+    monkeypatch.setenv("FLOWFILE_ARTIFACT_STORAGE", "s3")
+    monkeypatch.setenv("FLOWFILE_S3_BUCKET", "models")
+    reset_storage_backend()
+    yield
+    reset_storage_backend()
+
+
+def test_an_s3_artifact_store_needs_https_where_a_model_crosses_it(s3_artifact_store):
+    graph = model_flow(8420, "remote", publish="m", catalog="m")
+    policy = SingleBackendPolicy(BACKEND_ID)
+
+    without_https = place(graph, {BACKEND_ID: without(everything(), scheme="https")}, policy)
+    without_file = place(graph, {BACKEND_ID: without(everything(), scheme="file")}, policy)
+
+    assert without_https.refusals == [
+        Refusal(2, BACKEND_ID, "it writes storage this backend does not write: https"),
+        Refusal(3, BACKEND_ID, "it reads storage this backend does not read: https"),
+    ]
+    assert without_file.refusals == []
+
+
+@pytest.fixture(scope="module")
+def csv_url():
+    """A CSV of three rows served on a free loopback port; the fixture is its ``http://`` URL."""
+    body = b"n,label\n1,a\n2,b\n3,c\n"
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def _answer(self) -> bytes:
+            start, _, end = self.headers.get("Range", "bytes=0-").removeprefix("bytes=").partition("-")
+            part = body[int(start) : int(end) + 1 if end else None]
+            self.send_response(206 if "Range" in self.headers else 200)
+            self.send_header("Content-Length", str(len(part)))
+            self.send_header("Content-Range", f"bytes {start}-{int(start) + len(part) - 1}/{len(body)}")
+            self.send_header("Accept-Ranges", "bytes")
+            self.end_headers()
+            return part
+
+        def do_HEAD(self):  # noqa: N802
+            self._answer()
+
+        def do_GET(self):  # noqa: N802
+            self.wfile.write(self._answer())
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/rows.csv"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def url_read_flow(flow_id: int, url: str) -> FlowGraph:
+    """Read node 1 over the CSV at ``url``."""
+    graph = make_graph(flow_id)
+    add_promise(graph, 1, "read")
+    received = input_schema.ReceivedTable(path=url, file_type="csv", table_settings={"encoding": "utf-8"})
+    graph.add_read(input_schema.NodeRead(flow_id=flow_id, node_id=1, received_file=received))
+    return graph
+
+
+def test_a_read_from_a_url_is_refused_on_a_backend_that_does_not_read_its_scheme(protocol_on, declare, csv_url):
+    backend = declare(without(everything(), scheme="http"))
+    graph = url_read_flow(8432, csv_url)
+
+    run_info = graph.run_graph()
+
+    assert_refused_before_any_node(graph, run_info, backend, {1: ["it reads storage this backend does not read: http"]})
+
+
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+def test_a_read_from_a_url_runs_on_a_backend_that_reads_its_scheme(declare, monkeypatch, flag, csv_url):
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    backend = declare(everything())
+    graph = url_read_flow(8431 if flag else 8430, csv_url)
+
+    run_info = graph.run_graph()
+
+    assert run_info.success is True, [result.error for result in run_info.node_step_result]
+    assert graph.get_node(1).get_resulting_data().collect().rows() == [(1, "a"), (2, "b"), (3, "c")]
+    assert backend.work == ["submit 1"]

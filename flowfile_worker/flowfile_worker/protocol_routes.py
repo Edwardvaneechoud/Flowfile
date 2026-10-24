@@ -3,14 +3,23 @@
 Every route needs the internal token, then an ``X-Protocol-Version`` equal to this worker's
 ``PROTOCOL_VERSION``: a request without one, or with another, is answered 426. ``POST /v1/submit``
 runs the plan in a spawned ``funcs.submit_result`` child and keeps the result in ``results.results``,
-written to a file or deferred as ``_materialise`` decides; the other routes read, count, probe and
-release what it holds. A submit's job id is its result id, and every submit first drops what has
+written to a file or deferred as ``_materialise`` decides; a deferred submit with no preview spawns no
+child, as this process resolves the plan's columns and collects nothing. The other routes read, count,
+probe and release what it holds. A submit's job id is its result id, and every submit first drops what has
 been held for ``CACHE_EXPIRATION_TIME``. ``run_submit`` is the submit itself, which ``streaming.py``'s
-``/v1/ws/submit`` runs too. ``POST /v1/ops/<kind>`` runs a read, a fuzzy join, a random split or a
-custom node in the child its task route spawns, as the job the request's ``job_id`` names, and holds
-each output that child wrote as the materialised result ``<job_id>_<i>``, which the same routes read,
-count, probe and release. The legacy routes in ``routes.py`` stay as they are; the two share only
-``status_dict``.
+``/v1/ws/submit`` runs too. ``POST /v1/ops/<kind>`` runs a read, a fuzzy join, a random split, a
+custom node, a model's training or its apply in the child its task route spawns, as the job the
+request's ``job_id`` names, and holds each output that child wrote as the materialised result
+``<job_id>_<i>``, which the same routes read, count, probe and release. A training's output is the
+model it fitted, held as a blob; an apply scores with a model held here, named by its result id.
+``POST /v1/results/{id}/export`` writes a held result to a URI as parquet in a
+``funcs.export_result`` child; ``POST /v1/results/{id}/import`` holds a scan of a URI as a deferred
+result, with the columns and row count core sent and nothing read. A credential crosses either as a
+stored connection's id and user, resolved where the plan runs. A blob, a held file of bytes that is not
+rows, takes the same two routes: its export copies the file to a ``file://`` URI or ``PUT``s it to a
+presigned ``https://`` URL, and an import with ``kind="blob"`` copies or ``GET``s one into a blob of
+this worker's own, in this process; a presigned URL carries its own authorisation, so neither takes a
+credential. The legacy routes in ``routes.py`` stay as they are; the two share only ``status_dict``.
 """
 
 import io
@@ -19,12 +28,12 @@ import os
 import uuid
 from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import polars as pl
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response
 from fastapi.requests import HTTPConnection
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from flowfile_worker import CACHE_EXPIRATION_TIME, PROCESS_MEMORY_USAGE, models, status_dict, status_dict_lock
 from flowfile_worker.auth import verify_internal_token
@@ -39,22 +48,32 @@ from flowfile_worker.external_sources.rest_api_source.main import read_rest_api
 from flowfile_worker.external_sources.rest_api_source.models import RestApiReadSettings
 from flowfile_worker.external_sources.sql_source.main import read_sql_source
 from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings
+from flowfile_worker.funcs import _load_plan
 from flowfile_worker.results import ResultRecord, result_path, results
 from flowfile_worker.spawner import (
     process_manager,
+    start_apply_model_process,
     start_custom_node_process,
     start_fuzzy_process,
     start_generic_process,
     start_process,
+    start_train_model_process,
 )
+from flowfile_worker.task_errors import DEFAULT_ERROR_LIMIT, WorkerEnvironmentError, describe_exception
+from shared.cloud_credential_provider import CredentialRefProvider
 from shared.compute_protocol import (
+    CLOUD_SCHEMES,
     PROTOCOL_VERSION,
     PROTOCOL_VERSION_HEADER,
     Capabilities,
     ResultRef,
     SubmitHints,
     SubmitResult,
+    WireColumn,
+    file_uri_path,
+    get_blob,
     local_capabilities,
+    put_blob,
     schema_to_wire,
 )
 from shared.kafka.models import KafkaReadSettings
@@ -66,6 +85,34 @@ SAMPLE_ROWS_CAP = 10_000
 
 SAMPLE_ROWS_IN_PARENT = 1_000
 """The most rows of a materialised result a sample reads in this process; more are read in a child."""
+
+OPERATIONS = frozenset(
+    {
+        "database_read",
+        "kafka_read",
+        "google_analytics_read",
+        "rest_api_read",
+        "file_read",
+        "fuzzy_join",
+        "custom_node",
+        "random_split",
+        "database_write",
+        "cloud_write",
+        "file_write",
+        "ml_train",
+        "ml_apply",
+        "delta_write",
+        "delta_merge",
+        "delta_scd2",
+        "viz_session",
+    }
+)
+"""The operation kinds this worker runs, by ``OperationKind`` value; a kind is named while a route here runs it.
+
+Ten are the ``POST /v1/ops/<kind>`` routes below: the reads, the fuzzy join, the custom node, the random split, and
+ML training and apply. The other seven are served by the task routes in ``routes.py``: the database, cloud and file
+writes, the Delta write, merge and SCD2 write, and the visualisation sessions.
+"""
 
 # An operation's job id names its output files, so it holds no path separator.
 JobId = Annotated[str, Query(pattern=r"^[A-Za-z0-9_-]+$")]
@@ -116,7 +163,8 @@ class OpOutputs(BaseModel):
     """The answer of an operation: the reference of each output, by name, and what it reports besides rows.
 
     ``metadata`` is empty except for a Kafka read that consumed messages, which reports the ``KafkaReadResult`` its
-    child wrote: the offsets core commits once the flow completes.
+    child wrote: the offsets core commits once the flow completes, and a training, which reports the model it fitted:
+    its ``sha256``, ``size_bytes`` and ``model_type``.
     """
 
     outputs: dict[str, ResultRef]
@@ -132,6 +180,97 @@ class RandomSplitInput(models.PolarsOperation):
     model_config = ConfigDict(extra="forbid")
 
     splits: list[tuple[str, float]]
+
+
+class MlTrainInput(models.PolarsOperation):
+    """The body of a training: the rows to fit on, the model type, the target and feature columns, and the parameters.
+
+    An unknown field is refused rather than dropped, because core builds this body by hand; a path to write the model
+    to is one, as the model is held here.
+    """
+
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+    model_type: str
+    target_column: str
+    feature_columns: list[str]
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class MlApplyInput(models.PolarsOperation):
+    """The body of an apply: the rows to score, the model as the result id of a blob held here, and the column to add.
+
+    An unknown field is refused rather than dropped, because core builds this body by hand; a path to read the model
+    from is one, as the model is held here.
+    """
+
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+    model: str
+    output_column: str
+
+
+class CredentialRefBody(BaseModel):
+    """A stored connection as an export or an import names it: its id and the user it runs for, nothing else.
+
+    An unknown field is refused rather than dropped, because core builds this body by hand.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    connection_id: int
+    user_id: int
+
+
+class ExportBody(BaseModel):
+    """Where ``POST /v1/results/{id}/export`` writes the result, and the stored connection the target needs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    uri: str
+    credential: CredentialRefBody | None = None
+
+
+class ImportBody(BaseModel):
+    """What ``POST /v1/results/{id}/import`` holds: the URI to scan, its connection, and its columns and row count.
+
+    The columns and the row count are core's, never read from the URI. With ``kind="blob"`` the URI's bytes are
+    fetched instead, and a blob takes no credential, no columns and no row count.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    uri: str
+    credential: CredentialRefBody | None = None
+    columns: list[WireColumn]
+    row_count: int | None = None
+    kind: Literal["table", "blob"] = "table"
+
+    @model_validator(mode="after")
+    def _a_blob_is_bytes(self) -> "ImportBody":
+        if self.kind == "blob" and (self.credential is not None or self.columns or self.row_count is not None):
+            raise ValueError("A blob import takes no credential, no columns and no row count")
+        return self
+
+
+def _credential_provider(credential: CredentialRefBody) -> CredentialRefProvider:
+    """The provider a scan carries for *credential*, resolved by whichever child runs the scan."""
+    return CredentialRefProvider(credential.connection_id, credential.user_id)
+
+
+def _copy_blob(copy: Callable[[], None]) -> None:
+    """Run a blob's copy: a scheme it does not copy is 422, a copy that fails the 500 a failed export answers.
+
+    The messages name no URL query, so a presigned URL's signature is in no answer.
+    """
+    try:
+        copy()
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+    except OSError as e:
+        raise HTTPException(
+            status_code=500, detail={"status": "Error", "error_message": str(e), "error_kind": "task"}
+        ) from None
 
 
 def _materialise(hints: SubmitHints) -> bool:
@@ -218,6 +357,35 @@ def _run(
             kwargs=dict(kwargs or {}),
         ),
     )
+
+
+def _resolve_columns(task_id: str, plan: bytes) -> None:
+    """Load *plan* and resolve its columns in this process as job *task_id*, which ends as a child's would.
+
+    It does what a deferred ``submit_result`` child with no preview does, and no more: deserialise the plan, which
+    loads its UDF modules and plugin libraries, and resolve its schema; nothing is collected. The entry ends
+    ``Completed`` with the dict that child queues, or ``Error`` with ``progress`` -1 and the kind and message its
+    recorded failure splits into, the message cut to fit that child's ``DEFAULT_ERROR_LIMIT``-byte buffer.
+    """
+    try:
+        columns = _load_plan(plan).collect_schema()
+    except (Exception, pl.exceptions.PanicException) as e:
+        environment = isinstance(e, WorkerEnvironmentError)
+        # A child's buffer spends one byte on the environment marker.
+        limit = DEFAULT_ERROR_LIMIT - 1 if environment else DEFAULT_ERROR_LIMIT
+        description = describe_exception(e.original if environment else e).encode()[:limit]
+        with status_dict_lock:
+            status = status_dict[task_id]
+            status.status = "Error"
+            status.progress = -1
+            status.error_kind = "environment" if environment else "task"
+            status.error_message = description.decode(errors="replace")
+        return
+    with status_dict_lock:
+        status = status_dict[task_id]
+        status.status = "Completed"
+        status.progress = 100
+        status.results = {"columns": columns, "row_count": None, "sample": None}
 
 
 def _run_child(record: ResultRecord, plan: bytes, operation: str, kwargs: dict | None = None) -> Any:
@@ -329,10 +497,27 @@ def _read(job_id: str, func: Callable, kwargs: dict[str, Any], flow_id: int, nod
     return OpOutputs(outputs={"result": _read_into(job_id, result_id, path, func, kwargs, flow_id, node_id)})
 
 
+def worker_capabilities() -> Capabilities:
+    """The capabilities of this process with what this worker declares: ``OPERATIONS`` and the schemes it uses.
+
+    It reads and writes object storage and ``https``, a presigned URL a blob is copied to or from, and the local disk
+    too when ``FLOWFILE_WORKER_LOCAL_FILES`` is ``1`` at the time of the call: the desktop shell and the single-host
+    compose set it for a worker on core's host, which sees core's files. It also reads ``http``: the child that runs a
+    node's plan or its ``file_read`` fetches a Read node's ``http`` or ``https`` URL itself, and nothing writes to an
+    ``http`` URL.
+    """
+    schemes = CLOUD_SCHEMES | {"https"}
+    if os.environ.get("FLOWFILE_WORKER_LOCAL_FILES") == "1":
+        schemes |= {"file"}
+    return local_capabilities().model_copy(
+        update={"operations": OPERATIONS, "read_schemes": schemes | {"http"}, "write_schemes": schemes}
+    )
+
+
 @router.get("/capabilities", response_model=Capabilities)
 async def capabilities() -> Capabilities:
     """What this worker can run, as the legacy ``GET /capabilities`` answers it."""
-    return local_capabilities()
+    return worker_capabilities()
 
 
 def parse_submit_meta(meta: str) -> SubmitMeta:
@@ -350,6 +535,10 @@ def run_submit(submit_meta: SubmitMeta, plan: bytes) -> SubmitResult:
     404 for an input that is not held, 500 when the child did not complete. Expired results are
     swept first; a result already held under the id is released. The end of the submit is stamped
     whether or not it completed, so its job entry ages out like a held result.
+
+    A deferred submit with no preview runs no child, since all that child would do is resolve the
+    plan's columns: they are resolved here (``_resolve_columns``), nothing is collected, and a
+    failure is the 500 a child's would be.
     """
     sweep_expired()
     for input_id in submit_meta.inputs:
@@ -366,15 +555,18 @@ def run_submit(submit_meta: SubmitMeta, plan: bytes) -> SubmitResult:
         path = str(target)
     logger.info(f"Submitting result {result_id} ({'materialised' if materialise else 'deferred'})")
     try:
-        status = _run(
-            result_id,
-            plan,
-            "submit_result",
-            path or "",
-            submit_meta.flow_id,
-            submit_meta.node_id,
-            {"materialise": materialise, "preview_rows": submit_meta.hints.preview_rows},
-        )
+        if not materialise and submit_meta.hints.preview_rows is None:
+            status = _run_job(result_id, lambda: _resolve_columns(result_id, plan))
+        else:
+            status = _run(
+                result_id,
+                plan,
+                "submit_result",
+                path or "",
+                submit_meta.flow_id,
+                submit_meta.node_id,
+                {"materialise": materialise, "preview_rows": submit_meta.hints.preview_rows},
+            )
     finally:
         results.mark_ended(result_id)
     if status.status != "Completed":
@@ -456,6 +648,79 @@ def release(result_id: str) -> Response:
     if not _release(result_id):
         raise _not_held(result_id)
     return Response(status_code=204)
+
+
+@router.post("/results/{result_id}/export")
+def export(result_id: str, body: ExportBody) -> dict[str, str]:
+    """Write a held result to ``body.uri`` as parquet in a child, and answer the URI written.
+
+    The child sinks the result's plan, a scan of its file when materialised and the held plan when deferred, so the
+    rows stream to the target without passing through this process. A credential reaches the child as the stored
+    connection's id and user, which it resolves against its catalog with its master key. A result that is not held
+    is 404; a sink that fails is the 500 a failed submit answers, and the result stays held.
+
+    A blob is not rows: its file is copied here to a ``file://`` URI or ``PUT`` to a presigned ``https://`` URL, with
+    no child (``put_blob``). A credential or another scheme is 422, a copy that fails the 500, and the blob stays held.
+    """
+    record = _held(result_id)
+    if record is None:
+        raise _not_held(result_id)
+    if record.kind == "blob":
+        if body.credential is not None:
+            raise HTTPException(status_code=422, detail="A blob is copied to a URI that carries its own authorisation")
+        _copy_blob(lambda: put_blob(Path(record.path), body.uri))
+        return {"uri": body.uri}
+    plan = pl.scan_ipc(record.path).serialize() if record.state == "materialised" else record.plan
+    credential = body.credential.model_dump() if body.credential is not None else None
+    return {"uri": _run_child(record, plan, "export_result", {"uri": body.uri, "credential": credential})}
+
+
+@router.post("/results/{result_id}/import", response_model=ResultRef)
+def import_uri(result_id: str, body: ImportBody) -> ResultRef:
+    """Hold a scan of the parquet at ``body.uri`` as the deferred result *result_id*, and answer its reference.
+
+    Nothing is read: the scan is built and serialised here, never run, so the file need not exist yet, and the
+    columns and row count are the ones core sent. Expired results are swept first and a result held under the id is
+    released; the record is stamped now, so it ages out with the rest. ``count`` answers the given row count without
+    a child, ``sample`` and ``export`` run the scan in one, and ``DELETE`` forgets the record and leaves the file,
+    which is not this worker's.
+
+    With ``kind="blob"`` the bytes at ``body.uri`` are copied from a ``file://`` URI or fetched from a presigned
+    ``https://`` URL here (``get_blob``) into ``result_path(-1, id)`` with a ``.blob`` suffix, and held as a blob
+    record of that file, whose ``DELETE`` removes it. Another scheme is 422 and a fetch that fails the 500; either way
+    nothing is held and nothing is left of the file.
+    """
+    sweep_expired()
+    _release(result_id)
+    if body.kind == "blob":
+        path = result_path(-1, result_id).with_suffix(".blob")
+        _copy_blob(lambda: get_blob(body.uri, path))
+        record = ResultRecord(
+            result_id=result_id,
+            state="materialised",
+            columns=[],
+            row_count=None,
+            flow_id=-1,
+            node_id=-1,
+            path=str(path),
+            kind="blob",
+        )
+        results.put(record)
+        results.mark_ended(result_id)
+        return record.ref()
+    provider = {} if body.credential is None else {"credential_provider": _credential_provider(body.credential)}
+    record = ResultRecord(
+        result_id=result_id,
+        state="deferred",
+        columns=body.columns,
+        row_count=body.row_count,
+        flow_id=-1,
+        node_id=-1,
+        plan=pl.scan_parquet(file_uri_path(body.uri), **provider).serialize(),
+    )
+    results.put(record)
+    results.mark_ended(result_id)
+    return record.ref()
 
 
 @router.get("/jobs/{job_id}", response_model=models.Status)
@@ -620,3 +885,79 @@ def random_split(body: RandomSplitInput, job_id: JobId) -> OpOutputs:
         )
     }
     return OpOutputs(outputs=refs)
+
+
+@router.post("/ops/ml_train", response_model=OpOutputs)
+def ml_train(body: MlTrainInput, job_id: JobId) -> OpOutputs:
+    """Fit a model to the body's rows in a child as job *job_id* and hold it as the blob ``model``.
+
+    The child writes the model to ``result_path`` of ``<job_id>_0`` with a ``.blob`` suffix, held as a blob record of
+    that file; ``metadata`` is what the child reported of it, its ``sha256``, ``size_bytes`` and ``model_type``.
+    """
+    flow_id, node_id = body.flowfile_flow_id, body.flowfile_node_id
+    (model_id,) = _op_outputs(job_id, 1)
+    path = str(Path(_output_file(flow_id, model_id)).with_suffix(".blob"))
+    reported, _ = _run_op(
+        job_id,
+        lambda: start_train_model_process(
+            polars_serializable_object=body.polars_serializable_object(),
+            task_id=job_id,
+            file_ref=path,
+            model_type=body.model_type,
+            target_column=body.target_column,
+            feature_columns=body.feature_columns,
+            params=body.params,
+            staging_path=path,
+            flowfile_flow_id=flow_id,
+            flowfile_node_id=node_id,
+        ),
+        [path],
+    )
+    record = ResultRecord(
+        result_id=model_id,
+        state="materialised",
+        columns=[],
+        row_count=None,
+        flow_id=flow_id,
+        node_id=node_id,
+        path=path,
+        kind="blob",
+    )
+    results.put(record)
+    results.mark_ended(model_id)
+    return OpOutputs(outputs={"model": record.ref()}, metadata=reported)
+
+
+@router.post("/ops/ml_apply", response_model=OpOutputs)
+def ml_apply(body: MlApplyInput, job_id: JobId) -> OpOutputs:
+    """Score the body's rows with a held model in a child as job *job_id* and hold the scored rows as ``result``.
+
+    The model is the blob held under ``body.model``: one that is not held is 404, and a held result that is not a
+    blob 422, before anything runs. The child reports no count, so the rows are counted here from the file's metadata.
+    """
+    flow_id, node_id = body.flowfile_flow_id, body.flowfile_node_id
+    (result_id,) = _op_outputs(job_id, 1)
+    model = _held(body.model)
+    if model is None:
+        raise _not_held(body.model)
+    if model.kind != "blob":
+        raise HTTPException(status_code=422, detail=f"Result {body.model} holds rows, not a model")
+    path = _output_file(flow_id, result_id)
+    _run_op(
+        job_id,
+        lambda: start_apply_model_process(
+            polars_serializable_object=body.polars_serializable_object(),
+            task_id=job_id,
+            file_ref=path,
+            model_path=model.path,
+            output_column=body.output_column,
+            flowfile_flow_id=flow_id,
+            flowfile_node_id=node_id,
+        ),
+        [path],
+    )
+    rows = pl.scan_ipc(path)
+    row_count = rows.select(pl.len()).collect().item()
+    return OpOutputs(
+        outputs={"result": _hold_output(result_id, path, rows.collect_schema(), row_count, flow_id, node_id)}
+    )

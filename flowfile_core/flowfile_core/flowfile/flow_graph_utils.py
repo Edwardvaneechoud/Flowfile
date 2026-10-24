@@ -1,10 +1,9 @@
-import shutil
 from copy import deepcopy
 
 import polars as pl
 
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, register_missing_node_template
-from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection, ml_flow_model_path
+from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.schemas import input_schema, schemas
@@ -393,14 +392,5 @@ def _carry_node_outputs(
                 node.node_schema.predicted_schema = source_node.node_schema.predicted_schema
                 node.deferred_until_run = source_node.deferred_until_run
                 node.placed_deferred = source_node.placed_deferred
-            if source_node.node_type == "train_model":
-                _carry_model_file(fg.flow_id, source_node.node_id, combined_graph.flow_id, node.node_id)
-
-
-def _carry_model_file(source_flow_id: int, source_node_id: int, flow_id: int, node_id: int) -> None:
-    """Copy a fitted Train Model node's model to its remapped ids, where Apply Model and ``read_model`` look."""
-    source = ml_flow_model_path(source_flow_id, source_node_id)
-    if source.exists():
-        target = ml_flow_model_path(flow_id, node_id)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
+                # a fitted model is held by reference, where Apply Model and read_model look for it
+                node.results.model_ref = source_node.results.model_ref

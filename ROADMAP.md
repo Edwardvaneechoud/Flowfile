@@ -1,6 +1,6 @@
 # Flowfile Roadmap
 
-**Flowfile 0.22 · updated 2026-10-08 · [discuss this roadmap](https://github.com/edwardvaneechoud/Flowfile/discussions/categories/announcements)**
+**Flowfile 0.22 · updated 2026-10-14 · [discuss this roadmap](https://github.com/edwardvaneechoud/Flowfile/discussions/categories/announcements)**
 
 Flowfile lets you build the same data pipeline on a canvas or in Python.
 The priority is to make that everyday workflow dependable: edit it, run it,
@@ -20,7 +20,7 @@ notes are in the [roadmap background](docs/roadmap-details.md).
 |---|---|---|---|
 | 1 | [Canvas, Python and export](docs/roadmap-details.md#canvas-python-and-export) | Working, with coverage gaps | Close the remaining export and expression gaps; verify matching results and preserved node settings. |
 | 2 | [Everyday reliability](docs/roadmap-details.md#everyday-reliability) | Release criteria to define and verify | Check install, save, reopen, upgrade and error recovery against a documented set of everyday flows. |
-| 3 | [Workers on separate machines](docs/roadmap-details.md#remote-workers) | Separate service; shared filesystem still required | Run core and worker on separate hosts without a shared disk. |
+| 3 | [Workers on separate machines](docs/roadmap-details.md#remote-workers) | Core and worker run on separate hosts without a shared disk; flows with kernel nodes still run on core's host | Run one flow's nodes on two backends through an exchange store, so a flow with kernel nodes can use a remote worker too. |
 | 4 | [Open formats and catalogs](docs/roadmap-details.md#open-formats-and-catalogs) | Iceberg reader still a stub | Read an Iceberg table written by another engine, through the canvas, Python API and export. |
 | 5 | [Shared catalogs and team deployment](docs/roadmap-details.md#shared-catalogs-and-team-deployment) | Combined setup still to verify | Two instances share tables safely; provide a reproducible PostgreSQL and MinIO setup. |
 | 6 | [AI planner reliability](docs/roadmap-details.md#ai-planner-reliability) | Reviewable changes exist; benchmark planned | Measure task success and retries against agreed thresholds. |

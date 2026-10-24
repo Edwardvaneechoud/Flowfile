@@ -8,6 +8,12 @@ holds the factory of each, which imports the backend's module when it first make
 first lookup of an id nothing registered; an entry point never shadows a built-in id. ``backend`` calls a factory
 once per process and hands out that instance from then on.
 
+A configured worker, ``worker:<name>``, is a row of core's ``compute_backends`` table (``ConfiguredBackend``): its URL
+and its bearer token, stored as secret-manager ciphertext. The first lookup of such an id that nothing registered and
+no entry point names reads the row, decrypts the token and makes a ``WorkerBackend`` on that URL with that id and
+token; the instance is cached like every other. No row is a ``LookupError``. ``forget`` drops a cached instance, so the
+next lookup reads the row again, or fails once the row is gone.
+
 ``default_backend_id`` names the default backend, the one a ``"remote"`` flow and a call without a graph use:
 the process-wide override a headless runner sets (``set_default_override``) when there is one, else
 ``FLOWFILE_COMPUTE_BACKEND`` when set, else ``"worker"`` while the ``OFFLOAD_TO_WORKER`` setting is on and
@@ -40,6 +46,7 @@ BACKEND_ENV_VAR = "FLOWFILE_COMPUTE_BACKEND"
 LEGACY_OFFLOAD_ENV_VAR = "FLOWFILE_OFFLOAD_TO_WORKER"
 LOCAL_BACKEND_ID = "local"
 WORKER_BACKEND_ID = "worker"
+CONFIGURED_WORKER_PREFIX = "worker:"
 
 
 def _local_backend() -> ComputeBackend:
@@ -54,6 +61,25 @@ def _worker_backend() -> ComputeBackend:
     from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 
     return WorkerBackend(url=settings.WORKER_URL)
+
+
+def _configured_worker_backend(backend_id: str) -> ComputeBackend:
+    """The worker the ``compute_backends`` row of ``backend_id`` configures, signing its calls with the row's token.
+
+    Raises:
+        LookupError: No row configures ``backend_id``.
+    """
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import ConfiguredBackend
+    from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+    from flowfile_core.secret_manager.secret_manager import decrypt_secret
+
+    with get_db_context() as db:
+        row = db.get(ConfiguredBackend, backend_id)
+        if row is None:
+            raise LookupError(f"Unknown compute backend {backend_id!r}; no compute_backends row has that id")
+        url, ciphertext = row.url, row.token
+    return WorkerBackend(url=url, backend_id=backend_id, token=decrypt_secret(ciphertext).get_secret_value())
 
 
 _BUILTIN: dict[str, BackendFactory] = {
@@ -82,9 +108,12 @@ def register_backend(backend_id: str, factory: BackendFactory) -> None:
 def backend(backend_id: str) -> ComputeBackend:
     """The process's instance of ``backend_id``, made by its factory on first use.
 
+    An id that nothing registered and no entry point names, starting with ``worker:``, is made from its
+    ``compute_backends`` row.
+
     Raises:
         LookupError: No factory is registered, built in or installed under ``backend_id``; the message lists the
-            known ids, built-in ones included.
+            known ids, built-in ones included. For a ``worker:`` id, no row configures it.
     """
     with _lock:
         instance = _instances.get(backend_id)
@@ -94,11 +123,21 @@ def backend(backend_id: str) -> ComputeBackend:
             _factories[backend_id] = _BUILTIN[backend_id]
         _scan_entry_points()
         factory = _factories.get(backend_id)
-        if factory is None:
+        if factory is not None:
+            instance = factory()
+        elif backend_id.startswith(CONFIGURED_WORKER_PREFIX):
+            instance = _configured_worker_backend(backend_id)
+        else:
             known = ", ".join(repr(known_id) for known_id in sorted(_factories.keys() | _BUILTIN.keys())) or "none"
             raise LookupError(f"Unknown compute backend {backend_id!r}; known backends: {known}")
-        instance = _instances[backend_id] = factory()
+        _instances[backend_id] = instance
         return instance
+
+
+def forget(backend_id: str) -> None:
+    """Drop the process's instance of ``backend_id``; the next lookup makes it again, or fails once its row is gone."""
+    with _lock:
+        _instances.pop(backend_id, None)
 
 
 def default_backend_id() -> str:

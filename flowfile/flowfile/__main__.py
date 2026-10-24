@@ -7,7 +7,12 @@ import sys
 from pathlib import Path
 
 
-def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: int | None = None) -> int:
+def run_flow(
+    flow_path: str,
+    param_overrides: list[str] | None = None,
+    run_id: int | None = None,
+    backend: str | None = None,
+) -> int:
     """
     Load and execute a flow from a YAML/JSON file.
 
@@ -15,6 +20,10 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
         flow_path: Path to the flow file (.yaml, .yml, or .json)
         param_overrides: List of "key=value" strings overriding flow parameters.
         run_id: Optional pre-created run ID to report results back to
+        backend: The compute backend the run uses (``local``, ``worker`` or ``worker:<name>``). Without it, a
+            backend id saved as the flow's ``execution_location`` names one, and a flow saved ``local``, ``remote``
+            or ``auto`` runs in this process. A named backend becomes the process's default and the flow runs
+            ``"remote"`` on it.
 
     Returns:
         Exit code (0 for success, 1 for failure)
@@ -22,7 +31,8 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     from flowfile_core.flowfile.execution import registry
 
-    registry.set_default_override(registry.LOCAL_BACKEND_ID)
+    backend_id = backend or registry.LOCAL_BACKEND_ID
+    registry.set_default_override(backend_id)
 
     from flowfile_core.flowfile.manage.io_flowfile import open_flow
 
@@ -72,8 +82,11 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
         if override_dict:
             print(f"Parameter overrides: {override_dict}")
 
-    # Force local execution for CLI - no worker service needed
-    flow.execution_location = "local"
+    # Run in this process unless --backend or the flow's saved backend id names a backend
+    if backend is None and flow.execution_location not in ("local", "remote", "auto"):
+        backend_id = flow.execution_location
+        registry.set_default_override(backend_id)
+    flow.execution_location = "local" if backend_id == registry.LOCAL_BACKEND_ID else "remote"
 
     # Remove explore_data nodes - they're UI-only and require a worker service
     explore_data_nodes = [n.node_id for n in flow.nodes if n.node_type == "explore_data"]
@@ -424,6 +437,12 @@ def main():
     )
     parser.add_argument("--run-id", type=int, default=None, help="Pre-created run ID for scheduled runs")
     parser.add_argument(
+        "--backend",
+        metavar="ID",
+        default=None,
+        help="Compute backend a flow run uses: local (the default), worker or worker:<name>",
+    )
+    parser.add_argument(
         "--out",
         default=None,
         help="Output directory for convert and import, or the file an --inspect report goes to "
@@ -459,7 +478,7 @@ def main():
                 print("Error: 'flow' component requires a file path", file=sys.stderr)
                 print("Usage: flowfile run flow <path-to-flow-file>", file=sys.stderr)
                 sys.exit(1)
-            sys.exit(run_flow(args.file_path, param_overrides=args.params, run_id=args.run_id))
+            sys.exit(run_flow(args.file_path, param_overrides=args.params, run_id=args.run_id, backend=args.backend))
     elif args.command == "convert":
         sys.exit(
             _run_convert_command(args.component, args.file_path, out=args.out, csv=args.csv, overwrite=args.overwrite)

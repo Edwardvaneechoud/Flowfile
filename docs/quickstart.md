@@ -49,7 +49,7 @@ You'll build this pipeline: **read → drop duplicates → filter → group by**
     To get a data preview under every node as you build this demo, match these flow settings:
 
     - **Execution Mode:** Development
-    - **Execution location:** Local
+    - **Execution location:** Auto (default worker)
     - **Show details during execution:** on
 
     ![Flow Settings for step-by-step previews](assets/images/quickstart/flow_settings.gif)
