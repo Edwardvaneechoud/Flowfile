@@ -95,15 +95,18 @@ def _node_id_exprs(parent: str, child: str, schema: pl.Schema) -> list[pl.Expr]:
     ]
 
 
-def explode_hierarchy_frame(lf: pl.LazyFrame, settings: ExplodeHierarchyInput) -> pl.LazyFrame:
+def explode_hierarchy_frame(
+    lf: pl.LazyFrame, settings: ExplodeHierarchyInput, schema: pl.Schema | None = None
+) -> pl.LazyFrame:
     """Explode ``lf``'s parent -> child edges into the table ``settings.output_detail`` describes.
 
-    Reads the input schema only; nothing is collected, so cycles and null quantities surface as
-    a ``ComputeError`` when the result is collected. Empty or identical parent/child columns
-    raise ``ValueError`` straight away.
+    Reads the input schema only, ``schema`` when the caller passes it (``lf`` is then not resolved),
+    else ``lf``'s; nothing is collected, so cycles and null quantities surface as a ``ComputeError``
+    when the result is collected. Empty or identical parent/child columns raise ``ValueError``
+    straight away.
     """
     settings.check_edge_columns()
-    schema = lf.collect_schema()
+    schema = lf.collect_schema() if schema is None else schema
     quantity = pl.col(settings.quantity_column).cast(pl.Float64) if settings.quantity_column else None
     function = HIERARCHY_FUNCTIONS[settings.output_detail]
     return lf.select(

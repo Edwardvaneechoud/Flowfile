@@ -89,7 +89,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 )
 from flowfile_core.flowfile.execution import registry as compute_registry
 from flowfile_core.flowfile.execution.context import current_context
-from flowfile_core.flowfile.execution.payloads import FileWritePayload, op_payload
+from flowfile_core.flowfile.execution.payloads import FileWritePayload, RestApiReadPayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.extensions import (
     get_formula_chain_check,
@@ -1898,7 +1898,8 @@ def fetch_rest_api_sample(
     caches them on the node's ``fields`` (so downstream schema prediction needs
     no network), and returns the inferred columns. This powers the node's
     "Fetch sample" button. Defined as a sync endpoint so the blocking worker
-    round-trip runs in FastAPI's threadpool rather than the event loop.
+    round-trip runs in FastAPI's threadpool rather than the event loop. With
+    ``FLOWFILE_COMPUTE_PROTOCOL`` on, the rows come from ``_rest_api_sample_rows``.
     """
     input_data["user_id"] = current_user.id
     try:
@@ -1917,12 +1918,15 @@ def fetch_rest_api_sample(
     auth.secret = None
 
     sample_size = max(1, sample_size)
-    worker_settings = build_rest_api_worker_settings(node, secret_encrypted, sample_size=sample_size)
     try:
-        fetcher = ExternalRestApiFetcher(
-            worker_settings, wait_on_completion=True, worker_url=compute_registry.worker_url()
-        )
-        sample_df = fetcher.get_result().head(sample_size).collect()
+        if FLOWFILE_COMPUTE_PROTOCOL:
+            sample_df = _rest_api_sample_rows(node, secret_encrypted, sample_size)
+        else:
+            worker_settings = build_rest_api_worker_settings(node, secret_encrypted, sample_size=sample_size)
+            fetcher = ExternalRestApiFetcher(
+                worker_settings, wait_on_completion=True, worker_url=compute_registry.worker_url()
+            )
+            sample_df = fetcher.get_result().head(sample_size).collect()
     except Exception as e:
         raise HTTPException(422, f"Failed to fetch sample from REST API: {e}") from e
 
@@ -1932,6 +1936,29 @@ def fetch_rest_api_sample(
     if live is not None and isinstance(live.setting_input, input_schema.NodeRestApiReader):
         live.setting_input.fields = fields
     return RestApiSampleResponse(fields=fields)
+
+
+def _rest_api_sample_rows(
+    node: input_schema.NodeRestApiReader, secret_encrypted: str | None, sample_size: int
+) -> pl.DataFrame:
+    """The first page of *node*'s request, at most *sample_size* records, read on the worker and released there.
+
+    The node's pagination is capped at one page of *sample_size* records, the request a sample fetch makes. The read
+    is ``run_op(rest_api_read)`` on the worker backend; its result is sampled, then released whether or not the
+    sample was read.
+    """
+    settings = node.rest_api_settings
+    one_page = settings.pagination.model_copy(update={"max_pages": 1, "max_records": sample_size})
+    capped = node.model_copy(update={"rest_api_settings": settings.model_copy(update={"pagination": one_page})})
+    read = RestApiReadPayload(
+        flow_id=node.flow_id, node_id=node.node_id, settings=capped, encrypted_secret=secret_encrypted
+    )
+    backend = compute_registry.backend(compute_registry.WORKER_BACKEND_ID)
+    ref = backend.run_op(OperationKind.rest_api_read, op_payload(read)).refs["result"]
+    try:
+        return pl.read_ipc_stream(backend.sample(ref, sample_size))
+    finally:
+        backend.release(ref)
 
 
 @router.get("/files/available_flow_files", tags=["editor"], response_model=list[FileInfo])

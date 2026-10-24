@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi.exceptions import HTTPException
 
 from flowfile_core.auth import sharing
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     get_local_cloud_connection,
 )
@@ -138,3 +139,18 @@ def _cloud_change_read_target(settings: CloudStorageReadSettings, user_id: int) 
     if connection.storage_type == "gcs":
         raise ValueError("Reading Delta changes is not supported on Google Cloud Storage yet")
     return normalize_delta_path(settings.resource_path), CloudStorageReader.get_storage_options(connection)
+
+
+def _cloud_change_scan_kwargs(
+    settings: CloudStorageReadSettings, user_id: int, storage_options: dict
+) -> dict[str, Any]:
+    """The ``storage_options``/``credential_provider`` kwargs of a cloud change read's plan.
+
+    With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a cloud read's own rule (``CloudStorageReader.get_read_credentials``): a
+    stored connection is named by reference and resolved where the plan runs. Otherwise *storage_options*, as
+    :func:`_cloud_change_read_target` resolved them, travel with their credentials encrypted for *user_id*.
+    """
+    if not FLOWFILE_COMPUTE_PROTOCOL:
+        return CloudStorageReader.get_secure_scan_kwargs(storage_options, user_id)
+    connection = _resolve_cloud_node_connection(settings, user_id, role="reader")
+    return CloudStorageReader.get_scan_kwargs(*CloudStorageReader.get_read_credentials(connection, user_id))

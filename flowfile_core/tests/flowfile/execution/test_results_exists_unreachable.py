@@ -12,6 +12,7 @@ import polars as pl
 import pytest
 import requests
 
+from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
@@ -39,6 +40,13 @@ def closed_worker_url(monkeypatch) -> str:
     url = _closed_url()
     monkeypatch.setattr(registry.backend(registry.WORKER_BACKEND_ID), "url", url)
     return url
+
+
+@pytest.fixture(params=[False, True], ids=["flag_off", "flag_on"])
+def protocol(request, monkeypatch) -> bool:
+    """The protocol flag in each state, back to what it was when the test ends."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", request.param)
+    return request.param
 
 
 @pytest.fixture
@@ -226,8 +234,20 @@ def test_other_compute_errors_fail_the_node_the_same_way(running_worker, monkeyp
     assert counts == {"function": 0, "execution": 0, "collect": 0}
 
 
-@pytest.mark.parametrize(("flow_id", "execution_mode", "reruns"), [(9102, "Development", 0), (9105, "Performance", 1)])
-def test_local_cached_node_never_asks_the_worker(closed_worker_url, monkeypatch, flow_id, execution_mode, reruns):
+@pytest.mark.parametrize(
+    ("flow_id", "execution_mode", "reruns_flag_off", "reruns_flag_on"),
+    [(9102, "Development", 0, 0), (9105, "Performance", 1, 0)],
+)
+def test_local_cached_node_never_asks_the_worker(
+    closed_worker_url, monkeypatch, protocol, flow_id, execution_mode, reruns_flag_off, reruns_flag_on
+):
+    """A cached node in local mode is decided in core, the worker never asked, in both modes and flag states.
+
+    With the protocol flag off ``LocalBackend`` holds the node's plan deferred, which is no cache, so the node
+    follows the ordinary rules: Development mode skips it once it ran and Performance mode reruns it. With the
+    flag on its result is stored in core's storage directory and is its cache, as on the worker, so a second run
+    skips it in either mode and keeps the stored result.
+    """
     graph = _cached_input_graph(flow_id, "local", execution_mode)
     node = graph.get_node(1)
     probes = []
@@ -239,18 +259,24 @@ def test_local_cached_node_never_asks_the_worker(closed_worker_url, monkeypatch,
 
     assert run_info.success is True
     _assert_succeeded(node)
-    assert node.results.result_ref.backend_id == "local"
+    held = node.results.result_ref
+    assert held.backend_id == "local"
+    assert held.state == ("materialised" if protocol else "deferred")
     assert probes == []
     assert counts["execution"] == 1
     assert counts["function"] == 1
 
-    # Local mode follows the ordinary rules: Development skips a node that ran, Performance reruns it.
     _reset(counts)
     assert graph.run_graph().success is True
     _assert_succeeded(node)
     assert probes == []
+    reruns = reruns_flag_on if protocol else reruns_flag_off
     assert counts["execution"] == reruns
     assert counts["function"] == reruns
+    if protocol:
+        assert node.results.result_ref == held
+    assert node.results.resulting_data.data_frame.collect().to_dicts() == [{"a": 1}]
+    node.release_result()
 
 
 def test_cached_node_recovers_after_the_worker_returns(running_worker, monkeypatch):

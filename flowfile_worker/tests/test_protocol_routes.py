@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from polars.testing import assert_frame_equal
 from starlette.testclient import WebSocketDenialResponse
 
-from flowfile_worker import main, protocol_routes, status_dict, status_dict_lock, streaming
+from flowfile_worker import main, models, protocol_routes, status_dict, status_dict_lock, streaming
 from flowfile_worker.results import result_path
 from shared.compute_protocol import (
     PROTOCOL_VERSION,
@@ -44,6 +44,19 @@ ROUTES = [
     ("DELETE", "/v1/results/some-id"),
     ("GET", "/v1/jobs/some-id"),
     ("POST", "/v1/jobs/some-id/cancel"),
+    *[
+        ("POST", f"/v1/ops/{kind}?job_id=some-id")
+        for kind in (
+            "database_read",
+            "kafka_read",
+            "google_analytics_read",
+            "rest_api_read",
+            "file_read",
+            "fuzzy_join",
+            "custom_node",
+            "random_split",
+        )
+    ],
 ]
 
 
@@ -151,6 +164,14 @@ def test_the_v1_paths_are_in_the_openapi_document():
         "/v1/results/{result_id}",
         "/v1/jobs/{job_id}",
         "/v1/jobs/{job_id}/cancel",
+        "/v1/ops/database_read",
+        "/v1/ops/kafka_read",
+        "/v1/ops/google_analytics_read",
+        "/v1/ops/rest_api_read",
+        "/v1/ops/file_read",
+        "/v1/ops/fuzzy_join",
+        "/v1/ops/custom_node",
+        "/v1/ops/random_split",
     }
     assert set(paths["/v1/results/{result_id}"]) == {"head", "delete"}
 
@@ -290,6 +311,53 @@ def test_sample_and_count_of_an_unknown_result_are_404():
     assert client.get("/v1/results/unknown/count").status_code == 404
 
 
+def _record_children(monkeypatch) -> list[str]:
+    """The operation of every child the routes run from here on, in order."""
+    operations: list[str] = []
+    run = protocol_routes._run
+
+    def recording(task_id, plan, operation, *args, **kwargs):
+        operations.append(operation)
+        return run(task_id, plan, operation, *args, **kwargs)
+
+    monkeypatch.setattr(protocol_routes, "_run", recording)
+    return operations
+
+
+def test_more_than_a_thousand_rows_of_a_stored_result_are_read_in_a_child(held, monkeypatch):
+    result_id = held()
+    plan = pl.LazyFrame({"id": range(1_500)})
+    _submit(result_id, plan, must_materialise=True)
+    jobs_before = set(status_dict)
+    children = _record_children(monkeypatch)
+
+    in_parent = client.get(f"/v1/results/{result_id}/sample", params={"n": 1_000})
+    assert children == []
+    in_child = client.get(f"/v1/results/{result_id}/sample", params={"n": 1_001})
+
+    assert children == ["submit_result"]
+    assert_frame_equal(pl.read_ipc_stream(in_parent.content), plan.head(1_000).collect())
+    assert_frame_equal(pl.read_ipc_stream(in_child.content), plan.head(1_001).collect())
+    assert set(status_dict) == jobs_before
+
+
+def test_a_sample_above_the_cap_is_refused_before_anything_runs(held, monkeypatch):
+    result_id = held()
+    plan = _plan()
+    _submit(result_id, plan, must_materialise=True)
+    children = _record_children(monkeypatch)
+
+    refused = client.get(f"/v1/results/{result_id}/sample", params={"n": 10_001})
+    assert refused.status_code == 422
+    assert "10000" in refused.text
+    assert children == []
+
+    capped = client.get(f"/v1/results/{result_id}/sample", params={"n": 10_000})
+    assert capped.status_code == 200
+    assert_frame_equal(pl.read_ipc_stream(capped.content), plan.collect())
+    assert children == ["submit_result"]
+
+
 def test_release_removes_the_file_the_record_and_the_job(held):
     result_id = held()
     path = _location(_submit(result_id, _plan(), must_materialise=True)).path
@@ -382,6 +450,22 @@ def test_a_submits_job_is_its_result_id(held):
     assert job.status_code == 200
     assert job.json()["status"] == "Completed"
     assert job.json()["results"] is None
+
+
+def test_a_jobs_answer_leaves_out_what_its_child_reported(held):
+    result_id = held()
+    reported = {"columns": _plan().collect_schema(), "row_count": 5, "sample": b"\x00"}
+    with status_dict_lock:
+        status_dict[result_id] = models.Status(
+            background_task_id=result_id, status="Completed", file_ref="", result_type="other", results=reported
+        )
+
+    job = client.get(f"/v1/jobs/{result_id}")
+
+    assert job.status_code == 200
+    assert job.json()["status"] == "Completed"
+    assert job.json()["results"] is None
+    assert status_dict[result_id].results is reported
 
 
 def test_a_failed_submits_job_carries_the_error(held):
@@ -531,11 +615,17 @@ def test_an_unchanged_progress_is_sent_again_as_a_heartbeat(held, monkeypatch):
 
 
 def test_a_client_that_leaves_does_not_stop_the_submit(held):
+    """The client leaves once a progress frame says its submit runs.
+
+    Leaving a test client's socket cancels the route and closes the event loop it ran on, so a submit not yet in the
+    threadpool would never start; a real server keeps its loop and reads both frames before the close.
+    """
     result_id = held()
 
     with client.websocket_connect("/v1/ws/submit") as websocket:
         websocket.send_text(_meta(result_id, must_materialise=True))
         websocket.send_bytes(_plan().serialize())
+        assert websocket.receive_json()["type"] == "progress"
 
     deadline = time.monotonic() + 30
     while True:

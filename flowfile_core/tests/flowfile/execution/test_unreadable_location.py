@@ -6,11 +6,13 @@ host, but any read of that leaf from core raises ``FileNotFoundError``. A touch 
 instead of being counted, so these flows pass only while core takes a stored result's schema from its reference.
 They run with the protocol flag off and on: with it on, core asks the backend that holds a result whether it still
 does, and reads rows of those results through the backend: the formula editor's preview row, a formula gate's probe,
-column statistics and the CSV export. The tests named for ``v1`` results check the same over the session worker's
-``/v1`` routes.
+column statistics and the CSV export; and a filter, a select, a join or a group_by over a stored result takes its
+input's columns from the input engine's cached schema. The tests named for ``v1`` results check the same over the
+session worker's ``/v1`` routes.
 """
 
 import dataclasses
+import io
 import os
 from contextlib import contextmanager
 from pathlib import Path
@@ -25,6 +27,13 @@ from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.extensions import get_instant_func_results
+from flowfile_core.flowfile.flow_data_engine.bounded import unique_values
+from flowfile_core.flowfile.flow_data_engine.formula_entries import (
+    FormulaEntry,
+    FormulaEntryError,
+    apply_formula_entries,
+)
+from flowfile_core.flowfile.flow_data_engine.hierarchy import explode_hierarchy_frame
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_node.executor import NodeExecutor
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
@@ -37,6 +46,21 @@ from shared.compute_protocol import WorkerLocation
 BACKEND_ID = "unreadable"
 
 
+def detached(plan: pl.LazyFrame) -> pl.LazyFrame:
+    """A copy of ``plan`` through its serialised form, sharing nothing Polars resolved on the original."""
+    return pl.LazyFrame.deserialize(io.BytesIO(plan.serialize()))
+
+
+def detached_payload(payload):
+    """An operation payload with each of its ``pl.LazyFrame`` fields detached."""
+    frames = {
+        field.name: detached(getattr(payload, field.name))
+        for field in dataclasses.fields(payload)
+        if isinstance(getattr(payload, field.name), pl.LazyFrame)
+    }
+    return dataclasses.replace(payload, **frames)
+
+
 class UnreadableBackend(LocalBackend):
     """Core's own backend, except that a result it stores sits at a path that exists only while one of its calls runs.
 
@@ -45,6 +69,10 @@ class UnreadableBackend(LocalBackend):
     ``<root>/<result id>.arrow``, which is its ``location``, and ``plan_for`` returns ``scan_ipc`` of that path.
     ``submit``, ``run_op``, ``sample`` and ``count`` write every stored result to its path, so the plans composed on
     them run, and remove the files before they return.
+
+    Like a worker, it runs a copy of each plan core sends (``detached``) and hands core a copy of each deferred plan
+    it holds: Polars keeps what it resolves of a scan on the plan object, so a backend that resolved core's own plans
+    while their files existed would answer core's later reads of the same leaves without touching the files.
     """
 
     def __init__(self, root: Path):
@@ -55,14 +83,14 @@ class UnreadableBackend(LocalBackend):
 
     def submit(self, plan, inputs, hints, result_id, *, flow_id, node_id):
         with self._readable(storing=hints.must_materialise):
-            result = super().submit(plan, inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
+            result = super().submit(detached(plan), inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
             if result.ref.state == "materialised" and hints.preview_rows is not None:
                 result = dataclasses.replace(result, sample=super().sample(result.ref, hints.preview_rows))
         return result
 
     def run_op(self, op, payload):
         with self._readable(storing=True):
-            return super().run_op(op, payload)
+            return super().run_op(op, {key: detached_payload(value) for key, value in payload.items()})
 
     def sample(self, ref, n):
         with self._readable():
@@ -74,9 +102,12 @@ class UnreadableBackend(LocalBackend):
 
     def plan_for(self, ref):
         if ref.state == "deferred":
-            return super().plan_for(ref)
+            return detached(super().plan_for(ref))
         self._plan(ref)
         return pl.scan_ipc(ref.location.decode("utf-8"))
+
+    def _store(self, plan, *, result_id, flow_id):
+        return self._hold(plan, result_id=result_id)
 
     def _hold(self, frame, row_count=None, schema=None, result_id=None):
         if not self._storing:
@@ -279,6 +310,77 @@ def geometry_flow(flow_id: int) -> FlowGraph:
     return graph
 
 
+def stored_inputs_flow(flow_id: int) -> FlowGraph:
+    """Manual input 1 → filter 2 → select 3 → join 5 (with manual input 4) → group_by 6; filter 7 on 1, split in two.
+
+    1, 4 and 5 cache their results, so the backend stores them: filter 2 and the split run over a stored result, the
+    select over a plan composed on one, the join over a stored right input and the group_by over a stored input.
+    """
+    graph = make_graph(flow_id, max_parallel_workers=1)
+    customers = [{"id": i, "name": f"n{i}", "region": "eu" if i % 2 else "us", "amount": i * 10} for i in range(1, 7)]
+    add_manual_input(graph, 1, customers)
+    add_filter_on(graph, 2, 1, "[amount] > 10")
+    add_promise(graph, 3, "select")
+    graph.add_select(
+        input_schema.NodeSelect(
+            flow_id=graph.flow_id,
+            node_id=3,
+            depending_on_id=2,
+            select_input=[
+                transform_schema.SelectInput(old_name="id"),
+                transform_schema.SelectInput(old_name="name", new_name="customer"),
+                transform_schema.SelectInput(old_name="region"),
+                transform_schema.SelectInput(old_name="amount", data_type="Float64", data_type_change=True),
+            ],
+            keep_missing=False,
+        )
+    )
+    connect(graph, 2, 3)
+    add_manual_input(graph, 4, [{"id": i, "segment": f"s{i % 3}"} for i in range(1, 7)])
+    add_promise(graph, 5, "join")
+    graph.add_join(
+        input_schema.NodeJoin(
+            flow_id=graph.flow_id,
+            node_id=5,
+            depending_on_ids=[3, 4],
+            join_input=transform_schema.JoinInput(
+                join_mapping=[transform_schema.JoinMap("id", "id")], left_select=[], right_select=[]
+            ),
+        )
+    )
+    connect(graph, 3, 5)
+    connect(graph, 4, 5, input_type="right")
+    add_promise(graph, 6, "group_by")
+    graph.add_group_by(
+        input_schema.NodeGroupBy(
+            flow_id=graph.flow_id,
+            node_id=6,
+            depending_on_id=5,
+            groupby_input=transform_schema.GroupByInput(
+                agg_cols=[
+                    transform_schema.AggColl("region", "groupby"),
+                    transform_schema.AggColl("amount", "sum", "total"),
+                ]
+            ),
+        )
+    )
+    connect(graph, 5, 6)
+    add_promise(graph, 7, "filter")
+    graph.add_filter(
+        input_schema.NodeFilter(
+            flow_id=graph.flow_id,
+            node_id=7,
+            depending_on_id=1,
+            filter_input=transform_schema.FilterInput(mode="advanced", advanced_filter='[region] = "eu"'),
+            split_mode=True,
+        )
+    )
+    connect(graph, 1, 7)
+    for node_id in (1, 4, 5):
+        graph.get_node(node_id).node_settings.cache_results = True
+    return graph
+
+
 def columns(schema) -> list[tuple[str, str]]:
     return [(column.column_name, column.data_type) for column in schema]
 
@@ -387,6 +489,104 @@ def test_a_v1_result_the_worker_dropped_is_run_again(remote_worker, protocol_on)
         run_info = graph.run_graph()
         assert run_info.success, failures(run_info)
         assert worker.exists(sort.results.result_ref)
+    finally:
+        graph.close_flow()
+
+
+CUSTOMERS = [("id", "Int64"), ("name", "String"), ("region", "String"), ("amount", "Int64")]
+SELECTED = [("id", "Int64"), ("customer", "String"), ("region", "String"), ("amount", "Float64")]
+
+
+def test_filter_select_join_and_group_by_run_over_stored_results_core_cannot_read(unreadable, protocol_on):
+    graph = stored_inputs_flow(9347)
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        for node_id in (1, 4, 5):
+            ref = graph.get_node(node_id).results.result_ref
+            assert ref.state == "materialised"
+            assert not os.path.exists(ref.location.decode("utf-8"))
+        assert {node_id: columns(graph.get_node(node_id).schema) for node_id in range(1, 7)} == {
+            1: CUSTOMERS,
+            2: CUSTOMERS,
+            3: SELECTED,
+            4: [("id", "Int64"), ("segment", "String")],
+            5: SELECTED + [("segment", "String"), ("id_right", "Int64")],
+            6: [("region", "String"), ("total", "Float64")],
+        }
+        splits = graph.get_node(7)._named_outputs
+        assert {handle: columns(engine.schema) for handle, engine in splits.items()} == {
+            "output-0": CUSTOMERS,
+            "output-1": CUSTOMERS,
+        }
+        previews = {node_id: len(graph.get_node(node_id).get_table_example(True).data) for node_id in range(1, 7)}
+        assert previews == {1: 6, 2: 5, 3: 5, 4: 6, 5: 5, 6: 2}
+
+        add_promise(graph, 8, "pivot")
+        connect(graph, 5, 8)
+        graph.add_pivot(
+            input_schema.NodePivot(
+                flow_id=graph.flow_id,
+                node_id=8,
+                depending_on_id=5,
+                pivot_input=transform_schema.PivotInput(
+                    index_columns=["region"], pivot_column="segment", value_col="amount", aggregations=["sum"]
+                ),
+            )
+        )
+
+        assert [column.column_name for column in graph.get_node(8).get_predicted_schema()] == [
+            "region",
+            "s0",
+            "s1",
+            "s2",
+        ]
+    finally:
+        graph.close_flow()
+
+
+def test_a_stored_results_columns_are_read_from_its_cached_schema(unreadable, protocol_on):
+    graph = stored_inputs_flow(9348)
+    try:
+        assert graph.run_graph().success
+        engine = graph.get_node(1).get_resulting_data()
+
+        assert engine._fetch_null_profile() == (6, {"id": 0, "name": 0, "region": 0, "amount": 0})
+        region = unique_values(unreadable[0], engine.data_frame.select("region"), 10, column="region")
+        assert region.to_list() == ["eu", "us"]
+        amount = next(column for column in engine.calculate_schema() if column.column_name == "amount")
+        assert (amount.min_value, amount.max_value) == ("10.0", "60.0")
+    finally:
+        graph.close_flow()
+
+
+def test_frame_helpers_given_a_schema_never_resolve_the_frame(tmp_path):
+    gone = pl.scan_ipc(tmp_path / "gone.arrow")
+    schema = pl.Schema({"parent": pl.String, "child": pl.String, "amount": pl.Int64})
+    hierarchy = transform_schema.ExplodeHierarchyInput(parent_column="parent", child_column="child")
+    entries = [FormulaEntry(1, "doubled", "[amount] * 2"), FormulaEntry(2, "quadrupled", "[doubled] * 2")]
+
+    assert isinstance(explode_hierarchy_frame(gone, hierarchy, schema=schema), pl.LazyFrame)
+    assert isinstance(apply_formula_entries(gone, entries, schema=schema), pl.LazyFrame)
+    with pytest.raises(FormulaEntryError) as raised:
+        apply_formula_entries(gone, [FormulaEntry(1, "doubled", "[amont] * 2")], schema=schema)
+    assert raised.value.kind == "missing_column"
+    assert raised.value.suggestion.to_name == "amount"
+
+
+def test_a_filter_over_a_stored_v1_result_keeps_the_columns_the_worker_sent(remote_worker, protocol_on):
+    graph = geometry_flow(9349)
+    try:
+        add_filter_on(graph, 4, 3, "[id] > 1")
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        assert WorkerLocation.model_validate_json(graph.get_node(3).results.result_ref.location).kind == "file"
+        assert [(column.column_name, column.semantic_type) for column in graph.get_node(4).schema] == [
+            ("id", None),
+            ("g", "geometry"),
+        ]
     finally:
         graph.close_flow()
 

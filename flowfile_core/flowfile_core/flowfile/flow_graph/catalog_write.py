@@ -33,7 +33,6 @@ from flowfile_core.flowfile.execution.payloads import (
     op_payload,
 )
 from flowfile_core.flowfile.execution.protocol import OperationKind
-from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
@@ -129,20 +128,21 @@ def _scd2_writer_output(
     output_mode: str,
     version: int | None,
     run_timestamp: str,
-    storage_options: dict[str, str] | None,
+    credential_kwargs: dict[str, Any],
 ) -> FlowDataEngine:
     """The frame an SCD2 catalog writer emits downstream, read back at the version it settled on.
 
     All three modes yield the input's columns in input order followed by the four generated
     columns, so the node's advertised schema holds whichever mode is selected. Pinning the read to
     *version* is what makes a concurrent writer unable to change what this run passes on. The plan
-    stays lazy — core never materialises it.
+    stays lazy — core never materialises it. *credential_kwargs* are the scan's credentials
+    (``CatalogStorageTarget.scan_kwargs`` for a cloud table, empty for a local one).
     """
-    scan_kwargs = CloudStorageReader.get_secure_scan_kwargs(storage_options, None)
+    scan_kwargs = dict(credential_kwargs)
     if version is not None:
         scan_kwargs["version"] = version
     system_dtypes = _scd2_system_column_dtypes(scd2_config)
-    input_dtypes = dict(df.data_frame.collect_schema())
+    input_dtypes = dict(df.polars_schema())
     output_dtypes = {**input_dtypes, **system_dtypes}
     is_current = scd2_config["is_current_column"]
     table = pl.scan_delta(str(dest_path), **scan_kwargs)
@@ -781,7 +781,7 @@ def _handle_physical_table_write(
             (settings.scd2 or input_schema.Scd2Settings()).output_mode,
             written.scd2_version,
             run_timestamp,
-            storage_options,
+            target.scan_kwargs(None) if dest_is_cloud else {},
         )
 
     if meta_kwargs is None:
