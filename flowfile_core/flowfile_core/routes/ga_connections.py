@@ -13,10 +13,11 @@ import json
 import time
 from urllib.parse import urlencode
 
+import jwt
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
-from jose import JWTError, jwt
+from jwt import PyJWTError as JWTError
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -246,7 +247,7 @@ def oauth_callback(
     id_token = token_data.get("id_token")
     if id_token:
         try:
-            id_payload = jwt.get_unverified_claims(id_token)
+            id_payload = jwt.decode(id_token, options={"verify_signature": False})
             oauth_user_email = id_payload.get("email")
         except JWTError:
             oauth_user_email = None

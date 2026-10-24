@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from jose import jwt as jose_jwt
+import jwt as jose_jwt
 from sqlalchemy.orm import Session
 
 from flowfile_core import main

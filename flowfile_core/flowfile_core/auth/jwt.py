@@ -8,9 +8,10 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
+from jwt import PyJWTError as JWTError
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth.models import TokenData, User
