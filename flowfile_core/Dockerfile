@@ -1,5 +1,5 @@
 # Build stage
-FROM python:3.12-slim AS builder
+FROM python:3.12.15-slim AS builder
 
 WORKDIR /build
 
@@ -40,7 +40,7 @@ RUN poetry install --only=main --no-root && \
     rm -rf /root/.cache /root/.cargo/registry /root/.cargo/git
 
 # Runtime stage
-FROM python:3.12-slim
+FROM python:3.12.15-slim
 
 WORKDIR /app
 

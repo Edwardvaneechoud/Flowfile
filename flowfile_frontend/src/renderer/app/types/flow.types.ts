@@ -78,6 +78,8 @@ export interface RunInformation {
   number_of_nodes: number;
   node_step_result: NodeResult[];
   run_type: "fetch_one" | "full_run" | "init";
+  // The edges the run's placement put between two backends; absent from an older core.
+  boundaries?: [number, number][];
 }
 
 export interface RunInformationDictionary {

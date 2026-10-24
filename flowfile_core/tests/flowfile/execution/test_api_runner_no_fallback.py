@@ -2,7 +2,8 @@
 
 Drives the real app over HTTP: the public ``/api/data/{slug}`` route answers with generic detail (it never
 exposes node or worker detail to an API-key holder), the owner's ``/flow-api/endpoints/{id}/test`` route with
-the typed message. With the protocol flag on, a remote response is a sample of the result the worker holds.
+the typed message. With the protocol flag on, a remote response is a sample of the result the worker holds. A call
+leaves no result its run minted held on the worker once it has answered, in both flag states.
 """
 
 import socket
@@ -30,6 +31,7 @@ from flowfile_core.flowfile.flow_graph import add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.routes import flow_api
 from flowfile_core.schemas import input_schema, schemas
+from tests.flowfile.execution.test_mixed_placement import record_refs, still_held
 
 PUBLIC_UNAVAILABLE_DETAIL = "Compute unavailable"
 PUBLIC_FAILED_DETAIL = "Flow execution failed"
@@ -173,6 +175,13 @@ def protocol_on(monkeypatch):
     monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
 
 
+@pytest.fixture(params=[False, True], ids=["flag-off", "flag-on"])
+def flag(request, monkeypatch) -> bool:
+    """The protocol flag in each state, as ``task_routes`` and ``protocol_on`` set it."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", request.param)
+    return request.param
+
+
 @pytest.fixture
 def api_raised(monkeypatch) -> list[Exception]:
     """Every exception the published run raised to the route, ``_materialize``'s or the run's own."""
@@ -301,6 +310,19 @@ def test_with_the_protocol_flag_the_response_is_a_sample_of_the_result_the_worke
     assert run_record.core_collects == 0
 
 
+def test_a_call_leaves_no_result_its_run_minted_held_on_the_worker(
+    client, endpoint, flag, run_record, running_worker, monkeypatch
+):
+    answered = record_refs(monkeypatch, "submit", "run_op")
+
+    response = _call(client, endpoint, "public")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == [{"region": "EU", "v": 1}]
+    assert {method for method, _, _ in answered} == {"submit"}
+    assert still_held(answered) == []
+
+
 def test_with_the_protocol_flag_a_worker_gone_before_the_read_answers_503(
     client, endpoint, protocol_on, run_record, running_worker, monkeypatch
 ):
@@ -336,7 +358,7 @@ def test_with_the_protocol_flag_a_worker_unreachable_when_the_run_starts_answers
     assert type(raised) is ComputeUnavailable
     assert str(raised).startswith("node 1: ")
     assert f"port={closed_worker_port}" in str(raised)
-    assert str(raised).count("Is the worker running?") == 1
+    assert str(raised).count('Is backend "worker" running? Start it, or check the Backends page.') == 1
     expected_detail = PUBLIC_UNAVAILABLE_DETAIL if route == "public" else str(raised)
     assert response.json()["detail"] == expected_detail
     assert run_record.raised == []

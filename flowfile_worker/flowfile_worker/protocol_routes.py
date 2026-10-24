@@ -3,8 +3,8 @@
 Every route needs the internal token, then an ``X-Protocol-Version`` equal to this worker's
 ``PROTOCOL_VERSION``: a request without one, or with another, is answered 426. ``POST /v1/submit``
 runs the plan in a spawned ``funcs.submit_result`` child and keeps the result in ``results.results``,
-written to a file or deferred as ``_materialise`` decides; a deferred submit with no preview spawns no
-child, as this process resolves the plan's columns and collects nothing. The other routes read, count,
+written to a file or deferred as ``_materialise`` decides; a deferred submit with no preview runs in the
+child too, which resolves the plan's columns and collects nothing. The other routes read, count,
 probe and release what it holds. A submit's job id is its result id, and every submit first drops what has
 been held for ``CACHE_EXPIRATION_TIME``. ``run_submit`` is the submit itself, which ``streaming.py``'s
 ``/v1/ws/submit`` runs too. ``POST /v1/ops/<kind>`` runs a read, a fuzzy join, a random split, a
@@ -12,14 +12,21 @@ custom node, a model's training or its apply in the child its task route spawns,
 request's ``job_id`` names, and holds each output that child wrote as the materialised result
 ``<job_id>_<i>``, which the same routes read, count, probe and release. A training's output is the
 model it fitted, held as a blob; an apply scores with a model held here, named by its result id.
+``POST /v1/ops/polars_code`` runs a Polars Code node's code, and ``POST /v1/ops/sql_query`` translates
+a SQL Query node's statement, once in a pooled child and holds the result as ``<job_id>_0``: deferred,
+as its plan, when the code answered a LazyFrame over sources, materialised in its file when it answered
+a DataFrame or a LazyFrame over rows in memory.
 ``POST /v1/results/{id}/export`` writes a held result to a URI as parquet in a
 ``funcs.export_result`` child; ``POST /v1/results/{id}/import`` holds a scan of a URI as a deferred
 result, with the columns and row count core sent and nothing read. A credential crosses either as a
-stored connection's id and user, resolved where the plan runs. A blob, a held file of bytes that is not
+stored connection's id and user, resolved where the plan runs; an import whose connection cannot be read
+from the catalog answers the 500 a failed export does. A blob, a held file of bytes that is not
 rows, takes the same two routes: its export copies the file to a ``file://`` URI or ``PUT``s it to a
 presigned ``https://`` URL, and an import with ``kind="blob"`` copies or ``GET``s one into a blob of
 this worker's own, in this process; a presigned URL carries its own authorisation, so neither takes a
-credential. The legacy routes in ``routes.py`` stay as they are; the two share only ``status_dict``.
+credential. ``POST /v1/jobs/{id}/cancel`` stops a job's child, and takes a job still ``Starting`` too,
+which then ends as a cancel when it starts. The legacy routes in ``routes.py`` stay as they are; the two
+share only ``status_dict``.
 """
 
 import io
@@ -48,7 +55,6 @@ from flowfile_worker.external_sources.rest_api_source.main import read_rest_api
 from flowfile_worker.external_sources.rest_api_source.models import RestApiReadSettings
 from flowfile_worker.external_sources.sql_source.main import read_sql_source
 from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings
-from flowfile_worker.funcs import _load_plan
 from flowfile_worker.results import ResultRecord, result_path, results
 from flowfile_worker.spawner import (
     process_manager,
@@ -59,8 +65,8 @@ from flowfile_worker.spawner import (
     start_process,
     start_train_model_process,
 )
-from flowfile_worker.task_errors import DEFAULT_ERROR_LIMIT, WorkerEnvironmentError, describe_exception
-from shared.cloud_credential_provider import CredentialRefProvider
+from flowfile_worker.task_errors import describe_exception
+from shared.cloud_credential_provider import CredentialResolutionError, credential_ref_kwargs
 from shared.compute_protocol import (
     CLOUD_SCHEMES,
     PROTOCOL_VERSION,
@@ -105,13 +111,15 @@ OPERATIONS = frozenset(
         "delta_merge",
         "delta_scd2",
         "viz_session",
+        "polars_code",
+        "sql_query",
     }
 )
 """The operation kinds this worker runs, by ``OperationKind`` value; a kind is named while a route here runs it.
 
-Ten are the ``POST /v1/ops/<kind>`` routes below: the reads, the fuzzy join, the custom node, the random split, and
-ML training and apply. The other seven are served by the task routes in ``routes.py``: the database, cloud and file
-writes, the Delta write, merge and SCD2 write, and the visualisation sessions.
+Twelve are the ``POST /v1/ops/<kind>`` routes below: the reads, the fuzzy join, the custom node, the random split, ML
+training and apply, Polars code and SQL queries. The other seven are served by the task routes in ``routes.py``: the
+database, cloud and file writes, the Delta write, merge and SCD2 write, and the visualisation sessions.
 """
 
 # An operation's job id names its output files, so it holds no path separator.
@@ -210,6 +218,34 @@ class MlApplyInput(models.PolarsOperation):
     output_column: str
 
 
+class PolarsCodeInput(BaseModel):
+    """The body of a Polars Code run: the node's code, its input plans in connection order, and its flow and node.
+
+    An unknown field is refused rather than dropped, because core builds this body by hand.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    inputs: list[models.Base64Bytes]
+    flowfile_flow_id: int
+    flowfile_node_id: int | str = -1
+
+
+class SqlQueryInput(BaseModel):
+    """The body of a SQL Query run: the node's statement, its input plans in connection order, and its flow and node.
+
+    An unknown field is refused rather than dropped, because core builds this body by hand.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    sql_code: str
+    inputs: list[models.Base64Bytes]
+    flowfile_flow_id: int
+    flowfile_node_id: int | str = -1
+
+
 class CredentialRefBody(BaseModel):
     """A stored connection as an export or an import names it: its id and the user it runs for, nothing else.
 
@@ -251,11 +287,6 @@ class ImportBody(BaseModel):
         if self.kind == "blob" and (self.credential is not None or self.columns or self.row_count is not None):
             raise ValueError("A blob import takes no credential, no columns and no row count")
         return self
-
-
-def _credential_provider(credential: CredentialRefBody) -> CredentialRefProvider:
-    """The provider a scan carries for *credential*, resolved by whichever child runs the scan."""
-    return CredentialRefProvider(credential.connection_id, credential.user_id)
 
 
 def _copy_blob(copy: Callable[[], None]) -> None:
@@ -357,35 +388,6 @@ def _run(
             kwargs=dict(kwargs or {}),
         ),
     )
-
-
-def _resolve_columns(task_id: str, plan: bytes) -> None:
-    """Load *plan* and resolve its columns in this process as job *task_id*, which ends as a child's would.
-
-    It does what a deferred ``submit_result`` child with no preview does, and no more: deserialise the plan, which
-    loads its UDF modules and plugin libraries, and resolve its schema; nothing is collected. The entry ends
-    ``Completed`` with the dict that child queues, or ``Error`` with ``progress`` -1 and the kind and message its
-    recorded failure splits into, the message cut to fit that child's ``DEFAULT_ERROR_LIMIT``-byte buffer.
-    """
-    try:
-        columns = _load_plan(plan).collect_schema()
-    except (Exception, pl.exceptions.PanicException) as e:
-        environment = isinstance(e, WorkerEnvironmentError)
-        # A child's buffer spends one byte on the environment marker.
-        limit = DEFAULT_ERROR_LIMIT - 1 if environment else DEFAULT_ERROR_LIMIT
-        description = describe_exception(e.original if environment else e).encode()[:limit]
-        with status_dict_lock:
-            status = status_dict[task_id]
-            status.status = "Error"
-            status.progress = -1
-            status.error_kind = "environment" if environment else "task"
-            status.error_message = description.decode(errors="replace")
-        return
-    with status_dict_lock:
-        status = status_dict[task_id]
-        status.status = "Completed"
-        status.progress = 100
-        status.results = {"columns": columns, "row_count": None, "sample": None}
 
 
 def _run_child(record: ResultRecord, plan: bytes, operation: str, kwargs: dict | None = None) -> Any:
@@ -536,9 +538,8 @@ def run_submit(submit_meta: SubmitMeta, plan: bytes) -> SubmitResult:
     swept first; a result already held under the id is released. The end of the submit is stamped
     whether or not it completed, so its job entry ages out like a held result.
 
-    A deferred submit with no preview runs no child, since all that child would do is resolve the
-    plan's columns: they are resolved here (``_resolve_columns``), nothing is collected, and a
-    failure is the 500 a child's would be.
+    A deferred submit with no preview runs in the child too, which loads the plan and resolves its
+    columns, so its UDF modules and plugin libraries never load here, and collects nothing.
     """
     sweep_expired()
     for input_id in submit_meta.inputs:
@@ -555,18 +556,15 @@ def run_submit(submit_meta: SubmitMeta, plan: bytes) -> SubmitResult:
         path = str(target)
     logger.info(f"Submitting result {result_id} ({'materialised' if materialise else 'deferred'})")
     try:
-        if not materialise and submit_meta.hints.preview_rows is None:
-            status = _run_job(result_id, lambda: _resolve_columns(result_id, plan))
-        else:
-            status = _run(
-                result_id,
-                plan,
-                "submit_result",
-                path or "",
-                submit_meta.flow_id,
-                submit_meta.node_id,
-                {"materialise": materialise, "preview_rows": submit_meta.hints.preview_rows},
-            )
+        status = _run(
+            result_id,
+            plan,
+            "submit_result",
+            path or "",
+            submit_meta.flow_id,
+            submit_meta.node_id,
+            {"materialise": materialise, "preview_rows": submit_meta.hints.preview_rows},
+        )
     finally:
         results.mark_ended(result_id)
     if status.status != "Completed":
@@ -679,11 +677,13 @@ def export(result_id: str, body: ExportBody) -> dict[str, str]:
 def import_uri(result_id: str, body: ImportBody) -> ResultRef:
     """Hold a scan of the parquet at ``body.uri`` as the deferred result *result_id*, and answer its reference.
 
-    Nothing is read: the scan is built and serialised here, never run, so the file need not exist yet, and the
-    columns and row count are the ones core sent. Expired results are swept first and a result held under the id is
-    released; the record is stamped now, so it ages out with the rest. ``count`` answers the given row count without
-    a child, ``sample`` and ``export`` run the scan in one, and ``DELETE`` forgets the record and leaves the file,
-    which is not this worker's.
+    Nothing of the file is read: the scan is built and serialised here, never run, so the file need not exist yet,
+    and the columns and row count are the ones core sent. A credential's connection is read from the catalog here for
+    its endpoint and region (``credential_ref_kwargs``); its secrets are resolved by the child that runs the scan. A
+    catalog that cannot be read is the 500 an export's child answers for the same error, and nothing is held.
+    Expired results are swept first and a result held under the id is released; the record is stamped now, so it ages
+    out with the rest. ``count`` answers the given row count without a child, ``sample`` and ``export`` run the scan
+    in one, and ``DELETE`` forgets the record and leaves the file, which is not this worker's.
 
     With ``kind="blob"`` the bytes at ``body.uri`` are copied from a ``file://`` URI or fetched from a presigned
     ``https://`` URL here (``get_blob``) into ``result_path(-1, id)`` with a ``.blob`` suffix, and held as a blob
@@ -708,7 +708,13 @@ def import_uri(result_id: str, body: ImportBody) -> ResultRef:
         results.put(record)
         results.mark_ended(result_id)
         return record.ref()
-    provider = {} if body.credential is None else {"credential_provider": _credential_provider(body.credential)}
+    ref = body.credential
+    try:
+        credential_kwargs = {} if ref is None else credential_ref_kwargs(ref.connection_id, ref.user_id)
+    except CredentialResolutionError as e:
+        raise HTTPException(
+            status_code=500, detail={"status": "Error", "error_message": describe_exception(e), "error_kind": "task"}
+        ) from None
     record = ResultRecord(
         result_id=result_id,
         state="deferred",
@@ -716,7 +722,7 @@ def import_uri(result_id: str, body: ImportBody) -> ResultRef:
         row_count=body.row_count,
         flow_id=-1,
         node_id=-1,
-        plan=pl.scan_parquet(file_uri_path(body.uri), **provider).serialize(),
+        plan=pl.scan_parquet(file_uri_path(body.uri), **credential_kwargs).serialize(),
     )
     results.put(record)
     results.mark_ended(result_id)
@@ -740,7 +746,18 @@ def job_status(job_id: str) -> models.Status:
 
 @router.post("/jobs/{job_id}/cancel")
 def cancel_job(job_id: str) -> dict[str, str]:
-    """Stop a running job's child and mark the job cancelled."""
+    """Stop a running job's child and mark the job cancelled.
+
+    A job still ``Starting`` has no child yet: its entry is marked ``Cancelled`` under ``status_dict_lock`` and the
+    job ends as a cancel when it starts, its child stopped on the monitor's first pass. The check comes first because
+    the spawner registers a job's process before its monitor writes ``Processing`` under that lock, so a job seen
+    ``Processing`` has one to stop.
+    """
+    with status_dict_lock:
+        status = status_dict.get(job_id)
+        if status is not None and status.status == "Starting":
+            status.status = "Cancelled"
+            return {"message": f"Job {job_id} has been cancelled."}
     if not process_manager.cancel_process(job_id):
         raise HTTPException(status_code=404, detail=f"No job {job_id} is running on this worker")
     with status_dict_lock:
@@ -961,3 +978,78 @@ def ml_apply(body: MlApplyInput, job_id: JobId) -> OpOutputs:
     return OpOutputs(
         outputs={"result": _hold_output(result_id, path, rows.collect_schema(), row_count, flow_id, node_id)}
     )
+
+
+@router.post("/ops/polars_code", response_model=OpOutputs)
+def polars_code(body: PolarsCodeInput, job_id: JobId) -> OpOutputs:
+    """Run a Polars Code node's code once over its input plans in a child as job *job_id* and hold its result.
+
+    A LazyFrame over sources the code answers is held as the deferred result ``result``, its plan and the columns the
+    child resolved for it, nothing collected, so every dtype of the plan reaches its consumers; a DataFrame, or a
+    LazyFrame over rows in memory, whose plan would carry them to core, is written to its file by the child and held
+    materialised with its height. Either is ``<job_id>_0``.
+    """
+    flow_id, node_id = body.flowfile_flow_id, body.flowfile_node_id
+    (result_id,) = _op_outputs(job_id, 1)
+    path = _output_file(flow_id, result_id)
+    reported, _ = _run_op(
+        job_id,
+        lambda: start_process(
+            b"",
+            task_id=job_id,
+            operation="polars_code",
+            file_ref=path,
+            flowfile_flow_id=flow_id,
+            flowfile_node_id=node_id,
+            kwargs={"code": body.code, "inputs": list(body.inputs)},
+        ),
+        [path],
+    )
+    return OpOutputs(outputs={"result": _hold_user_code_result(result_id, path, reported, flow_id, node_id)})
+
+
+@router.post("/ops/sql_query", response_model=OpOutputs)
+def sql_query(body: SqlQueryInput, job_id: JobId) -> OpOutputs:
+    """Translate a SQL Query node's statement once over its input plans in a child as job *job_id* and hold its result.
+
+    The child validates the statement itself and registers the inputs as ``input_1``, ``input_2``, …; the result is
+    held as a Polars Code result is: deferred as its plan over sources, materialised in its file over rows in memory.
+    Either is ``<job_id>_0``.
+    """
+    flow_id, node_id = body.flowfile_flow_id, body.flowfile_node_id
+    (result_id,) = _op_outputs(job_id, 1)
+    path = _output_file(flow_id, result_id)
+    reported, _ = _run_op(
+        job_id,
+        lambda: start_process(
+            b"",
+            task_id=job_id,
+            operation="sql_query",
+            file_ref=path,
+            flowfile_flow_id=flow_id,
+            flowfile_node_id=node_id,
+            kwargs={"sql_code": body.sql_code, "inputs": list(body.inputs)},
+        ),
+        [path],
+    )
+    return OpOutputs(outputs={"result": _hold_user_code_result(result_id, path, reported, flow_id, node_id)})
+
+
+def _hold_user_code_result(
+    result_id: str, path: str, reported: dict[str, Any], flow_id: int, node_id: int | str
+) -> ResultRef:
+    """Hold what a Polars Code or SQL Query child *reported* as *result_id*: deferred as its plan, else its file."""
+    if reported["plan"] is None:
+        return _hold_output(result_id, path, reported["columns"], reported["row_count"], flow_id, node_id)
+    record = ResultRecord(
+        result_id=result_id,
+        state="deferred",
+        columns=schema_to_wire(reported["columns"]),
+        row_count=None,
+        flow_id=flow_id,
+        node_id=node_id,
+        plan=reported["plan"],
+    )
+    results.put(record)
+    results.mark_ended(result_id)
+    return record.ref()

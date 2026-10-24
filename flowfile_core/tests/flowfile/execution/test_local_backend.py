@@ -1,8 +1,10 @@
 """Core's own process as a compute: plans held lazily in an in-process store, operations run in process.
 
 With the protocol flag on, a plan that must be materialised is streamed to a file under core's storage directory
-instead, and held as a scan of that file. A result is exported to a URI by a streaming sink of its plan, and a URI is
-imported as a scan held deferred. A blob is copied into core's storage directory and out again, and never read as rows.
+instead, and held as a scan of that file, and a submit that asks for a preview answers it inline, a bounded collect of
+the held plan, so a plan that cannot collect fails its submit. A result is exported to a URI by a streaming sink of its
+plan, and a URI is imported as a scan held deferred. A blob is copied into core's storage directory and out again, and
+never read as rows.
 """
 
 import datetime
@@ -30,7 +32,9 @@ from flowfile_core.flowfile.execution.payloads import (
     FuzzyJoinPayload,
     MlApplyPayload,
     MlTrainPayload,
+    PolarsCodePayload,
     RandomSplitPayload,
+    SqlQueryPayload,
     op_payload,
 )
 from flowfile_core.flowfile.execution.protocol import (
@@ -47,6 +51,7 @@ from flowfile_core.schemas import input_schema
 from shared.compute_protocol import PROTOCOL_VERSION, file_uri, local_capabilities
 from shared.delta_utils import get_delta_size_bytes
 from shared.ml.trainers import get_trainer
+from shared.sql_validation import UnsafeSQLError
 from shared.storage_config import storage
 
 UNSUPPORTED_KINDS = (
@@ -216,6 +221,22 @@ def test_a_plan_that_fails_to_collect_is_held_and_fails_where_it_is_read(backend
         backend.sample(ref, 5)
 
 
+def test_a_preview_validates_the_plan_so_one_that_cannot_run_fails_its_submit(backend):
+    failing = pl.LazyFrame({"a": ["x"]}).select(pl.col("a").cast(pl.Int64, strict=True))
+
+    if settings.FLOWFILE_COMPUTE_PROTOCOL:
+        with pytest.raises(pl.exceptions.InvalidOperationError):
+            submit(backend, failing, submit_hints=hints(preview_rows=5))
+        assert backend._results == {}
+        return
+
+    ref = submit(backend, failing, submit_hints=hints(preview_rows=5)).ref
+
+    assert ref.state == "deferred"
+    with pytest.raises(pl.exceptions.InvalidOperationError):
+        backend.sample(ref, 5)
+
+
 @pytest.mark.parametrize("next_call", ["release", "submit"])
 def test_a_failed_sink_never_writes_the_result_file_and_what_it_wrote_goes_with_the_ids_next_call(
     backend, ten_rows, next_call, monkeypatch, tmp_path
@@ -259,13 +280,17 @@ def test_the_plan_is_held_as_the_object_submitted(backend, monkeypatch):
 
 
 @pytest.mark.parametrize("preview_rows", [None, 4])
-def test_no_sample_comes_inline_and_sample_serves_it_when_read(backend, ten_rows, preview_rows, monkeypatch):
+def test_a_preview_comes_inline_under_the_flag_and_sample_serves_it_again(backend, ten_rows, preview_rows, monkeypatch):
     collects = count_collects(monkeypatch)
 
     submitted = submit(backend, ten_rows, submit_hints=hints(preview_rows=preview_rows))
 
-    assert submitted.sample is None
-    assert collects == []
+    if settings.FLOWFILE_COMPUTE_PROTOCOL and preview_rows is not None:
+        assert collects == [4]
+        assert ipc_rows(submitted.sample)["n"].to_list() == [0, 1, 2, 3]
+    else:
+        assert submitted.sample is None
+        assert collects == []
     assert ipc_rows(backend.sample(submitted.ref, 4)).height == 4
 
 
@@ -430,6 +455,42 @@ def test_random_split_holds_one_result_per_split(backend):
     assert [backend.count(ref) for ref in refs.values()] == [80, 20]
     rows = pl.concat([backend.plan_for(ref).collect() for ref in refs.values()])
     assert sorted(rows["n"].to_list()) == list(range(100))
+
+
+def test_polars_code_holds_the_codes_result(backend):
+    rows = pl.LazyFrame({"n": list(range(5))})
+    code = "output_df = input_df.filter(pl.col('n') > 2).with_columns(double=pl.col('n') * 2)"
+    lazy = PolarsCodePayload(code=code, inputs=(rows,), flow_id=1, node_id=1)
+
+    refs = backend.run_op(OperationKind.polars_code, op_payload(lazy)).refs
+
+    ref = refs["result"]
+    assert refs == {"result": ref}
+    assert ref.state == "deferred"
+    assert [(column.column_name, column.data_type) for column in ref.schema] == [("n", "Int64"), ("double", "Int64")]
+    assert backend.plan_for(ref).collect().to_dicts() == [{"n": 3, "double": 6}, {"n": 4, "double": 8}]
+    eager = PolarsCodePayload(code="output_df = input_df.collect().head(2)", inputs=(rows,), flow_id=1, node_id=1)
+    assert backend.run_op(OperationKind.polars_code, op_payload(eager)).refs["result"].row_count == 2
+
+
+def test_sql_query_holds_the_querys_result(backend):
+    rows = pl.LazyFrame({"n": list(range(5))})
+    query = SqlQueryPayload(
+        sql_code="SELECT n, n * 2 AS double FROM input_1 WHERE n > 2", inputs=(rows,), flow_id=1, node_id=1
+    )
+
+    refs = backend.run_op(OperationKind.sql_query, op_payload(query)).refs
+
+    ref = refs["result"]
+    assert refs == {"result": ref}
+    assert ref.state == "deferred"
+    assert [(column.column_name, column.data_type) for column in ref.schema] == [("n", "Int64"), ("double", "Int64")]
+    assert backend.plan_for(ref).collect().to_dicts() == [{"n": 3, "double": 6}, {"n": 4, "double": 8}]
+    backend.release(ref)
+    unsafe = SqlQueryPayload(sql_code="DROP TABLE input_1", inputs=(rows,), flow_id=1, node_id=1)
+    with pytest.raises(UnsafeSQLError):
+        backend.run_op(OperationKind.sql_query, op_payload(unsafe))
+    assert backend._results == {}
 
 
 def test_file_read_holds_the_rows_of_a_csv(backend, tmp_path):

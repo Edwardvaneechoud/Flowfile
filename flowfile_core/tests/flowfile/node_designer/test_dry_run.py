@@ -712,7 +712,7 @@ def test_worker_failing_the_handshake_while_polled_answers_500_with_the_message(
     admin = User(username="local_user", id=1, disabled=False, is_admin=True, must_change_password=False)
     reported = local_capabilities().model_copy(update={"polars_version": "0.0.1"})
     monkeypatch.setattr(dr, "trigger_custom_node_operation", lambda request, *, worker_url: _Status("task-1"))
-    monkeypatch.setattr(handshake, "fetch_worker_capabilities", lambda worker_url: reported)
+    monkeypatch.setattr(worker_module.WorkerBackend, "capabilities", lambda self: reported)
     handshake.reset_handshake()
     main.app.dependency_overrides[get_current_active_user] = lambda: admin
     try:
@@ -725,6 +725,5 @@ def test_worker_failing_the_handshake_while_polled_answers_500_with_the_message(
 
     assert response.status_code == 500, response.text
     assert response.json()["detail"] == (
-        f"The worker at {registry.worker_url()} does not match core "
-        f"(polars_version: core {pl.__version__}, worker 0.0.1)"
+        f'Backend "worker" does not match core (polars_version: core {pl.__version__}, backend 0.0.1)'
     )

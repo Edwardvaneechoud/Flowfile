@@ -78,11 +78,13 @@ services:
       - FLOWFILE_ADMIN_USER=${FLOWFILE_ADMIN_USER:-admin}
       - FLOWFILE_ADMIN_PASSWORD=${FLOWFILE_ADMIN_PASSWORD:-changeme}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-flowfile-dev-secret-change-in-production}
-      # Shared secret for kernel → core authentication (must match the kernels)
+      # Shared secret between core, the worker and the kernels (must match all of them)
       - FLOWFILE_INTERNAL_TOKEN=${FLOWFILE_INTERNAL_TOKEN:-flowfile-dev-internal-token-change-in-production}
       - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:-}
       - FLOWFILE_SCHEDULER_ENABLED=true
       - FLOWFILE_ENABLE_PROJECTS=${FLOWFILE_ENABLE_PROJECTS:-true}
+      # Core reaches the worker over its versioned /v1 routes (on by default)
+      - FLOWFILE_COMPUTE_PROTOCOL=${FLOWFILE_COMPUTE_PROTOCOL:-1}
       - WORKER_HOST=flowfile-worker
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data
@@ -103,6 +105,8 @@ services:
     environment:
       - FLOWFILE_MODE=docker
       - CORE_HOST=flowfile-core
+      # Must match flowfile-core: the worker refuses a request without it
+      - FLOWFILE_INTERNAL_TOKEN=${FLOWFILE_INTERNAL_TOKEN:-flowfile-dev-internal-token-change-in-production}
       - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:-}
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data
@@ -122,6 +126,8 @@ volumes:
     driver: local
 ```
 
+The worker can also run on a host of its own; [Remote workers](remote-worker.md) covers what it and core then need.
+
 ## Environment Variables
 
 | Variable | Description | Default |
@@ -130,7 +136,7 @@ volumes:
 | `FLOWFILE_ADMIN_USER` | Admin username | `admin` |
 | `FLOWFILE_ADMIN_PASSWORD` | Admin password | `changeme` |
 | `JWT_SECRET_KEY` | Token signing secret. Required in Docker mode. | Insecure dev fallback in compose |
-| `FLOWFILE_INTERNAL_TOKEN` | Shared secret for kernel → core authentication. Required in Docker mode. | Insecure dev fallback in compose |
+| `FLOWFILE_INTERNAL_TOKEN` | Shared secret that core, the worker and the kernels sign their calls to each other with; set the same value on core and the worker. Required in Docker mode. | Insecure dev fallback in compose |
 | `FLOWFILE_MASTER_KEY` | Encryption key for secrets | Empty (setup wizard prompts) |
 | `FLOWFILE_SCHEDULER_ENABLED` | Auto-start the flow scheduler | `true` in the bundled compose (the code default when the var is entirely unset is off) |
 | `FLOWFILE_ENABLE_PROJECTS` | Enable git project tracking (admin-only in Docker; the `/project` router 404s when off). Accepts `true`/`1`/`yes`/`on`. | `true` in the bundled compose |

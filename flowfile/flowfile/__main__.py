@@ -23,7 +23,8 @@ def run_flow(
         backend: The compute backend the run uses (``local``, ``worker`` or ``worker:<name>``). Without it, a
             backend id saved as the flow's ``execution_location`` names one, and a flow saved ``local``, ``remote``
             or ``auto`` runs in this process. A named backend becomes the process's default and the flow runs
-            ``"remote"`` on it.
+            ``"remote"`` on it; the flow is closed when its run ends, so no result the run minted stays held there
+            after the process exits.
 
     Returns:
         Exit code (0 for success, 1 for failure)
@@ -119,6 +120,8 @@ def run_flow(
         print(f"Error running flow: {e}", file=sys.stderr)
         _complete_run_if_needed(run_id, success=False, nodes_completed=0)
         return 1
+    finally:
+        flow.close_flow()
 
     if result is None:
         print("Error: Flow execution returned no result", file=sys.stderr)

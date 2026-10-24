@@ -275,6 +275,8 @@ GROUP BY c.name
 
 The node is read-only: a query must start with `SELECT` or `WITH`, and statements that modify data or schema — `INSERT`, `UPDATE`, `DELETE`, `DROP`, `CREATE`, `ALTER`, `TRUNCATE` — are rejected. Invalid or unsafe SQL surfaces as a node error before the flow runs.
 
+The query runs where the flow runs, on the worker or, for a local run, in Flowfile's own process, once over the node's inputs. Before the node has run, the designer predicts its columns by running the query over an empty frame of each input.
+
 A query placed from the [Python API](../../python-api/reference/flowframe-operations.md#sql-queries) (`frame.sql(...)`, `ff.sql(...)`) that names its tables starts with a `WITH <name> AS (SELECT * FROM input_<n>)` header mapping each name to its input.
 
 !!! tip "Querying catalog tables"
@@ -307,6 +309,8 @@ A snippet does the same in fewer lines:
 ```python
 input_df.filter(pl.col('Age') > 30)
 ```
+
+The code runs where the flow runs, on the worker or, for a local run, in Flowfile's own process, and it runs once over the node's inputs, so code that collects an input, reads a value of it or writes a file does that there, once, as a script would. Before the node has run, the designer predicts its columns by running the code once more over an empty frame of each input, so code that reads a value of its input shows its columns once the node has run.
 
 ## ![Python Script](../../../assets/images/nodes/python_code.svg){ width="44" height="44" } Python Script
 

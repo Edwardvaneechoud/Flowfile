@@ -298,7 +298,7 @@ import {
   updateRunStatus,
 } from "../../nodes/nodeLogic";
 import { MODIFIER_LABEL } from "../../../utils/shortcuts";
-import { executionLocationOptions } from "../../../utils/executionLocation";
+import { executionLocationOptions, type BackendRow } from "../../../utils/executionLocation";
 import { listComputeBackends } from "../../../api/computeBackends.api";
 
 const nodeStore = useNodeStore();
@@ -369,17 +369,17 @@ const recordCurrentFlowAsRecent = async (catalogRef?: string) => {
 
 const executionModes = ref<ExecutionMode[]>(["Development", "Performance"]);
 
-// A non-admin may not list the configured backends (403) and is offered "auto" and the flow's value.
-const backendIds = ref<string[]>([]);
-const loadBackendIds = async () => {
+// A listing that fails leaves "auto" and the flow's value.
+const backendRows = ref<BackendRow[]>([]);
+const loadBackendRows = async () => {
   try {
-    backendIds.value = (await listComputeBackends()).map((backend) => backend.id);
+    backendRows.value = await listComputeBackends();
   } catch {
-    backendIds.value = [];
+    backendRows.value = [];
   }
 };
 const locationOptions = computed(() =>
-  executionLocationOptions(flowSettings.value?.execution_location ?? "auto", backendIds.value),
+  executionLocationOptions(flowSettings.value?.execution_location ?? "auto", backendRows.value),
 );
 
 const emit = defineEmits(["openFlow", "refreshFlow", "flowSaved", "logs-start", "logs-stop"]);
@@ -540,7 +540,7 @@ const runFlow = () => {
 
 const openSettingsModal = () => {
   modalVisibleForSettings.value = true;
-  void loadBackendIds();
+  void loadBackendRows();
   tutorialStore.notify({ type: "flow-settings-opened" });
 };
 

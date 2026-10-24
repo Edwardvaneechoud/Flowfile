@@ -6,12 +6,14 @@ the operations and schemes it declares, and core builds the same for its own pro
 two can be compared field by field. The wire models (``SubmitHints``, ``SubmitResult``,
 ``ResultRef``) are what the two exchange about one result. A result is a table or a blob, a file of bytes such as a
 fitted model that is never read as rows; ``put_blob`` and ``get_blob`` copy a blob's bytes to and from a ``file://`` URI
-or a presigned ``https://`` URL, in whichever process holds it. ``file_uri`` writes a local path's ``file:`` URI and
+or a presigned ``https://`` URL, in whichever process holds it, and importing this module cuts urllib3's request line
+at the query, so its DEBUG log names no presigned URL's signature. ``file_uri`` writes a local path's ``file:`` URI and
 ``file_uri_path`` reads the path back, in one form on every platform.
 """
 
 import importlib.metadata
 import importlib.util
+import logging
 import platform
 import shutil
 import sys
@@ -25,10 +27,24 @@ from pydantic import BaseModel, ConfigDict
 from shared._version import get_version
 
 PROTOCOL_VERSION = 1
+"""The worker contract: the shape of every request and answer between core and a worker, and the catalog columns a
+worker reads.
+
+``shared/tests/test_worker_contract.py`` pins it and says when to bump it; a new operation kind needs no bump, since a
+worker that does not declare it is refused only that kind's nodes. Workers must be upgraded when this number changes,
+and when the Polars version does; the app version is reported and compared nowhere.
+"""
 PROTOCOL_VERSION_HEADER = "X-Protocol-Version"
 
 # Packages whose installed version a compute reports.
-PLUGIN_PACKAGES = ("polars_grouper", "polars_simed", "polars_ds", "deltalake", "pl_fuzzy_frame_match")
+PLUGIN_PACKAGES = (
+    "polars_grouper",
+    "polars_simed",
+    "polars_ds",
+    "deltalake",
+    "pl_fuzzy_frame_match",
+    "polars_expr_transformer",
+)
 # The subset that registers Polars expression plugins: a plan that uses one carries the
 # plugin's library path as Polars resolved it, relative to the sending process's sys.prefix.
 EXPRESSION_PLUGINS = ("polars_grouper", "polars_ds")
@@ -40,9 +56,12 @@ CLOUD_SCHEMES = frozenset({"s3", "az", "gs"})
 class Capabilities(BaseModel):
     """What one compute process can run.
 
-    A handshake compares the four versions, ``platform``, ``plugins`` and ``plugin_libs``. The other four fields
-    are what a compute declares and are never compared: ``operations``, the values of the ``OperationKind``s it
-    runs; ``read_schemes`` and ``write_schemes``, the URI schemes it reads and writes; and
+    A handshake refuses a compute whose protocol or Polars version or ``polars_runtime`` (the index width of the
+    loaded Polars runtime, ``"32"`` or ``"64"``) differs from core's, compares ``python_version`` and each of
+    ``plugins`` to narrow what it offers, and reports ``app_version``, ``platform`` and ``plugin_libs`` without
+    comparing them. The other
+    four fields are what a compute declares and are never compared: ``operations``, the values of the
+    ``OperationKind``s it runs; ``read_schemes`` and ``write_schemes``, the URI schemes it reads and writes; and
     ``credential_resolution``, how it resolves a connection a plan names.
     """
 
@@ -51,6 +70,7 @@ class Capabilities(BaseModel):
     python_version: str
     protocol_version: int
     platform: str
+    polars_runtime: str
     plugins: dict[str, str]
     plugin_libs: dict[str, str]
     operations: frozenset[str] = frozenset()
@@ -104,6 +124,7 @@ def local_capabilities() -> Capabilities:
         python_version=platform.python_version(),
         protocol_version=PROTOCOL_VERSION,
         platform=f"{sys.platform}-{platform.machine()}",
+        polars_runtime="64" if pl.get_index_type() == pl.UInt64 else "32",
         plugins=plugin_versions(),
         plugin_libs=plugin_libs(),
         credential_resolution="master_key",
@@ -116,6 +137,8 @@ _BASE64_BYTES = ConfigDict(ser_json_bytes="base64", val_json_bytes="base64")
 
 class WireColumn(BaseModel):
     """One column of a result: the ``name`` and ``data_type`` of ``FileColumn``, the dtype spelled ``str(dtype)``."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str
     data_type: str
@@ -155,6 +178,8 @@ class ResultRef(BaseModel):
 
 class SubmitHints(BaseModel):
     """What core knows about a submitted plan, for the worker's materialisation policy."""
+
+    model_config = ConfigDict(extra="forbid")
 
     must_materialise: bool
     wide: bool
@@ -261,7 +286,8 @@ def _transfer(method: str, uri: str, *, data: BinaryIO | None = None, out: Binar
     """Send ``data`` to ``uri`` (``PUT``) or write what it answers to ``out`` (``GET``).
 
     No message names the URL's query: a presigned URL's signature is there, and ``requests``' own messages repeat
-    the whole URL, so they are not passed on.
+    the whole URL, so they are not passed on. urllib3's DEBUG request line is cut at the query by
+    ``_RequestLineWithoutQuery``.
     """
     import requests
 
@@ -276,3 +302,19 @@ def _transfer(method: str, uri: str, *, data: BinaryIO | None = None, out: Binar
                     out.write(chunk)
     except requests.RequestException as e:
         raise OSError(f"{method} {where} failed: {type(e).__name__}") from None
+
+
+class _RequestLineWithoutQuery(logging.Filter):
+    """Cut each text argument of a ``urllib3.connectionpool`` record at its first ``?``.
+
+    urllib3 logs every request line at DEBUG with the request's path and query as one of ``record.args``, so a process
+    run at DEBUG would log a presigned URL's signature; the args are rewritten in place and keep their arity.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(arg.partition("?")[0] if isinstance(arg, str) else arg for arg in record.args)
+        return True
+
+
+logging.getLogger("urllib3.connectionpool").addFilter(_RequestLineWithoutQuery())

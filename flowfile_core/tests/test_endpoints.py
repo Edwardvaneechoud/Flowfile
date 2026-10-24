@@ -3455,10 +3455,11 @@ def test_get_node_column_stats():
 
 
 def test_get_node_column_stats_offload_decision(monkeypatch):
-    """Whenever offloading is on the stats aggregate runs on the worker, whatever
-    the flow's execution location — core must not run pipeline compute.
-    In core only when no worker exists (offloading disabled): the route uses the
-    default compute backend."""
+    """With the protocol flag off the stats aggregate runs on the default compute
+    backend whatever the flow's execution location: on the worker whenever
+    offloading is on, in core only when no worker exists (offloading disabled).
+    With it on the aggregate runs on the flow's own backend, so a local flow's
+    in core and a remote flow's on the default backend."""
     from unittest.mock import patch
 
     import polars as pl
@@ -3486,7 +3487,9 @@ def test_get_node_column_stats_offload_decision(monkeypatch):
             for location in ("local", "remote"):
                 flow.flow_settings.execution_location = location
                 assert client.get("/node/column_stats", params=params).status_code == 200
-                assert mock_stats.call_args.kwargs["backend"].id == registry.WORKER_BACKEND_ID
+                aggregates_in_core = settings.FLOWFILE_COMPUTE_PROTOCOL and location == "local"
+                expected = registry.LOCAL_BACKEND_ID if aggregates_in_core else registry.WORKER_BACKEND_ID
+                assert mock_stats.call_args.kwargs["backend"].id == expected
 
             settings.OFFLOAD_TO_WORKER.set(False)
             assert client.get("/node/column_stats", params=params).status_code == 200

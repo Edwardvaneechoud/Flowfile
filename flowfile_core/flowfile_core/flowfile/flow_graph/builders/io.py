@@ -439,7 +439,6 @@ class FileIoBuildersMixin(GraphMixinBase):
                 # A lazy scan is a plan like any node's: the node submits it to the backend.
                 input_data = FlowDataEngine.create_from_path(input_file.received_file)
             else:
-                # Not `node`: a new read node runs this from its schema prefetch before `node` is bound.
                 backend = current_context(self).backend
                 read = FileReadPayload(
                     flow_id=self.flow_id,
@@ -447,8 +446,13 @@ class FileIoBuildersMixin(GraphMixinBase):
                     settings=input_file,
                     node_logger=self.flow_logger.get_node_logger(input_file.node_id),
                 )
-                ref = run_operation(backend, OperationKind.file_read, op_payload(read)).refs["result"]
-                input_data = engine_from_read(backend, ref)
+                node = self.get_node(input_file.node_id)
+                if node is None:
+                    # A new read node runs this from its schema prefetch before `node` is bound.
+                    result = run_operation(backend, OperationKind.file_read, op_payload(read))
+                else:
+                    result = node.run_op(backend, OperationKind.file_read, op_payload(read), job_id=read.job_id)
+                input_data = engine_from_read(backend, result.refs["result"])
             input_data.name = input_file.received_file.name
             return input_data
 

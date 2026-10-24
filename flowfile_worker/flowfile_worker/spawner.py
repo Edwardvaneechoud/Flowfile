@@ -104,13 +104,18 @@ def handle_task(
 
     Notes:
         - Updates task status in status_dict while process is running
+        - An entry a cancel marked ``Cancelled`` while the job was still ``Starting`` stays so, and the loop's
+          first pass stops the child
+        - A failure ends ``Error`` with progress -1 whether or not the loop saw the -1 before the child exited,
+          its description decoded with a character cut at the buffer's end replaced
         - Handles task cancellation, completion, and error states
         - Cleans up process resources after completion
     """
     envelope_received = False
     try:
         with status_dict_lock:
-            status_dict[task_id].status = "Processing"
+            if status_dict[task_id].status != "Cancelled":
+                status_dict[task_id].status = "Processing"
 
         delay = _POLL_INITIAL_DELAY
         deadline = (monotonic() + _TASK_TIMEOUT) if _TASK_TIMEOUT else None
@@ -129,7 +134,7 @@ def handle_task(
                 with status_dict_lock:
                     status_dict[task_id].status = "Error"
                     with error_message.get_lock():
-                        kind, msg = split_failure(error_message.value.decode().rstrip("\x00"))
+                        kind, msg = split_failure(error_message.value.decode(errors="replace").rstrip("\x00"))
                     status_dict[task_id].error_message = msg
                     status_dict[task_id].error_kind = kind
                 break
@@ -195,6 +200,7 @@ def handle_task(
                     # it (a child can die before we read progress == -1). Surface a terminal
                     # Error so the core poller doesn't wait on "Processing" forever.
                     status.status = "Error"
+                    status.progress = -1
                     if not status.error_message:
                         with error_message.get_lock():
                             decoded = error_message.value.decode(errors="replace").rstrip("\x00")

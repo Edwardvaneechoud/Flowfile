@@ -149,7 +149,9 @@ class ConfiguredBackend(Base):
 
     ``id`` is the backend id a flow saves, ``worker:<name>``; ``url`` is the worker's base URL without a trailing
     slash; ``token`` is the worker's bearer token as secret-manager ciphertext (``encrypt_secret``'s
-    ``$ffsec$1$<user>$…``), never the token itself. The built-in ``local`` and ``worker`` are never rows. The table
+    ``$ffsec$1$<user>$…``), never the token itself; ``ca_cert`` is the PEM of the certificate authority core trusts
+    for the worker's certificate when it is not public (a self-signed worker certificate is its own), ``None`` for a
+    public certificate or a plain ``http://`` worker. The built-in ``local`` and ``worker`` are never rows. The table
     shares its name with the ``flowfile.compute_backends`` entry-point group, the other way to add a backend; the
     registry reads a row on the first lookup of its id.
     """
@@ -159,6 +161,7 @@ class ConfiguredBackend(Base):
     id = Column(String, primary_key=True)
     url = Column(String, nullable=False)
     token = Column(Text, nullable=False)
+    ca_cert = Column(Text, nullable=True)
 
 
 # ==================== Catalog Models ====================

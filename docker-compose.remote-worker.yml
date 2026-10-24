@@ -74,6 +74,7 @@ services:
       - "127.0.0.1::63578"
     environment:
       - FLOWFILE_MODE=docker
+      - FLOWFILE_COMPUTE_PROTOCOL=${FLOWFILE_COMPUTE_PROTOCOL:-1}
       - FLOWFILE_ADMIN_USER=${FLOWFILE_ADMIN_USER:?}
       - FLOWFILE_ADMIN_PASSWORD=${FLOWFILE_ADMIN_PASSWORD:?}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?}
@@ -86,6 +87,8 @@ services:
       - FLOWFILE_ARTIFACT_STORAGE=s3
       - FLOWFILE_S3_BUCKET=flowfile-artifacts
       - FLOWFILE_S3_ENDPOINT_URL=https://minio-tls:9443
+      - FLOWFILE_EXCHANGE_URI=s3://flowfile-exchange/runs
+      - FLOWFILE_EXCHANGE_CONNECTION=exchange_minio
       - AWS_ACCESS_KEY_ID=minioadmin
       - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_CA_BUNDLE=/tmp/minio-ca.pem

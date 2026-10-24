@@ -80,9 +80,11 @@ Adds a prediction column to the input, loading the model either from an upstream
 | **Model name / version** | Used when the source is `Catalog`. An empty version means "latest active". |
 | **Output column** | Name of the prediction column. Defaults to `prediction`. |
 
-The input must contain every feature column the model was trained on; a missing feature raises a clear error before any work runs. Linear, ridge, lasso and logistic models apply as a pure Polars expression — no Python loop and no worker round-trip — while KNN collects once because it needs the full training set in memory for its kd-tree query.
+The input must contain every feature column the model was trained on; a missing feature raises a clear error before any work runs. Linear, ridge, lasso and logistic models apply as a pure Polars expression — no Python loop — while KNN collects once because it needs the full training set in memory for its kd-tree query.
 
 The output dtype is the algorithm's `output_dtype`: `Float64` for regression, `Int64` for classification. For binary logistic regression the prediction is the argmax of the sigmoid, so `1` when the linear combination is positive and `0` otherwise.
+
+Apply Model runs as one operation on its backend, like Train Model: the flow's, unless the node names its own [Compute backend](../building-flows.md#a-nodes-own-backend). In the designer that is a worker.
 
 ## ![Evaluate Model](../../../assets/images/nodes/evaluate_model.svg){ width="44" height="44" } Evaluate Model
 

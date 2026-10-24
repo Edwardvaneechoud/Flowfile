@@ -1,18 +1,23 @@
-// The admin /compute_backends routes; the token goes in the add body once and is never answered.
+// The /compute_backends routes: every user lists the ids and last verdicts, the URL, adding, removing and the
+// handshake are an administrator's; the token and the CA certificate go in the add body once and are never answered.
 
 import axios from "../services/axios.config";
 
 const COMPUTE_BACKENDS_URL = "/compute_backends";
 
+/** `url` is null for a user who is no administrator; `verdict` is null until the backend was checked. */
 export interface ComputeBackend {
   id: string;
-  url: string;
+  url: string | null;
+  verdict: HandshakeVerdict | null;
 }
 
 export interface ComputeBackendInput {
   name: string;
   url: string;
   token: string;
+  /** PEM of the CA to trust for an https worker whose certificate is not public. */
+  ca_cert?: string;
 }
 
 export interface WorkerCapabilities {
@@ -21,6 +26,7 @@ export interface WorkerCapabilities {
   python_version: string;
   protocol_version: number;
   platform: string;
+  polars_runtime: string;
   plugins: Record<string, string>;
   plugin_libs: Record<string, string>;
   operations: string[];
@@ -29,13 +35,19 @@ export interface WorkerCapabilities {
   credential_resolution: string;
 }
 
-/** `worker` is null and `error` says why when the worker's capabilities could not be read. */
+/**
+ * `backend` is null and `error` says why when its capabilities could not be read; `ok` false with `error` is a
+ * backend refused whole. `absent` names what an `ok` backend does not offer (a plugin, or "python" for core's
+ * Python functions) and why, and `offered` is `backend` with the plugins it offers.
+ */
 export interface HandshakeVerdict {
   id: string;
   ok: boolean;
   core: WorkerCapabilities;
-  worker: WorkerCapabilities | null;
+  backend: WorkerCapabilities | null;
+  offered: WorkerCapabilities | null;
   differences: string[];
+  absent: Record<string, string>;
   error: string | null;
 }
 

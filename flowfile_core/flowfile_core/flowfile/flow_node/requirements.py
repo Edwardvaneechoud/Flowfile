@@ -1,10 +1,10 @@
 """What a node needs from the compute that runs it, derived from its template and settings.
 
-``requirements_for`` reads a node's ``NodeTemplate`` and its settings model and nothing else: no database, no
-registry, no backend. Each family answers what its builder does on the backend: the operation it runs there
-(``run_op``), the storage schemes the backend reads and writes for it, the plugin packages its work imports, the
-stored connections it names and whether it runs on a notebook kernel. A node that only submits a plan, or works
-in core, needs none of these.
+``requirements_for`` reads a node's ``NodeTemplate`` and its settings model and nothing else: no database, no registry,
+no backend. Each family answers what its builder does on the backend: the operation it runs there (``run_op``), the
+storage schemes the backend reads and writes for it, the plugin packages its work imports, the stored connections it
+names, whether its plan may carry a Python function and whether it runs on a notebook kernel. A node that only submits a
+plan, or works in core, needs none of these.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 _OBJECT_STORAGE_SCHEMES = {"s3": "s3", "adls": "az", "gcs": "gs"}
 _LAZY_SCAN_FILE_TYPES = ("parquet", "ipc", "ndjson")
 _FILE = frozenset({"file"})
-_POLARS_DS = frozenset({"polars_ds"})
+_FORMULA_PLUGINS = frozenset({"polars_ds", "polars_expr_transformer"})
 _POLARS_GROUPER = frozenset({"polars_grouper"})
 
 
@@ -45,6 +45,9 @@ class NodeRequirements:
         plugins: The plugin packages the node's work imports, as ``shared.compute_protocol.PLUGIN_PACKAGES``
             names them.
         credentials: The names of the stored connections the node uses. Secret names are not connections.
+        python_function: The node's plan may carry a Python function serialised under core's Python, which runs
+            only where core's Python functions do: a formula-family node, whose formulas may compile to one, and a
+            cloud change read until it is an operation of its own.
         needs_kernel: The node runs its code on a notebook kernel, which reads the node's inputs from the
             kernel shared volume, a ``file`` location on core's Docker host.
     """
@@ -54,11 +57,16 @@ class NodeRequirements:
     write_schemes: frozenset[str] = frozenset()
     plugins: frozenset[str] = frozenset()
     credentials: frozenset[str] = frozenset()
+    python_function: bool = False
     needs_kernel: bool = False
 
 
 _ON_KERNEL = NodeRequirements(operation=OperationKind.file_write, write_schemes=_FILE, needs_kernel=True)
 """A kernel node: its inputs are written as parquet to the kernel shared volume, a ``file_write`` operation."""
+
+_FORMULA = NodeRequirements(plugins=_FORMULA_PLUGINS, python_function=True)
+"""A formula: its plan may load ``polars_ds`` and the formula library ``polars_expr_transformer`` and carry a Python
+function, whichever its formulas compile to, so every formula node needs both, its settings not telling which."""
 
 
 def requirements_for(
@@ -79,7 +87,8 @@ def requirements_for(
     or writer claims no scheme for a path it refuses itself when it runs: empty, blank, relative, or a URI that is
     not object storage, a URL included; a path that still holds a ``${…}`` parameter claims the scheme of its text,
     ``file`` for ``${root}/table``. A ``NodePromise``, a node not set up yet, answers only what its template says:
-    whether it runs on a kernel.
+    whether it runs on a kernel. An Explore Data node runs ``viz_session`` for its chart, on the backend that holds its
+    result.
 
     Args:
         template: The node's template.
@@ -207,10 +216,12 @@ def _cloud_scheme(path: str, role: Literal["reader", "writer"]) -> frozenset[str
 
 
 def _cloud_storage_reader(settings: input_schema.NodeCloudStorageReader) -> NodeRequirements:
-    """A plan over the object-storage path, a change read included."""
+    """A plan over the object-storage path; a change read's plan carries a Python function, its change-feed source."""
     cloud = settings.cloud_storage_settings
     return NodeRequirements(
-        read_schemes=_cloud_scheme(cloud.resource_path, "reader"), credentials=_names(cloud.connection_name)
+        read_schemes=_cloud_scheme(cloud.resource_path, "reader"),
+        credentials=_names(cloud.connection_name),
+        python_function=cloud.cdc_mode != "off",
     )
 
 
@@ -274,28 +285,29 @@ def _google_analytics_reader(settings: input_schema.NodeGoogleAnalyticsReader) -
 
 def _filter(settings: input_schema.NodeFilter) -> NodeRequirements:
     """An advanced filter is a formula; a basic one is built from a column, an operator and a value."""
-    return NodeRequirements(plugins=_POLARS_DS if settings.filter_input.is_advanced() else frozenset())
+    return _FORMULA if settings.filter_input.is_advanced() else NodeRequirements()
 
 
 def _gate(settings: input_schema.NodeGate) -> NodeRequirements:
-    return NodeRequirements(plugins=_POLARS_DS if settings.gate_input.condition_source == "formula" else frozenset())
+    return _FORMULA if settings.gate_input.condition_source == "formula" else NodeRequirements()
 
 
 def _dynamic_rename(settings: input_schema.NodeDynamicRename) -> NodeRequirements:
-    return NodeRequirements(
-        plugins=_POLARS_DS if settings.dynamic_rename_input.rename_mode == "formula" else frozenset()
-    )
+    return _FORMULA if settings.dynamic_rename_input.rename_mode == "formula" else NodeRequirements()
 
 
 _BY_TEMPLATE: dict[str, NodeRequirements] = {
     "python_script": _ON_KERNEL,
     "fuzzy_match": NodeRequirements(operation=OperationKind.fuzzy_join, plugins=frozenset({"polars_simed"})),
     "random_split": NodeRequirements(operation=OperationKind.random_split),
+    "polars_code": NodeRequirements(operation=OperationKind.polars_code),
+    "sql_query": NodeRequirements(operation=OperationKind.sql_query),
     "rest_api_reader": NodeRequirements(operation=OperationKind.rest_api_read),
+    "explore_data": NodeRequirements(operation=OperationKind.viz_session),
     "graph_solver": NodeRequirements(plugins=_POLARS_GROUPER),
     "explode_hierarchy": NodeRequirements(plugins=_POLARS_GROUPER),
-    "formula": NodeRequirements(plugins=_POLARS_DS),
-    "multi_field_formula": NodeRequirements(plugins=_POLARS_DS),
+    "formula": _FORMULA,
+    "multi_field_formula": _FORMULA,
 }
 """The families whose requirements do not depend on their settings."""
 

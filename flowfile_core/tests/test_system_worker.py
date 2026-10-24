@@ -21,6 +21,7 @@ from flowfile_core import main
 from flowfile_core.auth.jwt import get_current_active_user, get_current_user
 from flowfile_core.auth.models import User as PydanticUser
 from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from shared.compute_protocol import local_capabilities
 
@@ -141,17 +142,14 @@ def unchecked_worker() -> Iterator[None]:
 
 def test_worker_on_other_versions_surfaces_typed_503(admin_client: TestClient, unchecked_worker, monkeypatch) -> None:
     reported = local_capabilities().model_copy(update={"polars_version": "0.0.1"})
-    monkeypatch.setattr(handshake, "fetch_worker_capabilities", lambda worker_url: reported)
+    monkeypatch.setattr(WorkerBackend, "capabilities", lambda self: reported)
 
     response = admin_client.get("/system/worker_pool")
 
     assert response.status_code == 503, response.text
     assert response.json()["detail"] == {
         "error_code": "WORKER_UNAVAILABLE",
-        "message": (
-            f"The worker at {registry.worker_url()} does not match core "
-            f"(polars_version: core {pl.__version__}, worker 0.0.1)"
-        ),
+        "message": f'Backend "worker" does not match core (polars_version: core {pl.__version__}, backend 0.0.1)',
     }
 
 
@@ -169,7 +167,7 @@ def test_worker_down_on_first_contact_surfaces_typed_503(
     detail = response.json()["detail"]
     assert detail["error_code"] == "WORKER_UNAVAILABLE"
     assert detail["message"].startswith(f"Worker not reachable: Could not reach the worker at {dead_url}: ")
-    assert detail["message"].endswith("Is the worker running? Start it, or switch the flow to local execution.")
+    assert detail["message"].endswith("Is the compute backend running? Start it, or check the Backends page.")
 
 
 def test_out_of_range_size_returns_422(admin_client: TestClient, live_worker: str) -> None:

@@ -3,6 +3,7 @@
 import polars as pl
 
 from flowfile_core.configs import logger
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.flowfile.catalog_cdc import (
     resolve_change_window,
 )
@@ -93,6 +94,10 @@ class CloudStorageBuildersMixin(GraphMixinBase):
     def add_cloud_storage_reader(self, node_cloud_storage_reader: input_schema.NodeCloudStorageReader) -> None:
         """Adds a cloud storage read node to the flow graph.
 
+        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a plain read takes its schema from the backend the reader runs on, which
+        resolves the read's connection: a worker in its own process, ``LocalBackend`` in core. A change read, and every
+        read with the flag off, resolves its schema in core.
+
         Args:
             node_cloud_storage_reader: The settings for the cloud storage read node.
         """
@@ -166,7 +171,10 @@ class CloudStorageBuildersMixin(GraphMixinBase):
                     cloud_storage_read_settings, node_cloud_storage_reader.user_id, role="reader"
                 ),
             )
-            fl = FlowDataEngine.from_cloud_storage_obj(settings, user_id=node_cloud_storage_reader.user_id)
+            backend = current_context(self).backend if FLOWFILE_COMPUTE_PROTOCOL else None
+            fl = FlowDataEngine.from_cloud_storage_obj(
+                settings, user_id=node_cloud_storage_reader.user_id, backend=backend
+            )
             return fl
 
         node = self.add_node_step(

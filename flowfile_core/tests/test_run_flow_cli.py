@@ -1,7 +1,7 @@
 """A headless run child must not sweep the cache and temp directories a live core still references, and both
 headless runners make core's own backend the process's default through the backend registry, unless ``--backend``
 or a backend id saved as the flow's location names another; a spawned run passes ``--backend`` only when its request
-names one."""
+names one; and a run on the worker leaves no result it minted held there once its runner returns."""
 
 from __future__ import annotations
 
@@ -103,7 +103,8 @@ def test_a_headless_run_defaults_to_core_s_own_backend_and_leaves_the_offload_fl
 
 
 class CountingBackend(LocalBackend):
-    """Core's own backend under another id; ``submitted`` holds the node id of every plan submitted to it."""
+    """Core's own backend under another id; ``submitted`` holds the node id of every plan submitted to it but the
+    handshake's probe jobs."""
 
     def __init__(self, backend_id: str):
         super().__init__()
@@ -111,7 +112,8 @@ class CountingBackend(LocalBackend):
         self.submitted: list[int | str] = []
 
     def submit(self, plan, inputs, hints, result_id, **kwargs):
-        self.submitted.append(kwargs["node_id"])
+        if not result_id.startswith("handshake-"):
+            self.submitted.append(kwargs["node_id"])
         return super().submit(plan, inputs, hints, result_id, **kwargs)
 
 
@@ -245,6 +247,29 @@ def test_a_headless_run_on_a_named_backend_submits_every_node_there(
     assert registry.default_override() == "counting"
     assert len(counting) == 1
     assert sorted(counting[0].submitted) == [1, 2]
+
+
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+@pytest.mark.parametrize("runner", [_frozen_runner, _dev_runner], ids=["frozen-verb", "dev-cli"])
+def test_a_headless_run_on_the_worker_leaves_no_result_it_minted_held_there(
+    tmp_path, monkeypatch, in_process_run, session_worker, runner, flag
+):
+    from flowfile_core.configs import settings
+    from flowfile_core.flowfile.execution import registry
+    from tests.flowfile.execution.test_mixed_placement import record_refs, still_held
+
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    monkeypatch.setattr(settings, "WORKER_URL", session_worker)
+    registry.reset()
+    answered = record_refs(monkeypatch, "submit", "run_op")
+    flow_path = _save_group_by_flow(tmp_path / "flow.yaml")
+    try:
+        assert runner(str(flow_path), backend="worker") == 0
+
+        assert {(method, backend.url) for method, backend, _ in answered} == {("submit", session_worker)}
+        assert still_held(answered) == []
+    finally:
+        registry.reset()
 
 
 @pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])

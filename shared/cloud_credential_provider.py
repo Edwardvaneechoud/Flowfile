@@ -4,7 +4,8 @@ Polars inlines ``storage_options`` into a serialized plan, so a plan carries its
 providers instead. ``EncryptedCredentialProvider`` holds them as a ``$ffsec$`` ciphertext and decrypts through
 whatever the executing process registered with :func:`register_secret_decryptor`. ``CredentialRefProvider`` holds
 only a stored connection's id and the user it runs for; the executing process reads that connection from its own
-catalog database and resolves it there. Stdlib-only at import and outside ``shared.cloud_storage`` (whose
+catalog database and resolves it there; ``credential_ref_kwargs`` gives a sink or scan of a URI that provider and the
+connection's plain options. Stdlib-only at import and outside ``shared.cloud_storage`` (whose
 ``__init__`` loads ``shared.delta_utils``): every spawned worker child imports this module.
 """
 
@@ -128,6 +129,47 @@ def resolve_credential_ref(connection_id: int, user_id: int) -> tuple[dict[str, 
     secrets = {name: _decrypt_stored(value, label) for name, value in ciphertexts.items() if value}
     options = build_storage_options(**fields, **secrets)
     return _provider_credentials(fields["storage_type"], options)
+
+
+def credential_ref_kwargs(connection_id: int, user_id: int) -> dict[str, Any]:
+    """What a sink or scan of a URI takes for stored connection *connection_id*: its provider and its plain options.
+
+    The provider resolves the connection's credentials where the sink or scan runs. The options are the connection's
+    region, endpoint, plain-HTTP, TLS, account and project settings, read here from this process's catalog database
+    with no secret decrypted and built as a cloud read's plan carries them (S3 as ``env_vars``, which resolves
+    nothing), so an S3-compatible store is reached at its own endpoint. A connection the catalog lacks gets the
+    provider alone, which raises ``CredentialResolutionError`` if Polars calls it.
+
+    Raises:
+        CredentialResolutionError: The catalog database could not be read.
+    """
+    from shared.cloud_storage.storage_options import build_storage_options
+    from shared.database import cloud_connection_record
+
+    kwargs: dict[str, Any] = {"credential_provider": CredentialRefProvider(connection_id, user_id)}
+    try:
+        record = cloud_connection_record(connection_id)
+    except Exception as e:
+        raise CredentialResolutionError(
+            f"Could not read cloud connection {connection_id} (user {user_id}) from the catalog database: "
+            f"{type(e).__name__}"
+        ) from None
+    if record is None:
+        return kwargs
+    fields = record[0]
+    storage_type = fields["storage_type"]
+    kwargs["storage_options"] = build_storage_options(
+        storage_type=storage_type,
+        auth_method="env_vars" if storage_type == "s3" else fields["auth_method"],
+        connection_name=fields["connection_name"],
+        aws_region=fields["aws_region"],
+        aws_allow_unsafe_html=fields["aws_allow_unsafe_html"],
+        azure_account_name=fields["azure_account_name"],
+        gcs_project_id=fields["gcs_project_id"],
+        endpoint_url=fields["endpoint_url"],
+        verify_ssl=fields["verify_ssl"],
+    )
+    return kwargs
 
 
 def _decrypt_stored(ciphertext: str, label: str) -> str:

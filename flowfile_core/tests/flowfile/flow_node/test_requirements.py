@@ -120,7 +120,7 @@ def test_a_cloud_read_is_a_plan_over_its_object_storage_scheme(resource_path, sc
     )
 
 
-def test_a_cloud_change_read_is_a_plan_too():
+def test_a_cloud_change_read_is_a_plan_that_may_carry_a_python_function():
     cloud = cloud_storage_schemas.CloudStorageReadSettings(
         resource_path="s3://bucket/table",
         connection_name="minio",
@@ -131,7 +131,7 @@ def test_a_cloud_change_read_is_a_plan_too():
     settings = input_schema.NodeCloudStorageReader(**_ids(cloud_storage_settings=cloud))
 
     assert _requirements("cloud_storage_reader", settings) == NodeRequirements(
-        read_schemes=frozenset({"s3"}), credentials=frozenset({"minio"})
+        read_schemes=frozenset({"s3"}), credentials=frozenset({"minio"}), python_function=True
     )
 
 
@@ -343,6 +343,12 @@ def test_a_random_split_runs_random_split():
     assert _requirements("random_split", settings) == NodeRequirements(operation=OperationKind.random_split)
 
 
+def test_an_explore_data_node_runs_the_viz_session_operation():
+    settings = input_schema.NodeExploreData(**_ids())
+
+    assert _requirements("explore_data", settings) == NodeRequirements(operation=OperationKind.viz_session)
+
+
 @pytest.mark.parametrize(
     ("item", "settings"),
     [
@@ -405,10 +411,14 @@ def _formula(expression: str) -> transform_schema.FunctionInput:
         ),
     ],
 )
-def test_a_node_that_carries_a_formula_needs_polars_ds(item, settings):
+def test_a_node_that_carries_a_formula_needs_polars_ds_and_the_formula_library_and_may_carry_a_python_function(
+    item, settings
+):
     requirements = _requirements(item, settings)
 
-    assert requirements == NodeRequirements(plugins=frozenset({"polars_ds"}))
+    assert requirements == NodeRequirements(
+        plugins=frozenset({"polars_ds", "polars_expr_transformer"}), python_function=True
+    )
     assert requirements.plugins <= set(PLUGIN_PACKAGES)
 
 
@@ -534,23 +544,10 @@ def test_a_promise_answers_only_whether_its_template_runs_on_a_kernel(template, 
         ("record_count", input_schema.NodeRecordCount(**_ids())),
         ("sample", input_schema.NodeSample(**_ids())),
         (
-            "polars_code",
-            input_schema.NodePolarsCode(
-                **_ids(polars_code_input=transform_schema.PolarsCodeInput(polars_code="output_df = input_df"))
-            ),
-        ),
-        (
-            "sql_query",
-            input_schema.NodeSqlQuery(
-                **_ids(sql_query_input=transform_schema.SqlQueryInput(sql_code="SELECT * FROM input_1"))
-            ),
-        ),
-        (
             "manual_input",
             input_schema.NodeManualInput(**_ids(raw_data_format=input_schema.RawData(columns=[], data=[]))),
         ),
         ("list_files", input_schema.NodeListFiles(**_ids(path="/data"))),
-        ("explore_data", input_schema.NodeExploreData(**_ids())),
         ("evaluate_model", input_schema.NodeEvaluateModel(**_ids())),
         ("wait_for", input_schema.NodeWaitFor(**_ids())),
         ("api_response", input_schema.NodeApiResponse(**_ids())),
@@ -559,3 +556,19 @@ def test_a_promise_answers_only_whether_its_template_runs_on_a_kernel(template, 
 )
 def test_a_plain_transform_or_a_node_working_in_core_needs_nothing(item, settings):
     assert _requirements(item, settings) == NOTHING
+
+
+def test_a_polars_code_node_runs_the_polars_code_operation():
+    settings = input_schema.NodePolarsCode(
+        **_ids(polars_code_input=transform_schema.PolarsCodeInput(polars_code="output_df = input_df"))
+    )
+
+    assert _requirements("polars_code", settings) == NodeRequirements(operation=OperationKind.polars_code)
+
+
+def test_a_sql_query_node_runs_the_sql_query_operation():
+    settings = input_schema.NodeSqlQuery(
+        **_ids(sql_query_input=transform_schema.SqlQueryInput(sql_code="SELECT * FROM input_1"))
+    )
+
+    assert _requirements("sql_query", settings) == NodeRequirements(operation=OperationKind.sql_query)

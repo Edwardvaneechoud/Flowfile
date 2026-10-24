@@ -3,10 +3,12 @@
 Mirrors the catalog visualization path (``catalog/services/visualizations.py``)
 so a chart built on a flow node and the same chart built on a catalog table run
 through one aggregation implementation — ``polars_gw`` inside a spawned worker
-child — and agree. Each request is a ``viz_session`` operation on the worker
-backend (``registry.WORKER_BACKEND_ID``) whatever the flow's execution location,
-since the visualisation child exists only on the worker; core's own backend
-refuses the operation.
+child — and agree. Each request is a ``viz_session`` operation. With the compute
+protocol flag on it runs on the backend that holds the node's result when that
+backend declares ``viz_session``, else on the worker backend
+(``registry.WORKER_BACKEND_ID``), since core's own backend has no visualisation
+child; a configured worker without it refuses the node at placement. With the
+flag off it runs on the worker backend whatever the flow's execution location.
 
 Core never collects here, and nothing is materialised: the operation ships the
 node's LazyFrame, serialised, and the worker child holds it lazily, exactly as
@@ -24,10 +26,11 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from flowfile_core.catalog.constants import DEFAULT_VISUALIZATION_ROWS, MAX_VISUALIZATION_ROWS
 from flowfile_core.catalog.storage_backend import serialized_frame_uses_cloud
-from flowfile_core.configs import logger
+from flowfile_core.configs import logger, settings
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.payloads import VizSessionPayload, op_payload
 from flowfile_core.flowfile.execution.protocol import OperationKind
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.schemas.catalog_schema import VisualizationComputeResponse, VisualizationFieldsResponse
 
@@ -124,10 +127,16 @@ def viz_request(
     )
 
 
-def _answer(request: VizSessionPayload) -> dict[str, Any]:
-    """The worker's visualisation session's answer to *request*."""
-    worker = registry.backend(registry.WORKER_BACKEND_ID)
-    return worker.run_op(OperationKind.viz_session, op_payload(request)).metadata
+def _answer(node: FlowNode, request: VizSessionPayload) -> dict[str, Any]:
+    """The session's answer to *request*, on the backend holding *node*'s result when it offers one, else the worker."""
+    backend = registry.backend(registry.WORKER_BACKEND_ID)
+    ref = node.results.result_ref
+    if settings.FLOWFILE_COMPUTE_PROTOCOL and ref is not None:
+        holder = registry.backend(ref.backend_id)
+        verdict = handshake.verdict_for(holder)
+        if verdict.ok and OperationKind.viz_session.value in verdict.offered.operations:
+            backend = holder
+    return backend.run_op(OperationKind.viz_session, op_payload(request)).metadata
 
 
 def compute_node_rows(
@@ -142,7 +151,7 @@ def compute_node_rows(
         request.session_key,
         max_rows,
     )
-    return VisualizationComputeResponse(**_answer(request))
+    return VisualizationComputeResponse(**_answer(node, request))
 
 
 def get_node_fields(flow: FlowGraph, node: FlowNode) -> VisualizationFieldsResponse:
@@ -154,4 +163,4 @@ def get_node_fields(flow: FlowGraph, node: FlowNode) -> VisualizationFieldsRespo
         node.node_id,
         request.session_key,
     )
-    return VisualizationFieldsResponse(**_answer(request))
+    return VisualizationFieldsResponse(**_answer(node, request))

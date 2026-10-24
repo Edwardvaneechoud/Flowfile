@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:
     pass
@@ -29,6 +29,8 @@ class KafkaReadSettings(BaseModel):
     are only decrypted at point-of-use via a ``decrypt_fn`` passed to
     :meth:`to_consumer_config`.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     bootstrap_servers: str
     topic: str

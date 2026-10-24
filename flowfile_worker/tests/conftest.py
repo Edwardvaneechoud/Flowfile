@@ -36,7 +36,7 @@ def shutdown_worker_pool():
     """Retire the module-singleton warm pool's members at session end.
 
     Tests that don't patch pool.task_pool lease members from the env-configured
-    singleton (CI sets FLOWFILE_WORKER_POOL_SIZE; Windows defaults it on), and a
+    singleton (on by default; CI sets FLOWFILE_WORKER_POOL_SIZE), and a
     bare pytest process never runs the app lifespan that would shut it down.
     """
     yield

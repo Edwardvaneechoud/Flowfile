@@ -45,7 +45,7 @@ def _worker_out_of_reach() -> WorkerBackend:
 
 def _worker_on_other_polars(monkeypatch: pytest.MonkeyPatch) -> WorkerBackend:
     reported = local_capabilities().model_copy(update={"polars_version": "0.0.0"})
-    monkeypatch.setattr(handshake, "fetch_worker_capabilities", lambda worker_url: reported)
+    monkeypatch.setattr(WorkerBackend, "capabilities", lambda self: reported)
     return WorkerBackend(url=_worker_url())
 
 

@@ -55,9 +55,23 @@ def test_capabilities_reports_this_process():
 
 
 @pytest.mark.worker
+@both_routes
+def test_capabilities_report_the_index_width_of_the_loaded_polars_runtime(route_client, path):
+    caps = declared(route_client, path)
+    assert caps.polars_runtime == ("64" if pl.get_index_type() == pl.UInt64 else "32")
+
+
+@pytest.mark.worker
 def test_capabilities_plugin_set_and_versions():
     caps = Capabilities.model_validate(client.get("/capabilities").json())
-    assert set(caps.plugins) == {"polars_grouper", "polars_simed", "polars_ds", "deltalake", "pl_fuzzy_frame_match"}
+    assert set(caps.plugins) == {
+        "polars_grouper",
+        "polars_simed",
+        "polars_ds",
+        "deltalake",
+        "pl_fuzzy_frame_match",
+        "polars_expr_transformer",
+    }
     for name, version in caps.plugins.items():
         assert version == importlib.metadata.version(name)
 
@@ -98,6 +112,8 @@ def test_capabilities_name_the_operations_this_worker_runs(route_client, path):
         "delta_merge",
         "delta_scd2",
         "viz_session",
+        "polars_code",
+        "sql_query",
     }
 
 
@@ -106,7 +122,7 @@ def test_capabilities_name_the_operations_this_worker_runs(route_client, path):
 def test_every_v1_operation_route_is_among_the_operations(route_client, path):
     routed = {p.removeprefix("/v1/ops/") for p in main.app.openapi()["paths"] if p.startswith("/v1/ops/")}
 
-    assert len(routed) == 10
+    assert len(routed) == 12
     assert routed <= declared(route_client, path).operations
 
 

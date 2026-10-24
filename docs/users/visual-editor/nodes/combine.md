@@ -329,7 +329,7 @@ Single-node preview ignores gates entirely — fetching one node's data plans as
 
 A pass-through with two inputs: the **left** input flows through unchanged, and the **right** input only enforces ordering. Once both have finished, the node emits the left input's data on its single output. There are no settings — wire the data branch into the left input and the dependency branch into the right.
 
-Use it when a downstream node depends on a *side effect* of a sibling branch rather than on its data. The common case is [Apply Model](ml.md#apply-model) needing [Train Model](ml.md#train-model) to have written its artifact first.
+Use it when a downstream node depends on a *side effect* of a sibling branch rather than on its data. The common case is an [Apply Model](ml.md#apply-model) whose **Model source** is **From catalog**, after a [Train Model](ml.md#train-model) that saves its model to the catalog: Wait For makes the training finish before the model is read.
 
 ## ![Run Flow](../../../assets/images/nodes/run_flow.svg){ width="44" height="44" } Run Flow
 

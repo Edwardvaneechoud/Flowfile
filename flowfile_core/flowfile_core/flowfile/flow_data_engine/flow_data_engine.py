@@ -28,8 +28,9 @@ from flowfile_core.configs.flow_logger import NodeLogger
 from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine import utils
-from flowfile_core.flowfile.flow_data_engine.bounded import count_rows, single_row, unique_values
+from flowfile_core.flowfile.flow_data_engine.bounded import _deferred, count_rows, single_row, unique_values
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import (
     CloudStorageReader,
     ensure_path_has_wildcard_pattern,
@@ -506,7 +507,11 @@ class FlowDataEngine:
 
     @classmethod
     def from_cloud_storage_obj(
-        cls, settings: cloud_storage_schemas.CloudStorageReadSettingsInternal, user_id: int | None = None
+        cls,
+        settings: cloud_storage_schemas.CloudStorageReadSettingsInternal,
+        user_id: int | None = None,
+        *,
+        backend: ComputeBackend | None = None,
     ) -> FlowDataEngine:
         """Creates a FlowDataEngine from an object in cloud storage.
 
@@ -516,12 +521,21 @@ class FlowDataEngine:
 
         The credentials ride in a credential provider, since the plan is serialized to the worker: encrypted
         (``EncryptedCredentialProvider``), or with the compute protocol flag on as a reference to the stored
-        connection that the executing process resolves (``CredentialRefProvider``).
+        connection that the executing process resolves (``CredentialRefProvider``). With the flag on, an ``aws-cli``
+        read with no saved connection carries no credential and no provider, so Polars' default provider resolves the
+        default credential chain of whichever process runs the plan.
+
+        Given a ``backend``, the scan is held there as a deferred result with no preview while the reference's schema
+        is read, then released, and the engine takes that schema: the backend resolves the read's connection, and core
+        reads no directory's first file. A read given no backend resolves the schema in core, and so does a GCS read
+        with an endpoint with the flag off, which goes through gcsfs; with the flag on it is a native scan like any
+        other.
 
         Args:
             settings: A `CloudStorageReadSettingsInternal` object containing connection
                 details, file format, and read options.
             user_id: The user the credentials are re-encrypted for inside the plan.
+            backend: The backend the reader runs on, which answers the read's schema.
 
         Returns:
             A new `FlowDataEngine` instance containing the data from cloud storage.
@@ -530,14 +544,19 @@ class FlowDataEngine:
             ValueError: If the storage type or file format is not supported.
             NotImplementedError: If a requested file format like "delta" or "iceberg"
                 is not yet implemented.
+            ComputeError: `backend` could not answer the read's schema, raised as the backend raised it.
             Exception: If reading from cloud storage fails.
         """
         connection = settings.connection
         read_settings = settings.read_settings
 
         logger.info(f"Reading from {connection.storage_type} storage: {read_settings.resource_path}")
-        storage_options, credential_provider = CloudStorageReader.get_read_credentials(connection, user_id)
-        use_pyarrow = CloudStorageReader.use_pyarrow_for_gcs(connection)
+        if FLOWFILE_COMPUTE_PROTOCOL and connection.auth_method == "aws-cli" and not connection.connection_name:
+            storage_options, credential_provider = CloudStorageReader.get_plan_storage_options(connection), None
+        else:
+            storage_options, credential_provider = CloudStorageReader.get_read_credentials(connection, user_id)
+        use_pyarrow = CloudStorageReader.use_pyarrow_for_gcs(connection) and not FLOWFILE_COMPUTE_PROTOCOL
+        backend = None if use_pyarrow else backend
         if read_settings.file_format == "parquet":
             return cls._read_parquet_from_cloud(
                 read_settings.resource_path,
@@ -545,6 +564,7 @@ class FlowDataEngine:
                 credential_provider,
                 read_settings.scan_mode == "directory",
                 use_pyarrow=use_pyarrow,
+                backend=backend,
             )
         elif read_settings.file_format == "delta":
             return cls._read_delta_from_cloud(
@@ -553,6 +573,7 @@ class FlowDataEngine:
                 credential_provider,
                 read_settings,
                 use_pyarrow=use_pyarrow,
+                backend=backend,
             )
         elif read_settings.file_format == "csv":
             return cls._read_csv_from_cloud(
@@ -561,6 +582,7 @@ class FlowDataEngine:
                 credential_provider,
                 read_settings,
                 use_pyarrow=use_pyarrow,
+                backend=backend,
             )
         elif read_settings.file_format == "json":
             return cls._read_json_from_cloud(
@@ -569,6 +591,7 @@ class FlowDataEngine:
                 credential_provider,
                 read_settings.scan_mode == "directory",
                 use_pyarrow=use_pyarrow,
+                backend=backend,
             )
         elif read_settings.file_format == "iceberg":
             return cls._read_iceberg_from_cloud(
@@ -669,6 +692,7 @@ class FlowDataEngine:
         credential_provider: Callable | None,
         is_directory: bool,
         use_pyarrow: bool = False,
+        backend: ComputeBackend | None = None,
     ) -> FlowDataEngine:
         """Reads Parquet file(s) from cloud storage."""
         try:
@@ -676,7 +700,12 @@ class FlowDataEngine:
                 resource_path = ensure_path_has_wildcard_pattern(resource_path=resource_path, file_format="parquet")
             scan_kwargs = {"source": resource_path}
             scan_kwargs.update(CloudStorageReader.get_scan_kwargs(storage_options, credential_provider))
-            if storage_options and is_directory and not isinstance(credential_provider, CredentialRefProvider):
+            if (
+                backend is None
+                and storage_options
+                and is_directory
+                and not isinstance(credential_provider, CredentialRefProvider)
+            ):
                 schema = cls._get_schema_from_first_file_in_dir(
                     resource_path, storage_options, "parquet", use_pyarrow=use_pyarrow
                 )
@@ -688,6 +717,9 @@ class FlowDataEngine:
                 )
             else:
                 lf = pl.scan_parquet(**scan_kwargs)
+            if backend is not None:
+                with _deferred(backend, lf) as ref:
+                    schema = ref.schema
             return cls(
                 lf,
                 number_of_records=CLOUD_PLACEHOLDER_RECORD_COUNT,
@@ -696,6 +728,8 @@ class FlowDataEngine:
                 schema=schema,
             )
 
+        except ComputeError:
+            raise
         except Exception as e:
             logger.error(f"Failed to read Parquet from {resource_path}: {str(e)}")
             raise Exception(f"Failed to read Parquet from cloud storage: {str(e)}") from e
@@ -708,6 +742,7 @@ class FlowDataEngine:
         credential_provider: Callable | None,
         read_settings: cloud_storage_schemas.CloudStorageReadSettings,
         use_pyarrow: bool = False,
+        backend: ComputeBackend | None = None,
     ) -> FlowDataEngine:
         """Reads a Delta Lake table from cloud storage."""
         try:
@@ -721,13 +756,20 @@ class FlowDataEngine:
                     scan_kwargs["version"] = read_settings.delta_version
                 scan_kwargs.update(CloudStorageReader.get_scan_kwargs(storage_options, credential_provider))
                 lf = pl.scan_delta(**scan_kwargs)
+            schema = None
+            if backend is not None:
+                with _deferred(backend, lf) as ref:
+                    schema = ref.schema
 
             return cls(
                 lf,
                 number_of_records=CLOUD_PLACEHOLDER_RECORD_COUNT,
                 optimize_memory=True,
                 streamable=True,
+                schema=schema,
             )
+        except ComputeError:
+            raise
         except Exception as e:
             logger.error(f"Failed to read Delta file from {resource_path}: {str(e)}")
             raise Exception(f"Failed to read Delta file from cloud storage: {str(e)}") from e
@@ -740,6 +782,7 @@ class FlowDataEngine:
         credential_provider: Callable | None,
         read_settings: cloud_storage_schemas.CloudStorageReadSettings,
         use_pyarrow: bool = False,
+        backend: ComputeBackend | None = None,
     ) -> FlowDataEngine:
         """Reads CSV file(s) from cloud storage; unset CSV options take the drawer's defaults (Polars rejects None)."""
         read_settings = read_settings.with_csv_defaults()
@@ -759,7 +802,8 @@ class FlowDataEngine:
                 resource_path = ensure_path_has_wildcard_pattern(resource_path=resource_path, file_format="csv")
                 scan_kwargs["source"] = resource_path
             if (
-                storage_options
+                backend is None
+                and storage_options
                 and read_settings.scan_mode == "directory"
                 and not isinstance(credential_provider, CredentialRefProvider)
             ):
@@ -772,6 +816,9 @@ class FlowDataEngine:
                 lf = df.lazy()
             else:
                 lf = pl.scan_csv(**scan_kwargs)
+            if backend is not None:
+                with _deferred(backend, lf) as ref:
+                    schema = ref.schema
 
             return cls(
                 lf,
@@ -781,6 +828,8 @@ class FlowDataEngine:
                 schema=schema,
             )
 
+        except ComputeError:
+            raise
         except Exception as e:
             logger.error(f"Failed to read CSV from {resource_path}: {str(e)}")
             raise Exception(f"Failed to read CSV from cloud storage: {str(e)}") from e
@@ -793,6 +842,7 @@ class FlowDataEngine:
         credential_provider: Callable | None,
         is_directory: bool,
         use_pyarrow: bool = False,
+        backend: ComputeBackend | None = None,
     ) -> FlowDataEngine:
         """Reads JSON file(s) from cloud storage."""
         try:
@@ -815,14 +865,21 @@ class FlowDataEngine:
                 return cls(df.lazy(), number_of_records=len(df), optimize_memory=True, streamable=True)
 
             lf = pl.scan_ndjson(**scan_kwargs)
+            schema = None
+            if backend is not None:
+                with _deferred(backend, lf) as ref:
+                    schema = ref.schema
 
             return cls(
                 lf,
                 number_of_records=-1,
                 optimize_memory=True,
                 streamable=True,
+                schema=schema,
             )
 
+        except ComputeError:
+            raise
         except Exception as e:
             logger.error(f"Failed to read JSON from {resource_path}: {str(e)}")
             raise Exception(f"Failed to read JSON from cloud storage: {str(e)}") from e
@@ -1101,14 +1158,19 @@ class FlowDataEngine:
         if not settings.window_functions:
             return self
 
-        df = self.data_frame
-        if settings.order_by:
-            descending = [s.descending for s in settings.order_by]
-            df = df.sort([s.column for s in settings.order_by], descending=descending)
-
         exprs = [_build_window_expr(w, settings.partition_by) for w in settings.window_functions]
-        df = df.with_columns(exprs)
-        return FlowDataEngine(df, calculate_schema_stats=calculate_schema_stats)
+
+        def windowed(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+            if settings.order_by:
+                descending = [s.descending for s in settings.order_by]
+                frame = frame.sort([s.column for s in settings.order_by], descending=descending)
+            return frame.with_columns(exprs)
+
+        return FlowDataEngine(
+            windowed(self.data_frame),
+            calculate_schema_stats=calculate_schema_stats,
+            schema=_derived_schema(windowed, self),
+        )
 
     def do_sort(self, sorts: list[transform_schemas.SortByInput]) -> FlowDataEngine:
         """Sorts the DataFrame by one or more columns.
@@ -1426,11 +1488,12 @@ class FlowDataEngine:
             split_input.split_fixed_value if split_input.split_by_fixed_value else pl.col(split_input.split_by_column)
         )
 
-        df = self.data_frame.with_columns(
-            pl.col(split_input.column_to_split).str.split(by=split_value).alias(output_column_name)
-        ).explode(output_column_name)
+        def exploded(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+            return frame.with_columns(
+                pl.col(split_input.column_to_split).str.split(by=split_value).alias(output_column_name)
+            ).explode(output_column_name)
 
-        return FlowDataEngine(df)
+        return FlowDataEngine(exploded(self.data_frame), schema=_derived_schema(exploded, self))
 
     def unpivot(self, unpivot_input: transform_schemas.UnpivotInput) -> FlowDataEngine:
         """Converts the DataFrame from a wide to a long format.
@@ -1445,16 +1508,15 @@ class FlowDataEngine:
         Returns:
             A new, unpivoted `FlowDataEngine` instance.
         """
-        lf = self.data_frame
 
-        if unpivot_input.data_type_selector_expr is not None:
-            result = lf.unpivot(on=unpivot_input.data_type_selector_expr(), index=unpivot_input.index_columns)
-        elif unpivot_input.value_columns is not None:
-            result = lf.unpivot(on=unpivot_input.value_columns, index=unpivot_input.index_columns)
-        else:
-            result = lf.unpivot()
+        def unpivoted(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+            if unpivot_input.data_type_selector_expr is not None:
+                return frame.unpivot(on=unpivot_input.data_type_selector_expr(), index=unpivot_input.index_columns)
+            if unpivot_input.value_columns is not None:
+                return frame.unpivot(on=unpivot_input.value_columns, index=unpivot_input.index_columns)
+            return frame.unpivot()
 
-        return FlowDataEngine(result)
+        return FlowDataEngine(unpivoted(self.data_frame), schema=_derived_schema(unpivoted, self))
 
     def do_pivot(self, pivot_input: transform_schemas.PivotInput, node_logger: NodeLogger = None) -> FlowDataEngine:
         """Converts the DataFrame from a long to a wide format, aggregating values.
@@ -1489,7 +1551,7 @@ class FlowDataEngine:
 
         if len(pivot_input.index_columns) == 0:
             no_index_cols = True
-            pivot_input.index_columns = ["__temp__"]
+            pivot_input = pivot_input.model_copy(update={"index_columns": ["__temp__"]})
             ff = self.apply_flowfile_formula("1", col_name="__temp__")
         else:
             no_index_cols = False
@@ -1499,39 +1561,42 @@ class FlowDataEngine:
         grouped_ff = ff.do_group_by(pivot_input.get_group_by_input(), False)
         pivot_column = pivot_input.get_pivot_column()
 
-        input_df = grouped_ff.data_frame.with_columns(pivot_column.cast(pl.String).alias(pivot_input.pivot_column))
         number_of_aggregations = len(pivot_input.aggregations)
         # Aggregations where missing combinations should be filled with 0 to match
         # native polars pivot behavior (polars >= 1.32)
         _zero_fill_aggs = {"sum", "count", "len"}
-        df = (
-            input_df.select(*index_columns, pivot_column, pivot_input.get_values_expr())
-            .group_by(*index_columns)
-            .agg(
-                [
-                    (pl.col("vals").filter(pivot_column == new_col_value)).first().alias(new_col_value)
-                    for new_col_value in new_cols_unique
-                ]
+
+        def pivoted(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+            input_df = frame.with_columns(pivot_column.cast(pl.String).alias(pivot_input.pivot_column))
+            df = (
+                input_df.select(*index_columns, pivot_column, pivot_input.get_values_expr())
+                .group_by(*index_columns)
+                .agg(
+                    [
+                        (pl.col("vals").filter(pivot_column == new_col_value)).first().alias(new_col_value)
+                        for new_col_value in new_cols_unique
+                    ]
+                )
+                .select(
+                    *index_columns,
+                    *[
+                        (
+                            pl.col(new_col).struct.field(agg).fill_null(0)
+                            if agg in _zero_fill_aggs
+                            else pl.col(new_col).struct.field(agg)
+                        ).alias(f'{new_col + "_" + agg if number_of_aggregations > 1 else new_col}')
+                        for new_col in new_cols_unique
+                        for agg in pivot_input.aggregations
+                    ],
+                )
             )
-            .select(
-                *index_columns,
-                *[
-                    (
-                        pl.col(new_col).struct.field(agg).fill_null(0)
-                        if agg in _zero_fill_aggs
-                        else pl.col(new_col).struct.field(agg)
-                    ).alias(f'{new_col + "_" + agg if number_of_aggregations > 1 else new_col}')
-                    for new_col in new_cols_unique
-                    for agg in pivot_input.aggregations
-                ],
-            )
+            if no_index_cols:
+                df = df.drop("__temp__")
+            return df
+
+        return FlowDataEngine(
+            pivoted(grouped_ff.data_frame), calculate_schema_stats=False, schema=_derived_schema(pivoted, grouped_ff)
         )
-
-        if no_index_cols:
-            df = df.drop("__temp__")
-            pivot_input.index_columns = []
-
-        return FlowDataEngine(df, calculate_schema_stats=False)
 
     def do_filter(self, predicate: str) -> FlowDataEngine:
         """Filters rows based on a predicate expression.
@@ -1995,19 +2060,23 @@ class FlowDataEngine:
         duplicate_problems = get_duplicate_output_problems(cross_join_input_manager)
         if duplicate_problems:
             raise ValueError("Cross join is not valid: " + "; ".join(duplicate_problems))
-        left = self.data_frame.select(left_select).rename(cross_join_input_manager.left_select.rename_table)
-        right = other.data_frame.select(right_select).rename(cross_join_input_manager.right_select.rename_table)
-
-        joined_df = left.join(right, how="cross")
-
         cols_to_delete_after = [
             col.new_name
             for col in cross_join_input_manager.left_select.renames + cross_join_input_manager.right_select.renames
             if col.join_key and not col.keep and col.is_available
         ]
 
-        fl = FlowDataEngine(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False, streamable=False)
-        return fl
+        def crossed(left_lf: pl.LazyFrame, right_lf: pl.LazyFrame) -> pl.LazyFrame:
+            left = left_lf.select(left_select).rename(cross_join_input_manager.left_select.rename_table)
+            right = right_lf.select(right_select).rename(cross_join_input_manager.right_select.rename_table)
+            return left.join(right, how="cross").drop(cols_to_delete_after)
+
+        return FlowDataEngine(
+            crossed(self.data_frame, other.data_frame),
+            calculate_schema_stats=False,
+            streamable=False,
+            schema=_derived_schema(crossed, self, other),
+        )
 
     def join(
         self,
@@ -2130,12 +2199,13 @@ class FlowDataEngine:
         Returns:
             A new `FlowDataEngine` instance with the solved graph data.
         """
-        lf = self.data_frame.with_columns(
-            graph_solver(graph_solver_input.col_from, graph_solver_input.col_to).alias(
-                graph_solver_input.output_column_name
-            )
+        solved = graph_solver(graph_solver_input.col_from, graph_solver_input.col_to).alias(
+            graph_solver_input.output_column_name
         )
-        return FlowDataEngine(lf)
+        return FlowDataEngine(
+            self.data_frame.with_columns(solved),
+            schema=_derived_schema(lambda frame: frame.with_columns(solved), self),
+        )
 
     def explode_hierarchy(self, settings: transform_schemas.ExplodeHierarchyInput) -> FlowDataEngine:
         """Explodes a parent -> child edge list into its transitive closure.
@@ -2150,7 +2220,11 @@ class FlowDataEngine:
             A new, lazy `FlowDataEngine` with an unknown row count.
         """
         lf = explode_hierarchy_frame(self.data_frame.lazy(), settings, schema=self._cached_polars_schema())
-        return FlowDataEngine(lf, number_of_records=-1)
+        return FlowDataEngine(
+            lf,
+            number_of_records=-1,
+            schema=_derived_schema(lambda frame: explode_hierarchy_frame(frame, settings), self),
+        )
 
     def add_new_values(self, values: Iterable, col_name: str = None) -> FlowDataEngine:
         """Adds a new column with the provided values.
@@ -2173,7 +2247,10 @@ class FlowDataEngine:
         Returns:
             A new `FlowDataEngine` instance.
         """
-        return FlowDataEngine(self.data_frame.select(pl.len().alias("number_of_records")))
+        count = pl.len().alias("number_of_records")
+        return FlowDataEngine(
+            self.data_frame.select(count), schema=_derived_schema(lambda frame: frame.select(count), self)
+        )
 
     def assert_equal(self, other: FlowDataEngine, ordered: bool = True, strict_schema: bool = False):
         """Asserts that this DataFrame is equal to another.
@@ -2416,18 +2493,20 @@ class FlowDataEngine:
                 pl_type = cast_str_to_polars_type(col.data_type)
                 missing_exprs.append(pl.lit(None).cast(pl_type).alias(col.column_name))
 
-        df = self.data_frame
-        if missing_exprs:
-            df = df.with_columns(missing_exprs)
-
         expected_set = set(expected_names)
         extra_names = [c for c in self.columns if c not in expected_set]
         final_order = expected_names + extra_names
 
+        def aligned(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+            if missing_exprs:
+                frame = frame.with_columns(missing_exprs)
+            return frame.select(final_order)
+
         return FlowDataEngine(
-            df.select(final_order),
+            aligned(self.data_frame),
             number_of_records=self.number_of_records,
             streamable=self._streamable,
+            schema=_derived_schema(aligned, self),
         )
 
     def reorganize_order(self, column_order: list[str]) -> FlowDataEngine:
@@ -2456,11 +2535,15 @@ class FlowDataEngine:
         """
         parsed_func = to_expr(func)
         if output_data_type is not None:
-            df2 = self.data_frame.with_columns(parsed_func.cast(output_data_type).alias(col_name))
+            column = parsed_func.cast(output_data_type).alias(col_name)
         else:
-            df2 = self.data_frame.with_columns(parsed_func.alias(col_name))
+            column = parsed_func.alias(col_name)
 
-        return FlowDataEngine(df2, number_of_records=self.number_of_records)
+        return FlowDataEngine(
+            self.data_frame.with_columns(column),
+            number_of_records=self.number_of_records,
+            schema=_derived_schema(lambda frame: frame.with_columns(column), self),
+        )
 
     @staticmethod
     def _select_target_columns(
@@ -2615,7 +2698,11 @@ class FlowDataEngine:
         expressions = self.build_multi_field_formula_expressions(columns, settings)
         if not expressions:
             return FlowDataEngine(self.data_frame, number_of_records=self.number_of_records, schema=self.schema)
-        return FlowDataEngine(self.data_frame.with_columns(expressions), number_of_records=self.number_of_records)
+        return FlowDataEngine(
+            self.data_frame.with_columns(expressions),
+            number_of_records=self.number_of_records,
+            schema=_derived_schema(lambda frame: frame.with_columns(expressions), self),
+        )
 
     @staticmethod
     def _compute_renamed_names(
@@ -2787,18 +2874,25 @@ class FlowDataEngine:
         if settings.rename_mode == "first_row":
             first_row_values = self._peek_first_row_as_dict()
         rename_map = self.resolve_dynamic_rename_map(columns, settings, first_row_values=first_row_values)
-        new_df = self.data_frame.rename(rename_map) if rename_map else self.data_frame
+
+        def renamed(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+            frame = frame.rename(rename_map) if rename_map else frame
+            return frame.slice(1) if settings.rename_mode == "first_row" else frame
+
         if settings.rename_mode == "first_row":
-            new_df = new_df.slice(1)
             new_records = max(0, self.number_of_records - 1)
-            return FlowDataEngine(new_df, number_of_records=new_records)
+            return FlowDataEngine(
+                renamed(self.data_frame), number_of_records=new_records, schema=_derived_schema(renamed, self)
+            )
         if not rename_map:
             return FlowDataEngine(
                 self.data_frame,
                 number_of_records=self.number_of_records,
                 schema=self.schema,
             )
-        return FlowDataEngine(new_df, number_of_records=self.number_of_records)
+        return FlowDataEngine(
+            renamed(self.data_frame), number_of_records=self.number_of_records, schema=_derived_schema(renamed, self)
+        )
 
     @staticmethod
     def _select_cleansing_targets(
@@ -2958,26 +3052,34 @@ class FlowDataEngine:
         Returns:
             A new `FlowDataEngine` with the cleansing rules applied.
         """
-        new_df = self.data_frame
-        if cleansing_input.remove_null_rows:
-            new_df = new_df.filter(~pl.all_horizontal(pl.all().is_null()))
-
         dropped: set[str] = set()
+        drop_order: list[str] = []
         if cleansing_input.remove_null_columns and self.number_of_records != 0:
             height, null_counts = self._fetch_null_profile()
             if height > 0:
                 dropped = {name for name, null_count in null_counts.items() if null_count == height}
-            if dropped:
-                new_df = new_df.drop([name for name in null_counts if name in dropped])
+            drop_order = [name for name in null_counts if name in dropped]
 
         columns = [(c.column_name, c.data_type_group) for c in self.schema if c.column_name not in dropped]
         exprs = self.build_data_cleansing_expressions(columns, cleansing_input)
-        if exprs:
-            new_df = new_df.with_columns(exprs)
+
+        def cleansed(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+            if cleansing_input.remove_null_rows:
+                frame = frame.filter(~pl.all_horizontal(pl.all().is_null()))
+            if drop_order:
+                frame = frame.drop(drop_order)
+            return frame.with_columns(exprs) if exprs else frame
 
         if cleansing_input.remove_null_rows:
-            return FlowDataEngine(new_df, streamable=self._streamable)
-        return FlowDataEngine(new_df, number_of_records=self.number_of_records, streamable=self._streamable)
+            return FlowDataEngine(
+                cleansed(self.data_frame), streamable=self._streamable, schema=_derived_schema(cleansed, self)
+            )
+        return FlowDataEngine(
+            cleansed(self.data_frame),
+            number_of_records=self.number_of_records,
+            streamable=self._streamable,
+            schema=_derived_schema(cleansed, self),
+        )
 
     def apply_sql_formulas(self, entries: list[FormulaEntry]) -> FlowDataEngine:
         """Applies the formula node's entries, chained (see `apply_formula_entries`).
@@ -3040,11 +3142,15 @@ class FlowDataEngine:
         Returns:
             A new `FlowDataEngine` instance with unique rows.
         """
-        if unique_input is None:
-            return FlowDataEngine(self.data_frame.unique())
-        if not unique_input.columns:
-            return FlowDataEngine(self.data_frame.unique(keep=unique_input.strategy))
-        return FlowDataEngine(self.data_frame.unique(unique_input.columns, keep=unique_input.strategy))
+
+        def deduplicated(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+            if unique_input is None:
+                return frame.unique()
+            if not unique_input.columns:
+                return frame.unique(keep=unique_input.strategy)
+            return frame.unique(unique_input.columns, keep=unique_input.strategy)
+
+        return FlowDataEngine(deduplicated(self.data_frame), schema=_derived_schema(deduplicated, self))
 
     def concat(self, other: Iterable[FlowDataEngine] | FlowDataEngine) -> FlowDataEngine:
         """Concatenates this DataFrame with one or more other DataFrames.
@@ -3207,10 +3313,12 @@ def execute_sql_query(*flowfile_tables: FlowDataEngine, sql_code: str) -> FlowDa
 def execute_polars_code(*flowfile_tables: FlowDataEngine, code: str) -> FlowDataEngine:
     """Executes arbitrary Polars code on one or more FlowDataEngine objects.
 
-    This function takes a string of Python code that uses Polars and executes it.
+    This function takes a string of Python code that uses Polars and executes it, once.
     Function-form code (a single ``def``) is called with the inputs as positional
     LazyFrames; snippet code reads them as `input_df` (for a single input) or
-    `input_df_1`, `input_df_2`, etc.
+    `input_df_1`, `input_df_2`, etc. The backend that runs the ``polars_code``
+    operation in core's process calls it, and so does the Polars Code node's builder
+    with ``FLOWFILE_COMPUTE_PROTOCOL`` off.
 
     Args:
         *flowfile_tables: A variable number of `FlowDataEngine` objects to be

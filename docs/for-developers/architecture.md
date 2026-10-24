@@ -117,88 +117,64 @@ Flowfile offers two execution modes tailored for different needs:
 | **Speed** | Moderate                             | Faster for complex flows                         |
 
 **Development Mode**
-In Development mode, each node's transformation is triggered sequentially within the Worker service. Its intermediate result is typically serialized using **Apache Arrow IPC format** and cached to disk. This allows you to inspect the data at each step in the Designer via small samples fetched from the cache.
+In Development mode, each node submits its plan to the flow's compute backend with a 100-row preview asked for. On the worker, a wide node (a join, a group by, a sort) is stored as an Arrow IPC file in the worker's own storage and a narrow one is kept as a plan, and the preview comes back inline with the submit. This lets you inspect the data at each step in the Designer.
 
 **Performance Mode**
-In Performance mode, Flowfile fully embraces Polars' lazy evaluation. The Core service constructs the *entire* Polars execution plan based on the DAG, and an ordinary transform node does nothing more than extend that plan — it is neither materialized nor sent to the Worker. Materialization happens in exactly two places:
+In Performance mode, Flowfile fully embraces Polars' lazy evaluation. Each node submits its plan with no preview asked for, so an ordinary transform only extends the plan the next node composes on, and no backend computes it until a writer or a cached node downstream reads it. Rows are computed in two places:
 
-- **Output nodes** (writing to a file, an API response, a subflow) materialize **in Core**, not on the Worker. Sinks have nothing to offload, so `_do_execute_remote` short-circuits them before the offload path.
-- **Nodes with `cache_results` enabled** are the one case that still offloads: caching requires a real result, so the executor drops those nodes out of performance mode for the duration of their run and sends them to the Worker.
+- **Output nodes** (writing to a file, a database or cloud storage) run their write as an operation on the flow's backend, which computes the plan it is given.
+- **Nodes with `cache_results` enabled** submit with `must_materialise`, so the backend stores their rows whatever the mode.
 
 This minimizes computation and memory usage by avoiding unnecessary intermediate materializations.
+
+[Execution Strategy](flowfile-core.md#execution-strategy-how-nodes-decide-where-to-run) has the detail: the hints, each backend's policy and the previews.
 
 <details markdown="1">
 <summary>View Performance Mode Python Example (simplified)</summary>
 
 ```python
-# Execution logic in Performance Mode (simplified)
-def execute_performance_mode(self, node: FlowNode, is_output_node: bool):
-    """Handles execution in performance mode, leveraging lazy evaluation."""
-    if is_output_node:
-        # Sinks have nothing to offload: the write itself is the materialization,
-        # so an output node collects in Core and never reaches the Worker.
-        return node.get_resulting_data()
-    if node.cache_results:
-        # Caching needs a real result, so these nodes drop out of performance
-        # mode and offload. Offload happens inside ExternalDfFetcher.__init__ —
-        # constructing it serializes the LazyFrame and POSTs it to the worker.
-        # flow_id and node_id are required.
-        fetcher = ExternalDfFetcher(
-            flow_id=node.flow_id,
-            node_id=node.node_id,
-            lf=node.get_resulting_data().data_frame,  # the LazyFrame plan
-            file_ref=node.hash,                        # unique reference for caching
-            wait_on_completion=False,                  # usually async
-        )
-        result = fetcher.get_result()  # Worker runs .collect()/.sink_*() and caches
-        return result
-    else:
-        # Intermediate nodes just pass the LazyFrame plan along — no compute here.
-        return node.get_resulting_data().data_frame
+# What a node submits with, in either mode (flow_node/executor.py::hints_for, simplified)
+hints = SubmitHints(
+    must_materialise=node.node_settings.cache_results,  # correctness: the user asked for a stored result
+    wide=not is_narrow_transform(node),                  # join, group_by, sort, …
+    fanout=len(node.leads_to_nodes),                     # downstream consumers
+    preview_rows=None if performance_mode and not node.node_settings.cache_results else 100,
+)
+# The backend's policy decides from the hints whether to store the rows or keep the plan.
+result = backend.submit(plan, inputs, hints, node.hash, flow_id=flow_id, node_id=node.node_id)
 ```
 
 </details>
 
-Crucially, **bulk data processing and materialization of Polars DataFrames/LazyFrames happens in the Worker service** — Core builds plans and ships paths and JSON, never intermediate frames. (The exception is a sink, which collects in Core because writing *is* the materialization.) This separation prevents large datasets from overwhelming the Core service, ensuring the UI remains responsive.
+Crucially, with a worker as the flow's backend, **bulk data processing happens in the Worker service**: core builds plans, sends them, and takes back a schema, a row count and at most a bounded sample, never an intermediate frame. This separation prevents large datasets from overwhelming the Core service and keeps the UI responsive.
 
 ### Efficient Data Exchange
 
-Flowfile uses Apache Arrow IPC format for efficient inter-process communication between the Core and Worker services:
+Flowfile uses Apache Arrow IPC format for the data the Core and Worker services exchange, and keeps results where they were computed:
 
-1.  **Worker Processing & Serialization**: When the Worker needs to materialize data (either for intermediate caching in Development mode or final results), it computes the Polars DataFrame. The resulting DataFrame is serialized into the efficient Arrow IPC binary format.
-2.  **Disk Caching**: This serialized data is saved to a temporary file on disk. This file acts as a cache, identified by a unique hash (`file_ref`). The Worker informs the Core that the result is ready at this `file_ref`.
-3.  **Core Fetching**: If the Core (or subsequently, another Worker task) needs this data, it uses the `file_ref` to access the cached Arrow file directly. This avoids sending large datasets over network sockets between processes.
-4.  **UI Sampling**: For UI previews, the Core requests a small sample (e.g., the first 100 rows) from the Worker. The Worker reads just the sample from the Arrow IPC file and sends only that lightweight data back to the Core, which forwards it to the Designer.
+1.  **Worker Processing & Storage**: When the backend's policy stores a result (a `must_materialise` node, or a wide one with a preview asked for), the worker computes it in a child process and writes it as an Arrow IPC file under its own storage directory; otherwise it keeps the plan.
+2.  **Result References**: The worker answers a result reference (`ResultRef`): the result's schema, its row count when known, and a location that is opaque to core. Core composes the next node's plan on `plan_for(ref)`, a scan of the worker's file that core sends back to the same worker and never opens itself.
+3.  **UI Sampling**: A preview arrives inline with the submit, or later from `sample(ref, n)`, an Arrow IPC stream of at most `n` rows, which core forwards to the Designer.
+4.  **Crossing backends**: Data moves to another backend only through `export` and `import_uri`, never implicitly; the [compute protocol](compute-protocol.md) describes the exchange store that carries it.
 
-This ensures responsiveness, memory isolation, and efficiency.
+This keeps core responsive and memory-isolated, and lets the worker run on another host.
 
-Here is how the Core offloads computation to the Worker, and how the Worker manages the separate process execution:
+Here is how a node submits its plan on the core side, and how the Worker runs a job in a separate process:
 
 <details markdown="1">
 <summary>View Core-Side Python Example (simplified)</summary>
 
 ```python
-# Core side - Initiating remote execution in the Worker (simplified)
-def execute_remote(self, performance_mode: bool = False) -> None:
-    """Offloads the execution of a node's LazyFrame to the Worker service."""
-    # Constructing ExternalDfFetcher IS the offload: __init__ serializes the
-    # LazyFrame and sends it to the worker (no separate "start" call). The
-    # constructor requires flow_id and node_id.
-    fetcher = ExternalDfFetcher(
-        flow_id=self.flow_id,
-        node_id=self.node_id,
-        lf=self.get_resulting_data().data_frame,  # the Polars LazyFrame plan
-        file_ref=self.hash,                        # unique identifier for result/cache
-        wait_on_completion=False,                  # operate asynchronously
-    )
-
-    # Store the fetcher to retrieve results later
-    self._fetch_cached_df = fetcher
-
-    # For UI updates, request a sample separately
-    self.store_example_data_generator(fetcher)  # fetches sample async
+# Core side - FlowNode._do_execute (simplified)
+backend = current_context().backend                      # the run's backend: the worker, or core's own process
+result = backend.submit(plan, inputs, hints, self.hash, flow_id=flow_id, node_id=self.node_id)
+self.results.result_ref = result.ref                     # the handle core keeps; it never opens the worker's file
+self.results.resulting_data = FlowDataEngine(backend.plan_for(result.ref), schema=result.ref.schema)
+# The preview: result.sample when it came inline, else backend.sample(result.ref, n) when it is opened.
 ```
 </details>
+
+The worker's task routes start a job through `spawner.py::start_process`, below; its `/v1` routes run theirs in a pool of child processes kept warm.
 
 <details markdown="1">
 <summary>View Worker-Side Python Example (simplified)</summary>

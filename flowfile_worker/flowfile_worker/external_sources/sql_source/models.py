@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, ConfigDict, SecretStr
 
 from flowfile_worker.secrets import decrypt_secret
 from shared.sql_utils import construct_sql_uri, get_sqlalchemy_uri
@@ -8,6 +8,8 @@ from shared.sql_utils import construct_sql_uri, get_sqlalchemy_uri
 
 class DataBaseConnection(BaseModel):
     """Database connection configuration with secure password handling."""
+
+    model_config = ConfigDict(extra="forbid")
 
     username: str | None = None
     password: SecretStr | None = None  # Encrypted password
@@ -61,6 +63,8 @@ class DataBaseConnection(BaseModel):
 class DatabaseReadSettings(BaseModel):
     """Settings for SQL source."""
 
+    model_config = ConfigDict(extra="forbid")
+
     connection: DataBaseConnection
     query: str
     flowfile_flow_id: int = 1
@@ -69,6 +73,8 @@ class DatabaseReadSettings(BaseModel):
 
 class DatabaseWriteSettings(BaseModel):
     """Settings for SQL sink."""
+
+    model_config = ConfigDict(extra="forbid")
 
     connection: DataBaseConnection
     table_name: str

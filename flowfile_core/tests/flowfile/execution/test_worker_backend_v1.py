@@ -11,6 +11,7 @@ import tests write a result to a URI on the worker and hold a URI there as a res
 call reads as rows.
 """
 
+import dataclasses
 import hashlib
 import io
 import json
@@ -82,7 +83,7 @@ from flowfile_core.schemas.input_schema import (
 )
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared import compute_protocol as wire
-from shared.compute_protocol import PROTOCOL_VERSION_HEADER, WorkerLocation, file_uri
+from shared.compute_protocol import PROTOCOL_VERSION_HEADER, WorkerLocation, file_uri, local_capabilities
 from shared.storage_config import storage
 
 PEOPLE = pl.DataFrame(
@@ -635,15 +636,22 @@ def test_a_backend_on_another_protocol_version_is_refused_and_nothing_is_held(ba
 
 
 def test_a_worker_out_of_reach_is_unavailable_naming_it(running_worker, closed_port_url):
-    dead = WorkerBackend(url=closed_port_url)
+    """The URL and the backend's id: from the gate at submit, from the gate again at the next call, its refused verdict
+    checked again, and from ``capabilities``."""
+    dead = WorkerBackend(url=closed_port_url, backend_id="worker:team")
     unreachable = re.escape(f"Could not reach the worker at {closed_port_url}")
+    hint = 'Is backend "worker:team" running? Start it, or check the Backends page.'
 
-    with pytest.raises(ComputeUnavailable, match=unreachable):
+    with pytest.raises(ComputeUnavailable, match=unreachable) as at_submit:
         dead.submit(people(), [], hints(True), new_result_id(), flow_id=-1, node_id=-1)
-    with pytest.raises(ComputeUnavailable, match=unreachable):
-        dead.exists(v1_ref(new_result_id()))
-    with pytest.raises(ComputeUnavailable, match=unreachable):
+    handshake.ensure_handshake(settings.WORKER_URL)
+    with pytest.raises(ComputeUnavailable, match=unreachable) as past_the_gate:
+        dead.exists(dataclasses.replace(v1_ref(new_result_id()), backend_id="worker:team"))
+    with pytest.raises(ComputeUnavailable, match=unreachable) as reading_capabilities:
         dead.capabilities()
+
+    for raised in (at_submit, past_the_gate, reading_capabilities):
+        assert str(raised.value).endswith(hint)
 
 
 def test_status_follows_the_job_and_cancel_leaves_an_ended_one(backend, kept):
@@ -717,7 +725,10 @@ def test_a_backend_with_its_own_token_signs_every_v1_call_and_the_socket_with_it
 def test_a_token_that_is_no_header_value_fails_each_call_typed_and_is_never_quoted(
     running_worker, token, monkeypatch, caplog
 ):
-    """``http.client`` quotes such a token in its error and ``websockets`` logs it, so neither is ever handed it."""
+    """``http.client`` quotes such a token in its error and ``websockets`` logs it, so neither is ever handed it.
+
+    The session worker that owns the URL is checked first, so the probe jobs of its check are not among the dials."""
+    handshake.ensure_handshake(settings.WORKER_URL)
     dialled = []
     real_dial = worker_module.connect
 
@@ -1015,6 +1026,39 @@ def test_a_fuzzy_join_runs_over_v1_and_matches_as_it_does_in_core(backend, kept,
     columns = ["name", "name_right", "name_vs_name_right_levenshtein"]
     assert sampled(backend, ref).sort(columns).equals(in_core.plan_for(local_ref).collect().sort(columns))
     assert backend.status(JobHandle("worker", join.job_id)).state == "done"
+
+
+@SOCKET_ONLY
+def test_a_fuzzy_join_over_results_the_worker_holds_resolves_neither_side_in_core(
+    backend, kept, no_file_read_in_core, monkeypatch
+):
+    names = pl.LazyFrame({"name": ["eduward", "edward", "courtney"]})
+    stored = submit(backend, kept, must_materialise=True, plan=names).ref
+    join = FuzzyJoinPayload(
+        left=backend.plan_for(stored),
+        right=backend.plan_for(stored),
+        left_schema=stored.schema,
+        right_schema=stored.schema,
+        settings=fuzzy_settings(),
+        flow_id=1,
+        node_id=2,
+        job_id=f"{new_result_id()}_fm",
+    )
+
+    def no_schema_resolved(*args, **kwargs):
+        pytest.fail("core resolved a side of the fuzzy join")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(pl.LazyFrame, "collect_schema", no_schema_resolved)
+        ref = backend.run_op(OperationKind.fuzzy_join, op_payload(join)).refs["result"]
+    kept.append(ref)
+
+    assert (ref.state, ref.row_count) == ("materialised", 5)
+    in_core = LocalBackend()
+    in_memory = dataclasses.replace(join, left=names, right=names, left_schema=None, right_schema=None)
+    local_ref = in_core.run_op(OperationKind.fuzzy_join, op_payload(in_memory)).refs["result"]
+    columns = ["name", "name_right", "name_vs_name_right_levenshtein"]
+    assert sampled(backend, ref).sort(columns).equals(in_core.plan_for(local_ref).collect().sort(columns))
 
 
 @SOCKET_ONLY
@@ -1336,11 +1380,13 @@ def test_a_socket_closed_after_the_plan_is_unavailable_and_not_posted(backend, s
 def test_the_socket_is_dialled_under_the_workers_url_with_the_token_and_version(
     running_worker, monkeypatch, worker_url, socket_url
 ):
-    handshake.ensure_handshake(settings.WORKER_URL)
+    """No worker answers ``worker_url``, so the backend made on it is given a passing verdict instead of a check."""
+    passing = handshake.Verdict(id="worker", ok=True, core=local_capabilities())
+    monkeypatch.setattr(handshake, "verdict_for", lambda backend: passing)
     result_id = new_result_id()
     dials = dial_into(monkeypatch, FakeSocket([complete_frame(result_id, people())]))
 
     WorkerBackend(url=worker_url).submit(people(), [], hints(False), result_id, flow_id=-1, node_id=-1)
 
     headers = {"X-Flowfile-Internal": get_internal_token(), PROTOCOL_VERSION_HEADER: "1"}
-    assert dials == [(socket_url, {"additional_headers": headers, "max_size": None})]
+    assert dials == [(socket_url, {"additional_headers": headers, "max_size": None, "ssl": None})]

@@ -17,6 +17,10 @@ The Delta writes (``DeltaWritePayload``, ``DeltaMergePayload``, ``DeltaScd2Paylo
 ``CatalogTableIdentity`` instead of a ``path``, and the compute reports the path or URI it resolved that to as the
 ``table_path``. A visualisation session request
 (``VizSessionPayload``) reports the session's answer as the metadata too.
+
+The transform payloads (``FuzzyJoinPayload``, ``RandomSplitPayload``, ``CustomNodePayload``, ``PolarsCodePayload``,
+``SqlQueryPayload``) carry their input rows as the ``pl.LazyFrame`` each input engine holds; a Polars Code node's code
+and a SQL Query node's statement are the payload's text, which only the backend that runs the operation executes.
 """
 
 from __future__ import annotations
@@ -26,7 +30,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
-from flowfile_core.flowfile.execution.protocol import OpPayload, ResultRef
+from flowfile_core.flowfile.execution.protocol import OpPayload, ResultRef, Schema
 
 if TYPE_CHECKING:
     import polars as pl
@@ -317,12 +321,17 @@ class FuzzyJoinPayload(OperationPayload):
         settings: The node's settings; its ``join_input`` (copied, never changed) holds the fuzzy mappings and the
             column selections of both sides.
         node_logger: The node's logger, which an in-process match reports its progress to; read in core only.
+        left_schema: The left rows' columns as the input node knows them, which the worker backend prepares the side
+            over instead of resolving its plan; ``None`` resolves the plan.
+        right_schema: The right rows' columns, as ``left_schema``.
     """
 
     left: pl.LazyFrame
     right: pl.LazyFrame
     settings: NodeFuzzyMatch
     node_logger: NodeLogger | None = None
+    left_schema: Schema | None = None
+    right_schema: Schema | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -364,6 +373,41 @@ class CustomNodePayload(OperationPayload):
     settings_values: dict[str, Any]
     output_names: list[str]
     user_id: int | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class PolarsCodePayload(OperationPayload):
+    """Run a Polars Code node's code once over its inputs on the backend that holds them.
+
+    The operation's refs are ``{"result": ref}``, carrying the schema of the frame the code returned.
+
+    Attributes:
+        code: The node's code as its settings hold it when the node runs, a ``${name}`` parameter resolved.
+        inputs: The node's input rows in connection order, each the plan its input engine holds (a leaf over the
+            input's result); empty for a node with no input. The designer's prediction sends an empty frame of each
+            input's schema.
+    """
+
+    code: str
+    inputs: tuple[pl.LazyFrame, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class SqlQueryPayload(OperationPayload):
+    """Translate a SQL Query node's statement once over its inputs on the backend that holds them.
+
+    The backend registers the inputs as ``input_1``, ``input_2``, … in a ``pl.SQLContext``. The operation's refs are
+    ``{"result": ref}``, carrying the schema of the frame the query answered.
+
+    Attributes:
+        sql_code: The node's statement as its settings hold it when the node runs.
+        inputs: The node's input rows in connection order, each the plan its input engine holds (a leaf over the
+            input's result); empty for a node with no input. The designer's prediction sends an empty frame of each
+            input's schema.
+    """
+
+    sql_code: str
+    inputs: tuple[pl.LazyFrame, ...]
 
 
 @dataclass(frozen=True, kw_only=True)

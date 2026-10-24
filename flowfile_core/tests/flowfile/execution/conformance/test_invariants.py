@@ -1,7 +1,8 @@
 """What every compute backend guarantees, checked on each backend in ``conftest.BACKENDS``.
 
 - Core receives at most ``n`` rows of a result: ``sample`` and the sample ``submit`` returns are the only rows,
-  ``count`` answers a number and ``plan_for`` a plan.
+  ``count`` answers a number and ``plan_for`` a plan. With the protocol flag on, every backend returns that sample
+  from ``submit`` when ``preview_rows`` asks for one.
 - Only the backend that minted a result reads it: every other backend refuses its reference with ``ForeignRef``, in
   every method that takes one, and leaves the result where it is.
 - Core learns a result's schema from its reference: every table result carries the columns of its rows, core predicts
@@ -79,6 +80,13 @@ POLICIES: dict[str, Callable[[SubmitHints], bool]] = {
 }
 """Whether each backend in ``conftest.BACKENDS`` stores a submit with these hints, as its class docstring says."""
 
+INLINE: dict[str, Callable[[], bool]] = {
+    "local": lambda: bool(settings.FLOWFILE_COMPUTE_PROTOCOL),
+    "worker": lambda: True,
+}
+"""Whether each backend in ``conftest.BACKENDS`` answers ``submit`` with the sample ``preview_rows`` asks for, as its
+class docstring says."""
+
 SHUFFLED = pl.LazyFrame({"id": list(range(1000))}).select(pl.col("id").shuffle())
 """A plan whose rows come in another order each time it runs."""
 
@@ -151,13 +159,13 @@ def test_sample_returns_at_most_n_rows(backend, submitted, must_materialise):
 
 @STATES
 @pytest.mark.parametrize("preview_rows", [None, 1, 4])
-def test_the_inline_sample_holds_at_most_preview_rows(submitted, must_materialise, preview_rows):
+def test_the_inline_sample_holds_at_most_preview_rows(backend_name, submitted, must_materialise, preview_rows):
     sample = submitted(must_materialise=must_materialise, preview_rows=preview_rows).sample
 
-    if preview_rows is None:
+    if preview_rows is None or not INLINE[backend_name]():
         assert sample is None
-    elif sample is not None:
-        assert rows(sample) <= preview_rows
+    else:
+        assert rows(sample) == min(preview_rows, PEOPLE.height)
 
 
 @STATES

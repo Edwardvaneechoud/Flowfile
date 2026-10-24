@@ -88,7 +88,18 @@ def _resolve_catalog_target(table_name: str, base_uri: str | None) -> str:
     return str(_validate_catalog_path(table_name))
 
 
-def _delta_target(output_path: str | None, table_name: str | None, storage_payload: dict | None) -> str:
+def _storage(storage_payload: models.DeltaStoragePayload | dict | None) -> models.DeltaStoragePayload | None:
+    """A Delta operation's *storage_payload* as its model (``None`` or empty ⇒ local); an unknown key fails the task."""
+    if not storage_payload:
+        return None
+    from flowfile_worker import models
+
+    return models.DeltaStoragePayload.model_validate(storage_payload)
+
+
+def _delta_target(
+    output_path: str | None, table_name: str | None, storage_payload: models.DeltaStoragePayload | dict | None
+) -> str:
     """The table a Delta operation writes: *output_path* as given, or the catalog table *table_name*.
 
     *table_name* is a bare directory name, joined onto the payload's ``base_uri`` for object storage or onto this
@@ -97,24 +108,23 @@ def _delta_target(output_path: str | None, table_name: str | None, storage_paylo
     """
     if table_name is None:
         return output_path
-    base_uri = (storage_payload or {}).get("base_uri")
+    storage_payload = _storage(storage_payload)
+    base_uri = storage_payload.base_uri if storage_payload is not None else None
     if base_uri is not None:
         return _resolve_catalog_target(table_name, base_uri)
     _validate_catalog_path(table_name)
     return str(storage.catalog_tables_directory / table_name)
 
 
-def _resolve_storage_options(storage_payload: dict | None) -> dict | None:
-    """Decrypt object-storage options from a serialized ``CatalogStorageInterface`` (``None`` for local).
+def _resolve_storage_options(storage_payload: models.DeltaStoragePayload | dict | None) -> dict | None:
+    """Decrypt object-storage options from a Delta operation's ``DeltaStoragePayload`` (``None`` for local).
 
     The connection's owner-encrypted secrets are decrypted here, worker-side.
     """
-    if not storage_payload:
+    storage_payload = _storage(storage_payload)
+    if storage_payload is None:
         return None
-    from flowfile_worker.external_sources.s3_source.models import FullCloudStorageConnection
-
-    conn = FullCloudStorageConnection(**storage_payload["connection"])
-    return conn.get_storage_options()
+    return storage_payload.connection.get_storage_options()
 
 
 def _validate_virtual_results_path(name: str) -> Path:
@@ -415,21 +425,23 @@ def export_result(
     The task routes run it too, as the operation ``export_result`` with *uri* and *credential* as kwargs, when core
     exports a result it minted over them. Nothing is collected: the rows stream from the plan's source to the target.
     *credential*, a stored connection's ``connection_id`` and ``user_id``, becomes a ``CredentialRefProvider`` that
-    this child resolves against its catalog with its master key when the sink opens the target. A ``file:`` URI is
-    sunk to the local path it names (``file_uri_path``), whose folder is the caller's. The URI written is queued.
-    *file_path* is not read.
+    this child resolves against its catalog with its master key when the sink opens the target, beside the
+    connection's endpoint and region read from that catalog (``credential_ref_kwargs``). A ``file:`` URI is sunk to
+    the local path it names (``file_uri_path``), whose folder is the caller's. The URI written is queued. *file_path*
+    is not read. A failure is logged with the target cut at its query, where a presigned URL's signature is.
     """
-    from shared.cloud_credential_provider import CredentialRefProvider
+    from shared.cloud_credential_provider import credential_ref_kwargs
     from shared.compute_protocol import file_uri_path
 
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info("Starting export to parquet")
     try:
         lf = _load_plan(polars_serializable_object)
-        provider = {} if credential is None else {"credential_provider": CredentialRefProvider(**credential)}
-        lf.sink_parquet(file_uri_path(uri), **provider)
+        credential_kwargs = {} if credential is None else credential_ref_kwargs(**credential)
+        lf.sink_parquet(file_uri_path(uri), **credential_kwargs)
     except BaseException as e:
-        flowfile_logger.error(f"Error during export: {str(e)}")
+        target = uri.partition("?")[0]
+        flowfile_logger.error(f"Error during export to {target}: {str(e).replace(uri, target)}")
         record_task_failure(error_message, progress, e, limit=1024)
         if not isinstance(e, Exception):
             raise
@@ -481,6 +493,114 @@ def split_result(
         return
     # A dict, not a tuple: spawner.unpack_result reads a 2-tuple as (payload, row_count).
     queue.put({"columns": schema, "row_counts": row_counts})
+    with progress.get_lock():
+        progress.value = 100
+
+
+def _scans_rows_in_memory(lf: pl.LazyFrame) -> bool:
+    """Whether *lf* reads a frame held in memory, whose rows its serialised plan carries whole.
+
+    Polars prints such a leaf (``input_df.collect().lazy()``, ``pl.LazyFrame({...})``) as ``DF [<columns>]`` in the
+    plan before optimisation, which is the plan that is serialised, and a scan of a source as the scan
+    (``Ipc SCAN [<path>]``). A string literal spelling such a line matches too, and the result is then written to a
+    file it did not need.
+    """
+    return any(line.lstrip().startswith("DF [") for line in lf.explain(optimized=False).splitlines())
+
+
+def _user_code_result(result: pl.LazyFrame | pl.DataFrame, file_path: str) -> dict:
+    """What a Polars Code or SQL Query child queues for the frame the user's code answered.
+
+    A ``LazyFrame`` over sources is reported as its resolved ``pl.Schema`` and its serialised plan, with no row count,
+    nothing collected and nothing written. A ``DataFrame``, or a ``LazyFrame`` that reads a frame held in memory
+    (``_scans_rows_in_memory``), whose plan would carry those rows to core, is collected if lazy and written as IPC to
+    *file_path*, and its ``pl.Schema`` and height are reported. The schema is the result's own, never one read back
+    from a file (see ``submit_result``).
+    """
+    if isinstance(result, pl.LazyFrame) and _scans_rows_in_memory(result):
+        result = collect_lazy_frame(result)
+    if isinstance(result, pl.DataFrame):
+        with environment_failures():
+            result.write_ipc(file_path)
+        return {"columns": result.schema, "row_count": result.height, "plan": None}
+    return {"columns": result.collect_schema(), "row_count": None, "plan": result.serialize()}
+
+
+def polars_code(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,
+    flowfile_flow_id: int,
+    flowfile_node_id: int | str,
+    code: str,
+    inputs: list[bytes],
+):
+    """Run a Polars Code node's code once over its input plans, for ``POST /v1/ops/polars_code``.
+
+    The code runs in the Polars Code sandbox (``shared.polars_code_parser``), given the plans of *inputs* in order, and
+    what it returns is queued as ``_user_code_result`` reports it: a ``LazyFrame`` over sources as its plan, a
+    ``DataFrame`` or a ``LazyFrame`` over rows in memory written to *file_path*. *polars_serializable_object* is not
+    read: the plans come as *inputs*.
+    """
+    from shared.polars_code_parser import polars_code_parser
+
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(f"Starting Polars code over {len(inputs)} inputs")
+    try:
+        frames = [_load_plan(plan) for plan in inputs]
+        result = polars_code_parser.get_executable(code, num_inputs=len(inputs))(*frames)
+        reported = _user_code_result(result, file_path)
+    except BaseException as e:
+        flowfile_logger.error(f"Error during Polars code: {str(e)}")
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
+        return
+    # A dict, not a tuple: spawner.unpack_result reads a 2-tuple as (payload, row_count).
+    queue.put(reported)
+    with progress.get_lock():
+        progress.value = 100
+
+
+def sql_query(
+    polars_serializable_object: bytes,
+    progress: Value,
+    error_message: Array,
+    queue: Queue,
+    file_path: str,
+    flowfile_flow_id: int,
+    flowfile_node_id: int | str,
+    sql_code: str,
+    inputs: list[bytes],
+):
+    """Translate a SQL Query node's statement once over its input plans, for ``POST /v1/ops/sql_query``.
+
+    This is the SQL Query node's child, apart from the catalog SQL editor's ``execute_sql_query`` below. The statement
+    is validated here first, as the worker does not trust the core caller, then the plans of *inputs* are registered
+    in order as ``input_1``, ``input_2``, … in a ``pl.SQLContext`` and the statement is translated over them. What it
+    answers is queued as ``_user_code_result`` reports it: a plan over sources as its plan, one over rows in memory
+    written to *file_path*. *polars_serializable_object* is not read: the plans come as *inputs*.
+    """
+    from shared.sql_validation import validate_sql_query
+
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(f"Starting SQL query over {len(inputs)} inputs")
+    try:
+        validate_sql_query(sql_code)
+        ctx = pl.SQLContext()
+        for i, plan in enumerate(inputs):
+            ctx.register(f"input_{i + 1}", _load_plan(plan))
+        reported = _user_code_result(ctx.execute(sql_code), file_path)
+    except BaseException as e:
+        flowfile_logger.error(f"Error during SQL query: {str(e)}")
+        record_task_failure(error_message, progress, e, limit=1024)
+        if not isinstance(e, Exception):
+            raise
+        return
+    # A dict, not a tuple: spawner.unpack_result reads a 2-tuple as (payload, row_count).
+    queue.put(reported)
     with progress.get_lock():
         progress.value = 100
 
@@ -811,7 +931,7 @@ def write_delta(
     output_path: str | None = None,
     mode: str = "overwrite",
     partition_by: list[str] | None = None,
-    storage_payload: dict | None = None,
+    storage_payload: models.DeltaStoragePayload | None = None,
     enable_cdf: bool = False,
     table_name: str | None = None,
     table_id: int | None = None,
@@ -832,6 +952,7 @@ def write_delta(
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     try:
+        from flowfile_worker import models
         from shared.delta_utils import write_delta as _write_delta
 
         output_path = _delta_target(output_path, table_name, storage_payload)
@@ -850,7 +971,7 @@ def write_delta(
         )
 
         if not wrote:
-            queue.put({"skipped": True})
+            queue.put(models.DeltaSkipReport(skipped=True).model_dump(exclude_unset=True))
             flowfile_logger.info(f"write_delta skipped (no-op) for {output_path}")
             with progress.get_lock():
                 progress.value = 100
@@ -860,13 +981,13 @@ def write_delta(
         schema = [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns]
 
         queue.put(
-            {
-                "table_path": output_path,
-                "schema": schema,
-                "row_count": df.height,
-                "column_count": len(df.columns),
-                "size_bytes": size_bytes,
-            }
+            models.DeltaWriteReport(
+                table_path=output_path,
+                column_schema=schema,
+                row_count=df.height,
+                column_count=len(df.columns),
+                size_bytes=size_bytes,
+            ).model_dump(by_alias=True)
         )
         flowfile_logger.info(f"write_delta completed: {df.height} records written to {output_path}")
         with progress.get_lock():
@@ -888,7 +1009,7 @@ def merge_delta(
     merge_mode: str = "upsert",
     merge_keys: list[str] | None = None,
     partition_by: list[str] | None = None,
-    storage_payload: dict | None = None,
+    storage_payload: models.DeltaStoragePayload | None = None,
     enable_cdf: bool = False,
     table_name: str | None = None,
     table_id: int | None = None,
@@ -909,6 +1030,7 @@ def merge_delta(
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     try:
+        from flowfile_worker import models
         from shared.delta_utils import merge_into_delta
 
         output_path = _delta_target(output_path, table_name, storage_payload)
@@ -928,7 +1050,7 @@ def merge_delta(
         )
 
         if not wrote:
-            queue.put({"skipped": True})
+            queue.put(models.DeltaSkipReport(skipped=True).model_dump(exclude_unset=True))
             flowfile_logger.info(f"merge_delta skipped (no-op) for {output_path}")
             with progress.get_lock():
                 progress.value = 100
@@ -941,13 +1063,13 @@ def merge_delta(
         size_bytes = _get_delta_size_bytes(output_path, storage_options=storage_options)
 
         queue.put(
-            {
-                "table_path": output_path,
-                "schema": schema,
-                "row_count": row_count,
-                "column_count": len(schema),
-                "size_bytes": size_bytes,
-            }
+            models.DeltaWriteReport(
+                table_path=output_path,
+                column_schema=schema,
+                row_count=row_count,
+                column_count=len(schema),
+                size_bytes=size_bytes,
+            ).model_dump(by_alias=True)
         )
         flowfile_logger.info(f"merge_delta ({merge_mode}) completed: {row_count} rows in {output_path}")
         with progress.get_lock():
@@ -976,7 +1098,7 @@ def scd2_delta(
     full_snapshot: bool = False,
     partition_by: list[str] | None = None,
     partition_on_current: bool = True,
-    storage_payload: dict | None = None,
+    storage_payload: models.DeltaStoragePayload | None = None,
     table_name: str | None = None,
     table_id: int | None = None,
     flowfile_flow_id: int = -1,
@@ -996,6 +1118,7 @@ def scd2_delta(
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     try:
+        from flowfile_worker import models
         from shared.delta_utils import scd2_into_delta
 
         output_path = _delta_target(output_path, table_name, storage_payload)
@@ -1022,7 +1145,7 @@ def scd2_delta(
 
         if result.skipped:
             # The version rides along even on a skip: core reads the unchanged table back at it.
-            queue.put({"skipped": True, "version": result.version})
+            queue.put(models.DeltaSkipReport(skipped=True, version=result.version).model_dump(exclude_unset=True))
             flowfile_logger.info(f"scd2_delta skipped (nothing changed) for {output_path}")
             with progress.get_lock():
                 progress.value = 100
@@ -1035,21 +1158,21 @@ def scd2_delta(
         size_bytes = _get_delta_size_bytes(output_path, storage_options=storage_options)
 
         queue.put(
-            {
-                "table_path": output_path,
-                "schema": schema,
-                "row_count": result.rows_total,
-                "column_count": len(schema),
-                "size_bytes": size_bytes,
-                "version": result.version,
-                "scd2_metrics": {
-                    "rows_inserted": result.rows_inserted,
-                    "rows_closed": result.rows_closed,
-                    "rows_total": result.rows_total,
-                    "rows_current": result.rows_current,
-                    "created": result.created,
-                },
-            }
+            models.Scd2WriteReport(
+                table_path=output_path,
+                column_schema=schema,
+                row_count=result.rows_total,
+                column_count=len(schema),
+                size_bytes=size_bytes,
+                version=result.version,
+                scd2_metrics=models.Scd2Metrics(
+                    rows_inserted=result.rows_inserted,
+                    rows_closed=result.rows_closed,
+                    rows_total=result.rows_total,
+                    rows_current=result.rows_current,
+                    created=result.created,
+                ),
+            ).model_dump(by_alias=True)
         )
         flowfile_logger.info(
             f"scd2_delta completed: +{result.rows_inserted} inserted, {result.rows_closed} closed "

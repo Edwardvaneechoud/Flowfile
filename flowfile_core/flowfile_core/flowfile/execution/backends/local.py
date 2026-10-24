@@ -51,8 +51,10 @@ from flowfile_core.flowfile.execution.payloads import (
     KafkaReadPayload,
     MlApplyPayload,
     MlTrainPayload,
+    PolarsCodePayload,
     RandomSplitPayload,
     RestApiReadPayload,
+    SqlQueryPayload,
     unpack,
 )
 from flowfile_core.flowfile.execution.protocol import (
@@ -69,7 +71,11 @@ from flowfile_core.flowfile.execution.protocol import (
 )
 from flowfile_core.flowfile.execution.registry import LOCAL_BACKEND_ID
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
+    FlowDataEngine,
+    execute_polars_code,
+    execute_sql_query,
+)
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import convert_stats_to_column_info
 from flowfile_core.flowfile.flow_data_engine.utils import local_write_output
 from flowfile_core.flowfile.flow_node.multi_output import output_handle
@@ -82,7 +88,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
     FullCloudStorageConnectionWorkerInterface,
 )
 from flowfile_core.secret_manager.secret_manager import decrypt_secret
-from shared.cloud_credential_provider import CredentialRefProvider
+from shared.cloud_credential_provider import credential_ref_kwargs
 from shared.compute_protocol import (
     CLOUD_SCHEMES,
     PROTOCOL_VERSION,
@@ -115,9 +121,11 @@ class LocalBackend:
     Materialisation policy: with ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on, a submit whose hints say
     ``must_materialise`` is stored: a streaming sink writes its rows to a file under core's own storage directory and
     the store holds a scan of that file, so nothing is collected into memory. Every other plan, and every plan with
-    the flag off, is held deferred as the object submitted. No sample is returned inline either way, even when
-    ``preview_rows`` asks for one, because ``sample`` serves it when something reads it. Apart from a stored result,
-    nothing in core computes a node's rows before a consumer, a write or an opened preview needs them.
+    the flag off, is held deferred as the object submitted. With the flag on, a submit whose hints set ``preview_rows``
+    also answers that many rows inline, a bounded collect of what it holds, so a plan that cannot run raises its Polars
+    error from ``submit`` and nothing stays held under the id; with the flag off no sample comes inline and ``sample``
+    serves the preview when it is opened. Apart from a stored result and that preview, nothing in core computes a node's
+    rows before a consumer, a write or an opened preview needs them.
 
     A blob (``ResultRef.kind == "blob"``), an imported one or a model a training fitted here, is held as a copy of its
     bytes at ``cache/local/-1/<result_id>.blob`` under core's storage directory, beside the store, in both flag states.
@@ -167,9 +175,11 @@ class LocalBackend:
         ``must_materialise`` is streamed to ``cache/local/<flow_id>/<result_id>.arrow`` under core's storage
         directory and held as a scan of that file; a sink that fails leaves no file at that path and nothing held, and
         its Polars error propagates, while what it wrote beside the path goes with the id's next ``release`` or
-        ``submit``. The other hints are not read (see the class docstring), nor is ``node_id``. What the id held is
-        dropped first, its files included. ``inputs`` are only validated: a plan over results of this backend already
-        reads them through its own leaves (``plan_for``). The returned sample is always ``None``.
+        ``submit``. ``wide`` and ``fanout`` are not read (see the class docstring), nor is ``node_id``. What the id held
+        is dropped first, its files included. ``inputs`` are only validated: a plan over results of this backend
+        already reads them through its own leaves (``plan_for``). With the flag on and ``preview_rows`` set, the
+        returned sample is the first ``preview_rows`` rows of what the id now holds, and a plan that cannot collect them
+        raises its Polars error with nothing left held under the id; otherwise the sample is ``None``.
 
         Raises:
             ForeignRef: An input was minted by another backend.
@@ -183,7 +193,14 @@ class LocalBackend:
             ref = self._store(plan, result_id=result_id, flow_id=flow_id)
         else:
             ref = self._hold(plan, result_id=result_id)
-        return SubmitResult(ref=ref, sample=None, handle=JobHandle(backend_id=self.id, job_id=result_id))
+        sample = None
+        if settings.FLOWFILE_COMPUTE_PROTOCOL and hints.preview_rows is not None:
+            try:
+                sample = _ipc_stream(self._plan(ref).head(hints.preview_rows).collect())
+            except BaseException:
+                self._drop(_store_key(ref))
+                raise
+        return SubmitResult(ref=ref, sample=sample, handle=JobHandle(backend_id=self.id, job_id=result_id))
 
     def run_op(self, op: OperationKind, payload: OpPayload) -> OpResult:
         """Run ``op`` in this process with the payload its method documents.
@@ -231,7 +248,8 @@ class LocalBackend:
         """Write ``ref``'s rows to ``uri`` as parquet by a streaming sink of its plan, and return ``uri``.
 
         Nothing is collected into memory. ``credential`` names the stored connection the target needs; this process
-        resolves it with its own catalog and master key when the sink opens the target. A ``file:`` URI is sunk to
+        reads its endpoint and region from its own catalog here and resolves its credentials with its master key when
+        the sink opens the target. A ``file:`` URI is sunk to
         the local path it names, whose folder is the caller's. The target is the caller's, so a sink that fails
         leaves it to the caller and its Polars error propagates.
 
@@ -265,8 +283,9 @@ class LocalBackend:
 
         Nothing is read here: the schema and the count are the caller's, so ``count`` answers the given count (and
         counts the rows only when it is ``None``) and the file need not exist until something reads the rows.
-        ``credential`` is resolved in this process when the scan runs. A ``file:`` URI is scanned as the local path it
-        names. ``release`` forgets the scan and leaves the file, which is not this backend's.
+        ``credential``'s endpoint and region are read from this process's catalog here and its credentials resolved
+        in this process when the scan runs. A ``file:`` URI is scanned as the local path it names. ``release`` forgets
+        the scan and leaves the file, which is not this backend's.
 
         With ``kind="blob"`` the bytes at a ``file://`` URI or a presigned ``https://`` URL are copied now
         (``get_blob``) to ``cache/local/-1/<result_id>.blob`` under core's storage directory and held under a fresh id
@@ -586,6 +605,25 @@ class LocalBackend:
             return OpResult(refs={"result": self._hold_plan(FlowDataEngine(output))})
         return OpResult(refs={})
 
+    def _polars_code(self, payload: OpPayload) -> OpResult:
+        """Run the code of the ``PolarsCodePayload`` under ``"payload"`` once in this process over its input plans.
+
+        Returns the refs ``{"result": ref}``, a deferred result holding the frame the code returned as a plan, with its
+        row count when the code computed the frame.
+        """
+        job = unpack(payload, PolarsCodePayload)
+        engine = execute_polars_code(*(FlowDataEngine(plan) for plan in job.inputs), code=job.code)
+        return OpResult(refs={"result": self._hold_plan(engine)})
+
+    def _sql_query(self, payload: OpPayload) -> OpResult:
+        """Translate the statement of the ``SqlQueryPayload`` under ``"payload"`` once in this process over its inputs.
+
+        Returns the refs ``{"result": ref}``, a deferred result holding the plan the query answered.
+        """
+        job = unpack(payload, SqlQueryPayload)
+        engine = execute_sql_query(*(FlowDataEngine(plan) for plan in job.inputs), sql_code=job.sql_code)
+        return OpResult(refs={"result": self._hold_plan(engine)})
+
     def _write_cloud_storage(self, payload: OpPayload) -> OpResult:
         """Write the rows of the ``CloudWritePayload`` under ``"payload"`` to object storage.
 
@@ -751,6 +789,8 @@ class LocalBackend:
         OperationKind.fuzzy_join: _fuzzy_join,
         OperationKind.random_split: _random_split,
         OperationKind.custom_node: _run_custom_node,
+        OperationKind.polars_code: _polars_code,
+        OperationKind.sql_query: _sql_query,
         OperationKind.cloud_write: _write_cloud_storage,
         OperationKind.delta_write: _write_delta,
         OperationKind.delta_merge: _merge_delta,
@@ -779,14 +819,15 @@ def _partial_path(path: Path) -> Path:
 
 
 def _credential_kwargs(credential: CredentialRef | None) -> dict[str, Any]:
-    """The ``credential_provider`` a sink or scan of a URI takes for ``credential``; nothing without one.
+    """What a sink or scan of a URI takes for ``credential``: its provider and its connection's plain options.
 
-    The provider carries the stored connection's id and user only, and resolves it where the plan runs. Without a
-    credential Polars resolves the target as it does for any scan.
+    The provider carries the stored connection's id and user only, and resolves it where the plan runs; the options
+    (``credential_ref_kwargs``) carry the connection's endpoint and region, so an S3-compatible store is reached.
+    Without a credential Polars resolves the target as it does for any scan.
     """
     if credential is None:
         return {}
-    return {"credential_provider": CredentialRefProvider(credential.connection_id, credential.user_id)}
+    return credential_ref_kwargs(credential.connection_id, credential.user_id)
 
 
 def _flowfile_schema(schema: pl.Schema) -> Schema:

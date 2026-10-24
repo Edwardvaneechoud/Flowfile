@@ -39,6 +39,8 @@ from flowfile_core.flowfile.execution.payloads import (
     FuzzyJoinPayload,
     MlApplyPayload,
     MlTrainPayload,
+    PolarsCodePayload,
+    SqlQueryPayload,
     RandomSplitPayload,
     unpack,
 )
@@ -193,14 +195,34 @@ def ml_apply(**overrides) -> MlApplyPayload:
     )
 
 
+def polars_code(**overrides) -> PolarsCodePayload:
+    return PolarsCodePayload(
+        **{"code": "output_df = input_df", "inputs": (NAMES,), "flow_id": 1, "node_id": 1, **overrides}
+    )
+
+
+def sql_query(**overrides) -> SqlQueryPayload:
+    return SqlQueryPayload(
+        **{"sql_code": "SELECT * FROM input_1", "inputs": (NAMES,), "flow_id": 1, "node_id": 1, **overrides}
+    )
+
+
 PAYLOADS = {
     OperationKind.fuzzy_join: fuzzy_join,
     OperationKind.random_split: random_split,
     OperationKind.custom_node: custom_node,
     OperationKind.ml_train: ml_train,
     OperationKind.ml_apply: ml_apply,
+    OperationKind.polars_code: polars_code,
+    OperationKind.sql_query: sql_query,
 }
-LOCAL_KINDS = (OperationKind.fuzzy_join, OperationKind.random_split, OperationKind.custom_node)
+LOCAL_KINDS = (
+    OperationKind.fuzzy_join,
+    OperationKind.random_split,
+    OperationKind.custom_node,
+    OperationKind.polars_code,
+    OperationKind.sql_query,
+)
 BACKEND_KINDS = [(LocalBackend, kind) for kind in LOCAL_KINDS] + [(WorkerBackend, kind) for kind in PAYLOADS]
 
 

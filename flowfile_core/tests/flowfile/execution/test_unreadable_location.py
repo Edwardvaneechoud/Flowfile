@@ -6,15 +6,33 @@ host, but any read of that leaf from core raises ``FileNotFoundError``. A touch 
 instead of being counted, so these flows pass only while core takes a stored result's schema from its reference.
 They run with the protocol flag off and on: with it on, core asks the backend that holds a result whether it still
 does, and reads rows of those results through the backend: the formula editor's preview row, a formula gate's probe,
-column statistics and the CSV export; and a filter, a select, a join, a group_by or a formula over a stored result
-takes its input's columns from the input engine's cached schema. The tests named for ``v1`` results check the same
-over the session worker's ``/v1`` routes.
+column statistics, the CSV export, a Run Flow node's parameter rows and the preview of each output of a random split
+or a custom node; and a filter, a select, a join, a group_by, a
+formula, a record count, a unique, a union, an unpivot, window functions, text to rows, a multi-field formula, a graph
+solver, an explode hierarchy, a pivot, a dynamic rename, a data cleansing or a cross join over a stored result, a
+node's output field config, a Run Flow node's outputs over its child's stored results and its data input and metadata
+columns over stored inputs, or the REST API reader's alignment of a read it stored, takes its input's columns from the
+input engine's cached schema; a Polars code node over a stored result is the ``polars_code`` operation, its code run
+once on the backend that holds the input and never in core, eager code and a side effect included, and the designer's
+prediction for it is the same operation over an empty frame; a SQL query node is likewise the ``sql_query``
+operation, its query translated once on the backend that holds the inputs and never in core, the designer's prediction
+included; and a node that fails on a missing file in core keeps its stored input rather than rerunning it. The
+elaborate integration flow runs whole over stored inputs with the flag on, and with it off fails at the nodes that read
+them in core. The tests named for ``v1`` results check the same over the session worker's ``/v1`` routes, where a
+multi-output node's other output previews from the result the node holds for it. Two backends hold what they store
+where core cannot read it: ``UnreadableBackend``, core's own backend, whose stored files exist only while one of its
+calls runs, and ``UnreadableWorker``, the session worker as core sees one on another host, whose stored files exist
+only while one of its requests runs; a fuzzy match and a SQL query run over a stored input on the second.
 """
 
 import dataclasses
 import io
+import json
 import os
+import threading
+import uuid
 from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,25 +41,31 @@ import pytest
 
 from flowfile_core import flow_file_handler
 from flowfile_core.configs import settings
+from flowfile_core.database import models as db_models
+from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.local import LocalBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.extensions import get_instant_func_results
 from flowfile_core.flowfile.flow_data_engine.bounded import unique_values
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.formula_entries import (
     FormulaEntry,
     FormulaEntryError,
     apply_formula_entries,
 )
 from flowfile_core.flowfile.flow_data_engine.hierarchy import explode_hierarchy_frame
+from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_node.executor import NodeExecutor
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.models import InvalidationReason
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
+from flowfile_core.flowfile.user_defined.registry import registry as node_registry
 from flowfile_core.routes.routes import export_node_data
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from shared.compute_protocol import WorkerLocation
+from tests.flowfile.test_flowfile_integration import build_complex_elaborate_flow
 
 BACKEND_ID = "unreadable"
 
@@ -437,6 +461,146 @@ def test_a_flow_runs_previews_and_predicts_over_stored_results_core_cannot_read(
         graph.close_flow()
 
 
+SPLIT_NODE_SOURCE = """
+import polars as pl
+from flowfile_core.flowfile.node_designer import CustomNodeBase
+
+
+class UnreadableSplitNode(CustomNodeBase):
+    node_name: str = "Unreadable Split Node"
+    number_of_outputs: int = 2
+    output_names: list[str] = ["big", "small"]
+
+    def process(self, *inputs: pl.LazyFrame):
+        lf = inputs[0]
+        return {"big": lf.filter(pl.col("amount") > 20), "small": lf.filter(pl.col("amount") <= 20)}
+"""
+
+
+@pytest.fixture
+def split_node(tmp_path):
+    """A custom node with two outputs loaded from a node file, so it runs as the ``custom_node`` operation."""
+    path = tmp_path / "unreadable_split_node.py"
+    path.write_text(SPLIT_NODE_SOURCE)
+    entry = node_registry.load_file(path)
+    assert entry.error is None, entry.error
+    yield entry
+    node_registry.remove_file(entry.file_path)
+
+
+def multi_output_flow(flow_id: int, node_type: str, split_node) -> FlowGraph:
+    """Manual input 1 of six customers → node 2, a random split or ``split_node``, whose outputs the backend stores."""
+    graph = make_graph(flow_id, max_parallel_workers=1)
+    customers = [{"id": i, "name": f"n{i}", "region": "eu" if i % 2 else "us", "amount": i * 10} for i in range(1, 7)]
+    add_manual_input(graph, 1, customers)
+    if node_type == "random_split":
+        add_promise(graph, 2, "random_split")
+        graph.add_random_split(
+            input_schema.NodeRandomSplit(
+                flow_id=graph.flow_id,
+                node_id=2,
+                depending_on_id=1,
+                seed=1,
+                splits=[
+                    input_schema.RandomSplitGroup(name="train", percentage=50.0),
+                    input_schema.RandomSplitGroup(name="test", percentage=50.0),
+                ],
+            )
+        )
+    else:
+        graph.add_node_promise(
+            input_schema.NodePromise(
+                flow_id=graph.flow_id, node_id=2, node_type=split_node.node_key, is_user_defined=True
+            )
+        )
+        graph.add_user_defined_node(
+            custom_node=split_node.node_class.from_settings({}),
+            user_defined_node_settings=input_schema.UserDefinedNode(
+                flow_id=graph.flow_id, node_id=2, settings={}, is_user_defined=True, user_id=1
+            ),
+        )
+    connect(graph, 1, 2)
+    return graph
+
+
+@pytest.mark.parametrize(
+    "flow_id, node_type", [(9367, "random_split"), (9368, "custom_node")], ids=["random_split", "custom_node"]
+)
+def test_a_multi_output_node_previews_each_output_stored_where_core_cannot_read(
+    unreadable, protocol, split_node, flow_id, node_type
+):
+    graph = multi_output_flow(flow_id, node_type, split_node)
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        node = graph.get_node(2)
+        handles = [DEFAULT_OUTPUT_HANDLE, "output-1"]
+        if not protocol:
+            for handle in handles:
+                with pytest.raises(FileNotFoundError):
+                    node.get_table_example(True, output_handle=handle)
+        else:
+            previews = {handle: node.get_table_example(True, output_handle=handle) for handle in handles}
+            node.results.example_data_generator = None
+            read_again = node.get_table_example(True, output_handle=DEFAULT_OUTPUT_HANDLE)
+
+            ids = {handle: [row["id"] for row in preview.data] for handle, preview in previews.items()}
+            counts = {handle: preview.number_of_records for handle, preview in previews.items()}
+            if node_type == "random_split":
+                assert counts == {DEFAULT_OUTPUT_HANDLE: 3, "output-1": 3}
+                assert sorted(ids[DEFAULT_OUTPUT_HANDLE] + ids["output-1"]) == [1, 2, 3, 4, 5, 6]
+            else:
+                assert ids == {DEFAULT_OUTPUT_HANDLE: [3, 4, 5, 6], "output-1": [1, 2]}
+                assert counts == {DEFAULT_OUTPUT_HANDLE: 4, "output-1": 2}
+            assert read_again.data == previews[DEFAULT_OUTPUT_HANDLE].data
+    finally:
+        graph.close_flow()
+
+
+@pytest.mark.parametrize(
+    "flow_id, node_type", [(9369, "random_split"), (9370, "custom_node")], ids=["random_split", "custom_node"]
+)
+def test_a_v1_multi_output_node_previews_its_other_output_from_the_result_it_holds(
+    remote_worker, protocol_on, split_node, monkeypatch, flow_id, node_type
+):
+    calls: list[tuple[str, str]] = []
+    real_sample, real_submit = WorkerBackend.sample, WorkerBackend.submit
+
+    def recording_sample(self, ref, n):
+        calls.append(("sample", ref.result_id))
+        return real_sample(self, ref, n)
+
+    def recording_submit(self, plan, inputs, hints, result_id, **kwargs):
+        calls.append(("submit", result_id))
+        return real_submit(self, plan, inputs, hints, result_id, **kwargs)
+
+    monkeypatch.setattr(WorkerBackend, "sample", recording_sample)
+    monkeypatch.setattr(WorkerBackend, "submit", recording_submit)
+    graph = multi_output_flow(flow_id, node_type, split_node)
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        node = graph.get_node(2)
+        ref = node.held_output("output-1")
+        assert (ref.backend_id, ref.state) == (registry.WORKER_BACKEND_ID, "materialised")
+        calls.clear()
+
+        preview = node.get_table_example(True, output_handle="output-1")
+
+        assert calls == [("sample", ref.result_id)]
+        worker = registry.backend(ref.backend_id)
+        assert preview.data == pl.read_ipc_stream(worker.sample(ref, 100)).to_dicts()
+        ids = [row["id"] for row in preview.data]
+        if node_type == "random_split":
+            assert preview.number_of_records == 3 and len(ids) == 3
+        else:
+            assert (ids, preview.number_of_records) == ([1, 2], 2)
+    finally:
+        graph.close_flow()
+
+
 def test_a_result_its_backend_dropped_is_run_again(unreadable, protocol):
     graph = stored_results_flow(9342)
     try:
@@ -454,6 +618,55 @@ def test_a_result_its_backend_dropped_is_run_again(unreadable, protocol):
             assert not decision.should_run
         run_info = graph.run_graph()
         assert run_info.success, failures(run_info)
+    finally:
+        graph.close_flow()
+
+
+def test_a_missing_file_in_core_reruns_a_held_input_only_with_the_flag_off(unreadable, protocol, monkeypatch, tmp_path):
+    submits, releases = [], []
+    submit, release = UnreadableBackend.submit, UnreadableBackend.release
+
+    def recording_submit(self, plan, inputs, hints, result_id, *, flow_id, node_id):
+        submits.append((node_id, result_id))
+        return submit(self, plan, inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
+
+    def recording_release(self, ref):
+        if not ref.result_id.startswith("handshake-"):
+            releases.append(ref.result_id)
+        return release(self, ref)
+
+    monkeypatch.setattr(UnreadableBackend, "submit", recording_submit)
+    monkeypatch.setattr(UnreadableBackend, "release", recording_release)
+    missing = tmp_path / "missing.parquet"
+    graph = make_graph(9380, max_parallel_workers=1)
+    add_manual_input(graph, 1, [{"id": i, "amount": i * 10} for i in range(1, 4)])
+    graph.get_node(1).node_settings.cache_results = True
+    add_promise(graph, 2, "polars_code")
+    graph.add_polars_code(
+        input_schema.NodePolarsCode(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_ids=[1],
+            polars_code_input=transform_schema.PolarsCodeInput(
+                polars_code=f'input_df.join(pl.read_parquet("{missing.as_posix()}").lazy(), how="cross")'
+            ),
+        )
+    )
+    connect(graph, 1, 2)
+    try:
+        run_info = graph.run_graph()
+
+        ref = graph.get_node(1).results.result_ref
+        assert [node_id for node_id, _ in failures(run_info)] == [2]
+        assert "(os error 2)" in failures(run_info)[0][1]
+        assert unreadable[0].exists(ref)
+        input_submits = [result_id for node_id, result_id in submits if node_id == 1]
+        if protocol:
+            assert releases == []
+            assert input_submits == [ref.result_id]
+        else:
+            assert releases == [ref.result_id]
+            assert input_submits == [ref.result_id, ref.result_id]
     finally:
         graph.close_flow()
 
@@ -581,6 +794,1033 @@ def test_a_formula_runs_over_a_stored_result_core_cannot_read(unreadable, protoc
         assert len(graph.get_node(2).get_table_example(True).data) == 4
     finally:
         graph.close_flow()
+
+
+TRANSFORM_ROWS = [
+    {
+        "id": i,
+        "region": "eu" if i % 2 else "us",
+        "amount": i * 10,
+        "parent": f"p{i // 3}",
+        "child": f"c{i}",
+        "tags": "x,y" if i % 2 else "z",
+    }
+    for i in range(1, 7)
+]
+TRANSFORM_COLUMNS = [
+    ("id", "Int64"),
+    ("region", "String"),
+    ("amount", "Int64"),
+    ("parent", "String"),
+    ("child", "String"),
+    ("tags", "String"),
+]
+UNION_ROWS = [{"id": 7, "region": "eu", "amount": 70.5}, {"id": 8, "region": "us", "amount": 80.5}]
+
+TRANSFORMS = [
+    (9351, "record_count", input_schema.NodeRecordCount, {}, [("number_of_records", "UInt32")], 1),
+    (
+        9352,
+        "unique",
+        input_schema.NodeUnique,
+        {"unique_input": transform_schema.UniqueInput(columns=["region"], strategy="first")},
+        TRANSFORM_COLUMNS,
+        2,
+    ),
+    (
+        9353,
+        "union",
+        input_schema.NodeUnion,
+        {},
+        [("id", "Int64"), ("region", "String"), ("amount", "Float64")] + TRANSFORM_COLUMNS[3:],
+        8,
+    ),
+    (
+        9354,
+        "unpivot",
+        input_schema.NodeUnpivot,
+        {"unpivot_input": transform_schema.UnpivotInput(index_columns=["id"], value_columns=["region", "tags"])},
+        [("id", "Int64"), ("variable", "String"), ("value", "String")],
+        12,
+    ),
+    (
+        9355,
+        "window_functions",
+        input_schema.NodeWindowFunctions,
+        {
+            "window_input": transform_schema.WindowFunctionsInput(
+                partition_by=["region"],
+                order_by=[transform_schema.SortByInput(column="id")],
+                window_functions=[
+                    transform_schema.WindowFunctionInput(column="amount", function="cum_sum", new_column_name="running")
+                ],
+            )
+        },
+        TRANSFORM_COLUMNS + [("running", "Int64")],
+        6,
+    ),
+    (
+        9356,
+        "text_to_rows",
+        input_schema.NodeTextToRows,
+        {"text_to_rows_input": transform_schema.TextToRowsInput(column_to_split="tags", output_column_name="tag")},
+        TRANSFORM_COLUMNS + [("tag", "String")],
+        9,
+    ),
+    (
+        9357,
+        "multi_field_formula",
+        input_schema.NodeMultiFieldFormula,
+        {
+            "multi_field_formula_input": transform_schema.MultiFieldFormulaInput(
+                formula="[_CurrentField_] * 2",
+                selection_mode="list",
+                selected_columns=["amount"],
+                output_mode="new",
+                output_suffix="_x2",
+            )
+        },
+        TRANSFORM_COLUMNS + [("amount_x2", "Int64")],
+        6,
+    ),
+    (
+        9358,
+        "graph_solver",
+        input_schema.NodeGraphSolver,
+        {"graph_solver_input": transform_schema.GraphSolverInput(col_from="parent", col_to="child")},
+        TRANSFORM_COLUMNS + [("graph_group", "UInt64")],
+        6,
+    ),
+    (
+        9359,
+        "explode_hierarchy",
+        input_schema.NodeExplodeHierarchy,
+        {
+            "explode_hierarchy_input": transform_schema.ExplodeHierarchyInput(
+                parent_column="parent", child_column="child"
+            )
+        },
+        [
+            ("ancestor", "String"),
+            ("descendant", "String"),
+            ("level", "UInt32"),
+            ("quantity", "Float64"),
+            ("is_leaf", "Boolean"),
+        ],
+        6,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "flow_id, node_type, settings_class, fields, expected_columns, rows",
+    TRANSFORMS,
+    ids=[case[1] for case in TRANSFORMS],
+)
+def test_a_transform_runs_over_a_stored_result_core_cannot_read(
+    unreadable, protocol_on, flow_id, node_type, settings_class, fields, expected_columns, rows
+):
+    graph = make_graph(flow_id, max_parallel_workers=1)
+    try:
+        inputs = [1, 3] if node_type == "union" else [1]
+        add_manual_input(graph, 1, TRANSFORM_ROWS)
+        if node_type == "union":
+            add_manual_input(graph, 3, UNION_ROWS)
+        for node_id in inputs:
+            graph.get_node(node_id).node_settings.cache_results = True
+        add_promise(graph, 2, node_type)
+        sources = {"depending_on_ids": inputs} if node_type == "union" else {"depending_on_id": 1}
+        getattr(graph, f"add_{node_type}")(settings_class(flow_id=graph.flow_id, node_id=2, **sources, **fields))
+        for node_id in inputs:
+            connect(graph, node_id, 2)
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        for node_id in inputs:
+            ref = graph.get_node(node_id).results.result_ref
+            assert ref.state == "materialised"
+            assert not os.path.exists(ref.location.decode("utf-8"))
+        assert columns(graph.get_node(2).schema) == expected_columns
+        assert len(graph.get_node(2).get_table_example(True).data) == rows
+    finally:
+        graph.close_flow()
+
+
+CLEANSING_ROWS = [{**row, "note": None} for row in TRANSFORM_ROWS] + [dict.fromkeys([*TRANSFORM_ROWS[0], "note"])]
+SEGMENT_ROWS = [{"id": 1, "segment": "s1"}, {"id": 2, "segment": "s2"}]
+
+TRANSFORM_VARIANTS = [
+    (
+        9360,
+        "pivot",
+        "pivot",
+        input_schema.NodePivot,
+        {
+            "pivot_input": transform_schema.PivotInput(
+                index_columns=["region"], pivot_column="parent", value_col="amount", aggregations=["sum"]
+            )
+        },
+        [("region", "String"), ("p0", "Int64"), ("p1", "Int64"), ("p2", "Int64")],
+        2,
+    ),
+    (
+        9361,
+        "pivot_without_index_columns",
+        "pivot",
+        input_schema.NodePivot,
+        {
+            "pivot_input": transform_schema.PivotInput(
+                index_columns=[], pivot_column="region", value_col="amount", aggregations=["sum", "count"]
+            )
+        },
+        [("eu_sum", "Int64"), ("eu_count", "UInt32"), ("us_sum", "Int64"), ("us_count", "UInt32")],
+        1,
+    ),
+    (
+        9362,
+        "dynamic_rename_prefix",
+        "dynamic_rename",
+        input_schema.NodeDynamicRename,
+        {"dynamic_rename_input": transform_schema.DynamicRenameInput(rename_mode="prefix", prefix="p_")},
+        [(f"p_{name}", dtype) for name, dtype in TRANSFORM_COLUMNS],
+        6,
+    ),
+    (
+        9363,
+        "dynamic_rename_first_row",
+        "dynamic_rename",
+        input_schema.NodeDynamicRename,
+        {
+            "dynamic_rename_input": transform_schema.DynamicRenameInput(
+                rename_mode="first_row", selection_mode="list", selected_columns=["region", "child"]
+            )
+        },
+        [
+            ("id", "Int64"),
+            ("eu", "String"),
+            ("amount", "Int64"),
+            ("parent", "String"),
+            ("c1", "String"),
+            ("tags", "String"),
+        ],
+        5,
+    ),
+    (
+        9364,
+        "data_cleansing",
+        "data_cleansing",
+        input_schema.NodeDataCleansing,
+        {
+            "cleansing_input": transform_schema.DataCleansingInput(
+                remove_null_rows=True, remove_null_columns=True, case_mode="uppercase"
+            )
+        },
+        TRANSFORM_COLUMNS,
+        6,
+    ),
+    (
+        9365,
+        "cross_join",
+        "cross_join",
+        input_schema.NodeCrossJoin,
+        {"cross_join_input": transform_schema.CrossJoinInput(left_select=[], right_select=[])},
+        TRANSFORM_COLUMNS + [("id_right", "Int64"), ("segment", "String")],
+        12,
+    ),
+    (
+        9370,
+        "polars_code",
+        "polars_code",
+        input_schema.NodePolarsCode,
+        {
+            "polars_code_input": transform_schema.PolarsCodeInput(
+                polars_code="output_df = input_df.filter(pl.col('amount') > 20).select('id', 'region', 'amount')"
+            )
+        },
+        [("id", "Int64"), ("region", "String"), ("amount", "Int64")],
+        4,
+    ),
+    (
+        9388,
+        "polars_code_eager",
+        "polars_code",
+        input_schema.NodePolarsCode,
+        {
+            "polars_code_input": transform_schema.PolarsCodeInput(
+                polars_code="output_df = input_df.filter(pl.col('amount') >= input_df.collect().item(2, 'amount'))"
+                ".with_columns(top=pl.lit(input_df.select(pl.col('amount').max()).collect().item()))"
+                ".select('id', 'amount', 'top')"
+            )
+        },
+        [("id", "Int64"), ("amount", "Int64"), ("top", "Int32")],
+        4,
+    ),
+    (
+        9393,
+        "sql_query",
+        "sql_query",
+        input_schema.NodeSqlQuery,
+        {
+            "sql_query_input": transform_schema.SqlQueryInput(
+                sql_code="SELECT id, region, amount FROM input_1 WHERE amount > 20"
+            )
+        },
+        [("id", "Int64"), ("region", "String"), ("amount", "Int64")],
+        4,
+    ),
+    (
+        9394,
+        "sql_query_aggregate",
+        "sql_query",
+        input_schema.NodeSqlQuery,
+        {
+            "sql_query_input": transform_schema.SqlQueryInput(
+                sql_code="SELECT region, SUM(amount) AS total FROM input_1 GROUP BY region ORDER BY region"
+            )
+        },
+        [("region", "String"), ("total", "Int64")],
+        2,
+    ),
+    (
+        9372,
+        "output_fields_raise_on_missing",
+        "filter",
+        input_schema.NodeFilter,
+        {
+            "filter_input": transform_schema.FilterInput(mode="advanced", advanced_filter="[amount] > 20"),
+            "output_field_config": input_schema.OutputFieldConfig(
+                enabled=True,
+                validation_mode_behavior="raise_on_missing",
+                fields=[
+                    input_schema.OutputFieldInfo(name="amount", data_type="Int64"),
+                    input_schema.OutputFieldInfo(name="id", data_type="Int64"),
+                ],
+            ),
+        },
+        [("amount", "Int64"), ("id", "Int64")],
+        4,
+    ),
+    (
+        9373,
+        "output_fields_add_missing",
+        "filter",
+        input_schema.NodeFilter,
+        {
+            "filter_input": transform_schema.FilterInput(mode="advanced", advanced_filter="[amount] > 20"),
+            "output_field_config": input_schema.OutputFieldConfig(
+                enabled=True,
+                validation_mode_behavior="add_missing",
+                fields=[
+                    input_schema.OutputFieldInfo(name="id", data_type="Int64"),
+                    input_schema.OutputFieldInfo(name="status", data_type="String", default_value="new"),
+                ],
+            ),
+        },
+        [("id", "Int64"), ("status", "String")],
+        4,
+    ),
+    (
+        9374,
+        "output_fields_add_missing_keep_extra",
+        "filter",
+        input_schema.NodeFilter,
+        {
+            "filter_input": transform_schema.FilterInput(mode="advanced", advanced_filter="[amount] > 20"),
+            "output_field_config": input_schema.OutputFieldConfig(
+                enabled=True,
+                validation_mode_behavior="add_missing_keep_extra",
+                fields=[
+                    input_schema.OutputFieldInfo(name="status", data_type="String", default_value="new"),
+                    input_schema.OutputFieldInfo(name="id", data_type="Int64"),
+                ],
+            ),
+        },
+        [("status", "String"), ("id", "Int64")] + TRANSFORM_COLUMNS[1:],
+        4,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "flow_id, node_type, settings_class, fields, expected_columns, rows",
+    [case[:1] + case[2:] for case in TRANSFORM_VARIANTS],
+    ids=[case[1] for case in TRANSFORM_VARIANTS],
+)
+def test_a_transform_variant_runs_over_stored_results_core_cannot_read(
+    unreadable, protocol_on, flow_id, node_type, settings_class, fields, expected_columns, rows
+):
+    graph = make_graph(flow_id, max_parallel_workers=1)
+    try:
+        inputs = {1: "main", 3: "right"} if node_type == "cross_join" else {1: "main"}
+        add_manual_input(graph, 1, CLEANSING_ROWS if node_type == "data_cleansing" else TRANSFORM_ROWS)
+        if node_type == "cross_join":
+            add_manual_input(graph, 3, SEGMENT_ROWS)
+        for node_id in inputs:
+            graph.get_node(node_id).node_settings.cache_results = True
+        add_promise(graph, 2, node_type)
+        multi_input = issubclass(settings_class, input_schema.NodeMultiInput)
+        sources = {"depending_on_ids": list(inputs)} if multi_input else {"depending_on_id": 1}
+        getattr(graph, f"add_{node_type}")(settings_class(flow_id=graph.flow_id, node_id=2, **sources, **fields))
+        for node_id, input_type in inputs.items():
+            connect(graph, node_id, 2, input_type=input_type)
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        for node_id in inputs:
+            ref = graph.get_node(node_id).results.result_ref
+            assert ref.state == "materialised"
+            assert not os.path.exists(ref.location.decode("utf-8"))
+        assert columns(graph.get_node(2).schema) == expected_columns
+        assert len(graph.get_node(2).get_table_example(True).data) == rows
+    finally:
+        graph.close_flow()
+
+
+LAZY_POLARS_CODE = "output_df = input_df.filter(pl.col('amount') > 20).select('id', 'region', 'amount')"
+
+
+def executed_in_core(*args, **kwargs):
+    pytest.fail("core executed the Polars code")
+
+
+def side_effect_flow(flow_id: int, written: Path) -> FlowGraph:
+    """Manual input 1, cached → Polars code 2, which writes its collected input to a new CSV file in ``written``."""
+    graph = make_graph(flow_id, max_parallel_workers=1)
+    add_manual_input(graph, 1, TRANSFORM_ROWS)
+    graph.get_node(1).node_settings.cache_results = True
+    add_promise(graph, 2, "polars_code")
+    code = (
+        "rows = input_df.collect()\n"
+        f'rows.write_csv(f"{written.as_posix()}/{{time.time_ns()}}.csv")\n'
+        "output_df = rows.lazy().select('id', 'amount')"
+    )
+    graph.add_polars_code(
+        input_schema.NodePolarsCode(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_ids=[1],
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code=code),
+        )
+    )
+    connect(graph, 1, 2)
+    return graph
+
+
+def prediction_flow(flow_id: int) -> FlowGraph:
+    """Manual input 1 → Polars code 2 with lazy code; neither has run."""
+    graph = make_graph(flow_id, max_parallel_workers=1)
+    add_manual_input(graph, 1, TRANSFORM_ROWS)
+    add_promise(graph, 2, "polars_code")
+    graph.add_polars_code(
+        input_schema.NodePolarsCode(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_ids=[1],
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code=LAZY_POLARS_CODE),
+        )
+    )
+    connect(graph, 1, 2)
+    return graph
+
+
+SQL_QUERY = "SELECT id, region, amount FROM input_1 WHERE amount > 20"
+SQL_AGGREGATE = "SELECT region, SUM(amount) AS total FROM input_1 GROUP BY region ORDER BY region"
+
+
+def translated_in_core(*args, **kwargs):
+    pytest.fail("core translated the SQL")
+
+
+def sql_query_flow(flow_id: int, sql_code: str) -> FlowGraph:
+    """Manual input 1 → SQL query 2 running ``sql_code`` over it as ``input_1``; neither has run."""
+    graph = make_graph(flow_id, max_parallel_workers=1)
+    add_manual_input(graph, 1, TRANSFORM_ROWS)
+    add_promise(graph, 2, "sql_query")
+    graph.add_sql_query(
+        input_schema.NodeSqlQuery(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_ids=[1],
+            sql_query_input=transform_schema.SqlQueryInput(sql_code=sql_code),
+        )
+    )
+    connect(graph, 1, 2)
+    return graph
+
+
+def written_lines(written: Path) -> list[int]:
+    """The number of lines of each CSV file in ``written``."""
+    return [len(path.read_text().splitlines()) for path in written.glob("*.csv")]
+
+
+def test_polars_code_with_a_side_effect_runs_it_once_on_the_backend(unreadable, protocol_on, tmp_path):
+    written = tmp_path / "written"
+    written.mkdir()
+    graph = side_effect_flow(9389, written)
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        assert written_lines(written) == [7]
+        assert columns(graph.get_node(2).schema) == [("id", "Int64"), ("amount", "Int64")]
+        assert len(graph.get_node(2).get_table_example(True).data) == 6
+    finally:
+        graph.close_flow()
+
+
+def test_polars_code_with_a_side_effect_runs_it_once_on_the_worker(remote_worker, protocol_on, monkeypatch, tmp_path):
+    ops = []
+    run_op = WorkerBackend.run_op
+
+    def recording(self, op, payload):
+        ops.append(op.value)
+        return run_op(self, op, payload)
+
+    monkeypatch.setattr(WorkerBackend, "run_op", recording)
+    monkeypatch.setattr(polars_code_parser, "get_executable", executed_in_core)
+    written = tmp_path / "written"
+    written.mkdir()
+    graph = side_effect_flow(9390, written)
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        assert ops == ["polars_code"]
+        assert written_lines(written) == [7]
+        assert columns(graph.get_node(2).schema) == [("id", "Int64"), ("amount", "Int64")]
+        assert len(graph.get_node(2).get_table_example(True).data) == 6
+    finally:
+        graph.close_flow()
+
+
+def test_the_designers_prediction_of_a_polars_code_node_is_the_operation_over_an_empty_frame(
+    unreadable, protocol_on, monkeypatch
+):
+    calls = []
+    run_op = UnreadableBackend.run_op
+
+    def recording(self, op, payload):
+        result = run_op(self, op, payload)
+        calls.append((op.value, payload["payload"], result))
+        return result
+
+    monkeypatch.setattr(UnreadableBackend, "run_op", recording)
+    graph = prediction_flow(9391)
+    try:
+        predicted = graph.get_node(2).get_predicted_schema()
+
+        assert columns(predicted) == [("id", "Int64"), ("region", "String"), ("amount", "Int64")]
+        ((kind, payload, result),) = calls
+        assert kind == "polars_code"
+        assert payload.inputs[0].select(pl.len()).collect().item() == 0
+        assert result.refs["result"].row_count == 0
+        assert [graph.get_node(node_id).results.result_ref for node_id in (1, 2)] == [None, None]
+    finally:
+        graph.close_flow()
+
+
+def test_the_designers_prediction_of_a_polars_code_node_runs_on_the_worker(remote_worker, protocol_on, monkeypatch):
+    """The prediction reads an empty frame in memory, so the worker holds the code's result as a file of no rows."""
+    calls = []
+    run_op = WorkerBackend.run_op
+
+    def recording(self, op, payload):
+        result = run_op(self, op, payload)
+        calls.append((op.value, payload["payload"], result))
+        return result
+
+    monkeypatch.setattr(WorkerBackend, "run_op", recording)
+    monkeypatch.setattr(polars_code_parser, "get_executable", executed_in_core)
+    graph = prediction_flow(9392)
+    try:
+        predicted = graph.get_node(2).get_predicted_schema()
+
+        assert columns(predicted) == [("id", "Int64"), ("region", "String"), ("amount", "Int64")]
+        ((kind, payload, result),) = calls
+        assert kind == "polars_code"
+        assert payload.inputs[0].select(pl.len()).collect().item() == 0
+        assert (result.refs["result"].state, result.refs["result"].row_count) == ("materialised", 0)
+    finally:
+        graph.close_flow()
+
+
+def test_the_designers_prediction_of_a_sql_query_node_is_the_operation_over_an_empty_frame(
+    unreadable, protocol_on, monkeypatch
+):
+    calls = []
+    run_op = UnreadableBackend.run_op
+
+    def recording(self, op, payload):
+        result = run_op(self, op, payload)
+        calls.append((op.value, payload["payload"], result))
+        return result
+
+    monkeypatch.setattr(UnreadableBackend, "run_op", recording)
+    graph = sql_query_flow(9396, SQL_QUERY)
+    try:
+        predicted = graph.get_node(2).get_predicted_schema()
+
+        assert columns(predicted) == [("id", "Int64"), ("region", "String"), ("amount", "Int64")]
+        ((kind, payload, result),) = calls
+        assert kind == "sql_query"
+        assert payload.inputs[0].select(pl.len()).collect().item() == 0
+        assert result.refs["result"].row_count == 0
+        assert [graph.get_node(node_id).results.result_ref for node_id in (1, 2)] == [None, None]
+    finally:
+        graph.close_flow()
+
+
+def test_the_designers_prediction_of_a_sql_query_node_runs_on_the_worker(remote_worker, protocol_on, monkeypatch):
+    """The prediction reads an empty frame in memory, so the worker holds the query's result as a file of no rows."""
+    calls = []
+    run_op = WorkerBackend.run_op
+
+    def recording(self, op, payload):
+        result = run_op(self, op, payload)
+        calls.append((op.value, payload["payload"], result))
+        return result
+
+    monkeypatch.setattr(WorkerBackend, "run_op", recording)
+    monkeypatch.setattr(pl.SQLContext, "execute", translated_in_core)
+    graph = sql_query_flow(9397, SQL_QUERY)
+    try:
+        predicted = graph.get_node(2).get_predicted_schema()
+
+        assert columns(predicted) == [("id", "Int64"), ("region", "String"), ("amount", "Int64")]
+        ((kind, payload, result),) = calls
+        assert kind == "sql_query"
+        assert payload.inputs[0].select(pl.len()).collect().item() == 0
+        assert (result.refs["result"].state, result.refs["result"].row_count) == ("materialised", 0)
+    finally:
+        graph.close_flow()
+
+
+@pytest.mark.parametrize(
+    "flow_id, iteration_mode, rows", [(9375, "first_value", 6), (9376, "iterate", 12)], ids=["first_value", "iterate"]
+)
+def test_a_run_flow_reads_its_child_output_stored_where_core_cannot_read(
+    unreadable, protocol_on, tmp_path, flow_id, iteration_mode, rows
+):
+    child = make_graph(9379)
+    child.flow_settings.parameters = [schemas.FlowParameter(name="limit", default_value="10", type="integer")]
+    add_promise(child, 1, "flow_input")
+    child.add_flow_input(
+        input_schema.NodeFlowInput(
+            flow_id=child.flow_id,
+            node_id=1,
+            input_name="a",
+            raw_data_format=input_schema.RawData.from_pylist(TRANSFORM_ROWS),
+            cache_results=True,
+        )
+    )
+    add_promise(child, 2, "flow_output")
+    child.add_flow_output(
+        input_schema.NodeFlowOutput(flow_id=child.flow_id, node_id=2, output_name="out_a", depending_on_id=1)
+    )
+    connect(child, 1, 2)
+    path = tmp_path / "child_out_a.yaml"
+    child.save_flow(str(path))
+    child.close_flow()
+    with get_db_context() as db:
+        registration = db_models.FlowRegistration(
+            flow_uuid=str(uuid.uuid4()), name=path.stem, flow_path=str(path), owner_id=1
+        )
+        db.add(registration)
+        db.commit()
+        db.refresh(registration)
+        registration_id = registration.id
+
+    iterate = iteration_mode == "iterate"
+    graph = make_graph(flow_id, max_parallel_workers=1)
+    try:
+        if iterate:
+            add_manual_input(graph, 1, [{"limit": 1}, {"limit": 2}])
+        add_promise(graph, 2, "run_flow")
+        bindings = [input_schema.RunFlowParameterBinding(parameter_name="limit", source="column", column_name="limit")]
+        graph.add_run_flow(
+            input_schema.NodeRunFlow(
+                flow_id=graph.flow_id,
+                node_id=2,
+                user_id=1,
+                flow_reference=input_schema.SubflowReference(registration_id=registration_id),
+                input_slots=["a"],
+                output_slots=["out_a"],
+                parameter_bindings=bindings if iterate else [],
+                iteration_mode=iteration_mode,
+                append_run_metadata=False,
+            )
+        )
+        if iterate:
+            add_connection(
+                graph,
+                input_schema.NodeConnection(
+                    input_connection=input_schema.NodeInputConnection(node_id=2, connection_class="input-0"),
+                    output_connection=input_schema.NodeOutputConnection(node_id=1, connection_class="output-0"),
+                ),
+            )
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        assert columns(graph.get_node(2).schema) == TRANSFORM_COLUMNS
+        assert unreadable[0].count(graph.get_node(2).results.result_ref) == rows
+    finally:
+        graph.close_flow()
+
+
+def registered_child(tmp_path: Path, flow_id: int, cached: bool) -> int:
+    """The registration id of a saved child: parameter ``limit``, flow_input ``a`` of ``TRANSFORM_ROWS``, ``out_a``."""
+    child = make_graph(flow_id)
+    child.flow_settings.parameters = [schemas.FlowParameter(name="limit", default_value="10", type="integer")]
+    add_promise(child, 1, "flow_input")
+    child.add_flow_input(
+        input_schema.NodeFlowInput(
+            flow_id=child.flow_id,
+            node_id=1,
+            input_name="a",
+            raw_data_format=input_schema.RawData.from_pylist(TRANSFORM_ROWS),
+            cache_results=cached,
+        )
+    )
+    add_promise(child, 2, "flow_output")
+    child.add_flow_output(
+        input_schema.NodeFlowOutput(flow_id=child.flow_id, node_id=2, output_name="out_a", depending_on_id=1)
+    )
+    connect(child, 1, 2)
+    path = tmp_path / "child_out_a.yaml"
+    child.save_flow(str(path))
+    child.close_flow()
+    with get_db_context() as db:
+        registration = db_models.FlowRegistration(
+            flow_uuid=str(uuid.uuid4()), name=path.stem, flow_path=str(path), owner_id=1
+        )
+        db.add(registration)
+        db.commit()
+        db.refresh(registration)
+        return registration.id
+
+
+PARAMS = [{"limit": 1}, {"limit": 2}]
+METADATA_COLUMNS = [("param_limit", "Int64"), ("run_index", "UInt32")]
+
+
+@pytest.mark.parametrize(
+    "flow_id, rows_in, input_cached, handle, child_cached, iteration_mode, metadata, expected_columns, rows",
+    [
+        (9384, TRANSFORM_ROWS, True, "input-1", False, "first_value", False, TRANSFORM_COLUMNS, 6),
+        (9385, PARAMS, False, "input-0", True, "iterate", True, TRANSFORM_COLUMNS + METADATA_COLUMNS, 12),
+        (9386, PARAMS, True, "input-0", False, "iterate", False, TRANSFORM_COLUMNS, 12),
+    ],
+    ids=["stored_input", "append_run_metadata", "parameter_input"],
+)
+def test_a_run_flow_node_runs_over_inputs_stored_where_core_cannot_read(
+    unreadable,
+    protocol,
+    tmp_path,
+    flow_id,
+    rows_in,
+    input_cached,
+    handle,
+    child_cached,
+    iteration_mode,
+    metadata,
+    expected_columns,
+    rows,
+):
+    registration_id = registered_child(tmp_path, 9387, child_cached)
+    iterate = iteration_mode == "iterate"
+    graph = make_graph(flow_id, max_parallel_workers=1)
+    try:
+        add_manual_input(graph, 1, rows_in)
+        graph.get_node(1).node_settings.cache_results = input_cached
+        add_promise(graph, 2, "run_flow")
+        bindings = [input_schema.RunFlowParameterBinding(parameter_name="limit", source="column", column_name="limit")]
+        graph.add_run_flow(
+            input_schema.NodeRunFlow(
+                flow_id=graph.flow_id,
+                node_id=2,
+                user_id=1,
+                flow_reference=input_schema.SubflowReference(registration_id=registration_id),
+                input_slots=["a"],
+                output_slots=["out_a"],
+                parameter_bindings=bindings if iterate else [],
+                iteration_mode=iteration_mode,
+                append_run_metadata=metadata,
+            )
+        )
+        connect(graph, 1, 2, handle)
+
+        run_info = graph.run_graph()
+
+        if protocol:
+            assert run_info.success, failures(run_info)
+            assert columns(graph.get_node(2).schema) == expected_columns
+            assert unreadable[0].count(graph.get_node(2).results.result_ref) == rows
+        else:
+            assert [node_id for node_id, _ in failures(run_info)] == [2]
+            assert "(os error 2)" in failures(run_info)[0][1]
+    finally:
+        graph.close_flow()
+
+
+ELABORATE_INPUTS = (1, 2, 3, 4, 5, 27)
+ELABORATE_OUTPUTS = {
+    71: "customer_sales_analysis.csv",
+    72: "fuzzy_matched_customers.parquet",
+    73: "network_components.csv",
+    74: "combined_aggregations.csv",
+}
+
+
+def test_the_elaborate_integration_flow_runs_over_stored_inputs_core_cannot_read(unreadable, protocol, tmp_path):
+    graph = build_complex_elaborate_flow(tmp_path)
+    graph.flow_settings.execution_location = "remote"
+    graph.flow_settings.max_parallel_workers = 1
+    for node_id in ELABORATE_INPUTS:
+        graph.get_node(node_id).node_settings.cache_results = True
+    try:
+        run_info = graph.run_graph()
+
+        for node_id in ELABORATE_INPUTS:
+            ref = graph.get_node(node_id).results.result_ref
+            assert ref.state == "materialised"
+            assert not os.path.exists(ref.location.decode("utf-8"))
+        if protocol:
+            assert run_info.success, failures(run_info)
+            assert run_info.nodes_completed == len(graph.nodes) == 30
+            rows = {}
+            for node_id, name in ELABORATE_OUTPUTS.items():
+                path = tmp_path / name
+                frame = pl.read_parquet(path) if path.suffix == ".parquet" else pl.read_csv(path)
+                assert frame.columns == [column.column_name for column in graph.get_node(node_id).schema]
+                rows[name] = frame.height
+            assert rows["fuzzy_matched_customers.parquet"] == 3
+            assert rows["network_components.csv"] == 5
+            assert rows["customer_sales_analysis.csv"] > 0 and rows["combined_aggregations.csv"] > 0
+        else:
+            assert not run_info.success
+            assert {node_id for node_id, _ in failures(run_info)} == {11, 17, 26, 28, 30, 31}
+            assert all("(os error 2)" in error for _, error in failures(run_info))
+    finally:
+        graph.close_flow()
+
+
+UNREADABLE_WORKER_ID = "unreadable_worker"
+
+
+class UnreadableWorker(WorkerBackend):
+    """The session worker as core sees a worker on another host, whose stored files exist only during a request.
+
+    The file of a result the worker stores is at its path only while one of this backend's requests to the worker
+    runs, so the worker stores, reads, samples and releases as always, and a read of a stored result in core outside
+    a request raises ``FileNotFoundError``. The window is the request, not the backend call as in
+    ``UnreadableBackend``, because a call such as ``run_op`` prepares its payload in core before it sends it.
+    """
+
+    def __init__(self, url: str):
+        super().__init__(url, backend_id=UNREADABLE_WORKER_ID)
+        self.stored: list[str] = []
+
+    def put_back(self) -> None:
+        """Every stored file this backend moved aside back at its path."""
+        for path in self.stored:
+            if os.path.exists(path + ".away"):
+                os.replace(path + ".away", path)
+
+    def _ref_from_wire(self, ref):
+        """The parent's reference; the file it names is moved aside, since the request that answered it has returned."""
+        result = super()._ref_from_wire(ref)
+        location = WorkerLocation.model_validate_json(result.location)
+        if location.kind == "file":
+            self.stored.append(location.path)
+            if os.path.exists(location.path):
+                os.replace(location.path, location.path + ".away")
+        return result
+
+    def _v1(self, method, path, **kwargs):
+        with self._requesting():
+            return super()._v1(method, path, **kwargs)
+
+    def _v1_socket_submit(self, meta, plan, result_id):
+        with self._requesting():
+            return super()._v1_socket_submit(meta, plan, result_id)
+
+    @contextmanager
+    def _requesting(self):
+        """Every stored file is at its path while the block runs; one the worker released stays gone."""
+        self.put_back()
+        try:
+            yield
+        finally:
+            for path in self.stored:
+                if os.path.exists(path):
+                    os.replace(path, path + ".away")
+
+
+@pytest.fixture
+def unreadable_worker(remote_worker, monkeypatch) -> list[UnreadableWorker]:
+    """``unreadable_worker`` on the session worker is registered and is the default; the list holds each instance made.
+
+    Each instance puts back the files it moved aside when the test ends, so none is left aside in the worker's storage.
+    """
+    made: list[UnreadableWorker] = []
+    registry.reset()
+    url = registry.worker_url()
+
+    def make_unreadable_worker() -> UnreadableWorker:
+        made.append(UnreadableWorker(url))
+        return made[-1]
+
+    registry.register_backend(UNREADABLE_WORKER_ID, make_unreadable_worker)
+    monkeypatch.setenv("FLOWFILE_COMPUTE_BACKEND", UNREADABLE_WORKER_ID)
+    yield made
+    for worker in made:
+        worker.put_back()
+    registry.reset()
+
+
+def test_a_fuzzy_match_runs_on_a_worker_over_a_stored_input_core_cannot_read(unreadable_worker, protocol_on):
+    graph = make_graph(9399, max_parallel_workers=1)
+    add_manual_input(graph, 1, [{"name": "eduward"}, {"name": "edward"}, {"name": "courtney"}])
+    graph.get_node(1).node_settings.cache_results = True
+    add_promise(graph, 2, "fuzzy_match")
+    graph.add_fuzzy_match(
+        input_schema.NodeFuzzyMatch(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_ids=[1, 1],
+            join_input=transform_schema.FuzzyMatchInput(
+                join_mapping=[
+                    transform_schema.FuzzyMap(
+                        left_col="name", right_col="name", threshold_score=75, fuzzy_type="levenshtein"
+                    )
+                ],
+                left_select=[transform_schema.SelectInput("name", join_key=True)],
+                right_select=[transform_schema.SelectInput("name", join_key=True)],
+                how="inner",
+            ),
+        )
+    )
+    connect(graph, 1, 2)
+    connect(graph, 1, 2, input_type="right")
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        ref = graph.get_node(1).results.result_ref
+        assert (ref.backend_id, ref.state) == (UNREADABLE_WORKER_ID, "materialised")
+        path = WorkerLocation.model_validate_json(ref.location).path
+        assert path in unreadable_worker[0].stored and not os.path.exists(path)
+        assert [column.column_name for column in graph.get_node(2).schema] == [
+            "name",
+            "name_right",
+            "name_vs_name_right_levenshtein",
+        ]
+        rows = graph.get_node(2).get_table_example(True).data
+        assert sorted((row["name"], row["name_right"]) for row in rows) == [
+            ("courtney", "courtney"),
+            ("eduward", "eduward"),
+            ("eduward", "edward"),
+            ("edward", "eduward"),
+            ("edward", "edward"),
+        ]
+    finally:
+        graph.close_flow()
+
+
+def test_a_sql_query_runs_on_the_worker(unreadable_worker, protocol_on, monkeypatch):
+    """The query is translated over a stored input core cannot open, on the worker that holds it, never in core."""
+    ops = []
+    run_op = WorkerBackend.run_op
+
+    def recording(self, op, payload):
+        ops.append(op.value)
+        return run_op(self, op, payload)
+
+    monkeypatch.setattr(WorkerBackend, "run_op", recording)
+    monkeypatch.setattr(pl.SQLContext, "execute", translated_in_core)
+    graph = sql_query_flow(9395, SQL_AGGREGATE)
+    graph.get_node(1).node_settings.cache_results = True
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        assert ops == ["sql_query"]
+        ref = graph.get_node(1).results.result_ref
+        assert (ref.backend_id, ref.state) == (UNREADABLE_WORKER_ID, "materialised")
+        path = WorkerLocation.model_validate_json(ref.location).path
+        assert path in unreadable_worker[0].stored and not os.path.exists(path)
+        assert columns(graph.get_node(2).schema) == [("region", "String"), ("total", "Int64")]
+        assert len(graph.get_node(2).get_table_example(True).data) == 2
+    finally:
+        graph.close_flow()
+
+
+API_ROWS = [{"id": 1, "name": "a", "city": "ams"}, {"id": 2, "name": "b", "city": "rtm"}]
+
+
+class _Api(BaseHTTPRequestHandler):
+    def log_message(self, *_args):
+        pass
+
+    def do_GET(self):  # noqa: N802
+        body = json.dumps(API_ROWS).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(body)
+
+
+@pytest.fixture
+def api_url():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Api)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/items"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_a_rest_api_reader_aligns_a_read_stored_where_core_cannot_read_it(unreadable, protocol_on, api_url):
+    graph = make_graph(9366, max_parallel_workers=1)
+    try:
+        add_promise(graph, 1, "rest_api_reader")
+        graph.add_rest_api_reader(
+            input_schema.NodeRestApiReader(
+                flow_id=graph.flow_id,
+                node_id=1,
+                user_id=1,
+                rest_api_settings=input_schema.RestApiSettings(url=api_url),
+                fields=[
+                    input_schema.MinimalFieldInfo(name="name", data_type="String"),
+                    input_schema.MinimalFieldInfo(name="id", data_type="Int64"),
+                    input_schema.MinimalFieldInfo(name="missing", data_type="String"),
+                ],
+            )
+        )
+        run_info = graph.run_graph()
+
+        assert run_info.success, failures(run_info)
+        assert columns(graph.get_node(1).schema) == [
+            ("name", "String"),
+            ("id", "Int64"),
+            ("missing", "String"),
+            ("city", "String"),
+        ]
+        assert len(graph.get_node(1).get_table_example(True).data) == 2
+    finally:
+        graph.close_flow()
+
+
+def test_a_pivot_without_index_columns_never_writes_to_its_settings(unreadable, protocol):
+    pivot_input = transform_schema.PivotInput(
+        index_columns=[], pivot_column="region", value_col="missing", aggregations=["sum"]
+    )
+    with pytest.raises(pl.exceptions.ColumnNotFoundError):
+        FlowDataEngine(pl.LazyFrame(TRANSFORM_ROWS)).do_pivot(pivot_input)
+
+    assert pivot_input.index_columns == []
 
 
 def test_a_stored_results_columns_are_read_from_its_cached_schema(unreadable, protocol_on):

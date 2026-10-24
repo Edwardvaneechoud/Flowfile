@@ -2,13 +2,14 @@ import base64
 from typing import Annotated, Any, Literal
 
 import polars as pl
-from pydantic import BaseModel, BeforeValidator, PlainSerializer
+from pydantic import BaseModel, BeforeValidator, Field, PlainSerializer
 
 from flowfile_core.schemas.input_schema import (
     DatabaseConnection,
     FullDatabaseConnection,
     NodeDatabaseReader,
     NodeDatabaseWriter,
+    SecretRef,
 )
 
 
@@ -29,8 +30,13 @@ Base64Bytes = Annotated[
 
 
 class ExtDatabaseConnection(DatabaseConnection):
-    """Database connection configuration with password handling."""
+    """Database connection configuration with password handling.
 
+    ``password_ref`` names the secret core resolved into ``password``; it is excluded from a dump, so a worker, whose
+    connection refuses an unknown field, is never sent it.
+    """
+
+    password_ref: SecretRef | None = Field(default=None, exclude=True)
     password: str | None = None
     ssl_enabled: bool | None = False
 

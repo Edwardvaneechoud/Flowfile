@@ -4,11 +4,16 @@ Nothing here knows which worker to call. Every function and fetcher takes ``work
 from its caller: ``WorkerBackend`` passes its own ``url``, and a caller outside it that sends work to the worker
 asks the backend registry for it (``registry.worker_url()``). Whether to call the worker at all is the caller's
 decision too.
+
+A worker whose TLS certificate is not public is trusted through ``trust_ca``, which the backend made for it calls with
+its configured CA certificate: the worker session then verifies that worker's URL against it, and both WebSocket clients
+take it from ``ssl_context_for``. Every other worker is verified against the public CAs.
 """
 
 import io
 import json
 import os
+import ssl
 import threading
 from base64 import b64decode
 from time import monotonic
@@ -18,6 +23,7 @@ from uuid import uuid4
 import polars as pl
 import requests
 from pl_fuzzy_frame_match.models import FuzzyMapping
+from requests.adapters import HTTPAdapter
 from websockets.exceptions import ConnectionClosed
 
 from flowfile_core.auth.jwt import get_internal_token
@@ -84,20 +90,67 @@ class _WorkerSession(requests.Session):
     its own, its callers pass the one of the backend they serve. Each call first passes ``ensure_handshake``, which
     is once per process, not per worker: the first call's worker is refused before it is sent anything when its
     versions differ from core's, and later calls pass whichever worker they name. A call that cannot reach the
-    worker re-arms that check, because the worker that comes back may be another one.
+    worker re-arms that check, because the worker that comes back may be another one. A caller that knows which
+    backend the worker is names it with the keyword ``backend_id``, which the check's ``ComputeUnavailable`` names.
+    ``gated=False`` sends a call around the check, neither passing nor re-arming it: the gate's own
+    ``GET /capabilities`` and ``WorkerBackend.capabilities``, which read a worker's versions to compare them.
     """
 
-    def request(self, method, path, *args, worker_url: str, **kwargs):
-        ensure_handshake(worker_url)
+    def request(
+        self, method, path, *args, worker_url: str, backend_id: str | None = None, gated: bool = True, **kwargs
+    ):
+        if gated:
+            ensure_handshake(worker_url, backend_id=backend_id)
         try:
             return super().request(method, f"{worker_url}{path}", *args, **kwargs)
         except requests.ConnectionError:
-            reset_handshake()
+            if gated:
+                reset_handshake()
             raise
+
+
+class _TrustedCa(HTTPAdapter):
+    """Verifies a worker's certificate against the CA core was given for it, in place of the public CAs."""
+
+    def __init__(self, context: ssl.SSLContext) -> None:
+        self._context = context
+        super().__init__()
+
+    def init_poolmanager(self, *args, **kwargs):
+        kwargs["ssl_context"] = self._context
+        return super().init_poolmanager(*args, **kwargs)
 
 
 _worker_session = _WorkerSession()
 _worker_session.auth = _WorkerAuth()
+
+_trusted_cas: dict[str, ssl.SSLContext] = {}
+
+
+def trust_ca(worker_url: str, ca_cert: str | None) -> None:
+    """Verify the worker at ``worker_url`` against ``ca_cert``, a PEM, from now on, in place of the public CAs.
+
+    The PEM is the CA that signed the worker's certificate, or a self-signed certificate itself. The worker session
+    uses it for every call under ``worker_url``, and ``ssl_context_for`` hands it to both WebSocket clients; a later
+    call for the same URL replaces it, and one with no PEM drops it, so the worker is verified against the public CAs
+    again. Nothing is written to disk.
+
+    Raises:
+        ssl.SSLError: ``ca_cert`` holds no PEM certificate.
+    """
+    if not ca_cert:
+        if _trusted_cas.pop(worker_url, None) is not None:
+            _worker_session.adapters.pop(f"{worker_url}/", None)
+        return
+    context = ssl.create_default_context(cadata=ca_cert)
+    _trusted_cas[worker_url] = context
+    _worker_session.mount(f"{worker_url}/", _TrustedCa(context))
+
+
+def ssl_context_for(worker_url: str) -> ssl.SSLContext | None:
+    """The context ``trust_ca`` made for ``worker_url``; ``None`` for a worker verified against the public CAs."""
+    return _trusted_cas.get(worker_url)
+
 
 _JSON_HEADERS = {"Content-Type": "application/json"}
 

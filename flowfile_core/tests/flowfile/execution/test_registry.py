@@ -1,8 +1,10 @@
 """Compute backends are known by id: registered in process or installed as entry points, made once per process."""
 
 import importlib.metadata
+import ssl
 import threading
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -11,9 +13,34 @@ from flowfile_core.configs import settings
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 
 TEAM_URL = "http://team-worker.test:63579"
+TLS_TEAM_URL = "https://tls-team-worker.test:63579"
+
+
+def self_signed_pem() -> str:
+    """A self-signed P-256 certificate, PEM: the CA of a worker that serves it."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "tls-team-worker.test")])
+    now = datetime.now(timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5))
+        .not_valid_after(now + timedelta(hours=2))
+        .sign(key, hashes.SHA256())
+    )
+    return cert.public_bytes(serialization.Encoding.PEM).decode()
 
 
 class FakeEntryPoint:
@@ -367,6 +394,26 @@ def test_a_configured_worker_resolves_with_its_url_and_its_own_token(configured_
     assert worker.token == "row-token"
     assert worker.token != get_internal_token()
     assert registry.backend("worker:team") is worker
+    assert subops.ssl_context_for(TEAM_URL) is None
+
+
+def test_a_configured_worker_with_a_ca_certificate_has_the_transport_trust_it_for_its_url():
+    with get_db_context() as db:
+        db.add(
+            ConfiguredBackend(
+                id="worker:tls-team", url=TLS_TEAM_URL, token=encrypt_secret("row-token", 1), ca_cert=self_signed_pem()
+            )
+        )
+        db.commit()
+    try:
+        worker = registry.backend("worker:tls-team")
+
+        assert worker.url == TLS_TEAM_URL
+        assert isinstance(subops.ssl_context_for(TLS_TEAM_URL), ssl.SSLContext)
+    finally:
+        with get_db_context() as db:
+            db.delete(db.get(ConfiguredBackend, "worker:tls-team"))
+            db.commit()
 
 
 def test_a_worker_name_no_row_configures_is_unknown():

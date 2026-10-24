@@ -78,6 +78,38 @@
 
           <div class="setting-group">
             <div class="setting-header">
+              <span class="setting-title">Compute backend</span>
+              <span class="setting-description">
+                Where this node runs. Auto runs it on the flow's backend; another backend is used
+                when an exchange store is configured, its data crossing through the store.
+              </span>
+            </div>
+            <div class="execution-location-row">
+              <el-select
+                v-model="localSettings.execution_location"
+                data-testid="node-execution-location"
+                class="execution-location-select"
+                size="small"
+                @change="handleSettingChange"
+              >
+                <el-option
+                  v-for="option in locationOptions"
+                  :key="option.key"
+                  :value="option.key"
+                  :label="option.label"
+                />
+              </el-select>
+              <router-link
+                :to="{ name: 'compute', query: { tab: 'backends' } }"
+                class="manage-backends-link"
+              >
+                Manage backends
+              </router-link>
+            </div>
+          </div>
+
+          <div class="setting-group">
+            <div class="setting-header">
               <span class="setting-title">Node Reference</span>
               <div class="setting-description-wrapper">
                 <span class="setting-description">
@@ -282,12 +314,14 @@
 
 <script lang="ts" setup generic="T extends NodeBase">
 /* eslint-disable no-undef */
-import { computed, ref, watch, reactive } from "vue";
+import { computed, onMounted, ref, watch, reactive } from "vue";
 import type { NodeBase, OutputFieldConfig } from "./nodeInput";
 import { useNodeStore } from "../../../stores/node-store";
 import { useFlowStore } from "../../../stores/flow-store";
 import { InfoFilled, DCaret, Delete } from "@element-plus/icons-vue";
 import AiInlineActions from "../../../features/ai/AiInlineActions.vue";
+import { listComputeBackends } from "../../../api/computeBackends.api";
+import { nodeExecutionLocationOptions, type BackendRow } from "../../../utils/executionLocation";
 
 const nodeStore = useNodeStore();
 const flowStore = useFlowStore();
@@ -361,11 +395,27 @@ watch(activeTab, (newTab, oldTab) => {
   }
 });
 
-const localSettings = ref<Pick<NodeBase, "cache_results" | "description" | "node_reference">>({
+const localSettings = ref<
+  Pick<NodeBase, "cache_results" | "description" | "node_reference" | "execution_location">
+>({
   cache_results: props.modelValue?.cache_results ?? false,
   description: props.modelValue?.description ?? "",
   node_reference: props.modelValue?.node_reference ?? "",
+  execution_location: props.modelValue?.execution_location ?? "auto",
 });
+
+// A listing that fails leaves auto, worker and the node's own value.
+const backendRows = ref<BackendRow[]>([]);
+onMounted(async () => {
+  try {
+    backendRows.value = await listComputeBackends();
+  } catch {
+    backendRows.value = [];
+  }
+});
+const locationOptions = computed(() =>
+  nodeExecutionLocationOptions(localSettings.value.execution_location ?? "auto", backendRows.value),
+);
 
 const outputFieldConfig = reactive<OutputFieldConfig>(
   props.modelValue?.output_field_config ?? {
@@ -384,6 +434,7 @@ watch(
         cache_results: newValue.cache_results,
         description: newValue.description ?? "",
         node_reference: newValue.node_reference ?? "",
+        execution_location: newValue.execution_location ?? "auto",
       };
 
       if (newValue.output_field_config) {
@@ -400,6 +451,7 @@ const handleSettingChange = () => {
     cache_results: localSettings.value.cache_results,
     description: localSettings.value.description,
     node_reference: localSettings.value.node_reference,
+    execution_location: localSettings.value.execution_location,
     output_field_config: outputFieldConfig.enabled ? outputFieldConfig : null,
   });
 };
@@ -697,6 +749,27 @@ const loadFieldsFromSchema = async () => {
 
 .setting-description {
   flex-grow: 1;
+}
+
+.execution-location-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.execution-location-select {
+  flex: 1;
+}
+
+.manage-backends-link {
+  font-size: 0.8rem;
+  color: var(--el-color-primary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.manage-backends-link:hover {
+  text-decoration: underline;
 }
 
 .validation-error {

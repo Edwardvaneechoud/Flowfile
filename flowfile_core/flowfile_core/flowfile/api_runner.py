@@ -6,7 +6,9 @@ single terminal collect runs on the worker, and a worker that cannot run it fail
 request with a typed compute error), and serializes the data flowing into the flow's
 single ``api_response`` node. With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a remote run's
 response is instead a sample of the api_response node's result on the backend that
-holds it, bounded by the worker's sample cap.
+holds it, bounded by the worker's sample cap. The flow is closed when the call ends,
+once the response is serialised or on any error, so every result the call minted is
+released on the backend that holds it.
 
 A freshly opened flow keeps the ``flow_id`` stored in its file, and that id keys
 *process-wide* scratch state: the singleton ``FlowLogger``, the kernel I/O dirs
@@ -151,8 +153,8 @@ def _first_error(run_info: RunInformation | None) -> str | None:
 def _first_compute_error(run_info: RunInformation | None) -> ComputeError | None:
     """The typed compute error that failed the run's first failed node, rebuilt from its run report row, else None.
 
-    The row keeps the error's class name and its text. ``ComputeUnavailable`` adds its hint when it is read, and the
-    row's text carries it already, so the rebuilt error is given the text without it and reads as the row does.
+    The row keeps the error's class name and its text. The row's text carries ``ComputeUnavailable``'s hint already,
+    and the class does not add it twice, so the rebuilt error reads as the row does.
     """
     if run_info is None:
         return None
@@ -161,9 +163,7 @@ def _first_compute_error(run_info: RunInformation | None) -> ComputeError | None
             error_class = _COMPUTE_ERRORS.get(node_result.compute_error)
             if error_class is None:
                 return None
-            message = f"node {node_result.node_id}: {node_result.error}"
-            added = str(error_class(message))[len(message) :]
-            return error_class(message.removesuffix(added))
+            return error_class(f"node {node_result.node_id}: {node_result.error}")
     return None
 
 
@@ -287,52 +287,55 @@ def run_flow_as_api(
             Nothing is collected in core instead.
     """
     flow = open_flow(Path(flow_path), user_id=owner_id)
-    # Machine traffic, not a user pressing Run.
-    flow._system_run = True
+    try:
+        # Machine traffic, not a user pressing Run.
+        flow._system_run = True
 
-    api_nodes = [n for n in flow.nodes if n.node_type == "api_response"]
-    if len(api_nodes) == 0:
-        raise ApiConfigError("flow has no API response node")
-    if len(api_nodes) > 1:
-        raise ApiConfigError("flow has more than one API response node")
-    api_node = api_nodes[0]
+        api_nodes = [n for n in flow.nodes if n.node_type == "api_response"]
+        if len(api_nodes) == 0:
+            raise ApiConfigError("flow has no API response node")
+        if len(api_nodes) > 1:
+            raise ApiConfigError("flow has more than one API response node")
+        api_node = api_nodes[0]
 
-    resolved = resolve_params(_effective_specs(flow, param_specs), query)
-    for param in flow.flow_settings.parameters:
-        if param.name in resolved:
-            param.default_value = resolved[param.name]
+        resolved = resolve_params(_effective_specs(flow, param_specs), query)
+        for param in flow.flow_settings.parameters:
+            if param.name in resolved:
+                param.default_value = resolved[param.name]
 
-    # Run in performance mode (one lazy plan; no per-node materialization or example
-    # data) and send compute to the worker when the location is remote, so the core process
-    # does no heavy collect (the final collect is offloaded in _materialize). Tests pin
-    # execution_location="local" to stay hermetic.
-    flow.flow_settings.execution_location = execution_location or get_global_execution_location()
-    flow.flow_settings.execution_mode = "Performance"
+        # Run in performance mode (one lazy plan; no per-node materialization or example
+        # data) and send compute to the worker when the location is remote, so the core process
+        # does no heavy collect (the final collect is offloaded in _materialize). Tests pin
+        # execution_location="local" to stay hermetic.
+        flow.flow_settings.execution_location = execution_location or get_global_execution_location()
+        flow.flow_settings.execution_mode = "Performance"
 
-    # Serialize concurrent runs of the same published flow: the freshly opened flow
-    # keeps its saved flow_id, which keys process-wide scratch state (FlowLogger,
-    # kernel I/O dirs, cache dir) that overlapping runs would corrupt. Held through
-    # serialization too, since collecting the result reads the flow_id-keyed cache.
-    with _flow_run_lock(flow.flow_id):
-        run_info = flow.run_graph()
-        if run_info is None or not run_info.success:
-            compute_error = _first_compute_error(run_info) if FLOWFILE_COMPUTE_PROTOCOL else None
-            if compute_error is not None:
-                raise compute_error
-            raise ApiExecutionError(_first_error(run_info) or "flow execution failed")
+        # Serialize concurrent runs of the same published flow: the freshly opened flow
+        # keeps its saved flow_id, which keys process-wide scratch state (FlowLogger,
+        # kernel I/O dirs, cache dir) that overlapping runs would corrupt. Held through
+        # serialization too, since collecting the result reads the flow_id-keyed cache.
+        with _flow_run_lock(flow.flow_id):
+            run_info = flow.run_graph()
+            if run_info is None or not run_info.success:
+                compute_error = _first_compute_error(run_info) if FLOWFILE_COMPUTE_PROTOCOL else None
+                if compute_error is not None:
+                    raise compute_error
+                raise ApiExecutionError(_first_error(run_info) or "flow execution failed")
 
-        deliberately_skipped = {nr.node_id for nr in run_info.node_step_result if nr.skipped}
-        if api_node.node_id in deliberately_skipped:
-            # The response node sits behind a closed gate for these parameter
-            # values. Pulling it anyway would lazily execute the gated-off
-            # branch and serve its data as if the gate were open — refuse
-            # explicitly instead.
-            raise ApiExecutionError(
-                "API response node was gated off for these parameter values (a gate "
-                "condition upstream evaluated false)"
-            )
+            deliberately_skipped = {nr.node_id for nr in run_info.node_step_result if nr.skipped}
+            if api_node.node_id in deliberately_skipped:
+                # The response node sits behind a closed gate for these parameter
+                # values. Pulling it anyway would lazily execute the gated-off
+                # branch and serve its data as if the gate were open — refuse
+                # explicitly instead.
+                raise ApiExecutionError(
+                    "API response node was gated off for these parameter values (a gate "
+                    "condition upstream evaluated false)"
+                )
 
-        data = api_node.get_resulting_data()
-        if data is None:
-            raise ApiExecutionError("API response node produced no data")
-        return _serialize(data, api_node.setting_input, flow, api_node)
+            data = api_node.get_resulting_data()
+            if data is None:
+                raise ApiExecutionError("API response node produced no data")
+            return _serialize(data, api_node.setting_input, flow, api_node)
+    finally:
+        flow.close_flow()
