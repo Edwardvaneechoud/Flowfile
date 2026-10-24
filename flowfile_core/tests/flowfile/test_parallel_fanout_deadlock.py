@@ -50,7 +50,7 @@ def _add_manual_input(graph: FlowGraph, data: list[dict], node_id: int) -> None:
 
 
 def _add_formula(graph: FlowGraph, node_id: int, input_id: int, out_field: str, expression: str) -> None:
-    """A narrow transform → runs LOCAL_WITH_SAMPLING (deferred) under remote execution."""
+    """A narrow transform: under remote execution the worker backend holds its plan deferred and samples it."""
     graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="formula"))
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(input_id, node_id))
     graph.add_formula(
@@ -116,7 +116,7 @@ def test_parallel_fanout_opposite_order_joins_do_not_deadlock(flowfile_worker, m
     graph = _make_remote_graph()
 
     # Two independent source→formula chains (A and B). The formulas are narrow
-    # transforms, so they run LOCAL_WITH_SAMPLING (result deferred/memoized).
+    # transforms, so their results stay deferred plans (memoized on the node).
     _add_manual_input(graph, [{"id": 1, "a": "a1"}, {"id": 2, "a": "a2"}, {"id": 3, "a": "a3"}], node_id=1)
     _add_manual_input(graph, [{"id": 1, "b": "b1"}, {"id": 2, "b": "b2"}, {"id": 3, "b": "b3"}], node_id=2)
     _add_formula(graph, node_id=3, input_id=1, out_field="a_out", expression="[a] + '!'")  # A

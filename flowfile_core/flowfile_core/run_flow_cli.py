@@ -28,9 +28,9 @@ def run_flow_cli(flow_path: str, run_id: int) -> int:
     _cli_logger.debug("run_flow_cli started: flow_path=%s, run_id=%s", flow_path, run_id)
     _cli_logger.debug("sys.executable=%s, frozen=%s", sys.executable, getattr(sys, "frozen", False))
 
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+    from flowfile_core.flowfile.execution import registry
 
-    OFFLOAD_TO_WORKER.set(False)
+    registry.set_default_override(registry.LOCAL_BACKEND_ID)
 
     from flowfile_core.flowfile.manage.io_flowfile import open_flow
 

@@ -1,15 +1,17 @@
 import asyncio
+import ipaddress
 import signal
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 
 from flowfile_worker import mp_context
 from flowfile_worker.configs import FLOWFILE_CORE_URI, SERVICE_HOST, SERVICE_PORT, logger
 from flowfile_worker.pool import task_pool
+from flowfile_worker.protocol_routes import router as protocol_router
 from flowfile_worker.routes import router
-from flowfile_worker.streaming import streaming_router
+from flowfile_worker.streaming import streaming_router, v1_streaming_router
 from shared.parent_watcher import start_parent_death_watcher
 from shared.storage_config import storage
 
@@ -55,11 +57,24 @@ async def shutdown_handler(app: FastAPI):
 app = FastAPI(lifespan=shutdown_handler)
 app.include_router(router)
 app.include_router(streaming_router)
+app.include_router(protocol_router)
+app.include_router(v1_streaming_router)
 
 
 @app.post("/shutdown")
-async def shutdown():
-    """Endpoint to handle graceful shutdown"""
+async def shutdown(request: Request):
+    """Endpoint to handle graceful shutdown, answered only for a loopback transport peer.
+
+    The peer is the socket address, never a forwarded header; a missing client or a host that
+    is not an IP address is refused with 403.
+    """
+    host = request.client.host if request.client else ""
+    try:
+        is_loopback = ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        is_loopback = False
+    if not is_loopback:
+        raise HTTPException(status_code=403, detail="Shutdown is only accepted from a loopback address")
     if server_instance:
         await asyncio.create_task(trigger_shutdown())
     return {"message": "Shutting down"}

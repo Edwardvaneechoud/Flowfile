@@ -11,6 +11,9 @@ from fastapi.exceptions import HTTPException
 from flowfile_core.configs import logger
 from flowfile_core.configs.settings import is_electron_mode
 from flowfile_core.fileExplorer.funcs import SecureFileExplorer
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.payloads import FileReadPayload, FileWritePayload, op_payload
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.create import funcs as create_funcs
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
@@ -20,13 +23,12 @@ from flowfile_core.flowfile.flow_data_engine.read_excel_tables import (
     get_calamine_xlsx_data_types,
     get_open_xlsx_datatypes,
 )
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-    ExternalOutputWriter,
-)
 from flowfile_core.flowfile.flow_graph._base import GraphMixinBase
+from flowfile_core.flowfile.flow_graph.builders.connectors import engine_from_read
 from flowfile_core.flowfile.flow_graph.history import with_history_capture
 from flowfile_core.flowfile.flow_node.flow_node import (
     FlowNode,
+    run_operation,
 )
 from flowfile_core.flowfile.schema_callbacks import (
     pl_schema_to_flowfile_columns,
@@ -269,30 +271,15 @@ class FileIoBuildersMixin(GraphMixinBase):
         """
 
         def _func(df: FlowDataEngine):
-            if self.execution_location == "local":
-                df.output(
-                    output_fs=output_file.output_settings,
-                    flow_id=self.flow_id,
-                    node_id=output_file.node_id,
-                    execute_remote=False,
-                )
-                return df
-            output_fs = output_file.output_settings
-            node = self.get_node(output_file.node_id)
-            writer = ExternalOutputWriter(
-                lf=df.data_frame,
-                data_type=output_fs.file_type,
-                path=output_fs.abs_file_path,
-                write_mode=output_fs.write_mode,
-                sheet_name=output_fs.sheet_name,
-                delimiter=output_fs.delimiter,
-                compression=output_fs.compression,
+            write = FileWritePayload(
+                plan=df.data_frame.lazy(),
+                settings=output_file.output_settings,
                 flow_id=self.flow_id,
                 node_id=output_file.node_id,
-                wait_on_completion=False,
             )
-            node._fetch_cached_df = writer
-            writer.get_result()
+            self.get_node(output_file.node_id).run_op(
+                current_context(self).backend, OperationKind.file_write, op_payload(write), job_id=write.job_id
+            )
             return df
 
         def schema_callback():
@@ -445,20 +432,23 @@ class FileIoBuildersMixin(GraphMixinBase):
 
         def _func():
             input_file.received_file.set_absolute_filepath()
-            if self.execution_location == "local":
-                input_data = FlowDataEngine.create_from_path(
-                    input_file.received_file, node_logger=self.flow_logger.get_node_logger(input_file.node_id)
-                )
-            elif input_file.received_file.file_type in ("parquet", "ipc", "ndjson"):
-                input_data = FlowDataEngine.create_from_path(input_file.received_file)
-            elif input_file.received_file.file_type == "csv" and is_utf8_encoding(
-                input_file.received_file.table_settings.encoding
+            if input_file.received_file.file_type in ("parquet", "ipc", "ndjson") or (
+                input_file.received_file.file_type == "csv"
+                and is_utf8_encoding(input_file.received_file.table_settings.encoding)
             ):
+                # A lazy scan is a plan like any node's: the node submits it to the backend.
                 input_data = FlowDataEngine.create_from_path(input_file.received_file)
             else:
-                input_data = FlowDataEngine.create_from_path_worker(
-                    input_file.received_file, node_id=input_file.node_id, flow_id=self.flow_id
+                # Not `node`: a new read node runs this from its schema prefetch before `node` is bound.
+                backend = current_context(self).backend
+                read = FileReadPayload(
+                    flow_id=self.flow_id,
+                    node_id=input_file.node_id,
+                    settings=input_file,
+                    node_logger=self.flow_logger.get_node_logger(input_file.node_id),
                 )
+                ref = run_operation(backend, OperationKind.file_read, op_payload(read)).refs["result"]
+                input_data = engine_from_read(backend, ref)
             input_data.name = input_file.received_file.name
             return input_data
 

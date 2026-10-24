@@ -1,5 +1,6 @@
 """Running a `FlowGraph`: run claiming, freshness probes, gate routing, staged execution and fetch-one."""
 
+import contextvars
 import datetime
 import threading
 from collections.abc import Collection, Mapping
@@ -12,7 +13,7 @@ from typing import Any, Literal
 import polars as pl
 from polars_expr_transformer import simple_function_to_expr as to_expr
 
-from flowfile_core.configs import logger
+from flowfile_core.configs import logger, settings
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.events import publish
@@ -20,6 +21,8 @@ from flowfile_core.flowfile.catalog_cdc import (
     read_cursor,
     resolve_consumer_key,
 )
+from flowfile_core.flowfile.execution.context import ExecutionContext, current_context, use_context
+from flowfile_core.flowfile.flow_data_engine.bounded import head_rows
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
@@ -69,17 +72,22 @@ def _gate_formula_matches(source: FlowDataEngine, formula: str) -> bool:
     """True when at least one row of *source* satisfies the gate's formula.
 
     The formula is the Filter node's flowfile expression language applied as
-    a row predicate; matching is existence — ``filter(pred).head(1)`` — so
-    only a bounded single-row collect happens in core. An empty formula, a
-    formula that does not parse, or one referencing unknown columns raises,
-    failing the gate visibly instead of silently picking a branch. An empty
-    input (zero rows) is simply "no match": the gate closes.
+    a row predicate; matching is existence — ``filter(pred).head(1)``. With
+    ``FLOWFILE_COMPUTE_PROTOCOL`` off that one row is collected in core; with
+    it on it is read through ``bounded.head_rows`` on the current execution
+    context's backend, the run's, so core never opens a result that backend
+    stored and a formula error comes back as its ``ComputeError``. An empty
+    formula, a formula that does not parse, or one referencing unknown
+    columns raises, failing the gate visibly instead of silently picking a
+    branch. An empty input (zero rows) is simply "no match": the gate closes.
     """
     if not formula.strip():
         raise ValueError("Gate is set to route on a formula, but no formula is configured")
     predicate = to_expr(formula)
     data_frame = source.data_frame
     lazy_frame = data_frame.lazy() if isinstance(data_frame, pl.DataFrame) else data_frame
+    if settings.FLOWFILE_COMPUTE_PROTOCOL:
+        return head_rows(current_context().backend, lazy_frame.filter(predicate), 1).num_rows > 0
     return lazy_frame.filter(predicate).head(1).collect().height > 0
 
 
@@ -115,6 +123,14 @@ class ExecutionMixin(GraphMixinBase):
     def last_closed_gate_handles(self) -> Mapping[str | int, frozenset[str]]:
         """Gate id -> the output handles the last ``run_graph`` routed dead (parameter and formula gates)."""
         return self._last_closed_gate_handles
+
+    @property
+    def execution_context(self) -> ExecutionContext:
+        """Where this flow's runs execute, derived from its current location, mode and parallelism settings.
+
+        Computed on each access, so it always matches ``flow_settings``, however a field was set.
+        """
+        return ExecutionContext.for_flow(self.flow_settings)
 
     def check_flow_laziness(self) -> tuple[bool, list[str]]:
         """Check whether the flow supports lazy execution for virtual tables.
@@ -276,6 +292,7 @@ class ExecutionMixin(GraphMixinBase):
         ``reset_cache=False`` so exploring doesn't evict a useful cache.
         ``claimed`` says the caller already holds the run slot (``try_claim_run``),
         as the fetch route does before it answers; the slot is released here either way.
+        The node runs under ``current_context(self)``, as a node of ``run_graph`` does.
         """
         if not claimed and not self.try_claim_run():
             raise Exception("Flow is already running")
@@ -295,12 +312,10 @@ class ExecutionMixin(GraphMixinBase):
         logger.info(f"Starting to run: node {flow_node.node_id}, start time: {node_result.start_timestamp}")
         self.latest_run_info.node_step_result.append(node_result)
         try:
-            with node_parameters_resolved(flow_node):
+            with use_context(current_context(self)), node_parameters_resolved(flow_node):
                 flow_node.execute_node(
-                    run_location=self.flow_settings.execution_location,
                     performance_mode=performance_mode,
                     node_logger=node_logger,
-                    optimize_for_downstream=False,
                     reset_cache=reset_cache,
                 )
             errors = flow_node.results.errors
@@ -460,11 +475,7 @@ class ExecutionMixin(GraphMixinBase):
                 return node_result, node
 
             logger.info(f"Starting to run: node {node.node_id}, start time: {node_result.start_timestamp}")
-            node.execute_node(
-                run_location=self.flow_settings.execution_location,
-                performance_mode=performance_mode,
-                node_logger=node_logger,
-            )
+            node.execute_node(performance_mode=performance_mode, node_logger=node_logger)
         try:
             errors = node.results.errors
             if self.flow_settings.is_canceled:
@@ -542,9 +553,9 @@ class ExecutionMixin(GraphMixinBase):
     ) -> set[str | int]:
         """Execute all stages in the plan, running independent nodes in parallel.
 
-        Iterates through stages sequentially. Within each stage, independent
-        nodes are executed in parallel (or sequentially if parallelism is
-        disabled). Because stages are topological, each node is decided from its
+        Iterates through stages sequentially. Within each stage, up to the run
+        context's ``parallelism`` independent nodes execute at once (one at a
+        time in a local flow). Because stages are topological, each node is decided from its
         immediate inputs' statuses via the trigger rules (skip_rules) right
         before its stage runs — a failure skips its dependents stage by stage
         instead of via a blind transitive closure.
@@ -615,8 +626,7 @@ class ExecutionMixin(GraphMixinBase):
                 if not nodes_to_run:
                     continue
 
-                is_local = self.flow_settings.execution_location == "local"
-                max_workers = 1 if is_local else self.flow_settings.max_parallel_workers
+                max_workers = current_context(self).parallelism
                 if len(nodes_to_run) == 1 or max_workers == 1:
                     stage_results = [
                         self._execute_single_node(node, performance_mode, run_info_lock) for node in nodes_to_run
@@ -625,8 +635,15 @@ class ExecutionMixin(GraphMixinBase):
                     stage_results: list[tuple[NodeResult, FlowNode]] = []
                     workers = min(max_workers, len(nodes_to_run))
                     with ThreadPoolExecutor(max_workers=workers) as executor:
+                        # Each node gets its own copy of this thread's context, so it sees the run's.
                         futures = {
-                            executor.submit(self._execute_single_node, node, performance_mode, run_info_lock): node
+                            executor.submit(
+                                contextvars.copy_context().run,
+                                self._execute_single_node,
+                                node,
+                                performance_mode,
+                                run_info_lock,
+                            ): node
                             for node in nodes_to_run
                         }
                         for future in as_completed(futures):
@@ -1009,6 +1026,10 @@ class ExecutionMixin(GraphMixinBase):
         using threads. Stages are processed sequentially so that all dependencies
         are satisfied before a stage begins.
 
+        The run and every node it executes see ``current_context(self)``: the graph's
+        ``execution_context``, or, for a run started inside another run (a subflow's), the
+        outer run's context, so a subflow executes where the flow that runs it does.
+
         Args:
             node_ids: Restrict the run to these nodes; pass a closed set (each node together with
                 every node it reads from), since a node whose input lies outside it is unreachable.
@@ -1044,56 +1065,57 @@ class ExecutionMixin(GraphMixinBase):
         ambient = ambient_kernel_hold.set(kernel_hold)
         released = False
         try:
-            self.flow_logger.info("Starting to run flowfile flow...")
+            with use_context(current_context(self)):
+                self.flow_logger.info("Starting to run flowfile flow...")
 
-            publish("flow_run_started", graph=self)
+                publish("flow_run_started", graph=self)
 
-            selected = None if node_ids is None else set(node_ids)
-            run_nodes = self.nodes if selected is None else [n for n in self.nodes if n.node_id in selected]
-            self._refresh_catalog_reader_freshness(run_nodes)
-            self._refresh_read_source_freshness(run_nodes)
+                selected = None if node_ids is None else set(node_ids)
+                run_nodes = self.nodes if selected is None else [n for n in self.nodes if n.node_id in selected]
+                self._refresh_catalog_reader_freshness(run_nodes)
+                self._refresh_read_source_freshness(run_nodes)
 
-            params: dict[str, ParamValue] = typed_parameter_values(self.flow_settings.parameters)
-            # Parameter gates are routed before the run (dead sides deliberately skipped); formula gates at execution.
-            closed_gate_handles = self._evaluate_gate_conditions(run_nodes)
-            # Same dict the stage loop folds formula-gate decisions into, so it ends as the run's final routing.
-            self._last_closed_gate_handles = closed_gate_handles
+                params: dict[str, ParamValue] = typed_parameter_values(self.flow_settings.parameters)
+                # Parameter gates route before the run (dead sides deliberately skipped); formula gates at execution.
+                closed_gate_handles = self._evaluate_gate_conditions(run_nodes)
+                # Same dict the stage loop folds formula-gate decisions into, so it ends as the run's final routing.
+                self._last_closed_gate_handles = closed_gate_handles
 
-            flow_starts = self._flow_starts + self.get_implicit_starter_nodes()
-            execution_plan = compute_execution_plan(
-                nodes=run_nodes,
-                flow_starts=flow_starts if selected is None else [n for n in flow_starts if n.node_id in selected],
-                closed_gate_handles=closed_gate_handles,
-            )
+                flow_starts = self._flow_starts + self.get_implicit_starter_nodes()
+                execution_plan = compute_execution_plan(
+                    nodes=run_nodes,
+                    flow_starts=flow_starts if selected is None else [n for n in flow_starts if n.node_id in selected],
+                    closed_gate_handles=closed_gate_handles,
+                )
 
-            plan_skip_ids: set[str | int] = {n.node_id for n in execution_plan.skip_nodes}
-            deliberate_skip_ids: set[str | int] = {n.node_id for n in execution_plan.deliberate_skip_nodes}
-            not_selected_ids = set() if selected is None else {n.node_id for n in self.nodes} - selected
-            self._prepare_rerun_artifacts(plan_skip_ids | deliberate_skip_ids | not_selected_ids)
+                plan_skip_ids: set[str | int] = {n.node_id for n in execution_plan.skip_nodes}
+                deliberate_skip_ids: set[str | int] = {n.node_id for n in execution_plan.deliberate_skip_nodes}
+                not_selected_ids = set() if selected is None else {n.node_id for n in self.nodes} - selected
+                self._prepare_rerun_artifacts(plan_skip_ids | deliberate_skip_ids | not_selected_ids)
 
-            self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")
-            skip_node_message(self.flow_logger, execution_plan.skip_nodes)
-            execution_order_message(self.flow_logger, execution_plan.stages)
+                self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")
+                skip_node_message(self.flow_logger, execution_plan.skip_nodes)
+                execution_order_message(self.flow_logger, execution_plan.stages)
 
-            performance_mode = self.flow_settings.execution_mode == "Performance"
-            self._record_deliberate_skips(deliberate_skip_ids)
+                performance_mode = self.flow_settings.execution_mode == "Performance"
+                self._record_deliberate_skips(deliberate_skip_ids)
 
-            failed_node_ids = self._execute_stages(
-                execution_plan, performance_mode, params, plan_skip_ids, deliberate_skip_ids, closed_gate_handles
-            )
-            if commit_sources and not self.flow_settings.is_canceled:
-                self._run_post_execution_callbacks(failed_node_ids, plan_skip_ids, deliberate_skip_ids, selected)
+                failed_node_ids = self._execute_stages(
+                    execution_plan, performance_mode, params, plan_skip_ids, deliberate_skip_ids, closed_gate_handles
+                )
+                if commit_sources and not self.flow_settings.is_canceled:
+                    self._run_post_execution_callbacks(failed_node_ids, plan_skip_ids, deliberate_skip_ids, selected)
 
-            self.latest_run_info.end_time = datetime.datetime.now()
-            self.flow_logger.info("Flow completed!")
-            self.end_datetime = datetime.datetime.now()
-            self.release_run()
-            released = True
-            if self.flow_settings.is_canceled:
-                self.flow_logger.info("Flow canceled")
-            run_info = self.get_run_info()
-            publish("flow_run_finished", graph=self, run_info=run_info)
-            return run_info
+                self.latest_run_info.end_time = datetime.datetime.now()
+                self.flow_logger.info("Flow completed!")
+                self.end_datetime = datetime.datetime.now()
+                self.release_run()
+                released = True
+                if self.flow_settings.is_canceled:
+                    self.flow_logger.info("Flow canceled")
+                run_info = self.get_run_info()
+                publish("flow_run_finished", graph=self, run_info=run_info)
+                return run_info
         except BaseException as e:
             # A pyo3 panic is BaseException-only; `except Exception` would miss it.
             publish("flow_run_crashed", graph=self, error=e)

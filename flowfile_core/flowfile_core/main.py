@@ -28,11 +28,9 @@ from flowfile_core.configs.access_log import install_access_log_redaction
 from flowfile_core.configs.settings import (
     SERVER_HOST,
     SERVER_PORT,
-    WORKER_HOST,
-    WORKER_PORT,
-    WORKER_URL,
 )
 from flowfile_core.events import publish
+from flowfile_core.flowfile.execution import registry as compute_registry
 from flowfile_core.kernel import router as kernel_router
 from flowfile_core.lsp.admin_routes import router as lsp_admin_router
 from flowfile_core.lsp.routes import router as lsp_router
@@ -328,7 +326,10 @@ def run(host: str = None, port: int = None):
     if port is None:
         port = SERVER_PORT
     print(f"Starting server on {host}:{port}")
-    print(f"Worker configured at {WORKER_URL} (host: {WORKER_HOST}, port: {WORKER_PORT})")
+    print(
+        f"Compute backend {compute_registry.default_backend_id()!r}; "
+        f"worker configured at {compute_registry.worker_url()}"
+    )
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)

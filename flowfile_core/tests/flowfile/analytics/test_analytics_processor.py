@@ -606,16 +606,16 @@ def _fetch_recording_stores(graph, **fetch_kwargs) -> list:
     independent of whether a worker happens to be running: what changed is
     whether the store is *reached*, and that is what must stay pinned.
     """
-    from flowfile_core.flowfile.flow_node import flow_node as flow_node_module
+    from flowfile_core.flowfile.execution.backends import worker as worker_module
 
     attempts = []
-    real = flow_node_module.ExternalDfFetcher
+    real = worker_module.ExternalDfFetcher
 
     def spy(*args, **kwargs):
         attempts.append(kwargs.get("file_ref"))
         return real(*args, **kwargs)
 
-    with patch.object(flow_node_module, "ExternalDfFetcher", side_effect=spy):
+    with patch.object(worker_module, "ExternalDfFetcher", side_effect=spy):
         graph.trigger_fetch_node(2, **fetch_kwargs)
     return attempts
 

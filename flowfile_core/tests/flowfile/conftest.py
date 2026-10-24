@@ -13,6 +13,8 @@ from flowfile_core.database.models import (
     FlowRegistration,
     FlowSchedule,
 )
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
 from flowfile_core.flowfile.flow_graph import FlowGraph, RunInformation, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas
@@ -323,3 +325,17 @@ def keep_single_file_env(monkeypatch):
             monkeypatch.setenv(key, os.environ[key])
         else:
             monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture(params=[registry.LOCAL_BACKEND_ID, registry.WORKER_BACKEND_ID])
+def context_backend(request):
+    """Runs the test in an execution context on core's own backend, then on the worker's (skipped without one).
+
+    Engine code that reads ``current_context()`` uses the context's backend, which the fixture yields.
+    """
+    from tests.conftest import is_worker_running
+
+    if request.param == registry.WORKER_BACKEND_ID and not is_worker_running():
+        pytest.skip("flowfile_worker is not running")
+    with use_context(ExecutionContext(request.param, parallelism=1, preview_rows=None)) as context:
+        yield context.backend

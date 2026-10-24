@@ -1,6 +1,7 @@
 import pytest
 
 from flowfile_core.configs.flow_logger import FlowLogger
+from flowfile_core.flowfile.execution.context import use_context
 from flowfile_core.flowfile.flow_graph import FlowGraph, RunInformation, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas, transform_schema
@@ -100,7 +101,8 @@ def test_node_step_needs_run():
     node = graph.get_node(1)
     node_logger = graph.flow_logger.get_node_logger(node.node_id)
     assert node.needs_run(False), "Node should run"
-    node.execute_node(run_location="auto", performance_mode=False, node_logger=node_logger)
+    with use_context(graph.execution_context):
+        node.execute_node(performance_mode=False, node_logger=node_logger)
     assert not node.needs_run(False), "Node should not need to run"
 
 

@@ -55,6 +55,12 @@ FLOWFILE_CUSTOM_NODE_HOT_RELOAD: MutableBool = MutableBool(
     os.environ.get("FLOWFILE_CUSTOM_NODE_HOT_RELOAD", "1").strip().lower() in ("true", "1", "yes", "on")
 )
 
+# When True, the worker backend submits plans and reads results over the worker's versioned /v1 routes.
+FLOWFILE_COMPUTE_PROTOCOL: MutableBool = MutableBool(
+    os.environ.get("FLOWFILE_COMPUTE_PROTOCOL", "0").strip().lower() in ("true", "1", "yes", "on")
+)
+
+
 def get_catalog_storage_uri() -> str | None:
     """Object-storage root for catalog table data, e.g. ``s3://bucket/catalog``.
 

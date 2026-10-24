@@ -596,3 +596,63 @@ def cleanup_global_artifacts():
     _cleanup()
     yield
     _cleanup()
+
+
+def _default_backend_state() -> tuple:
+    """What decides which backend a ``remote`` flow runs on, as one comparable value."""
+    from flowfile_core.configs import settings
+    from flowfile_core.flowfile.execution import context, registry
+
+    current = context._current.get()
+    return (
+        registry.default_backend_id(),
+        os.environ.get(registry.BACKEND_ENV_VAR),
+        bool(settings.OFFLOAD_TO_WORKER),
+        settings.OFFLOAD_TO_WORKER,
+        None if current is None else current.backend_id,
+        registry.default_override(),
+    )
+
+
+_default_backend_at_start: tuple | None = None
+
+
+def pytest_sessionstart(session):
+    global _default_backend_at_start
+    _default_backend_at_start = _default_backend_state()
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_runtest_teardown(item, nextitem):
+    """A test leaves the default compute backend as it found it.
+
+    The registry reads its default override, ``FLOWFILE_COMPUTE_BACKEND`` and the offload setting live, so a test
+    that leaves an override set (an in-process headless run sets one), swaps the setting object, clears the flag,
+    sets the variable or leaves an execution context behind and does not undo it would silently move every later
+    ``remote`` flow onto the local backend. This runs after every fixture teardown, puts the state back, and fails
+    the test that changed it, so the culprit is named where it happened.
+    """
+    if _default_backend_at_start is None:
+        return
+    state = _default_backend_state()
+    rebound = state[3] is not _default_backend_at_start[3]
+    if state[:3] == _default_backend_at_start[:3] and state[4:] == _default_backend_at_start[4:] and not rebound:
+        return
+    from flowfile_core.configs import settings
+    from flowfile_core.flowfile.execution import context, registry
+
+    backend_id, env_value, flag, flag_object, _, override = _default_backend_at_start
+    registry.set_default_override(override)
+    settings.OFFLOAD_TO_WORKER = flag_object
+    flag_object.set(flag)
+    if env_value is None:
+        os.environ.pop(registry.BACKEND_ENV_VAR, None)
+    else:
+        os.environ[registry.BACKEND_ENV_VAR] = env_value
+    context._current.set(None)
+    what = "rebound the offload setting object" if rebound else "left the default compute backend changed"
+    pytest.fail(
+        f"{item.nodeid} {what}: {state[:3] + state[4:]} "
+        f"instead of {_default_backend_at_start[:3] + _default_backend_at_start[4:]}; restored.",
+        pytrace=False,
+    )

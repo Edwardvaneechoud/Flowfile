@@ -20,9 +20,9 @@ def run_flow(flow_path: str, param_overrides: list[str] | None = None, run_id: i
         Exit code (0 for success, 1 for failure)
     """
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+    from flowfile_core.flowfile.execution import registry
 
-    OFFLOAD_TO_WORKER.set(False)
+    registry.set_default_override(registry.LOCAL_BACKEND_ID)
 
     from flowfile_core.flowfile.manage.io_flowfile import open_flow
 

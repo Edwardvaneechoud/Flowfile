@@ -480,7 +480,6 @@ def test_param_pattern_run_skips_when_unchanged(tmp_path):
 
     decision = node.executor._decide_execution(
         state=node._execution_state,
-        run_location="local",
         performance_mode=False,
         force_refresh=False,
     )

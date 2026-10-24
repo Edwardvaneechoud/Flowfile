@@ -2,15 +2,17 @@
 
 Covers schema inference from a sample, credential resolution (stored secret by
 name, or inline plaintext), worker-settings construction, and node execution.
-Local flows fetch in-process (mocked ``fetch_rest_api``); remote flows offload to
-the worker (mocked ``ExternalRestApiFetcher``) — the core never makes a real HTTP call.
+Local flows fetch in-process (mocked ``fetch_rest_api``); remote flows run the read on
+the worker backend (mocked ``WorkerBackend.run_op``) — the core never makes a real HTTP call.
 """
 
 from __future__ import annotations
 
 import polars as pl
 
-from flowfile_core.flowfile import flow_graph as flow_graph_module
+from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+from flowfile_core.flowfile.execution.protocol import OperationKind, OpResult, ResultRef
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
@@ -21,7 +23,6 @@ from flowfile_core.flowfile.sources.external_sources.rest_api_source import (
 )
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.secret_manager.secret_manager import decrypt_secret
-
 
 # --- helpers ------------------------------------------------------------------
 
@@ -50,17 +51,20 @@ def _add_reader(graph: FlowGraph, node: input_schema.NodeRestApiReader) -> None:
     graph.add_rest_api_reader(node)
 
 
-class _FakeFetcher:
-    """Stands in for ExternalRestApiFetcher (remote/worker path) so the core never hits the worker/network."""
+def _fake_worker_read(monkeypatch, tmp_path, rows: pl.DataFrame) -> list:
+    """Stand in for the worker backend's read (remote path); returns the (kind, payload) calls it received."""
+    calls: list = []
 
-    last: dict = {}
-    result = pl.LazyFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]})
+    def run_op(self, op, payload):
+        calls.append((op, payload["payload"]))
+        path = tmp_path / "rest_result.arrow"
+        rows.write_ipc(path)
+        schema = [FlowfileColumn.create_from_polars_dtype(name, dtype) for name, dtype in rows.schema.items()]
+        ref = ResultRef("worker", "fake-task", schema, rows.height, "materialised", str(path).encode())
+        return OpResult(refs={"result": ref})
 
-    def __init__(self, settings, wait_on_completion: bool = False):
-        _FakeFetcher.last = {"settings": settings, "wait": wait_on_completion}
-
-    def get_result(self):
-        return _FakeFetcher.result
+    monkeypatch.setattr(WorkerBackend, "run_op", run_op)
+    return calls
 
 
 def _patch_local_fetch(monkeypatch, result: pl.DataFrame) -> dict:
@@ -165,9 +169,9 @@ def test_execution_local_fetches_in_process_and_stamps_schema(monkeypatch):
     """Local execution fetches in-process via ``fetch_rest_api`` (no worker) and stamps the schema."""
 
     def _no_worker(*args, **kwargs):
-        raise AssertionError("local execution must not use the worker fetcher")
+        raise AssertionError("local execution must not use the worker backend")
 
-    monkeypatch.setattr(flow_graph_module, "ExternalRestApiFetcher", _no_worker)
+    monkeypatch.setattr(WorkerBackend, "run_op", _no_worker)
     captured = _patch_local_fetch(monkeypatch, pl.DataFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]}))
 
     graph = _graph(execution_location="local")
@@ -189,10 +193,9 @@ def test_execution_local_fetches_in_process_and_stamps_schema(monkeypatch):
     assert {f.name for f in node.fields} == {"id", "name"}
 
 
-def test_execution_remote_offloads_to_worker_and_stamps_schema(monkeypatch):
-    """Remote execution offloads to the worker fetcher and stamps the schema."""
-    monkeypatch.setattr(flow_graph_module, "ExternalRestApiFetcher", _FakeFetcher)
-    _FakeFetcher.result = pl.LazyFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]})
+def test_execution_remote_offloads_to_worker_and_stamps_schema(monkeypatch, tmp_path):
+    """Remote execution runs the read on the worker backend and stamps the schema."""
+    calls = _fake_worker_read(monkeypatch, tmp_path, pl.DataFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]}))
 
     graph = _graph(execution_location="remote")
     node = _make_node(
@@ -204,8 +207,10 @@ def test_execution_remote_offloads_to_worker_and_stamps_schema(monkeypatch):
 
     df = graph.get_node(1).get_resulting_data().data_frame.collect()
 
-    assert _FakeFetcher.last["settings"].url == "https://x/api"
-    assert _FakeFetcher.last["settings"].auth.bearer_token_encrypted is not None
+    [(op, read)] = calls
+    assert op is OperationKind.rest_api_read
+    assert read.settings.rest_api_settings.url == "https://x/api"
+    assert decrypt_secret(read.encrypted_secret).get_secret_value() == "tok"  # travels encrypted
     assert df.height == 3
     assert sorted(df["id"].to_list()) == [1, 2, 3]
     assert node.fields is not None

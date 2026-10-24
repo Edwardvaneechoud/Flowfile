@@ -10,6 +10,7 @@ import tempfile
 import polars as pl
 import pytest
 
+from flowfile_core.flowfile.execution.context import use_context
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas, transform_schema
@@ -845,14 +846,14 @@ def test_retry_upstream_resolves_parameters(execution_location):
     run_and_assert_ok(graph)
 
     upstream, node = graph.get_node(2), graph.get_node(3)
-    node.executor._handle_error(
-        node._execution_state,
-        Exception("No such file or directory (os error 2)"),
-        execution_location,
-        False,
-        True,
-        graph.flow_logger.get_node_logger(3),
-    )
+    with use_context(graph.execution_context):
+        node.executor._handle_error(
+            node._execution_state,
+            Exception("No such file or directory (os error 2)"),
+            False,
+            True,
+            graph.flow_logger.get_node_logger(3),
+        )
 
     assert upstream.results.errors is None
     assert _column(graph, 2, "output_field") == ["hello"]

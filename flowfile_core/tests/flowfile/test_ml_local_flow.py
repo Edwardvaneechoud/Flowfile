@@ -1,16 +1,18 @@
 """Train Model and Apply Model on a local flow run in core, never on the worker.
 
 A graph built with ``flowfile_frame`` (and every headless run) is local, and a script that never started a
-worker must still train and score. The worker fetchers are replaced with ones that fail the test, so a local
-flow that reaches for the worker fails here.
+worker must still train and score. Every socket connection fails the test, so a local flow that reaches for
+the worker fails here.
 """
 
 import hashlib
 import shutil
+import socket
 
 import polars as pl
 import pytest
 
+from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_graph.builders.ml import _apply_in_process, ml_flow_model_path
@@ -19,15 +21,13 @@ from flowfile_core.schemas import input_schema, schemas
 from shared.ml.trainers import get_trainer
 
 
-class _WorkerRefused:
-    def __init__(self, *args, **kwargs):
-        raise AssertionError("a local flow called the worker")
-
-
 @pytest.fixture
 def no_worker(monkeypatch):
-    monkeypatch.setattr("flowfile_core.flowfile.flow_graph.MLTrainFetcher", _WorkerRefused)
-    monkeypatch.setattr("flowfile_core.flowfile.flow_graph.MLApplyFetcher", _WorkerRefused)
+    def refuse(sock, address, *args):
+        raise AssertionError(f"a local flow called the worker at {address}")
+
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(socket.socket, "connect_ex", refuse)
 
 
 @pytest.fixture
@@ -171,12 +171,11 @@ def test_a_local_flow_publishes_the_model_it_fitted_in_core(no_worker, monkeypat
 def test_a_remote_flow_still_trains_on_the_worker(monkeypatch, local_graph):
     called = []
 
-    class _Fetcher:
-        def __init__(self, *args, **kwargs):
-            called.append(kwargs["model_type"])
-            raise RuntimeError("worker reached")
+    def run_op(self, op, payload):
+        called.append(payload["payload"].model_type)
+        raise RuntimeError("worker reached")
 
-    monkeypatch.setattr("flowfile_core.flowfile.flow_graph.MLTrainFetcher", _Fetcher)
+    monkeypatch.setattr(WorkerBackend, "run_op", run_op)
     graph = local_graph(7104)
     graph.execution_location = "remote"
     _wire(graph, "train_model", node_id=10, upstream_id=1)

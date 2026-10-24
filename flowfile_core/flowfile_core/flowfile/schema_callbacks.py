@@ -6,8 +6,9 @@ from pl_fuzzy_frame_match.pre_process import rename_fuzzy_right_mapping
 from polars import datatypes
 
 from flowfile_core.configs.flow_logger import main_logger
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.flow_data_engine.bounded import unique_values
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, PlType
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import fetch_unique_values
 from flowfile_core.schemas import input_schema, transform_schema
 
 if TYPE_CHECKING:
@@ -262,6 +263,12 @@ def pre_calculate_pivot_schema(
     output_fields: list[input_schema.MinimalFieldInfo] = None,
     input_lf: pl.LazyFrame = None,
 ) -> list[FlowfileColumn]:
+    """The predicted columns of a pivot: its index columns, then one column per pivot value and aggregation.
+
+    With ``output_fields`` those are the pivot columns; otherwise the pivot values are the first 200 distinct values
+    of the pivot column in ascending order, as text, which the current execution context's backend reads from
+    ``input_lf`` (``bounded.unique_values``), as the pivot itself does when it runs (``FlowDataEngine.do_pivot``).
+    """
     index_columns_schema = [
         get_schema_of_column(node_input_schema, index_col) for index_col in pivot_input.index_columns
     ]
@@ -274,12 +281,10 @@ def pre_calculate_pivot_schema(
 
     else:
         max_unique_vals = 200
-        unique_vals = fetch_unique_values(
-            input_lf.select(pivot_input.pivot_column)
-            .unique()
-            .sort(pivot_input.pivot_column)
-            .limit(max_unique_vals)
+        unique_vals = (
+            unique_values(current_context().backend, input_lf.select(pivot_input.pivot_column), max_unique_vals)
             .cast(pl.String)
+            .to_list()
         )
         if len(unique_vals) >= max_unique_vals:
             main_logger.warning(

@@ -15,6 +15,7 @@ import polars as pl
 from requests.exceptions import RequestException
 
 from flowfile_core.auth import sharing
+from flowfile_core.catalog.compute import uses_worker
 from flowfile_core.catalog.constants import QUERY_VIRTUAL_TABLE_RECURSION_LIMIT
 from flowfile_core.catalog.delta_utils import check_source_versions_current, is_delta_table
 from flowfile_core.catalog.exceptions import (
@@ -39,6 +40,9 @@ from flowfile_core.catalog.text_utils import (
 from flowfile_core.catalog.validators import format_full_name
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 from flowfile_core.database.models import CatalogTable
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
+from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_resolve_virtual_table,
@@ -63,13 +67,6 @@ _ABS_PATH_RE = re.compile(r"(?:/[\w.\-]+){2,}")
 def _scrub_abs_paths(text: str) -> str:
     """Replace absolute filesystem paths in error text with their basename so callers don't learn server layout."""
     return _ABS_PATH_RE.sub(lambda m: m.group(0).rsplit("/", 1)[-1], text)
-
-
-def _should_offload() -> bool:
-    """Return True when heavy I/O should be delegated to the worker process."""
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-
-    return OFFLOAD_TO_WORKER.value
 
 
 def _project_sync_tables(owner_id: int) -> None:
@@ -431,10 +428,12 @@ class VirtualTableService:
 
         For optimized tables, deserializes the stored LazyFrame directly.
         For query-based virtual tables, delegates to resolve_query_virtual_table.
-        For non-optimized tables, triggers flow execution via the worker.
+        For non-optimized tables, runs the producer flow's writer node under the execution context of that flow
+        with ``run_location`` as its location; with none given it is ``"remote"`` when catalog I/O goes to the worker
+        (``catalog.compute.uses_worker``), else ``"local"``.
         """
         if run_location is None:
-            run_location = "remote" if _should_offload() else "local"
+            run_location = "remote" if uses_worker() else "local"
         if node_logger is None:
             node_logger = FlowLogger(-1).get_node_logger(-1)
         from flowfile_core.flowfile.manage.io_flowfile import open_flow
@@ -474,21 +473,21 @@ class VirtualTableService:
         # Running the writer directly bypasses the producer flow's run loop, so its own
         # ${name} refs and those of the upstream nodes it pulls are still unresolved.
         upstream = [flow.get_node(i) for i in flow._get_upstream_node_ids(selected_node.node_id)]
+        producer_context = ExecutionContext.for_flow(
+            flow.flow_settings.model_copy(update={"execution_location": run_location})
+        )
         with ExitStack() as params:
+            params.enter_context(use_context(producer_context))
             for node in [selected_node, *upstream]:
                 params.enter_context(node_parameters_resolved(node))
-            selected_node.execute_node(
-                run_location=run_location,
-                reset_cache=True,
-                performance_mode=True,
-                optimize_for_downstream=False,
-                node_logger=node_logger,
-            )
+            selected_node.execute_node(reset_cache=True, performance_mode=True, node_logger=node_logger)
 
         if selected_node.results.errors:
             raise ValueError(f"Flow errors for table '{table.name}': {selected_node.results.errors}")
 
         flowframe = selected_node.get_resulting_data()
+        # The producer graph is dropped after this call; the returned plan keeps what it reads.
+        selected_node.release_deferred_result()
         if flowframe is None or flowframe.data_frame is None:
             raise ValueError(f"No data produced for table '{table.name}'")
 
@@ -532,8 +531,10 @@ class VirtualTableService:
 
         key = hashlib.sha256(plan_bytes).hexdigest()
         try:
-            result = trigger_resolve_virtual_table(table_id, plan_bytes, key, target="kernel_shared")
-        except (RequestException, RuntimeError) as e:
+            result = trigger_resolve_virtual_table(
+                table_id, plan_bytes, key, target="kernel_shared", worker_url=registry.worker_url()
+            )
+        except (RequestException, RuntimeError, ComputeError) as e:
             raise WorkerUnavailableError(_scrub_abs_paths(str(e))) from e
         ipc_path = validate_catalog_path(result["ipc_path"], storage.shared_virtual_results_directory)
         return CatalogTableMaterializeResult(
