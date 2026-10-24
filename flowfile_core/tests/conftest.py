@@ -152,6 +152,14 @@ STARTUP_CHECK_INTERVAL = 2  # seconds
 SHUTDOWN_TIMEOUT = int(os.environ.get("FLOWFILE_SHUTDOWN_TIMEOUT", 15))  # seconds
 
 
+@pytest.fixture(autouse=True)
+def exchange_store_file_in_tmp(tmp_path, monkeypatch):
+    """A store saved on the developer's machine never reaches a test: each test starts with no saved exchange store."""
+    from flowfile_core.configs import exchange_config
+
+    monkeypatch.setattr(exchange_config, "_settings_file", lambda: tmp_path / "exchange_store.yaml")
+
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_db():
     """Setup the test database and clean up after tests"""

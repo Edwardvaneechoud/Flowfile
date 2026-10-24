@@ -157,7 +157,8 @@ def remedy_for(node: FlowNode, policy: PlacementPolicy) -> str | None:
     if own_backend:
         return (
             f"To run it elsewhere, set {_FLOW_SETTING}; "
-            "a node's own Compute backend applies only when an exchange store is configured."
+            "a node's own Compute backend applies only when an exchange store is configured "
+            "(Settings → Execution → Backends)."
         )
     return f"To run it elsewhere, set {_FLOW_SETTING}."
 

@@ -9,6 +9,7 @@ import {
   type ComputeBackendInput,
   type HandshakeVerdict,
 } from "../../api/computeBackends.api";
+import { detailOf } from "../../utils/apiDetail";
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
@@ -21,19 +22,6 @@ export function plainHttpOffLoopback(url: string): boolean {
     return false;
   }
   return parsed.protocol === "http:" && !LOOPBACK_HOSTS.has(parsed.hostname);
-}
-
-/** The route's own words: a string detail as is, FastAPI's validation list as its messages. */
-function detailOf(error: unknown, fallback: string): string {
-  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
-  if (typeof detail === "string") return detail;
-  if (Array.isArray(detail)) {
-    const messages = detail
-      .map((entry) => (entry as { msg?: unknown })?.msg)
-      .filter((msg): msg is string => typeof msg === "string");
-    if (messages.length) return messages.join("; ");
-  }
-  return fallback;
 }
 
 /**

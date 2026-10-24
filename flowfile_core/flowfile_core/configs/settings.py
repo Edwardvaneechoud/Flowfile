@@ -7,6 +7,7 @@ import tempfile
 from passlib.context import CryptContext
 from starlette.config import Config
 
+from flowfile_core.configs import exchange_config
 from flowfile_core.configs.utils import MutableBool
 from shared.storage_config import storage
 
@@ -81,33 +82,30 @@ def get_catalog_storage_connection() -> str | None:
 def get_exchange_uri() -> str | None:
     """Object-storage root of the exchange store results cross between backends through, e.g. ``s3://bucket/exchange``.
 
-    Read per call, as ``get_catalog_storage_uri`` is. ``None`` ⇒ no exchange store.
+    ``FLOWFILE_EXCHANGE_URI`` when set, else what the Backends page saved (``exchange_config``); read per call, as
+    ``get_catalog_storage_uri`` is. ``None`` ⇒ no exchange store.
     """
-    return os.environ.get("FLOWFILE_EXCHANGE_URI") or None
+    return exchange_config.effective().uri
 
 
 def get_exchange_connection() -> str | None:
-    """Name of the ``CloudStorageConnection`` that opens the exchange store.
+    """Name of the ``CloudStorageConnection`` that opens the exchange store, from the environment or the saved store.
 
     Only consulted when ``get_exchange_uri()`` is set; required in that case.
     """
-    return os.environ.get("FLOWFILE_EXCHANGE_CONNECTION") or None
+    return exchange_config.effective().connection
 
 
 def get_exchange_max_rows() -> int | None:
     """The most rows a result may cross between backends with through the exchange store; ``None`` ⇒ no limit.
 
-    Read per call, as ``get_exchange_uri`` is.
+    ``FLOWFILE_EXCHANGE_MAX_ROWS`` when set, else what the Backends page saved; read per call, as ``get_exchange_uri``
+    is.
 
     Raises:
         ValueError: ``FLOWFILE_EXCHANGE_MAX_ROWS`` is set to something other than a whole number.
     """
-    value = os.environ.get("FLOWFILE_EXCHANGE_MAX_ROWS") or None
-    if value is None:
-        return None
-    if not value.isdecimal():
-        raise ValueError(f"FLOWFILE_EXCHANGE_MAX_ROWS must be a whole number of rows, not {value!r}")
-    return int(value)
+    return exchange_config.effective().max_rows
 
 
 COMMUNITY_DEFAULT_REPO = "edwardvaneechoud/flowfile-community-nodes"
@@ -246,6 +244,8 @@ DEBUG: bool = config("DEBUG", cast=bool, default=False)
 FILE_LOCATION = config("FILE_LOCATION", cast=str, default=".\\files\\")
 AVAILABLE_RAM = config("AVAILABLE_RAM", cast=int, default=8)
 WORKER_URL = config("FLOWFILE_WORKER_URL", cast=str, default=get_default_worker_url(WORKER_PORT))
+# No FLOWFILE_WORKER_URL and no WORKER_HOST: the built-in worker is the one beside core, on this host.
+WORKER_ADDRESS_CONFIGURED = bool(config("FLOWFILE_WORKER_URL", cast=str, default="")) or bool(os.getenv("WORKER_HOST"))
 TEMP_DIR = storage.temp_directory
 
 # FLOWFILE_MODE: Determines the runtime environment

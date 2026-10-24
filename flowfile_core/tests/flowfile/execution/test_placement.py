@@ -67,7 +67,7 @@ AUTO_REMEDY = (
 )
 OWN_WITHOUT_STORE_REMEDY = (
     "To run it elsewhere, set the flow's Execution location under Flow Settings; "
-    "a node's own Compute backend applies only when an exchange store is configured."
+    "a node's own Compute backend applies only when an exchange store is configured (Settings → Execution → Backends)."
 )
 LOCAL_DISK = 'namespace "TestCat.TestSch" is on local disk; remote execution needs an object-storage namespace'
 
