@@ -15,7 +15,7 @@ DEFAULT_SERVER_HOST = "0.0.0.0"
 DEFAULT_SERVER_PORT = 63578
 DEFAULT_WORKER_PORT = 63579
 
-# Single file mode flag, this determines where worker requests are being send to.
+# Single-file mode, which the pip server's start_server sets: its worker is the one embedded in this process.
 SINGLE_FILE_MODE: MutableBool = MutableBool(os.environ.get("FLOWFILE_SINGLE_FILE_MODE", "0") == "1")
 
 # Offload to worker flag, this determines if the worker should handle processing tasks.
@@ -229,7 +229,6 @@ def get_default_worker_url(worker_port=None):
         worker_url = f"http://127.0.0.1:{worker_port}"
     else:
         worker_url = f"http://0.0.0.0:{worker_port}"
-    worker_url += "/worker" if SINGLE_FILE_MODE else ""
     return worker_url
 
 

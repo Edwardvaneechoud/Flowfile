@@ -58,6 +58,8 @@ class SingleExecutionFuture(Generic[T]):
 
         The function runs in a copy of the starting thread's context, so the caller's
         context-local state (such as notebook build mode) reaches it and no other thread's does.
+        The executor is shut down right after the one submit: the call still runs, and its thread
+        exits once it has, instead of idling for as long as the node holds this future.
         """
         with self._lock:
             if self._has_started:
@@ -68,6 +70,7 @@ class SingleExecutionFuture(Generic[T]):
             executor: ThreadPoolExecutor = self._ensure_executor()
             generation = self._generation
             self._future = executor.submit(contextvars.copy_context().run, self._func_wrapper, generation)
+            executor.shutdown(wait=False)
             self._has_started = True
 
     def _func_wrapper(self, generation: int) -> T:

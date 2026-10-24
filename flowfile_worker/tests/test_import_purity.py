@@ -117,6 +117,36 @@ def test_worker_package_init_does_not_pull_models(tmp_path):
 
 
 @pytest.mark.worker
+def test_importing_the_worker_sets_no_start_method_until_its_first_child_starts(tmp_path):
+    """A library that imports the worker keeps its own start method and ``__main__`` until a child starts."""
+    code = "\n".join(
+        [
+            "import json, multiprocessing, sys",
+            "import flowfile_worker",
+            "before = [multiprocessing.get_start_method(allow_none=True), sys.modules['__main__'].__spec__]",
+            "p = flowfile_worker.mp_context.Process(target=int)",
+            "p.start()",
+            "p.join()",
+            "spec = sys.modules['__main__'].__spec__",
+            "after = [multiprocessing.get_start_method(allow_none=True), spec.name, p.exitcode]",
+            "print(json.dumps({'before': before, 'after': after}))",
+        ]
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        env=_probe_env(tmp_path),
+        cwd=str(tmp_path),
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    seen = json.loads(result.stdout.strip().splitlines()[-1])
+    assert seen["before"] == [None, None]
+    assert seen["after"] == ["spawn", "flowfile_worker.__main__", 0]
+
+
+@pytest.mark.worker
 def test_worker_funcs_import_is_lean(tmp_path):
     env = os.environ.copy()
     env["TEST_MODE"] = "1"
@@ -152,7 +182,7 @@ def test_worker_funcs_import_is_lean(tmp_path):
 
 # A console-script launch leaves __main__.__spec__ as None, which makes spawn pass
 # init_main_from_path and re-execute the launcher (and the whole FastAPI app) in every
-# child. flowfile_worker/__init__.py stamps a ".__main__" spec to take spawn's free path.
+# child. The first child's start stamps a ".__main__" spec to take spawn's free path.
 FORBIDDEN_IN_SPAWNED_CHILD = (
     "fastapi",
     "uvicorn",
@@ -186,7 +216,7 @@ def report(out_path):
         json.dump(sorted(sys.modules), fh)
 '''
 
-# Run as `python launcher.py`, so __main__.__spec__ is None exactly like a console script.
+# Run as `python launcher.py`, so __main__.__spec__ is None like a console script until the child's start.
 _LAUNCHER = '''
 import os
 import sys

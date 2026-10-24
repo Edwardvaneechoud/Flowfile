@@ -9,6 +9,12 @@ import sys
 import threading
 from contextlib import asynccontextmanager
 
+# A frozen build re-enters this file for multiprocessing's helpers (the resource tracker): divert them first.
+if __name__ == "__main__":
+    import multiprocessing
+
+    multiprocessing.freeze_support()
+
 # Headless run child: dispatch before the router imports and the storage sweep below.
 if __name__ == "__main__" and "--run-flow" in sys.argv:
     from flowfile_core.run_flow_cli import main as _run_flow_main
@@ -326,7 +332,9 @@ def run(host: str = None, port: int = None):
     """Runs the FastAPI application using Uvicorn.
 
     This function configures and starts the Uvicorn server, setting up
-    signal handlers to ensure a graceful shutdown.
+    signal handlers to ensure a graceful shutdown. It marks the process as one
+    that serves first (``registry.mark_serving``), so its compute is the worker
+    beside it and never the worker embedded in it.
 
     Args:
         host: The host to bind the server to. Defaults to `SERVER_HOST` from settings.
@@ -334,6 +342,7 @@ def run(host: str = None, port: int = None):
     """
     global server_instance
 
+    compute_registry.mark_serving()
     if host is None:
         host = SERVER_HOST
     if port is None:

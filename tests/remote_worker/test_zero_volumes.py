@@ -7,10 +7,14 @@ worker does not declare local files. The flow reads the table, adds a column wit
 worker, scores with the model the worker holds, publishes the model to the artifact store and writes the scores to the
 catalog. The artifact store reaches MinIO through an HTTPS forwarder with a certificate made per run, because the URLs
 it presigns for the worker are ``https`` ones. The secrets and the certificate reach the services through the
-environment only. A second flow runs one node on the worker and the rest in core, its data crossing through an exchange
-store on MinIO, with the protocol flag on and then off; its flag-off case recreates core, which is why it comes last.
-The elaborate integration flow (``complex_flow.json``, its outputs written to MinIO) runs whole on the worker, and
-with its nodes alternating between the worker and core, so that its edges cross through the exchange store.
+environment only. Core is configured with an exchange store on MinIO. A second flow, one node on the worker, is posted
+onto ``local`` through its settings: with the protocol flag on, core, which serves, saves it as ``auto`` and the flow
+runs on the worker, and with the flag off it stays on ``local`` and runs in core; its flag-off case recreates core,
+which is why it comes last. The elaborate integration flow (``complex_flow.json``, its outputs written to MinIO) runs
+whole on the worker, and with its nodes alternating between the worker and ``local`` is refused before any node runs,
+core refusing every node on ``local``. Data crossing between two backends needs a process that does not serve, as
+``flowfile_core/tests/flowfile/execution/test_mixed_placement.py`` runs it. A scheduled run's child computes on the
+worker embedded in it, inside core's container, while the worker container serves nothing.
 """
 
 from __future__ import annotations
@@ -296,17 +300,20 @@ def _set_up_sources(stack: Stack) -> None:
     assert response.status_code == 201, response.text
 
 
-def _import_flow(stack: Stack, flow: dict) -> int:
-    """Copy the flow into core's container, as nothing is mounted there, and import it."""
+def _copy_to_core(flow: dict, path: str) -> None:
+    """Write the flow to ``path`` in core's container, as nothing is mounted there."""
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
         json.dump(flow, handle)
     try:
         container = _compose("ps", "-q", "flowfile-core").stdout.strip()
-        subprocess.run(
-            ["docker", "cp", handle.name, f"{container}:/app/zero_volumes_flow.json"], capture_output=True, check=True
-        )
+        subprocess.run(["docker", "cp", handle.name, f"{container}:{path}"], capture_output=True, check=True)
     finally:
         os.unlink(handle.name)
+
+
+def _import_flow(stack: Stack, flow: dict) -> int:
+    """Copy the flow into core's container and import it."""
+    _copy_to_core(flow, "/app/zero_volumes_flow.json")
     response = stack.http.get(f"{stack.core}/import_flow/", params={"flow_path": "/app/zero_volumes_flow.json"})
     assert response.status_code == 200, response.text
     return response.json()
@@ -368,6 +375,76 @@ def test_core_and_the_worker_have_no_mount(stack):
             ["docker", "inspect", "-f", "{{json .Mounts}}", container], capture_output=True, text=True, check=True
         )
         assert json.loads(inspected.stdout) == [], (service, inspected.stdout)
+
+
+SCHEDULED_FLOW = "/app/scheduled_flow.json"
+
+
+def _scheduled_flow() -> dict:
+    """Manual input 1 → group_by 2, the rows counted by region, saved ``remote`` as the designer saves a flow."""
+    columns = [{"name": "region", "data_type": "String"}]
+    aggregations = [{"old_name": "region", "agg": "groupby"}, {"old_name": "region", "agg": "count", "new_name": "n"}]
+    return {
+        "flowfile_version": "0.23.0",
+        "flowfile_id": 7406,
+        "flowfile_name": "scheduled",
+        "flowfile_settings": {"execution_mode": "Development", "execution_location": "remote"},
+        "nodes": [
+            {
+                "id": 1,
+                "type": "manual_input",
+                "is_start_node": True,
+                "outputs": [2],
+                "setting_input": {"raw_data_format": {"columns": columns, "data": [["north", "south", "north"]]}},
+            },
+            {
+                "id": 2,
+                "type": "group_by",
+                "input_ids": [1],
+                "setting_input": {"groupby_input": {"agg_cols": aggregations}},
+            },
+        ],
+    }
+
+
+def _worker_requests() -> list[str]:
+    """Every request the worker served so far, from its access log, but the health probes on ``/docs``: each of its
+    jobs starts with one."""
+    log = _compose("logs", "--no-color", "flowfile-worker").stdout
+    served = [line for line in log.splitlines() if ' HTTP/1.1"' in line or '"WebSocket ' in line]
+    return [line for line in served if '"GET /docs ' not in line]
+
+
+def _run_schedule_now(stack: Stack, schedule_id: int, timeout: float = 300) -> dict:
+    """Trigger the schedule as its tick would, a ``flowfile run flow`` child of core, and poll its run until it ends."""
+    response = stack.http.post(f"{stack.core}/catalog/schedules/{schedule_id}/run-now")
+    assert response.status_code == 200, response.text
+    run_id = response.json()["id"]
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        run = stack.http.get(f"{stack.core}/catalog/runs/{run_id}").json()
+        if run["ended_at"] is not None:
+            run["log"] = stack.http.get(f"{stack.core}/catalog/runs/{run_id}/log").json().get("log")
+            return run
+        time.sleep(1)
+    pytest.fail(f"run {run_id} did not finish within {timeout:.0f}s:\n{_logs()}")
+
+
+def test_a_scheduled_run_computes_in_core_s_container_and_leaves_the_worker_idle(stack):
+    _copy_to_core(_scheduled_flow(), SCHEDULED_FLOW)
+    response = stack.http.post(f"{stack.core}/catalog/flows", json={"name": "scheduled", "flow_path": SCHEDULED_FLOW})
+    assert response.status_code == 201, response.text
+    schedule = {"registration_id": response.json()["id"], "schedule_type": "interval", "interval_seconds": 3600}
+    response = stack.http.post(f"{stack.core}/catalog/schedules", json=schedule)
+    assert response.status_code == 201, response.text
+    served_before = _worker_requests()
+
+    run = _run_schedule_now(stack, response.json()["id"])
+
+    assert run["success"] is True and run["nodes_completed"] == 2, f"{run}\n{_logs()}"
+    node_results = json.loads(run["node_results_json"])
+    assert [result["success"] for result in node_results] == [True, True], node_results
+    assert _worker_requests() == served_before
 
 
 EXCHANGE_BUCKET = "flowfile-exchange"
@@ -455,10 +532,23 @@ def _core_with_protocol(stack: Stack, flag: str) -> Stack:
     return Stack(core=core, minio=stack.minio, http=_sign_in(core))
 
 
-def _listed(minio, prefix: str) -> list[str]:
-    return [
-        listed["Key"] for listed in minio.list_objects_v2(Bucket=EXCHANGE_BUCKET, Prefix=prefix).get("Contents", [])
-    ]
+REFUSED = (
+    'cannot run on backend "local": this core serves; compute runs on its worker. '
+    "To run it elsewhere, set its Compute backend under General Settings."
+)
+
+
+def _assert_refused_before_any_node(stack: Stack, run: dict, flow_id: int, refused: list[int]) -> None:
+    """The run failed with exactly the nodes in ``refused`` refused on ``local`` for the serving core's reason, started
+    no node, and left nothing under its flow in the exchange store or in the worker's cache."""
+    errors = {result["node_id"]: result["error"] for result in run["node_step_result"]}
+    assert errors == dict.fromkeys(refused, REFUSED), f"{errors}\n{_logs()}"
+    assert all(result["compute_error"] == "Refusal" for result in run["node_step_result"]), run["node_step_result"]
+    assert run["success"] is False and run["nodes_completed"] == 0
+    versions = stack.minio.list_object_versions(Bucket=EXCHANGE_BUCKET, Prefix=f"runs/{flow_id}/")
+    assert "Versions" not in versions and "DeleteMarkers" not in versions, versions
+    worker_cache = f"/app/internal_storage/cache/{flow_id}/"
+    assert [path for path in _cache_files("flowfile-worker") if path.startswith(worker_cache)] == []
 
 
 COMPLEX_FLOW = Path(__file__).with_name("complex_flow.json")
@@ -474,35 +564,6 @@ ALTERNATING = {
     **dict.fromkeys((1, 2, 4, 5, 12, 14, 17, 26, 27, 30, 41, 72, 73, 74, 9999), "worker"),
     **dict.fromkeys((3, 11, 13, 15, 16, 28, 29, 31, 32, 42, 43, 51, 52, 61, 71), "local"),
 }
-ALTERNATING_BOUNDARIES = [
-    [1, 11],
-    [1, 43],
-    [2, 16],
-    [3, 30],
-    [4, 43],
-    [5, 31],
-    [11, 12],
-    [12, 13],
-    [13, 14],
-    [14, 15],
-    [15, 41],
-    [16, 17],
-    [16, 26],
-    [16, 41],
-    [17, 42],
-    [26, 32],
-    [26, 61],
-    [27, 28],
-    [28, 9999],
-    [30, 42],
-    [31, 73],
-    [41, 51],
-    [41, 52],
-    [41, 71],
-    [43, 72],
-    [61, 74],
-    [9999, 29],
-]
 
 
 @pytest.fixture(scope="module")
@@ -551,7 +612,7 @@ def test_the_elaborate_flow_runs_on_a_worker_that_shares_no_volume_with_core(sta
     assert [path for path in _cache_files("flowfile-core") if path.startswith(core_cache)] == []
 
 
-def test_the_elaborate_flow_with_its_nodes_alternating_between_worker_and_core_crosses_the_exchange_store(
+def test_the_elaborate_flow_with_its_nodes_alternating_between_worker_and_local_is_refused_before_any_node_runs(
     stack, exchange, complex_outputs
 ):
     stack = _core_with_protocol(stack, "1")
@@ -560,33 +621,12 @@ def test_the_elaborate_flow_with_its_nodes_alternating_between_worker_and_core_c
 
     run = _run(stack, flow_id)
 
-    failures = {result["node_id"]: result["error"] for result in run["node_step_result"] if not result["success"]}
-    assert run["success"] is True and not failures, f"{failures}\n{_logs()}"
-    assert run["nodes_completed"] == 30
-    assert _written(stack, flow_id) == COMPLEX_ROWS
-    assert sorted(run["boundaries"]) == ALTERNATING_BOUNDARIES
-    prefix = f"runs/{flow_id}/"
-    _wait_until(lambda: _listed(stack.minio, prefix) == [], f"the run's prefix {prefix} emptied", timeout=60)
-    versions = stack.minio.list_object_versions(Bucket=EXCHANGE_BUCKET, Prefix=prefix)
-    written = sorted(version["Key"] for version in versions.get("Versions", []))
-    run_ids = sorted({key.split("/")[2] for key in written})
-    assert len(run_ids) == 1 and re.fullmatch(r"[0-9a-f]{32}", run_ids[0]), written
-    crossings = sorted(
-        f"{prefix}{run_ids[0]}/{source}-output-0-{target}.parquet" for source, target in ALTERNATING_BOUNDARIES
-    )
-    assert written == crossings
-    removed = sorted(marker["Key"] for marker in versions.get("DeleteMarkers", []) if marker["IsLatest"])
-    assert removed == written and not any(version["IsLatest"] for version in versions["Versions"]), versions
-    worker_cache = f"/app/internal_storage/cache/{flow_id}/"
-    worker_files = [path for path in _cache_files("flowfile-worker") if path.startswith(worker_cache)]
-    assert any(path.endswith(".arrow") for path in worker_files), worker_files
-    core_cache = f"/app/internal_storage/cache/local/{flow_id}/"
-    core_files = [path for path in _cache_files("flowfile-core") if path.startswith(core_cache)]
-    assert any(path.endswith(".arrow") for path in core_files), core_files
+    _assert_refused_before_any_node(stack, run, flow_id, [node for node, on in ALTERNATING.items() if on == "local"])
+    assert stack.minio.list_objects_v2(Bucket=COMPLEX_BUCKET, Prefix=f"{flow_id}/")["KeyCount"] == 0
 
 
 @pytest.mark.parametrize("protocol", ["1", "0"], ids=["flag-on", "flag-off"])
-def test_a_flow_with_one_node_on_the_worker_and_the_rest_in_core_crosses_through_the_exchange_store(
+def test_a_flow_moved_onto_local_with_one_node_on_the_worker_runs_on_the_worker_unless_the_flag_is_off(
     stack, exchange, protocol
 ):
     stack = _core_with_protocol(stack, protocol)
@@ -595,6 +635,8 @@ def test_a_flow_with_one_node_on_the_worker_and_the_rest_in_core_crosses_through
     settings = stack.http.get(f"{stack.core}/flow_settings", params={"flow_id": flow_id}).json()
     response = stack.http.post(f"{stack.core}/flow_settings", json={**settings, "execution_location": "local"})
     assert response.status_code == 200, response.text
+    saved = stack.http.get(f"{stack.core}/flow_settings", params={"flow_id": flow_id}).json()
+    assert saved["execution_location"] == ("auto" if protocol == "1" else "local")
 
     run = _run(stack, flow_id)
 
@@ -605,26 +647,12 @@ def test_a_flow_with_one_node_on_the_worker_and_the_rest_in_core_crosses_through
     assert len(filtered["data"]) == 4, filtered
     grouped = stack.http.get(f"{stack.core}/node/data", params={"flow_id": flow_id, "node_id": 3}).json()
     assert sorted((row["region"], row["total"]) for row in grouped["data"]) == TOTALS, grouped
-    prefix = f"runs/{flow_id}/"
-    worker_cache = f"/app/internal_storage/cache/{flow_id}/"
-    worker_files = [path for path in _cache_files("flowfile-worker") if path.startswith(worker_cache)]
-    if protocol == "0":
-        assert run["boundaries"] == []
-        versions = stack.minio.list_object_versions(Bucket=EXCHANGE_BUCKET, Prefix=prefix)
-        assert "Versions" not in versions and "DeleteMarkers" not in versions, versions
-        assert worker_files == []
-        return
-    assert run["boundaries"] == [[1, 2], [2, 3]]
-    _wait_until(lambda: _listed(stack.minio, prefix) == [], f"the run's prefix {prefix} emptied", timeout=60)
-    versions = stack.minio.list_object_versions(Bucket=EXCHANGE_BUCKET, Prefix=prefix)
-    written = sorted(version["Key"] for version in versions.get("Versions", []))
-    run_ids = sorted({key.split("/")[2] for key in written})
-    assert len(run_ids) == 1 and re.fullmatch(r"[0-9a-f]{32}", run_ids[0]), written
-    run_id = run_ids[0]
-    assert written == [f"{prefix}{run_id}/1-output-0-2.parquet", f"{prefix}{run_id}/2-output-0-3.parquet"]
-    removed = sorted(marker["Key"] for marker in versions.get("DeleteMarkers", []) if marker["IsLatest"])
-    assert removed == written and not any(version["IsLatest"] for version in versions["Versions"]), versions
-    assert any(path.endswith(".arrow") for path in worker_files), worker_files
-    core_cache = f"/app/internal_storage/cache/local/{flow_id}/"
-    core_files = [path for path in _cache_files("flowfile-core") if path.startswith(core_cache)]
-    assert any(path.endswith(".arrow") for path in core_files), core_files
+    assert run["boundaries"] == []
+    versions = stack.minio.list_object_versions(Bucket=EXCHANGE_BUCKET, Prefix=f"runs/{flow_id}/")
+    assert "Versions" not in versions and "DeleteMarkers" not in versions, versions
+    if protocol == "1":
+        core_cache = f"/app/internal_storage/cache/local/{flow_id}/"
+        assert [path for path in _cache_files("flowfile-core") if path.startswith(core_cache)] == []
+    else:
+        worker_cache = f"/app/internal_storage/cache/{flow_id}/"
+        assert [path for path in _cache_files("flowfile-worker") if path.startswith(worker_cache)] == []

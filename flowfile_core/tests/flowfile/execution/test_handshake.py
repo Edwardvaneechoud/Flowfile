@@ -21,7 +21,7 @@ import requests
 from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import worker as worker_module
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, PlanRejected, VersionMismatch
 from flowfile_core.flowfile.execution.placement import PYTHON_FUNCTIONS, Refusal, SingleBackendPolicy, place
@@ -34,6 +34,7 @@ from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings
 from shared.compute_protocol import PROTOCOL_VERSION, local_capabilities
+from tests.flowfile.execution.test_placement import FLOW_REMEDY
 
 HINT = ". Is the compute backend running? Start it, or check the Backends page."
 TEAM_HINT = '. Is backend "worker:team" running? Start it, or check the Backends page.'
@@ -177,9 +178,9 @@ def team_on_other_polars(monkeypatch) -> tuple[WorkerBackend, list[int]]:
     return backend, asked
 
 
-class CoreAsTeam(LocalBackend):
-    """Core's own process as ``worker:team``, reporting core's capabilities with ``changes``, whose probe job
-    ``failing`` fails as a plan the compute cannot load."""
+class CoreAsTeam(EmbeddedWorkerBackend):
+    """The worker embedded in this process as ``worker:team``, reporting this process's capabilities with
+    ``changes``, whose probe job ``failing`` fails as a plan the compute cannot load."""
 
     id = TEAM
 
@@ -197,7 +198,7 @@ class CoreAsTeam(LocalBackend):
         return super().submit(plan, inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
 
 
-def register_team(backend: LocalBackend) -> LocalBackend:
+def register_team(backend: EmbeddedWorkerBackend) -> EmbeddedWorkerBackend:
     registry.register_backend(TEAM, lambda: backend)
     return backend
 
@@ -303,7 +304,7 @@ def test_two_workers_are_each_checked_on_first_use_and_the_mismatched_one_is_sen
     mismatch = f'Backend "{TEAM}" does not match core (polars_version: core {pl.__version__}, backend 0.0.1)'
     assert refused.success is False
     # with the flag on placement refuses the node, so no node starts; with it off the node's gate raises
-    assert result.error == (f'cannot run on backend "{TEAM}": {mismatch}' if flag else mismatch)
+    assert result.error == (f'cannot run on backend "{TEAM}": {mismatch}. {FLOW_REMEDY}' if flag else mismatch)
     assert result.compute_error == ("Refusal" if flag else "VersionMismatch")
     assert team_asked == [1]
     assert probes == []
@@ -428,7 +429,8 @@ def test_a_formula_is_refused_where_core_s_python_functions_do_not_run_and_a_sel
     assert node_id == 2
     assert error == (
         f'cannot run on backend "{TEAM}": its plan may carry a Python function, which core\'s Python functions do not '
-        f"run on this backend (Python: core {python}, backend {python}): the python probe could not be loaded"
+        f"run on this backend (Python: core {python}, backend {python}): the python probe could not be loaded. "
+        f"{FLOW_REMEDY}"
     )
 
     graph.delete_node(2)
@@ -484,7 +486,7 @@ def test_a_backend_of_any_kind_refused_whole_refuses_its_nodes_at_placement(prot
     mismatch = f'Backend "{TEAM}" does not match core (polars_version: core {pl.__version__}, backend 0.0.1)'
     assert refused.success is False
     assert sorted((result.node_id, result.error) for result in refused.node_step_result) == [
-        (node_id, f'cannot run on backend "{TEAM}": {mismatch}') for node_id in (1, 2, 3)
+        (node_id, f'cannot run on backend "{TEAM}": {mismatch}. {FLOW_REMEDY}') for node_id in (1, 2, 3)
     ]
     assert submitted == []
     assert handshake.last_verdict(TEAM).error == mismatch
@@ -612,7 +614,9 @@ def test_a_node_on_an_earlier_release_or_on_no_worker_fails_with_the_typed_error
     refused_at_placement = flag and error is VersionMismatch
     assert run_info.success is False
     assert row(run_info, 1).error == (
-        f'cannot run on backend "{registry.WORKER_BACKEND_ID}": {message}' if refused_at_placement else message
+        f'cannot run on backend "{registry.WORKER_BACKEND_ID}": {message}. {FLOW_REMEDY}'
+        if refused_at_placement
+        else message
     )
     assert row(run_info, 1).compute_error == ("Refusal" if refused_at_placement else error.__name__)
 

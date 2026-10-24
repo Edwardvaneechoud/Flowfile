@@ -16,9 +16,9 @@ from pydantic import SecretStr
 from flowfile_core.configs import settings
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution.backends import worker as worker_module
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
-from flowfile_core.flowfile.execution.errors import OperationUnsupported, TaskFailed
+from flowfile_core.flowfile.execution.errors import TaskFailed
 from flowfile_core.flowfile.execution.payloads import (
     PAYLOAD_KEY,
     DatabaseReadPayload,
@@ -35,7 +35,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
 from flowfile_core.schemas import input_schema
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, encrypt_secret
 from shared.google_analytics.models import GoogleAnalyticsReadSettings
-from shared.kafka.models import KafkaReadResult, KafkaReadSettings
+from shared.kafka.models import KafkaReadSettings
 from shared.path_utils import CloudPathNotSupportedError, DirectoryScanUnsupportedError
 from shared.rest_api.models import RestApiReadSettings
 
@@ -47,7 +47,7 @@ def task_routes(monkeypatch):
 
 
 def make(backend_type: type):
-    """An instance of ``backend_type``: the worker backend on the session worker, core's own backend as it is."""
+    """An instance of ``backend_type``: the worker backend on the session worker, the embedded worker as it is."""
     return backend_type(url=WORKER_URL) if backend_type is WorkerBackend else backend_type()
 
 
@@ -378,7 +378,7 @@ def test_a_cancel_reaches_a_worker_read_by_its_job_id(fetchers, monkeypatch):
     assert [str(e) for e in raised] == ["Task cancelled"]
 
 
-def test_the_local_backend_reads_a_database_and_holds_the_rows_as_a_plan(tmp_path):
+def test_the_embedded_worker_reads_a_database_and_holds_the_rows(tmp_path):
     path = tmp_path / "shop.db"
     with sqlite3.connect(path) as db:
         db.execute("CREATE TABLE movies (id INTEGER, title TEXT)")
@@ -396,77 +396,53 @@ def test_the_local_backend_reads_a_database_and_holds_the_rows_as_a_plan(tmp_pat
         encrypted_password=None,
         cancel_check=lambda: False,
     )
-    backend = LocalBackend()
+    backend = EmbeddedWorkerBackend()
 
     ref = backend.run_op(OperationKind.database_read, op_payload(read)).refs["result"]
-    plan = backend.plan_for(ref)
-    backend.release(ref)
-
-    assert ref.state == "deferred"
-    assert ref.row_count == 2
+    try:
+        assert (ref.state, ref.row_count) == ("materialised", 2)
+        assert backend.plan_for(ref).collect().to_dicts() == [{"id": 1, "title": "a"}, {"id": 2, "title": "b"}]
+    finally:
+        backend.release(ref)
     assert not backend.exists(ref)
-    assert plan.collect().to_dicts() == [{"id": 1, "title": "a"}, {"id": 2, "title": "b"}]
 
 
-@pytest.mark.parametrize("consumed", [3, 0])
-def test_the_local_backend_consumes_kafka_through_the_payloads_hook(consumed):
-    calls = []
-
-    def read_kafka_source(settings, **kwargs):
-        calls.append((settings, kwargs))
-        return ROWS.lazy(), KafkaReadResult(new_offsets={0: 9}, messages_consumed=consumed, partitions_read=1)
-
-    read = kafka_payload(read_kafka_source)
-    backend = LocalBackend()
-
-    result = backend.run_op(OperationKind.kafka_read, op_payload(read))
-
-    [(settings, kwargs)] = calls
-    assert settings is read.settings
-    assert kwargs["commit"] is False
-    assert kwargs["spill_path"].endswith(".arrow")
-    assert kwargs["decrypt_fn"](read.settings.sasl_password) == "kafka-pass"
-    assert result.metadata == ({"offsets": {0: 9}} if consumed else {})
-    assert backend.plan_for(result.refs["result"]).collect().equals(ROWS)
-
-
-def test_the_local_backend_fetches_rest_with_the_secret_decrypted_here(monkeypatch):
+def test_the_embedded_worker_fetches_rest_with_the_secret_decrypted_by_the_workers_reader(monkeypatch):
     captured = {}
 
     def fetch(settings, *, secret=None):
         captured.update(settings=settings, secret=secret)
         return ROWS
 
-    monkeypatch.setattr("shared.rest_api.fetch.fetch_rest_api", fetch)
+    monkeypatch.setattr("flowfile_worker.external_sources.rest_api_source.main.fetch_rest_api", fetch)
     read = rest_payload()
+    backend = EmbeddedWorkerBackend()
 
-    ref = LocalBackend().run_op(OperationKind.rest_api_read, op_payload(read)).refs["result"]
+    ref = backend.run_op(OperationKind.rest_api_read, op_payload(read)).refs["result"]
 
-    assert captured["secret"] == "tok"
-    assert captured["settings"].auth.bearer_token_encrypted == read.encrypted_secret
-    assert (ref.state, ref.row_count) == ("deferred", 3)
+    try:
+        assert captured["secret"] == "tok"
+        assert captured["settings"].auth.bearer_token_encrypted == read.encrypted_secret
+        assert (ref.state, ref.row_count) == ("materialised", 3)
+    finally:
+        backend.release(ref)
 
 
-def test_the_local_backend_reads_a_file(tmp_path):
+def test_the_embedded_worker_reads_a_file(tmp_path):
     path = tmp_path / "people.csv"
     ROWS.write_csv(path)
-    backend = LocalBackend()
+    backend = EmbeddedWorkerBackend()
 
     ref = backend.run_op(OperationKind.file_read, op_payload(file_payload(path))).refs["result"]
 
-    assert ref.state == "deferred"
-    assert backend.plan_for(ref).collect().equals(ROWS)
+    try:
+        assert (ref.state, ref.row_count) == ("materialised", 3)
+        assert backend.plan_for(ref).collect().equals(ROWS)
+    finally:
+        backend.release(ref)
 
 
-def test_the_local_backend_has_no_google_analytics_reader():
-    with pytest.raises(OperationUnsupported, match="google_analytics_read"):
-        LocalBackend().run_op(OperationKind.google_analytics_read, op_payload(google_analytics_payload()))
-
-
-BACKEND_KINDS = [
-    *[(WorkerBackend, kind) for kind in READ_PAYLOADS],
-    *[(LocalBackend, kind) for kind in READ_PAYLOADS if kind is not OperationKind.google_analytics_read],
-]
+BACKEND_KINDS = [(backend, kind) for backend in (WorkerBackend, EmbeddedWorkerBackend) for kind in READ_PAYLOADS]
 
 
 @pytest.mark.parametrize(

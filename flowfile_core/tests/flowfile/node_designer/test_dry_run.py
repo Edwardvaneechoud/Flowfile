@@ -17,6 +17,8 @@ import requests
 from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import worker as worker_module
+from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
+from flowfile_core.flowfile.execution.protocol import JobHandle, ResultRef, SubmitResult
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.node_designer.state import (
     DesignerState,
@@ -502,7 +504,8 @@ def test_kernel_output_read_rejects_path_traversal(tmp_path):
     pl.DataFrame({"secret": [42]}).write_parquet(victim_dir / "main.parquet")
 
     traversal = "../../victim/outputs/main"
-    outputs, err = dr._read_kernel_output_previews(str(output_dir), ["main", traversal], object(), 100)
+    with use_context(ExecutionContext(backend_id=registry.LOCAL_BACKEND_ID, parallelism=1, preview_rows=None)):
+        outputs, err = dr._read_kernel_output_previews(str(output_dir), ["main", traversal], object(), 100)
 
     assert err is None
     by_name = {o.name: o for o in outputs}
@@ -511,6 +514,61 @@ def test_kernel_output_read_rejects_path_traversal(tmp_path):
     assert by_name[traversal].rows == []
     assert by_name[traversal].columns == []
     assert by_name[traversal].row_count == 0
+
+
+class _AnsweringBackend:
+    """Answers bounded reads from a frame of its own and records what core asked of it."""
+
+    id = "answering"
+
+    def __init__(self, frame: pl.DataFrame):
+        self.frame = frame
+        self.calls: list[str] = []
+
+    def submit(self, plan, inputs, hints, result_id, *, flow_id, node_id):
+        self.calls.append("submit")
+        ref = ResultRef(self.id, result_id, [], None, "deferred", result_id.encode())
+        return SubmitResult(ref=ref, sample=None, handle=JobHandle(self.id, result_id))
+
+    def sample(self, ref, n):
+        self.calls.append(f"sample {n}")
+        buffer = io.BytesIO()
+        self.frame.head(n).write_ipc_stream(buffer)
+        return buffer.getvalue()
+
+    def count(self, ref):
+        self.calls.append("count")
+        return self.frame.height
+
+    def release(self, ref):
+        self.calls.append("release")
+
+
+def _no_read_in_core(*args, **kwargs):
+    raise AssertionError("core read the kernel's output itself")
+
+
+@pytest.mark.parametrize("flag", [True, False], ids=["flag_on", "flag_off"])
+def test_kernel_outputs_are_sampled_and_counted_by_the_backend_and_never_read_in_core(tmp_path, monkeypatch, flag):
+    """The rows, the columns and the count are the backend's answers; core collects nothing of the file."""
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    output_dir = tmp_path / "outputs"
+    output_dir.mkdir()
+    pl.DataFrame({"a": [1, 2, 3]}).write_parquet(output_dir / "main.parquet")
+    backend = _AnsweringBackend(pl.DataFrame({"a": [7, 8, 9], "b": ["x", "y", "z"]}))
+    monkeypatch.setattr(dr, "current_context", lambda: SimpleNamespace(backend=backend))
+    monkeypatch.setattr(pl.LazyFrame, "collect", _no_read_in_core)
+    monkeypatch.setattr(pl.LazyFrame, "collect_schema", _no_read_in_core)
+
+    outputs, err = dr._read_kernel_output_previews(str(output_dir), ["main"], object(), 2)
+
+    assert err is None
+    (main,) = outputs
+    assert [(c.name, c.data_type) for c in main.columns] == [("a", "Int64"), ("b", "String")]
+    assert main.rows == [[7, "x"], [8, "y"]]
+    assert main.row_count == 3
+    assert main.truncated is True
+    assert backend.calls == ["submit", "sample 2", "release", "submit", "count", "release"]
 
 
 def test_dry_run_kernel_request_disables_log_callback():

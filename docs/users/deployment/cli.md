@@ -22,7 +22,7 @@ Installing Flowfile with `pip install flowfile` puts a `flowfile` command on you
 flowfile run ui
 ```
 
-This launches the core API with the worker co-hosted on the same port and opens the web UI in your browser at `http://127.0.0.1:63578/ui`.
+This starts the core API with the worker embedded in the same process, its jobs running in a pool of child processes, and opens the web UI in your browser at `http://127.0.0.1:63578/ui`.
 
 Flags:
 
@@ -43,15 +43,15 @@ Accepted file formats are `.yaml`, `.yml`, and `.json`. (The legacy `.flowfile` 
 
 What a headless run does:
 
-- **Runs in-process by default.** The flow computes in the command's own process, so no worker service needs to be running, unless `--backend <id>` or the flow's saved **Execution location**, when it is a backend id such as `worker:<name>`, names a backend; the run then uses that backend. A flow saved as **Auto** runs in-process.
+- **Runs in-process by default.** The flow computes on a worker embedded in the command's own process, so no worker service needs to be running, unless `--backend <id>` or the flow's saved **Execution location**, when it is a backend id such as `worker:<name>`, names a backend; the run then uses that backend, and fails if it cannot be reached. A flow saved as **Auto** runs in-process.
 - **Skips UI-only nodes.** `explore_data` nodes are dropped before the run (they require the interactive UI); the command reports how many it skipped.
-- **Prints progress.** It shows the flow name, node count, the node tree, and a per-node error summary if anything fails.
+- **Prints progress.** It shows the flow name, node count, the node tree, and a per-node error summary if anything fails. The log lines the embedded worker writes for each node go to standard error, which a scheduled run writes to its run log.
 
 Flags:
 
 - `--param KEY=VALUE` — override a flow parameter. Repeat the flag for several overrides. An override that names a parameter the flow doesn't have is added as a new one.
 - `--run-id N` — report the run's result back to a pre-created run record (used by the scheduler). You normally don't set this by hand.
-- `--backend ID` — the compute backend the run uses: `local` (the default), `worker` or `worker:<name>`. It takes precedence over the backend id saved in the flow.
+- `--backend ID` — the compute backend the run uses: `local` (the default, the worker embedded in the command's process), `worker` or `worker:<name>`. It takes precedence over the backend id saved in the flow.
 
 ```bash
 # Override two parameters
@@ -80,7 +80,7 @@ flowfile run core --host 0.0.0.0 --port 63578
 flowfile run worker                     # compute worker, default 127.0.0.1:63579
 ```
 
-When you run the UI the two are combined into one process via single-file mode (`FLOWFILE_SINGLE_FILE_MODE`), which co-hosts the worker on the core port. When you run `core` and `worker` separately, core reaches the worker at `WORKER_HOST:FLOWFILE_WORKER_PORT`.
+When you run the UI the two are combined into one process: `run ui` puts it in single-file mode, where flows compute on the worker embedded in core. That mode is `run ui`'s own; `FLOWFILE_SINGLE_FILE_MODE` set by hand for `run core` makes core compute on an embedded worker but serve none of the worker's routes. When you run `core` and `worker` separately, core reaches the worker at `WORKER_HOST:FLOWFILE_WORKER_PORT`.
 
 ## The PyInstaller / packaged path
 
@@ -90,7 +90,7 @@ The desktop app and packaged builds run a saved flow through the core module dir
 python -m flowfile_core.main --run-flow <path> --run-id <N> [--backend <id>]
 ```
 
-This runs in-process unless `--backend` or the flow's saved backend id names a backend, and drops `explore_data` nodes, exactly like `flowfile run flow`. Here `--run-id` is required — the packaged path always reports back to a run record. Prefer `flowfile run flow` for your own headless runs; this form exists for the scheduler and installed builds.
+This computes on the worker embedded in its own process unless `--backend` or the flow's saved backend id names a backend, and drops `explore_data` nodes, exactly like `flowfile run flow`. Here `--run-id` is required — the packaged path always reports back to a run record. Prefer `flowfile run flow` for your own headless runs; this form exists for the scheduler and installed builds.
 
 ## Demo catalog
 
@@ -113,7 +113,7 @@ These are the headless equivalents of the app's project controls. Opening a proj
 
 ## Scheduling
 
-To run flows on a timer rather than on demand, use the scheduler. In the desktop app and pip package it runs inside the app; for a standalone service the `flowfile_scheduler` console script polls for due runs and executes each one through the same headless path documented above. See [Schedules](../visual-editor/catalog/schedules.md) for setup, cron syntax, and the standalone-service mode.
+To run flows on a timer rather than on demand, use the scheduler. In the desktop app and pip package it runs inside the app; for a standalone service the `flowfile_scheduler` console script polls for due runs and executes each one through the same headless path documented above. Each run is a process of its own that computes on the worker embedded in it, not on the app's worker, which it uses only for a Google Analytics read: in the desktop app it runs beside that worker, and in [Docker](docker.md) inside the core container. See [Schedules](../visual-editor/catalog/schedules.md) for setup, cron syntax, and the standalone-service mode.
 
 ## Related
 

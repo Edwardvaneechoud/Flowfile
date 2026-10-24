@@ -18,12 +18,19 @@ is gone.
 ``default_backend_id`` names the default backend, the one a ``"remote"`` flow and a call without a graph use:
 the process-wide override a headless runner sets (``set_default_override``) when there is one, else
 ``FLOWFILE_COMPUTE_BACKEND`` when set, else ``"worker"`` while the ``OFFLOAD_TO_WORKER`` setting is on and
-``"local"`` when it is off.
+``"local"`` when it is off; never ``"local"`` in a process that serves.
+
+A process that serves (the desktop sidecar, the Docker image, the pip server) is marked by its entry point
+(``mark_serving``): its compute is the worker beside it, so its default backend is never the worker embedded in it,
+a run placed on ``local`` there is refused, and the ``local`` factory leaves the embedded worker's jobs to its pool.
+The pip server has no worker beside it: in single-file mode (``settings.SINGLE_FILE_MODE``, which its ``start_server``
+sets) the built-in ``worker`` is the worker embedded in this process under that id, its jobs in its pool, while a
+``worker:<name>`` row stays a ``WorkerBackend``.
 
 This module is the one place outside ``configs/settings.py`` that reads the worker settings: the offload setting
 above, and ``WORKER_URL``, the URL the built-in worker backend is made with. Every other module asks this registry,
 or the backend it holds, where compute goes and which worker it reaches (``worker_url``); ``child_env`` names the
-variables a child process needs to run on core's own backend.
+variables a child process needs to run on the worker embedded in its own process.
 """
 
 from __future__ import annotations
@@ -51,14 +58,30 @@ CONFIGURED_WORKER_PREFIX = "worker:"
 
 
 def _local_backend() -> ComputeBackend:
-    """Core's own process as a compute."""
-    from flowfile_core.flowfile.execution.backends.local import LocalBackend
+    """The worker embedded in this process.
 
-    return LocalBackend()
+    A process that does not serve (a headless run, a flow built in code, a test) computes in its own process, so the
+    factory sets the worker's in-process mode before it makes the adapter; in a process that serves
+    (``mark_serving``) it leaves the mode unset, so the embedded worker's jobs run in its pool or a child, never in the
+    serving process.
+    """
+    from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
+    from flowfile_worker import spawner
+
+    if not _serving:
+        spawner.in_process = True
+    return EmbeddedWorkerBackend()
 
 
 def _worker_backend() -> ComputeBackend:
-    """The worker at ``settings.WORKER_URL``, which ``FLOWFILE_WORKER_URL`` sets, else ``WORKER_HOST`` and the port."""
+    """The worker at ``settings.WORKER_URL``, which ``FLOWFILE_WORKER_URL`` sets, else ``WORKER_HOST`` and the port.
+
+    In single-file mode it is the worker embedded in this process, made as ``local`` is and answering to ``worker``.
+    """
+    if settings.SINGLE_FILE_MODE:
+        embedded = _local_backend()
+        embedded.id = WORKER_BACKEND_ID
+        return embedded
     from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 
     return WorkerBackend(url=settings.WORKER_URL)
@@ -97,6 +120,7 @@ _factories: dict[str, BackendFactory] = {}
 _instances: dict[str, ComputeBackend] = {}
 _entry_points_scanned = False
 _default_override: str | None = None
+_serving = False
 
 
 def register_backend(backend_id: str, factory: BackendFactory) -> None:
@@ -148,15 +172,17 @@ def default_backend_id() -> str:
     """The id of the default backend, the one a ``"remote"`` flow and a call without a graph use.
 
     The override ``set_default_override`` set, when there is one; else ``FLOWFILE_COMPUTE_BACKEND`` when set to a
-    non-empty value; else ``"worker"`` while ``OFFLOAD_TO_WORKER`` is on and ``"local"`` when it is off.
+    non-empty value; else ``"worker"`` while ``OFFLOAD_TO_WORKER`` is on and ``"local"`` when it is off. In a process
+    that serves (``mark_serving``) it is ``"worker"`` wherever that order gives ``"local"``.
     """
-    override = _default_override
-    if override is not None:
-        return override
-    configured = os.environ.get(BACKEND_ENV_VAR, "").strip()
-    if configured:
-        return configured
-    return WORKER_BACKEND_ID if settings.OFFLOAD_TO_WORKER else LOCAL_BACKEND_ID
+    backend_id = _default_override
+    if backend_id is None:
+        backend_id = os.environ.get(BACKEND_ENV_VAR, "").strip() or (
+            WORKER_BACKEND_ID if settings.OFFLOAD_TO_WORKER else LOCAL_BACKEND_ID
+        )
+    if _serving and backend_id == LOCAL_BACKEND_ID:
+        return WORKER_BACKEND_ID
+    return backend_id
 
 
 def default_backend() -> ComputeBackend:
@@ -167,7 +193,8 @@ def default_backend() -> ComputeBackend:
 def set_default_override(backend_id: str | None) -> str | None:
     """Make ``backend_id`` the default backend of this process, ahead of ``FLOWFILE_COMPUTE_BACKEND`` and the flag.
 
-    The headless flow runners set it to core's own backend for the run they make. ``None`` removes the override, so
+    The headless flow runners set it to the worker embedded in their process for the run they make. ``None`` removes
+    the override, so
     the default follows the environment variable and the flag again. Returns the override this call replaced
     (``None`` when there was none); passing it back here undoes the call.
     """
@@ -182,8 +209,24 @@ def default_override() -> str | None:
     return _default_override
 
 
+def mark_serving() -> None:
+    """Mark this process as one that serves: the desktop sidecar, the Docker image, the pip server.
+
+    Its entry point calls it before the server starts. From then on the default backend is never ``"local"``, a run
+    placed on ``local`` is refused (``FlowGraph._place_run``), and the ``local`` factory leaves the embedded worker's
+    jobs to its pool. Nothing unmarks a process.
+    """
+    global _serving
+    _serving = True
+
+
+def serving() -> bool:
+    """Whether this process serves (``mark_serving``)."""
+    return _serving
+
+
 def child_env() -> dict[str, str]:
-    """The environment variables a child process needs to run on core's own backend.
+    """The environment variables a child process needs to run on the worker embedded in its own process.
 
     ``FLOWFILE_COMPUTE_BACKEND`` names it; the legacy ``FLOWFILE_OFFLOAD_TO_WORKER=0`` says the same to a release
     that only knows that flag.
@@ -192,7 +235,13 @@ def child_env() -> dict[str, str]:
 
 
 def worker_url() -> str:
-    """The base URL of the worker the registry's worker backend runs on, for a caller that sends work there itself."""
+    """The base URL of the worker the registry's worker backend runs on, for a caller that sends work there itself.
+
+    In single-file mode that worker is embedded in this process and the app mounts its routes at
+    ``settings.WORKER_URL``, which ``start_server`` sets; no backend is made for the answer.
+    """
+    if settings.SINGLE_FILE_MODE:
+        return settings.WORKER_URL
     return cast("WorkerBackend", backend(WORKER_BACKEND_ID)).url
 
 

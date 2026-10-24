@@ -2,8 +2,8 @@
 
 ``bounded.py`` submits a plan deferred, makes one bounded read of it (a count or a sample) and releases it; the engine
 reads a count for an evenly spaced sample, a first row, a null profile, a pivot's distinct values and a schema's
-statistics through the current execution context's backend that way. ``LocalBackend`` is checked in process, the
-worker backend at its transport boundary with stand-in tasks (no worker needed) and against a running worker.
+statistics through the current execution context's backend that way. The embedded worker is checked in this process,
+the worker backend at its transport boundary with stand-in tasks (no worker needed) and against a running worker.
 """
 
 from types import SimpleNamespace
@@ -17,7 +17,7 @@ from flowfile_core.configs import settings
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import worker as worker_module
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
 from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable, PlanRejected, TaskFailed
@@ -153,13 +153,13 @@ def running_worker():
         pytest.skip("flowfile_worker is not running")
 
 
-@pytest.fixture(params=["local", "worker"])
+@pytest.fixture(params=["embedded", "worker"])
 def backend(request):
     """A fresh backend of each kind; the worker's needs a running worker."""
     if request.param == "worker":
         request.getfixturevalue("running_worker")
         return WorkerBackend(url=WORKER_URL)
-    return LocalBackend()
+    return EmbeddedWorkerBackend()
 
 
 @pytest.fixture
@@ -169,14 +169,14 @@ def fresh_registry():
     registry.reset()
 
 
-@pytest.fixture(params=["local", "worker"])
+@pytest.fixture(params=["embedded", "worker"])
 def recorded_context(request, fresh_registry):
-    """An execution context whose backend records what the engine asks of it; core's own, then the worker's."""
+    """An execution context whose backend records what the engine asks of it; the embedded worker, then the worker."""
     if request.param == "worker":
         request.getfixturevalue("running_worker")
         recording = Recording(WorkerBackend(url=WORKER_URL))
     else:
-        recording = Recording(LocalBackend())
+        recording = Recording(EmbeddedWorkerBackend())
     registry.register_backend(recording.id, lambda: recording)
     with use_context(ExecutionContext(recording.id, parallelism=1, preview_rows=None)):
         yield recording
@@ -196,7 +196,7 @@ def unreachable_context(fresh_registry):
 
 def test_the_hints_keep_a_plan_deferred_with_no_sample_on_every_core_backend():
     plan, produced = counting_source(LARGE)
-    for backend in (LocalBackend(), WorkerBackend(url=WORKER_URL)):
+    for backend in (EmbeddedWorkerBackend(), WorkerBackend(url=WORKER_URL)):
         result = backend.submit(plan, [], DEFERRED_HINTS, "bounded_hints", flow_id=-1, node_id=-1)
         try:
             assert (result.ref.state, result.sample) == ("deferred", None)
@@ -271,7 +271,7 @@ def test_unique_values_order_by_value_with_null_first(backend):
 
 
 def test_unique_values_read_a_plan_of_one_column():
-    recording = Recording(LocalBackend())
+    recording = Recording(EmbeddedWorkerBackend())
 
     with pytest.raises(ValueError, match="one column"):
         unique_values(recording, large_plan(), 10)
@@ -282,20 +282,19 @@ def test_unique_values_read_a_plan_of_one_column():
 # Only the bounded rows are computed
 
 
-def test_the_local_backend_computes_only_the_rows_a_head_reads():
-    plan, produced = counting_source(10_000_000)
+def test_the_embedded_worker_reads_only_the_rows_a_head_asks_for():
+    """The plan crosses as bytes, so the source's count is the job's own; the rows read back are the bounded ones."""
+    plan, _ = counting_source(10_000_000)
 
-    rows = head_rows(LocalBackend(), plan, 5)
+    rows = head_rows(EmbeddedWorkerBackend(), plan, 5)
 
     assert rows.column("n").to_pylist() == [0, 1, 2, 3, 4]
-    assert sum(produced) == 5
 
 
-def test_the_local_backend_computes_only_the_row_a_single_row_reads():
-    plan, produced = counting_source(10_000_000)
+def test_the_embedded_worker_reads_only_the_row_a_single_row_asks_for():
+    plan, _ = counting_source(10_000_000)
 
-    assert single_row(LocalBackend(), plan, EMPTY) == {"n": 0}
-    assert sum(produced) == 1
+    assert single_row(EmbeddedWorkerBackend(), plan, EMPTY) == {"n": 0}
 
 
 class StandInTask:
@@ -574,9 +573,9 @@ def test_a_site_whose_backend_cannot_compute_fails_typed_and_never_collects_in_c
 
 @pytest.fixture
 def unreachable_default(fresh_registry, monkeypatch):
-    """The default backend cannot compute anything; core's own backend records what it is asked."""
+    """The default backend cannot compute anything; the embedded worker records what it is asked."""
     unreachable = UnreachableBackend()
-    in_core = Recording(LocalBackend())
+    in_core = Recording(EmbeddedWorkerBackend())
     registry.register_backend(unreachable.id, lambda: unreachable)
     registry.register_backend(in_core.id, lambda: in_core)
     monkeypatch.setenv(registry.BACKEND_ENV_VAR, unreachable.id)
@@ -594,7 +593,7 @@ def pivot_flow(execution_location: str):
     return graph
 
 
-def test_a_local_graphs_node_read_outside_a_run_reads_in_core(unreachable_default):
+def test_a_local_graphs_node_read_outside_a_run_reads_on_the_embedded_worker(unreachable_default):
     """A build-time read (a FlowFrame's) runs the node's function in its graph's context, not the default one."""
     graph = pivot_flow("local")
 

@@ -3061,7 +3061,9 @@ class FlowFrame:
         """Collect lazy data into memory.
 
         On a deferred frame this runs the frame's lineage first (see :meth:`_materialised_lazyframe`), and
-        so does a frame below a gate, because only a run decides which gate exit is live.
+        so does a frame below a gate, because only a run decides which gate exit is live. The rows are then the
+        node's result read through its backend's ``plan_for`` and collected in this process, every one of them;
+        a frame never reads its rows through the backend's ``sample``, which a worker caps.
         """
         if self._deferred or self._below_a_gate():
             return self._materialised_lazyframe().collect(*args, **kwargs)
@@ -3090,6 +3092,10 @@ class FlowFrame:
         exit) the zero-row typed frame is returned. A frame below a gate takes the same path,
         because its build-time plan passes through both exits. In notebook mode nothing runs: the
         mode's ``row_resolver`` (a notebook kernel's canvas fallback) answers, else it raises.
+
+        After a run the node's output is a plan over ``plan_for`` of the result its backend holds (the
+        worker embedded in this process for a ``local`` flow): the result's own plan, or a scan of the
+        file it stored.
         """
         if not (self._deferred or self._below_a_gate()):
             return self.data

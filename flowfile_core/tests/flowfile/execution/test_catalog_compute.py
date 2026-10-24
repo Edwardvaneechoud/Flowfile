@@ -1,5 +1,6 @@
 """The catalog's compute: the catalog writer's Delta write runs on the execution context's backend, and the catalog
-services send their table I/O to the worker exactly when that backend is not core's own.
+services send their table I/O to the worker exactly when that backend is not the worker embedded in this process, a
+worker they cannot reach answering ``ComputeUnavailable`` and never a read in this process.
 
 The writer's expected reports are what its in-process Delta write returned before the write moved behind the
 backend, recorded from that code on the same inputs; only ``size_bytes`` is measured here, the way that code
@@ -15,7 +16,9 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from fastapi.testclient import TestClient
 
+from flowfile_core import main
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog import compute as catalog_compute
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
@@ -27,11 +30,12 @@ from flowfile_core.catalog.storage_backend import resolve_for_namespace
 from flowfile_core.configs import settings
 from flowfile_core.configs.utils import MutableBool
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.database.models import CatalogTable
 from flowfile_core.flowfile.execution import registry
-from flowfile_core.flowfile.execution.backends import local as local_module
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.execution.payloads import (
     PAYLOAD_KEY,
     CatalogTableIdentity,
@@ -41,7 +45,7 @@ from flowfile_core.flowfile.execution.payloads import (
     op_payload,
 )
 from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, OpResult
-from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_graph.catalog_write import (
     CatalogDeltaWrite,
@@ -52,6 +56,7 @@ from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.catalog_schema import CatalogTablePreview
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 from shared.delta_utils import get_delta_size_bytes
+from shared.storage_config import storage
 from tests.flowfile.conftest import (
     add_test_catalog_writer,
     add_test_manual_input,
@@ -60,6 +65,7 @@ from tests.flowfile.conftest import (
     create_test_namespace,
     run_test_graph,
 )
+from tests.flowfile.execution.test_results_exists_unreachable import _closed_url
 from tests.test_catalog_cloud_virtual import (
     _BUCKET,
     _create_cloud_schema,
@@ -173,7 +179,17 @@ def test_any_backend_but_the_core_one_sends_catalog_io_out(probe_backend):
 
 
 @pytest.fixture
-def delta_table(tmp_path) -> str:
+def delta_table():
+    """A Delta table under the managed catalog directory, whose bare name the worker's catalog routes resolve."""
+    path = storage.catalog_tables_directory / f"people_{uuid.uuid4().hex[:8]}"
+    pl.DataFrame({"id": [1, 2, 3], "name": ["ada", "grace", "edsger"]}).write_delta(str(path))
+    yield str(path)
+    shutil.rmtree(path, ignore_errors=True)
+
+
+@pytest.fixture
+def external_delta_table(tmp_path) -> str:
+    """A Delta table registered where it lies, outside the managed catalog directory."""
     path = tmp_path / "people"
     pl.DataFrame({"id": [1, 2, 3], "name": ["ada", "grace", "edsger"]}).write_delta(str(path))
     return str(path)
@@ -200,7 +216,7 @@ def test_a_metadata_read_runs_where_the_context_says(delta_table, monkeypatch):
 
     assert in_core[1:3] == (3, 2)
     assert on_worker == ([{"name": "id", "dtype": "Int64"}], 99, 1, 7)
-    assert asked == [("people", None, registry.worker_url())]
+    assert asked == [(Path(delta_table).name, None, registry.worker_url())]
 
 
 def test_a_preview_runs_where_the_context_says(delta_table, monkeypatch):
@@ -220,7 +236,93 @@ def test_a_preview_runs_where_the_context_says(delta_table, monkeypatch):
 
     assert in_core.rows == [[1, "ada"], [2, "grace"]]
     assert on_worker.rows == [[42]]
-    assert asked == [("people", 2, registry.worker_url())]
+    assert asked == [(Path(delta_table).name, 2, registry.worker_url())]
+
+
+def previews_of(table_path: str) -> TablePreviewService:
+    """The preview service over a repository that holds one local table at ``table_path``."""
+    table = types.SimpleNamespace(file_path=table_path, namespace_id=None)
+    return TablePreviewService(repo=types.SimpleNamespace(get_table=lambda _: table), tables=None, virtual_tables=None)
+
+
+CATALOG_READS = {
+    "metadata": lambda path: TableService._read_table_metadata(path, "delta"),
+    "preview": lambda path: previews_of(path)._get_delta_preview(path, 2),
+    "version preview": lambda path: previews_of(path)._get_delta_version_preview(path, 0, 2),
+    "history": lambda path: previews_of(path).get_table_history(1),
+}
+
+
+@pytest.fixture(params=["refused at the handshake", "refused once the handshake passed"])
+def stopped_worker(request, monkeypatch) -> str:
+    """The registry's worker pointed at a port nothing listens on; returns its URL.
+
+    Refused by the handshake that checks a worker before the first call to it, or by the call itself while an earlier
+    verdict on it stands.
+    """
+    url = _closed_url()
+    monkeypatch.setattr(registry.backend(registry.WORKER_BACKEND_ID), "url", url)
+    if request.param == "refused once the handshake passed":
+        monkeypatch.setattr(subprocess_operations, "ensure_handshake", lambda *args, **kwargs: None)
+    return url
+
+
+@pytest.mark.parametrize("read", CATALOG_READS)
+def test_a_catalog_read_on_a_stopped_worker_is_compute_unavailable_and_never_read_in_core(
+    read, delta_table, stopped_worker
+):
+    with use_context(WORKER), pytest.raises(ComputeUnavailable) as excinfo:
+        CATALOG_READS[read](delta_table)
+
+    assert str(excinfo.value).startswith(f"Could not reach the worker at {stopped_worker}")
+
+
+@pytest.mark.parametrize("read", ["metadata", "version preview", "history"])
+def test_an_external_table_is_read_in_this_process_whatever_the_context(read, external_delta_table, monkeypatch):
+    def refused(*args, **kwargs):
+        pytest.fail("the worker was asked for a table outside the managed catalog directory")
+
+    monkeypatch.setattr(tables_module, "trigger_read_table_metadata", refused)
+    monkeypatch.setattr(previews_module, "trigger_delta_version_preview", refused)
+    monkeypatch.setattr(previews_module, "trigger_delta_history", refused)
+
+    with use_context(WORKER):
+        on_worker_context = CATALOG_READS[read](external_delta_table)
+    with use_context(LOCAL):
+        on_local_context = CATALOG_READS[read](external_delta_table)
+
+    assert on_worker_context == on_local_context
+
+
+@pytest.fixture
+def catalog_api(monkeypatch):
+    """A client of the app whose catalog I/O goes to the worker, and a namespace to register tables in."""
+    monkeypatch.delenv(registry.BACKEND_ENV_VAR, raising=False)
+    monkeypatch.setattr(settings, "OFFLOAD_TO_WORKER", MutableBool(True))
+    catalog_cleanup()
+    client = TestClient(main.app)
+    client.headers = {"Authorization": f"Bearer {client.post('/auth/token').json()['access_token']}"}
+    yield client, create_test_namespace()
+    catalog_cleanup()
+
+
+def register_physical(namespace_id: int, file_path: str) -> int:
+    table = CatalogTable(name="people", namespace_id=namespace_id, owner_id=1, file_path=file_path)
+    with get_db_context() as db:
+        return SQLAlchemyCatalogRepository(db).create_table(table).id
+
+
+@pytest.mark.parametrize("route", ["/history", "/preview?version=0"])
+def test_a_catalog_route_on_a_stopped_worker_answers_503_with_the_typed_message(
+    route, catalog_api, delta_table, stopped_worker
+):
+    client, namespace_id = catalog_api
+    table_id = register_physical(namespace_id, delta_table)
+
+    response = client.get(f"/catalog/tables/{table_id}{route}")
+
+    assert response.status_code == 503
+    assert response.json()["detail"].startswith(f"Could not reach the worker at {stopped_worker}")
 
 
 # The catalog writer's operation and payload
@@ -359,9 +461,13 @@ def test_an_scd2_config_without_the_creation_knob_partitions_on_the_current_flag
     assert write.partition_on_current is True
 
 
-def test_the_core_backend_opens_a_cloud_table_with_the_options_the_catalog_resolves(monkeypatch):
+def test_the_embedded_worker_opens_a_cloud_table_with_the_options_the_worker_resolves(monkeypatch):
+    from flowfile_worker.external_sources.s3_source.models import FullCloudStorageConnection as WorkerConnection
+
     received = []
-    monkeypatch.setattr(local_module, "write_delta", lambda *args, **kwargs: received.append(kwargs["storage_options"]))
+    monkeypatch.setattr(
+        "shared.delta_utils.write_delta", lambda *args, **kwargs: received.append(kwargs["storage_options"]) or False
+    )
     connection = s3_connection()
     _, write = _catalog_delta_op(
         "overwrite",
@@ -375,9 +481,11 @@ def test_the_core_backend_opens_a_cloud_table_with_the_options_the_catalog_resol
         node_id=2,
     )
 
-    LocalBackend().run_op(OperationKind.delta_write, op_payload(write))
+    EmbeddedWorkerBackend().run_op(OperationKind.delta_write, op_payload(write))
 
-    assert received == [CloudStorageReader.get_storage_options(connection)]
+    sent = WorkerConnection.model_validate(connection.get_worker_interface(1).model_dump())
+    assert received == [sent.get_storage_options()]
+    assert received[0]["aws_secret_access_key"] == "plain-s3-secret"
 
 
 def test_every_write_gets_its_own_job_id():
@@ -443,7 +551,7 @@ def test_a_skipped_report_registers_nothing_and_keeps_its_version(report, versio
     assert _catalog_delta_written(report) == CatalogDeltaWrite(None, version)
 
 
-# The writer's in-process write, through the local backend, reads as it did before
+# The writer's write on the embedded worker reads as it did before
 
 
 def run_locally(delta_mode, settings_, plan, path, scd2_config=None, run_timestamp=RUN_TIMESTAMP):
@@ -458,7 +566,7 @@ def run_locally(delta_mode, settings_, plan, path, scd2_config=None, run_timesta
         flow_id=1,
         node_id=2,
     )
-    return _catalog_delta_written(LocalBackend().run_op(operation, op_payload(write)).metadata)
+    return _catalog_delta_written(EmbeddedWorkerBackend().run_op(operation, op_payload(write)).metadata)
 
 
 def test_an_scd2_write_in_core_reads_as_before(tmp_path):
@@ -542,12 +650,12 @@ def test_a_plain_write_and_a_merge_in_core_read_as_before(tmp_path):
         scd2_version=None,
     )
     assert upserted == CatalogDeltaWrite(
-        meta={"schema": PEOPLE_SCHEMA, "row_count": 2, "column_count": 2, "size_bytes": upserted_size},
+        meta={"schema": PEOPLE_SCHEMA, "row_count": 4, "column_count": 2, "size_bytes": upserted_size},
         scd2_version=None,
-    )
+    ), "the worker reports a merge by the table after it"
     assert appended_nothing == CatalogDeltaWrite(meta=None, scd2_version=None)
     assert upserted_nothing == CatalogDeltaWrite(
-        meta={"schema": PEOPLE_SCHEMA, "row_count": 0, "column_count": 2, "size_bytes": upserted_size},
+        meta={"schema": PEOPLE_SCHEMA, "row_count": 4, "column_count": 2, "size_bytes": upserted_size},
         scd2_version=None,
     )
     assert pl.read_delta(path).sort("id").rows() == [(1, "ada"), (2, "grace"), (3, "dijkstra"), (4, "barbara")]
@@ -604,7 +712,7 @@ class Writes:
 @pytest.fixture
 def writes(monkeypatch) -> Writes:
     recorder = Writes()
-    for backend_type in (LocalBackend, WorkerBackend):
+    for backend_type in (EmbeddedWorkerBackend, WorkerBackend):
 
         def spy(self, op, payload, _run_op=backend_type.run_op):
             held = recorder.writer._submit_in_flight if recorder.writer is not None else None
@@ -672,8 +780,8 @@ def test_the_catalog_writer_upserts_on_the_flows_backend(execution_location, cle
     writes.take_one(backend_id, OperationKind.delta_merge, DeltaMergePayload)
     table = registered(namespace_id)
     assert pl.read_delta(table.file_path).sort("id").rows() == [(1, "ada"), (2, "hopper"), (3, "edsger")]
-    # Each backend reports a merge as it always has: core the rows merged, the worker the table's rows.
-    assert table.row_count == (2 if backend_id == registry.LOCAL_BACKEND_ID else 3)
+    # The worker reports a merge by the table's rows, embedded in this process or beside it.
+    assert table.row_count == 3
     assert table.size_bytes == get_delta_size_bytes(table.file_path)
 
 
@@ -805,7 +913,7 @@ def test_the_catalog_writer_names_a_local_table_by_identity_when_the_flag_is_on(
 def test_core_stores_and_reads_the_table_where_the_compute_answered(clean_catalog, monkeypatch, tmp_path):
     """The location the compute answers, not the one core resolved, is what core registers and reads back."""
     monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
-    run_op = LocalBackend.run_op
+    run_op = EmbeddedWorkerBackend.run_op
 
     def moved(self, op, payload):
         result = run_op(self, op, payload)
@@ -817,7 +925,7 @@ def test_core_stores_and_reads_the_table_where_the_compute_answered(clean_catalo
         shutil.move(answered, elsewhere)
         return OpResult(refs=result.refs, metadata={**result.metadata, "table_path": str(elsewhere)})
 
-    monkeypatch.setattr(LocalBackend, "run_op", moved)
+    monkeypatch.setattr(EmbeddedWorkerBackend, "run_op", moved)
     namespace_id = create_test_namespace()
     graph = create_test_graph(flow_id=9351, execution_location="local")
     add_test_manual_input(graph, [{"id": 1, "val": "a"}, {"id": 2, "val": "b"}], node_id=1)
@@ -886,7 +994,7 @@ def test_an_existing_table_stays_where_its_record_puts_it(protocol, same_place, 
         compute_root.symlink_to(Path(stored).parent, target_is_directory=True)
     else:
         compute_root.mkdir()
-    monkeypatch.setattr(local_module, "storage", types.SimpleNamespace(catalog_tables_directory=compute_root))
+    monkeypatch.setattr("flowfile_worker.funcs.storage", types.SimpleNamespace(catalog_tables_directory=compute_root))
 
     run = append(9392, [{"id": 3, "name": "edsger"}])
 

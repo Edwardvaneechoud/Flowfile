@@ -8,6 +8,7 @@ Covers:
 - FlowRegistration.flow_path usage (regression for file_path AttributeError)
 - Source table version tracking and staleness detection
 - Virtual table previews read through a backend with the protocol flag on
+- A virtual table's producer runs on the execution context's backend, and a stopped worker answers 503
 """
 
 import json
@@ -15,11 +16,14 @@ import tempfile
 
 import polars as pl
 import pytest
+from fastapi.testclient import TestClient
 
+from flowfile_core import main
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.delta_utils import check_source_versions_current
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.services import previews
+from flowfile_core.catalog.services import virtual_tables as virtual_tables_module
 from flowfile_core.configs import settings
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
@@ -28,6 +32,7 @@ from flowfile_core.database.models import (
 )
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
 from flowfile_core.flowfile.flow_graph import add_connection
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.transform_schema import BasicFilter, FilterInput, PivotInput
@@ -57,6 +62,7 @@ from tests.flowfile.conftest import (
 from tests.flowfile.conftest import (
     run_test_graph as _run_graph,
 )
+from tests.flowfile.execution.test_results_exists_unreachable import _closed_url
 
 
 @pytest.fixture()
@@ -1487,3 +1493,37 @@ class TestVirtualTablePreviewThroughABackend:
 
         assert (preview.columns, preview.rows, preview.total_rows) == ([], [], 0)
         assert sampled == []
+
+
+class TestVirtualTableProducerCompute:
+    """A virtual table's producer runs where the execution context says, and a worker it cannot reach answers 503."""
+
+    @pytest.mark.parametrize("backend_id", [registry.LOCAL_BACKEND_ID, registry.WORKER_BACKEND_ID])
+    def test_with_no_location_named_the_producer_runs_on_the_contexts_backend(
+        self, eager_virtual_table_id, catalog_service, monkeypatch, backend_id
+    ):
+        entered = []
+
+        def recording(context):
+            entered.append(context.backend_id)
+            return use_context(context)
+
+        monkeypatch.setattr(virtual_tables_module, "use_context", recording)
+
+        with use_context(ExecutionContext(backend_id, parallelism=1, preview_rows=None)):
+            catalog_service.resolve_virtual_flow_table(eager_virtual_table_id)
+
+        assert entered == [backend_id]
+
+    def test_the_resolve_route_on_a_stopped_worker_answers_503_with_the_typed_message(
+        self, eager_virtual_table_id, monkeypatch
+    ):
+        client = TestClient(main.app)
+        client.headers = {"Authorization": f"Bearer {client.post('/auth/token').json()['access_token']}"}
+        url = _closed_url()
+        monkeypatch.setattr(registry.backend(registry.WORKER_BACKEND_ID), "url", url)
+
+        response = client.post(f"/catalog/virtual-tables/{eager_virtual_table_id}/resolve")
+
+        assert response.status_code == 503
+        assert response.json()["detail"].startswith(f"Could not reach the worker at {url}")

@@ -19,7 +19,7 @@ import pytest
 from flowfile_core.auth.models import User
 from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution import registry
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ResultMissing
 from flowfile_core.flowfile.execution.payloads import PAYLOAD_KEY, MlApplyPayload, MlTrainPayload
@@ -794,8 +794,10 @@ def _flow_only_train_settings(graph: FlowGraph) -> input_schema.NodeTrainModel:
 
 
 @pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
-def test_a_local_flow_trains_and_scores_in_core(monkeypatch, flag):
-    """Core's own backend fits and holds the model, and Apply Model releases the deferred rows it scored there."""
+def test_a_local_flow_trains_and_scores_on_the_embedded_worker(monkeypatch, flag):
+    """The worker embedded in this process fits and holds the model, and Apply Model keeps the rows it scored held
+    there: the worker stores them, and a stored result is the node's to release. The handshake's probe jobs, run and
+    released the first time a session checks ``local`` with the flag on, are not the flow's."""
     monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
     graph = _make_graph()
     graph._flow_settings.path = ""
@@ -803,19 +805,20 @@ def test_a_local_flow_trains_and_scores_in_core(monkeypatch, flag):
     _seed_manual_input(graph, node_id=1)
     _refuse_worker_ops(monkeypatch, AssertionError("the worker backend was sent an operation"))
     released = []
-    release = LocalBackend.release
+    release = EmbeddedWorkerBackend.release
 
     def record_release(self, ref):
-        released.append((ref.kind, ref.state))
+        if not ref.result_id.startswith("handshake-"):
+            released.append((ref.kind, ref.state))
         release(self, ref)
 
-    monkeypatch.setattr(LocalBackend, "release", record_release)
+    monkeypatch.setattr(EmbeddedWorkerBackend, "release", record_release)
     _upstream_flow(graph)
 
     run_info = graph.run_graph()
 
     assert run_info.success is True, [result.error for result in run_info.node_step_result]
-    assert released == [("table", "deferred")]
+    assert released == []
     model = graph.get_node(10).results.model_ref
     assert (model.backend_id, model.kind) == (registry.LOCAL_BACKEND_ID, "blob")
     assert registry.backend(registry.LOCAL_BACKEND_ID).exists(model)

@@ -1,8 +1,8 @@
 """A node's held result is released when what held it goes: the node, its flow, or a run_flow child graph.
 
-The local cases run on a fresh ``LocalBackend`` so its store holds only what the test made. The subflow cases
-check that the child graph's deferred plans are released once its run ends while a result the worker stored for
-the child is left alone, since the parent's result may scan its file.
+The local cases count what the worker embedded in this process holds beyond what it held before the test. The
+subflow cases check that the child graph's deferred plans are released once its run ends while a result the worker
+stored for the child is left alone, since the parent's result may scan its file.
 """
 
 import uuid
@@ -12,7 +12,7 @@ import pytest
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.execution import registry
-from flowfile_core.flowfile.execution.backends.local import LocalBackend
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
@@ -20,10 +20,13 @@ from flowfile_core.schemas import input_schema, schemas, transform_schema
 
 
 @pytest.fixture
-def local_store():
-    """A fresh registry, so the local backend's store starts empty; returns that store."""
+def held():
+    """The result ids the worker embedded in this process holds that it did not hold when the test began."""
+    from flowfile_worker.results import results
+
     registry.reset()
-    yield registry.backend(registry.LOCAL_BACKEND_ID)._results
+    before = set(results._records)
+    yield lambda: set(results._records) - before
     registry.reset()
 
 
@@ -62,22 +65,22 @@ def input_then_sort(graph: FlowGraph, cache_sort: bool = False) -> FlowGraph:
     return graph
 
 
-def test_deleting_a_node_releases_its_result(local_store):
+def test_deleting_a_node_releases_its_result(held):
     graph = input_then_sort(
         FlowGraph(schemas.FlowSettings(flow_id=9601, name="release_node", path=".", execution_location="local"))
     )
     assert graph.run_graph().success
     first, second = (graph.get_node(node_id).results.result_ref.result_id for node_id in (1, 2))
-    assert set(local_store) == {first, second}
+    assert held() == {first, second}
 
     graph.delete_node(2)
-    assert set(local_store) == {first}
+    assert held() == {first}
     graph.delete_node(1)
 
-    assert local_store == {}
+    assert held() == set()
 
 
-def test_deleting_a_flow_through_the_handler_releases_its_results(local_store):
+def test_deleting_a_flow_through_the_handler_releases_its_results(held):
     handler = FlowfileHandler()
     graph = input_then_sort(
         handler.register_flow(
@@ -85,11 +88,11 @@ def test_deleting_a_flow_through_the_handler_releases_its_results(local_store):
         )
     )
     assert graph.run_graph().success
-    assert len(local_store) == 2
+    assert len(held()) == 2
 
     handler.delete_flow(9602)
 
-    assert local_store == {}
+    assert held() == set()
 
 
 def _register_subflow(tmp_path, cache_sort: bool) -> int:
@@ -166,15 +169,15 @@ def _record_submits(monkeypatch, backend_class) -> list[tuple[int, object]]:
     return minted
 
 
-def test_a_subflow_run_releases_the_child_graphs_deferred_results(local_store, tmp_path, monkeypatch):
-    minted = _record_submits(monkeypatch, LocalBackend)
+def test_a_subflow_run_releases_the_child_graphs_deferred_results(held, tmp_path, monkeypatch):
+    minted = _record_submits(monkeypatch, EmbeddedWorkerBackend)
     parent = _parent_running(_register_subflow(tmp_path, cache_sort=False), 9604, "local")
 
     assert parent.run_graph().success
 
     child_refs = [ref for flow_id, ref in minted if flow_id != parent.flow_id]
     assert child_refs and all(ref.state == "deferred" for ref in child_refs)
-    assert set(local_store) == {parent.get_node(node_id).results.result_ref.result_id for node_id in (1, 2)}
+    assert held() == {parent.get_node(node_id).results.result_ref.result_id for node_id in (1, 2)}
     assert [row["rank"] for row in parent.get_node(2).get_output("output-0").collect().to_dicts()] == [1, 2]
 
 

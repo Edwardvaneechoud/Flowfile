@@ -3,10 +3,10 @@
 Each helper submits the plan to the backend as a deferred result under a fresh result id, makes one bounded read of
 it (``count`` or ``sample``) and releases it, whether the read succeeded or not. The submit asks for no
 materialisation and no inline sample (``DEFERRED_HINTS``), which both of core's backends honour by holding the plan
-as it is: ``LocalBackend`` holds every plan lazily, and ``WorkerBackend`` stores a plan only when it must be
-materialised or is wide with a preview asked for. So nothing is computed before the one read, and the read computes
-only what it returns: a count, or at most the rows asked for (``LocalBackend`` collects ``plan.head(n)`` in this
-process, the worker runs ``plan.limit(n)`` in a child and core reads that many rows back from the file it wrote).
+as it is: the worker, embedded in this process or beside it, stores a plan only when it must be materialised or is
+wide with a preview asked for. So nothing is computed before the one read, and the read computes only what it
+returns: a count, or at most the rows asked for (the worker runs ``plan.head(n)`` as a job, in this process for the
+embedded worker and in a child for one beside core, and core reads that many rows back).
 
 Where the work runs is the backend's to decide, never the helper's: a failure comes back as the ``ComputeError`` the
 backend raised (``ComputeUnavailable``, ``TaskFailed``, ``PlanRejected``, ...), and nothing here computes the plan in

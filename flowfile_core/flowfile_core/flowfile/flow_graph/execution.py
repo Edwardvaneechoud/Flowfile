@@ -13,6 +13,7 @@ from time import time
 from typing import Any, Literal
 
 import polars as pl
+from polars.exceptions import PanicException
 from polars_expr_transformer import simple_function_to_expr as to_expr
 
 from flowfile_core.configs import logger, settings
@@ -33,6 +34,7 @@ from flowfile_core.flowfile.execution.placement import (
     Refusal,
     SingleBackendPolicy,
     place,
+    remedy_for,
 )
 from flowfile_core.flowfile.execution.protocol import CredentialRef, ResultRef
 from flowfile_core.flowfile.flow_data_engine.bounded import DEFERRED_HINTS, head_rows
@@ -871,7 +873,7 @@ class ExecutionMixin(GraphMixinBase):
                             # Route from the actual result, never a stash: cache branches can skip the gate's function.
                             try:
                                 closed = self._formula_gate_is_closed(node, params or None)
-                            except Exception as e:
+                            except (Exception, PanicException) as e:
                                 node_result.success = False
                                 node_result.error = f"Gate formula evaluation failed: {e}"
                                 self.latest_run_info.nodes_completed -= 1
@@ -1037,7 +1039,9 @@ class ExecutionMixin(GraphMixinBase):
         With an exchange store configured (``FLOWFILE_EXCHANGE_URI``) each node goes to the backend its own
         ``execution_location`` names, ``"auto"`` to the run's (``MixedPlacementPolicy``); without one every node goes
         to the run's backend whatever its own setting says, but the ones their builders pin to the worker
-        (``SingleBackendPolicy``). Each backend named is read through its handshake verdict (``handshake.verdict_for``,
+        (``SingleBackendPolicy``). In a process that serves (``registry.serving()``) ``local`` refuses every node
+        assigned to it, "this core serves; compute runs on its worker", before the registry or the handshake is asked
+        for it. Each other backend named is read through its handshake verdict (``handshake.verdict_for``,
         which checks it on its first use in this process). One whose verdict refuses it whole, or whose check raises a
         ``VersionMismatch``, refuses every node assigned to it with that error, as an id the registry does not know does
         with the registry's message; one whose check raises any other ``ComputeError`` is left out of the map ``place``
@@ -1053,7 +1057,7 @@ class ExecutionMixin(GraphMixinBase):
         an edge whose output core knows before the run to hold more rows than ``FLOWFILE_EXCHANGE_MAX_ROWS``
         (``BoundaryEdge.cost``), the message naming the rows, the columns and the limit, and a limit that is not a whole
         number; an edge whose count core does not know crosses whatever its size. A node is refused once, for the first
-        of its crossings refused.
+        of its crossings refused. Every refusal carries the settings that move its node elsewhere (``remedy_for``).
         """
         if not settings.FLOWFILE_COMPUTE_PROTOCOL:
             return None, []
@@ -1067,6 +1071,9 @@ class ExecutionMixin(GraphMixinBase):
         absent: dict[str, dict[str, str]] = {}
         refused: dict[str, str] = {}
         for backend_id in dict.fromkeys(policy.backend_for(node) for node in nodes):
+            if backend_id == registry.LOCAL_BACKEND_ID and registry.serving():
+                refused[backend_id] = "this core serves; compute runs on its worker"
+                continue
             try:
                 verdict = handshake.verdict_for(registry.backend(backend_id))
             except VersionMismatch as e:
@@ -1131,13 +1138,26 @@ class ExecutionMixin(GraphMixinBase):
                     edges.append(edge)
         if crossing_refusals:
             placement = replace(placement, refusals=[*placement.refusals, *crossing_refusals.values()])
+        if placement.refusals:
+            placement = replace(
+                placement,
+                refusals=[
+                    replace(refusal, remedy=remedy_for(self.get_node(refusal.node_id), policy))
+                    for refusal in placement.refusals
+                ],
+            )
         return placement, edges
 
     def _record_refusals(self, refusals: list[Refusal]) -> None:
-        """Record each refused node as a failed result of the run, which starts no node; called single-threaded."""
+        """Record each refused node as a failed result of the run, which starts no node; called single-threaded.
+
+        The node's error is ``cannot run on backend "<id>": <reason>``, then its remedy as a sentence when it has one.
+        """
         for refusal in refusals:
             node = self.get_node(refusal.node_id)
             error = f'cannot run on backend "{refusal.backend_id}": {refusal.reason}'
+            if refusal.remedy:
+                error += f"{'' if error.endswith('.') else '.'} {refusal.remedy}"
             self.flow_logger.get_node_logger(node.node_id).error(error)
             node_result = NodeResult(
                 node_id=node.node_id,

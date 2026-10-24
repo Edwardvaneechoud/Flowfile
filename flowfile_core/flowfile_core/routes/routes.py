@@ -2270,9 +2270,9 @@ def export_node_data(
     """Downloads up to 10,000 rows of a node's cached result as CSV/TSV without re-executing it.
 
     TSV is also capped at 100,000 cells. Larger exports belong in a write node. The file is written by a
-    ``file_write`` on the flow's backend; with ``FLOWFILE_COMPUTE_PROTOCOL`` on, the schema checks read the
-    engine's cached schema, the rows are read through ``bounded.head_rows`` on the flow's backend and the file is
-    written in core by ``LocalBackend``, so core never serves a file another process wrote.
+    ``file_write`` on the flow's backend in both flag states; with ``FLOWFILE_COMPUTE_PROTOCOL`` on, the schema
+    checks read the engine's cached schema and the rows are read through ``bounded.head_rows`` on that backend, which
+    then writes them, so core reads no result a backend stored.
     """
     flow, node = _get_analysis_node(flow_id, node_id, current_user)
     try:
@@ -2304,12 +2304,11 @@ def export_node_data(
         backend = current_context(flow).backend
         if FLOWFILE_COMPUTE_PROTOCOL:
             rows = pl.from_arrow(head_rows(backend, data, n)).lazy()
-            writer = compute_registry.backend(compute_registry.LOCAL_BACKEND_ID)
         else:
             # head before lazy(): an in-memory DataFrame is sliced so only n rows get serialized.
-            rows, writer = data.head(n).lazy(), backend
+            rows = data.head(n).lazy()
         write = FileWritePayload(plan=rows, settings=output_settings, flow_id=flow_id, node_id=node_id)
-        writer.run_op(OperationKind.file_write, op_payload(write))
+        backend.run_op(OperationKind.file_write, op_payload(write))
     except Exception as e:
         path.unlink(missing_ok=True)
         logger.error(f"Failed to export data for node {node_id}: {e}")
@@ -2738,9 +2737,13 @@ def update_flow_settings(flow_settings: schemas.FlowSettings, current_user=Depen
     tracking stay server-owned: renames, saves and runs have their own routes, and the
     settings form posts back whatever copy it last fetched. Flow settings are outside
     the undo scope, so this records no step; it runs as a transaction to serialize with
-    graph edits and refresh the dirty flag.
+    graph edits and refresh the dirty flag. In a process that serves, the execution location
+    is stored as a file saved with it opens (``schemas.loaded_execution_location``): a posted
+    ``local`` or ``remote`` is ``auto`` with ``FLOWFILE_COMPUTE_PROTOCOL`` on.
     """
     flow = get_flow_or_404(flow_settings.flow_id, current_user)
+    if compute_registry.serving():
+        flow_settings.execution_location = schemas.loaded_execution_location(flow_settings.execution_location)
     with flow.transaction("Update flow settings"):
         live = flow.flow_settings
         server_owned = {field: getattr(live, field) for field in _SERVER_OWNED_FLOW_SETTINGS}

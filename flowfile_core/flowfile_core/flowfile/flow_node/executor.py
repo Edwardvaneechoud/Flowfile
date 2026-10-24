@@ -263,9 +263,8 @@ class NodeExecutor:
         last run stored: the decision asks ``exists`` of the stored result the node holds
         under its current hash (``FlowNode.held_result``). A node holding no result for its
         current hash on the run's backend has no cache. A result held as a deferred plan is
-        no cache either (``LocalBackend`` holds every plan that way), so a cached node holding
-        one follows the ordinary rules below: in Development mode it is skipped after a
-        successful run, and Performance mode reruns it.
+        no cache either, so a cached node holding one follows the ordinary rules below: in
+        Development mode it is skipped after a successful run, and Performance mode reruns it.
 
         A cached node whose last run failed reruns even when the backend still holds its
         result: skipping it would keep the failed run's error on the node, while running it
