@@ -21,7 +21,7 @@
           Each worker has its own URL and bearer token, and, when its TLS certificate is not public,
           the CA certificate to trust; its id is <code>worker:&lt;name&gt;</code>. The built-in
           backends, <code>local</code> and <code>worker</code>, are not listed. To change a worker's
-          URL, token or CA certificate, remove it and add it again.
+          URL, token, CA certificate or local-files setting, remove it and add it again.
         </p>
 
         <p v-if="loading && !backends.length" class="backends-loading">Loading workers…</p>
@@ -31,6 +31,7 @@
             <tr>
               <th>Id</th>
               <th>URL</th>
+              <th>Local files</th>
               <th></th>
             </tr>
           </thead>
@@ -41,6 +42,9 @@
                   <code>{{ backend.id }}</code>
                 </td>
                 <td class="backends-url">{{ backend.url }}</td>
+                <td data-testid="backend-shares-core-disk">
+                  {{ backend.shares_core_disk ? "Shared with this server" : "No" }}
+                </td>
                 <td class="backends-actions">
                   <el-button
                     size="small"
@@ -61,7 +65,7 @@
                 </td>
               </tr>
               <tr v-if="verdicts[backend.id]" class="backends-verdict-row">
-                <td colspan="3">
+                <td colspan="4">
                   <div
                     v-if="verdicts[backend.id].ok && verdicts[backend.id].backend"
                     class="backends-verdict backends-verdict--ok"
@@ -145,6 +149,19 @@
               />
             </label>
           </div>
+          <div class="backends-field backends-field--wide">
+            <el-checkbox
+              v-model="form.shares_core_disk"
+              data-testid="backend-shares-core-disk-input"
+            >
+              Sees this server's files
+            </el-checkbox>
+            <span class="backends-field__hint">
+              Tick only for a worker on this host or on a mount this server shares with it: flows
+              then read and write local files there. Elsewhere a local path would be written on the
+              worker's own disk.
+            </span>
+          </div>
           <el-button
             type="primary"
             size="small"
@@ -186,7 +203,7 @@ const isAdmin = computed(() => useAuthStore().isAdmin);
 const { backends, loading, loadError, adding, busy, verdicts, load, add, remove, handshake } =
   useComputeBackends();
 
-const form = reactive({ name: "", url: "", token: "", ca_cert: "" });
+const form = reactive({ name: "", url: "", token: "", ca_cert: "", shares_core_disk: false });
 const canAdd = computed(() => form.name !== "" && form.url !== "" && form.token !== "");
 const plainHttp = computed(() => plainHttpOffLoopback(form.url));
 
@@ -207,11 +224,13 @@ const onAdd = async () => {
       url: form.url,
       token: form.token,
       ca_cert: form.ca_cert,
+      shares_core_disk: form.shares_core_disk,
     });
     form.name = "";
     form.url = "";
     form.token = "";
     form.ca_cert = "";
+    form.shares_core_disk = false;
     ElMessage.success(`Added ${row.id}`);
   } catch (error) {
     ElMessage.error((error as Error).message);
@@ -430,6 +449,16 @@ onMounted(() => {
 .backends-field__label {
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
+}
+
+.backends-field--wide {
+  margin-bottom: var(--spacing-3);
+}
+
+.backends-field__hint {
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+  color: var(--color-text-tertiary);
 }
 
 .backends-field__warning {
