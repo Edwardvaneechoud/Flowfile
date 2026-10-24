@@ -48,6 +48,7 @@ export const useEditorStore = defineStore("editor", {
 
     // Run state
     isRunning: false,
+    isCanceled: false,
     showFlowResult: false,
     tableVisible: false,
 
