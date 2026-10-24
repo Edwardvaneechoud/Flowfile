@@ -5,10 +5,14 @@ import axios from "../services/axios.config";
 
 const COMPUTE_BACKENDS_URL = "/compute_backends";
 
-/** `url` is null for a user who is no administrator; `verdict` is null until the backend was checked. */
+/**
+ * `url` is null for a user who is no administrator; `verdict` is null until the backend was checked;
+ * `shares_core_disk` means core offers the worker local files whatever it declares.
+ */
 export interface ComputeBackend {
   id: string;
   url: string | null;
+  shares_core_disk: boolean;
   verdict: HandshakeVerdict | null;
 }
 
@@ -18,6 +22,8 @@ export interface ComputeBackendInput {
   token: string;
   /** PEM of the CA to trust for an https worker whose certificate is not public. */
   ca_cert?: string;
+  /** The worker sees this server's files: the same host or a shared mount. */
+  shares_core_disk?: boolean;
 }
 
 export interface WorkerCapabilities {

@@ -30,6 +30,18 @@ from shared.cloud_storage.storage_options import build_storage_options
 from shared.cloud_storage.utils import ensure_path_has_wildcard_pattern  # noqa: F401
 
 
+class _NativeCredentials:
+    def __repr__(self) -> str:
+        return "NATIVE_CREDENTIALS"
+
+
+NATIVE_CREDENTIALS = _NativeCredentials()
+"""The credential provider of a read with none of its own, for a backend that reaches storage with its own identity
+(``credential_resolution`` ``ambient``): the scan is given ``credential_provider=None``, so its plan holds no pickled
+Python provider, which a backend on another Python cannot load, and Polars' native chain finds the identity where the
+plan runs."""
+
+
 class CloudStorageReader:
     """Helper class to handle different cloud storage authentication methods and read operations."""
 
@@ -177,10 +189,15 @@ class CloudStorageReader:
     @staticmethod
     def get_scan_kwargs(
         storage_options: dict[str, Any] | None,
-        credential_provider: EncryptedCredentialProvider | CredentialRefProvider | None,
+        credential_provider: EncryptedCredentialProvider | CredentialRefProvider | _NativeCredentials | None,
     ) -> dict[str, Any]:
-        """``storage_options``/``credential_provider`` kwargs for a lazy scan, with no credential in the options."""
+        """``storage_options``/``credential_provider`` kwargs for a lazy scan, with no credential in the options.
+
+        ``NATIVE_CREDENTIALS`` is ``credential_provider=None``; ``None`` leaves Polars' default, its ``auto`` provider.
+        """
         kwargs: dict[str, Any] = {}
+        if credential_provider is NATIVE_CREDENTIALS:
+            kwargs["credential_provider"] = credential_provider = None
         if storage_options:
             kwargs["storage_options"] = (
                 split_credentials(storage_options)[0] if credential_provider is not None else storage_options

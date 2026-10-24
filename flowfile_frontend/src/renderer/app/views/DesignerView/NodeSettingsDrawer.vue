@@ -46,7 +46,7 @@ interface DrawerComponentInstance {
   loadNodeData: (nodeId: number) => void | Promise<void>;
   pushNodeData: () => void | boolean | Promise<void | boolean>;
   // Opt-in: a component that can have nothing to save (ExploreData before its
-  // data is fetched) exposes this to hide the Apply footer. Undefined keeps
+  // settings load) exposes this to hide the Apply footer. Undefined keeps
   // Apply visible, which is what every other node settings component wants.
   canApply?: boolean;
 }

@@ -15,17 +15,16 @@ job runs in the calling process, as a library host sets it; left unset, the work
 serving host leaves it. Nothing of the worker is imported until the first call (``_service``). Every ``HTTPException``
 a body raises is mapped to the typed errors (``_typed``): 404 is ``ResultMissing``, 422 ``PlanRejected``, a 500 that
 carries a child's ``status`` goes through ``errors.worker_failure``, and any other code is a ``TaskFailed`` naming it.
-The seven kinds the worker still serves on its task routes, the database, cloud and file writes, the Delta write,
-merge and SCD2 write and the visualisation session, run here through the worker's own job runner (``service._run``)
-with the operation and the keyword arguments those routes build, and through its session registry, so every kind the
-worker declares runs on this backend too. A custom node whose class has no node file, which exists in this process and
+The four kinds the worker still serves on its task routes, the Delta write, merge and SCD2 write and the
+visualisation session, run here through the worker's own job runner (``service._run``) with the operation and the
+keyword arguments those routes build, and through its session registry, so every kind the worker declares runs on this
+backend too. A custom node whose class has no node file, which exists in this process and
 nowhere else, runs its ``process`` here and its outputs are held as the worker holds a child's. The embedded worker is
 on core's host by definition, so it reads and writes ``file`` whatever ``FLOWFILE_WORKER_LOCAL_FILES`` says.
 """
 
 from __future__ import annotations
 
-import base64
 import io
 import uuid
 from collections.abc import Callable
@@ -37,8 +36,10 @@ from fastapi import HTTPException
 
 from flowfile_core.flowfile.execution.backends.worker import (
     _JOB_STATES,
+    _cloud_write_settings,
     _custom_node_request,
     _database_read_settings,
+    _database_write_settings,
     _declared_outputs,
     _delta_destination,
     _file_to_read,
@@ -99,8 +100,6 @@ from flowfile_core.flowfile.execution.registry import LOCAL_BACKEND_ID
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import safe_eval_pl_type
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import FuzzyJoinInput, PolarsOperation
 from flowfile_core.flowfile.flow_node.multi_output import output_handle
-from flowfile_core.flowfile.sources.external_sources.sql_source.models import DatabaseExternalWriteSettings
-from flowfile_core.schemas.cloud_storage_schemas import CloudStorageWriteSettingsWorkerInterface
 from shared import compute_protocol as wire
 from shared.compute_protocol import PROTOCOL_VERSION, Capabilities
 
@@ -137,15 +136,16 @@ class EmbeddedWorkerBackend:
     ``OperationUnsupported``, as ``submit`` refuses one among its inputs.
 
     ``run_op`` runs the five reads, ``fuzzy_join``, ``random_split``, ``custom_node``, ``ml_train``, ``ml_apply``,
-    ``polars_code`` and ``sql_query`` through the body of ``POST /v1/ops/<kind>``, the payload's ``job_id`` the job's,
-    so ``status`` and ``cancel`` reach it; the refs are keyed as ``WorkerBackend`` keys them, each output the stored
-    result ``<job_id>_<i>``, a training's model the blob ``<job_id>_0``, a Kafka read's offsets and a training's
-    digest, size and type as ``metadata``. The three writes and the three Delta kinds run as the job the payload's
-    ``job_id`` names through the worker's own job runner, with the operation and the keyword arguments their task
-    routes build, no refs and the Delta report as ``metadata``; ``viz_session`` is one request to the worker's session
-    registry, its answer the ``metadata`` in the shape the visualisation routes answer. A custom node whose class has
-    no node file runs ``process`` in this process and holds each output as a stored result ``<job_id>_<i>``. ``cancel``
-    of a job that already ended, or of one running in this process, which nothing stops, is left as it is.
+    ``polars_code``, ``sql_query`` and the file, database and cloud writes through the body of ``POST /v1/ops/<kind>``,
+    the payload's ``job_id`` the job's, so ``status`` and ``cancel`` reach it; the refs are keyed as ``WorkerBackend``
+    keys them, each output the stored result ``<job_id>_<i>``, a training's model the blob ``<job_id>_0``, a Kafka
+    read's offsets and a training's digest, size and type as ``metadata``, a write's none. The three Delta kinds run as
+    the job the payload's ``job_id`` names through the worker's own job runner, with the operation and the keyword
+    arguments their task routes build, no refs and the Delta report as ``metadata``; ``viz_session`` is one request
+    to the worker's session registry, its answer the ``metadata`` in the shape the visualisation routes answer. A
+    custom node whose class has no node file runs ``process`` in this process and holds each output as a stored result
+    ``<job_id>_<i>``. ``cancel`` of a job that already ended, or of one running in this process, which nothing stops,
+    is left as it is.
     """
 
     id = LOCAL_BACKEND_ID
@@ -200,9 +200,9 @@ class EmbeddedWorkerBackend:
 
         The payload is unpacked before anything runs, so an empty one is a ``ValueError`` here too; the body is built
         as the worker's own request model. A training's ``metadata`` is the model's digest, size and type, a Kafka
-        read's the offsets to commit, a Delta write's its report. The writes, the Delta kinds and ``viz_session``
-        take the worker's job runner and session registry (``_write``, ``_delta``, ``_viz_session``), a custom node
-        with no node file runs here (``_custom_node_here``).
+        read's the offsets to commit, a Delta write's its report; a write answers no refs. The Delta kinds and
+        ``viz_session`` take the worker's job runner and session registry (``_delta``, ``_viz_session``), a custom
+        node with no node file runs here (``_custom_node_here``).
 
         Raises:
             ForeignRef: An ``ml_apply`` model another backend minted.
@@ -216,44 +216,30 @@ class EmbeddedWorkerBackend:
         args: tuple[Any, ...] = ()
         match op:
             case OperationKind.file_write:
-                write = unpack(payload, FileWritePayload)
-                settings = write.settings
-                kwargs = {
-                    "data_type": settings.file_type,
-                    "path": settings.abs_file_path,
-                    "write_mode": settings.write_mode,
-                    "sheet_name": settings.sheet_name,
-                    "delimiter": settings.delimiter,
-                    "compression": settings.compression,
-                }
-                return self._write(write, write.plan.serialize(), "write_output", settings.abs_file_path, kwargs)
+                job = unpack(payload, FileWritePayload)
+                settings = job.settings
+                body = service.models.PolarsScriptWrite(
+                    operation=job.plan.serialize(),
+                    data_type=settings.file_type,
+                    path=settings.abs_file_path,
+                    write_mode=settings.write_mode,
+                    sheet_name=settings.sheet_name,
+                    delimiter=settings.delimiter,
+                    compression=settings.compression,
+                    flowfile_flow_id=job.flow_id,
+                    flowfile_node_id=job.node_id,
+                )
+                run = service.file_write
             case OperationKind.database_write:
-                write = unpack(payload, DatabaseWritePayload)
-                reference = (
-                    write.connection if write.settings.database_write_settings.connection_mode == "reference" else None
-                )
-                sent = DatabaseExternalWriteSettings.create_from_from_node_database_writer(
-                    node_database_writer=write.settings,
-                    password=write.encrypted_password,
-                    table_name=write.table_name,
-                    lf=write.plan,
-                    database_reference_settings=reference,
-                ).model_copy(update={"flowfile_flow_id": write.flow_id, "flowfile_node_id": write.node_id})
-                body = service.models.DatabaseScriptWrite.model_validate_json(sent.model_dump_json())
-                kwargs = {"database_write_settings": body.get_database_write_settings()}
-                return self._write(write, body.polars_serializable_object(), "write_to_database", "", kwargs)
+                job = unpack(payload, DatabaseWritePayload)
+                sent = _database_write_settings(job).model_dump_json()
+                body = service.models.DatabaseScriptWrite.model_validate_json(sent)
+                run = service.database_write
             case OperationKind.cloud_write:
-                write = unpack(payload, CloudWritePayload)
-                sent = CloudStorageWriteSettingsWorkerInterface(
-                    operation=base64.b64encode(write.plan.serialize()).decode(),
-                    write_settings=write.settings.get_write_setting_worker_interface(),
-                    connection=write.connection,
-                    flowfile_flow_id=write.flow_id,
-                    flowfile_node_id=write.node_id,
-                )
-                body = service.models.CloudStorageScriptWrite.model_validate_json(sent.model_dump_json())
-                kwargs = {"cloud_write_settings": body.get_cloud_storage_write_settings()}
-                return self._write(write, body.polars_serializable_object(), "write_to_cloud_storage", "", kwargs)
+                job = unpack(payload, CloudWritePayload)
+                sent = _cloud_write_settings(job).model_dump_json()
+                body = service.models.CloudStorageScriptWrite.model_validate_json(sent)
+                run = service.cloud_write
             case OperationKind.delta_write:
                 write = unpack(payload, DeltaWritePayload)
                 kwargs = {"mode": write.mode, "partition_by": write.partition_by, "enable_cdf": write.enable_cdf}
@@ -525,18 +511,6 @@ class EmbeddedWorkerBackend:
         except HTTPException as e:
             if e.status_code != 404:
                 raise _typed(e) from e
-
-    def _write(
-        self,
-        write: FileWritePayload | DatabaseWritePayload | CloudWritePayload,
-        plan: bytes,
-        operation: str,
-        file_ref: str,
-        kwargs: dict[str, Any],
-    ) -> OpResult:
-        """Run a write as the job ``write.job_id`` names through the worker's job runner; no refs, no metadata."""
-        self._job(write.job_id, plan, operation, file_ref, write.flow_id, write.node_id, kwargs)
-        return OpResult(refs={})
 
     def _delta(
         self, write: DeltaWritePayload | DeltaMergePayload | DeltaScd2Payload, operation: str, kwargs: dict[str, Any]

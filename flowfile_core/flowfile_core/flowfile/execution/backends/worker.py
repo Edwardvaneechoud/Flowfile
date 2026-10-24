@@ -10,12 +10,12 @@ With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on, ``submit``, ``status``, ``cancel
 worker's versioned ``/v1`` routes instead, and the worker holds what ``submit`` returns, whether stored or deferred:
 its schema, row count and samples come over the wire, never from a file core opens. ``submit`` goes over
 ``WS /v1/ws/submit``, and to ``POST /v1/submit`` only when that socket cannot be opened or the plan not sent. ``run_op``
-runs the reads, ``fuzzy_join``, ``random_split``, ``custom_node``, ``ml_train`` and ``ml_apply`` over
-``POST /v1/ops/{kind}``, whose outputs the worker holds as it holds a stored submit, a trained model as a blob; the
-writes and ``viz_session`` stay on the task routes. ``polars_code`` and ``sql_query`` have no task route and go over
-``POST /v1/ops/polars_code`` and ``POST /v1/ops/sql_query`` in either flag state, the result held as a submit's is:
-deferred, as its plan, for code that answered a LazyFrame over sources, stored for code that answered a DataFrame or a
-LazyFrame over rows in memory.
+runs the reads, ``fuzzy_join``, ``random_split``, ``custom_node``, ``ml_train``, ``ml_apply`` and the file, database
+and cloud writes over ``POST /v1/ops/{kind}``, whose outputs the worker holds as it holds a stored submit, a trained
+model as a blob, a write none; the Delta writes and ``viz_session`` stay on the task routes. ``polars_code`` and
+``sql_query`` have no task route and go over ``POST /v1/ops/polars_code`` and ``POST /v1/ops/sql_query`` in either flag
+state, the result held as a submit's is: deferred, as its plan, for code that answered a LazyFrame over sources, stored
+for code that answered a DataFrame or a LazyFrame over rows in memory.
 ``import_uri`` asks the worker to hold a scan of the URI (``POST /v1/results/{id}/import``). A result is read and
 exported over the routes that minted it, whatever the flag says when it is read: a ``/v1`` result is exported by a
 child on the worker (``POST /v1/results/{id}/export``), a task-route result by a worker task running the same child.
@@ -195,6 +195,9 @@ _V1_OPERATIONS = frozenset(
         OperationKind.ml_apply,
         OperationKind.polars_code,
         OperationKind.sql_query,
+        OperationKind.file_write,
+        OperationKind.database_write,
+        OperationKind.cloud_write,
     }
 )
 _JOB_STATES: dict[str, Literal["running", "done", "failed", "cancelled"]] = {
@@ -285,8 +288,9 @@ class WorkerBackend:
     the scan of the URI as a deferred ``/v1`` result, and with ``kind="blob"`` copies a ``file://`` URI or fetches a
     presigned ``https://`` URL into a blob it holds. A reference is read over the routes that minted it, whatever the
     flag says when it is read, and only ``/v1`` references go as a submit's ``inputs``. ``run_op`` runs the reads,
-    ``fuzzy_join``, ``random_split``, ``custom_node``, ``ml_train`` and ``ml_apply`` over ``POST /v1/ops/{kind}``
-    (``run_op`` has the details), whose refs are ``/v1`` references like a stored submit's; every other operation and
+    ``fuzzy_join``, ``random_split``, ``custom_node``, ``ml_train``, ``ml_apply`` and the file, database and cloud
+    writes over ``POST /v1/ops/{kind}`` (``run_op`` has the details), whose refs are ``/v1`` references like a stored
+    submit's, a write's none; every other operation and
     its results stay on the task routes, but ``polars_code`` and ``sql_query``, which go over ``POST /v1/ops/<kind>``
     with the flag off too. ``status`` and ``cancel`` of a job no fetcher waits on use ``/v1/jobs/{id}``.
     Every ``/v1`` request and the socket's upgrade carry ``X-Protocol-Version``. A REST answer, a refused upgrade and
@@ -307,11 +311,18 @@ class WorkerBackend:
     protocol_version = PROTOCOL_VERSION
 
     def __init__(
-        self, url: str, *, backend_id: str = WORKER_BACKEND_ID, token: str | None = None, ca_cert: str | None = None
+        self,
+        url: str,
+        *,
+        backend_id: str = WORKER_BACKEND_ID,
+        token: str | None = None,
+        ca_cert: str | None = None,
+        shares_core_disk: bool = False,
     ) -> None:
         self.url = url
         self.id = backend_id
         self.token = token
+        self.shares_core_disk = shares_core_disk
         trust_ca(url, ca_cert)
         owns(self)
         self._auth = _TokenAuth(token, backend_id) if token is not None else None
@@ -347,6 +358,10 @@ class WorkerBackend:
         session around the handshake gate (``gated=False``), signed with this backend's token and carrying its
         ``X-Protocol-Version``. Its ``operations`` are the kinds the worker runs, the ones ``run_op`` sends it.
 
+        A backend made with ``shares_core_disk`` adds ``file`` to both scheme sets whatever the worker declares: core
+        knows that worker sees its files (the built-in worker at its unconfigured address, a row marked so), which the
+        worker cannot know by itself.
+
         Raises:
             ComputeUnavailable: The worker could not be reached, or it answered with no ``Capabilities`` and no
                 ``app_version``, so the URL is no Flowfile worker (``capabilities_from_answer``, naming this backend).
@@ -376,7 +391,15 @@ class WorkerBackend:
             )
         if not response.ok:
             raise _v1_failure(response.status_code, response.content, response.reason)
-        return capabilities_from_answer(self.url, response, backend_id=self.id)
+        declared = capabilities_from_answer(self.url, response, backend_id=self.id)
+        if not self.shares_core_disk:
+            return declared
+        return declared.model_copy(
+            update={
+                "read_schemes": frozenset(declared.read_schemes) | {"file"},
+                "write_schemes": frozenset(declared.write_schemes) | {"file"},
+            }
+        )
 
     def submit(
         self,
@@ -484,18 +507,21 @@ class WorkerBackend:
         or ``trigger_visualize_query``), and returns the session's answer as ``metadata`` with no refs.
 
         With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on, the five reads, ``fuzzy_join``, ``random_split``,
-        ``custom_node``, ``ml_train`` and ``ml_apply`` go to the worker's ``POST /v1/ops/{kind}`` instead: the body is
-        the request the kind's fetcher sends (the read settings, the file to read with the flow and node as query
-        parameters, the fuzzy join's prepared sides, the custom node's request, a random split's shuffled rows with
-        its splits, a training's rows with the model type, the columns and the parameters, an apply's rows with the
-        result id of its model and the output column), the payload's ``job_id`` the query parameter the job runs
+        ``custom_node``, ``ml_train``, ``ml_apply`` and the three writes go to the worker's ``POST /v1/ops/{kind}``
+        instead: the body is the request the kind's fetcher sends (the read settings, the file to read with the flow
+        and node as query parameters, the fuzzy join's prepared sides, the custom node's request, a random split's
+        shuffled rows with its splits, a training's rows with the model type, the columns and the parameters, an
+        apply's rows with the result id of its model and the output column, a write's plan with its output settings,
+        its database table or its cloud write settings and connection), the payload's ``job_id`` the query parameter
+        the job runs
         under, so ``cancel(JobHandle("worker", job_id))`` reaches it through ``POST /v1/jobs/{job_id}/cancel`` and
         ``status`` follows it. The refs are keyed as on the task routes, but every one is a stored ``/v1`` result
         ``<job_id>_<i>``, read over ``/v1/results/{id}`` like a stored submit's, its columns and row count as the worker
         answered them: a random split's splits are each a file of their own, releasing one output of a custom node or
         a split leaves the others, and a training's model is the blob ``<job_id>_0``. A ``kafka_read`` takes its
-        offsets, and an ``ml_train`` the model's digest, size and type, from the answer's ``metadata``. A failure maps
-        as every ``/v1`` answer does: an ``ml_apply`` whose model the worker no longer holds is ``ResultMissing``.
+        offsets, and an ``ml_train`` the model's digest, size and type, from the answer's ``metadata``; a write has no
+        refs and no ``metadata``. A failure maps as every ``/v1`` answer does: an ``ml_apply`` whose model the worker
+        no longer holds is ``ResultMissing``.
 
         ``polars_code`` takes a ``PolarsCodePayload`` and has no task route: it goes to ``POST /v1/ops/polars_code`` in
         either flag state, with the code and each input plan serialised. Its refs are ``{"result": ref}``, a ``/v1``
@@ -1068,6 +1094,26 @@ class WorkerBackend:
                     "flowfile_flow_id": job.flow_id,
                     "flowfile_node_id": job.node_id,
                 }
+            case OperationKind.file_write:
+                job = unpack(payload, FileWritePayload)
+                settings = job.settings
+                body = {
+                    "operation": base64.b64encode(job.plan.serialize()).decode("ascii"),
+                    "data_type": settings.file_type,
+                    "path": settings.abs_file_path,
+                    "write_mode": settings.write_mode,
+                    "sheet_name": settings.sheet_name,
+                    "delimiter": settings.delimiter,
+                    "compression": settings.compression,
+                    "flowfile_flow_id": job.flow_id,
+                    "flowfile_node_id": job.node_id,
+                }
+            case OperationKind.database_write:
+                job = unpack(payload, DatabaseWritePayload)
+                body = json.loads(_database_write_settings(job).model_dump_json())
+            case OperationKind.cloud_write:
+                job = unpack(payload, CloudWritePayload)
+                body = json.loads(_cloud_write_settings(job).model_dump_json())
             case _:
                 job = unpack(payload, RandomSplitPayload)
                 body = {
@@ -1358,14 +1404,7 @@ class WorkerBackend:
 
     def _database_write(self, payload: OpPayload) -> OpResult:
         write = unpack(payload, DatabaseWritePayload)
-        reference = write.connection if write.settings.database_write_settings.connection_mode == "reference" else None
-        settings = DatabaseExternalWriteSettings.create_from_from_node_database_writer(
-            node_database_writer=write.settings,
-            password=write.encrypted_password,
-            table_name=write.table_name,
-            lf=write.plan,
-            database_reference_settings=reference,
-        ).model_copy(update={"flowfile_flow_id": write.flow_id, "flowfile_node_id": write.node_id})
+        settings = _database_write_settings(write)
         self._run_tracked(
             write.job_id, lambda: ExternalDatabaseWriter(settings, wait_on_completion=False, worker_url=self.url)
         )
@@ -1373,13 +1412,7 @@ class WorkerBackend:
 
     def _cloud_write(self, payload: OpPayload) -> OpResult:
         write = unpack(payload, CloudWritePayload)
-        settings = CloudStorageWriteSettingsWorkerInterface(
-            operation=base64.b64encode(write.plan.serialize()).decode(),
-            write_settings=write.settings.get_write_setting_worker_interface(),
-            connection=write.connection,
-            flowfile_flow_id=write.flow_id,
-            flowfile_node_id=write.node_id,
-        )
+        settings = _cloud_write_settings(write)
         self._run_tracked(
             write.job_id, lambda: ExternalCloudWriter(settings, wait_on_completion=False, worker_url=self.url)
         )
@@ -1730,6 +1763,29 @@ def _database_read_settings(read: DatabaseReadPayload) -> DatabaseExternalReadSe
         database_reference_settings=read.connection if database_settings.connection_mode == "reference" else None,
     )
     return settings.model_copy(update=_filed_under(read))
+
+
+def _database_write_settings(write: DatabaseWritePayload) -> DatabaseExternalWriteSettings:
+    """The worker's database write: the plan, the table and the connection with its password as stored."""
+    reference = write.connection if write.settings.database_write_settings.connection_mode == "reference" else None
+    settings = DatabaseExternalWriteSettings.create_from_from_node_database_writer(
+        node_database_writer=write.settings,
+        password=write.encrypted_password,
+        table_name=write.table_name,
+        lf=write.plan,
+        database_reference_settings=reference,
+    )
+    return settings.model_copy(update=_filed_under(write))
+
+
+def _cloud_write_settings(write: CloudWritePayload) -> CloudStorageWriteSettingsWorkerInterface:
+    """The worker's cloud write: the plan, the write settings and the connection with its secrets still encrypted."""
+    return CloudStorageWriteSettingsWorkerInterface(
+        operation=base64.b64encode(write.plan.serialize()).decode(),
+        write_settings=write.settings.get_write_setting_worker_interface(),
+        connection=write.connection,
+        **_filed_under(write),
+    )
 
 
 def _kafka_read_settings(read: KafkaReadPayload) -> KafkaReadSettings:

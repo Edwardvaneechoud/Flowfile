@@ -9,146 +9,177 @@
       </p>
     </div>
 
-    <div v-if="isAdmin" class="backends-card">
-      <div v-if="loadError" class="backends-banner">
-        <i class="fa-solid fa-circle-exclamation"></i>
-        <span>{{ loadError }}</span>
-      </div>
-
-      <h3 class="backends-card-title">Configured workers</h3>
-      <p class="backends-card-description">
-        Each worker has its own URL and bearer token, and, when its TLS certificate is not public,
-        the CA certificate to trust; its id is <code>worker:&lt;name&gt;</code>. The built-in
-        backends, <code>local</code> and <code>worker</code>, are not listed. To change a worker's
-        URL, token or CA certificate, remove it and add it again.
-      </p>
-
-      <p v-if="loading && !backends.length" class="backends-loading">Loading workers…</p>
-
-      <table v-if="backends.length" class="backends-table">
-        <thead>
-          <tr>
-            <th>Id</th>
-            <th>URL</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          <template v-for="backend in backends" :key="backend.id">
-            <tr>
-              <td>
-                <code>{{ backend.id }}</code>
-              </td>
-              <td class="backends-url">{{ backend.url }}</td>
-              <td class="backends-actions">
-                <el-button
-                  size="small"
-                  :loading="busy[backend.id]"
-                  @click="onHandshake(backend.id)"
-                >
-                  Handshake
-                </el-button>
-                <el-button
-                  size="small"
-                  type="danger"
-                  plain
-                  :loading="busy[backend.id]"
-                  @click="onRemove(backend.id)"
-                >
-                  Remove
-                </el-button>
-              </td>
-            </tr>
-            <tr v-if="verdicts[backend.id]" class="backends-verdict-row">
-              <td colspan="3">
-                <div
-                  v-if="verdicts[backend.id].ok && verdicts[backend.id].backend"
-                  class="backends-verdict backends-verdict--ok"
-                >
-                  <i class="fa-solid fa-circle-check"></i>
-                  <div>
-                    <div>{{ matchLine(verdicts[backend.id]) }}</div>
-                    <div
-                      v-for="difference in verdicts[backend.id].differences"
-                      :key="difference"
-                      class="backends-difference"
-                    >
-                      {{ difference }}
-                    </div>
-                    <div
-                      v-for="(reason, name) in verdicts[backend.id].absent"
-                      :key="name"
-                      class="backends-difference"
-                    >
-                      offered without: {{ absentLabel(String(name)) }} — {{ reason }}
-                    </div>
-                  </div>
-                </div>
-                <div v-else class="backends-verdict backends-verdict--error">
-                  <i class="fa-solid fa-circle-xmark"></i>
-                  <span v-if="verdicts[backend.id].error">{{ verdicts[backend.id].error }}</span>
-                  <div v-else>
-                    <div>Does not match this server:</div>
-                    <div
-                      v-for="difference in verdicts[backend.id].differences"
-                      :key="difference"
-                      class="backends-difference"
-                    >
-                      {{ difference }}
-                    </div>
-                  </div>
-                </div>
-              </td>
-            </tr>
-          </template>
-        </tbody>
-      </table>
-
-      <div v-else-if="!loading && !loadError" class="backends-empty">
-        <i class="fa-solid fa-network-wired"></i>
-        <div class="backends-empty__title">No workers configured</div>
-        <div class="backends-empty__hint">Add one below with its name, URL and token.</div>
-      </div>
-
-      <div class="backends-add">
-        <h4 class="backends-add__title">Add a worker</h4>
-        <div class="backends-add__fields">
-          <label class="backends-field">
-            <span class="backends-field__label">Name</span>
-            <el-input v-model="form.name" v-bind="NO_AUTOFILL" placeholder="team">
-              <template #prepend>worker:</template>
-            </el-input>
-          </label>
-          <label class="backends-field">
-            <span class="backends-field__label">URL</span>
-            <el-input v-model="form.url" v-bind="NO_AUTOFILL" placeholder="https://…" />
-            <span v-if="plainHttp" class="backends-field__warning">
-              <i class="fa-solid fa-triangle-exclamation"></i>
-              Plain HTTP to another host: the token and every plan cross the network in clear, and
-              whoever holds the token can run code on the worker. Beyond a trusted network, use
-              https:// and, for a certificate that is not public, its CA certificate.
-            </span>
-          </label>
-          <label class="backends-field">
-            <span class="backends-field__label">Token</span>
-            <el-input v-model="form.token" v-bind="NO_AUTOFILL" type="password" show-password />
-          </label>
-          <label class="backends-field">
-            <span class="backends-field__label">CA certificate (PEM, optional)</span>
-            <el-input
-              v-model="form.ca_cert"
-              v-bind="NO_AUTOFILL"
-              type="textarea"
-              :rows="3"
-              placeholder="-----BEGIN CERTIFICATE-----"
-            />
-          </label>
+    <template v-if="isAdmin">
+      <div class="backends-card">
+        <div v-if="loadError" class="backends-banner">
+          <i class="fa-solid fa-circle-exclamation"></i>
+          <span>{{ loadError }}</span>
         </div>
-        <el-button type="primary" size="small" :loading="adding" :disabled="!canAdd" @click="onAdd">
-          Add
-        </el-button>
+
+        <h3 class="backends-card-title">Configured workers</h3>
+        <p class="backends-card-description">
+          Each worker has its own URL and bearer token, when its TLS certificate is not public the
+          CA certificate to trust, and whether it sees this server's files; its id is
+          <code>worker:&lt;name&gt;</code>. The built-in backends, <code>local</code> and
+          <code>worker</code>, are not listed. To change any of these, remove the worker and add it
+          again.
+        </p>
+
+        <p v-if="loading && !backends.length" class="backends-loading">Loading workers…</p>
+
+        <table v-if="backends.length" class="backends-table">
+          <thead>
+            <tr>
+              <th>Id</th>
+              <th>URL</th>
+              <th>Sees this server's files</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template v-for="backend in backends" :key="backend.id">
+              <tr>
+                <td>
+                  <code>{{ backend.id }}</code>
+                </td>
+                <td class="backends-url">{{ backend.url }}</td>
+                <td :data-testid="`backend-server-files-${backend.id}`">
+                  {{ serverFilesLabel(backend, verdicts[backend.id]) }}
+                </td>
+                <td class="backends-actions">
+                  <el-button
+                    size="small"
+                    :loading="busy[backend.id]"
+                    @click="onHandshake(backend.id)"
+                  >
+                    Handshake
+                  </el-button>
+                  <el-button
+                    size="small"
+                    type="danger"
+                    plain
+                    :loading="busy[backend.id]"
+                    @click="onRemove(backend.id)"
+                  >
+                    Remove
+                  </el-button>
+                </td>
+              </tr>
+              <tr v-if="verdicts[backend.id]" class="backends-verdict-row">
+                <td colspan="4">
+                  <div
+                    v-if="verdicts[backend.id].ok && verdicts[backend.id].backend"
+                    class="backends-verdict backends-verdict--ok"
+                  >
+                    <i class="fa-solid fa-circle-check"></i>
+                    <div>
+                      <div>{{ matchLine(verdicts[backend.id]) }}</div>
+                      <div
+                        v-for="difference in verdicts[backend.id].differences"
+                        :key="difference"
+                        class="backends-difference"
+                      >
+                        {{ difference }}
+                      </div>
+                      <div
+                        v-for="(reason, name) in verdicts[backend.id].absent"
+                        :key="name"
+                        class="backends-difference"
+                      >
+                        offered without: {{ absentLabel(String(name)) }} — {{ reason }}
+                      </div>
+                    </div>
+                  </div>
+                  <div v-else class="backends-verdict backends-verdict--error">
+                    <i class="fa-solid fa-circle-xmark"></i>
+                    <span v-if="verdicts[backend.id].error">{{ verdicts[backend.id].error }}</span>
+                    <div v-else>
+                      <div>Does not match this server:</div>
+                      <div
+                        v-for="difference in verdicts[backend.id].differences"
+                        :key="difference"
+                        class="backends-difference"
+                      >
+                        {{ difference }}
+                      </div>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+
+        <div v-else-if="!loading && !loadError" class="backends-empty">
+          <i class="fa-solid fa-network-wired"></i>
+          <div class="backends-empty__title">No workers configured</div>
+          <div class="backends-empty__hint">Add one below with its name, URL and token.</div>
+        </div>
+
+        <div class="backends-add">
+          <h4 class="backends-add__title">Add a worker</h4>
+          <div class="backends-add__fields">
+            <label class="backends-field">
+              <span class="backends-field__label">Name</span>
+              <el-input v-model="form.name" v-bind="NO_AUTOFILL" placeholder="team">
+                <template #prepend>worker:</template>
+              </el-input>
+            </label>
+            <label class="backends-field">
+              <span class="backends-field__label">URL</span>
+              <el-input v-model="form.url" v-bind="NO_AUTOFILL" placeholder="https://…" />
+              <span v-if="plainHttp" class="backends-field__note backends-field__note--warning">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+                Plain HTTP to another host: the token and every plan cross the network in clear, and
+                whoever holds the token can run code on the worker. Beyond a trusted network, use
+                https:// and, for a certificate that is not public, its CA certificate.
+              </span>
+            </label>
+            <label class="backends-field">
+              <span class="backends-field__label">Token</span>
+              <el-input v-model="form.token" v-bind="NO_AUTOFILL" type="password" show-password />
+            </label>
+            <label class="backends-field">
+              <span class="backends-field__label">CA certificate (PEM, optional)</span>
+              <el-input
+                v-model="form.ca_cert"
+                v-bind="NO_AUTOFILL"
+                type="textarea"
+                :rows="3"
+                placeholder="-----BEGIN CERTIFICATE-----"
+              />
+            </label>
+          </div>
+          <div class="backends-field backends-option">
+            <el-checkbox
+              v-model="form.shares_core_disk"
+              data-testid="backend-server-files-input"
+              aria-describedby="backend-server-files-hint"
+            >
+              Sees this server's files
+            </el-checkbox>
+            <span id="backend-server-files-hint" class="backends-field__note">
+              Tick only when the worker sees this server's files at the same paths: on this host, or
+              with this server's data, flows and kernel shared folders mounted at the same paths.
+              Flows then read and write local paths there, and Python Script and kernel nodes may
+              run there. Leave it unticked for a worker that sets
+              <code>FLOWFILE_WORKER_LOCAL_FILES=1</code> itself.
+            </span>
+          </div>
+          <el-button
+            type="primary"
+            size="small"
+            :loading="adding"
+            :disabled="!canAdd"
+            @click="onAdd"
+          >
+            Add
+          </el-button>
+        </div>
       </div>
-    </div>
+
+      <ExchangeStoreCard class="backends-card backends-card--below" />
+    </template>
 
     <div v-else class="backends-locked">
       <i class="fa-solid fa-lock"></i>
@@ -168,14 +199,21 @@ import type { HandshakeVerdict } from "../../api/computeBackends.api";
 import { useAuthStore } from "../../stores/auth-store";
 import { absentLabel } from "../../utils/executionLocation";
 import { NO_AUTOFILL } from "../../utils/noAutofill";
-import { plainHttpOffLoopback, useComputeBackends } from "./useComputeBackends";
+import ExchangeStoreCard from "./ExchangeStoreCard.vue";
+import {
+  backendInputFrom,
+  emptyBackendForm,
+  plainHttpOffLoopback,
+  serverFilesLabel,
+  useComputeBackends,
+} from "./useComputeBackends";
 
 const isAdmin = computed(() => useAuthStore().isAdmin);
 
 const { backends, loading, loadError, adding, busy, verdicts, load, add, remove, handshake } =
   useComputeBackends();
 
-const form = reactive({ name: "", url: "", token: "", ca_cert: "" });
+const form = reactive(emptyBackendForm());
 const canAdd = computed(() => form.name !== "" && form.url !== "" && form.token !== "");
 const plainHttp = computed(() => plainHttpOffLoopback(form.url));
 
@@ -191,16 +229,8 @@ const matchLine = (verdict: HandshakeVerdict): string => {
 const onAdd = async () => {
   if (!canAdd.value) return;
   try {
-    const row = await add({
-      name: form.name,
-      url: form.url,
-      token: form.token,
-      ca_cert: form.ca_cert,
-    });
-    form.name = "";
-    form.url = "";
-    form.token = "";
-    form.ca_cert = "";
+    const row = await add(backendInputFrom(form));
+    Object.assign(form, emptyBackendForm());
     ElMessage.success(`Added ${row.id}`);
   } catch (error) {
     ElMessage.error((error as Error).message);
@@ -210,7 +240,8 @@ const onAdd = async () => {
 const onRemove = async (id: string) => {
   try {
     await ElMessageBox.confirm(
-      `Remove ${id}? Its token and CA certificate are not kept; adding it again needs them.`,
+      `Remove ${id}? Its token, CA certificate and "Sees this server's files" setting are not ` +
+        "kept; adding it again needs them, so tick the box again if it was ticked.",
       "Remove worker",
       { confirmButtonText: "Remove", cancelButtonText: "Keep", type: "warning" },
     );
@@ -251,6 +282,10 @@ onMounted(() => {
   border-radius: var(--border-radius-lg);
   box-shadow: var(--shadow-xs);
   padding: var(--spacing-4) var(--spacing-5);
+}
+
+.backends-card--below {
+  margin-top: var(--spacing-4);
 }
 
 .backends-banner {
@@ -417,9 +452,17 @@ onMounted(() => {
   color: var(--color-text-secondary);
 }
 
-.backends-field__warning {
+.backends-option {
+  margin-bottom: var(--spacing-3);
+}
+
+.backends-field__note {
   font-size: var(--font-size-xs);
   line-height: var(--line-height-normal);
+  color: var(--color-text-tertiary);
+}
+
+.backends-field__note--warning {
   color: var(--color-warning);
 }
 

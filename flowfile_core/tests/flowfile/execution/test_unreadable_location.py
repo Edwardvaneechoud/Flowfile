@@ -827,7 +827,7 @@ TRANSFORM_COLUMNS = [
 UNION_ROWS = [{"id": 7, "region": "eu", "amount": 70.5}, {"id": 8, "region": "us", "amount": 80.5}]
 
 TRANSFORMS = [
-    (9351, "record_count", input_schema.NodeRecordCount, {}, [("number_of_records", "UInt32")], 1),
+    (9351, "record_count", input_schema.NodeRecordCount, {}, [("number_of_records", "UInt64")], 1),
     (
         9352,
         "unique",
@@ -982,7 +982,7 @@ TRANSFORM_VARIANTS = [
                 index_columns=[], pivot_column="region", value_col="amount", aggregations=["sum", "count"]
             )
         },
-        [("eu_sum", "Int64"), ("eu_count", "UInt32"), ("us_sum", "Int64"), ("us_count", "UInt32")],
+        [("eu_sum", "Int64"), ("eu_count", "UInt64"), ("us_sum", "Int64"), ("us_count", "UInt64")],
         1,
     ),
     (

@@ -9,6 +9,7 @@ import {
   type ComputeBackendInput,
   type HandshakeVerdict,
 } from "../../api/computeBackends.api";
+import { detailOf } from "../../utils/apiDetail";
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
@@ -23,17 +24,44 @@ export function plainHttpOffLoopback(url: string): boolean {
   return parsed.protocol === "http:" && !LOOPBACK_HOSTS.has(parsed.hostname);
 }
 
-/** The route's own words: a string detail as is, FastAPI's validation list as its messages. */
-function detailOf(error: unknown, fallback: string): string {
-  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
-  if (typeof detail === "string") return detail;
-  if (Array.isArray(detail)) {
-    const messages = detail
-      .map((entry) => (entry as { msg?: unknown })?.msg)
-      .filter((msg): msg is string => typeof msg === "string");
-    if (messages.length) return messages.join("; ");
-  }
-  return fallback;
+export interface BackendForm {
+  name: string;
+  url: string;
+  token: string;
+  ca_cert: string;
+  shares_core_disk: boolean;
+}
+
+/** The add form as it opens and as it resets after an add: the server's files left unticked. */
+export function emptyBackendForm(): BackendForm {
+  return { name: "", url: "", token: "", ca_cert: "", shares_core_disk: false };
+}
+
+/** The add body the form sends, the "Sees this server's files" tick included. */
+export function backendInputFrom(form: BackendForm): ComputeBackendInput {
+  return {
+    name: form.name,
+    url: form.url,
+    token: form.token,
+    ca_cert: form.ca_cert,
+    shares_core_disk: form.shares_core_disk,
+  };
+}
+
+/**
+ * What a row's "Server's files" cell says: marked on its row, else declared by the worker itself (its last verdict
+ * offers `file`, as with `FLOWFILE_WORKER_LOCAL_FILES=1`), else no; a worker never checked reads "Not checked".
+ */
+export function serverFilesLabel(
+  backend: ComputeBackend,
+  verdict: HandshakeVerdict | null | undefined,
+): string {
+  if (backend.shares_core_disk) return "Yes, marked here";
+  const offered = verdict?.offered;
+  if (!offered) return verdict ? "No" : "Not checked";
+  return offered.read_schemes.includes("file") || offered.write_schemes.includes("file")
+    ? "Yes, declared by the worker"
+    : "No";
 }
 
 /**

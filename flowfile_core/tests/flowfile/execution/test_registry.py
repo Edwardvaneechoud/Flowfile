@@ -474,6 +474,24 @@ def test_a_configured_worker_resolves_with_its_url_and_its_own_token(configured_
     assert worker.token != get_internal_token()
     assert registry.backend("worker:team") is worker
     assert subops.ssl_context_for(TEAM_URL) is None
+    assert worker.shares_core_disk is False
+
+
+def test_a_row_marked_as_seeing_cores_files_makes_a_backend_that_shares_its_disk():
+    with get_db_context() as db:
+        db.add(
+            ConfiguredBackend(
+                id="worker:nfs-team", url=TEAM_URL, token=encrypt_secret("row-token", 1), shares_core_disk=True
+            )
+        )
+        db.commit()
+    try:
+        assert registry.backend("worker:nfs-team").shares_core_disk is True
+    finally:
+        registry.forget("worker:nfs-team")
+        with get_db_context() as db:
+            db.delete(db.get(ConfiguredBackend, "worker:nfs-team"))
+            db.commit()
 
 
 def test_a_configured_worker_with_a_ca_certificate_has_the_transport_trust_it_for_its_url():

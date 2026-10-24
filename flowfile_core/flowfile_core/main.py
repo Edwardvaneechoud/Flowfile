@@ -71,6 +71,7 @@ from flowfile_core.routes.secrets import router as secrets_router
 from flowfile_core.routes.shares import router as shares_router
 from flowfile_core.routes.storage_browser import router as storage_browser_router
 from flowfile_core.routes.system_backups import router as system_backups_router
+from flowfile_core.routes.system_exchange import router as system_exchange_router
 from flowfile_core.routes.system_worker import router as system_worker_router
 from flowfile_core.routes.telemetry import router as telemetry_router
 from flowfile_core.routes.user_defined_components import router as user_defined_components_router
@@ -277,6 +278,7 @@ app.include_router(ai_admin_router, prefix="/system", tags=["system"])
 app.include_router(lsp_admin_router, prefix="/system", tags=["system"])
 app.include_router(system_worker_router, prefix="/system", tags=["system"])
 app.include_router(system_backups_router, prefix="/system", tags=["system"])
+app.include_router(system_exchange_router, prefix="/system", tags=["system"])
 app.include_router(compute_backends_router, tags=["compute_backends"])
 
 core_telemetry.install(app)

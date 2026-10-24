@@ -77,6 +77,8 @@ def _worker_backend() -> ComputeBackend:
     """The worker at ``settings.WORKER_URL``, which ``FLOWFILE_WORKER_URL`` sets, else ``WORKER_HOST`` and the port.
 
     In single-file mode it is the worker embedded in this process, made as ``local`` is and answering to ``worker``.
+    With neither ``FLOWFILE_WORKER_URL`` nor ``WORKER_HOST`` set it is the worker beside core on this host, which sees
+    core's files, so it is made with ``shares_core_disk``; at a configured address the worker declares that itself.
     """
     if settings.SINGLE_FILE_MODE:
         embedded = _local_backend()
@@ -84,12 +86,13 @@ def _worker_backend() -> ComputeBackend:
         return embedded
     from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 
-    return WorkerBackend(url=settings.WORKER_URL)
+    return WorkerBackend(url=settings.WORKER_URL, shares_core_disk=not settings.WORKER_ADDRESS_CONFIGURED)
 
 
 def _configured_worker_backend(backend_id: str) -> ComputeBackend:
     """The worker the ``compute_backends`` row of ``backend_id`` configures, signing its calls with the row's token
-    and trusting the row's CA certificate for its TLS, when the row has one.
+    and trusting the row's CA certificate for its TLS, when the row has one; a row marked ``shares_core_disk`` makes
+    a backend offering ``file``.
 
     Raises:
         LookupError: No row configures ``backend_id``.
@@ -103,9 +106,13 @@ def _configured_worker_backend(backend_id: str) -> ComputeBackend:
         row = db.get(ConfiguredBackend, backend_id)
         if row is None:
             raise LookupError(f"Unknown compute backend {backend_id!r}; no compute_backends row has that id")
-        url, ciphertext, ca_cert = row.url, row.token, row.ca_cert
+        url, ciphertext, ca_cert, shares_core_disk = row.url, row.token, row.ca_cert, bool(row.shares_core_disk)
     return WorkerBackend(
-        url=url, backend_id=backend_id, token=decrypt_secret(ciphertext).get_secret_value(), ca_cert=ca_cert
+        url=url,
+        backend_id=backend_id,
+        token=decrypt_secret(ciphertext).get_secret_value(),
+        ca_cert=ca_cert,
+        shares_core_disk=shares_core_disk,
     )
 
 

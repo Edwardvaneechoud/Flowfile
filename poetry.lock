@@ -3745,6 +3745,7 @@ files = [
 
 [package.dependencies]
 polars-runtime-32 = "1.43.2"
+polars-runtime-64 = {version = "1.43.2", optional = true, markers = "extra == \"rt64\""}
 pyarrow = {version = ">=7.0.0", optional = true, markers = "extra == \"pyarrow\""}
 
 [package.extras]
@@ -3898,6 +3899,24 @@ files = [
     {file = "polars_runtime_32-1.43.2-cp310-abi3-win_amd64.whl", hash = "sha256:00e33c28e321410c8d66e814a90043101e3bdd9ed2c6dabda07565aa8adbbdf1"},
     {file = "polars_runtime_32-1.43.2-cp310-abi3-win_arm64.whl", hash = "sha256:350a4868cae85bf8b3f81b33ba47927c15256bd9264dfc8c0753f1b927eac9d3"},
     {file = "polars_runtime_32-1.43.2.tar.gz", hash = "sha256:d7b7c486bccee75a6af0158b87077da3d054657e3c60036b28644f4e1c7fdbf7"},
+]
+
+[[package]]
+name = "polars-runtime-64"
+version = "1.43.2"
+description = "Blazingly fast DataFrame library"
+optional = false
+python-versions = ">=3.10"
+files = [
+    {file = "polars_runtime_64-1.43.2-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:485d3230a8f4b6633758bcb1922c5d9f8f259bb5a2b68ce818f1f0577b3f7a48"},
+    {file = "polars_runtime_64-1.43.2-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:8a3ec3900cf4f14a2e52a5ca283820fdf75afee14537b1e38fed40b2858fbdc7"},
+    {file = "polars_runtime_64-1.43.2-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:4b8ff8bd4f1a1ed42886bbed4ce9fcedc87d63247f40bd8cba91c2a28fe09f09"},
+    {file = "polars_runtime_64-1.43.2-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:169ec1aa9f463ef6d9ed13aa179fd46a14109ff47ba970e86ab0cf1ebf4497fd"},
+    {file = "polars_runtime_64-1.43.2-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:0233e7f103663d996ae16dd812c9dbcf4098aa2d001b8968d7527a3453b979d0"},
+    {file = "polars_runtime_64-1.43.2-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:c77f58f54b01cf042a338ccd6d5c383b1e680295967050982bb5f6e89a5ce2b3"},
+    {file = "polars_runtime_64-1.43.2-cp310-abi3-win_amd64.whl", hash = "sha256:7fe097d414e596c6a6085401c98f46bd632a6e257868d39a31bb2ecce57b677c"},
+    {file = "polars_runtime_64-1.43.2-cp310-abi3-win_arm64.whl", hash = "sha256:f51dc94a479dfc79dfe9b02700964a33864b4382521d55dfd4c5a0a93a174a16"},
+    {file = "polars_runtime_64-1.43.2.tar.gz", hash = "sha256:096eb2817d3ff566508883e66acb95cc54a0480976a00b822d669a738854ad13"},
 ]
 
 [[package]]
@@ -6471,4 +6490,4 @@ yxdb = ["yxdb"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.14"
-content-hash = "c812dd258099ea848e37d0e25a1e590488371b940ec4392b8bf5cb4667d9d84d"
+content-hash = "b004d4ebb1dda87146493e31f682de146260e79b8cbeb0c522b9547e24591019"
