@@ -1,6 +1,6 @@
 """The worker's ``POST /v1/ops/<kind>`` routes: an operation runs in its child and each output it wrote is held.
 
-A training holds the model it fitted as a blob, and an apply scores with a blob held here.
+A training holds the model it fitted as a blob, and an apply scores with a blob held here. A write holds nothing.
 """
 
 import base64
@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import os
+import sqlite3
 import threading
 import time
 import uuid
@@ -21,6 +22,7 @@ from pydantic import BaseModel
 
 from flowfile_worker import main, models, status_dict, status_dict_lock
 from flowfile_worker.create.models import ReceivedTable
+from flowfile_worker.external_sources.s3_source.models import FullCloudStorageConnection, WriteSettings
 from flowfile_worker.protocol_routes import OpOutputs
 from flowfile_worker.results import result_path, results
 from flowfile_worker.secrets import encrypt_secret
@@ -695,3 +697,115 @@ def test_a_sql_statement_the_worker_refuses_holds_nothing(jobs):
     assert "Only SELECT queries are allowed" in response.json()["detail"]["error_message"]
     assert client.head(f"/v1/results/{job_id}_0").status_code == 404
     assert not result_path(FLOW_ID, f"{job_id}_0").exists()
+
+
+def _write_body(plan: pl.LazyFrame, **fields) -> dict:
+    return {
+        "operation": base64.b64encode(plan.serialize()).decode("ascii"),
+        "flowfile_flow_id": FLOW_ID,
+        "flowfile_node_id": NODE_ID,
+        **fields,
+    }
+
+
+def _minio_available() -> bool:
+    from test_utils.s3.fixtures import get_minio_client
+
+    if not is_docker_available():
+        return False
+    try:
+        get_minio_client().list_buckets()
+        return True
+    except Exception:
+        return False
+
+
+def test_a_file_write_writes_its_target_and_holds_nothing(jobs, tmp_path):
+    job_id = jobs()
+    target = tmp_path / "people.csv"
+    body = _write_body(PEOPLE.lazy(), data_type="csv", path=str(target), write_mode="overwrite", delimiter=";")
+
+    answer = _answer(_post_op("file_write", job_id, body))
+
+    assert (answer.outputs, answer.metadata) == ({}, {})
+    assert_frame_equal(pl.read_csv(target, separator=";"), PEOPLE)
+    assert client.get(f"/v1/jobs/{job_id}").json()["status"] == "Completed"
+    assert client.head(f"/v1/results/{job_id}_0").status_code == 404
+
+
+def test_a_database_write_writes_its_table_and_holds_nothing(jobs, tmp_path):
+    database = tmp_path / "people.db"
+    body = _write_body(
+        PEOPLE.lazy(),
+        connection={"database_type": "sqlite", "url": f"sqlite:///{database}"},
+        table_name="people",
+        if_exists="replace",
+    )
+
+    answer = _answer(_post_op("database_write", jobs(), body))
+
+    assert answer.outputs == {}
+    with sqlite3.connect(database) as db:
+        assert db.execute("SELECT id, name FROM people ORDER BY id").fetchall() == list(PEOPLE.iter_rows())
+
+
+@pytest.mark.skipif(not _minio_available(), reason="MinIO mock S3 not available")
+def test_a_cloud_write_writes_its_object_with_the_connection_it_decrypts(jobs):
+    from test_utils.s3.fixtures import get_minio_client
+
+    connection = FullCloudStorageConnection(
+        connection_name="minio-test",
+        storage_type="s3",
+        auth_method="access_key",
+        aws_access_key_id="minioadmin",
+        aws_secret_access_key=encrypt_secret("minioadmin"),
+        aws_region="us-east-1",
+        endpoint_url="http://localhost:9000",
+        aws_allow_unsafe_html=True,
+    )
+    key = f"v1-ops/{uuid.uuid4().hex}.parquet"
+    body = models.CloudStorageScriptWrite(
+        connection=connection,
+        write_settings=WriteSettings(resource_path=f"s3://worker-test-bucket/{key}", file_format="parquet"),
+        operation=PEOPLE.lazy().serialize(),
+    ).model_dump(mode="json")
+    body["connection"]["aws_secret_access_key"] = connection.aws_secret_access_key.get_secret_value()
+    minio = get_minio_client()
+    try:
+        answer = _answer(_post_op("cloud_write", jobs(), body))
+
+        assert answer.outputs == {}
+        written = minio.get_object(Bucket="worker-test-bucket", Key=key)["Body"].read()
+        assert_frame_equal(pl.read_parquet(io.BytesIO(written)), PEOPLE)
+    finally:
+        minio.delete_object(Bucket="worker-test-bucket", Key=key)
+
+
+def test_a_write_that_fails_answers_500_names_the_error_and_holds_nothing(jobs, tmp_path):
+    job_id = jobs()
+    (tmp_path / "a-file").write_text("not a directory")
+    target = tmp_path / "a-file" / "people.csv"
+
+    body = _write_body(PEOPLE.lazy(), data_type="csv", path=str(target), write_mode="overwrite")
+
+    response = _post_op("file_write", job_id, body)
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert (detail["status"], detail["error_kind"]) == ("Error", "task")
+    assert detail["error_message"]
+    assert client.get(f"/v1/jobs/{job_id}").json()["status"] == "Error"
+    assert client.head(f"/v1/results/{job_id}_0").status_code == 404
+
+
+def test_a_write_body_naming_an_unknown_field_is_422_and_runs_nothing(jobs, tmp_path):
+    job_id = jobs()
+    body = _write_body(
+        PEOPLE.lazy(), data_type="csv", path=str(tmp_path / "x.csv"), write_mode="overwrite", task_id="t"
+    )
+
+    response = _post_op("file_write", job_id, body)
+
+    assert response.status_code == 422
+    assert job_id not in status_dict
+    assert not (tmp_path / "x.csv").exists()

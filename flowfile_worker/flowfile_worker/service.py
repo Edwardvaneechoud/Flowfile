@@ -10,13 +10,14 @@ what the body refuses before anything runs, and a 500 carrying a child's ``statu
 to a file or deferred as ``_materialise`` decides; a deferred submit with no preview runs in the child too, which
 resolves the plan's columns and collects nothing. ``sample``, ``count``, ``exists`` and ``release`` read, count, probe
 and release what it holds. A submit's job id is its result id, and every submit first drops what has been held for
-``CACHE_EXPIRATION_TIME``. The twelve operations run a read, a fuzzy join, a random split, a custom node, a model's
-training or its apply in the child its task route spawns, as the job the ``job_id`` names, and hold each output that
-child wrote as the materialised result ``<job_id>_<i>``, which the same functions read, count, probe and release. A
-training's output is the model it fitted, held as a blob; an apply scores with a model held here, named by its result
-id. ``polars_code`` runs a Polars Code node's code, and ``sql_query`` translates a SQL Query node's statement, once in a
-pooled child and holds the result as ``<job_id>_0``: deferred, as its plan, when the code answered a LazyFrame over
-sources, materialised in its file when it answered a DataFrame or a LazyFrame over rows in memory.
+``CACHE_EXPIRATION_TIME``. The operations run a read, a fuzzy join, a random split, a custom node, a model's training
+or its apply in the child its task route spawns, as the job the ``job_id`` names, and hold each output that child wrote
+as the materialised result ``<job_id>_<i>``, which the same functions read, count, probe and release; the file,
+database and cloud writes run the child their task routes spawn and hold nothing. A training's output is the model it
+fitted, held as a blob; an apply scores with a model held here, named by its result id. ``polars_code`` runs a Polars
+Code node's code, and ``sql_query`` translates a SQL Query node's statement, once in a pooled child and holds the
+result as ``<job_id>_0``: deferred, as its plan, when the code answered a LazyFrame over sources, materialised in its
+file when it answered a DataFrame or a LazyFrame over rows in memory.
 ``export`` writes a held result to a URI as parquet in a ``funcs.export_result`` child; ``import_uri`` holds a scan of a
 URI as a deferred result, with the columns and row count core sent and nothing read. A credential crosses either as a
 stored connection's id and user, resolved where the plan runs; an import whose connection cannot be read from the
@@ -110,10 +111,9 @@ OPERATIONS = frozenset(
 )
 """The operation kinds this worker runs, by ``OperationKind`` value; a kind is named while a route runs it.
 
-Twelve are the ``POST /v1/ops/<kind>`` routes, whose bodies are here: the reads, the fuzzy join, the custom node, the
-random split, ML training and apply, Polars code and SQL queries. The other seven are served by the task routes in
-``routes.py``: the database, cloud and file writes, the Delta write, merge and SCD2 write, and the visualisation
-sessions.
+Fifteen are the ``POST /v1/ops/<kind>`` routes, whose bodies are here: the reads, the fuzzy join, the custom node, the
+random split, ML training and apply, Polars code, SQL queries and the database, cloud and file writes. The other four
+are served by the task routes in ``routes.py``: the Delta write, merge and SCD2 write, and the visualisation sessions.
 """
 
 
@@ -912,6 +912,66 @@ def ml_apply(body: MlApplyInput, job_id: str) -> OpOutputs:
     return OpOutputs(
         outputs={"result": _hold_output(result_id, path, rows.collect_schema(), row_count, flow_id, node_id)}
     )
+
+
+def _write(
+    job_id: str, plan: bytes, operation: str, file_ref: str, flow_id: int, node_id: int | str, kwargs: dict[str, Any]
+) -> OpOutputs:
+    """Run the write *operation* over *plan* in a child as job *job_id*; a write holds nothing, so no outputs.
+
+    The child is the one the write's task route spawns, with the keyword arguments that route builds. Expired results
+    are swept and what an earlier run under the job id left is released first, as for every operation. A write that
+    does not complete answers the 500 a failed submit answers; what it wrote at its target is not this worker's.
+    """
+    _op_outputs(job_id, 0)
+    _run_op(
+        job_id,
+        lambda: start_process(
+            plan,
+            task_id=job_id,
+            operation=operation,
+            file_ref=file_ref,
+            flowfile_flow_id=flow_id,
+            flowfile_node_id=node_id,
+            kwargs=kwargs,
+        ),
+        [],
+    )
+    return OpOutputs(outputs={})
+
+
+def file_write(body: models.PolarsScriptWrite, job_id: str) -> OpOutputs:
+    """Write the body's plan to its ``path`` as its ``data_type`` in a child as job *job_id*; nothing is held."""
+    kwargs = {
+        "data_type": body.data_type,
+        "path": body.path,
+        "write_mode": body.write_mode,
+        "sheet_name": body.sheet_name,
+        "delimiter": body.delimiter,
+        "compression": body.compression,
+    }
+    plan = body.polars_serializable_object()
+    return _write(job_id, plan, "write_output", body.path, body.flowfile_flow_id, body.flowfile_node_id, kwargs)
+
+
+def database_write(body: models.DatabaseScriptWrite, job_id: str) -> OpOutputs:
+    """Write the body's plan to its database table in a child as job *job_id*; nothing is held.
+
+    The connection's password is the ``$ffsec$`` ciphertext core sent, decrypted by the child.
+    """
+    kwargs = {"database_write_settings": body.get_database_write_settings()}
+    plan = body.polars_serializable_object()
+    return _write(job_id, plan, "write_to_database", "", body.flowfile_flow_id, body.flowfile_node_id, kwargs)
+
+
+def cloud_write(body: models.CloudStorageScriptWrite, job_id: str) -> OpOutputs:
+    """Write the body's plan to its object-storage path in a child as job *job_id*; nothing is held.
+
+    The connection's secrets are the ``$ffsec$`` ciphertext core sent, decrypted by the child.
+    """
+    kwargs = {"cloud_write_settings": body.get_cloud_storage_write_settings()}
+    plan = body.polars_serializable_object()
+    return _write(job_id, plan, "write_to_cloud_storage", "", body.flowfile_flow_id, body.flowfile_node_id, kwargs)
 
 
 def polars_code(body: PolarsCodeInput, job_id: str) -> OpOutputs:
