@@ -77,6 +77,7 @@ from shared.cloud_storage import (
     get_lazy_frame_from_gcs_pyarrow_dataset,
     scan_delta_from_gcs,
 )
+from shared.cloud_storage.gcs import gcs_filesystem
 from shared.cloud_storage.utils import normalize_delta_path
 from shared.cloud_storage.writers import write_to_cloud
 from shared.db_writer import write_dataframe_to_database
@@ -640,9 +641,7 @@ class FlowDataEngine:
         read_settings: cloud_storage_schemas.CloudStorageReadSettings | None = None,
     ) -> FlowDataEngine:
         """Read multiple files from a GCS directory using gcsfs glob + open."""
-        import gcsfs
-
-        fs = gcsfs.GCSFileSystem(**storage_options)
+        fs = gcs_filesystem(**storage_options)
         path = resource_path.replace("gs://", "").rstrip("/")
         files = fs.glob(f"{path}/*.{file_format}")
         if not files:
@@ -681,9 +680,7 @@ class FlowDataEngine:
             first_file_ref = get_first_file_from_cloud_dir(source, storage_options=storage_options)
 
             if use_pyarrow:
-                import gcsfs
-
-                fs = gcsfs.GCSFileSystem(**storage_options)
+                fs = gcs_filesystem(**storage_options)
                 return convert_stats_to_column_info(
                     FlowDataEngine._create_schema_stats_from_pl_schema(
                         pl.from_arrow(pq.read_schema(first_file_ref, filesystem=fs).empty_table()).collect_schema()
@@ -883,9 +880,7 @@ class FlowDataEngine:
 
             if use_pyarrow:
                 # For GCS via gcsfs: use gcsfs.open for single-file JSON
-                import gcsfs
-
-                fs = gcsfs.GCSFileSystem(**storage_options)
+                fs = gcs_filesystem(**storage_options)
                 path = resource_path.replace("gs://", "")
                 with fs.open(path) as f:
                     df = pl.read_ndjson(f)

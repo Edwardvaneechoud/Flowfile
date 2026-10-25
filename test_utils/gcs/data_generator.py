@@ -85,10 +85,11 @@ def _create_delta_lake_table(arrow_table: pa.Table, bucket_name: str):
     import os
     import tempfile
 
-    import gcsfs
     from deltalake import write_deltalake
 
-    fs = gcsfs.GCSFileSystem(token="anon", endpoint_url=GCS_ENDPOINT_URL)
+    from shared.cloud_storage.gcs import gcs_filesystem
+
+    fs = gcs_filesystem(token="anon", endpoint_url=GCS_ENDPOINT_URL)
     gcs_path = f"{bucket_name}/delta-lake-table"
 
     with tempfile.TemporaryDirectory() as tmp_dir:

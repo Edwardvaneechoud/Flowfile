@@ -617,7 +617,7 @@ def test_a_gcs_read_with_an_endpoint_on_the_worker_reads_nothing_in_core(
     Flag on, every reader is a native scan the worker reads and answers the schema of, no plan carrying rows; flag
     off, core builds the read's options.
     """
-    import gcsfs
+    import gcsfs.core
 
     name = f"plan secrets gcs endpoint {uuid.uuid4().hex[:6]}"
     with get_db_context() as db:
@@ -638,7 +638,7 @@ def test_a_gcs_read_with_an_endpoint_on_the_worker_reads_nothing_in_core(
         resolved.append(args)
         raise RuntimeError("core resolved a connection for a read on the worker")
 
-    monkeypatch.setattr(gcsfs.GCSFileSystem, "__init__", _refuse)
+    monkeypatch.setattr(gcsfs.core.GCSFileSystem, "__init__", _refuse)
     monkeypatch.setattr(cp, "resolve_credential_ref", _refuse)
     monkeypatch.setattr(CloudStorageReader, "get_storage_options", staticmethod(_refuse))
     graph = create_test_graph(flow_id=7412, execution_location=execution_location)

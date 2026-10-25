@@ -112,12 +112,12 @@ def get_first_file_from_gcs_dir(source: str, storage_options: dict[str, Any] | N
     str
         GCS URI of the first matching file found.
     """
-    import gcsfs
+    from shared.cloud_storage.gcs import gcs_filesystem
 
     file_extension = _get_file_extension(source)
     path = source.replace("gs://", "").split("*")[0].rstrip("/")
 
-    fs = gcsfs.GCSFileSystem(**(storage_options or {}))
+    fs = gcs_filesystem(**(storage_options or {}))
     matches = fs.glob(f"{path}/**/*.{file_extension}")
     if not matches:
         raise ValueError(f"No .{file_extension} files found in gs://{path}")

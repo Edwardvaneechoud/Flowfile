@@ -24,6 +24,19 @@ def use_pyarrow_for_gcs(storage_type: str, endpoint_url: str | None) -> bool:
     return storage_type == "gcs" and endpoint_url is not None
 
 
+def gcs_filesystem(**storage_options: Any) -> Any:
+    """A gcsfs filesystem for ``storage_options``, without gcsfs's zonal/hierarchical-namespace layer.
+
+    From gcsfs 2026.10 ``gcsfs.GCSFileSystem`` is ``ExtendedGcsFileSystem``, which first asks each bucket's storage
+    layout over gRPC. An endpoint that serves only the JSON API (fake-gcs-server, a custom endpoint) never answers, so
+    every call waits out a 60 s timeout, and the unknown layout is not cached. The core class is what earlier releases
+    returned. Every gcsfs filesystem in Flowfile is made here.
+    """
+    from gcsfs.core import GCSFileSystem
+
+    return GCSFileSystem(**storage_options)
+
+
 def get_path_without_scheme(path_str: str) -> str:
     """Strip the URI scheme from a cloud storage path.
 
@@ -78,7 +91,6 @@ def get_lazy_frame_from_gcs_pyarrow_dataset(
     is_directory
         If True, glob/wildcard patterns are stripped to get the base directory path.
     """
-    import gcsfs
     import pyarrow.dataset as ds
 
     clean_path = (
@@ -87,7 +99,7 @@ def get_lazy_frame_from_gcs_pyarrow_dataset(
         else get_path_without_scheme(resource_path)
     )
 
-    fs = gcsfs.GCSFileSystem(**(storage_options or {}))
+    fs = gcs_filesystem(**(storage_options or {}))
     return pl.scan_pyarrow_dataset(ds.dataset(clean_path, format="parquet", filesystem=fs))
 
 
@@ -116,10 +128,9 @@ def sink_to_gcs(
     **kwargs
         Additional arguments passed to the underlying writer.
     """
-    import gcsfs
     import pyarrow.parquet as pq
 
-    fs = gcsfs.GCSFileSystem(**storage_options)
+    fs = gcs_filesystem(**storage_options)
     clean_path = get_path_without_scheme(path)
     df = lf.collect()
 
@@ -161,12 +172,11 @@ def write_delta_to_gcs(
     partition_by
         Delta partition columns (applied at table creation).
     """
-    import gcsfs
     from deltalake import write_deltalake
 
     clean_path = get_path_without_scheme(path)
 
-    fs = gcsfs.GCSFileSystem(**storage_options)
+    fs = gcs_filesystem(**storage_options)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         local_path = os.path.join(tmp_dir, clean_path)
@@ -208,10 +218,9 @@ def scan_delta_from_gcs(
     pl.LazyFrame
         A lazy frame backed by the Delta table's PyArrow dataset.
     """
-    import gcsfs
     from deltalake import DeltaTable
 
-    fs = gcsfs.GCSFileSystem(**storage_options)
+    fs = gcs_filesystem(**storage_options)
     clean_path = get_path_without_scheme(resource_path)
 
     dt_kwargs: dict[str, Any] = {}

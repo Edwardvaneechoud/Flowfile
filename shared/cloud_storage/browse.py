@@ -556,11 +556,11 @@ def _normalize_gcs_options(storage_options: dict[str, Any] | None) -> dict[str, 
 def _list_gcs(
     parsed: ParsedUri, storage_options: dict[str, Any] | None, page_size: int, page_token: str | None
 ) -> BrowseResult:
-    import gcsfs
+    from shared.cloud_storage.gcs import gcs_filesystem
 
     options = _normalize_gcs_options(storage_options)
     try:
-        fs = gcsfs.GCSFileSystem(**options)
+        fs = gcs_filesystem(**options)
     except Exception as exc:
         raise _translate_generic_error(exc, parsed.scheme) from None
 
