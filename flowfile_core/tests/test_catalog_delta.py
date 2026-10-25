@@ -356,6 +356,47 @@ class TestKernelTableRoutes:
         assert resp.status_code == 201, resp.text
         assert resp.json()["file_path"] == os.path.realpath(path)
 
+    @staticmethod
+    def _object_storage_schema() -> int:
+        """A schema under a catalog whose storage root is ``s3://bucket/catalog``; its connection is never resolved."""
+        with get_db_context() as db:
+            cat = CatalogNamespace(
+                name="DeltaCloudCat",
+                level=0,
+                owner_id=1,
+                storage_uri="s3://bucket/catalog",
+                storage_connection_name="unresolved",
+            )
+            db.add(cat)
+            db.commit()
+            schema = CatalogNamespace(name="DeltaCloudSch", level=1, parent_id=cat.id, owner_id=1)
+            db.add(schema)
+            db.commit()
+            return schema.id
+
+    def test_from_data_registers_a_table_directory_under_the_namespace_storage_root(self, client):
+        resp = self._register(client, self._object_storage_schema(), "s3://bucket/catalog/kernel_t/")
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["file_path"] == "s3://bucket/catalog/kernel_t"
+
+    @pytest.mark.parametrize(
+        "table_path",
+        [
+            "s3://other/catalog/kernel_t",
+            "s3://bucket/catalog/nested/kernel_t",
+            "s3://bucket/catalog/../kernel_t",
+            "s3://bucket/catalog/..",
+            "s3://bucket/catalog",
+            "s3://bucket/catalogue/kernel_t",
+        ],
+    )
+    def test_from_data_refuses_an_object_storage_path_off_the_namespace_root(self, client, table_path):
+        assert self._register(client, self._object_storage_schema(), table_path).status_code == 403
+
+    def test_from_data_refuses_an_object_storage_path_in_a_local_namespace(self, client):
+        _, schema_id = _make_namespace()
+        assert self._register(client, schema_id, "s3://bucket/catalog/kernel_t").status_code == 403
+
     def test_refresh_refuses_a_path_outside_the_catalog(self, client, tmp_path):
         _, schema_id = _make_namespace()
         path = storage.catalog_tables_directory / "kernel_t_refresh"

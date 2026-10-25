@@ -61,7 +61,7 @@ from flowfile_core.catalog import (
     WorkerUnavailableError,
 )
 from flowfile_core.catalog.access import AccessResolver
-from flowfile_core.catalog.services.tables import managed_table_path
+from flowfile_core.catalog.services.tables import catalog_table_location
 from flowfile_core.catalog.validators import validate_cron_expression, validate_cron_timezone
 from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db
@@ -219,11 +219,14 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
 _HANDLED_EXCEPTIONS = tuple(_CATALOG_EXCEPTION_MAP.keys())
 
 
-def _kernel_table_path(table_path: str) -> str:
-    """A kernel-written table's directory, resolved under the catalog's tables directory; 403 for any other path."""
-    resolved = managed_table_path(table_path)
+def _kernel_table_path(table_path: str, namespace_id: int | None = None) -> str:
+    """A table directory in the catalog's storage (``catalog_table_location``); 403 for any other path.
+
+    Without *namespace_id* only a directory under the catalog tables directory is one.
+    """
+    resolved = catalog_table_location(table_path, namespace_id)
     if resolved is None:
-        raise HTTPException(403, "Access denied: table_path must be under the catalog tables directory")
+        raise HTTPException(403, "Access denied: table_path must be a table directory in the catalog's storage")
     return resolved
 
 
@@ -768,11 +771,12 @@ def register_table_from_data(
     Used by ``flowfile_ctx.write_catalog_table`` once the kernel has written
     the Delta directory locally — Core only persists the metadata record (no
     worker-side materialization). The directory must be under the catalog's
-    tables directory, where the kernel writes it (403 otherwise).
+    tables directory, where the kernel writes it, or a table directory under
+    the namespace's object-storage root (403 otherwise).
     """
     return service.register_table_from_data(
         name=body.name,
-        table_path=_kernel_table_path(body.table_path),
+        table_path=_kernel_table_path(body.table_path, body.namespace_id),
         owner_id=current_user.id,
         namespace_id=body.namespace_id,
         description=body.description,

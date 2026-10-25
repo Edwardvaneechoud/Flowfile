@@ -46,6 +46,7 @@ from flowfile_core.catalog.storage_backend import (
     _catalog_table_dir_name,
     _is_cloud_uri,
     join_catalog_uri,
+    locate_for_namespace,
     resolve_for_namespace,
 )
 from flowfile_core.catalog.validators import format_full_name, validate_table_registration
@@ -122,6 +123,23 @@ def managed_table_path(file_path: str) -> str | None:
     if resolved is None or resolved == base:
         return None
     return resolved
+
+
+def catalog_table_location(table_path: str, namespace_id: int | None) -> str | None:
+    """*table_path* when it is a table directory in the catalog's storage; ``None`` otherwise.
+
+    A local path must lie strictly under Flowfile's managed catalog dir (:func:`managed_table_path`). An
+    object-storage URI must be *namespace_id*'s storage root joined with one directory name, the location the
+    catalog writer gives a table there; a namespace on local disk takes no URI.
+    """
+    if not _is_cloud_uri(table_path):
+        return managed_table_path(table_path)
+    target = locate_for_namespace(namespace_id)
+    dir_name = _catalog_table_dir_name(table_path)
+    location = join_catalog_uri(target.base, dir_name)
+    if not target.is_cloud or dir_name in (".", "..") or location != table_path.rstrip("/"):
+        return None
+    return location
 
 
 def _is_managed_table_path(file_path: str) -> bool:
