@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "kernel-runtime"
-version = "0.6.2"
+version = "0.6.4"
 description = "FlowFile kernel runtime - executes Python code in isolated Docker containers"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
 readme = "README.md"
@@ -27,7 +27,7 @@ lightgbm = {version = "^4.0.0", optional = true}
 statsmodels = {version = "^0.14.0", optional = true}
 polars-ds = {version = ">=0.11.0", optional = true}
 pytest = {version = ">=7.0.0", optional = true}
-matplotlib = {version = "^3.6.0", optional = true}
+matplotlib = {version = "^3.6.0", optional = true, python = ">=3.11"}  # its pillow dep: only 13+ is patched, and 13 needs 3.11
 
 [tool.poetry.extras]
 ml = ["scikit-learn", "xgboost", "lightgbm", "statsmodels", "polars-ds"]

@@ -1,6 +1,12 @@
 import datetime
+import functools
+import hashlib
 import re
 
+import polars as pl
+from polars_expr_transformer import PolarsCodeGenError, to_polars_code
+
+from flowfile_core.configs import logger
 from flowfile_core.flowfile.code_generator.base import ConverterMixinBase
 from flowfile_core.schemas import transform_schema
 
@@ -36,6 +42,33 @@ def _temporal_literal(value: str, base: str) -> str | None:
         return f"datetime.datetime({', '.join(str(p) for p in parts)})"
     except ValueError:
         return None
+
+
+@functools.lru_cache(maxsize=2048)
+def _try_translate_to_polars_code(formula: str) -> str | None:
+    """Translate a flowfile formula into native ``pl.``-prefixed Polars expression code.
+
+    Returns the validated code string, or None so callers fall back to the
+    ``simple_function_to_expr`` runtime emission (always correct, but it keeps
+    the exported script dependent on polars_expr_transformer). Validation evals
+    the snippet with the modules a generated expression may reference. Memoised
+    on the formula text, the only input the result depends on.
+    """
+    try:
+        generated = to_polars_code(formula)
+    except PolarsCodeGenError:
+        return None
+    except Exception as e:
+        logger.debug(f"to_polars_code failed for {formula!r}: {e}")
+        return None
+    if not generated:
+        return None
+    try:
+        result = eval(generated, {"__builtins__": {}}, {"pl": pl, "datetime": datetime, "hashlib": hashlib})  # noqa: S307
+    except Exception as e:
+        logger.debug(f"Generated polars code failed validation for {formula!r}: {e}")
+        return None
+    return generated if isinstance(result, pl.Expr) else None
 
 
 class ExpressionHelpersMixin(ConverterMixinBase):

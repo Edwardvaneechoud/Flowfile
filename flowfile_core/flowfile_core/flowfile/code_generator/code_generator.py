@@ -15,13 +15,16 @@ import types
 from dataclasses import replace
 
 import polars as pl
-from polars_expr_transformer import PolarsCodeGenError, to_flowframe_code, to_polars_code
+from polars_expr_transformer import PolarsCodeGenError, to_flowframe_code
 
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.code_generator.chain_fusion import NodeEmission, render_pipeline
 from flowfile_core.flowfile.code_generator.connector_handlers import ConnectorHandlersMixin
 from flowfile_core.flowfile.code_generator.custom_node_handlers import CustomNodeHandlersMixin
-from flowfile_core.flowfile.code_generator.expression_helpers import ExpressionHelpersMixin
+from flowfile_core.flowfile.code_generator.expression_helpers import (
+    ExpressionHelpersMixin,
+    _try_translate_to_polars_code,
+)
 from flowfile_core.flowfile.code_generator.join_handlers import JoinHandlersMixin
 from flowfile_core.flowfile.code_generator.literals import python_literal
 from flowfile_core.flowfile.code_generator.native_handlers import FLOW_VAR, NativeHandlersMixin, literal_lines
@@ -205,33 +208,16 @@ def _interprets_without_a_kernel(fl_code: str) -> bool:
 
 
 @functools.lru_cache(maxsize=2048)
-def _try_translate_to_polars_code(formula: str) -> str | None:
-    """Translate a flowfile formula into native ``pl.``-prefixed Polars expression code.
+def _has_formula_form(ff_code: str) -> bool:
+    """Whether a translated ``ff.`` snippet keeps a formula form, so a cell rebuilds a Formula or Filter node from it.
 
-    Returns the validated code string, or None so callers fall back to the
-    ``simple_function_to_expr`` runtime emission (always correct, but it keeps
-    the exported script dependent on polars_expr_transformer). Validation evals
-    the snippet with the modules a generated expression may reference. Memoised
-    on the formula text, the only input the result depends on.
+    ``str.to_date(...)`` has none: a cell holding it would turn the canvas node into Polars code. Memoised on
+    the snippet text, the only input the verdict depends on.
     """
     try:
-        generated = to_polars_code(formula)
-    except PolarsCodeGenError:
-        return None
-    except Exception as e:
-        logger.debug(f"to_polars_code failed for {formula!r}: {e}")
-        return None
-    if not generated:
-        return None
-    import datetime
-    import hashlib
-
-    try:
-        result = eval(generated, {"__builtins__": {}}, {"pl": pl, "datetime": datetime, "hashlib": hashlib})  # noqa: S307
-    except Exception as e:
-        logger.debug(f"Generated polars code failed validation for {formula!r}: {e}")
-        return None
-    return generated if isinstance(result, pl.Expr) else None
+        return getattr(_eval_in_validation_namespace(ff_code), "_ff_repr", None) is not None
+    except Exception:
+        return False
 
 
 def _polars_code_header(settings: input_schema.NodePolarsCode) -> str:
@@ -2680,7 +2666,7 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
         ff_code = _try_translate_to_ff_code(strip_outer_parens(formula))
         if ff_code:
             ff_code = _polars_code_to_flowframe(ff_code, modules=("ff",))
-            if self.placeholders and not _interprets_without_a_kernel(ff_code):
+            if self.placeholders and not (_interprets_without_a_kernel(ff_code) and _has_formula_form(ff_code)):
                 return None
             self._register_expr_stdlib_imports(ff_code)
             if re.search(r"\bpl\.", ff_code):
