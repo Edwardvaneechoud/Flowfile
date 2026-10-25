@@ -1,6 +1,6 @@
 # Remote workers
 
-This page covers running `flowfile_worker` on a host other than core's: what the worker and core need in their environment, how core reaches the worker, and what does not run there. It assumes the [Docker deployment](docker.md). The design behind it is the [compute protocol](../../for-developers/compute-protocol.md).
+This page covers running `flowfile_worker` on a host other than core's: what the worker and core need in their environment, how core reaches the worker, and what does not run there. It assumes the [Docker deployment](docker.md). [Where flows run](where-flows-run.md) explains the model with diagrams; the design behind it is the [compute protocol](../../for-developers/compute-protocol.md).
 
 ## How it works
 
@@ -63,7 +63,7 @@ Core checks each worker the first time it uses it after it starts, and again aft
 - **Refuses some nodes on the worker.** A plugin the worker does not have, has in another version, or cannot load from the path core's plans carry; and a Python version other than core's, to the patch release, when core's Python functions do not run there. The nodes that need the missing piece are refused on that worker before the run starts, with the reason, and every other node runs there: a plugin refuses the nodes that use it, and Python refuses the formula nodes (**Formula**, **Multi-field formula**, and **Filter data**, **Gate** and **Rename columns** when they use a formula) and a cloud storage read of a table's changes.
 - **Shown, not compared.** The app version, the platform (operating system and CPU architecture) and the plugins' library paths.
 
-Every configured worker is listed for every user under **Execution location** and a node's **Compute backend**, with what its last check said beside the id: `ok`, `ok, without <what it lacks>`, `refused: <why>`, or `not checked`.
+Every configured worker is listed for every user under **Execution location** and a node's **Compute backend**, with what its last check said beside the id: **Compatible**, **Accepted with differences**, **Limited · N unavailable**, **Not accepted**, **Handshake failed**, or **Not checked**.
 
 Core and worker images of one release, built together, match. Two releases that speak one worker contract work together too, since the app version is not compared, and a worker refuses a request field it does not know rather than ignoring it. Upgrade the workers when a release changes the protocol version or Polars. A desktop app, or a Windows core, with a worker in a Linux container keeps plugins at other library paths, so the nodes that use a plugin, the formula nodes among them, are refused there.
 

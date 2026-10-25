@@ -673,9 +673,15 @@ class FlowDataEngine:
         file_format: Literal["csv", "parquet", "json", "delta"],
         use_pyarrow: bool = False,
     ) -> list[FlowfileColumn] | None:
-        """Infers the schema by scanning the first file in a cloud directory."""
+        """Infers the schema by scanning the first file in a cloud directory.
+
+        ``None`` for a GCS directory whose options are object_store's (a native scan's, with the compute protocol flag
+        on): the first file is found through gcsfs, which cannot read them, so the scan resolves its own schema.
+        """
         from pyarrow import parquet as pq
 
+        if source.startswith("gs://") and "service_account_key" in storage_options:
+            return None
         try:
             first_file_ref = get_first_file_from_cloud_dir(source, storage_options=storage_options)
 

@@ -2,23 +2,23 @@
 
 This page is the design for how `flowfile_core` hands work to compute: a worker beside core, on the same machine or on another host, or the worker embedded in the process when none runs beside it. It is written for contributors who work on it or build a backend against it. After reading it you know the interface a backend implements, the guarantees core relies on, what ships, and which decisions are settled.
 
-The protocol is on by default (`FLOWFILE_COMPUTE_PROTOCOL`). With it off, core uses the worker's task routes, and those the protocol's `/v1` routes replaced answer with `Deprecation: true`. [Remote workers](../users/deployment/remote-worker.md) lists what a worker on another host needs; the roadmap's [Remote workers](../roadmap-details.md#remote-workers) section says what comes next.
+[How compute works](compute-walkthrough.md) is a guided tour of the same code with diagrams; read it first for orientation.
 
-## Why a protocol
+The protocol is on by default (`FLOWFILE_COMPUTE_PROTOCOL`). With it off, core uses the worker's task routes, and the task routes that `/v1` routes cover answer with `Deprecation: true`. [Remote workers](../users/deployment/remote-worker.md) lists what a worker on another host needs; the roadmap's [Remote workers](../roadmap-details.md#remote-workers) section says what comes next.
 
-Core never holds a dataset. Before the protocol, for each node it built a Polars lazy plan, serialised it, and posted the bytes to `flowfile_worker`. The worker ran the plan in a spawned child, wrote the result to `cache/<flow>/<node hash>.arrow` on its own disk, and answered with another plan, `scan_ipc("<that path>")`. Core treated that plan as the node's result.
+## What the protocol is for
 
-That worked on one machine because both services saw one disk. Core opened the worker's file itself for the 100-row preview, the first-row probe behind the formula editor, the dynamic-rename and null-profile probes, pivot unique values, column stats, the published API runner, the REST sample, the CSV export, custom-node outputs, the catalog's virtual-table preview, and the check that asked whether a cached result still existed (`os.path.exists`). On another host every one of those reads failed, and the existence check reran every node on every run. Before the protocol (counted in 2026-10) there were eleven such read sites; 18 inline `execution_location` branches across `flow_graph/`, `builders/`, `flow_node/` and `flow_data_engine/`, not counting the two comparisons that only detect a settings change; 14 files outside `configs/settings.py` that read `OFFLOAD_TO_WORKER` or `WORKER_URL`; and about 20 worker calls with no local branch at all. The published API runner had a fallback of its own: when the worker was unreachable or rejected the plan, it collected the response in core.
+Core never holds a dataset. For each node it builds a Polars lazy plan and hands it to a backend, which runs it on its compute and holds the result. Core holds a reference to that result and receives at most a preview's rows of it, so core and its compute share no disk, host or process: a worker beside core, a worker on another host and the worker embedded in this process all sit behind one interface.
 
-Three habits underlay that, and each one blocked a different deployment shape:
+Three design rules carry that, and each makes a deployment shape possible:
 
-| Habit | Where it showed | Blocked |
+| Rule | Where it lives | Makes possible |
 |---|---|---|
-| A result was a path | `Status.file_ref`, `scan_ipc(path)` plans, `CatalogTable.file_path` | any second host |
-| The decision lived in globals | `OFFLOAD_TO_WORKER`, the module-level `WORKER_URL`; the CLI and scheduler forced both off | a per-run choice of compute, scheduled runs on a worker |
-| Nothing could say "this cannot run there" | plugin `.so` paths inside plans, local output paths, nodes that need a secret the executor lacks | team workers, clusters |
+| A result is a reference that only the backend that minted it can read | `ResultRef`, `plan_for`, `sample` | compute on any host, with no shared disk |
+| Where work runs is decided in one place | `execution/registry.py`, `ExecutionContext` | a choice of compute per run and per node, scheduled runs on a worker |
+| Every node states what it needs and every backend what it offers | `flow_node/requirements.py`, `Capabilities`, `place()` | team workers and clusters, with a node refused before the run when its backend cannot run it |
 
-The protocol replaces all three with one interface. Backends implement it; core calls only it.
+Backends implement the interface; core calls only it.
 
 ## Vocabulary
 
@@ -142,7 +142,7 @@ A reference is **materialised** when the backend wrote the result somewhere it o
 
 `plan_for(ref)` returns the leaf for composing the next node's plan: `scan_ipc(path)` on a worker, the deferred plan itself for a deferred reference. The leaf may name a path core cannot open; core only composes on it and sends the result back to the same backend.
 
-The `result_id` is the node hash, which folds input hashes, settings, the graph instance's `parent_uuid` and the cache epoch, so cache semantics are unchanged: a reference is the cache, `exists(ref)` replaces `results_exists`, and references do not survive a graph reload. `release(ref)` replaces `clear_task`.
+The `result_id` is the node hash, which folds input hashes, settings, the graph instance's `parent_uuid` and the cache epoch. A reference is the cache: `exists(ref)` says whether the backend still holds it, `release(ref)` lets it go, and references do not survive a graph reload.
 
 A node owns every reference it minted and releases them together (`FlowNode.release_result`): its result, the other outputs it stored beside it, and its operation's outputs (a read's result, a fuzzy join's, a random split's per split, a custom node's per output, the model a Train Model node fitted). It releases them on a rerun under another hash or on another backend, on removal, when its graph closes, and when it fails after storing part of its outputs; a published API call and a headless run close their flow when they end, so neither leaves a result behind. A release whose backend cannot be reached is logged and the reference dropped. The worker's age sweep, which forgets a result `CACHE_EXPIRATION_TIME` (24 hours) after its submit ended, the next time the worker receives work, is the backstop for a core that died, never the way a result is meant to go.
 
@@ -185,7 +185,7 @@ Core separates what it needs from what it knows:
 | `polars_code` | none: `POST /v1/ops/polars_code` in either protocol state | one reference, its schema from the code run on the backend |
 | `sql_query` | none: `POST /v1/ops/sql_query` in either protocol state | one reference, its schema from the query run on the backend |
 
-With the protocol on, the kinds whose result core samples (the reads, `fuzzy_join`, `random_split`, `custom_node`, `ml_train`, `ml_apply`, `polars_code` and `sql_query`) go to `POST /v1/ops/{kind}`, and the task routes those replaced answer with `Deprecation: true`; `/execute_custom_node` does not, as the custom-node dry run still uses it. The writes, the Delta kinds and `viz_session` stay on the task routes.
+With the protocol on, the kinds whose result core samples (the reads, `fuzzy_join`, `random_split`, `custom_node`, `ml_train`, `ml_apply`, `polars_code` and `sql_query`) go to `POST /v1/ops/{kind}`, and the task routes for those kinds answer with `Deprecation: true`; `/execute_custom_node` does not, as the custom-node dry run still uses it. The writes, the Delta kinds and `viz_session` stay on the task routes.
 
 A backend declares the subset it supports. `run_op` may run any number of jobs on the compute: a random split is one shuffle and a deferred reference per split over it; a custom node is one `process()` call and as many results as it named.
 
@@ -210,8 +210,8 @@ Schemas follow the same rule: core learns a reader's schema from the backend tha
 
 Consequences of resolving at the executor:
 
-- `aws-cli`, `iam_role`, `env_vars` and `managed_identity` connections use the **executor's** profile or role. Before the protocol, reads resolved them as core's identity and froze the resulting token into the plan, while writes already resolved on the worker; with the protocol on, reads resolve on the executor too.
-- A GCS service-account key or an Azure service-principal secret is not among `PROVIDER_CREDENTIAL_KEYS`, so before the protocol it travelled in a plan's `storage_options` as plain text. With the protocol on, the worker exchanges it for a bearer token where the plan runs, and it travels in no plan; with the protocol off, it still travels in the options.
+- `aws-cli`, `iam_role`, `env_vars` and `managed_identity` connections use the **executor's** profile or role, for reads and writes alike.
+- A GCS service-account key or an Azure service-principal secret is not among `PROVIDER_CREDENTIAL_KEYS`. With the protocol on, the worker exchanges it for a bearer token where the plan runs, and it travels in no plan; with the protocol off, it travels in the plan's `storage_options`.
 - With the protocol on, an `aws-cli` read with no saved connection carries no credential and no provider, so Polars' default provider resolves the default credential chain of whichever process runs the plan.
 - A GCS connection with an endpoint is read on the executor like any other cloud read: a Polars-native scan naming the connection by its reference, the endpoint reached through object_store's `gcs_base_url` in a service-account key with no key material. The gcsfs read in core stays for the protocol off and for the writers.
 - With the protocol on, a read that names a connection whose method holds a credential (any but `env_vars` and `managed_identity`, which carry no provider) and that the catalog does not hold for the user it runs as, or that runs as no user, is refused, never resolved in core: `Cloud connection "<name>" is not stored for user <id>: a read names a connection stored for the user it runs as`.
@@ -240,10 +240,10 @@ class Placement:
 ```
 
 - Every node has `execution_location: "auto" | <backend id>` in its settings, saved in the flow file. `"auto"` is the default and runs the node on its flow's backend; the version 1 policy places every node on its flow's backend whatever the node's own value, and the mixed policy reads it.
-- The saved vocabulary is a backend id, never a role name, because a saved value is permanent. A deployment's control plane maps its own names onto ids: its team node is `worker:team`. `remote` stays an alias of the default worker for flow files written before the protocol.
+- The saved vocabulary is a backend id, never a role name, because a saved value is permanent. A deployment's control plane maps its own names onto ids: its team node is `worker:team`. `remote` is an alias of the default worker, for flow files that carry it.
 - The flow's own `execution_location` becomes the default backend for its nodes. The designer offers `"auto"` (the configured default worker) and the ids of the backends table, each with its last handshake verdict beside it, never `"local"`: desktop and Docker always run on a worker, on the same machine by default, so an out-of-memory node takes a child down and not core, and cancel is real. A flow saved with `"local"` loads as `"auto"` wherever a file is opened with the protocol on, the designer and `flowfile_frame` alike. `"remote"` is an alias of `"auto"`. Headless runs, a `flowfile_frame` graph built in code and the conformance suite run on the worker embedded in their own process, whose id is `local`. The id is permanent and keeps resolving to that worker in a process with no worker beside it. In a core that serves, a run that reaches `local` is refused with the protocol on before any node starts, each node's row on the run report saying `cannot run on backend "local": this core serves; compute runs on its worker`.
 - **Version 1 policy** (`SingleBackendPolicy`) assigns one backend per flow, except the node types whose builders pin them to a backend of their own (the Google Analytics reader runs on the worker), and refuses a node whose requirements that backend does not meet: the run starts no node, and each refused node's row on the run report says `cannot run on backend "<id>": <reason>`. Mixed assignments are legal in the protocol from the first release.
-- **Mixed policy** (`MixedPlacementPolicy`), chosen when `FLOWFILE_EXCHANGE_URI` is set, assigns each node the backend its own `execution_location` names, the run's backend for `"auto"`, and keeps the pinned types where their builders pin them. A node that backend cannot run goes to the policy's `fallback_id` when that backend can run it (`registry.fallback_backend_id()`: the default backend in a core that serves, the embedded worker `local` in a process that does not), recorded as a `Fallback(node_id, backend_id, fallback_id, reason)` on `Placement.fallbacks`; `local` in a core that serves counts as a backend that runs no node. The Apply Model and formula gate rules read the assignment, so a Train Model that falls back takes its Apply Model along; a node neither backend can run is refused with both reasons, and a backend refused whole or unreachable keeps today's behaviour. Each moved node's run-report row carries `backend_id`, `fallback_from` and `fallback_reason`, and `GET /flow/placement` answers the same placement without running, for the designer's badges. Each boundary crosses through the exchange store by `export` and `import_uri`. Before any node starts, the importing node is refused when core cannot use the store, with the store's reason, and when core knows before the run that the edge's output holds more rows than `FLOWFILE_EXCHANGE_MAX_ROWS`, naming the rows, the columns and the limit. That limit is priced from what core holds before the run (the upstream's held result's `row_count`, the known count of the engine core holds for that output, a manual input's frame); nothing is counted, sampled or collected to price it, so an edge whose count is unknown crosses at any size. The run report carries the placement's boundaries as `RunInformation.boundaries`, a refused run's included, which the canvas marks on its edges. A catalog reader over a virtual table that resolves by running its producer flow runs that flow on the reader's own backend. The node drawer offers `"auto"`, `worker` and the ids of the backends table, never `"local"`.
+- **Mixed policy** (`MixedPlacementPolicy`), chosen when `FLOWFILE_EXCHANGE_URI` is set, assigns each node the backend its own `execution_location` names, the run's backend for `"auto"`, and keeps the pinned types where their builders pin them. A node that backend cannot run goes to the policy's `fallback_id` when that backend can run it (`registry.fallback_backend_id()`: the default backend in a core that serves, the embedded worker `local` in a process that does not), recorded as a `Fallback(node_id, backend_id, fallback_id, reason)` on `Placement.fallbacks`; `local` in a core that serves counts as a backend that runs no node. The Apply Model and formula gate rules read the assignment, so a Train Model that falls back takes its Apply Model along; a node neither backend can run is refused with both reasons, and the nodes of a backend refused whole, of an unknown id or of an unreachable backend never move. Each moved node's run-report row carries `backend_id`, `fallback_from` and `fallback_reason`, and `GET /flow/placement` answers the same placement without running, for the designer's badges. Each boundary crosses through the exchange store by `export` and `import_uri`. Before any node starts, the importing node is refused when core cannot use the store, with the store's reason, and when core knows before the run that the edge's output holds more rows than `FLOWFILE_EXCHANGE_MAX_ROWS`, naming the rows, the columns and the limit. That limit is priced from what core holds before the run (the upstream's held result's `row_count`, the known count of the engine core holds for that output, a manual input's frame); nothing is counted, sampled or collected to price it, so an edge whose count is unknown crosses at any size. The run report carries the placement's boundaries as `RunInformation.boundaries`, a refused run's included, which the canvas marks on its edges. A catalog reader over a virtual table that resolves by running its producer flow runs that flow on the reader's own backend. The node drawer offers `"auto"`, `worker` and the ids of the backends table, never `"local"`.
 - A deployment's control plane may fill the backends core places on (see Backends). Placement itself stays in core because only the DAG executor knows the graph ([Execution Strategy](flowfile-core.md#execution-strategy-how-nodes-decide-where-to-run)).
 
 ## Versions and the handshake
@@ -268,20 +268,20 @@ The worker exposes its capabilities as `GET /capabilities` and `GET /v1/capabili
 
 ## Previews and other bounded reads
 
-A backend provides rows; core does everything else. `sample` returns an Arrow IPC stream and core keeps the rendering it had. With `preview_rows` set, `submit` returns the sample inline on every backend, the embedded worker's from the worker's own submit, so the common case costs no second round trip and a plan that cannot run fails its node in Development mode on every backend alike. A read of a node whose last run failed raises the error that run failed with (`FlowNode.get_resulting_data`), never a frame built in the caller's process before the failure. Reopening a flow, a different row count, or an on-demand probe calls `sample(ref, n)`, and core caches the bytes per node hash.
+A backend provides rows; core does everything else. `sample` returns an Arrow IPC stream, which core renders. With `preview_rows` set, `submit` returns the sample inline on every backend, the embedded worker's from the worker's own submit, so the common case costs no second round trip and a plan that cannot run fails its node in Development mode on every backend alike. A read of a node whose last run failed raises the error that run failed with (`FlowNode.get_resulting_data`), never a frame built in the caller's process before the failure. Reopening a flow, a different row count, or an on-demand probe calls `sample(ref, n)`, and core caches the bytes per node hash.
 
-A worker caps `sample` at 10 000 rows and reads a sample of more than 1 000 rows of a materialised result in a child, never in its serving process; a larger request is refused, not truncated. A process with no worker beside it reads every row of a result it holds through `plan_for` and a collect in its own process, never through the cap. Every core-side read of a worker file collapsed into "submit a bounded plan, then sample it":
+A worker caps `sample` at 10 000 rows and reads a sample of more than 1 000 rows of a materialised result in a child, never in its serving process; a larger request is refused, not truncated. A process with no worker beside it reads every row of a result it holds through `plan_for` and a collect in its own process, never through the cap. Every read core makes of a result is a bounded call to the backend that holds it, never a file opened in core:
 
-| Before the protocol | In the protocol |
+| Read | How core makes it |
 |---|---|
-| preview, `get_read_top_n(file_ref, 100)` | inline sample on `submit` |
-| first row for the formula editor | `sample(ref, 1)` |
+| a node's preview | the inline sample on `submit` |
+| the first row for the formula editor | `sample(ref, 1)` |
 | pivot unique values | `submit(plan.select(col).unique().head(200))`, then `sample` |
 | column stats, null profile, dynamic-rename first row | an aggregate plan, then `sample` |
-| formula-gate probe | `sample(plan.filter(pred), 1)` |
-| CSV export | `sample(ref, 10_000)` streamed |
+| the formula-gate probe | `sample(plan.filter(pred), 1)` |
+| CSV export | `bounded.head_rows` of at most 10 000 rows on the backend that holds the result, written by that backend's `file_write` |
 | the published API runner | `sample(ref, max_rows)`, `max_rows` clamped to the worker's sample cap |
-| `artifact_is_missing` | `exists(ref)` |
+| whether a result is still held (`artifact_is_missing`) | `exists(ref)` |
 | kernel input parquet | `export(ref, <kernel shared volume uri>)`; needs `file` among the backend's write schemes, see Data locations |
 | catalog virtual-table preview | `sample` on the producer run's output reference |
 
@@ -307,17 +307,17 @@ Core reaches a backend through an `ExecutionContext` that the `FlowGraph` owns: 
 
 ## Headless runs
 
-The CLI (`flowfile run flow`, or `--run-flow` in a packaged build) and the scheduler, which spawns it, run a flow in the runner's own process unless a backend is named: a run with no backend named computes on the worker embedded in that process, each job in the process itself, whatever the flow's `"auto"` or `"remote"` says, since to the headless runner `"auto"` is its own process. A run a schedule or the catalog starts is such a child wherever core runs, so it never waits on the worker beside core and does not use it: on the desktop it computes beside the app's sidecar worker, and in Docker inside core's container, with that container's memory and CPU rather than the worker container's. A Google Analytics reader is the exception: its builder pins it to the default worker in every run. An explicit `--backend` on the run, or a specific backend id in the flow's setting, names a backend, and the headless runner then uses it through the same `ExecutionContext` the designer uses; a named worker that cannot be reached fails the run's nodes with `ComputeUnavailable`, and the run does not compute in its own process instead. The scheduler itself is core-import-free and only spawns `flowfile run flow`, which reads the flow's setting from the YAML, so no schedule changed behaviour with the protocol.
+The CLI (`flowfile run flow`, or `--run-flow` in a packaged build) and the scheduler, which spawns it, run a flow in the runner's own process unless a backend is named: a run with no backend named computes on the worker embedded in that process, each job in the process itself, whatever the flow's `"auto"` or `"remote"` says, since to the headless runner `"auto"` is its own process. A run a schedule or the catalog starts is such a child wherever core runs, so it never waits on the worker beside core and does not use it: on the desktop it computes beside the app's sidecar worker, and in Docker inside core's container, with that container's memory and CPU rather than the worker container's. A Google Analytics reader is the exception: its builder pins it to the default worker in every run. An explicit `--backend` on the run, or a specific backend id in the flow's setting, names a backend, and the headless runner then uses it through the same `ExecutionContext` the designer uses; a named worker that cannot be reached fails the run's nodes with `ComputeUnavailable`, and the run does not compute in its own process instead. The scheduler itself is core-import-free and only spawns `flowfile run flow`, which reads the flow's setting from the YAML.
 
 ## What ships
 
-These behaviours changed with the protocol:
+A deployment sees these behaviours:
 
-- An out-of-memory-killed worker child fails its node instead of the dataset moving into core.
-- A published API answers 503 when its compute cannot be reached, instead of collecting the response in core.
+- An out-of-memory-killed worker child fails its node; the dataset never moves into core.
+- A published API answers 503 when its compute cannot be reached; it never collects the response in core.
 - `aws-cli` and `iam_role` reads resolve on the executor (see Credentials).
 - A flow with a kernel node is refused on a remote backend, with the reason.
-- The protocol is on by default; `FLOWFILE_COMPUTE_PROTOCOL=0` switches core back to the worker's task routes.
+- The protocol is on by default; `FLOWFILE_COMPUTE_PROTOCOL=0` makes core use the worker's task routes.
 - With an exchange store configured, a flow's nodes run on several backends, each boundary crossing through the store.
 - Each backend is checked on its first use, through its own interface. Only the worker contract, the Polars version and its runtime refuse a backend whole; a plugin it lacks, and core's Python functions where they do not run there, refuse only the nodes that need them.
 - Core and a worker of different app releases work together while they speak one worker contract, and every worker request refuses a field the worker does not know.
@@ -326,8 +326,8 @@ These behaviours changed with the protocol:
 - Every backend answers the preview inline, so a plan that cannot run fails its node in Development mode, and with the protocol on a Polars Code node's code and a SQL Query node's statement run as operations on their backend, never in core.
 - The worker is the only compute. A scheduled run, `flowfile run flow` and Flowfile in Python compute on the worker embedded in their own process, `local` being its id, and a core that serves refuses `local` before any node starts.
 - The pip server's flows compute on the worker embedded in it, its jobs in the worker's pool, with no request to itself; `import flowfile` sets neither the worker's port nor single-file mode.
-- A catalog read whose worker cannot be reached answers `ComputeUnavailable` (503 on the catalog routes) instead of reading the table in core.
-- The custom-node dry run reads its outputs, and the AI agent its samples, through the backend instead of collecting them in core.
+- A catalog read whose worker cannot be reached answers `ComputeUnavailable` (503 on the catalog routes); core never reads the table itself.
+- The custom-node dry run reads its outputs, and the AI agent its samples, through the backend; neither collects them in core.
 
 | Check | Where |
 |---|---|

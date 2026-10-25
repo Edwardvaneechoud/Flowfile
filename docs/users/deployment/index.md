@@ -9,4 +9,4 @@ Choose how to run Flowfile based on your needs.
 | [Python Package](python.md) | Scripting, CI/CD, automation | No |
 | [Docker](docker.md) | Teams, servers, production | Yes |
 
-To run the worker on a host other than core's, see [Remote workers](remote-worker.md).
+[Where flows run](where-flows-run.md) explains which process computes a flow in each of these. To run the worker on a host other than core's, see [Remote workers](remote-worker.md).

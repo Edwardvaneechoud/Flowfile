@@ -125,6 +125,8 @@ def tls_worker(tmp_path_factory) -> Iterator[TlsWorker]:
             time.sleep(0.5)
         yield TlsWorker(url=url, url_by_name=f"https://localhost:{port}", pem=pem, cert_path=cert_path)
     finally:
+        # uvicorn waits on the session's pooled connection before it exits
+        subops.trust_ca(url, None)
         process.terminate()
         try:
             process.wait(timeout=30)

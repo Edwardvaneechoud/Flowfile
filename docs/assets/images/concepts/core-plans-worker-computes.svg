@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 214" role="img" aria-label="Core plans and a worker computes: the editor sends edits and runs to core, which holds the flow and plans each node; core sends one plan per node to the worker, which runs the node, keeps the result and reads and writes the files, databases and object storage; the worker answers core with a handle to the result, its columns, its row count and up to 100 preview rows, so the rows stay on the worker.">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2DD5D3"/><stop offset="0.55" stop-color="#26A8E0"/><stop offset="1" stop-color="#1D76D6"/>
+    </linearGradient>
+    <marker id="ah" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto-start-reverse"><path d="M1,1 L8,4.5 L1,8 Z" fill="#9aa8b6"/></marker>
+    <marker id="ahc" markerWidth="11" markerHeight="11" refX="7.8" refY="5" orient="auto"><path d="M1,1.2 L8.6,5 L1,8.8 Z" fill="#2DD5D3"/></marker>
+  </defs>
+  <style>
+    .box  { fill:#ffffff; stroke:#9aa0a6; stroke-width:1.4; }
+    .chip { fill:#eef0f2; }
+    .chipw{ fill:#ffffff; fill-opacity:0.16; }
+    .ic   { fill:none; stroke:#5b6470; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icw  { fill:none; stroke:#ffffff; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+    .t    { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:15px; fill:#233588; }
+    .tw   { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:15px; fill:#ffffff; }
+    .s    { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#6b7280; }
+    .sw   { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#eaf6ff; }
+    .albl { font-family:Roboto,Arial,sans-serif; font-size:11.5px; fill:#8a93a3; }
+    .arw  { fill:none; stroke:#b3bcc9; stroke-width:1.8; }
+    .arwc { fill:none; stroke:#2DD5D3; stroke-width:3; }
+    .mt   { fill:#ffffff; fill-opacity:0.92; }
+    .mh   { stroke:#9cc4ea; stroke-width:2; stroke-linecap:round; }
+    .mc   { stroke:#a9b2bd; stroke-width:2; stroke-linecap:round; }
+    @media (prefers-color-scheme: dark) { .albl { fill:#aeb6c0; } }
+    [data-md-color-scheme="slate"] .albl { fill:#aeb6c0; }
+  </style>
+
+  <!-- ============ EDGES ============ -->
+  <!-- editor -> core -->
+  <path class="arw" d="M132,104 H194" marker-end="url(#ah)"/>
+  <text class="albl" x="163" y="95" text-anchor="middle">edit, run</text>
+
+  <!-- core -> worker : the one cyan path -->
+  <path class="arwc" d="M392,80 H532" marker-end="url(#ahc)"/>
+  <text class="albl" x="465" y="70" text-anchor="middle">one plan per node</text>
+
+  <!-- worker -> core : what comes back -->
+  <path class="arw" d="M538,128 H398" marker-end="url(#ah)"/>
+  <text class="albl" x="465" y="148" text-anchor="middle">handle, columns, row count,</text>
+  <text class="albl" x="465" y="163" text-anchor="middle">up to 100 preview rows</text>
+
+  <!-- worker <-> data -->
+  <path class="arw" d="M750,104 H842" marker-start="url(#ah)" marker-end="url(#ah)"/>
+  <text class="albl" x="796" y="95" text-anchor="middle">reads and writes</text>
+
+  <!-- ============ EDITOR ============ -->
+  <g>
+    <rect class="box" x="20" y="58" width="110" height="92" rx="11"/>
+    <rect class="chip" x="54" y="70" width="42" height="42" rx="9"/>
+    <g class="ic" transform="translate(63,79)">
+      <rect x="1" y="2.5" width="22" height="17" rx="2.5"/>
+      <line x1="1" y1="8" x2="23" y2="8"/>
+      <circle cx="4.5" cy="5.2" r="0.9"/><circle cx="7.5" cy="5.2" r="0.9"/>
+      <circle cx="8" cy="14" r="1.7"/><circle cx="16" cy="14" r="1.7"/>
+      <line x1="9.7" y1="14" x2="14.3" y2="14"/>
+    </g>
+    <text class="t" x="75" y="134" text-anchor="middle">Editor</text>
+  </g>
+
+  <!-- ============ CORE ============ -->
+  <g>
+    <rect class="box" x="198" y="48" width="192" height="112" rx="11"/>
+    <rect class="chip" x="214" y="66" width="42" height="42" rx="9"/>
+    <g class="ic" transform="translate(223,75)">
+      <circle cx="5" cy="6" r="2.4"/><circle cx="5" cy="18" r="2.4"/><circle cx="19" cy="12" r="2.4"/>
+      <path d="M7.3,7 L16.7,11"/><path d="M7.3,17 L16.7,13"/>
+    </g>
+    <text class="t" x="270" y="86">Core</text>
+    <text class="s" x="270" y="104">holds the flow,</text>
+    <text class="s" x="270" y="119">plans each node</text>
+  </g>
+
+  <!-- ============ WORKER (hero) ============ -->
+  <g>
+    <rect x="540" y="18" width="206" height="176" rx="12" fill="url(#brand)"/>
+    <rect class="chipw" x="556" y="34" width="42" height="42" rx="9"/>
+    <g class="icw" transform="translate(565,43)">
+      <circle cx="12" cy="12" r="6.4"/>
+      <circle cx="12" cy="12" r="2.5"/>
+      <g stroke-width="2.1">
+        <line x1="18.4" y1="12" x2="21" y2="12"/><line x1="16.5" y1="16.5" x2="18.4" y2="18.4"/>
+        <line x1="12" y1="18.4" x2="12" y2="21"/><line x1="7.5" y1="16.5" x2="5.6" y2="18.4"/>
+        <line x1="5.6" y1="12" x2="3" y2="12"/><line x1="7.5" y1="7.5" x2="5.6" y2="5.6"/>
+        <line x1="12" y1="5.6" x2="12" y2="3"/><line x1="16.5" y1="7.5" x2="18.4" y2="5.6"/>
+      </g>
+    </g>
+    <text class="tw" x="612" y="54">Worker</text>
+    <text class="sw" x="612" y="72">runs the node,</text>
+    <text class="sw" x="612" y="87">keeps the result</text>
+    <!-- results kept on the worker -->
+    <g>
+      <rect class="mt" x="558" y="122" width="50" height="34" rx="5"/>
+      <line class="mh" x1="565" y1="131" x2="580" y2="131"/><line class="mh" x1="587" y1="131" x2="600" y2="131"/>
+      <line class="mc" x1="565" y1="141" x2="578" y2="141"/><line class="mc" x1="587" y1="141" x2="601" y2="141"/>
+      <line class="mc" x1="565" y1="149" x2="576" y2="149"/><line class="mc" x1="587" y1="149" x2="598" y2="149"/>
+    </g>
+    <g>
+      <rect class="mt" x="618" y="122" width="50" height="34" rx="5"/>
+      <line class="mh" x1="625" y1="131" x2="640" y2="131"/><line class="mh" x1="647" y1="131" x2="660" y2="131"/>
+      <line class="mc" x1="625" y1="141" x2="638" y2="141"/><line class="mc" x1="647" y1="141" x2="661" y2="141"/>
+      <line class="mc" x1="625" y1="149" x2="636" y2="149"/><line class="mc" x1="647" y1="149" x2="658" y2="149"/>
+    </g>
+    <g>
+      <rect class="mt" x="678" y="122" width="50" height="34" rx="5"/>
+      <line class="mh" x1="685" y1="131" x2="700" y2="131"/><line class="mh" x1="707" y1="131" x2="720" y2="131"/>
+      <line class="mc" x1="685" y1="141" x2="698" y2="141"/><line class="mc" x1="707" y1="141" x2="721" y2="141"/>
+      <line class="mc" x1="685" y1="149" x2="696" y2="149"/><line class="mc" x1="707" y1="149" x2="718" y2="149"/>
+    </g>
+    <text class="sw" x="643" y="178" text-anchor="middle">results stay here</text>
+  </g>
+
+  <!-- ============ DATA ============ -->
+  <g>
+    <rect class="box" x="846" y="46" width="118" height="116" rx="11"/>
+    <rect class="chip" x="884" y="58" width="42" height="42" rx="9"/>
+    <g class="ic" transform="translate(893,67)">
+      <ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"/>
+      <path d="M4.5,5.5 V16 C4.5,17.6 7.9,18.9 12,18.9 C16.1,18.9 19.5,17.6 19.5,16 V5.5"/>
+      <path d="M4.5,10.7 C4.5,12.3 7.9,13.6 12,13.6 C16.1,13.6 19.5,12.3 19.5,10.7"/>
+    </g>
+    <text class="t" x="905" y="122" text-anchor="middle">Data</text>
+    <text class="s" x="905" y="139" text-anchor="middle">files, databases,</text>
+    <text class="s" x="905" y="153" text-anchor="middle">object storage</text>
+  </g>
+</svg>

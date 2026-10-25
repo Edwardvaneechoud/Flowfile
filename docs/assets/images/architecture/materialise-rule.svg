@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 318" role="img" aria-label="How the worker's service._materialise reads SubmitHints: when must_materialise is set the result is materialised, a file on the worker that plan_for reads with scan_ipc; otherwise, when the plan is wide and preview_rows is set it is materialised too; otherwise it is deferred, the plan kept on the worker, and plan_for answers the plan itself.">
+  <defs>
+    <marker id="ah" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto"><path d="M1,1 L8,4.5 L1,8 Z" fill="#9aa8b6"/></marker>
+    <marker id="ahn" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto"><path d="M1,1 L8,4.5 L1,8 Z" fill="#233588"/></marker>
+  </defs>
+  <style>
+    .box   { fill:#ffffff; stroke:#1D76D6; stroke-width:1.5; }
+    .head  { fill:#eef5fd; stroke:#1D76D6; stroke-width:1.7; }
+    .store { fill:#eef2ff; stroke:#233588; stroke-width:1.7; }
+    .dia   { fill:#ffffff; stroke:#1D76D6; stroke-width:1.5; }
+    .chip  { fill:#eaf3fc; }
+    .chipn { fill:#dfe6ff; }
+    .ic    { fill:none; stroke:#1D76D6; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icn   { fill:none; stroke:#233588; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .tm    { font-family:'Roboto Mono',Menlo,Consolas,monospace; font-weight:600; font-size:12.5px; fill:#233588; }
+    .t     { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:14px; fill:#233588; }
+    .s     { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#6b7280; }
+    .sn    { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#4a5578; }
+    .mono  { font-family:'Roboto Mono',Menlo,Consolas,monospace; font-size:10.5px; fill:#5b6470; }
+    .q     { font-family:'Roboto Mono',Menlo,Consolas,monospace; font-size:11px; fill:#233588; }
+    .albl  { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#8a93a3; }
+    .arw   { fill:none; stroke:#9aa8b6; stroke-width:1.7; }
+    .arwn  { fill:none; stroke:#7e88c4; stroke-width:1.8; }
+    @media (prefers-color-scheme: dark) { .albl { fill:#aeb6c0; } }
+    [data-md-color-scheme="slate"] .albl { fill:#aeb6c0; }
+  </style>
+
+  <!-- ============ EDGES ============ -->
+  <path class="arw" d="M170,104 H198" marker-end="url(#ah)"/>
+  <path class="arw" d="M396,104 H450" marker-end="url(#ah)"/>
+  <text class="albl" x="423" y="96" text-anchor="middle">no</text>
+  <path class="arw" d="M664,104 H724" marker-end="url(#ah)"/>
+  <text class="albl" x="694" y="96" text-anchor="middle">no</text>
+  <path class="arwn" d="M300,144 V222" marker-end="url(#ahn)"/>
+  <text class="albl" x="310" y="188">yes</text>
+  <path class="arwn" d="M560,150 V222" marker-end="url(#ahn)"/>
+  <text class="albl" x="570" y="188">yes</text>
+
+  <!-- ============ HINTS ============ -->
+  <rect class="head" x="20" y="74" width="150" height="60" rx="10"/>
+  <text class="tm" x="95" y="109" text-anchor="middle">SubmitHints</text>
+
+  <!-- ============ DECISIONS ============ -->
+  <polygon class="dia" points="300,64 396,104 300,144 204,104"/>
+  <text class="q" x="300" y="108" text-anchor="middle">must_materialise?</text>
+  <polygon class="dia" points="560,58 664,104 560,150 456,104"/>
+  <text class="q" x="560" y="100" text-anchor="middle">wide and</text>
+  <text class="q" x="560" y="116" text-anchor="middle">preview_rows set?</text>
+
+  <!-- ============ DEFERRED ============ -->
+  <g>
+    <rect class="box" x="728" y="56" width="212" height="96" rx="12"/>
+    <rect class="chip" x="742" y="70" width="40" height="40" rx="9"/>
+    <g class="ic" transform="translate(750,78)">
+      <rect x="2" y="3" width="20" height="18" rx="2.5"/>
+      <line x1="6" y1="8.5" x2="18" y2="8.5"/><line x1="6" y1="12.5" x2="15" y2="12.5"/><line x1="6" y1="16.5" x2="12" y2="16.5"/>
+    </g>
+    <text class="t" x="794" y="86">deferred</text>
+    <text class="s" x="794" y="104">the plan kept</text>
+    <text class="s" x="794" y="118">on the worker</text>
+    <text class="mono" x="742" y="140">plan_for: the plan itself</text>
+  </g>
+
+  <!-- ============ MATERIALISED ============ -->
+  <g>
+    <rect class="store" x="206" y="226" width="460" height="72" rx="12"/>
+    <rect class="chipn" x="222" y="242" width="40" height="40" rx="9"/>
+    <g class="icn" transform="translate(230,250)">
+      <path d="M6,2.5 H14 L19,7.5 V20 A1.5,1.5 0 0 1 17.5,21.5 H6.5 A1.5,1.5 0 0 1 5,20 V4 A1.5,1.5 0 0 1 6,2.5 Z"/>
+      <path d="M14,2.5 V7.5 H19"/>
+    </g>
+    <text class="t" x="274" y="258">materialised</text>
+    <text class="sn" x="274" y="276">a file on the worker</text>
+    <text class="mono" x="460" y="268" fill="#4a5578">plan_for: scan_ipc</text>
+  </g>
+</svg>
