@@ -6,8 +6,8 @@ on:
 
 jobs:
   review:
-    # Skip drafts; they still emit synchronize events
-    if: github.event.pull_request.draft == false
+    # Skip drafts and fork PRs (forks get no secrets or OIDC token)
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
