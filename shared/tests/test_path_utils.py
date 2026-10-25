@@ -343,5 +343,5 @@ def test_contained_path_refuses_a_symlink_whose_target_escapes(tmp_path):
 
 
 def test_contained_path_under_the_filesystem_root(tmp_path):
-    root = os.path.abspath(os.sep)
+    root = tmp_path.anchor
     assert contained_path(root, tmp_path / "x") == os.path.realpath(tmp_path / "x")

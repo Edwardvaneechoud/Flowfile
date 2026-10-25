@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 
 import { API_URL, authHeaders, closeFlow, createFlow, getAuthToken } from "./helpers/api";
-import { clickRun, openFlow } from "./helpers/canvas";
+import { clickRun, minimizePalette, openFlow } from "./helpers/canvas";
 
 /**
  * A node its backend cannot run runs on the default backend when an exchange store is configured:
@@ -50,6 +50,7 @@ test.describe("Placement fallback", () => {
 
   test("the node is marked before the run and named on the run card after", async ({ page }) => {
     await openFlow(page, token, flowId, flowName);
+    await minimizePalette(page);
     const node = page.locator('.vue-flow__node[data-id="1"]');
     await expect(node).toBeVisible({ timeout: 15_000 });
     const badge = node.getByTestId("placement-badge");

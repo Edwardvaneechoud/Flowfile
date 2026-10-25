@@ -1990,6 +1990,8 @@ class TestHeldResultsOnAnUnreachableBackend:
                 node._execution_state.has_run_with_current_setup = True
             trained = graph.get_node(10)
             trained.results.model_ref = self._held_on(unreachable_worker, f"{trained.hash}_model", kind="blob")
+            # The model its own fit answered, so the node releases it as it does on a real run.
+            trained._operation_refs["model"] = trained.results.model_ref
 
             graph.execution_location = "local"
             run_info = graph.run_graph()
