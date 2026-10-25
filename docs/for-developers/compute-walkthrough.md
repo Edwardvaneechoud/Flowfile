@@ -1,6 +1,6 @@
 # How compute works
 
-This page walks through the code that runs a flow's nodes: how core hands one node to compute, how a run is placed across backends, how results, data and credentials travel, and which files to change for a new operation or a new backend. It is the guided tour; [Compute protocol](compute-protocol.md) is the design reference with every invariant, the full interface and the decision record. [Where flows run](../users/deployment/where-flows-run.md) is the same model from the user's side.
+This page walks through the code that runs a flow's nodes: how core hands one node to compute, how a run is placed across backends, how results, data and credentials travel, and which files to change for a new operation or a new backend. It is the guided tour; [Compute protocol](compute-protocol.md) is the design reference with every invariant and the full interface. [Where flows run](../users/deployment/where-flows-run.md) is the same model from the user's side.
 
 ## One interface
 

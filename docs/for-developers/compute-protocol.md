@@ -1,6 +1,6 @@
 # Compute protocol
 
-The compute protocol is the contract between `flowfile_core` and the compute that runs a flow's nodes. This page is the design reference for contributors who change that path or build a backend: the interface a backend implements, the invariants core relies on, and the reasoning behind each decision. [How compute works](compute-walkthrough.md) tours the same code with diagrams and is the better first read. [Where flows run](../users/deployment/where-flows-run.md) and [Remote workers](../users/deployment/remote-worker.md) cover the user and operator side.
+The compute protocol is the contract between `flowfile_core` and the compute that runs a flow's nodes. This page is the design reference for contributors who change that path or build a backend: the interface a backend implements and the invariants core relies on. [How compute works](compute-walkthrough.md) tours the same code with diagrams and is the better first read. [Where flows run](../users/deployment/where-flows-run.md) and [Remote workers](../users/deployment/remote-worker.md) cover the user and operator side.
 
 ## The idea
 
@@ -368,79 +368,3 @@ Paths are under `flowfile_core/tests/flowfile/execution/` unless given in full.
     - **A generic `HttpBackend`** for any other compute that speaks the worker's wire.
 
 Out of scope for now: a worker fleet registry and fleet page (control-plane work), durable intermediate results across a compute restart, kernels as a backend, fusing a chain into one job on a cluster, Arrow Flight, pull transport, and a load balancer in front of workers, which stays forbidden because a worker holds state.
-
-## Decision record
-
-Each group lists the choices made and the alternatives they were weighed against, with the reason each alternative lost.
-
-??? abstract "Results"
-
-    | Decision | Choice | Instead of |
-    |---|---|---|
-    | Result addressing | backend-scoped references with an opaque location; `export` to cross a boundary | universal URIs (a reachability check before every use, or object storage for every result); plain paths |
-    | Unit of submission | one plan, one reference; `run_op` answers named references | a multi-output `submit` (every backend would run one plan into N sinks) |
-    | Who materialises | the backend, from hints; core marks only correctness needs | core deciding by node type; always materialising |
-    | Materialisation in core | none: the worker's policy applies wherever the worker runs | a core backend sinking to its own disk (a second policy, and a hole in invariant 8); collecting in core (unbounded memory) |
-    | Who releases results | the node, every reference it minted together; the age sweep is a backstop | the sweep as the contract (a shared worker's disk fills at the pace of use) |
-    | Previews | every backend answers the inline sample, so a broken plan fails in Development mode | a backend lazy through the preview (a broken node reports success until something consumes it) |
-    | Sample size | capped at 10 000 rows, above 1 000 read in a child | unbounded, collected in the worker's serving process |
-    | Virtual-table preview | sample the producer run's output reference | a path answered by `resolve_virtual_table` |
-    | Schemas of derived frames | computed over an empty frame of the input's cached schema | resolving through the backend's leaf, which opens the worker's file |
-
-??? abstract "Operations and code"
-
-    | Decision | Choice | Instead of |
-    |---|---|---|
-    | Protocol definition | a Python interface with entry-point plugins; the worker's wire mirrors it | wire-first OpenAPI (every backend a service, and `plan_for` cannot cross a wire) |
-    | Operations | a closed enum, with support declared per backend | open string names (support discovered at run time); everything as a plan (Flowfile code on every compute) |
-    | Operations over `/v1` | `POST /v1/ops/{kind}` answers references like a submit's | keeping operations on the task routes until those go |
-    | User code | `polars_code` and `sql_query` run on the backend that holds the inputs | running user code in core to build the plan (core becomes a code-execution surface in a multi-user deployment); documenting that code must be lazy (learnt by breakage) |
-    | Artifacts | a model is a `blob` result; publishing is `export`, fetching is `import_uri`; core never carries the bytes | an upload target in the train payload; a separate artifact reference type; a hidden catalog artifact per run |
-
-??? abstract "Credentials and data"
-
-    | Decision | Choice | Instead of |
-    |---|---|---|
-    | Credential resolution | always the executor's identity | core for reads and the executor for writes (the pre-protocol split); a per-connection choice |
-    | Credentials on the worker | the plan carries a `CredentialRef`; the worker resolves it and makes Azure and GCS bearer tokens; a remote worker needs the shared PostgreSQL catalog | `$ffsec$` ciphertext in the plan (cannot carry a token exchange for every operation); refusing Azure and GCS on remote backends |
-    | Credentials for a schema | the backend that reads also answers the schema; the catalog's own object-storage work stays in core with core's identity | core resolving to learn schemas (every core, the desktop included, would need every bucket and key); the catalog's reads as backend operations (no surface for a Delta log read or a property commit) |
-    | Local-disk namespaces on a remote backend | refused with the reason | staging them automatically |
-    | Catalog writer | a table lives under its catalog's root; any other is refused on every backend | shipping the stored location (an absolute path to a remote worker); refusing on remote backends only (two write paths) |
-    | Kernel nodes on a remote backend | refused; under the mixed policy only the kernel node's own backend must qualify | a `KernelBackend` |
-
-??? abstract "Placement and backends"
-
-    | Decision | Choice | Instead of |
-    |---|---|---|
-    | Placement | per-node capable from the first release; one backend per flow by default | per-node by default (needs the exchange store first) |
-    | Setting vocabulary | `"auto"` or a backend id; a control plane maps its own names onto ids | role names such as `local`, `team`, `cloud` (less general, and a saved value is permanent) |
-    | Backend configuration | a `compute_backends` table, filled on the settings page or by a control plane | environment variables only (no second worker without a restart); fleet management in core |
-    | Authentication | one token per configured backend; the remaining task routes sign with `FLOWFILE_INTERNAL_TOKEN` | one service token for a fleet |
-    | Trust model | the worker serves TLS from a given certificate, rows carry a CA, the page warns on plain `http` | plain HTTP left to the deployer; plan signing (integrity without confidentiality); refusing plain `http` off loopback (breaks the single-host compose) |
-    | Context ownership | the `FlowGraph` owns the `ExecutionContext`, and stage threads get a copy | a ContextVar set by `run_graph` (invisible to the stage thread pool and to routes) |
-    | Exchange-store cleanup | per run, with the importing node materialising first | per flow at graph release (every run's data held while the flow is open); a size watermark |
-    | Exchange-store identity | the deployment's: an administrator's connection, resolved once per run | per user (every user needs the connection, and their own shadows the operator's) |
-    | API runner fallback | removed: `ComputeUnavailable` answers 503, other compute errors 500 | keeping a degrade path as an explicit fallback backend |
-
-??? abstract "Versions"
-
-    | Decision | Choice | Instead of |
-    |---|---|---|
-    | Version skew | only the Polars version, its runtime and the contract refuse a backend whole; a plugin or Python difference refuses only the nodes it affects | the exact app version (every release forces a worker upgrade); refusing a whole backend for one plugin or Python patch; one Polars minor of skew |
-    | The worker contract | `PROTOCOL_VERSION` fingerprinted by a test, unknown request fields refused, `app_version` not compared | the exact app version; the app version only for backends that run Flowfile code or read the catalog (every worker still upgraded every release) |
-    | Handshake scope | once per backend per process, through the backend's own interface, re-armed when unreachable; Python compared to the patch | once per process (a second worker never checked); Python at major and minor (passes the handshake, fails formula nodes at run time); a handshake path per backend kind |
-    | Formula library | `polars_expr_transformer` declared in `PLUGIN_PACKAGES` and required by every formula node | changing the library to decide string conversion at build time; one Python for every shipped build |
-    | Desktop to a remote worker | supported, with the nodes a plugin or Python difference affects refused there | team servers only; refusing the whole worker when its plugin layout differs |
-
-??? abstract "Processes"
-
-    | Decision | Choice | Instead of |
-    |---|---|---|
-    | One compute | the worker: separate processes for desktop and Docker, embedded by direct call for scheduled runs and Python; `local` kept as the embedded worker's id | a backend of core's own (two implementations of one compute); a worker process per script; an in-process HTTP transport (every JSON round trip kept) |
-    | Designer compute | no `local` in the designer; a saved `local` loads as `"auto"` | keeping `local` (an out-of-memory node takes core down, and cancel is not real) |
-    | Headless runs | the runner's own process unless a backend is named | the configured worker (every schedule would move, and a desktop schedule fails whenever the app is closed) |
-    | Single-file mode | the pip server calls its embedded worker directly, jobs in the pool; the worker's routes stay mounted under `/worker` | the co-hosted worker over HTTP on core's own port (a request to itself per node) |
-    | The serving process | only bounded reads in the worker's serving process; everything else in a pooled child | resolving in process for speed (the warm pool makes a child as cheap) |
-    | A frame's full `collect()` | `plan_for` and a collect in the process that holds the results | `export` to a `file://` URI (a write and a read for nothing); a raised sample cap (a large read in a serving process) |
-
-Earlier decisions this design keeps: core dials the compute (push); intermediate results are private to the compute; object storage holds catalog data only; a dead compute fails a run loudly, never silently; the handshake carries app, Polars and protocol versions; a load balancer never fronts a worker.
