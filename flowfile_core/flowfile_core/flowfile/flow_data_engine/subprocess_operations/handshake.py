@@ -353,6 +353,11 @@ def ensure_verdict(backend: ComputeBackend) -> Verdict:
     return verdict
 
 
+def cached_verdict(backend: ComputeBackend) -> Verdict | None:
+    """The verdict cached for *backend* by its last check, without checking it; ``None`` when it has none."""
+    return _cached(backend)
+
+
 def last_verdict(backend_id: str) -> Verdict | None:
     """The verdict of the backend last checked under *backend_id* in this process; ``None`` when none was."""
     with _lock:

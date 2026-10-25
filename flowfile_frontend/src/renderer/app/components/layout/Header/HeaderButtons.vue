@@ -168,7 +168,7 @@
   <el-dialog
     v-model="modalVisibleForSettings"
     title="Flow Settings"
-    width="40%"
+    width="min(640px, calc(100vw - 32px))"
     custom-class="high-z-index-dialog"
   >
     <div v-if="flowSettings">
@@ -191,7 +191,9 @@
             <label>Execution location:</label>
             <el-select
               v-model="flowSettings.execution_location"
+              fit-input-width
               size="small"
+              aria-label="Execution location"
               placeholder="Select the execution location"
               style="width: 100%"
               @change="pushFlowSettings"
@@ -203,6 +205,12 @@
                 :value="executionLocationOption.key"
               />
             </el-select>
+            <BackendHandshakeStatus
+              v-if="selectedBackend?.verdict"
+              :key="selectedBackend.id"
+              :verdict="selectedBackend.verdict"
+              compact
+            />
           </div>
           <div class="form-group">
             <el-checkbox
@@ -300,6 +308,7 @@ import {
 import { MODIFIER_LABEL } from "../../../utils/shortcuts";
 import { executionLocationOptions, type BackendRow } from "../../../utils/executionLocation";
 import { listComputeBackends } from "../../../api/computeBackends.api";
+import BackendHandshakeStatus from "../../settings/BackendHandshakeStatus.vue";
 
 const nodeStore = useNodeStore();
 const flowStore = useFlowStore();
@@ -380,6 +389,9 @@ const loadBackendRows = async () => {
 };
 const locationOptions = computed(() =>
   executionLocationOptions(flowSettings.value?.execution_location ?? "auto", backendRows.value),
+);
+const selectedBackend = computed(() =>
+  backendRows.value.find((backend) => backend.id === flowSettings.value?.execution_location),
 );
 
 const emit = defineEmits(["openFlow", "refreshFlow", "flowSaved", "logs-start", "logs-stop"]);

@@ -42,8 +42,8 @@ const verdict = (overrides: Partial<HandshakeVerdict>): HandshakeVerdict => ({
 });
 
 const VERDICTS: [string, HandshakeVerdict | null, string][] = [
-  ["unchecked", null, "not checked"],
-  ["passing", verdict({}), "ok"],
+  ["unchecked", null, "Not checked"],
+  ["passing", verdict({}), "Compatible"],
   [
     "narrowed",
     verdict({
@@ -54,7 +54,7 @@ const VERDICTS: [string, HandshakeVerdict | null, string][] = [
       },
       differences: ["python_version: core 3.12.15, backend 3.12.8"],
     }),
-    "ok, without polars_ds, Python functions",
+    "Limited · 2 unavailable",
   ],
   [
     "refused",
@@ -65,12 +65,12 @@ const VERDICTS: [string, HandshakeVerdict | null, string][] = [
         'Backend "worker:team" does not match core (polars_version: core 1.43.2, backend 1.39.3)',
       differences: ["polars_version: core 1.43.2, backend 1.39.3"],
     }),
-    'refused: Backend "worker:team" does not match core (polars_version: core 1.43.2, backend 1.39.3)',
+    "Not accepted",
   ],
   [
     "refused-without-an-error",
     verdict({ ok: false, offered: null, differences: ["polars_runtime: core 64, backend 32"] }),
-    "refused: polars_runtime: core 64, backend 32",
+    "Not accepted",
   ],
 ];
 

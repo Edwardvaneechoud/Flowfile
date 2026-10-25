@@ -13,9 +13,34 @@
         </div>
         <p v-if="namespace.description" class="description">{{ namespace.description }}</p>
       </div>
+      <div v-if="canManage(namespace)" class="header-actions">
+        <button
+          class="btn btn-danger btn-sm"
+          data-testid="catalog-delete"
+          :disabled="!!deleteBlocked || deleting"
+          :title="deleteBlocked ?? 'Delete catalog'"
+          @click="deleteCatalog"
+        >
+          <i class="fa-solid fa-trash"></i>
+          Delete
+        </button>
+      </div>
     </div>
 
-    <h3 class="section-title">Storage</h3>
+    <div class="section-header">
+      <h3 class="section-title">Storage</h3>
+      <button
+        v-if="canChangeStorage(namespace)"
+        class="btn btn-secondary btn-sm"
+        data-testid="catalog-edit-storage"
+        :disabled="!!storageLocked"
+        :title="storageLocked ?? 'Edit storage'"
+        @click="showStorageEditor = true"
+      >
+        <i class="fa-solid fa-pen"></i>
+        Edit storage
+      </button>
+    </div>
 
     <div class="meta-grid">
       <div class="meta-card">
@@ -70,13 +95,28 @@
     <p v-else-if="!connection" class="storage-hint muted">
       Connection details unavailable — it may be owned by another user or no longer exist.
     </p>
+    <p v-if="storageLocked && canChangeStorage(namespace)" class="storage-hint muted">
+      {{ storageLocked }}
+    </p>
+
+    <EditCatalogStorageModal
+      :visible="showStorageEditor"
+      :catalog="namespace"
+      @close="showStorageEditor = false"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
+import { ElMessage, ElMessageBox } from "element-plus";
 import type { NamespaceTree } from "../../types/catalog.types";
+import { CatalogApi } from "../../api/catalog.api";
+import { useCatalogStore } from "../../stores/catalog-store";
+import { useResourceSharing } from "../../composables/useResourceSharing";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
+import EditCatalogStorageModal from "./EditCatalogStorageModal.vue";
+import { deleteBlockedReason, storageLockedReason } from "./catalogStorageEdit";
 import { fetchCloudStorageConnectionsInterfaces } from "../CloudConnectionView/api";
 import {
   getStorageTypeLabel,
@@ -87,9 +127,43 @@ import type { FullCloudStorageConnectionInterface } from "../CloudConnectionView
 const props = defineProps<{ namespace: NamespaceTree }>();
 const emit = defineEmits(["close"]);
 
+const catalogStore = useCatalogStore();
+// Storage is the owner's (or an admin's) to change, as core refuses a manage-grantee
+const { canManage, canManageGrants: canChangeStorage } = useResourceSharing();
+
 const isCloud = computed(() => !!props.namespace.storage_uri);
 const connection = ref<FullCloudStorageConnectionInterface | null>(null);
 const loadingConnection = ref(false);
+const showStorageEditor = ref(false);
+const deleting = ref(false);
+
+const storageLocked = computed(() => storageLockedReason(props.namespace));
+const deleteBlocked = computed(() => deleteBlockedReason(props.namespace));
+
+async function deleteCatalog() {
+  if (deleteBlocked.value) return;
+  try {
+    await ElMessageBox.confirm(
+      `Delete the catalog "${props.namespace.name}"? Nothing in its storage is touched.`,
+      "Delete catalog",
+      { confirmButtonText: "Delete", cancelButtonText: "Cancel", type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  deleting.value = true;
+  try {
+    await CatalogApi.deleteNamespace(props.namespace.id);
+    catalogStore.clearNamespaceSelection();
+    await Promise.all([catalogStore.loadTree(), catalogStore.loadStats()]);
+    ElMessage.success(`Deleted ${props.namespace.name}`);
+    emit("close");
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Could not delete the catalog");
+  } finally {
+    deleting.value = false;
+  }
+}
 
 const providerIcon = computed(() => {
   switch (connection.value?.storageType) {
@@ -129,7 +203,7 @@ async function loadConnection() {
   }
 }
 
-watch(() => props.namespace.id, loadConnection);
+watch(() => [props.namespace.id, props.namespace.storage_connection_name], loadConnection);
 onMounted(loadConnection);
 </script>
 
@@ -169,8 +243,20 @@ onMounted(loadConnection);
   font-size: var(--font-size-sm);
 }
 
+.header-actions {
+  display: flex;
+  gap: var(--spacing-2);
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--spacing-3);
+}
+
 .section-title {
-  margin: 0 0 var(--spacing-3);
+  margin: 0;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-secondary);

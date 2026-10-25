@@ -87,6 +87,8 @@
             <div class="execution-location-row">
               <el-select
                 v-model="localSettings.execution_location"
+                fit-input-width
+                aria-label="Compute backend"
                 data-testid="node-execution-location"
                 class="execution-location-select"
                 size="small"
@@ -106,6 +108,12 @@
                 Manage backends
               </router-link>
             </div>
+            <BackendHandshakeStatus
+              v-if="selectedBackend?.verdict"
+              :key="selectedBackend.id"
+              :verdict="selectedBackend.verdict"
+              compact
+            />
           </div>
 
           <div class="setting-group">
@@ -322,6 +330,7 @@ import { InfoFilled, DCaret, Delete } from "@element-plus/icons-vue";
 import AiInlineActions from "../../../features/ai/AiInlineActions.vue";
 import { listComputeBackends } from "../../../api/computeBackends.api";
 import { nodeExecutionLocationOptions, type BackendRow } from "../../../utils/executionLocation";
+import BackendHandshakeStatus from "../../settings/BackendHandshakeStatus.vue";
 
 const nodeStore = useNodeStore();
 const flowStore = useFlowStore();
@@ -415,6 +424,9 @@ onMounted(async () => {
 });
 const locationOptions = computed(() =>
   nodeExecutionLocationOptions(localSettings.value.execution_location ?? "auto", backendRows.value),
+);
+const selectedBackend = computed(() =>
+  backendRows.value.find((backend) => backend.id === localSettings.value.execution_location),
 );
 
 const outputFieldConfig = reactive<OutputFieldConfig>(
@@ -753,12 +765,14 @@ const loadFieldsFromSchema = async () => {
 
 .execution-location-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
 }
 
 .execution-location-select {
   flex: 1;
+  min-width: 0;
 }
 
 .manage-backends-link {

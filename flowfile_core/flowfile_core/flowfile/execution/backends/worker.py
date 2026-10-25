@@ -9,7 +9,8 @@ wire. ``submit`` stores a plan or keeps it deferred in this process; the class d
 With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on, ``submit``, ``status``, ``cancel`` and ``capabilities`` speak the
 worker's versioned ``/v1`` routes instead, and the worker holds what ``submit`` returns, whether stored or deferred:
 its schema, row count and samples come over the wire, never from a file core opens. ``submit`` goes over
-``WS /v1/ws/submit``, and to ``POST /v1/submit`` only when that socket cannot be opened or the plan not sent. ``run_op``
+``WS /v1/ws/submit``, and to ``POST /v1/submit`` when the worker declares no such socket, or the socket cannot be opened
+or the plan not sent. ``run_op``
 runs the reads, ``fuzzy_join``, ``random_split``, ``custom_node``, ``ml_train``, ``ml_apply`` and the file, database
 and cloud writes over ``POST /v1/ops/{kind}``, whose outputs the worker holds as it holds a stored submit, a trained
 model as a blob, a write none; the Delta writes and ``viz_session`` stay on the task routes. ``polars_code`` and
@@ -103,6 +104,8 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import conver
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import safe_eval_pl_type
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import (
+    Verdict,
+    cached_verdict,
     capabilities_from_answer,
     ensure_handshake,
     owns,
@@ -182,6 +185,8 @@ _HEADER_VALUE = re.compile(r"[\t\x20-\x7e\x80-\xff]*")
 _OUTPUT_SEPARATOR = "#"
 _SPLIT_RANK = "__split_rank__"
 _NO_FLOW = -1
+# A proxy may keep the connection of a refused upgrade open; websockets' default would wait 10 s for it to close
+_SOCKET_CLOSE_TIMEOUT = 1.0
 _V1_OPERATIONS = frozenset(
     {
         OperationKind.database_read,
@@ -326,8 +331,9 @@ class WorkerBackend(_WorkerReferences):
     worker it cannot reach does.
 
     With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on (read on each call), ``submit`` sends a meta JSON (hints, inputs,
-    ids) and the plan over the worker's ``WS /v1/ws/submit``, and posts them to ``POST /v1/submit`` only when the socket
-    cannot be opened or the plan not sent. A 426 on the socket's upgrade is ``VersionMismatch`` and nothing is posted;
+    ids) and the plan over the worker's ``WS /v1/ws/submit``, and posts them to ``POST /v1/submit`` when the worker
+    declares no submit socket (``Capabilities.submit_socket``), or the socket cannot be opened or the plan not sent. A
+    426 on the socket's upgrade is ``VersionMismatch`` and nothing is posted;
     once the plan is sent nothing is resent: silence past ``FLOWFILE_WORKER_WS_TIMEOUT`` (each frame resets it) is
     ``TaskFailed`` and a closed socket ``ComputeUnavailable``. The worker applies the same policy and holds the result
     itself, in its own file or as the plan it was sent. The reference carries the worker's columns, read here with
@@ -377,6 +383,7 @@ class WorkerBackend(_WorkerReferences):
         owns(self)
         self._auth = _TokenAuth(token, backend_id) if token is not None else None
         self._lock = threading.Lock()
+        self._socket_refused_under: Verdict | None = None
         self._deferred: dict[str, _DeferredPlan] = {}
         self._in_flight: dict[str, BaseFetcher] = {}
         self._operations: dict[OperationKind, Callable[[OpPayload], OpResult]] = {
@@ -470,9 +477,9 @@ class WorkerBackend(_WorkerReferences):
         ``node_id``, which is where its log lines go.
 
         With the protocol flag on, the plan goes with the ids of the ``/v1`` results among ``inputs``, which the worker
-        checks it still holds, over ``WS /v1/ws/submit``, or to ``POST /v1/submit`` when the socket cannot be opened or
-        the plan not sent, and the worker's answer is the result. Once the plan is sent over the socket nothing is
-        resent.
+        checks it still holds, over ``WS /v1/ws/submit``, or to ``POST /v1/submit`` when the worker declares no submit
+        socket, or the socket cannot be opened or the plan not sent, and the worker's answer is the result. Once the
+        plan is sent over the socket nothing is resent.
 
         Raises:
             ComputeUnavailable: Over ``/v1``, the worker could not be reached, or its socket closed after the plan was
@@ -980,13 +987,17 @@ class WorkerBackend(_WorkerReferences):
     def _v1_socket_submit(self, meta: str, plan: bytes, result_id: str) -> wire.SubmitResult | None:
         """The worker's answer to a submit over ``WS /v1/ws/submit``, or ``None`` for ``submit`` to post it instead.
 
-        ``None`` means the socket could not be opened or the plan not sent. The worker reads both frames before it runs
-        anything and drops a socket that closed before the plan, so the post never runs a plan twice. The socket is
-        dialled after ``ensure_handshake``, with this backend's token (``_internal_token``), its ``X-Protocol-Version``,
-        no frame-size cap (a deferred result's ``complete`` frame carries its plan) and the CA the transport trusts for
-        ``url`` (``ssl_context_for``; ``None`` verifies a ``wss://`` worker against the public CAs); a connect that
-        fails at the network re-arms the handshake of the backends on ``url``, as the transport's WebSocket submit does
-        for every backend. Once the plan is sent the answer is the final frame's, and nothing is resent.
+        ``None`` means the socket is not dialled, could not be opened or the plan not sent. The worker reads both frames
+        before it runs anything and drops a socket that closed before the plan, so the post never runs a plan twice. The
+        socket is dialled after ``ensure_handshake``, and not at all when the verdict cached for this backend says it
+        declares no submit socket (``Capabilities.submit_socket``) or its upgrade was refused under that same verdict,
+        so a refusal is dialled again only once the backend is checked again. It is dialled with this backend's token
+        (``_internal_token``), its ``X-Protocol-Version``, no frame-size cap (a deferred result's ``complete`` frame
+        carries its plan), the CA the transport trusts for ``url`` (``ssl_context_for``; ``None`` verifies a ``wss://``
+        worker against the public CAs) and a short close timeout, as a proxy may hold a refused upgrade's connection
+        open; a connect that fails at the network re-arms the handshake of the backends on ``url``, as the transport's
+        WebSocket submit does for every backend. Once the plan is sent the answer is the final frame's, and nothing is
+        resent.
 
         Raises:
             ComputeUnavailable: The socket closed after the plan was sent; the handshake of the backends on ``url`` is
@@ -998,6 +1009,9 @@ class WorkerBackend(_WorkerReferences):
             ComputeError: The handshake failed, or the worker's ``error`` frame (``_v1_error``).
         """
         ensure_handshake(self.url, backend_id=self.id)
+        verdict = cached_verdict(self)
+        if verdict is not None and (verdict is self._socket_refused_under or not _takes_submit_socket(verdict)):
+            return None
         token = self._internal_token()
         try:
             ws = connect(
@@ -1008,6 +1022,7 @@ class WorkerBackend(_WorkerReferences):
                 },
                 max_size=None,
                 ssl=ssl_context_for(self.url),
+                close_timeout=_SOCKET_CLOSE_TIMEOUT,
             )
         except OSError as e:
             reset_handshake(self.url)
@@ -1016,6 +1031,7 @@ class WorkerBackend(_WorkerReferences):
         except Exception as e:
             if isinstance(e, InvalidStatus) and e.response.status_code == 426:
                 raise _v1_failure(426, bytes(e.response.body), e.response.reason_phrase) from e
+            self._socket_refused_under = verdict
             logger.debug(f"The /v1 submit socket to {self.url} was refused ({e}); posting the plan instead")
             return None
         try:
@@ -1604,6 +1620,12 @@ def _run(
             raise failure from e
         raise TaskFailed(description) from e
     return fetcher
+
+
+def _takes_submit_socket(verdict: Verdict) -> bool:
+    """Whether the backend *verdict* checked declared the ``/v1`` submit socket; one whose capabilities were not read
+    is dialled as before."""
+    return verdict.backend is None or verdict.backend.submit_socket
 
 
 def _final_frame(ws: ClientConnection, worker_url: str, result_id: str, *, backend_id: str) -> dict[str, Any]:

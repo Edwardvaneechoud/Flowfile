@@ -24,12 +24,15 @@ export function absentLabel(name: string): string {
   return name === "python" ? "Python functions" : name;
 }
 
-/** What the last handshake said of a backend, in a few words: what the picker shows beside its id. */
+/** A bounded picker label; capability names and diagnostics belong in the selected backend's details. */
 export function verdictSummary(verdict: HandshakeVerdict | null): string {
-  if (!verdict) return "not checked";
-  if (!verdict.ok) return `refused: ${verdict.error ?? verdict.differences[0]}`;
-  const without = Object.keys(verdict.absent).map(absentLabel);
-  return without.length ? `ok, without ${without.join(", ")}` : "ok";
+  if (!verdict) return "Not checked";
+  if (!verdict.ok || !verdict.backend) {
+    return verdict.backend ? "Not accepted" : "Handshake failed";
+  }
+  const unavailable = Object.keys(verdict.absent).length;
+  if (unavailable) return `Limited · ${unavailable} unavailable`;
+  return verdict.differences.length ? "Accepted with differences" : "Compatible";
 }
 
 function withVerdicts(

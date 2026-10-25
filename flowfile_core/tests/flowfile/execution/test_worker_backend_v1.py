@@ -1427,4 +1427,48 @@ def test_the_socket_is_dialled_under_the_workers_url_with_the_token_and_version(
     WorkerBackend(url=worker_url).submit(people(), [], hints(False), result_id, flow_id=-1, node_id=-1)
 
     headers = {"X-Flowfile-Internal": get_internal_token(), PROTOCOL_VERSION_HEADER: "1"}
-    assert dials == [(socket_url, {"additional_headers": headers, "max_size": None, "ssl": None})]
+    dialled_with = {"additional_headers": headers, "max_size": None, "ssl": None, "close_timeout": 1.0}
+    assert dials == [(socket_url, dialled_with)]
+
+
+def checked(backend: WorkerBackend, *, submit_socket: bool) -> handshake.Verdict:
+    """A passing verdict for ``backend`` whose capabilities declare ``submit_socket``."""
+    declared = local_capabilities().model_copy(update={"submit_socket": submit_socket})
+    return handshake.Verdict(id=backend.id, ok=True, core=local_capabilities(), backend=declared)
+
+
+@SOCKET_ONLY
+def test_a_worker_that_declares_no_submit_socket_is_posted_to_without_a_dial(backend, kept, sent, monkeypatch):
+    verdict = checked(backend, submit_socket=False)
+    monkeypatch.setattr(worker_module, "cached_verdict", lambda backend: verdict)
+    dials = dial_into(monkeypatch, FakeSocket())
+
+    ref = submit(backend, kept, must_materialise=True).ref
+
+    assert ref.row_count == 10
+    assert dials == []
+    assert [(method, path) for method, path, _ in sent] == [("POST", "/v1/submit")]
+
+
+@SOCKET_ONLY
+def test_a_refused_upgrade_is_not_dialled_again_until_the_backend_is_checked_again(backend, kept, sent, monkeypatch):
+    """A proxy can refuse a socket the worker declares; each dial it refuses cost the close timeout before the post."""
+    verdict = [checked(backend, submit_socket=True)]
+    monkeypatch.setattr(worker_module, "cached_verdict", lambda backend: verdict[0])
+    dials: list[str] = []
+
+    def refused(uri, **kwargs):
+        dials.append(uri)
+        raise InvalidStatus(Response(404, "Not Found", Headers()))
+
+    monkeypatch.setattr(worker_module, "connect", refused)
+
+    submit(backend, kept, must_materialise=True)
+    submit(backend, kept, must_materialise=False)
+    assert len(dials) == 1
+
+    verdict[0] = checked(backend, submit_socket=True)
+    submit(backend, kept, must_materialise=True)
+
+    assert len(dials) == 2
+    assert [(method, path) for method, path, _ in sent] == [("POST", "/v1/submit")] * 3

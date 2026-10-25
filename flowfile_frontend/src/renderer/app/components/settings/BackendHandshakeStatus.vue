@@ -1,6 +1,6 @@
 <template>
-  <div class="handshake">
-    <div class="handshake__overview" aria-live="polite">
+  <div class="handshake" :class="{ 'handshake--compact': compact }">
+    <div v-if="!compact" class="handshake__overview" aria-live="polite">
       <span class="handshake__status" :class="`handshake__status--${status.tone}`">
         <i :class="status.icon" aria-hidden="true"></i>
         {{ status.label }}
@@ -11,7 +11,7 @@
       </span>
     </div>
 
-    <div v-if="accepted && unavailable.length" class="handshake__unavailable">
+    <div v-if="!compact && accepted && unavailable.length" class="handshake__unavailable">
       <span>Unavailable on this worker</span>
       <ul aria-label="Unavailable capabilities">
         <li v-for="name in unavailable" :key="name">{{ absentLabel(name) }}</li>
@@ -19,7 +19,7 @@
     </div>
 
     <details v-if="verdict" class="handshake__details">
-      <summary>Handshake details</summary>
+      <summary>{{ compact ? "Compatibility details" : "Handshake details" }}</summary>
       <div class="handshake__detail-content">
         <dl v-if="verdict.backend" class="handshake__versions">
           <div v-for="(value, label) in versions" :key="label">
@@ -61,7 +61,7 @@ import { computed } from "vue";
 import type { HandshakeVerdict } from "../../api/computeBackends.api";
 import { absentLabel } from "../../utils/executionLocation";
 
-const props = defineProps<{ verdict?: HandshakeVerdict | null }>();
+const props = defineProps<{ verdict?: HandshakeVerdict | null; compact?: boolean }>();
 
 const accepted = computed(() => props.verdict?.ok && !!props.verdict.backend);
 const unavailable = computed(() => Object.keys(props.verdict?.absent ?? {}));
@@ -108,6 +108,12 @@ const versions = computed(() => ({
   align-items: center;
   flex-wrap: wrap;
   gap: var(--spacing-2);
+}
+
+.handshake--compact {
+  min-width: 0;
+  border-top: 0;
+  padding-top: 0;
 }
 
 .handshake__status {

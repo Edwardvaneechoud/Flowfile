@@ -204,7 +204,7 @@ import { computed, reactive, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useAuthStore } from "../../stores/auth-store";
 import { NO_AUTOFILL } from "../../utils/noAutofill";
-import BackendHandshakeStatus from "./BackendHandshakeStatus.vue";
+import BackendHandshakeStatus from "../../components/settings/BackendHandshakeStatus.vue";
 import ExchangeStoreCard from "./ExchangeStoreCard.vue";
 import {
   backendInputFrom,

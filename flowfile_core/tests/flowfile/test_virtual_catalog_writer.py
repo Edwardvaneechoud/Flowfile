@@ -1515,7 +1515,7 @@ class TestVirtualTableProducerCompute:
 
         assert entered == [backend_id]
 
-    def test_the_resolve_route_on_a_stopped_worker_answers_503_with_the_typed_message(
+    def test_the_resolve_route_on_a_stopped_worker_answers_503_naming_no_address(
         self, eager_virtual_table_id, monkeypatch
     ):
         client = TestClient(main.app)
@@ -1526,4 +1526,5 @@ class TestVirtualTableProducerCompute:
         response = client.post(f"/catalog/virtual-tables/{eager_virtual_table_id}/resolve")
 
         assert response.status_code == 503
-        assert response.json()["detail"].startswith(f"Could not reach the worker at {url}")
+        assert response.json()["detail"] == "Compute unavailable"
+        assert url not in response.text

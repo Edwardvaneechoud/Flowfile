@@ -59,9 +59,11 @@ class Capabilities(BaseModel):
     loaded Polars runtime, ``"32"`` or ``"64"``) differs from core's, compares ``python_version`` and each of
     ``plugins`` to narrow what it offers, and reports ``app_version``, ``platform`` and ``plugin_libs`` without
     comparing them. The other
-    four fields are what a compute declares and are never compared: ``operations``, the values of the
-    ``OperationKind``s it runs; ``read_schemes`` and ``write_schemes``, the URI schemes it reads and writes; and
-    ``credential_resolution``, how it resolves a connection a plan names.
+    five fields are what a compute declares and are never compared: ``operations``, the values of the
+    ``OperationKind``s it runs; ``read_schemes`` and ``write_schemes``, the URI schemes it reads and writes;
+    ``credential_resolution``, how it resolves a connection a plan names; and ``submit_socket``, whether it takes a
+    submit over ``WS /v1/ws/submit``, so core posts to ``POST /v1/submit`` straight away to one that does not (an
+    answer without it takes the socket, as every Flowfile worker does).
     """
 
     app_version: str
@@ -76,6 +78,7 @@ class Capabilities(BaseModel):
     read_schemes: frozenset[str] = frozenset()
     write_schemes: frozenset[str] = frozenset()
     credential_resolution: Literal["master_key", "vended", "ambient"]
+    submit_socket: bool = True
 
 
 def plugin_versions() -> dict[str, str]:
