@@ -563,10 +563,10 @@ def node_result(kernel_id: str, user, flow_id: int, node_id: int, output_handle:
     if cached is not None and cached[0]() is data and os.path.exists(cached[1]):
         path = cached[1]
     else:
-        results_dir = _results_dir(manager, flow_id)
-        path = contained_path(results_dir, os.path.join(results_dir, f"{node_id}_{handle}_{uuid4().hex}.parquet"))
+        name = f"{node_id}_{handle}_{uuid4().hex}.parquet"
+        path = contained_path(manager.shared_volume_path, os.path.join(_results_dir(manager, flow_id), name))
         if path is None:
-            raise HTTPException(422, f"Output {handle!r} of node {node_id} does not name a file in the session folder")
+            raise HTTPException(422, f"Output {handle!r} of node {node_id} does not name a file in the shared folder")
         _write_result(flow, node_id, data, path)
         with _lock:
             superseded = _results.setdefault(flow_id, {}).get((node_id, handle))

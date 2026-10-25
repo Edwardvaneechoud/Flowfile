@@ -52,6 +52,8 @@ def contained_path(base: str | os.PathLike, candidate: str | os.PathLike) -> str
     too. A relative ``candidate`` resolves against the working directory, as ``os.path.realpath`` does; join it onto
     ``base`` first to resolve it there. The realpath-then-``startswith`` shape is the one CodeQL's
     ``py/path-injection`` query recognises as a barrier, so callers return this value rather than their input.
+    ``base`` must be the caller's own trusted root, never built from a request: it is returned as is when
+    ``candidate`` resolves to it.
     """
     base_real = os.path.realpath(base)
     candidate_real = os.path.realpath(candidate)
