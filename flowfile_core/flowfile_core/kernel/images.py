@@ -11,9 +11,9 @@ import os
 from flowfile_core.kernel.models import ImageFlavour
 from shared._version import get_version
 
-_KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.6.3"
-_KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.6.3"
-_KERNEL_IMAGE_LITE_DEFAULT = "edwardvaneechoud/flowfile-kernel-lite:0.6.3"
+_KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.6.4"
+_KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.6.4"
+_KERNEL_IMAGE_LITE_DEFAULT = "edwardvaneechoud/flowfile-kernel-lite:0.6.4"
 # The notebook image bakes this app's flowfile, so its tag is the app version, not the kernel's.
 _KERNEL_IMAGE_NOTEBOOK_REPO = "edwardvaneechoud/flowfile-kernel-notebook"
 
