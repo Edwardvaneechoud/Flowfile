@@ -32,15 +32,34 @@ export function storageLockedReason(catalog: NamespaceTree): string | null {
   return `Its storage can't change: it holds ${plural(tables, "table")}. Create a new catalog to use other storage.`;
 }
 
-/** Why the catalog cannot be deleted; null when it is empty. */
+const CONTENT_KINDS = [
+  ["flows", "flow"],
+  ["tables", "table"],
+  ["notebooks", "notebook"],
+  ["visualizations", "visualization"],
+  ["artifacts", "model"],
+] as const;
+
+/** What the namespaces hold, as "2 tables, 1 flow"; empty when they hold nothing but schemas. */
+function heldBy(namespaces: NamespaceTree[]): string[] {
+  return CONTENT_KINDS.map(
+    ([key, word]) => [namespaces.reduce((n, ns) => n + ns[key].length, 0), word] as const,
+  )
+    .filter(([n]) => n > 0)
+    .map(([n, word]) => plural(n, word));
+}
+
+/** Whether a schema holds nothing, so core deletes it and nothing that points at it is left behind. */
+export function isEmptySchema(schema: NamespaceTree): boolean {
+  return schema.children.length === 0 && heldBy([schema]).length === 0;
+}
+
+/**
+ * Why the catalog cannot be deleted; null when neither it nor its schemas hold anything.
+ * Its empty schemas go with it: core deletes only an empty namespace, so the page deletes them first.
+ */
 export function deleteBlockedReason(catalog: NamespaceTree): string | null {
-  const contents = [
-    [catalog.children.length, "schema"],
-    [catalog.flows.length, "flow"],
-    [catalog.tables.length, "table"],
-    [catalog.notebooks.length, "notebook"],
-  ] as const;
-  const held = contents.filter(([n]) => n > 0).map(([n, word]) => plural(n, word));
+  const held = heldBy([catalog, ...catalog.children]);
   if (held.length === 0) return null;
   return `Only an empty catalog can be deleted; this one holds ${held.join(", ")}.`;
 }

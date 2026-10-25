@@ -76,29 +76,44 @@ describe("nodePlacementNote", () => {
 });
 
 describe("fallbackNotice", () => {
-  it("lists each row placement ran on the default backend", () => {
-    const rows = [
-      row({
-        node_name: "read",
-        backend_id: "worker",
-        fallback_from: "worker:polars",
-        fallback_reason: "it reads storage this backend does not read: https",
-      }),
-      row({ node_id: 2, backend_id: "worker:polars" }),
-    ];
+  const moved = (nodeId: number, from = "worker:polars", reason = "it reads https") =>
+    row({
+      node_id: nodeId,
+      node_name: "read",
+      backend_id: "worker",
+      fallback_from: from,
+      fallback_reason: reason,
+    });
 
-    expect(fallbackNotice(rows)).toEqual({
-      title: "1 node ran on the default backend",
+  it("names both backends once when every moved node went the same way", () => {
+    expect(
+      fallbackNotice([
+        moved(1),
+        moved(2, "worker:polars", "it needs polars_ds"),
+        row({ node_id: 3 }),
+      ]),
+    ).toEqual({
+      title: '2 nodes ran on "worker" because "worker:polars" cannot run them',
       lines: [
-        {
-          nodeId: 1,
-          text: 'read (#1) ran on "worker": "worker:polars" cannot run it (it reads storage this backend does not read: https).',
-        },
+        { nodeId: 1, label: "read #1", reason: "it reads https" },
+        { nodeId: 2, label: "read #2", reason: "it needs polars_ds" },
       ],
     });
   });
 
-  it("is null when no row moved", () => {
+  it("puts the backends on each line when the moves differ", () => {
+    const notice = fallbackNotice([moved(1), moved(2, "worker:team")]);
+
+    expect(notice?.title).toBe(
+      "2 nodes ran on the default backend because their backend cannot run them",
+    );
+    expect(notice?.lines[1].reason).toBe('"worker:team" → "worker": it reads https');
+  });
+
+  it("is singular for one node and null when none moved", () => {
+    expect(fallbackNotice([moved(1)])?.title).toBe(
+      '1 node ran on "worker" because "worker:polars" cannot run it',
+    );
     expect(fallbackNotice([row({ backend_id: "worker" })])).toBeNull();
     expect(fallbackNotice(undefined)).toBeNull();
   });

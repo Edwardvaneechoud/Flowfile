@@ -10,10 +10,12 @@
     <span
       v-if="placementNote"
       :class="['placement-badge', `placement-badge--${placementNote.kind}`]"
-      :title="placementNote.text"
-      data-testid="placement-badge"
+      :aria-label="placementNote.text"
     >
-      {{ placementNote.label }}
+      <span data-testid="placement-badge">{{ placementNote.label }}</span>
+      <span class="tooltip-text placement-tooltip" data-testid="placement-badge-tooltip">
+        {{ placementNote.text }}
+      </span>
     </span>
   </div>
 </template>
@@ -225,7 +227,6 @@ onMounted(() => {
   font-size: 10px;
   line-height: 16px;
   white-space: nowrap;
-  cursor: help;
   color: var(--color-text-primary);
   background-color: var(--color-background-primary);
   border: 1px solid var(--color-warning);
@@ -233,6 +234,17 @@ onMounted(() => {
 
 .placement-badge--refused {
   border-color: var(--color-danger);
+}
+
+/* Below the badge, which sits under the node, so the tooltip never covers the node itself. */
+.placement-tooltip {
+  bottom: auto;
+  top: calc(100% + 6px);
+}
+
+.placement-badge:hover .tooltip-text {
+  visibility: visible;
+  opacity: 1;
 }
 
 .node-button {

@@ -142,9 +142,14 @@ const deleteBlocked = computed(() => deleteBlockedReason(props.namespace));
 
 async function deleteCatalog() {
   if (deleteBlocked.value) return;
+  const catalog = props.namespace;
+  const schemas = catalog.children.map((s) => `"${s.name}"`).join(", ");
+  const withSchemas = schemas
+    ? ` and its empty schema${catalog.children.length > 1 ? "s" : ""} ${schemas}`
+    : "";
   try {
     await ElMessageBox.confirm(
-      `Delete the catalog "${props.namespace.name}"? Nothing in its storage is touched.`,
+      `Delete the catalog "${catalog.name}"${withSchemas}? Nothing in its storage is touched.`,
       "Delete catalog",
       { confirmButtonText: "Delete", cancelButtonText: "Cancel", type: "warning" },
     );
@@ -153,14 +158,20 @@ async function deleteCatalog() {
   }
   deleting.value = true;
   try {
-    await CatalogApi.deleteNamespace(props.namespace.id);
+    for (const schema of catalog.children) await CatalogApi.deleteNamespace(schema.id);
+    await CatalogApi.deleteNamespace(catalog.id);
     catalogStore.clearNamespaceSelection();
-    await Promise.all([catalogStore.loadTree(), catalogStore.loadStats()]);
-    ElMessage.success(`Deleted ${props.namespace.name}`);
+    ElMessage.success(`Deleted ${catalog.name}`);
     emit("close");
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail ?? "Could not delete the catalog");
   } finally {
+    await Promise.all([catalogStore.loadTree(), catalogStore.loadStats()]);
+    if (catalogStore.selectedNamespaceId !== null) {
+      catalogStore.selectedNamespace = catalogStore.findNamespaceInTree(
+        catalogStore.selectedNamespaceId,
+      );
+    }
     deleting.value = false;
   }
 }

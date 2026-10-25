@@ -12,7 +12,7 @@ export interface NodePlacementNote {
 
 export interface FallbackNotice {
   title: string;
-  lines: { nodeId: number; text: string }[];
+  lines: { nodeId: number; label: string; reason: string }[];
 }
 
 /** Why a node runs on the default backend; `ownBackend` when its own Compute backend names the one that cannot. */
@@ -57,19 +57,30 @@ export function nodePlacementNote(
   };
 }
 
-/** The run card's notice for the rows placement ran on the default backend; null when none moved. */
+/** The run card's notice for the rows placement ran on the default backend; null when none moved.
+ *
+ * The title names the two backends when every moved node went the same way; each line is then only the node and why.
+ */
 export function fallbackNotice(rows: NodeResult[] | undefined): FallbackNotice | null {
   const moved = (rows ?? []).filter(
     (row) => row.fallback_from && row.backend_id && row.fallback_reason,
   );
   if (!moved.length) return null;
+  const count = `${moved.length} ${moved.length === 1 ? "node" : "nodes"}`;
+  const them = moved.length === 1 ? "it" : "them";
+  const routes = new Set(moved.map((row) => `${row.fallback_from}\u0000${row.backend_id}`));
+  const [first] = moved;
+  const sameRoute = routes.size === 1;
   return {
-    title: `${moved.length} ${moved.length === 1 ? "node" : "nodes"} ran on the default backend`,
+    title: sameRoute
+      ? `${count} ran on "${first.backend_id}" because "${first.fallback_from}" cannot run ${them}`
+      : `${count} ran on the default backend because their backend cannot run ${them}`,
     lines: moved.map((row) => ({
       nodeId: row.node_id,
-      text:
-        `${row.node_name || `Node ${row.node_id}`} (#${row.node_id}) ran on "${row.backend_id}": ` +
-        `"${row.fallback_from}" cannot run it (${row.fallback_reason}).`,
+      label: `${row.node_name || "node"} #${row.node_id}`,
+      reason: sameRoute
+        ? (row.fallback_reason as string)
+        : `"${row.fallback_from}" → "${row.backend_id}": ${row.fallback_reason}`,
     })),
   };
 }

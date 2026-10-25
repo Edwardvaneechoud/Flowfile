@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   catalogStorageError,
   deleteBlockedReason,
+  isEmptySchema,
   storageLockedReason,
   storedTableCount,
 } from "./catalogStorageEdit";
@@ -66,15 +67,18 @@ describe("storage lock", () => {
 });
 
 describe("deleteBlockedReason", () => {
-  it("allows an empty catalog", () => {
+  it("allows an empty catalog, and one whose schemas are all empty", () => {
     expect(deleteBlockedReason(node({ id: 1, level: 0 }))).toBeNull();
+    expect(
+      deleteBlockedReason(node({ id: 1, level: 0, children: [node({ id: 2, level: 1 })] })),
+    ).toBeNull();
   });
 
-  it("names what a catalog still holds", () => {
+  it("names what the catalog and its schemas still hold", () => {
     const catalog = node({
       id: 1,
       level: 0,
-      children: [node({ id: 2, level: 1 })],
+      children: [node({ id: 2, level: 1, tables: [table(1, "physical"), table(2, "virtual")] })],
       flows: [
         { id: 1 } as NamespaceTree["flows"][number],
         { id: 2 } as NamespaceTree["flows"][number],
@@ -82,7 +86,20 @@ describe("deleteBlockedReason", () => {
     });
 
     expect(deleteBlockedReason(catalog)).toBe(
-      "Only an empty catalog can be deleted; this one holds 1 schema, 2 flows.",
+      "Only an empty catalog can be deleted; this one holds 2 flows, 2 tables.",
     );
+  });
+});
+
+describe("isEmptySchema", () => {
+  it("is true only for a schema that holds nothing", () => {
+    expect(isEmptySchema(node({ id: 2, level: 1 }))).toBe(true);
+    expect(isEmptySchema(node({ id: 2, level: 1, tables: [table(1, "virtual")] }))).toBe(false);
+    const withChart = node({
+      id: 2,
+      level: 1,
+      visualizations: [{ id: 1 } as NamespaceTree["visualizations"][number]],
+    });
+    expect(isEmptySchema(withChart)).toBe(false);
   });
 });

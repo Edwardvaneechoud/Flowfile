@@ -63,6 +63,15 @@
         >
           <i class="fa-solid fa-broom"></i>
         </button>
+        <button
+          v-if="canDeleteSchema"
+          class="action-btn"
+          title="Delete empty schema"
+          data-testid="schema-delete"
+          @click="$emit('deleteNamespace', node)"
+        >
+          <i class="fa-solid fa-trash"></i>
+        </button>
       </div>
     </div>
 
@@ -95,6 +104,7 @@
           @delete-flow="$emit('deleteFlow', $event)"
           @namespace-share="$emit('namespaceShare', $event)"
           @cleanup-namespace="$emit('cleanupNamespace', $event)"
+          @delete-namespace="$emit('deleteNamespace', $event)"
         />
       </div>
 
@@ -329,6 +339,7 @@ import { SCRATCH_NAMESPACE_NAMES, SYSTEM_NAMESPACE_NAMES } from "../../types";
 import type { GlobalArtifact, NamespaceTree } from "../../types";
 import TreeSection from "./components/TreeSection.vue";
 import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
+import { isEmptySchema } from "./catalogStorageEdit";
 import {
   namespaceNameMatches,
   normalizeQuery,
@@ -348,7 +359,7 @@ import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import CatalogStorageBadge from "./CatalogStorageBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 
-const { isMultiUser, isOwned } = useResourceSharing();
+const { isMultiUser, isOwned, canManage } = useResourceSharing();
 
 const props = withDefaults(
   defineProps<{
@@ -391,6 +402,7 @@ const emit = defineEmits([
   "deleteFlow",
   "namespaceShare",
   "cleanupNamespace",
+  "deleteNamespace",
 ]);
 
 function containsFlow(node: NamespaceTree, flowId: number): boolean {
@@ -463,6 +475,14 @@ const sectionsDefaultExpanded = computed(() => !SYSTEM_NAMESPACE_NAMES.has(props
 
 const isScratchSchema = computed(
   () => props.node.level === 1 && SCRATCH_NAMESPACE_NAMES.has(props.node.name),
+);
+
+const canDeleteSchema = computed(
+  () =>
+    props.node.level === 1 &&
+    !SYSTEM_NAMESPACE_NAMES.has(props.node.name) &&
+    canManage(props.node) &&
+    isEmptySchema(props.node),
 );
 
 const showFlowsSection = computed(() => props.node.level === 1 && visibleFlows.value.length > 0);
