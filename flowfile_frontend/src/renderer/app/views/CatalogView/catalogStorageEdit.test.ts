@@ -3,6 +3,7 @@ import {
   catalogStorageError,
   deleteBlockedReason,
   isEmptySchema,
+  isSeededSchema,
   storageLockedReason,
   storedTableCount,
 } from "./catalogStorageEdit";
@@ -101,5 +102,33 @@ describe("isEmptySchema", () => {
       visualizations: [{ id: 1 } as NamespaceTree["visualizations"][number]],
     });
     expect(isEmptySchema(withChart)).toBe(false);
+  });
+});
+
+describe("seeded namespaces", () => {
+  const general = node({ id: 1, level: 0, name: "General" });
+  const mine = node({ id: 5, level: 0, name: "Mine" });
+
+  it("blocks deleting the General root catalog, empty or not", () => {
+    expect(deleteBlockedReason(general)).toMatch(/created by Flowfile/);
+    expect(
+      deleteBlockedReason(node({ id: 3, level: 1, name: "General", parent_id: 5 })),
+    ).toBeNull();
+  });
+
+  it("marks General's default and app-managed schemas, not a user catalog's", () => {
+    const roots = [general, mine];
+    expect(isSeededSchema(node({ id: 2, level: 1, name: "default", parent_id: 1 }), roots)).toBe(
+      true,
+    );
+    expect(
+      isSeededSchema(node({ id: 4, level: 1, name: "Local Flows", parent_id: 1 }), roots),
+    ).toBe(true);
+    expect(isSeededSchema(node({ id: 6, level: 1, name: "default", parent_id: 5 }), roots)).toBe(
+      false,
+    );
+    expect(isSeededSchema(node({ id: 7, level: 1, name: "reports", parent_id: 1 }), roots)).toBe(
+      false,
+    );
   });
 });

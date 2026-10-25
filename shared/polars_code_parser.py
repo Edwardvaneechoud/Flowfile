@@ -484,12 +484,19 @@ class PolarsCodeParser:
         try:
             local_namespace: dict[str, Any] = {}
 
-            exec(wrapped_code, self.safe_globals, local_namespace)
+            exec(wrapped_code, self._fresh_globals(), local_namespace)
 
             transform_func = local_namespace["_transform"]
             return transform_func
         except Exception as e:
             raise ValueError(f"Error executing code: {str(e)}") from e
+
+    def _fresh_globals(self) -> dict[str, Any]:
+        """A copy of the sandbox globals for one executable, its builtins copied too, so no task rebinds a name
+        (``global col``, ``__builtins__[...] = ...``) for the tasks after it."""
+        namespace = dict(self.safe_globals)
+        namespace["__builtins__"] = dict(self.safe_globals["__builtins__"])
+        return namespace
 
     def _function_form_executable(self, code: str, name: str) -> Callable:
         """The ``def`` of function-form code, called with the node's inputs positionally as LazyFrames.
@@ -497,7 +504,7 @@ class PolarsCodeParser:
         The code runs in its own copy of the sandbox globals (one namespace, so the shared globals
         never see it) and its annotations are never evaluated, so they are documentation only.
         """
-        namespace = dict(self.safe_globals)
+        namespace = self._fresh_globals()
         try:
             flags = __future__.annotations.compiler_flag
             compiled = compile(code, "<polars_code>", "exec", flags=flags, dont_inherit=True)

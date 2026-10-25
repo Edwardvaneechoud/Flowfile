@@ -494,8 +494,6 @@ def _run_receive_thread_failing_with(monkeypatch, caplog, error: Exception, file
         raise error
 
     monkeypatch.setattr(subprocess_ops, "streaming_receive", _failed_receive)
-    # The core logger doesn't propagate, so route it to caplog's root handler for the test.
-    monkeypatch.setattr(subprocess_ops.logger, "propagate", True)
     caplog.clear()
     with caplog.at_level(logging.DEBUG, logger=subprocess_ops.logger.name):
         fetcher = subprocess_ops.ExternalDfFetcher(

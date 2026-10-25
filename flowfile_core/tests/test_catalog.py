@@ -929,6 +929,22 @@ class TestDefaultNamespace:
             assert parent is not None
             assert parent.name == "General"
 
+    def test_seeded_namespaces_cannot_be_deleted(self):
+        """The General catalog and its default schema are refused; a user catalog's own "default" is not."""
+        init_db()
+        default_id = client.get("/catalog/default-namespace-id").json()
+        with get_db_context() as db:
+            general_id = db.get(CatalogNamespace, default_id).parent_id
+        for ns_id in (default_id, general_id):
+            resp = client.delete(f"/catalog/namespaces/{ns_id}")
+            assert resp.status_code == 422, resp.text
+            assert "relies on it" in resp.json()["detail"]
+        assert client.get("/catalog/default-namespace-id").json() == default_id
+
+        cat = client.post("/catalog/namespaces", json={"name": "Mine"}).json()
+        own = client.post("/catalog/namespaces", json={"name": "default", "parent_id": cat["id"]}).json()
+        assert client.delete(f"/catalog/namespaces/{own['id']}").status_code == 204
+
     def test_default_namespace_idempotent(self):
         """Calling init_db twice should not duplicate the default namespace."""
         init_db()

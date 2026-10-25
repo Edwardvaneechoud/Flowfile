@@ -67,6 +67,15 @@ class NamespaceNotEmptyError(CatalogError):
         super().__init__(f"Cannot delete namespace: still contains {detail}")
 
 
+class SeededNamespaceError(CatalogError):
+    """Raised when deleting a namespace the application seeds and relies on (the root catalog, its default schema)."""
+
+    def __init__(self, namespace_id: int, name: str):
+        self.namespace_id = namespace_id
+        self.name = name
+        super().__init__(f"Cannot delete namespace {name!r}: the application creates and relies on it")
+
+
 class InvalidNamespaceStorageError(CatalogError):
     """Raised when per-catalog storage config is invalid (non-root, bad URI, or unresolved connection)."""
 

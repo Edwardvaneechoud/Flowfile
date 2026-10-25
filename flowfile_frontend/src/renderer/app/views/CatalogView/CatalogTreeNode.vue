@@ -339,7 +339,8 @@ import { SCRATCH_NAMESPACE_NAMES, SYSTEM_NAMESPACE_NAMES } from "../../types";
 import type { GlobalArtifact, NamespaceTree } from "../../types";
 import TreeSection from "./components/TreeSection.vue";
 import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
-import { isEmptySchema } from "./catalogStorageEdit";
+import { isEmptySchema, isSeededSchema } from "./catalogStorageEdit";
+import { useCatalogStore } from "../../stores/catalog-store";
 import {
   namespaceNameMatches,
   normalizeQuery,
@@ -477,10 +478,13 @@ const isScratchSchema = computed(
   () => props.node.level === 1 && SCRATCH_NAMESPACE_NAMES.has(props.node.name),
 );
 
+const catalogStore = useCatalogStore();
+
 const canDeleteSchema = computed(
   () =>
     props.node.level === 1 &&
     !SYSTEM_NAMESPACE_NAMES.has(props.node.name) &&
+    !isSeededSchema(props.node, catalogStore.tree) &&
     canManage(props.node) &&
     isEmptySchema(props.node),
 );

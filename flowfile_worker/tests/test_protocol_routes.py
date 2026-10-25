@@ -517,6 +517,20 @@ def test_release_removes_the_file_the_record_and_the_job(held):
     assert result_id not in status_dict
 
 
+def test_releasing_an_id_that_holds_no_result_drops_its_job_entry(held):
+    """A job that held nothing (a released running job, an operation's id) loses its end stamp on release, so its
+    entry would never age out if it stayed."""
+    result_id = held()
+    service.results.mark_ended(result_id)
+    with status_dict_lock:
+        status_dict[result_id] = models.Status(
+            background_task_id=result_id, status="Cancelled", file_ref="", result_type="other"
+        )
+
+    assert client.delete(f"/v1/results/{result_id}").status_code == 404
+    assert result_id not in status_dict
+
+
 def test_a_result_whose_file_is_gone_is_not_held(held):
     result_id = held()
     os.remove(_location(_submit(result_id, _plan(), must_materialise=True)).path)

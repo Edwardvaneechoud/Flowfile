@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from flowfile_core.catalog.constants import DEFAULT_SCHEMA, ROOT_CATALOG
+from flowfile_core.catalog.constants import DEFAULT_SCHEMA, ROOT_CATALOG, SEEDED_SCHEMAS, SYSTEM_SCHEMA_NAMES
 from flowfile_core.catalog.exceptions import (
     InvalidNamespaceStorageError,
     NamespaceExistsError,
@@ -13,6 +13,7 @@ from flowfile_core.catalog.exceptions import (
     NamespaceNotFoundError,
     NamespaceStorageLockedError,
     NestingLimitError,
+    SeededNamespaceError,
 )
 from flowfile_core.catalog.repository import CatalogRepository
 from flowfile_core.catalog.serializers import artifact_to_out
@@ -277,11 +278,22 @@ class NamespaceService:
         _project_sync_namespace(updated.owner_id)
         return updated
 
+    def _is_seeded(self, namespace: CatalogNamespace) -> bool:
+        """Whether ``namespace`` is the root catalog or one of the schemas the application keeps under it."""
+        if namespace.parent_id is None:
+            return namespace.name == ROOT_CATALOG.name
+        if namespace.name not in {schema.name for schema in SEEDED_SCHEMAS} | SYSTEM_SCHEMA_NAMES:
+            return False
+        parent = self.repo.get_namespace(namespace.parent_id)
+        return parent is not None and parent.parent_id is None and parent.name == ROOT_CATALOG.name
+
     def delete_namespace(self, namespace_id: int) -> None:
         """Delete a namespace if it has no children, flows, tables or notebooks."""
         namespace = self.repo.get_namespace(namespace_id)
         if namespace is None:
             raise NamespaceNotFoundError(namespace_id=namespace_id)
+        if self._is_seeded(namespace):
+            raise SeededNamespaceError(namespace_id=namespace_id, name=namespace.name)
         children = self.repo.count_children(namespace_id)
         flows = self.repo.count_flows_in_namespace(namespace_id)
         tables = self.repo.count_tables_in_namespace(namespace_id)

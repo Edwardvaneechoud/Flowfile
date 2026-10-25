@@ -26,6 +26,7 @@ from shared.cloud_credential_provider import (
     CredentialRefProvider,
     CredentialResolutionError,
     EncryptedCredentialProvider,
+    credential_ref_kwargs,
     split_credentials,
 )
 from shared.delta_utils import scan_delta_changes
@@ -288,6 +289,24 @@ class TestCredentialRefProvider:
         assert vars(restored) == {"connection_id": 7, "user_id": 3, "nonce": provider.nonce}
         assert pickle.dumps(CredentialRefProvider(7, 3)) != pickle.dumps(provider)
         assert repr(provider) == "CredentialRefProvider(connection_id=7, user_id=3)"
+
+    @pytest.mark.parametrize(
+        ("storage_type", "method"), [("s3", "env_vars"), ("adls", "managed_identity")], ids=["env_vars", "managed"]
+    )
+    def test_a_uri_of_a_connection_without_a_credential_takes_no_provider(self, catalog, storage_type, method):
+        """Polars then resolves the executing process's default chain, as a cloud read of the connection does."""
+        connection_id = catalog({}, storage_type=storage_type, auth_method=method, azure_account_name="acct")
+
+        kwargs = credential_ref_kwargs(connection_id, 1)
+
+        assert "credential_provider" not in kwargs
+        assert "storage_options" in kwargs
+
+    def test_a_uri_of_a_connection_with_a_credential_takes_the_provider(self, catalog):
+        connection_id = catalog(
+            {"aws_secret_access_key": SENTINEL}, storage_type="s3", auth_method="access_key", aws_access_key_id="AKID"
+        )
+        assert isinstance(credential_ref_kwargs(connection_id, 1)["credential_provider"], CredentialRefProvider)
 
     def test_an_s3_access_key_resolves_from_the_catalog(self, catalog):
         connection_id = catalog(

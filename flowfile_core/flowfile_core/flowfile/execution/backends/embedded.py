@@ -579,9 +579,10 @@ class EmbeddedWorkerBackend(_WorkerReferences):
         The instance is built from the payload's ``settings_values`` and, when the payload names a user, reads that
         user's secrets through core's secret store as ``process`` accesses them. The refs are ``{"result": ref}`` for
         one frame, one per declared output keyed by its output handle for a dict of them, none otherwise; each frame is
-        written to the file the worker gives the output ``<job_id>_<i>`` and held with that file's columns and rows.
-        An output that fails to be written releases the outputs held before it and removes what it wrote, so a failed
-        node holds nothing.
+        collected, then written to the file the worker gives the output ``<job_id>_<i>`` and held with that file's
+        columns and rows, as the worker's child writes them. An output that fails to be written releases the outputs
+        held before it and removes what it wrote, so a failed node holds nothing; collecting first is what makes that
+        hold, since a failing ``sink_ipc`` may create its file after it raised, past the removal.
 
         Raises:
             ValueError: ``process`` returned a dict without one of the declared outputs.
@@ -604,7 +605,7 @@ class EmbeddedWorkerBackend(_WorkerReferences):
         for (name, frame), result_id in zip(frames.items(), service._op_outputs(job.job_id, len(frames)), strict=True):
             path = service._output_file(job.flow_id, result_id)
             try:
-                frame.lazy().sink_ipc(path)
+                frame.lazy().collect(engine="streaming").write_ipc(path)
                 written = pl.scan_ipc(path)
                 row_count = written.select(pl.len()).collect().item()
                 held = service._hold_output(

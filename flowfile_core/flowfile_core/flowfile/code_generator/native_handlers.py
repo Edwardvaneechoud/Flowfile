@@ -366,10 +366,13 @@ class NativeHandlersMixin(ConverterMixinBase):
             if not raw.data or not any(raw.data[0]):
                 args.append(f"schema={schema}")
             else:
-                columns = [
-                    f"{self._py_str(column.name)}: {python_literal(list(values), self.imports)}"
-                    for column, values in zip(raw.columns, raw.data, strict=False)
-                ]
+                columns = []
+                for column, values in zip(raw.columns, raw.data, strict=False):
+                    # The notebook interprets plain literals only, so a date or a NaN sample stays a placeholder there.
+                    if getattr(self, "placeholders", False) and value_literal(list(values)) is None:
+                        reason = f"sample column {column.name!r} holds values with no literal form"
+                        return self._refuse(settings.node_id, "flow_input", reason)
+                    columns.append(f"{self._py_str(column.name)}: {python_literal(list(values), self.imports)}")
                 self.imports.add("import polars as pl")
                 args.append(f"sample=pl.DataFrame({{{', '.join(columns)}}}, schema={schema}, strict=False)")
         args.append(f"flow_graph={FLOW_VAR}")

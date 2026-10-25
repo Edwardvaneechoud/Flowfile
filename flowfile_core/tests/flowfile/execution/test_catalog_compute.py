@@ -314,11 +314,8 @@ def register_physical(namespace_id: int, file_path: str) -> int:
 
 @pytest.mark.parametrize("route", ["/history", "/preview?version=0"])
 def test_a_catalog_route_on_a_stopped_worker_answers_503_naming_no_address(
-    route, catalog_api, delta_table, stopped_worker, caplog, monkeypatch
+    route, catalog_api, delta_table, stopped_worker, caplog
 ):
-    from flowfile_core.configs import logger
-
-    monkeypatch.setattr(logger, "propagate", True)
     client, namespace_id = catalog_api
     table_id = register_physical(namespace_id, delta_table)
 

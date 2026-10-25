@@ -3669,11 +3669,13 @@ def test_directory_contents_blocked_outside_sandbox(monkeypatch):
     assert "Access denied" in response.json()["detail"], "Should return access denied message"
 
 
-def test_directory_contents_allowed_inside_sandbox(monkeypatch):
+def test_directory_contents_allowed_inside_sandbox(monkeypatch, tmp_path):
     """Test that directory_contents allows access inside sandbox in non-Electron mode."""
     from flowfile_core.routes import routes
 
     monkeypatch.setattr(routes, "is_electron_mode", lambda: False)
+    # Pinned: the cached root is whatever mode the first reader ran in (``/data/user`` after a docker-mode test).
+    monkeypatch.setattr(storage, "_user_data_dir", tmp_path)
     response = client.get(
         "/files/directory_contents/", params={"directory": str(storage.user_data_directory), "include_hidden": False}
     )
@@ -3805,7 +3807,7 @@ def test_get_excel_sheet_names_path_traversal_with_dots():
     assert response.status_code == 403, "Path traversal with .. should be blocked"
 
 
-def test_validate_path_under_cwd_electron_allows_any_local_path(monkeypatch):
+def test_validate_path_under_cwd_electron_allows_any_local_path(monkeypatch, tmp_path):
     """In electron (desktop) mode, validate_path_under_cwd permits any local
     absolute path and returns it normalized.
 
@@ -3817,6 +3819,7 @@ def test_validate_path_under_cwd_electron_allows_any_local_path(monkeypatch):
     from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
 
     monkeypatch.setattr(settings, "is_electron_mode", lambda: True)
+    monkeypatch.setattr(storage, "_user_data_dir", tmp_path)
 
     abs_path = str(storage.user_data_directory / "some_local_flow.yaml")
     result = validate_path_under_cwd(abs_path)

@@ -131,14 +131,20 @@ def resolve_credential_ref(connection_id: int, user_id: int) -> tuple[dict[str, 
     return _provider_credentials(fields["storage_type"], options)
 
 
+AMBIENT_AUTH_METHODS = frozenset({"env_vars", "managed_identity"})
+"""Auth methods whose connection holds no credential: a sink or scan of one takes none and resolves ambiently."""
+
+
 def credential_ref_kwargs(connection_id: int, user_id: int) -> dict[str, Any]:
     """What a sink or scan of a URI takes for stored connection *connection_id*: its provider and its plain options.
 
     The provider resolves the connection's credentials where the sink or scan runs. The options are the connection's
     region, endpoint, plain-HTTP, TLS, account and project settings, read here from this process's catalog database
     with no secret decrypted and built as a cloud read's plan carries them (S3 as ``env_vars``, which resolves
-    nothing), so an S3-compatible store is reached at its own endpoint. A connection the catalog lacks gets the
-    provider alone, which raises ``CredentialResolutionError`` if Polars calls it.
+    nothing), so an S3-compatible store is reached at its own endpoint. A connection whose method holds no credential
+    (``AMBIENT_AUTH_METHODS``) gets no provider, so the executing process's default chain applies, as a cloud read of
+    one does. A connection the catalog lacks gets the provider alone, which raises ``CredentialResolutionError`` if
+    Polars calls it.
 
     Raises:
         CredentialResolutionError: The catalog database could not be read.
@@ -146,7 +152,7 @@ def credential_ref_kwargs(connection_id: int, user_id: int) -> dict[str, Any]:
     from shared.cloud_storage.storage_options import build_storage_options
     from shared.database import cloud_connection_record
 
-    kwargs: dict[str, Any] = {"credential_provider": CredentialRefProvider(connection_id, user_id)}
+    provider = CredentialRefProvider(connection_id, user_id)
     try:
         record = cloud_connection_record(connection_id)
     except Exception as e:
@@ -155,9 +161,12 @@ def credential_ref_kwargs(connection_id: int, user_id: int) -> dict[str, Any]:
             f"{type(e).__name__}"
         ) from None
     if record is None:
-        return kwargs
+        return {"credential_provider": provider}
     fields = record[0]
     storage_type = fields["storage_type"]
+    kwargs: dict[str, Any] = {}
+    if fields["auth_method"] not in AMBIENT_AUTH_METHODS:
+        kwargs["credential_provider"] = provider
     kwargs["storage_options"] = build_storage_options(
         storage_type=storage_type,
         auth_method="env_vars" if storage_type == "s3" else fields["auth_method"],

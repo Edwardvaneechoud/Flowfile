@@ -309,13 +309,16 @@ def _not_held(result_id: str) -> HTTPException:
 
 
 def _forget(result_id: str) -> bool:
-    """Forget a held result with its file and its job entry; ``False`` when nothing was held under the id."""
-    if results.pop(result_id) is None:
-        return False
+    """Forget a held result with its file and its job entry; ``False`` when no result was held under the id.
+
+    The job entry goes either way: ``results.pop`` drops the id's end stamp too, so an entry left behind (a released
+    job that held nothing, an operation's job id) would never age out.
+    """
+    held = results.pop(result_id) is not None
     with status_dict_lock:
         status_dict.pop(result_id, None)
         PROCESS_MEMORY_USAGE.pop(result_id, None)
-    return True
+    return held
 
 
 _STOP_POLL_SECONDS = 0.1

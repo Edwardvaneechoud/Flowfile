@@ -579,10 +579,13 @@ def execute_run_flow_node(
                 node._subflow_cancel_context = None
             # The child graph is dropped after this run; its outputs keep the plans they read, and the node owns
             # the stored results those plans scan.
+            previous = node.take_adopted_results() if node is not None else []
             for child_node in child.nodes:
                 child_node.release_deferred_result()
                 if node is not None:
                     node.adopt_results(child_node)
+            if node is not None and node.release_superseded(previous):
+                node.drop_downstream_results()
 
         # Cancel first: a mid-node cancel leaves node results unsuccessful, which
         # would otherwise surface as a bogus "run failed" error.

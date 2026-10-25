@@ -126,6 +126,13 @@ def create_expr_method_wrapper(method_name: str, original_method: Callable) -> C
 
         is_complex = self.is_complex or method_name in complex_methods
 
+        callable_kwargs = {}
+        if processed.function_sources or not processed.all_resolved:
+            # A function argument is written by its name, as the passthrough methods write it, never by its repr.
+            callable_kwargs = {
+                "_repr_override": f"{self._repr_str}.{method_name}({processed.params_repr})",
+                "convertable_to_code": processed.all_resolved and self.convertable_to_code,
+            }
         result = self._create_next_expr(
             *args,
             **kwargs,
@@ -133,6 +140,7 @@ def create_expr_method_wrapper(method_name: str, original_method: Callable) -> C
             is_complex=is_complex,
             method_name=method_name,
             _function_sources=processed.function_sources,
+            **callable_kwargs,
         )
 
         if new_agg_func != self.agg_func:

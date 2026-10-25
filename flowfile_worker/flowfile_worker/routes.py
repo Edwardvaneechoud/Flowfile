@@ -45,7 +45,7 @@ from shared.kafka.models import KafkaReadSettings
 from shared.storage_config import storage
 
 
-def warn_on_foreign_protocol_version(request: Request) -> None:
+async def warn_on_foreign_protocol_version(request: Request) -> None:
     """Log a client that speaks another protocol version; these routes still answer it."""
     sent = request.headers.get(PROTOCOL_VERSION_HEADER)
     if sent is not None and sent != str(PROTOCOL_VERSION):
@@ -55,7 +55,7 @@ def warn_on_foreign_protocol_version(request: Request) -> None:
         )
 
 
-def deprecated_route(response: Response) -> None:
+async def deprecated_route(response: Response) -> None:
     """Answer with ``Deprecation: true``: the worker's versioned ``/v1`` routes do this route's work."""
     response.headers["Deprecation"] = "true"
 

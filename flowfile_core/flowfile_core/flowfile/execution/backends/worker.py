@@ -1025,7 +1025,8 @@ class WorkerBackend(_WorkerReferences):
                 close_timeout=_SOCKET_CLOSE_TIMEOUT,
             )
         except OSError as e:
-            reset_handshake(self.url)
+            # Re-arming here would re-enter a running check; the POST's own connection error re-arms an outage.
+            self._socket_refused_under = verdict
             logger.debug(f"The /v1 submit socket to {self.url} could not be opened ({e}); posting the plan instead")
             return None
         except Exception as e:
@@ -1387,19 +1388,21 @@ class WorkerBackend(_WorkerReferences):
         groups = split.settings.splits
         refs: dict[str, ResultRef] = {}
         offset = 0
-        for i, group in enumerate(groups):
-            length = total - offset if i == len(groups) - 1 else int(round(total * group.percentage / 100.0))
-            length = max(0, length)
-            refs[group.name], _ = self._defer(
-                rows.slice(offset, length),
-                f"{split.job_id}{_OUTPUT_SEPARATOR}{group.name}",
-                split.flow_id,
-                split.node_id,
-                None,
-                schema=stored.schema,
-                row_count=length,
-            )
-            offset += length
+        try:
+            for i, group in enumerate(groups):
+                length = total - offset if i == len(groups) - 1 else int(round(total * group.percentage / 100.0))
+                length = max(0, length)
+                refs[group.name] = self._store(
+                    rows.slice(offset, length), f"{split.job_id}_{i}", split.flow_id, split.node_id
+                )
+                offset += length
+        except BaseException:
+            for ref in refs.values():
+                self.release(ref)
+            raise
+        finally:
+            # Each split is stored on its own, as the /v1 operation stores them, so the shuffle is no one's.
+            self.release(stored)
         return OpResult(refs=refs)
 
     def _ml_apply(self, payload: OpPayload) -> OpResult:

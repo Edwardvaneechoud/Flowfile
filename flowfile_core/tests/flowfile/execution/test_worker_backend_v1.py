@@ -15,6 +15,7 @@ import dataclasses
 import hashlib
 import io
 import json
+import ssl
 import logging
 import re
 import socket
@@ -1472,3 +1473,26 @@ def test_a_refused_upgrade_is_not_dialled_again_until_the_backend_is_checked_aga
 
     assert len(dials) == 2
     assert [(method, path) for method, path, _ in sent] == [("POST", "/v1/submit")] * 3
+
+
+@SOCKET_ONLY
+def test_a_socket_that_cannot_be_opened_is_posted_to_without_re_arming_the_check(backend, kept, sent, monkeypatch):
+    """Re-arming would make the POST start a nested check from inside the probes of the running one."""
+    verdict = [checked(backend, submit_socket=True)]
+    monkeypatch.setattr(worker_module, "cached_verdict", lambda backend: verdict[0])
+    resets: list[str | None] = []
+    monkeypatch.setattr(worker_module, "reset_handshake", lambda url=None: resets.append(url))
+    dials: list[str] = []
+
+    def unverifiable(uri, **kwargs):
+        dials.append(uri)
+        raise ssl.SSLCertVerificationError("certificate verify failed")
+
+    monkeypatch.setattr(worker_module, "connect", unverifiable)
+
+    submit(backend, kept, must_materialise=True)
+    submit(backend, kept, must_materialise=False)
+
+    assert resets == []
+    assert len(dials) == 1
+    assert [(method, path) for method, path, _ in sent] == [("POST", "/v1/submit"), ("POST", "/v1/submit")]

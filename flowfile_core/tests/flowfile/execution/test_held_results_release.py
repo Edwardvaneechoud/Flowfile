@@ -196,6 +196,22 @@ def test_a_subflow_runs_stored_results_go_with_the_run_flow_node(held, tmp_path)
     assert held() == set()
 
 
+def test_a_second_subflow_run_releases_the_child_results_the_first_one_adopted(held, tmp_path):
+    parent = _parent_running(_register_subflow(tmp_path, cache_sort=True), 9607, "local")
+    assert parent.run_graph().success
+    first = {ref.result_id for ref in parent.get_node(2)._adopted_refs}
+
+    assert parent.run_graph().success
+    second = {ref.result_id for ref in parent.get_node(2)._adopted_refs}
+
+    assert first and second and first.isdisjoint(second)
+    assert not first & held()
+    assert second <= held()
+    assert [row["rank"] for row in parent.get_node(2).get_output("output-0").collect().to_dicts()] == [1, 2]
+    parent.close_flow()
+    assert held() == set()
+
+
 def test_a_subflow_run_leaves_a_result_the_worker_stored_for_the_child(tmp_path, monkeypatch, remote_worker):
     minted = _record_submits(monkeypatch, WorkerBackend)
     parent = _parent_running(_register_subflow(tmp_path, cache_sort=True), 9605, "remote")

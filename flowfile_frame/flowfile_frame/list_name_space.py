@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
+from flowfile_frame.config import logger
+
 # --- TYPE CHECKING IMPORTS ---
 if TYPE_CHECKING:
     from datetime import date, datetime, time
@@ -256,30 +258,31 @@ class ExprListNameSpace:
 
     def to_struct(
         self,
-        n_field_strategy: ListToStructWidthStrategy = "first_non_null",
+        n_field_strategy: ListToStructWidthStrategy | None = None,
         fields: Sequence[str] | Callable[[int], str] | None = None,
-        upper_bound: int = 0,
+        upper_bound: int | None = None,
     ) -> Expr:
+        given = {
+            name: value
+            for name, value in (
+                ("n_field_strategy", n_field_strategy),
+                ("fields", fields),
+                ("upper_bound", upper_bound),
+            )
+            if value is not None
+        }
         res_expr = None
-
         if self.expr is not None:
             try:
-                if isinstance(fields, Sequence):
-                    res_expr = self.expr.to_struct(fields=fields)
-                else:
-                    res_expr = self.expr.to_struct(
-                        n_field_strategy=n_field_strategy, fields=fields, upper_bound=upper_bound
-                    )
+                res_expr = self.expr.to_struct(**given)
             except Exception as e:
-                print(f"Warning: Could not create polars expression for list.to_struct(): {e}")
+                logger.warning(f"Could not create polars expression for list.to_struct(): {e}")
 
-        return self._create_next_expr(
-            method_name="to_struct",
-            result_expr=res_expr,
-            n_field_strategy=n_field_strategy,
-            fields=fields,
-            upper_bound=upper_bound,
-        )
+        # Only the arguments given are written, as Polars reads the rest; a naming function has no code form.
+        result = self._create_next_expr(method_name="to_struct", result_expr=res_expr, **given)
+        if callable(fields):
+            result.convertable_to_code = False
+        return result
 
     def eval(self, expr: Expr, *, parallel: bool = False) -> Expr:
         expr_inner = _polars(expr)

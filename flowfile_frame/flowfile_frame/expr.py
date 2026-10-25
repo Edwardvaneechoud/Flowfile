@@ -1201,7 +1201,7 @@ class Expr:
                 processed_predicates.append(pred)
 
         for col_name, value in constraints.items():
-            constraint_expr = pl.col(col_name).eq(value)
+            constraint_expr = pl.col(col_name).eq(_polars_argument(value))
             processed_predicates.append(constraint_expr)
 
         res_expr = None
@@ -1212,6 +1212,7 @@ class Expr:
                 logger.warning("Could not create polars expression for filter(): {e}")
                 pass  # res_expr will remain None
 
+        sources, convertable = _merge_operand_metadata(self, *predicates, *constraints.values())
         return Expr(
             res_expr,
             self.column_name,
@@ -1219,7 +1220,8 @@ class Expr:
             initial_column_name=self._initial_column_name,
             selector=None,  # Filter typically removes selector link
             agg_func=self.agg_func,  # Preserve aggregation status
-            convertable_to_code=self.convertable_to_code,
+            convertable_to_code=convertable,
+            _function_sources=sources,
         )
 
     def is_not_null(self):

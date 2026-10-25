@@ -59,7 +59,29 @@ export function isEmptySchema(schema: NamespaceTree): boolean {
  * Its empty schemas go with it: core deletes only an empty namespace, so the page deletes them first.
  */
 export function deleteBlockedReason(catalog: NamespaceTree): string | null {
+  if (isSeededCatalog(catalog)) return SEEDED_CATALOG_REASON;
   const held = heldBy([catalog, ...catalog.children]);
   if (held.length === 0) return null;
   return `Only an empty catalog can be deleted; this one holds ${held.join(", ")}.`;
+}
+
+const SEEDED_CATALOG_NAME = "General";
+const SEEDED_SCHEMA_NAMES = new Set([
+  "default",
+  "Unnamed Flows",
+  "Local Flows",
+  "Python Editor",
+  "sync",
+]);
+const SEEDED_CATALOG_REASON = "The General catalog is created by Flowfile and cannot be deleted.";
+
+/** Whether the catalog is the root catalog Flowfile seeds and saves into; core refuses to delete it. */
+export function isSeededCatalog(catalog: NamespaceTree): boolean {
+  return catalog.parent_id === null && catalog.name === SEEDED_CATALOG_NAME;
+}
+
+/** Whether the schema is one Flowfile keeps under the seeded root catalog; core refuses to delete it. */
+export function isSeededSchema(schema: NamespaceTree, roots: NamespaceTree[]): boolean {
+  if (!SEEDED_SCHEMA_NAMES.has(schema.name)) return false;
+  return roots.some((root) => isSeededCatalog(root) && root.id === schema.parent_id);
 }

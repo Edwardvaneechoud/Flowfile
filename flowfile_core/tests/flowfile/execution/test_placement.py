@@ -31,7 +31,7 @@ from pydantic import SecretStr
 from sqlalchemy.exc import OperationalError
 
 from flowfile_core.artifacts import reset_storage_backend
-from flowfile_core.configs import logger, settings
+from flowfile_core.configs import settings
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager import db_connections
 from flowfile_core.flowfile.execution import registry
@@ -635,7 +635,7 @@ def test_a_run_flow_node_decides_its_child_s_gates_on_the_parent_parameters_it_f
 
 
 def test_a_run_flow_node_forwarding_an_integer_parameter_is_refused_for_what_its_child_needs(
-    protocol_on, declare, tmp_path, monkeypatch, caplog
+    protocol_on, declare, tmp_path, caplog
 ):
     backend = declare(without(everything(), scheme="file"))
     child = make_graph(8433)
@@ -651,7 +651,6 @@ def test_a_run_flow_node_forwarding_an_integer_parameter_is_refused_for_what_its
         [input_schema.RunFlowParameterBinding(parameter_name="n", source="constant", constant_value="${n}")],
         [schemas.FlowParameter(name="n", default_value="1", type="integer")],
     )
-    monkeypatch.setattr(logger, "propagate", True)
 
     run_info = graph.run_graph()
 
@@ -1350,7 +1349,6 @@ def test_a_write_whose_needs_cannot_be_read_is_refused_before_any_node_starts_an
         return derivation(*args, **kwargs)
 
     monkeypatch.setattr(f"{place.__module__}.{derivation.__name__}", derive)
-    monkeypatch.setattr(logger, "propagate", True)
 
     run_info = graph.run_graph()
 

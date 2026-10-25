@@ -1674,13 +1674,39 @@ class FlowNode:
         For a ``run_flow`` child graph's node once the child run ended: the parent's output may scan the child's
         stored results, so they live as long as the Run Flow node's result does, not as long as the child graph.
         """
-        held = [other.results.result_ref, *other._stored_outputs.values(), *other._operation_refs.values()]
+        held = [
+            other.results.result_ref,
+            *other._stored_outputs.values(),
+            *other._operation_refs.values(),
+            *other._adopted_refs,
+        ]
         other.results.result_ref = None
         other.results.job_handle = None
-        other._stored_outputs, other._operation_refs = {}, {}
+        other._stored_outputs, other._operation_refs, other._adopted_refs = {}, {}, []
         if other.results.model_ref in held:
             other.results.model_ref = None
         self._adopted_refs.extend(ref for ref in held if ref is not None)
+
+    def take_adopted_results(self) -> list[ResultRef]:
+        """Hands over the child results this node adopted so far and holds none; for ``release_superseded``."""
+        adopted, self._adopted_refs = self._adopted_refs, []
+        return adopted
+
+    def release_superseded(self, previous: list[ResultRef]) -> bool:
+        """Releases the results of ``previous`` this node no longer adopts; whether it released any.
+
+        A ``run_flow`` node's child runs under a fresh graph each time, so its stored results come back under new ids
+        and the previous run's are released once the new ones are adopted.
+        """
+        kept = {(ref.backend_id, ref.result_id) for ref in self._adopted_refs}
+        released: set[tuple[str, str]] = set()
+        for ref in previous:
+            key = (ref.backend_id, ref.result_id)
+            if key in kept or key in released:
+                continue
+            released.add(key)
+            self._release_or_drop(ref)
+        return bool(released)
 
     def drop_downstream_results(self) -> None:
         """Every node downstream releases what it holds and counts as not run with its current setup.
