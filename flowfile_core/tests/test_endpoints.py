@@ -3691,6 +3691,22 @@ def test_directory_contents_invalid_directory():
     assert response.status_code == 404, "Non-existent directory should return 404"
 
 
+def test_explorer_without_a_sandbox_is_bounded_by_the_filesystem_roots(monkeypatch, tmp_path):
+    """No sandbox means the desktop's whole machine, the filesystem roots, never an unchecked path."""
+    from flowfile_core.fileExplorer import funcs
+
+    root = tmp_path / "root"
+    (root / "inside").mkdir(parents=True)
+    (tmp_path / "outside").mkdir()
+    monkeypatch.setattr(funcs, "_local_filesystem_roots", lambda: [str(root)])
+
+    explorer = funcs.SecureFileExplorer(root / "inside")
+    assert explorer.current_path == Path(os.path.realpath(root / "inside"))
+    assert explorer.get_absolute_path(str(tmp_path / "outside")) is None
+    with pytest.raises(PermissionError):
+        funcs.SecureFileExplorer(tmp_path / "outside")
+
+
 def test_get_local_files_path_traversal_blocked():
     """Test that get_local_files blocks access to directories outside sandbox."""
     # Note: This endpoint uses SecureFileExplorer which sandboxes to user_data_directory

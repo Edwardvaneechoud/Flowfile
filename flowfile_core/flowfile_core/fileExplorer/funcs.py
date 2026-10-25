@@ -95,7 +95,8 @@ class SecureFileExplorer:
         Args:
             start_path: Initial directory to start in
             sandbox_root: Root directory that user cannot escape from.
-                         If None, no sandbox enforcement.
+                         If None, the filesystem roots bound it (``_local_filesystem_roots``,
+                         the desktop's whole machine, as ``validate_path_under_cwd`` has it).
             use_relative_paths: If True, FileInfo will contain relative paths;
                                if False (default), contains absolute paths
         """
@@ -106,16 +107,19 @@ class SecureFileExplorer:
         else:
             self.sandbox_root = None
 
-        initial_str = os.path.expanduser(str(start_path))
-        if self.sandbox_root is not None:
-            contained = contained_path(self.sandbox_root, initial_str)
-            if contained is None:
-                raise PermissionError("Access denied: path is outside the allowed directory")
-            initial_str = contained
-        else:
-            initial_str = os.path.realpath(initial_str)
+        initial = self._contain(os.path.expanduser(str(start_path)))
+        if initial is None:
+            raise PermissionError("Access denied: path is outside the allowed directory")
+        self.current_path = Path(initial)
 
-        self.current_path = Path(initial_str)
+    def _contain(self, candidate: str) -> str | None:
+        """*candidate* resolved, when it lies in the sandbox, or in a filesystem root when there is none."""
+        roots = [self.sandbox_root] if self.sandbox_root is not None else _local_filesystem_roots()
+        for root in roots:
+            contained = contained_path(root, candidate)
+            if contained is not None:
+                return contained
+        return None
 
     def _is_path_safe(self, path: Path) -> bool:
         """Check if a path is within the sandbox root, symlinks resolved.
@@ -127,18 +131,10 @@ class SecureFileExplorer:
         return contained_path(self.sandbox_root, path) is not None
 
     def _sanitize_path(self, path: str | Path) -> Path | None:
-        """Resolve *path* (relative ones against the current directory), or None when it would escape the sandbox.
-
-        Without a sandbox the bounds are the filesystem roots, as ``validate_path_under_cwd`` has them in desktop mode.
-        """
+        """Resolve *path* (relative ones against the current directory), or None when it would escape the sandbox."""
         try:
-            candidate = os.path.join(str(self.current_path), path)
-            roots = [self.sandbox_root] if self.sandbox_root is not None else _local_filesystem_roots()
-            for root in roots:
-                contained = contained_path(root, candidate)
-                if contained is not None:
-                    return Path(contained)
-            return None
+            contained = self._contain(os.path.join(str(self.current_path), path))
+            return Path(contained) if contained is not None else None
         except (ValueError, RuntimeError, OSError):
             return None
 
