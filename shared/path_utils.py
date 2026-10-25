@@ -44,6 +44,25 @@ _DEFAULT_SCAN_EXTENSIONS = {
 }
 
 
+def contained_path(base: str | os.PathLike, candidate: str | os.PathLike) -> str | None:
+    """``candidate`` resolved, when it is ``base`` or a path under it; ``None`` otherwise.
+
+    Both sides are realpath'd before the test, so a symlink under ``base`` whose target escapes it is refused, and
+    the prefix ends in a separator, so a sibling sharing a name prefix (``/data/userX`` vs ``/data/user``) is refused
+    too. A relative ``candidate`` resolves against the working directory, as ``os.path.realpath`` does; join it onto
+    ``base`` first to resolve it there. The realpath-then-``startswith`` shape is the one CodeQL's
+    ``py/path-injection`` query recognises as a barrier, so callers return this value rather than their input.
+    """
+    base_real = os.path.realpath(base)
+    candidate_real = os.path.realpath(candidate)
+    if candidate_real == base_real:
+        return base_real
+    prefix = base_real if base_real.endswith(os.sep) else base_real + os.sep
+    if candidate_real.startswith(prefix):
+        return candidate_real
+    return None
+
+
 def file_name(path: str | os.PathLike) -> str:
     """The last component of ``path`` under either separator, so a Windows path named on Linux names its file."""
     return PureWindowsPath(path).name

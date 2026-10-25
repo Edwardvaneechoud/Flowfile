@@ -2831,6 +2831,19 @@ class TestFriendlyRelationError:
     def test_unrelated_error_passthrough(self):
         assert self._f("some parse error", "SELECT 1") == "some parse error"
 
+    def test_whitespace_around_dots_is_dropped(self):
+        out = self._f("relation 'cat' was not found", "SELECT * FROM cat  .\t'main' .  tbl")
+        assert "Table 'cat.main.tbl' was not found" in out
+
+    def test_long_whitespace_run_stays_fast(self):
+        import time
+
+        query = "SELECT * FROM cat." + " " * 50_000 + "x"
+        start = time.perf_counter()
+        out = self._f("relation 'cat' was not found", query)
+        assert time.perf_counter() - start < 1
+        assert "Table 'cat.x' was not found" in out
+
 
 class TestCronSchedules:
     """Cron schedule create/read/update via the catalog API."""

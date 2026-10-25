@@ -936,7 +936,10 @@ def custom_node(body: models.CustomNodeExecuteInput, job_id: str) -> OpOutputs:
     flow_id, node_id = body.flowfile_flow_id, body.flowfile_node_id
     output_ids = _op_outputs(job_id, len(names))
     primary = _output_file(flow_id, output_ids[0])
-    written = [_output_path(primary, name, names[0]) for name in names]
+    try:
+        written = [_output_path(primary, name, names[0]) for name in names]
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
     reported, _ = _run_op(
         job_id, lambda: start_custom_node_process(custom_node_input=body, file_ref=primary, task_id=job_id), written
     )

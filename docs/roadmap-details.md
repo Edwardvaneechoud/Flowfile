@@ -63,15 +63,15 @@ you use every day need to support that choice too.
 The idea is to let you choose the parts of the stack, and replace them when
 you need to.
 
-![The planned stack: the visual designer, Python API, canvas notebook and AI planner share one flow graph, with Polars export and Alteryx import. Execution options include a laptop, your own worker, Polars Cloud and sandboxed kernels. Tables use Delta internally and Iceberg for exchange. Catalog options include Flowfile metadata, Lakekeeper and other Iceberg REST catalogs, backed by your choice of object store.](assets/images/roadmap/target-architecture.svg)
+![The planned stack: the visual designer, Python API, canvas notebook and AI planner share one flow graph, with Polars export and Alteryx import. Execution options include a laptop, your own worker on another host, Polars Cloud and sandboxed kernels, which still run on core's host. Tables use Delta internally and Iceberg for exchange. Catalog options include Flowfile metadata, Lakekeeper and other Iceberg REST catalogs, backed by your choice of object store.](assets/images/roadmap/target-architecture.svg)
 
 **Legend:** plain cards are shipped · `GAP` marks a known limitation in
 something shipped · dimmed cards are planned.
 
 The diagram marks two gaps. Code export still has coverage gaps, including
-Google Analytics and API response nodes. A worker runs on its own host
-without a shared filesystem, but a kernel node still runs on core's host,
-where the kernel reads its inputs. Both need fixing.
+Google Analytics and API response nodes. Kernels run in Docker on core's
+host, where a kernel reads its inputs, so a kernel node can't run on a
+worker on another host. Both need fixing.
 
 ## Implementation notes
 

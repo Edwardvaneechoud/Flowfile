@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -69,6 +70,7 @@ from flowfile_core.schemas.catalog_schema import (
     VacuumTableResponse,
     scd2_system_columns_missing,
 )
+from shared.path_utils import contained_path
 from shared.storage_config import storage
 
 if TYPE_CHECKING:
@@ -105,6 +107,23 @@ def _scd2_columns_missing_from_schema(raw_scd2_config: str | None, schema_list: 
     return scd2_system_columns_missing(cfg, schema_list)
 
 
+def managed_table_path(file_path: str) -> str | None:
+    """*file_path* resolved, when it lies strictly under Flowfile's managed catalog dir; ``None`` otherwise.
+
+    The catalog dir itself is not a table path, and object-storage URIs are never managed locally.
+    """
+    if _is_cloud_uri(file_path):
+        return None
+    try:
+        base = os.path.realpath(storage.catalog_tables_directory)
+        resolved = contained_path(base, file_path)
+    except (ValueError, OSError):
+        return None
+    if resolved is None or resolved == base:
+        return None
+    return resolved
+
+
 def _is_managed_table_path(file_path: str) -> bool:
     """True when the storage path lives under Flowfile's managed catalog dir.
 
@@ -112,13 +131,7 @@ def _is_managed_table_path(file_path: str) -> bool:
     outside the managed dir) return False and must never be deleted. Object-storage
     URIs are never managed locally, so cloud tables are not auto-deleted.
     """
-    if _is_cloud_uri(file_path):
-        return False
-    try:
-        Path(file_path).resolve().relative_to(storage.catalog_tables_directory.resolve())
-        return True
-    except (ValueError, OSError):
-        return False
+    return managed_table_path(file_path) is not None
 
 
 def _project_sync_tables(owner_id: int) -> None:
@@ -793,7 +806,7 @@ class TableService:
 
         if not is_cloud:
             old_path = Path(table.file_path)
-            if old_path != Path(resolved_path_str) and old_path.exists():
+            if os.path.realpath(old_path) != os.path.realpath(resolved_path_str) and old_path.exists():
                 try:
                     delete_table_storage(old_path)
                 except OSError:

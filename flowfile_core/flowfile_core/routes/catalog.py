@@ -61,6 +61,7 @@ from flowfile_core.catalog import (
     WorkerUnavailableError,
 )
 from flowfile_core.catalog.access import AccessResolver
+from flowfile_core.catalog.services.tables import managed_table_path
 from flowfile_core.catalog.validators import validate_cron_expression, validate_cron_timezone
 from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db
@@ -216,6 +217,14 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
 }
 
 _HANDLED_EXCEPTIONS = tuple(_CATALOG_EXCEPTION_MAP.keys())
+
+
+def _kernel_table_path(table_path: str) -> str:
+    """A kernel-written table's directory, resolved under the catalog's tables directory; 403 for any other path."""
+    resolved = managed_table_path(table_path)
+    if resolved is None:
+        raise HTTPException(403, "Access denied: table_path must be under the catalog tables directory")
+    return resolved
 
 
 def _stale_token(value):
@@ -758,11 +767,12 @@ def register_table_from_data(
 
     Used by ``flowfile_ctx.write_catalog_table`` once the kernel has written
     the Delta directory locally — Core only persists the metadata record (no
-    worker-side materialization).
+    worker-side materialization). The directory must be under the catalog's
+    tables directory, where the kernel writes it (403 otherwise).
     """
     return service.register_table_from_data(
         name=body.name,
-        table_path=body.table_path,
+        table_path=_kernel_table_path(body.table_path),
         owner_id=current_user.id,
         namespace_id=body.namespace_id,
         description=body.description,
@@ -787,11 +797,12 @@ def refresh_table_metadata(
     Used by ``flowfile_ctx.write_catalog_table`` for append / upsert / update /
     delete modes — the kernel writes new data to the existing Delta directory
     and then reports back the new row_count / size_bytes / schema so Core's
-    record stays consistent.
+    record stays consistent. A ``table_path`` must be under the catalog's
+    tables directory (403 otherwise).
     """
     return service.overwrite_table_data(
         table_id=table_id,
-        table_path=body.table_path,
+        table_path=_kernel_table_path(body.table_path) if body.table_path is not None else None,
         description=body.description,
         storage_format=body.storage_format,
         schema=body.schema_columns,

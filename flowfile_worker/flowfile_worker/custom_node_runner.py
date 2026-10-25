@@ -13,6 +13,7 @@ import decimal
 import io
 import json
 import logging
+import os
 import time
 import traceback
 from multiprocessing import Array, Queue, Value
@@ -102,9 +103,18 @@ def _normalize_outputs(result, output_names: list[str]) -> dict[str, pl.LazyFram
 
 
 def _output_path(file_path: str, name: str, primary_name: str) -> str:
+    """Where output *name* is written: *file_path* for the primary, ``<file>__<name>.arrow`` beside it otherwise.
+
+    A name that would place the file outside *file_path*'s folder raises ``ValueError``.
+    """
     if name == primary_name:
         return file_path
-    return file_path.removesuffix(".arrow") + f"__{name}.arrow"
+    from shared.path_utils import contained_path
+
+    path = contained_path(os.path.dirname(file_path), file_path.removesuffix(".arrow") + f"__{name}.arrow")
+    if path is None:
+        raise ValueError(f"Output name {name!r} would write outside the node's result folder")
+    return path
 
 
 def _json_default(obj):

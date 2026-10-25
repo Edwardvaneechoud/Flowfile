@@ -4,9 +4,9 @@ This page walks through the code that runs a flow's nodes: how core hands one no
 
 ## One interface
 
-Core talks to compute only through `ComputeBackend` (`flowfile_core/flowfile/execution/protocol.py`). A result is a `ResultRef`: the id of the backend that minted it, the node hash, the schema, the row count when known, and a `location` only that backend reads. Rows reach core only through `sample` and the sample `submit` returns inline.
+Core talks to compute only through `ComputeBackend` (`flowfile_core/flowfile/execution/protocol.py`). A backend is not a service of its own: it is an adapter object inside core's process, `WorkerBackend` or `EmbeddedWorkerBackend`, and the worker it talks to is the compute. A result is a `ResultRef`: the id of the backend that minted it, the node hash, the schema, the row count when known, and a `location` only that backend reads. Rows reach core only through `sample` and the sample `submit` returns inline.
 
-![Core talks to compute only through ComputeBackend: core sends a plan with SubmitHints to a ComputeBackend and gets back a ResultRef and at most preview_rows rows; the backend fronts a worker on any host, which keeps the result in its own storage, read only by that backend.](../assets/images/architecture/compute-backend-overview.svg)
+![Core's process holds core, which plans each node, and a ComputeBackend, the adapter core calls: WorkerBackend (ids worker and worker:name) or EmbeddedWorkerBackend (id local). Core sends the backend a plan with SubmitHints and gets back a ResultRef and at most preview_rows rows. The backend reaches the worker over the /v1 routes on HTTP and WebSocket, or by a direct call for the worker embedded in core's process; the worker runs on any host and keeps each result in its own storage, read only through that backend.](../assets/images/architecture/compute-backend-overview.svg)
 
 The rest of the page builds on these rules:
 
@@ -65,9 +65,9 @@ Every `/v1` request carries `X-Protocol-Version`; a worker answers a different v
 
 ## One node, step by step
 
-`run_graph` places the run, then `_execute_stages` runs each stage's nodes (up to `ExecutionContext.parallelism` at once, each thread under a copy of the run's context). For a node that submits a plain Polars plan, `FlowNode._do_execute` does this:
+`run_graph` places the run, then `_execute_stages` runs each stage's nodes (up to `ExecutionContext.parallelism` at once, each thread under a copy of the run's context). For a node that submits a plain Polars plan, `FlowNode._do_execute` does this. `FlowNode` and the backend run in core's process; the worker's `service.run_submit` and the child it starts run in the worker's process, or in core's for `EmbeddedWorkerBackend`:
 
-![One node, step by step: FlowNode runs its cache check (1), builds the plan over its input leaves (2) and calls hints_for (3); it calls submit with the plan, inputs, hints and hash on the backend, which runs funcs.submit_result in a worker child that answers a file or a deferred plan and a sample (4); the backend answers a ResultRef and the sample, and FlowNode sets resulting_data to plan_for(ref) (5).](../assets/images/architecture/node-submit-sequence.svg)
+![One node, step by step. In core's process, FlowNode runs its cache check (1), builds the plan over its input leaves (2) and calls hints_for (3), then calls submit with the plan, inputs, hints and hash on the backend (4). The backend sends the plan bytes over the worker's /v1 submit, or by a direct call, to service.run_submit, which runs funcs.submit_result in a worker child; the child answers a file or a deferred plan and a sample, run_submit answers a SubmitResult, and the backend answers FlowNode a ResultRef and the sample, so FlowNode sets resulting_data to plan_for(ref) (5).](../assets/images/architecture/node-submit-sequence.svg)
 
 1. **Cache check.** A node with **Cache Results** on that still holds a stored result under its hash on this backend (`held_result`, then `exists`) takes it and skips the submit.
 2. **Build the plan.** `get_resulting_data()` runs the node function over its inputs' engines, each built on `plan_for` of the input's reference, so the function only composes a plan.

@@ -79,7 +79,7 @@ To change a worker's URL, token, CA certificate or **Sees this server's files** 
 !!! warning "The token is code execution on the worker"
     A plan can carry Python code that the worker runs when it loads the plan, and an operation runs node code there, so whoever holds the token and reaches the worker's port can run code on the worker, with its access to the catalog database, the master key and every stored connection. Keep the worker's port off untrusted networks, and beyond a trusted network serve the worker over [TLS](#tls), so neither the token nor a plan crosses in clear. The single-host `docker-compose.yml` stays plain HTTP inside its own Docker network.
 
-    Enter core's `FLOWFILE_INTERNAL_TOKEN` as the **Token**, and start the worker with that same value. The worker accepts one token, and core signs some of its calls to every worker with its own internal token: the writes, the Delta operations, the visualisation sessions and the catalog services. The version check signs with the worker's own **Token**.
+    Enter core's `FLOWFILE_INTERNAL_TOKEN` as the **Token**, and start the worker with that same value. The worker accepts one token, and core signs some of its calls to every worker with its own internal token: the Delta operations, the visualisation sessions, the catalog services and the custom-node dry run. The version check signs with the worker's own **Token**.
 
 ## TLS
 

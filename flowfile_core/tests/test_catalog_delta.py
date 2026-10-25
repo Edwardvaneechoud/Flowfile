@@ -16,6 +16,7 @@ Covers:
 
 import json
 import os
+import shutil
 from datetime import datetime, timezone
 
 import polars as pl
@@ -43,6 +44,7 @@ from flowfile_core.database.models import (
 )
 from flowfile_core.schemas.catalog_schema import DeltaTableHistory, DeltaVersionCommit
 from shared.delta_utils import format_delta_timestamp
+from shared.storage_config import storage
 
 # Helpers
 
@@ -317,6 +319,85 @@ class TestRegisterTableFromParquetAlias:
         assert len(calls) == 1
         assert calls[0]["storage_format"] == "parquet"
         assert calls[0]["table_path"] == "/tmp/compat.parquet"
+
+
+# The kernel's from-data and refresh routes
+
+
+class TestKernelTableRoutes:
+    """``/tables/from-data`` and ``/tables/{id}/refresh`` take only a directory under the catalog tables directory."""
+
+    @staticmethod
+    def _metadata() -> dict:
+        return {
+            "storage_format": "delta",
+            "schema_columns": [{"name": "a", "dtype": "Int64"}],
+            "row_count": 1,
+            "column_count": 1,
+            "size_bytes": 10,
+        }
+
+    def _register(self, client, schema_id: int, table_path: str):
+        body = {"name": "kernel_t", "table_path": table_path, "namespace_id": schema_id, **self._metadata()}
+        return client.post("/catalog/tables/from-data", json=body)
+
+    def test_from_data_refuses_a_path_outside_the_catalog(self, client, tmp_path):
+        _, schema_id = _make_namespace()
+        assert self._register(client, schema_id, str(tmp_path / "elsewhere")).status_code == 403
+
+    def test_from_data_refuses_the_catalog_directory_itself(self, client):
+        _, schema_id = _make_namespace()
+        assert self._register(client, schema_id, str(storage.catalog_tables_directory)).status_code == 403
+
+    def test_from_data_registers_a_directory_under_the_catalog(self, client):
+        _, schema_id = _make_namespace()
+        path = storage.catalog_tables_directory / "kernel_t_route"
+        resp = self._register(client, schema_id, str(path))
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["file_path"] == os.path.realpath(path)
+
+    def test_refresh_refuses_a_path_outside_the_catalog(self, client, tmp_path):
+        _, schema_id = _make_namespace()
+        path = storage.catalog_tables_directory / "kernel_t_refresh"
+        table_id = self._register(client, schema_id, str(path)).json()["id"]
+        resp = client.post(
+            f"/catalog/tables/{table_id}/refresh", json={"table_path": str(tmp_path / "x"), **self._metadata()}
+        )
+        assert resp.status_code == 403
+        with get_db_context() as db:
+            assert db.get(CatalogTable, table_id).file_path == os.path.realpath(path)
+
+    def test_refresh_under_another_spelling_keeps_the_table_data(self, client, tmp_path, monkeypatch):
+        """A refresh naming the table's own directory by another spelling must not delete it as an old location."""
+        monkeypatch.setattr(CatalogService, "_fire_table_trigger_schedules", lambda *a, **kw: 0)
+        _, schema_id = _make_namespace()
+        table_dir = storage.catalog_tables_directory / "kernel_t_alias"
+        (table_dir / "_delta_log").mkdir(parents=True)
+        alias = tmp_path / "alias"
+        try:
+            alias.symlink_to(storage.catalog_tables_directory, target_is_directory=True)
+        except OSError:
+            pytest.skip("symlinks unavailable")
+        try:
+            with get_db_context() as db:
+                table = CatalogTable(
+                    name="kernel_t_alias",
+                    namespace_id=schema_id,
+                    owner_id=1,
+                    file_path=str(alias / "kernel_t_alias"),
+                    storage_format="delta",
+                )
+                db.add(table)
+                db.commit()
+                table_id = table.id
+            resp = client.post(
+                f"/catalog/tables/{table_id}/refresh",
+                json={"table_path": str(alias / "kernel_t_alias"), **self._metadata()},
+            )
+            assert resp.status_code == 200, resp.text
+            assert (table_dir / "_delta_log").is_dir()
+        finally:
+            shutil.rmtree(table_dir, ignore_errors=True)
 
 
 # overwrite_table_data (with pre-computed delta metadata)

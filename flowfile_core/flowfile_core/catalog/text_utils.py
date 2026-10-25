@@ -65,7 +65,8 @@ def friendly_relation_error(error: str, query: str) -> str:
     found = ref.search(query)
     if found is None:
         return error  # single-part / not a dotted reference: polars' message is already clear
-    display = re.sub(r"\s*\.\s*", ".", found.group(0)).replace('"', "").replace("'", "")
+    # split + strip, not re.sub(r"\s*\.\s*"), which backtracks quadratically on long whitespace runs
+    display = ".".join(part.strip() for part in found.group(0).split(".")).replace('"', "").replace("'", "")
     return (
         f"Table '{display}' was not found in the catalog. "
         f"Check the name is spelled correctly and the table is registered."

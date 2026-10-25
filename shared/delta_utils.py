@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -89,19 +90,33 @@ def get_delta_size_bytes(path: str | Path, storage_options: dict[str, str] | Non
     Falls back to filesystem scanning if the delta log can't be read (local only; an
     unreadable object-storage log yields ``0``).
     """
-    from deltalake import DeltaTable
-
+    if storage_options is not None:
+        return get_remote_delta_size_bytes(str(path), storage_options)
     try:
-        dt = DeltaTable(str(path), storage_options=storage_options)
-        add_actions = dt.get_add_actions(flatten=True)
-        size_col = add_actions.column("size_bytes")
-        return sum(v for v in size_col.to_pylist() if v is not None)
+        return _delta_log_size_bytes(str(path), None)
     except Exception:
-        if storage_options is not None:
-            logger.warning("Failed to read size from delta log for %s", path, exc_info=True)
-            return 0
         logger.warning("Failed to read size from delta log, falling back to filesystem scan", exc_info=True)
         return sum(f.stat().st_size for f in Path(path).rglob("*.parquet"))
+
+
+def get_remote_delta_size_bytes(uri: str, storage_options: dict[str, str] | None) -> int:
+    """Sum the sizes of an object-storage Delta table's active data files from its log; ``0`` when it can't be read.
+
+    Never touches the local filesystem, unlike :func:`get_delta_size_bytes`' fallback.
+    """
+    try:
+        return _delta_log_size_bytes(uri, storage_options)
+    except Exception:
+        logger.warning("Failed to read size from delta log for %s", uri, exc_info=True)
+        return 0
+
+
+def _delta_log_size_bytes(path: str, storage_options: dict[str, str] | None) -> int:
+    from deltalake import DeltaTable
+
+    dt = DeltaTable(path, storage_options=storage_options)
+    size_col = dt.get_add_actions(flatten=True).column("size_bytes")
+    return sum(v for v in size_col.to_pylist() if v is not None)
 
 
 def _open_delta_or_none(output_path: str, storage_options: dict[str, str] | None):
@@ -1522,12 +1537,19 @@ def validate_catalog_path(table_name: str, catalog_dir: Path) -> Path:
     """Validate that *table_name* is a simple name and resolve it under *catalog_dir*.
 
     Only a bare name is accepted (no path separators, no ``..``, no null
-    bytes).  The full path is constructed from the trusted *catalog_dir*.
+    bytes).  The full path is constructed from the trusted *catalog_dir*,
+    and must resolve to a path under it.
 
     Raises ``ValueError`` when the input is invalid.
     """
+    from shared.path_utils import contained_path
+
     _guard_bare_table_name(table_name)
-    return catalog_dir.resolve() / table_name
+    base = os.path.realpath(catalog_dir)
+    resolved = contained_path(base, os.path.join(base, table_name))
+    if resolved is None or resolved == base:
+        raise ValueError(f"table_name {table_name!r} does not resolve under the catalog directory")
+    return Path(resolved)
 
 
 def _guard_bare_table_name(table_name: str) -> None:

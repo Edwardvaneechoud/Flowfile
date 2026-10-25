@@ -31,6 +31,7 @@ from flowfile_core.notebook.bridge import CleanRunRequest, CleanRunResult
 from flowfile_core.notebook.gate import DISABLED_DETAIL, kernel_sessions_allowed
 from flowfile_core.notebook.push import known_schemas, seed_snapshot
 from shared.notebook_display import KERNEL_RESULT_MARKER
+from shared.path_utils import contained_path
 
 SNIPPET = "from flowfile_frame import notebook_kernel as _nb\n_nb.handle({request!r}, globals())\n"
 
@@ -562,7 +563,10 @@ def node_result(kernel_id: str, user, flow_id: int, node_id: int, output_handle:
     if cached is not None and cached[0]() is data and os.path.exists(cached[1]):
         path = cached[1]
     else:
-        path = os.path.join(_results_dir(manager, flow_id), f"{node_id}_{handle}_{uuid4().hex}.parquet")
+        results_dir = _results_dir(manager, flow_id)
+        path = contained_path(results_dir, os.path.join(results_dir, f"{node_id}_{handle}_{uuid4().hex}.parquet"))
+        if path is None:
+            raise HTTPException(422, f"Output {handle!r} of node {node_id} does not name a file in the session folder")
         _write_result(flow, node_id, data, path)
         with _lock:
             superseded = _results.setdefault(flow_id, {}).get((node_id, handle))

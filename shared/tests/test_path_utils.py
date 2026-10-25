@@ -11,6 +11,7 @@ from shared.path_utils import (
     DirectoryScanUnsupportedError,
     NoFilesMatchedError,
     assert_directory_scan_supported,
+    contained_path,
     default_scan_extension,
     ensure_glob_pattern,
     expand_glob_pattern,
@@ -307,3 +308,40 @@ def test_assert_directory_scan_supported_refuses_an_empty_csv_encoding():
 )
 def test_file_name_takes_the_last_component_under_either_separator(path, expected):
     assert file_name(path) == expected
+
+
+def test_contained_path_accepts_the_base_and_paths_under_it(tmp_path):
+    base = tmp_path / "base"
+    (base / "child").mkdir(parents=True)
+    assert contained_path(base, base) == os.path.realpath(base)
+    assert contained_path(base, base / "child" / "new.csv") == os.path.realpath(base / "child" / "new.csv")
+
+
+def test_contained_path_refuses_a_sibling_sharing_the_name_prefix(tmp_path):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data2").mkdir()
+    assert contained_path(tmp_path / "data", tmp_path / "data2" / "x") is None
+
+
+def test_contained_path_refuses_a_traversal_out_of_the_base(tmp_path):
+    base = tmp_path / "base"
+    base.mkdir()
+    assert contained_path(base, os.path.join(base, "..", "outside")) is None
+
+
+def test_contained_path_refuses_a_symlink_whose_target_escapes(tmp_path):
+    base = tmp_path / "base"
+    base.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = base / "link"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    assert contained_path(base, link / "secret.txt") is None
+
+
+def test_contained_path_under_the_filesystem_root(tmp_path):
+    root = os.path.abspath(os.sep)
+    assert contained_path(root, tmp_path / "x") == os.path.realpath(tmp_path / "x")

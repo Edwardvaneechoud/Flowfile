@@ -1480,7 +1480,12 @@ def read_table_metadata(table_name: str, base_uri: str | None = None, storage_op
     schema = lf.collect_schema()
     schema_list = [{"name": n, "dtype": str(d)} for n, d in schema.items()]
     row_count = lf.select(pl.len()).collect().item()
-    size_bytes = _get_delta_size_bytes(_resolve_catalog_target(table_name, base_uri), storage_options=storage_options)
+    if base_uri is not None:
+        from shared.delta_utils import get_remote_delta_size_bytes, validate_catalog_uri
+
+        size_bytes = get_remote_delta_size_bytes(validate_catalog_uri(table_name, base_uri), storage_options)
+    else:
+        size_bytes = _get_delta_size_bytes(_validate_catalog_path(table_name))
     return {
         "schema": schema_list,
         "row_count": row_count,
