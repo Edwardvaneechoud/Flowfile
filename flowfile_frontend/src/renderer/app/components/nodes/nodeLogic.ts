@@ -75,24 +75,10 @@ export const addNodeSettings = async (node_type: string, nodeSettings: any) => {
   console.log(response);
 };
 
-const isResponseSuccessful = (status: number): boolean => status >= 200 && status < 300;
-
 export const getRunStatus = async (flowId: number): Promise<AxiosResponse<RunInformation>> => {
   const response = await axios.get("/flow/run_status/", {
     params: { flow_id: flowId },
     headers: { accept: "application/json" },
   });
-  return response;
-};
-
-export const updateRunStatus = async (
-  flowId: number,
-  nodeStore: { insertRunResult: (result: RunInformation) => void },
-): Promise<AxiosResponse<RunInformation>> => {
-  const response = await getRunStatus(flowId);
-  if (isResponseSuccessful(response.status)) {
-    nodeStore.insertRunResult(response.data);
-  }
-
   return response;
 };

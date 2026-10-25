@@ -390,9 +390,25 @@ const loadFlowSettings = async (): Promise<void> => {
   if (!(flowId && flowId > 0)) return;
   if (settingsLoad && settingsLoad.id === flowId) return settingsLoad.promise;
 
-  const promise = (async () => {
+  const wasRunning = editorStore.isRunning;
+  const wasCanceled = editorStore.isCanceled;
+  const owner = runButton.value?.getOperationOwner();
+  const refreshCounter = flowStore.pendingRunStateCounter;
+  let stale = false;
+  let promise = Promise.resolve();
+  promise = (async () => {
     const settings = await getFlowSettings(flowId);
-    if (nodeStore.flow_id !== flowId) return;
+    if (settingsLoad?.promise !== promise) return;
+    if (
+      nodeStore.flow_id !== flowId ||
+      runButton.value?.getOperationOwner() !== owner ||
+      flowStore.pendingRunStateCounter !== refreshCounter ||
+      editorStore.isRunning !== wasRunning ||
+      editorStore.isCanceled !== wasCanceled
+    ) {
+      stale = true;
+      return;
+    }
     flowSettings.value = settings;
     if (!flowSettings.value) return;
 
@@ -409,14 +425,21 @@ const loadFlowSettings = async (): Promise<void> => {
 
     if (flowSettings.value.is_running) {
       editorStore.isRunning = true;
-      button.startStatusPolling(flowId);
+      button.freezeFlow();
+      button.startStatusPolling(flowId, !flowSettings.value.is_canceled);
     } else {
       editorStore.isRunning = false;
-      button.stopPolling();
-      void getRunStatus(flowId).then((response) => {
-        if (nodeStore.flow_id === flowId && response.status === 200)
-          nodeStore.insertRunResult(response.data);
-      });
+      button.unFreezeFlow();
+      if (!button.checkStatusPolling()) {
+        void getRunStatus(flowId)
+          .then((response) => {
+            if (nodeStore.flow_id === flowId && response.status === 200)
+              nodeStore.insertRunResult(response.data);
+          })
+          .catch(() => {
+            /* An idle flow may have been evicted; leave its results unchanged. */
+          });
+      }
     }
   })();
 
@@ -424,7 +447,14 @@ const loadFlowSettings = async (): Promise<void> => {
   try {
     await promise;
   } finally {
-    if (settingsLoad?.id === flowId) settingsLoad = null;
+    if (settingsLoad?.promise === promise) {
+      settingsLoad = null;
+      if (
+        nodeStore.flow_id === flowId &&
+        (stale || flowStore.pendingRunStateCounter !== refreshCounter)
+      )
+        await loadFlowSettings();
+    }
   }
 };
 

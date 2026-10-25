@@ -4,7 +4,13 @@
       <span v-if="!isCancelling" class="material-icons run-icon">play_arrow</span>
       {{ isCancelling ? "Cancelling…" : "Run" }}
     </el-button>
-    <el-button v-if="nodeStore.isRunning && !isCancelling" size="small" round @click="cancelFlow()">
+    <el-button
+      v-if="nodeStore.isRunning"
+      :disabled="cancelPending"
+      size="small"
+      round
+      @click="cancelFlow()"
+    >
       Cancel
     </el-button>
   </div>
@@ -26,7 +32,7 @@ const props = defineProps({
     default: () => ({
       interval: 2000,
       enabled: true,
-      maxAttempts: Infinity,
+      maxAttempts: 5,
     }),
   },
   persistPolling: {
@@ -47,6 +53,10 @@ const {
   startStatusPolling,
   stopPolling,
   checkRunStatus,
+  checkStatusPolling,
+  getOperationOwner,
+  freezeFlow,
+  unFreezeFlow,
 } = useFlowExecution(() => props.flowId, props.pollingConfig, {
   persistPolling: props.persistPolling,
 });
@@ -61,6 +71,10 @@ defineExpose({
   startStatusPolling,
   stopPolling,
   checkRunStatus,
+  checkStatusPolling,
+  getOperationOwner,
+  freezeFlow,
+  unFreezeFlow,
   showNotification,
   runFlow,
   cancelFlow,
