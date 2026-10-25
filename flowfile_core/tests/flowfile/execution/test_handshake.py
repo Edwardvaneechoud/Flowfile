@@ -445,25 +445,26 @@ def test_calls_that_wait_on_a_check_of_an_unreachable_backend_each_raise_its_err
     assert handshake.last_verdict(TEAM).error_kind == "ComputeUnavailable"
 
 
-def test_a_submit_socket_that_cannot_be_opened_rearms_the_check_of_its_url(protocol_on, monkeypatch):
+def test_a_submit_socket_that_cannot_be_opened_falls_back_without_rechecking_its_url(protocol_on, monkeypatch):
+    """Re-arming would have the post start a nested check from inside a running one's probes; a post that cannot reach
+    the worker re-arms it through the session."""
     worker = registry.backend(registry.WORKER_BACKEND_ID)
     asked = counted(monkeypatch, worker)
     handshake.ensure_handshake(WORKER_URL)
+    dials: list[str] = []
 
-    real_connect = worker_module.connect
-
-    def unreachable_once(url, **kwargs):
-        monkeypatch.setattr(worker_module, "connect", real_connect)
+    def unreachable(url, **kwargs):
+        dials.append(url)
         raise OSError("[Errno 61] Connection refused")
 
-    monkeypatch.setattr(worker_module, "connect", unreachable_once)
+    monkeypatch.setattr(worker_module, "connect", unreachable)
     plan = pl.LazyFrame({"a": [1]})
     hints = SubmitHints(must_materialise=True, wide=False, fanout=1, preview_rows=None)
-    result = worker.submit(plan, [], hints, "t-handshake-rearm", flow_id=-1, node_id=-1)
-    worker.release(result.ref)
+    for result_id in ("t-handshake-dial-1", "t-handshake-dial-2"):
+        worker.release(worker.submit(plan, [], hints, result_id, flow_id=-1, node_id=-1).ref)
 
-    # the socket's failure dropped the verdict, so the post it fell back to checked the worker again
-    assert asked == [1, 1]
+    assert asked == [1]
+    assert len(dials) == 1, "the socket is not dialled again under the verdict it failed under"
 
 
 @pytest.mark.parametrize(

@@ -486,7 +486,27 @@ def execute_run_flow_node(
     param_input: FlowDataEngine | None,
     data_inputs: tuple,
 ) -> "NamedOutputs | FlowDataEngine":
-    """Execute the referenced subflow once (or once per parameter row) and collect outputs."""
+    """Execute the referenced subflow once (or once per parameter row) and collect outputs.
+
+    Each child run comes back under fresh ids, so the stored child results the Run Flow node adopted on its previous
+    run are released once this run ends, and the nodes downstream, whose plans scanned them, count as not run.
+    """
+    node = parent_graph.get_node(settings.node_id)
+    previous = node.take_adopted_results() if node is not None else []
+    try:
+        return _execute_runs(parent_graph, settings, param_input, data_inputs)
+    finally:
+        if node is not None and node.release_superseded(previous):
+            node.drop_downstream_results()
+
+
+def _execute_runs(
+    parent_graph: "FlowGraph",
+    settings: input_schema.NodeRunFlow,
+    param_input: FlowDataEngine | None,
+    data_inputs: tuple,
+) -> "NamedOutputs | FlowDataEngine":
+    """The child runs of ``execute_run_flow_node``, each adopting its child's stored results onto the node."""
     from flowfile_core.flowfile.manage.io_flowfile import open_flow
 
     node = parent_graph.get_node(settings.node_id)
@@ -579,13 +599,10 @@ def execute_run_flow_node(
                 node._subflow_cancel_context = None
             # The child graph is dropped after this run; its outputs keep the plans they read, and the node owns
             # the stored results those plans scan.
-            previous = node.take_adopted_results() if node is not None else []
             for child_node in child.nodes:
                 child_node.release_deferred_result()
                 if node is not None:
                     node.adopt_results(child_node)
-            if node is not None and node.release_superseded(previous):
-                node.drop_downstream_results()
 
         # Cancel first: a mid-node cancel leaves node results unsuccessful, which
         # would otherwise surface as a bogus "run failed" error.

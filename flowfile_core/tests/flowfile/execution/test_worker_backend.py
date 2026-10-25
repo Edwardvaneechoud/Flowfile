@@ -659,7 +659,7 @@ def test_a_random_split_on_the_worker_partitions_like_core(backend, kept):
         refs = backend.run_op(OperationKind.random_split, op_payload(split)).refs
         kept.extend(refs.values())
 
-        assert [(ref.state, ref.row_count) for ref in refs.values()] == [("deferred", 40), ("deferred", 10)]
+        assert [(ref.state, ref.row_count) for ref in refs.values()] == [("materialised", 40), ("materialised", 10)]
         on_worker = {name: backend.plan_for(ref).collect()["n"].to_list() for name, ref in refs.items()}
         embedded = EmbeddedWorkerBackend()
         embedded_refs = embedded.run_op(OperationKind.random_split, op_payload(split)).refs
@@ -668,7 +668,7 @@ def test_a_random_split_on_the_worker_partitions_like_core(backend, kept):
         }
         for embedded_ref in embedded_refs.values():
             embedded.release(embedded_ref)
-        assert backend.status(JobHandle("worker", split.job_id)).state == "done"
+        assert not subops.results_exists(split.job_id, worker_url=WORKER_URL), "the shuffle is no split's"
     finally:
         subops.clear_task_from_worker(split.job_id, worker_url=WORKER_URL)
 

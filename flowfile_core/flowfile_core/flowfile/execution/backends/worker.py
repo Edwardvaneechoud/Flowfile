@@ -1212,13 +1212,18 @@ class WorkerBackend(_WorkerReferences):
             metadata = answer["metadata"] if op is OperationKind.ml_train else {}
         return OpResult(refs=refs, metadata=metadata)
 
-    def _store(self, plan: pl.LazyFrame, result_id: str, flow_id: int, node_id: int | str) -> ResultRef:
-        """Run ``plan`` as worker store task ``result_id`` and return the result it wrote."""
+    def _store(
+        self, plan: pl.LazyFrame, result_id: str, flow_id: int, node_id: int | str, *, tracked_as: str | None = None
+    ) -> ResultRef:
+        """Run ``plan`` as worker store task ``result_id`` and return the result it wrote.
+
+        ``tracked_as`` is the job id ``cancel`` reaches the task under, ``result_id`` by default.
+        """
         with self._lock:
             self._deferred.pop(result_id, None)
         plan_bytes = plan.serialize()
         fetcher = self._run_tracked(
-            result_id,
+            tracked_as or result_id,
             lambda: ExternalDfFetcher(
                 flow_id=flow_id,
                 node_id=node_id,
@@ -1393,7 +1398,11 @@ class WorkerBackend(_WorkerReferences):
                 length = total - offset if i == len(groups) - 1 else int(round(total * group.percentage / 100.0))
                 length = max(0, length)
                 refs[group.name] = self._store(
-                    rows.slice(offset, length), f"{split.job_id}_{i}", split.flow_id, split.node_id
+                    rows.slice(offset, length),
+                    f"{split.job_id}_{i}",
+                    split.flow_id,
+                    split.node_id,
+                    tracked_as=split.job_id,
                 )
                 offset += length
         except BaseException:

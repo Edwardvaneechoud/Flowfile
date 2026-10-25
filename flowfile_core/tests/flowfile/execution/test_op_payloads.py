@@ -560,19 +560,20 @@ def test_the_worker_backend_refuses_an_invalid_join_before_it_starts_a_task(task
     assert tasks.built == []
 
 
-def test_the_worker_backend_stores_one_shuffle_and_splits_it_like_core(tasks):
+def test_the_worker_backend_stores_each_split_of_one_shuffle_like_core(tasks):
     tasks.replace("ExternalDfFetcher", rows=stored_rows)
     split = random_split(seed=7, job_id="split-job")
     backend = WorkerBackend(url=WORKER_URL)
 
     refs = backend.run_op(OperationKind.random_split, op_payload(split)).refs
 
-    (store,) = tasks.built
-    assert (store.kwargs["file_ref"], store.kwargs["flow_id"], store.kwargs["node_id"]) == ("split-job", 7, 3)
-    assert sorted(stored_rows(store.kwargs)["n"].to_list()) == list(range(100))
+    shuffle, *stores = tasks.built
+    assert (shuffle.kwargs["file_ref"], shuffle.kwargs["flow_id"], shuffle.kwargs["node_id"]) == ("split-job", 7, 3)
+    assert sorted(stored_rows(shuffle.kwargs)["n"].to_list()) == list(range(100))
+    assert [store.kwargs["file_ref"] for store in stores] == ["split-job_0", "split-job_1"]
     assert list(refs) == ["train", "test"]
-    assert [ref.result_id for ref in refs.values()] == ["split-job#train", "split-job#test"]
-    assert [(ref.state, ref.row_count) for ref in refs.values()] == [("deferred", 80), ("deferred", 20)]
+    assert [ref.result_id for ref in refs.values()] == ["split-job_0", "split-job_1"]
+    assert [(ref.state, ref.row_count) for ref in refs.values()] == [("materialised", 80), ("materialised", 20)]
     assert [column.column_name for column in refs["train"].schema] == ["n"]
     on_worker = {name: backend.plan_for(ref).collect()["n"].to_list() for name, ref in refs.items()}
     embedded = EmbeddedWorkerBackend()
@@ -583,8 +584,6 @@ def test_the_worker_backend_stores_one_shuffle_and_splits_it_like_core(tasks):
 
     for ref in refs.values():
         backend.release(ref)
-
-    assert os.path.isfile(store.status.file_ref), "releasing a split leaves the shuffled rows its siblings read"
 
 
 def test_the_worker_backend_draws_a_seed_when_the_settings_have_none(tasks):
@@ -750,8 +749,10 @@ def test_cancelling_a_node_reaches_the_operation_it_is_waiting_on(
 
     remote_node.run_op(backend, kind, op_payload(payload), job_id=payload.job_id)
 
-    (task,) = tasks.built
-    assert seen == [JobHandle(backend.id, payload.job_id)]
+    # A random split stores its shuffle, then each split, all under the operation's job id.
+    task, *rest = tasks.built
+    assert len(rest) == (2 if kind is OperationKind.random_split else 0)
+    assert set(seen) == {JobHandle(backend.id, payload.job_id)}
     assert task.cancelled
     assert remote_node._submit_in_flight is None
 
