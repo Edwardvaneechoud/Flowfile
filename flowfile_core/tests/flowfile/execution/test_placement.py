@@ -60,6 +60,11 @@ from tests.test_catalog_cloud_virtual import _create_cloud_schema, _ensure_conne
 
 BACKEND_ID = "declaring"
 FLOW_REMEDY = "To run it elsewhere, set the flow's Execution location under Flow Settings."
+FLOW_STORE_REMEDY = (
+    "To run it elsewhere, set the flow's Execution location under Flow Settings, or configure an exchange store "
+    '(Settings → Execution → Backends), which moves a node its backend cannot run to the default backend "local" on '
+    "its own."
+)
 OWN_REMEDY = "To run it elsewhere, set its Compute backend under General Settings."
 AUTO_REMEDY = (
     "To run it elsewhere, set its Compute backend under General Settings, "
@@ -1339,7 +1344,7 @@ def test_a_write_whose_needs_cannot_be_read_is_refused_before_any_node_starts_an
     connect(graph, 1, 2)
 
     def derive(*args, **kwargs):
-        node_settings = args[0].setting_input if derivation is _catalog_target else args[1]
+        node_settings = args[0] if derivation is _catalog_target else args[1]
         if isinstance(node_settings, input_schema.NodeOutput):
             raise error
         return derivation(*args, **kwargs)

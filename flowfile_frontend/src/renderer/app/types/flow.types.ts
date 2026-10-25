@@ -65,6 +65,29 @@ export interface FlowSettingsValidation {
   nodes: NodeSettingsValidation[];
 }
 
+// Where a run would place each node now (GET /flow/placement); `available` is false with the protocol off.
+export interface PlacementFallback {
+  node_id: number;
+  backend_id: string;
+  fallback_id: string;
+  reason: string;
+}
+
+export interface PlacementRefusal {
+  node_id: number;
+  backend_id: string;
+  reason: string;
+  remedy?: string | null;
+}
+
+export interface PlacementPreview {
+  available: boolean;
+  assignment: Record<number, string>;
+  fallbacks: PlacementFallback[];
+  refusals: PlacementRefusal[];
+  boundaries: [number, number][];
+}
+
 // Run Information
 
 export interface RunInformation {

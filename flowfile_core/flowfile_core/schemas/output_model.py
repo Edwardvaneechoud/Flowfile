@@ -35,6 +35,20 @@ class NodeResult(BaseModel):
             "started; None for any other outcome."
         ),
     )
+    backend_id: str | None = Field(
+        default=None,
+        description="The backend placement assigned the node; None when nothing was placed (the protocol flag off).",
+    )
+    fallback_from: str | None = Field(
+        default=None,
+        description=(
+            "The backend the node's settings name, when placement ran it on the default backend instead because that "
+            "backend cannot run it; None otherwise."
+        ),
+    )
+    fallback_reason: str | None = Field(
+        default=None, description="What the backend in fallback_from does not offer the node, in words."
+    )
     run_time_ms: int = Field(
         default=-1,
         description="Run time in milliseconds",
@@ -70,6 +84,39 @@ class RunInformation(BaseModel):
             "The run's Placement.boundaries: (source node id, target node id) of each edge whose two nodes were "
             "placed on different backends; empty when nothing was placed."
         ),
+    )
+
+
+class PlacementFallback(BaseModel):
+    """A node a run places on the default backend because the backend its settings name cannot run it."""
+
+    node_id: int
+    backend_id: str = Field(description="The backend the node's settings name.")
+    fallback_id: str = Field(description="The default backend it runs on instead.")
+    reason: str = Field(description="What backend_id does not offer the node, in words.")
+
+
+class PlacementRefusal(BaseModel):
+    """A node no backend a run may use can run, so the run would start no node."""
+
+    node_id: int
+    backend_id: str
+    reason: str
+    remedy: str | None = None
+
+
+class PlacementPreview(BaseModel):
+    """Where a run of the flow would place each node now (``FlowGraph.preview_placement``), for the designer.
+
+    ``available`` is false with the compute protocol off, when nothing is placed.
+    """
+
+    available: bool
+    assignment: dict[int, str] = Field(default_factory=dict, description="Node id -> the backend that would run it.")
+    fallbacks: list[PlacementFallback] = Field(default_factory=list)
+    refusals: list[PlacementRefusal] = Field(default_factory=list)
+    boundaries: list[tuple[int, int]] = Field(
+        default_factory=list, description="(source node id, target node id) of each edge that would cross backends."
     )
 
 

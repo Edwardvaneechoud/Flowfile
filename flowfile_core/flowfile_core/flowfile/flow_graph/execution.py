@@ -29,6 +29,7 @@ from flowfile_core.flowfile.execution.context import ExecutionContext, current_c
 from flowfile_core.flowfile.execution.errors import ComputeError, VersionMismatch
 from flowfile_core.flowfile.execution.exchange import ExchangeRun
 from flowfile_core.flowfile.execution.placement import (
+    Fallback,
     MixedPlacementPolicy,
     Placement,
     Refusal,
@@ -488,6 +489,11 @@ class ExecutionMixin(GraphMixinBase):
                     self._record_refusals(placement.refusals)
                     self.latest_run_info.end_time = datetime.datetime.now()
                     return self.get_run_info()
+                moved = [fallback for fallback in placement.fallbacks if fallback.node_id == flow_node.node_id]
+                self._record_fallbacks(moved)
+                node_result.backend_id = placement.assignment.get(flow_node.node_id)
+                if moved:
+                    node_result.fallback_from, node_result.fallback_reason = moved[0].backend_id, moved[0].reason
             logger.info(f"Starting to run: node {flow_node.node_id}, start time: {node_result.start_timestamp}")
             self.latest_run_info.node_step_result.append(node_result)
             context = current_context(self)
@@ -639,6 +645,7 @@ class ExecutionMixin(GraphMixinBase):
         backend_id: str | None,
         edges: Sequence[BoundaryEdge],
         unreachable: ComputeError | None = None,
+        fallback: Fallback | None = None,
     ) -> tuple[NodeResult, FlowNode]:
         """Executes a single node, records its result, and returns both.
 
@@ -654,6 +661,8 @@ class ExecutionMixin(GraphMixinBase):
                 import is released once it ran.
             unreachable: The error the handshake of the node's backend raised, when it could not be asked; the node
                 fails with it and nothing is sent.
+            fallback: Why placement put the node on the default backend instead of the one its settings name, which
+                its result row reports.
 
         Returns:
             A (NodeResult, FlowNode) tuple for post-stage failure propagation.
@@ -663,6 +672,9 @@ class ExecutionMixin(GraphMixinBase):
             node_id=node.node_id,
             node_name=node.name,
             description=node.get_node_information().description,
+            backend_id=backend_id,
+            fallback_from=None if fallback is None else fallback.backend_id,
+            fallback_reason=None if fallback is None else fallback.reason,
         )
 
         with run_info_lock:
@@ -804,6 +816,7 @@ class ExecutionMixin(GraphMixinBase):
 
         assignment = {} if placement is None else placement.assignment
         unreachable = {} if placement is None else placement.unreachable
+        moved = {} if placement is None else {fallback.node_id: fallback for fallback in placement.fallbacks}
         edges_into: dict[str | int, list[BoundaryEdge]] = {}
         for edge in edges:
             edges_into.setdefault(edge.target.node_id, []).append(edge)
@@ -858,6 +871,7 @@ class ExecutionMixin(GraphMixinBase):
                             assignment.get(node.node_id),
                             edges_into.get(node.node_id, []),
                             unreachable.get(assignment.get(node.node_id)),
+                            moved.get(node.node_id),
                         )
                         for node in nodes_to_run
                     ]
@@ -876,6 +890,7 @@ class ExecutionMixin(GraphMixinBase):
                                 assignment.get(node.node_id),
                                 edges_into.get(node.node_id, []),
                                 unreachable.get(assignment.get(node.node_id)),
+                                moved.get(node.node_id),
                             ): node
                             for node in nodes_to_run
                         }
@@ -1048,16 +1063,18 @@ class ExecutionMixin(GraphMixinBase):
         return closed
 
     def _place_run(
-        self, execution_plan: ExecutionPlan, exchange_run: ExchangeRun
+        self, execution_plan: ExecutionPlan, exchange_run: ExchangeRun, *, log: bool = True
     ) -> tuple[Placement | None, list[BoundaryEdge]]:
         """Place the nodes ``execution_plan`` runs and resolve its crossings; ``(None, [])`` with the protocol flag off.
 
         With an exchange store configured (``FLOWFILE_EXCHANGE_URI``) each node goes to the backend its own
         ``execution_location`` names, ``"auto"`` to the run's (``MixedPlacementPolicy``); without one every node goes
         to the run's backend whatever its own setting says, but the ones their builders pin to the worker
-        (``SingleBackendPolicy``). In a process that serves (``registry.serving()``) ``local`` refuses every node
-        assigned to it, "this core serves; compute runs on its worker", before the registry or the handshake is asked
-        for it. Each other backend named is read through its handshake verdict (``handshake.verdict_for``,
+        (``SingleBackendPolicy``). With a store, a node the backend it is placed on cannot run goes to the fallback
+        backend (``registry.fallback_backend_id``) when that one can run it, whose verdict is read with the others. In a
+        process that serves (``registry.serving()``) ``local`` runs no node, "this core serves; compute runs on its
+        worker", and is never asked: its nodes fall back with a store and are refused without one. Each other backend
+        named is read through its handshake verdict (``handshake.verdict_for``,
         which checks it on its first use in this process). One whose verdict refuses it whole, or whose check raises a
         ``VersionMismatch``, refuses every node assigned to it with that error, as an id the registry does not know does
         with the registry's message; one whose check raises any other ``ComputeError`` (``ComputeUnavailable``) keeps
@@ -1074,23 +1091,28 @@ class ExecutionMixin(GraphMixinBase):
         an edge whose output core knows before the run to hold more rows than ``FLOWFILE_EXCHANGE_MAX_ROWS``
         (``BoundaryEdge.cost``), the message naming the rows, the columns and the limit, and a limit that is not a whole
         number; an edge whose count core does not know crosses whatever its size. A node is refused once, for the first
-        of its crossings refused. Every refusal carries the settings that move its node elsewhere (``remedy_for``).
+        of its crossings refused. Every refusal carries the settings that move its node elsewhere (``remedy_for``),
+        without a store naming the store as what would move a node its backend lacks something for. ``log`` false (the
+        placement preview) keeps core's log free of the warnings placement writes.
         """
         if not settings.FLOWFILE_COMPUTE_PROTOCOL:
             return None, []
         nodes = execution_plan.all_nodes
         run_backend_id = current_context(self).backend_id
+        fallback_id = registry.fallback_backend_id()
         if settings.get_exchange_uri():
-            policy = MixedPlacementPolicy(run_backend_id)
+            policy = MixedPlacementPolicy(run_backend_id, fallback_id=fallback_id)
         else:
             policy = SingleBackendPolicy(run_backend_id)
         declared: dict[str, Capabilities] = {}
         absent: dict[str, dict[str, str]] = {}
         refused: dict[str, str] = {}
         unreachable: dict[str, ComputeError] = {}
-        for backend_id in dict.fromkeys(policy.backend_for(node) for node in nodes):
+        named = dict.fromkeys(policy.backend_for(node) for node in nodes)
+        if isinstance(policy, MixedPlacementPolicy) and nodes:
+            named.setdefault(fallback_id)
+        for backend_id in named:
             if backend_id == registry.LOCAL_BACKEND_ID and registry.serving():
-                refused[backend_id] = "this core serves; compute runs on its worker"
                 continue
             try:
                 verdict = handshake.verdict_for(registry.backend(backend_id))
@@ -1108,18 +1130,17 @@ class ExecutionMixin(GraphMixinBase):
                 absent[backend_id] = verdict.absent
             else:
                 refused[backend_id] = verdict.error
-        placement = place(self, declared, policy, nodes=nodes, absent=absent, unreachable=unreachable)
+        placement = place(self, declared, policy, nodes=nodes, absent=absent, unreachable=unreachable, log=log)
         if refused:
             refusals = [
                 Refusal(node.node_id, policy.backend_for(node), refused[policy.backend_for(node)])
                 for node in nodes
                 if policy.backend_for(node) in refused
             ]
-            placement = Placement(
+            placement = replace(
+                placement,
                 assignment={**placement.assignment, **{refusal.node_id: refusal.backend_id for refusal in refusals}},
-                boundaries=placement.boundaries,
                 refusals=[*refusals, *placement.refusals],
-                unreachable=placement.unreachable,
             )
         edges: list[BoundaryEdge] = []
         crossing_refusals: dict[int, Refusal] = {}
@@ -1159,14 +1180,60 @@ class ExecutionMixin(GraphMixinBase):
         if crossing_refusals:
             placement = replace(placement, refusals=[*placement.refusals, *crossing_refusals.values()])
         if placement.refusals:
+            store_moves_to = None if isinstance(policy, MixedPlacementPolicy) else fallback_id
             placement = replace(
                 placement,
                 refusals=[
-                    replace(refusal, remedy=remedy_for(self.get_node(refusal.node_id), policy))
+                    replace(
+                        refusal,
+                        remedy=remedy_for(
+                            self.get_node(refusal.node_id),
+                            policy,
+                            fallback_id=None
+                            if refusal.backend_id in refused or refusal.backend_id == store_moves_to
+                            else store_moves_to,
+                        ),
+                    )
                     for refusal in placement.refusals
                 ],
             )
         return placement, edges
+
+    def preview_placement(self) -> Placement | None:
+        """Where a run would place each of the flow's nodes now, without running, logging or changing anything.
+
+        ``None`` with the protocol flag off. Every node is placed, as if every gate were open, by ``_place_run`` under
+        an exchange run of its own that is never collected, so nothing reaches the store; the boundary edges are
+        dropped. Placement reads each node's settings through a resolved copy, so a preview beside an edit or a run
+        leaves both as they are.
+        """
+        stage = ExecutionStage(nodes=list(self.nodes))
+        placement, _ = self._place_run(
+            ExecutionPlan(skip_nodes=[], stages=[stage]), ExchangeRun(self.flow_id, "preview"), log=False
+        )
+        return placement
+
+    def _record_fallbacks(self, fallbacks: list[Fallback]) -> None:
+        """Log each node placement moved to the default backend on its node's log, and how many on the flow's.
+
+        A node whose own Compute backend names the backend is told so, since its setting is not what runs it.
+        """
+        if not fallbacks:
+            return
+        for fallback in fallbacks:
+            node = self.get_node(fallback.node_id)
+            own_backend = getattr(node.setting_input, "execution_location", "auto") != "auto"
+            subject = f'{"its Compute backend" if own_backend else "backend"} "{fallback.backend_id}"'
+            self.flow_logger.get_node_logger(fallback.node_id).warning(
+                f'{subject} cannot run it: {fallback.reason}; it runs on the default backend "{fallback.fallback_id}" '
+                "instead"
+            )
+        targets = ", ".join(sorted({fallback.fallback_id for fallback in fallbacks}))
+        node_ids = ", ".join(str(fallback.node_id) for fallback in fallbacks)
+        self.flow_logger.warning(
+            f"{len(fallbacks)} node(s) run on the default backend {targets} instead of the backend their settings "
+            f"name: {node_ids}"
+        )
 
     def _record_refusals(self, refusals: list[Refusal]) -> None:
         """Record each refused node as a failed result of the run, which starts no node; called single-threaded.
@@ -1503,6 +1570,7 @@ class ExecutionMixin(GraphMixinBase):
                     self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")
                     if placement is not None:
                         self.latest_run_info.boundaries = list(placement.boundaries)
+                        self._record_fallbacks(placement.fallbacks)
                     skip_node_message(self.flow_logger, execution_plan.skip_nodes)
                     execution_order_message(self.flow_logger, execution_plan.stages)
 

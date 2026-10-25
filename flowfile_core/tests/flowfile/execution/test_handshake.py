@@ -36,7 +36,7 @@ from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings
 from shared.compute_protocol import PROTOCOL_VERSION, local_capabilities
-from tests.flowfile.execution.test_placement import FLOW_REMEDY
+from tests.flowfile.execution.test_placement import FLOW_REMEDY, FLOW_STORE_REMEDY
 
 HINT = ". Is the compute backend running? Start it, or check the Backends page."
 TEAM_HINT = '. Is backend "worker:team" running? Start it, or check the Backends page.'
@@ -512,7 +512,7 @@ def test_a_formula_is_refused_where_core_s_python_functions_do_not_run_and_a_sel
     assert error == (
         f'cannot run on backend "{TEAM}": its plan may carry a Python function, which core\'s Python functions do not '
         f"run on this backend (Python: core {python}, backend {python}): the python probe could not be loaded. "
-        f"{FLOW_REMEDY}"
+        f"{FLOW_STORE_REMEDY}"
     )
 
     graph.delete_node(2)

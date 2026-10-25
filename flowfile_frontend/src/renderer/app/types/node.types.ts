@@ -95,6 +95,11 @@ export interface NodeResult {
   skipped?: boolean;
   // The class of the compute error that failed the node, "Refusal" when placement refused it.
   compute_error?: string | null;
+  // The backend placement ran the node on; absent from an older core or with the protocol off.
+  backend_id?: string | null;
+  // The backend its settings name, when placement ran it on the default backend because that one cannot run it.
+  fallback_from?: string | null;
+  fallback_reason?: string | null;
 }
 
 // Node Description Types

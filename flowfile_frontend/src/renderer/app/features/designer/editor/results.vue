@@ -29,6 +29,22 @@
         ×
       </button>
     </div>
+    <div
+      v-if="placementNotice"
+      class="placement-notice"
+      role="status"
+      data-testid="placement-notice"
+    >
+      <strong class="placement-notice__title">{{ placementNotice.title }}</strong>
+      <p
+        v-for="line in placementNotice.lines"
+        :key="line.nodeId"
+        class="placement-notice__line"
+        @click="navigateToNode(`node-${line.nodeId}`)"
+      >
+        {{ line.text }}
+      </p>
+    </div>
     <div v-if="computeBanner" class="compute-error-banner" role="alert">
       <strong class="compute-error-banner__title">{{ computeBanner.title }}</strong>
       <p
@@ -108,6 +124,7 @@ import { useAiStore } from "../../../stores/ai-store";
 import { useEditorStore } from "../../../stores/editor-store";
 import { useDrawerStore } from "../../../stores/drawer-store";
 import { computeErrorBanner } from "../../../utils/computeErrorBanner";
+import { fallbackNotice } from "../../../utils/placement";
 
 interface RunNode {
   node_id: number;
@@ -131,6 +148,10 @@ const computeBanner = computed(() =>
   runInformation.value?.is_running
     ? null
     : computeErrorBanner(runInformation.value?.node_step_result),
+);
+
+const placementNotice = computed(() =>
+  runInformation.value?.is_running ? null : fallbackNotice(runInformation.value?.node_step_result),
 );
 
 // Flow status. The backend leaves `success` null while the flow is running
@@ -286,6 +307,20 @@ const navigateToNode = (nodeId: string) => {
   content: "·";
   margin: 0 6px;
   color: var(--color-text-tertiary);
+}
+.placement-notice {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-warning);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--color-text-primary);
+}
+.placement-notice__line {
+  margin: 4px 0 0;
+  word-break: break-word;
+  cursor: pointer;
 }
 .compute-error-banner {
   margin-top: 12px;

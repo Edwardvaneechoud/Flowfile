@@ -7,6 +7,7 @@ the logic for creating, reading, updating, and deleting these resources.
 """
 
 import asyncio
+import dataclasses
 import inspect
 import json
 import logging
@@ -2779,6 +2780,23 @@ def get_flow_settings_validation(flow_id: int, current_user=Depends(get_current_
     """Conservative static check: node settings that reference missing input columns."""
     flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
     return validate_flow_settings(flow)
+
+
+@router.get("/flow/placement", tags=["editor"], response_model=output_model.PlacementPreview)
+def get_flow_placement(flow_id: int, current_user=Depends(get_current_active_user)) -> output_model.PlacementPreview:
+    """Where a run would place each node now: the backend it would run on, the nodes moved to the default backend
+    because theirs cannot run them, and the nodes no backend can run. Runs nothing and changes nothing."""
+    flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
+    placement = flow.preview_placement()
+    if placement is None:
+        return output_model.PlacementPreview(available=False)
+    return output_model.PlacementPreview(
+        available=True,
+        assignment=placement.assignment,
+        fallbacks=[output_model.PlacementFallback(**dataclasses.asdict(f)) for f in placement.fallbacks],
+        refusals=[output_model.PlacementRefusal(**dataclasses.asdict(r)) for r in placement.refusals],
+        boundaries=placement.boundaries,
+    )
 
 
 @router.get("/flow/node_upstream_ids", tags=["editor"])

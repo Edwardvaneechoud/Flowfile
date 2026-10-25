@@ -7,6 +7,7 @@ import type {
   NodeValidation,
   NodeValidationInput,
   FlowSettingsValidation,
+  PlacementPreview,
 } from "../types";
 
 export const useResultsStore = defineStore("results", {
@@ -14,6 +15,8 @@ export const useResultsStore = defineStore("results", {
     runResults: {} as RunInformationDictionary,
     runNodeResults: {} as Record<number, Record<number, NodeResult>>,
     runNodeValidations: {} as Record<number, Record<number, NodeValidation>>,
+    // Core's placement preview per flow: where each node would run now.
+    placements: {} as Record<number, PlacementPreview>,
     currentRunResult: null as RunInformation | null,
     resultVersion: 0,
   }),
@@ -108,6 +111,10 @@ export const useResultsStore = defineStore("results", {
         };
       }
       this.runNodeValidations[flowId] = next;
+    },
+
+    applyPlacement(flowId: number, preview: PlacementPreview): void {
+      this.placements[flowId] = preview;
     },
 
     // ========== Run Results Management ==========

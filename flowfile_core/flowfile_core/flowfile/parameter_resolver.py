@@ -213,6 +213,25 @@ def node_parameters_resolved(node: Any) -> Iterator[None]:
         node._hash = saved_hash
 
 
+def resolved_settings(node: Any) -> Any:
+    """A node's settings with its flow ``${name}`` refs substituted as the run substitutes them, the node left as it is.
+
+    The live settings when the flow defines no parameters or the settings name none; otherwise a deep copy resolved by
+    ``apply_parameters_in_place``, so a reader beside an edit or a run never sees, or leaves, a half-resolved node.
+
+    Raises:
+        ValueError: If a referenced parameter is not defined on the flow.
+    """
+    params_getter = getattr(node, "_params_getter", None)
+    params = params_getter() if params_getter is not None else {}
+    settings = node.setting_input
+    if not params or not find_unresolved_in_model(settings):
+        return settings
+    resolved = settings.model_copy(deep=True)
+    apply_parameters_in_place(resolved, params)
+    return resolved
+
+
 def _apply_recursive(
     obj: Any, params: dict[str, ParamValue], restorations: _Restorations, render_expressions: bool = True
 ) -> None:

@@ -204,6 +204,16 @@ def default_backend() -> ComputeBackend:
     return backend(default_backend_id())
 
 
+def fallback_backend_id() -> str:
+    """The id of the backend a node goes to when the one its settings name cannot run it.
+
+    The default backend in a process that serves; in one that does not (a headless run, Flowfile in Python), the worker
+    embedded in this process, ``"local"``, since a headless runner makes its run's own backend the default
+    (``set_default_override``).
+    """
+    return default_backend_id() if _serving else LOCAL_BACKEND_ID
+
+
 def set_default_override(backend_id: str | None) -> str | None:
     """Make ``backend_id`` the default backend of this process, ahead of ``FLOWFILE_COMPUTE_BACKEND`` and the flag.
 

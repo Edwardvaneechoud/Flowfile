@@ -11,8 +11,9 @@ environment only. Core is configured with an exchange store on MinIO. A second f
 onto ``local`` through its settings: with the protocol flag on, core, which serves, saves it as ``auto`` and the flow
 runs on the worker, and with the flag off it stays on ``local`` and runs in core; its flag-off case recreates core,
 which is why it comes last. The elaborate integration flow (``complex_flow.json``, its outputs written to MinIO) runs
-whole on the worker, and with its nodes alternating between the worker and ``local`` is refused before any node runs,
-core refusing every node on ``local``. Data crossing between two backends needs a process that does not serve, as
+whole on the worker, and with its nodes alternating between the worker and ``local`` runs whole on the worker too:
+core, which serves, runs nothing on ``local``, so each of those nodes falls back to the worker, its row saying so.
+Data crossing between two backends needs a process that does not serve, as
 ``flowfile_core/tests/flowfile/execution/test_mixed_placement.py`` runs it. A scheduled run's child computes on the
 worker embedded in it, inside core's container, while the worker container serves nothing.
 """
@@ -532,25 +533,6 @@ def _core_with_protocol(stack: Stack, flag: str) -> Stack:
     return Stack(core=core, minio=stack.minio, http=_sign_in(core))
 
 
-REFUSED = (
-    'cannot run on backend "local": this core serves; compute runs on its worker. '
-    "To run it elsewhere, set its Compute backend under General Settings."
-)
-
-
-def _assert_refused_before_any_node(stack: Stack, run: dict, flow_id: int, refused: list[int]) -> None:
-    """The run failed with exactly the nodes in ``refused`` refused on ``local`` for the serving core's reason, started
-    no node, and left nothing under its flow in the exchange store or in the worker's cache."""
-    errors = {result["node_id"]: result["error"] for result in run["node_step_result"]}
-    assert errors == dict.fromkeys(refused, REFUSED), f"{errors}\n{_logs()}"
-    assert all(result["compute_error"] == "Refusal" for result in run["node_step_result"]), run["node_step_result"]
-    assert run["success"] is False and run["nodes_completed"] == 0
-    versions = stack.minio.list_object_versions(Bucket=EXCHANGE_BUCKET, Prefix=f"runs/{flow_id}/")
-    assert "Versions" not in versions and "DeleteMarkers" not in versions, versions
-    worker_cache = f"/app/internal_storage/cache/{flow_id}/"
-    assert [path for path in _cache_files("flowfile-worker") if path.startswith(worker_cache)] == []
-
-
 COMPLEX_FLOW = Path(__file__).with_name("complex_flow.json")
 COMPLEX_BUCKET = "flowfile-complex"
 COMPLEX_ROWS = {
@@ -612,7 +594,7 @@ def test_the_elaborate_flow_runs_on_a_worker_that_shares_no_volume_with_core(sta
     assert [path for path in _cache_files("flowfile-core") if path.startswith(core_cache)] == []
 
 
-def test_the_elaborate_flow_with_its_nodes_alternating_between_worker_and_local_is_refused_before_any_node_runs(
+def test_the_elaborate_flow_with_its_nodes_alternating_between_worker_and_local_runs_whole_on_the_worker(
     stack, exchange, complex_outputs
 ):
     stack = _core_with_protocol(stack, "1")
@@ -621,8 +603,18 @@ def test_the_elaborate_flow_with_its_nodes_alternating_between_worker_and_local_
 
     run = _run(stack, flow_id)
 
-    _assert_refused_before_any_node(stack, run, flow_id, [node for node, on in ALTERNATING.items() if on == "local"])
-    assert stack.minio.list_objects_v2(Bucket=COMPLEX_BUCKET, Prefix=f"{flow_id}/")["KeyCount"] == 0
+    failures = {result["node_id"]: result["error"] for result in run["node_step_result"] if not result["success"]}
+    assert run["success"] is True and not failures, f"{failures}\n{_logs()}"
+    assert run["nodes_completed"] == 30
+    assert _written(stack, flow_id) == COMPLEX_ROWS
+    assert run["boundaries"] == []
+    moved = {
+        result["node_id"]: (result["backend_id"], result["fallback_from"], result["fallback_reason"])
+        for result in run["node_step_result"]
+        if result["fallback_from"] is not None
+    }
+    serving = ("worker", "local", "this core serves; compute runs on its worker")
+    assert moved == {node: serving for node, on in ALTERNATING.items() if on == "local"}
 
 
 @pytest.mark.parametrize("protocol", ["1", "0"], ids=["flag-on", "flag-off"])

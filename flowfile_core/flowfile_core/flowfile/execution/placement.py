@@ -16,21 +16,23 @@ stored connection it names whose ``auth_method`` is not one a plan leaves to the
 Flow node is placed with the flow it runs: that flow is built for the call, the nodes its run would run are placed on
 the node's backend by the same policy, and each of them refused there refuses the Run Flow node.
 Each node's needs are read from its settings with its flow's parameters in them, as the run puts them there before the
-node runs (``parameter_resolver.node_parameters_resolved``), and the settings are restored after, so a path on
+node runs (``parameter_resolver.resolved_settings``, a copy, so the node is never changed), so a path on
 ``${dir}`` is placed by where ``dir`` points; a node that refers to a ``${name}`` its flow does not define claims
 nothing, so the run fails it with the resolver's message, and a node whose needs cannot be read from its resolved
 settings is refused with the error, logged with its traceback.
 
 ``SingleBackendPolicy`` puts a whole run on one backend, except the node types whose builders always run on a backend
 of their own. ``MixedPlacementPolicy`` puts each node on the backend its own ``execution_location`` names, and ``place``
-lists the edges between two nodes on different backends, whose data crosses through the exchange store.
+lists the edges between two nodes on different backends, whose data crosses through the exchange store. Under it a node
+its backend cannot run goes to the policy's ``fallback_id`` (``registry.fallback_backend_id``) when that backend can,
+a ``Fallback`` saying why, so the importing edges cross like any other; one neither can run is refused with both
+reasons.
 """
 
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping
-from contextlib import ExitStack
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -43,7 +45,7 @@ from flowfile_core.flowfile.database_connection_manager import db_connections
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_node.requirements import NodeRequirements, requirements_for
 from flowfile_core.flowfile.param_types import coerce_param_value, stringify_param_value
-from flowfile_core.flowfile.parameter_resolver import node_parameters_resolved
+from flowfile_core.flowfile.parameter_resolver import resolved_settings
 from flowfile_core.schemas import input_schema
 from shared.compute_protocol import Capabilities
 
@@ -59,6 +61,9 @@ _PINNED_BACKENDS: dict[str, str] = {
 
 PYTHON_FUNCTIONS = "python"
 """The name an absence map gives core's Python functions: where its reason is, a plan that carries one does not run."""
+
+SERVING_LOCAL = "this core serves; compute runs on its worker"
+"""Why a process that serves (``registry.serving()``) runs no node on ``local``."""
 
 _AMBIENT_AUTH_METHODS = frozenset({"env_vars", "managed_identity"})
 """The stored-connection methods a backend reaching storage with its own identity can serve: a plan of one carries no
@@ -86,6 +91,23 @@ class Refusal:
 
 
 @dataclass(frozen=True)
+class Fallback:
+    """A node placed on the default backend because the backend its settings name cannot run it.
+
+    Attributes:
+        node_id: The node.
+        backend_id: The backend its settings name: the run's for an ``"auto"`` node, else its own.
+        fallback_id: The backend it runs on instead (``MixedPlacementPolicy.fallback_id``).
+        reason: What ``backend_id`` does not offer, in words.
+    """
+
+    node_id: int
+    backend_id: str
+    fallback_id: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class Placement:
     """Which backend runs each node, and the nodes refused there.
 
@@ -95,19 +117,21 @@ class Placement:
         refusals: The nodes their backend cannot run.
         unreachable: Backend id -> the error its handshake raised, for the backends that could not be asked; their
             nodes are assigned to them unchecked and fail with that error when they run.
+        fallbacks: The nodes assigned to the default backend instead of the one their settings name.
     """
 
     assignment: dict[int, str]
     boundaries: list[tuple[int, int]]
     refusals: list[Refusal]
     unreachable: dict[str, Exception] = field(default_factory=dict)
+    fallbacks: list[Fallback] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
 class SingleBackendPolicy:
     """Every node on ``backend_id``, except the node types whose builders pin them to a backend (``_PINNED_BACKENDS``).
 
-    A pinned node is placed, and checked, where its builder runs it.
+    A pinned node is placed, and checked, where its builder runs it. Nothing falls back: one run has one backend.
     """
 
     backend_id: str
@@ -116,16 +140,22 @@ class SingleBackendPolicy:
         """The id of the backend ``node`` runs on."""
         return _PINNED_BACKENDS.get(node.node_type, self.backend_id)
 
+    def fallback_for(self, node: FlowNode) -> str | None:
+        """``None``: without an exchange store no node runs elsewhere."""
+        return None
+
 
 @dataclass(frozen=True)
 class MixedPlacementPolicy:
     """Each node on the backend its own ``execution_location`` names, ``backend_id`` (the run's) for ``"auto"``.
 
     A node type its builder pins to a backend (``_PINNED_BACKENDS``) is placed there whatever its setting says. A saved
-    id is taken as it is, ``local`` included; one the registry does not know is refused when the run is placed.
+    id is taken as it is, ``local`` included; one the registry does not know is refused when the run is placed. A node
+    the backend it is placed on cannot run goes to ``fallback_id`` when that backend can run it, a pinned type never.
     """
 
     backend_id: str
+    fallback_id: str | None = None
 
     def backend_for(self, node: FlowNode) -> str:
         """The id of the backend ``node`` runs on."""
@@ -135,6 +165,10 @@ class MixedPlacementPolicy:
         location = node.setting_input.execution_location
         return self.backend_id if location == "auto" else location
 
+    def fallback_for(self, node: FlowNode) -> str | None:
+        """The backend ``node`` goes to when the one it is placed on cannot run it; ``None`` for a pinned type."""
+        return None if node.node_type in _PINNED_BACKENDS else self.fallback_id
+
 
 PlacementPolicy = SingleBackendPolicy | MixedPlacementPolicy
 
@@ -142,13 +176,14 @@ _FLOW_SETTING = "the flow's Execution location under Flow Settings"
 _NODE_SETTING = "its Compute backend under General Settings"
 
 
-def remedy_for(node: FlowNode, policy: PlacementPolicy) -> str | None:
+def remedy_for(node: FlowNode, policy: PlacementPolicy, *, fallback_id: str | None = None) -> str | None:
     """The settings that move ``node`` to another backend under ``policy``, named as the designer shows them.
 
     With an exchange store (``MixedPlacementPolicy``) the node's own Compute backend decides, and the flow's Execution
     location too while the node's is Auto. Without one (``SingleBackendPolicy``) only the flow's decides, so a node set
-    to a backend of its own is also told that its setting needs a store. A node type pinned to its backend
-    (``_PINNED_BACKENDS``) has no setting that moves it: ``None``.
+    to a backend of its own is also told that its setting needs a store; given ``fallback_id``, the backend a store
+    would move the node to, the remedy says so. A node type pinned to its backend (``_PINNED_BACKENDS``) has no setting
+    that moves it: ``None``.
     """
     if node.node_type in _PINNED_BACKENDS:
         return None
@@ -157,33 +192,42 @@ def remedy_for(node: FlowNode, policy: PlacementPolicy) -> str | None:
         if own_backend:
             return f"To run it elsewhere, set {_NODE_SETTING}."
         return f"To run it elsewhere, set {_NODE_SETTING}, or {_FLOW_SETTING}."
+    moves = f'a node its backend cannot run to the default backend "{fallback_id}" on its own'
     if own_backend:
-        return (
+        store = (
             f"To run it elsewhere, set {_FLOW_SETTING}; "
             "a node's own Compute backend applies only when an exchange store is configured "
-            "(Settings → Execution → Backends)."
+            "(Settings → Execution → Backends)"
+        )
+        return f"{store}, which also moves {moves}." if fallback_id else f"{store}."
+    if fallback_id:
+        return (
+            f"To run it elsewhere, set {_FLOW_SETTING}, or configure an exchange store "
+            f"(Settings → Execution → Backends), which moves {moves}."
         )
     return f"To run it elsewhere, set {_FLOW_SETTING}."
 
 
-def _model_elsewhere(flow: FlowGraph, node: FlowNode, backend_id: str, policy: PlacementPolicy) -> list[str]:
+def _model_elsewhere(
+    flow: FlowGraph, node: FlowNode, backend_id: str, backend_of: Callable[[FlowNode], str]
+) -> list[str]:
     """An Apply Model node scoring an upstream Train Model node's model runs where that model is fitted and held."""
     apply_input = node.setting_input.apply_input
     if apply_input.source != "upstream" or apply_input.upstream_node_id is None:
         return []
     train = flow.get_node(apply_input.upstream_node_id)
-    if train is None or policy.backend_for(train) == backend_id:
+    if train is None or backend_of(train) == backend_id:
         return []
     return [
         f"it scores the model Train Model node {train.node_id} fits and holds on backend "
-        f'"{policy.backend_for(train)}"; place both on one backend'
+        f'"{backend_of(train)}"; place both on one backend'
     ]
 
 
 def _probe_elsewhere(
     node: FlowNode,
     backend_id: str,
-    policy: PlacementPolicy,
+    backend_of: Callable[[FlowNode], str],
     requirements: NodeRequirements,
     backends: Mapping[str, Capabilities],
     absent: Mapping[str, Mapping[str, str]] | None,
@@ -193,7 +237,7 @@ def _probe_elsewhere(
     if gate_input is None or gate_input.condition_source != "formula":
         return []
     source = node.node_inputs.right_input or next(iter(node.node_inputs.main_inputs or []), None)
-    probe_backend_id = None if source is None else policy.backend_for(source)
+    probe_backend_id = None if source is None else backend_of(source)
     if probe_backend_id in (None, backend_id) or probe_backend_id not in backends:
         return []
     unmet = _unmet(requirements, backends[probe_backend_id], None, None, (absent or {}).get(probe_backend_id, {}))
@@ -211,10 +255,22 @@ def place(
     nodes: list[FlowNode] | None = None,
     absent: Mapping[str, Mapping[str, str]] | None = None,
     unreachable: Mapping[str, Exception] | None = None,
+    log: bool = True,
 ) -> Placement:
     """Assign each of ``nodes`` (default all of the flow's) its backend by ``policy``, refusing each it cannot run.
 
-    ``backends`` holds the capabilities in hand of the backends the policy names for them. A node whose backend is in
+    ``backends`` holds the capabilities in hand of the backends the policy names for them, and of the policy's fallback
+    (``fallback_for``). A node its backend cannot run is assigned to the fallback when that backend is in ``backends``
+    and can run it, a ``Fallback`` naming what the first lacks; else it is refused there, the reason adding what the
+    fallback lacks when it was checked. ``local`` in a process that serves (``registry.serving()``) runs no node
+    (``SERVING_LOCAL``), so such a node falls back too. The Apply Model and formula gate rules read the assignment, so
+    a node they refuse once another moved is checked again, until no node moves: a Train Model node that falls back
+    takes its Apply Model node along. A node whose backend is in
+    ``unreachable`` (its handshake raised that error) is assigned to it unchecked, so it fails with that error when it
+    runs and never runs anywhere else; a node whose backend is in neither map is neither assigned nor refused. An Apply
+    Model node is refused on another backend than the Train Model node whose model it scores (one not among ``nodes``
+    counts as on the backend holding its model, else its policy's), and a formula gate where
+    the backend of the input it probes lacks what the formula needs. ``absent`` maps a backend id to what its
     ``unreachable`` (its handshake raised that error) is assigned to it unchecked, so it fails with that error when it
     runs and never runs anywhere else; a node whose backend is in neither map is neither assigned nor refused. An Apply
     Model node is refused on another backend than the Train Model node whose model it scores, and a formula gate where
@@ -229,45 +285,43 @@ def place(
     ``credential_resolution`` is ``ambient``, the ``auth_method`` of each stored connection a cloud or catalog node
     names (``_unresolvable_connections``, which reads the connection's row and decrypts nothing).
 
-    Each node's needs are read with its flow's parameters in its settings, as the run puts them there before the node
-    runs (``node_parameters_resolved``), and the settings are restored once they are read. A node that refers to a
-    ``${name}`` its flow does not define is assigned and claims nothing, its needs being unknown rather than unmet, so
-    the run fails it with the resolver's message, as it would unplaced. A node whose needs cannot be read from its
+    Each node's needs are read from its settings with its flow's parameters in them, as the run puts them there before
+    the node runs (``parameter_resolver.resolved_settings``, a copy, so the node is never changed). A node that refers
+    to a ``${name}`` its flow does not define is assigned and claims nothing, its needs being unknown rather than unmet,
+    so the run fails it with the resolver's message, as it would unplaced. A node whose needs cannot be read from its
     resolved settings, whatever ``_catalog_target`` or ``requirements_for`` raises (a cloud path that is the whole
     ``${n}`` of an integer parameter, a fault in either, a catalog database error), is refused with the error's class
-    and message, and a warning with the traceback goes to core's log: its needs were not checked, so it is not sent to
-    a backend that may not meet them.
+    and message, and with ``log`` a warning with the traceback goes to core's log: its needs were not checked, so it is
+    not sent to a backend that may not meet them, nor to the fallback.
 
     ``boundaries`` lists, in the order of ``nodes``, each pair of a node and an input of it assigned to another backend,
     once; an edge with an end that is not assigned is none.
     """
     placed = flow.nodes if nodes is None else nodes
     assignment: dict[int, str] = {}
-    refusals: list[Refusal] = []
+    unreadable: dict[int, Refusal] = {}
+    needs: dict[int, _Needs | None] = {}
     for node in placed:
         backend_id = policy.backend_for(node)
-        capabilities = backends.get(backend_id)
-        if capabilities is None:
+        if not _serving_local(backend_id) and backend_id not in backends:
             if unreachable and backend_id in unreachable:
                 assignment[node.node_id] = backend_id
             continue
-        absent_here = (absent or {}).get(backend_id, {})
         assignment[node.node_id] = backend_id
-        with ExitStack() as resolved:
-            try:
-                resolved.enter_context(node_parameters_resolved(node))
-            except ValueError:
-                continue
-            artifact_scheme = _artifact_scheme(node)
-            try:
-                target, namespace, namespace_id = _catalog_target(node)
-                requirements = requirements_for(
-                    node.node_template, node.setting_input, catalog_target=target, artifact_scheme=artifact_scheme
-                )
-            except Exception as e:
-                reason = (
-                    f"its settings could not be checked with the flow's parameters filled in ({type(e).__name__}: {e})"
-                )
+        try:
+            settings = resolved_settings(node)
+        except ValueError:
+            needs[node.node_id] = None
+            continue
+        artifact_scheme = _artifact_scheme(node)
+        try:
+            target, namespace, namespace_id = _catalog_target(settings)
+            requirements = requirements_for(
+                node.node_template, settings, catalog_target=target, artifact_scheme=artifact_scheme
+            )
+        except Exception as e:
+            reason = f"its settings could not be checked with the flow's parameters filled in ({type(e).__name__}: {e})"
+            if log:
                 logger.warning(
                     'Node %s of flow %s is refused on backend "%s": %s',
                     node.node_id,
@@ -276,18 +330,61 @@ def place(
                     reason,
                     exc_info=True,
                 )
-                refusals.append(Refusal(node_id=node.node_id, backend_id=backend_id, reason=reason))
+            unreadable[node.node_id] = Refusal(node_id=node.node_id, backend_id=backend_id, reason=reason)
+            continue
+        needs[node.node_id] = _Needs(requirements, namespace, namespace_id, artifact_scheme)
+
+    def backend_of(other: FlowNode) -> str:
+        if other.node_id in assignment:
+            return assignment[other.node_id]
+        model_ref = getattr(other.results, "model_ref", None)
+        return model_ref.backend_id if model_ref is not None else policy.backend_for(other)
+
+    own: dict[tuple[int, str], list[str]] = {}
+
+    def reasons_on(node: FlowNode, backend_id: str) -> list[str]:
+        key = (node.node_id, backend_id)
+        if key not in own:
+            own[key] = _own_reasons(flow, node, backend_id, needs[node.node_id], backends, policy, absent, log)
+        reasons = list(own[key])
+        node_needs = needs[node.node_id]
+        if node_needs is not None and not _serving_local(backend_id):
+            if isinstance(node.setting_input, input_schema.NodeApplyModel):
+                reasons += _model_elsewhere(flow, node, backend_id, backend_of)
+            reasons += _probe_elsewhere(node, backend_id, backend_of, node_needs.requirements, backends, absent)
+        return reasons
+
+    def usable(node: FlowNode, backend_id: str) -> str | None:
+        fallback_id = policy.fallback_for(node)
+        return fallback_id if fallback_id not in (None, backend_id) and fallback_id in backends else None
+
+    fallbacks: dict[int, Fallback] = {}
+    found: dict[int, list[str]] = {}
+    moved = True
+    while moved:
+        moved = False
+        for node in placed:
+            if node.node_id not in needs or node.node_id in fallbacks:
                 continue
-        reasons = _unmet(requirements, capabilities, namespace, artifact_scheme, absent_here)
-        if capabilities.credential_resolution == "ambient":
-            reasons += _unresolvable_connections(node, requirements.credentials, namespace_id)
-        if isinstance(node.setting_input, input_schema.NodeRunFlow):
-            reasons += _child_refusals(flow, node, backend_id, backends, policy, absent)
-        if isinstance(node.setting_input, input_schema.NodeApplyModel):
-            reasons += _model_elsewhere(flow, node, backend_id, policy)
-        reasons += _probe_elsewhere(node, backend_id, policy, requirements, backends, absent)
-        if reasons:
-            refusals.append(Refusal(node_id=node.node_id, backend_id=backend_id, reason="; ".join(reasons)))
+            backend_id = assignment[node.node_id]
+            found[node.node_id] = reasons_on(node, backend_id)
+            fallback_id = usable(node, backend_id)
+            if found[node.node_id] and fallback_id is not None and not reasons_on(node, fallback_id):
+                assignment[node.node_id] = fallback_id
+                reason = "; ".join(found[node.node_id])
+                fallbacks[node.node_id] = Fallback(node.node_id, backend_id, fallback_id, reason)
+                moved = True
+    refusals: list[Refusal] = []
+    for node in placed:
+        if node.node_id in unreadable:
+            refusals.append(unreadable[node.node_id])
+        elif found.get(node.node_id) and node.node_id not in fallbacks:
+            backend_id = assignment[node.node_id]
+            reason = "; ".join(found[node.node_id])
+            fallback_id = usable(node, backend_id)
+            if fallback_id is not None:
+                reason += f'; on the default backend "{fallback_id}": ' + "; ".join(reasons_on(node, fallback_id))
+            refusals.append(Refusal(node_id=node.node_id, backend_id=backend_id, reason=reason))
     boundaries: list[tuple[int, int]] = []
     for node in placed:
         backend_id = assignment.get(node.node_id)
@@ -299,8 +396,55 @@ def place(
             if source_backend_id is not None and source_backend_id != backend_id and edge not in boundaries:
                 boundaries.append(edge)
     return Placement(
-        assignment=assignment, boundaries=boundaries, refusals=refusals, unreachable=dict(unreachable or {})
+        assignment=assignment,
+        boundaries=boundaries,
+        refusals=refusals,
+        unreachable=dict(unreachable or {}),
+        fallbacks=[fallbacks[node.node_id] for node in placed if node.node_id in fallbacks],
     )
+
+
+@dataclass(frozen=True)
+class _Needs:
+    """What a node asks of the backend that runs it, read once from its resolved settings."""
+
+    requirements: NodeRequirements
+    namespace: str | None
+    namespace_id: int | None
+    artifact_scheme: str | None
+
+
+def _serving_local(backend_id: str) -> bool:
+    """Whether ``backend_id`` is ``local`` in a process that serves, where no node runs."""
+    return backend_id == registry.LOCAL_BACKEND_ID and registry.serving()
+
+
+def _own_reasons(
+    flow: FlowGraph,
+    node: FlowNode,
+    backend_id: str,
+    needs: _Needs | None,
+    backends: Mapping[str, Capabilities],
+    policy: PlacementPolicy,
+    absent: Mapping[str, Mapping[str, str]] | None,
+    log: bool,
+) -> list[str]:
+    """What ``node`` needs that ``backend_id`` does not offer, the rules that read other nodes' placement left out.
+
+    ``SERVING_LOCAL`` on ``local`` in a process that serves; nothing for a node whose needs are unknown (``None``).
+    """
+    if _serving_local(backend_id):
+        return [SERVING_LOCAL]
+    if needs is None:
+        return []
+    capabilities = backends[backend_id]
+    absent_here = (absent or {}).get(backend_id, {})
+    reasons = _unmet(needs.requirements, capabilities, needs.namespace, needs.artifact_scheme, absent_here)
+    if capabilities.credential_resolution == "ambient":
+        reasons += _unresolvable_connections(node, needs.requirements.credentials, needs.namespace_id)
+    if isinstance(node.setting_input, input_schema.NodeRunFlow):
+        reasons += _child_refusals(flow, node, backend_id, backends, policy, absent, log)
+    return reasons
 
 
 def _unmet(
@@ -386,19 +530,20 @@ def _child_refusals(
     backends: Mapping[str, Capabilities],
     policy: PlacementPolicy,
     absent: Mapping[str, Mapping[str, str]] | None,
+    log: bool = True,
 ) -> list[str]:
     """One reason per node the flow a Run Flow node runs would run that its placement on ``backend_id`` refuses.
 
     The node's settings are read with ``flow``'s parameters in them, as the run puts them there before the node runs
-    (``node_parameters_resolved``), so a constant binding ``${name}`` forwards that parameter's value, except one that
+    (``resolved_settings``), so a constant binding ``${name}`` forwards that parameter's value, except one that
     refers to a parameter each run of ``flow`` takes from a column (its ``_column_bound_parameters``, kept when ``flow``
     is itself a child walked here), whose value is not known before the run: that binding counts as a column binding.
     The flow is built for the call (``ephemeral_flow_graph``) at the depth its run would have, and the nodes
     ``_child_run_nodes`` names are placed by ``policy`` with ``backend_id`` as the run's backend, as the child's own run
-    places them, so its Run Flow nodes are walked in turn, with the parameters given to the child here. Past
-    ``subflow.MAX_SUBFLOW_DEPTH``, and for any error while the settings or the flow are resolved, or the flow is built
-    or placed (logged with the node and the flow), it claims nothing, so the node fails when it runs with the run's own
-    message, as it would unplaced.
+    places them, its own nodes falling back as theirs would, so its Run Flow nodes are walked in turn, with the
+    parameters given to the child here. Past ``subflow.MAX_SUBFLOW_DEPTH``, and for any error while the settings or the
+    flow are resolved, or the flow is built or placed (with ``log``, logged with the node and the flow), it claims
+    nothing, so the node fails when it runs with the run's own message, as it would unplaced.
     """
     # Function-local: flow_graph imports this module, and ephemeral_graph imports flow_graph.
     from flowfile_core.flowfile import subflow
@@ -415,14 +560,16 @@ def _child_refusals(
         if binding.source == "constant" and any(f"${{{name}}}" in binding.constant_value for name in unknown)
     }
     try:
-        with node_parameters_resolved(node):
-            resolved = subflow.resolve_subflow_path(settings.flow_reference, settings.user_id)
-            with ephemeral_flow_graph(resolved.path, settings.user_id) as child:
-                child._subflow_depth = depth
-                child_policy = dataclasses.replace(policy, backend_id=backend_id)
-                nodes = _child_run_nodes(child, settings, forwarded)
-                placement = place(child, backends, child_policy, nodes=nodes, absent=absent)
+        bound = resolved_settings(node)
+        resolved = subflow.resolve_subflow_path(bound.flow_reference, bound.user_id)
+        with ephemeral_flow_graph(resolved.path, bound.user_id) as child:
+            child._subflow_depth = depth
+            child_policy = dataclasses.replace(policy, backend_id=backend_id)
+            nodes = _child_run_nodes(child, bound, forwarded)
+            placement = place(child, backends, child_policy, nodes=nodes, absent=absent, log=log)
     except Exception as e:
+        if not log:
+            return []
         logger.warning(
             "Run Flow node %s of flow %s is placed without the flow it runs (registration %s), which could not be "
             "resolved, built or placed: %s: %s",
@@ -498,17 +645,16 @@ def _artifact_scheme(node: FlowNode) -> str | None:
     return "https" if isinstance(store, S3Storage) else "file"
 
 
-def _catalog_target(node: FlowNode) -> tuple[CatalogStorageTarget | None, str | None, int | None]:
-    """Where a catalog writer's or reader's namespace keeps its tables, the namespace's name and its id.
+def _catalog_target(settings: object) -> tuple[CatalogStorageTarget | None, str | None, int | None]:
+    """Where the namespace of a catalog writer's or reader's ``settings`` keeps its tables, its name and its id.
 
-    ``(None, None, None)`` for any other node. A writer's namespace is the one its ``namespace_full_name`` names, else
-    its ``namespace_id``, as the writer resolves it; with neither, its tables go to the local catalog tables directory
-    of the default namespace. A reader's is its ``catalog_namespace_id``; a reader without one (a SQL reader, or a
-    table picked with no namespace) claims no storage, its table's namespace being unknown here. A namespace whose
+    ``(None, None, None)`` for any other node's settings. A writer's namespace is the one its ``namespace_full_name``
+    names, else its ``namespace_id``, as the writer resolves it; with neither, its tables go to the local catalog tables
+    directory of the default namespace. A reader's is its ``catalog_namespace_id``; a reader without one (a SQL reader,
+    or a table picked with no namespace) claims no storage, its table's namespace being unknown here. A namespace whose
     storage cannot be located (an object-storage root without a connection) answers no target either, so the node
     fails when it runs, as it would unplaced.
     """
-    settings = node.setting_input
     if isinstance(settings, input_schema.NodeCatalogWriter):
         write_settings = settings.catalog_write_settings
         with get_db_context() as db:

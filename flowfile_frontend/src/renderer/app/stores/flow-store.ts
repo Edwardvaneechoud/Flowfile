@@ -9,6 +9,8 @@ import { useResultsStore } from "./results-store";
 
 export const FLOW_ID_STORAGE_KEY = "last_flow_id";
 
+let placementTimer: ReturnType<typeof setTimeout> | null = null;
+
 // Default history state
 const defaultHistoryState: HistoryState = {
   flow_id: null,
@@ -147,6 +149,23 @@ export const useFlowStore = defineStore("flow", {
       } catch {
         // Validation is advisory; don't break the UI
       }
+    },
+
+    // Placement is advisory and every edit asks for it, so the request waits for edits to settle.
+    fetchPlacement(flowId?: number) {
+      const targetId = flowId ?? this.flowId;
+      if (targetId < 0) return;
+      if (placementTimer) clearTimeout(placementTimer);
+      placementTimer = setTimeout(async () => {
+        placementTimer = null;
+        try {
+          const data = await FlowApi.getPlacement(targetId);
+          if (this.flowId !== targetId) return;
+          useResultsStore().applyPlacement(targetId, data);
+        } catch {
+          // A failed preview keeps the last one shown
+        }
+      }, 400);
     },
 
     // Signal "the backend mutated the flow; please re-fetch and re-render".
