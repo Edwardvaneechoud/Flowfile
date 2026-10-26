@@ -1894,8 +1894,8 @@ def fetch_rest_api_sample(
 ) -> RestApiSampleResponse:
     """Fetch a small sample from the configured REST API and infer its schema.
 
-    Runs one capped request through the worker the worker backend runs on (so
-    all network I/O stays sandboxed off the core event loop), infers the output columns with Polars,
+    Runs one capped request through the worker (so all network I/O stays
+    sandboxed off the core event loop), infers the output columns with Polars,
     caches them on the node's ``fields`` (so downstream schema prediction needs
     no network), and returns the inferred columns. This powers the node's
     "Fetch sample" button. Defined as a sync endpoint so the blocking worker
@@ -1942,12 +1942,7 @@ def fetch_rest_api_sample(
 def _rest_api_sample_rows(
     node: input_schema.NodeRestApiReader, secret_encrypted: str | None, sample_size: int
 ) -> pl.DataFrame:
-    """The first page of *node*'s request, at most *sample_size* records, read on the worker and released there.
-
-    The node's pagination is capped at one page of *sample_size* records, the request a sample fetch makes. The read
-    is ``run_op(rest_api_read)`` on the worker backend; its result is sampled, then released whether or not the
-    sample was read.
-    """
+    """The first page of *node*'s request (at most *sample_size* records), read on the worker backend and released."""
     settings = node.rest_api_settings
     one_page = settings.pagination.model_copy(update={"max_pages": 1, "max_records": sample_size})
     capped = node.model_copy(update={"rest_api_settings": settings.model_copy(update={"pagination": one_page})})
@@ -2235,11 +2230,9 @@ def get_node_column_stats(
     Runs a single bounded aggregate (counts, uniques, min/max) over the result
     the last run left behind — it never re-executes the node — and returns the
     column's updated ``FileColumn``, the same shape ``table_schema`` ships.
-    With ``FLOWFILE_COMPUTE_PROTOCOL`` on the aggregate runs on the flow's
-    backend, and with it off on the default compute backend whatever the
-    flow's location, the worker whenever one is configured
-    (``FlowNode.get_column_stats``); core reads back only the one-row result,
-    and a failure there is a 409, never an in-process collect.
+    The aggregate runs on the backend ``FlowNode.get_column_stats`` picks; core
+    reads back only the one-row result, and a failure there is a 409, never an
+    in-process collect.
     Query parameters (not path segments): column names contain ``/`` and ``.``.
     """
     flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
@@ -2271,9 +2264,8 @@ def export_node_data(
     """Downloads up to 10,000 rows of a node's cached result as CSV/TSV without re-executing it.
 
     TSV is also capped at 100,000 cells. Larger exports belong in a write node. The file is written by a
-    ``file_write`` on the flow's backend in both flag states; with ``FLOWFILE_COMPUTE_PROTOCOL`` on, the schema
-    checks read the engine's cached schema and the rows are read through ``bounded.head_rows`` on the backend that
-    holds the node's result (``FlowNode.result_backend``), else the flow's, so core reads no result a backend stored.
+    ``file_write`` on the flow's backend. With ``FLOWFILE_COMPUTE_PROTOCOL`` on, the rows come from
+    ``bounded.head_rows`` on the backend that holds the node's result, so core opens no file a backend stored.
     """
     flow, node = _get_analysis_node(flow_id, node_id, current_user)
     try:
@@ -2739,8 +2731,8 @@ def update_flow_settings(flow_settings: schemas.FlowSettings, current_user=Depen
     settings form posts back whatever copy it last fetched. Flow settings are outside
     the undo scope, so this records no step; it runs as a transaction to serialize with
     graph edits and refresh the dirty flag. In a process that serves, the execution location
-    is stored as a file saved with it opens (``schemas.loaded_execution_location``): a posted
-    ``local`` or ``remote`` is ``auto`` with ``FLOWFILE_COMPUTE_PROTOCOL`` on.
+    is normalised as a loaded file's is (``schemas.loaded_execution_location``), so with
+    ``FLOWFILE_COMPUTE_PROTOCOL`` on a posted ``local`` or ``remote`` is stored as ``auto``.
     """
     flow = get_flow_or_404(flow_settings.flow_id, current_user)
     if compute_registry.serving():

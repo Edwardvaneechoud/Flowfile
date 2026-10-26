@@ -9,7 +9,7 @@ import sys
 import threading
 from contextlib import asynccontextmanager
 
-# A frozen build re-enters this file for multiprocessing's helpers (the resource tracker): divert them first.
+# Frozen builds re-enter this file for multiprocessing helpers (the resource tracker): divert them first.
 if __name__ == "__main__":
     import multiprocessing
 
@@ -334,9 +334,9 @@ def run(host: str = None, port: int = None):
     """Runs the FastAPI application using Uvicorn.
 
     This function configures and starts the Uvicorn server, setting up
-    signal handlers to ensure a graceful shutdown. It marks the process as one
-    that serves first (``registry.mark_serving``), so its compute is the worker
-    beside it and never the worker embedded in it.
+    signal handlers to ensure a graceful shutdown. It first marks the process
+    as serving (``registry.mark_serving``), so its compute is never the worker
+    embedded in it.
 
     Args:
         host: The host to bind the server to. Defaults to `SERVER_HOST` from settings.

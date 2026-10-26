@@ -11,9 +11,8 @@ This eliminates:
 - Base64 encode/decode overhead on result bytes
 - Multiple HTTP round-trips per task
 
-``v1_streaming_router`` serves ``/v1/ws/submit``: the versioned submit of ``protocol_routes.py`` over
-one connection, with the same token and version checks before accepting, the same ``run_submit``,
-progress frames while its child runs and the ``SubmitResult`` in the final frame.
+``v1_streaming_router`` serves ``/v1/ws/submit``: the ``/v1`` submit over one connection, with
+progress frames while its child runs.
 """
 
 import asyncio
@@ -505,17 +504,15 @@ async def _send_job_progress(websocket: WebSocket, job: asyncio.Future, job_id: 
 async def ws_submit_v1(websocket: WebSocket):
     """``POST /v1/submit`` over a WebSocket, with progress frames while the child runs.
 
-    A bad token closes 1008 and a missing or foreign ``X-Protocol-Version`` is answered 426 with the
-    REST routes' body, both before accepting. Core then sends the ``meta`` JSON as a text frame and
-    the plan as a binary frame. The worker runs ``run_submit`` in Starlette's threadpool, the one a
-    REST submit waits in, and sends:
+    Before accepting, a bad token closes 1008 and a missing or foreign ``X-Protocol-Version`` gets the
+    REST 426. Core sends the ``meta`` JSON as a text frame, then the plan as a binary frame. The worker sends:
 
         - JSON: {"type": "progress", "progress": N}  (0-100, on each change and as a heartbeat)
         - JSON: {"type": "complete", "result": <SubmitResult, bytes base64>}
         - JSON: {"type": "error", "status_code": N, "detail": ...}  (what the REST route answers)
 
-    then closes with 1000. A client that goes away does not stop the submit: its result is held, as
-    for a REST client that left. Cancel is ``POST /v1/jobs/{id}/cancel``.
+    then closes with 1000. A client that leaves does not stop the submit, and its result is held.
+    Cancel is ``POST /v1/jobs/{id}/cancel``.
     """
     if not websocket_authorized(websocket):
         await websocket.close(code=1008)

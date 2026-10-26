@@ -97,10 +97,9 @@ class CatalogStorageTarget:
     def scan_kwargs(self, user_id: int | None) -> dict[str, Any]:
         """``storage_options``/``credential_provider`` kwargs for a scan of this target whose plan may be serialized.
 
-        With a ``credential_ref``, a new ``CredentialRefProvider`` on every call, so a target resolved once still
-        gives each plan its own (Polars caches resolved credentials by the provider's pickled bytes); the process that
-        runs the plan resolves the connection. Otherwise the resolved options' credentials travel encrypted for
-        *user_id*.
+        With a ``credential_ref``, a new ``CredentialRefProvider`` on every call, so each plan gets its own (Polars
+        caches resolved credentials by the provider's pickled bytes); the process that runs the plan resolves it.
+        Otherwise the resolved options' credentials travel encrypted for *user_id*.
         """
         if self.credential_ref is not None:
             provider = CredentialRefProvider(self.credential_ref.connection_id, self.credential_ref.user_id)

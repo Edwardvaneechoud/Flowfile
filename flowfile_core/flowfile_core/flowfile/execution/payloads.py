@@ -1,26 +1,22 @@
-"""What the operations take: one frozen, keyword-only dataclass per ``OperationKind`` that runs whole, which every
-backend accepts.
+"""What the operations take: one frozen, keyword-only dataclass per ``OperationKind``, the same for every backend.
 
-An operation's ``OpPayload`` is ``{"payload": <the kind's dataclass>}`` (``op_payload``); a backend takes it back out
-with ``unpack`` and builds what its transport needs from it: the worker embedded in this process calls the worker's
-bodies directly, a backend that crosses a process builds what its transport needs from the fields and serialises a
-plan when it sends it. A payload holds what the node knows: its settings model, the connection those settings resolve
-to, the credential as stored (the ``$ffsec$`` ciphertext, never a decrypted secret; a cloud connection as its worker
-interface, which the compute decrypts where the operation runs), the input rows of a write as the ``pl.LazyFrame``
-itself, the flow and node the compute files the job under, the ``job_id`` that names the job while it runs, and the
-in-process hooks the builders bind (a cancel check, the node logger, the Kafka consumer), which no backend reads now.
+An ``OpPayload`` is ``{"payload": <the kind's dataclass>}`` (``op_payload``); a backend takes it out with ``unpack``.
+A payload holds what the node knows: its settings model, the resolved connection, the credential as stored
+(``$ffsec$`` ciphertext, or a cloud connection's worker interface, decrypted where the operation runs), input rows as
+the ``pl.LazyFrame``, and the flow, node and ``job_id`` the job is filed under. No backend reads the in-process hooks
+the builders bind (a cancel check, the node logger, the Kafka consumer).
 
-The Delta writes (``DeltaWritePayload``, ``DeltaMergePayload``, ``DeltaScd2Payload``) report what they wrote as the
-``OpResult.metadata``: ``{"skipped": True}`` when the write changed nothing, else the ``table_path``, the ``schema``
-(``name``/``dtype`` per column), ``row_count``, ``column_count`` and ``size_bytes``. An SCD2 write adds the Delta
-``version`` it settled on, a skip included, and its ``scd2_metrics``. A catalog table's write names the table by its
-``CatalogTableIdentity`` instead of a ``path``, and the compute reports the path or URI it resolved that to as the
-``table_path``. A visualisation session request
-(``VizSessionPayload``) reports the session's answer as the metadata too.
+The Delta writes (``DeltaWritePayload``, ``DeltaMergePayload``, ``DeltaScd2Payload``) report as ``OpResult.metadata``:
 
-The transform payloads (``FuzzyJoinPayload``, ``RandomSplitPayload``, ``CustomNodePayload``, ``PolarsCodePayload``,
-``SqlQueryPayload``) carry their input rows as the ``pl.LazyFrame`` each input engine holds; a Polars Code node's code
-and a SQL Query node's statement are the payload's text, which only the backend that runs the operation executes.
+- ``{"skipped": True}`` when the write changed nothing;
+- else ``table_path``, ``schema`` (``name``/``dtype`` per column), ``row_count``, ``column_count`` and ``size_bytes``;
+- an SCD2 write also ``version``, the Delta version it settled on (a skip included), and ``scd2_metrics``.
+
+A write that names a catalog table by ``CatalogTableIdentity`` instead of a ``path`` gets the path or URI the compute
+resolved as ``table_path``. ``VizSessionPayload`` reports the session's answer as the metadata too.
+
+A Polars Code node's code and a SQL Query node's statement are payload text, executed only by the backend that runs
+the operation.
 """
 
 from __future__ import annotations
@@ -81,9 +77,8 @@ class DatabaseReadPayload(OperationPayload):
     """A database table or query read.
 
     Attributes:
-        settings: The node's ``NodeDatabaseReader``: its ``database_settings`` and the ``fields`` it reads.
-        connection: The connection the settings resolve to: the inline ``DatabaseConnection``, or the stored
-            ``FullDatabaseConnection`` a reference names.
+        settings: The node's reader settings: its ``database_settings`` and the ``fields`` it reads.
+        connection: The inline connection, or the stored one a reference names.
         encrypted_password: The connection's password as stored; ``None`` for a file-based database.
         cancel_check: Called while a read in core runs; ``True`` stops it.
     """
@@ -173,8 +168,7 @@ class DatabaseWritePayload(OperationPayload):
     Attributes:
         plan: The rows to write.
         settings: The node's settings; ``database_write_settings`` holds the connection mode and ``if_exists``.
-        connection: The connection the settings resolve to: the node's inline ``DatabaseConnection``, or the stored
-            ``FullDatabaseConnection`` a reference names, whose ``password`` is the stored ciphertext.
+        connection: The inline connection, or the stored one a reference names (its ``password`` the ciphertext).
         encrypted_password: The connection's password as stored, ``None`` for a file-based database.
         table_name: The table to write, qualified by its schema when the settings name one.
     """
@@ -207,9 +201,9 @@ class CatalogTableIdentity:
 
     Attributes:
         table_id: The catalog table's id; ``None`` for a table the write creates.
-        table_name: The table's directory under its catalog's storage root, a bare name.
-        base_uri: The catalog's object-storage root; ``None`` for a table in the compute's own catalog tables
-            directory. With the payload's ``connection`` it is the table's storage target.
+        table_name: The table's directory name under its catalog's storage root.
+        base_uri: The catalog's object-storage root, opened with the payload's ``connection``; ``None`` for the
+            compute's own catalog tables directory.
     """
 
     table_id: int | None
@@ -224,12 +218,12 @@ class DeltaWritePayload(OperationPayload):
     Attributes:
         plan: The rows to write.
         path: The table's normalised path or URI; ``None`` when ``table`` names it.
-        mode: The Delta write mode (``"overwrite"``, ``"append"`` or ``"error"``).
+        mode: ``"overwrite"``, ``"append"`` or ``"error"``.
         partition_by: The partition columns a new table is created with, or ``None``.
         enable_cdf: Turn the table's change data feed on before writing.
-        connection: The object-storage connection, its secrets encrypted for the node's user; ``None`` for a table
-            on the filesystem the compute writes to.
-        table: The catalog table the write names by identity instead of a ``path``.
+        connection: The object-storage connection, secrets encrypted for the node's user; ``None`` on the compute's
+            own filesystem.
+        table: The catalog table, named by identity instead of ``path``.
     """
 
     plan: pl.LazyFrame
@@ -252,9 +246,9 @@ class DeltaMergePayload(OperationPayload):
         merge_keys: The columns that match a row to the table's.
         partition_by: The partition columns a new table is created with, or ``None``.
         enable_cdf: Turn the table's change data feed on before writing.
-        connection: The object-storage connection, its secrets encrypted for the node's user; ``None`` for a table
-            on the filesystem the compute writes to.
-        table: The catalog table the write names by identity instead of a ``path``.
+        connection: The object-storage connection, secrets encrypted for the node's user; ``None`` on the compute's
+            own filesystem.
+        table: The catalog table, named by identity instead of ``path``.
     """
 
     plan: pl.LazyFrame
@@ -269,30 +263,23 @@ class DeltaMergePayload(OperationPayload):
 
 @dataclass(frozen=True, kw_only=True)
 class DeltaScd2Payload(OperationPayload):
-    """Apply a plan's rows to a Delta table as a slowly changing dimension of type 2.
+    """Apply a plan's rows to a Delta table as a type 2 slowly changing dimension.
 
-    A missing table is an initial load; on an existing one a changed row is end-dated and inserted again as a new
-    version, in one commit, and a batch that changes nothing commits nothing. The fields are the resolved SCD2
-    configuration of the write, the one the catalog records for the table. Every field is keyword-only.
+    A missing table is an initial load. On an existing one a changed row is end-dated and inserted again as a new
+    version, in one commit. A batch that changes nothing commits nothing.
 
     Attributes:
-        plan: The rows to apply.
-        path: The table's path or URI; ``None`` when ``table`` names it.
+        path: The table's path or URI; ``None`` when ``table`` names it by identity.
         business_keys: The columns that identify a row across versions.
         compare_columns: The columns whose change opens a new version.
         full_snapshot: Also end-date the current rows whose key the batch does not carry.
-        surrogate_key_column: The generated column holding each version's key.
-        valid_from_column: The generated column holding the instant a version became current.
-        valid_to_column: The generated column holding the instant a version stopped being current, null while it is.
-        is_current_column: The generated column flagging the current version of each key.
-        run_timestamp: The write's one processing instant as an ISO 8601 string: the ``valid_from`` of every version
-            it inserts and the ``valid_to`` of every version it closes, from which the surrogate keys derive.
-        partition_by: The partition columns a new table is created with, nested above the is-current column, or
-            ``None``.
+        surrogate_key_column, valid_from_column, valid_to_column, is_current_column: The generated columns' names.
+        run_timestamp: The write's one processing instant (ISO 8601): ``valid_from`` of the versions it inserts and
+            ``valid_to`` of those it closes. The surrogate keys derive from it.
+        partition_by: A new table's partition columns, nested above the is-current column, or ``None``.
         partition_on_current: Partition a new table by the is-current column.
-        connection: The object-storage connection, its secrets encrypted for the user it resolves as (a catalog
-            table's owner); ``None`` for a table on the filesystem the compute writes to.
-        table: The catalog table the write names by identity instead of a ``path``.
+        connection: The object-storage connection, encrypted for the user it resolves as (a catalog table's owner);
+            ``None`` on the compute's own filesystem.
     """
 
     plan: pl.LazyFrame
@@ -318,12 +305,12 @@ class FuzzyJoinPayload(OperationPayload):
     Attributes:
         left: The left rows.
         right: The right rows.
-        settings: The node's settings; its ``join_input`` (copied, never changed) holds the fuzzy mappings and the
-            column selections of both sides.
-        node_logger: The node's logger, which an in-process match reports its progress to; read in core only.
-        left_schema: The left rows' columns as the input node knows them, which the worker backend prepares the side
-            over instead of resolving its plan; ``None`` resolves the plan.
-        right_schema: The right rows' columns, as ``left_schema``.
+        settings: The node's settings; ``join_input`` (copied, never changed) holds the fuzzy mappings and both
+            sides' column selections.
+        node_logger: The node's logger.
+        left_schema: The left rows' columns as the input node knows them, so the worker backend prepares the side
+            without resolving its plan; ``None`` resolves the plan.
+        right_schema: As ``left_schema``, for the right rows.
     """
 
     left: pl.LazyFrame
@@ -354,14 +341,12 @@ class CustomNodePayload(OperationPayload):
 
     Attributes:
         inputs: The node's input rows, in wiring order.
-        custom_node: The instance the node was placed with; read in core only. An in-process run builds a fresh
-            instance of its class from ``settings_values``; a backend that sends the node elsewhere resolves the
-            secrets its ``SecretSelector`` fields select to their ``$ffsec$`` ciphertext from it, so they are looked
-            up only where they are sent.
-        node_source: The source of the node's file, ``None`` for a class defined without one; such a node can only
-            run in core.
+        custom_node: The placed instance, read in core only. An in-process run builds a fresh one of its class from
+            ``settings_values``. A backend that sends the node elsewhere resolves its ``SecretSelector`` secrets to
+            ``$ffsec$`` ciphertext from it.
+        node_source: The node file's source; ``None`` for a class with no file, which can only run in core.
         class_name: The class to run from ``node_source``.
-        settings_values: The node's settings values by section, with the flow's parameters resolved.
+        settings_values: The settings values by section, flow parameters resolved.
         output_names: The node's declared outputs, in output order.
         user_id: The user the node runs as, whose secrets it reads; ``None`` runs it without a secret context.
     """
@@ -379,13 +364,12 @@ class CustomNodePayload(OperationPayload):
 class PolarsCodePayload(OperationPayload):
     """Run a Polars Code node's code once over its inputs on the backend that holds them.
 
-    The operation's refs are ``{"result": ref}``, carrying the schema of the frame the code returned.
+    The refs are ``{"result": ref}``, with the schema of the frame the code returned.
 
     Attributes:
-        code: The node's code as its settings hold it when the node runs, a ``${name}`` parameter resolved.
-        inputs: The node's input rows in connection order, each the plan its input engine holds (a leaf over the
-            input's result); empty for a node with no input. The designer's prediction sends an empty frame of each
-            input's schema.
+        code: The node's code when it runs, ``${name}`` parameters resolved.
+        inputs: The input plans in connection order, each a leaf over the input's result; empty for no input. The
+            designer's prediction sends an empty frame of each input's schema.
     """
 
     code: str
@@ -396,14 +380,13 @@ class PolarsCodePayload(OperationPayload):
 class SqlQueryPayload(OperationPayload):
     """Translate a SQL Query node's statement once over its inputs on the backend that holds them.
 
-    The backend registers the inputs as ``input_1``, ``input_2``, … in a ``pl.SQLContext``. The operation's refs are
-    ``{"result": ref}``, carrying the schema of the frame the query answered.
+    The backend registers the inputs as ``input_1``, ``input_2``, … in a ``pl.SQLContext``. The refs are
+    ``{"result": ref}``, with the schema of the frame the query answered.
 
     Attributes:
-        sql_code: The node's statement as its settings hold it when the node runs.
-        inputs: The node's input rows in connection order, each the plan its input engine holds (a leaf over the
-            input's result); empty for a node with no input. The designer's prediction sends an empty frame of each
-            input's schema.
+        sql_code: The node's statement when it runs.
+        inputs: The input plans in connection order, each a leaf over the input's result; empty for no input. The
+            designer's prediction sends an empty frame of each input's schema.
     """
 
     sql_code: str
@@ -414,8 +397,8 @@ class SqlQueryPayload(OperationPayload):
 class MlTrainPayload(OperationPayload):
     """Fit a model on a plan's rows; the backend that fits it holds it.
 
-    The operation's refs are ``{"model": <blob ref>}``, the model as a result of kind ``"blob"`` on the backend that
-    ran it, and its ``OpResult.metadata`` the model's ``sha256``, ``size_bytes`` and ``model_type``.
+    The refs are ``{"model": ref}``, a ``"blob"`` result. The ``OpResult.metadata`` is the model's ``sha256``,
+    ``size_bytes`` and ``model_type``.
 
     Attributes:
         plan: The training rows.
@@ -452,17 +435,18 @@ class MlApplyPayload(OperationPayload):
 class VizSessionPayload(OperationPayload):
     """Answer one Graphic Walker request over a plan a visualisation session holds.
 
-    The session holds the plan lazily under its key, so requests with the same key reuse it; each chart runs
-    against the plan, which nothing materialises first. The session's answer is the operation's ``OpResult.metadata``:
-    for ``"fields"`` the ``fields`` with ``cache_hit``, for ``"query"`` the chart's ``rows`` with ``total_rows``,
-    ``truncated``, ``elapsed_ms`` and ``cache_hit``, either with an ``error`` when it could not be computed.
+    The session holds the plan lazily under its key, so requests with the same key reuse it and nothing is
+    materialised first. The answer is the ``OpResult.metadata``:
+
+    - ``"fields"``: ``fields`` and ``cache_hit``;
+    - ``"query"``: the chart's ``rows``, ``total_rows``, ``truncated``, ``elapsed_ms`` and ``cache_hit``;
+    - either: an ``error`` when it could not be computed.
 
     Attributes:
         plan: The rows the charts read.
-        session_key: Names the session that holds ``plan``; a request with another key opens another session.
-        request: ``"fields"`` asks for the field schema, ``"query"`` for one chart's rows.
-        query: The Graphic Walker ``IDataQueryPayload`` of a ``"query"`` request, passed through as it is; ``None``
-            for ``"fields"``.
+        session_key: Names the session that holds ``plan``.
+        request: ``"fields"`` for the field schema, ``"query"`` for one chart's rows.
+        query: A ``"query"`` request's Graphic Walker ``IDataQueryPayload``, passed through; ``None`` for ``"fields"``.
         max_rows: The most rows a ``"query"`` request returns; ``None`` for ``"fields"``.
 
     Raises:

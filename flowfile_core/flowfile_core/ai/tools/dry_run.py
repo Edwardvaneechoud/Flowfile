@@ -22,12 +22,12 @@ HTTP+execute on a 1-row sample. Acceptable for an agent step that's
 already on a multi-second budget. The cache amortises repeats.
 
 **Sample-row sourcing.** Schema-driven: prefer the upstream's first
-row, read by ``sample(ref, 1)`` on the backend that holds its
-reference, when the upstream has run with its current setup; fall
-back to a 1-row null Polars LazyFrame built from the upstream's
-resolved ``predicted_schema`` (which the upstream-tier handler always
-populates for tiers 0–2; tier-3 upstreams cause the executor to
-short-circuit before reaching this module).
+row (``sample(ref, 1)`` on the backend holding it) when the upstream
+has run with its current setup; fall back to a 1-row null Polars
+LazyFrame built from the upstream's resolved ``predicted_schema``
+(which the upstream-tier handler always populates for tiers 0–2;
+tier-3 upstreams cause the executor to short-circuit before reaching
+this module).
 """
 
 from __future__ import annotations
@@ -133,9 +133,9 @@ def _resolve_sample_row(
     upstream_id: int,
     upstream_schemas: dict[int, list[FlowfileColumn]],
 ) -> Any | None:
-    """Return a 1-row sample for the upstream — its first row, read by
-    ``sample(ref, 1)`` on the backend that holds its reference, if it ran with
-    its current setup, otherwise a null-row LazyFrame built from the resolved schema.
+    """Return a 1-row sample for the upstream — its first row (``sample(ref, 1)``
+    on the backend holding it) if it ran with its current setup, otherwise a
+    null-row LazyFrame built from the resolved schema.
 
     Returns ``None`` if neither path is available (which should not happen if
     the executor honours the upstream-tier handler before calling here)."""

@@ -257,9 +257,8 @@ def apply_formula_entries(
         lf: The frame the first entry runs against.
         entries: The entries to apply, in evaluation order. Entries with a blank expression
             must already be filtered out by the caller.
-        schema: *lf*'s schema when the caller knows it. Each step is then resolved, and a failure
-            classified, over an empty frame of it carrying the same steps, so *lf* itself is never
-            resolved (its plan may scan a file only its backend can read).
+        schema: *lf*'s schema when the caller knows it. Steps are then checked over an empty frame
+            of it, so *lf* itself is never resolved (its plan may scan a file only its backend can read).
 
     Returns:
         The chained frame; *lf* unchanged when *entries* is empty.

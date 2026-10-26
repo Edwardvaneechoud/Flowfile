@@ -198,12 +198,10 @@ def _catalog_delta_op(
 ) -> tuple[OperationKind, DeltaWritePayload | DeltaMergePayload | DeltaScd2Payload]:
     """The operation a catalog Delta write in *delta_mode* runs, and its payload.
 
-    ``"scd2"`` is a ``delta_scd2`` carrying the resolved SCD2 config (*scd2_config*, as ``_resolve_scd2_config``
-    returns it) and the write's one instant *run_timestamp*; a merge mode is a ``delta_merge`` by the settings'
-    merge keys; any other mode is a ``delta_write`` in that mode. Only the last two take change tracking: the
-    settings refuse ``track_changes`` with ``"scd2"``. *connection* is the catalog's object-storage connection,
-    encrypted for its owner, and ``None`` for a table on the local filesystem. *table* names the table by identity
-    instead of *path*, which is then ``None``.
+    ``"scd2"`` runs ``delta_scd2`` with the resolved *scd2_config* and the write's one *run_timestamp*, a merge mode
+    ``delta_merge`` and any other mode ``delta_write``. Only the last two carry ``track_changes``, which the settings
+    refuse with ``"scd2"``. *connection* is the catalog's owner-encrypted object-storage connection, ``None`` for a
+    local table. When *table* names the table by identity, *path* is ``None``.
     """
     common: dict[str, Any] = {
         "plan": plan,
@@ -236,11 +234,11 @@ def _catalog_delta_op(
 
 
 def _catalog_delta_written(report: dict[str, Any]) -> CatalogDeltaWrite:
-    """What a catalog Delta write produced, from the report its operation returned as ``OpResult.metadata``.
+    """What a catalog Delta write produced, from its operation's ``OpResult.metadata``.
 
-    A report marked ``skipped`` is the catalog no-op protocol: no metadata, so the table is not registered again,
-    and the version an SCD2 write classified against. Otherwise the metadata holds exactly the four keys the
-    catalog service takes as keyword arguments, plus the transport-only ``scd2_metrics`` an SCD2 write reports.
+    A ``skipped`` report yields no metadata (the table is not registered again) and the version an SCD2 write
+    classified against. Otherwise the metadata keeps the four keys the catalog service takes, plus an SCD2 write's
+    ``scd2_metrics``.
     """
     version = report.get("version")
     if report.get("skipped"):
@@ -265,11 +263,9 @@ def _same_location(left: str, right: str) -> bool:
 def _catalog_table_identity(table_name: str, existing, dest_path: str, base_uri: str | None) -> CatalogTableIdentity:
     """The catalog table *table_name* stored at *dest_path*, by identity: its directory under the catalog's root.
 
-    *base_uri* is the catalog's object-storage root for a table in object storage and ``None`` for one in the catalog
-    tables directory; *existing* is the table's catalog record, ``None`` for a table the write creates. A destination
-    that is not that root joined with a directory name, compared as a location, has no identity and raises
-    ``ValueError``: a table registered at a location of its own would otherwise be written somewhere other than its
-    record says.
+    *base_uri* is the object-storage root, ``None`` for the catalog tables directory; *existing* is the table's
+    record, ``None`` for a new table. A *dest_path* that is not that root joined with a directory name raises
+    ``ValueError``, since a write by identity would put the table somewhere other than its record says.
     """
     dir_name = _catalog_table_dir_name(dest_path)
     root = base_uri if base_uri is not None else str(storage.catalog_tables_directory)
@@ -741,7 +737,7 @@ def _handle_physical_table_write(
         # Enable before the write so this write's own commit lands above the cursor floor.
         _ensure_catalog_cdc_enabled(settings.table_name, namespace_id, dest_path, storage_options)
 
-    # One instant for the whole write: the surrogate key depends on valid_from, and the output read selects by it.
+    # One instant per write: the surrogate key depends on valid_from, and the output read selects by it.
     run_timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     writer_node = graph.get_node(node_catalog_writer.node_id)
@@ -760,7 +756,7 @@ def _handle_physical_table_write(
     report = writer_node.run_op(current_context(graph).backend, operation, op_payload(write), job_id=write.job_id)
     written = _catalog_delta_written(report.metadata)
     meta_kwargs = written.meta
-    # By identity a new table is where the compute answered; an existing one stays where its record resolved.
+    # By identity a new table is where compute answered; an existing one stays where its record resolved.
     answered = report.metadata.get("table_path") if by_identity else None
     if answered and existing is None:
         dest_path = answered

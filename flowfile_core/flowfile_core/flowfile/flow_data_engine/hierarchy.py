@@ -100,10 +100,9 @@ def explode_hierarchy_frame(
 ) -> pl.LazyFrame:
     """Explode ``lf``'s parent -> child edges into the table ``settings.output_detail`` describes.
 
-    Reads the input schema only, ``schema`` when the caller passes it (``lf`` is then not resolved),
-    else ``lf``'s; nothing is collected, so cycles and null quantities surface as a ``ComputeError``
-    when the result is collected. Empty or identical parent/child columns raise ``ValueError``
-    straight away.
+    Reads only the input schema (``schema`` when given, so ``lf`` is not resolved). Nothing is
+    collected, so cycles and null quantities surface as a ``ComputeError`` when the result is
+    collected. Empty or identical parent/child columns raise ``ValueError`` straight away.
     """
     settings.check_edge_columns()
     schema = lf.collect_schema() if schema is None else schema

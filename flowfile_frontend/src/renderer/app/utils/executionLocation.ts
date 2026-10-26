@@ -1,4 +1,4 @@
-// Execution locations as the Flow Settings dialog and the node drawer offer them, verdicts beside backend ids.
+// Execution locations as the Flow Settings dialog and node drawer offer them, with backend verdicts.
 
 import type { ComputeBackend, HandshakeVerdict } from "../api/computeBackends.api";
 import type { ExecutionLocation } from "../types";
@@ -50,8 +50,8 @@ function withVerdicts(
 }
 
 /**
- * "auto" and the configured backends, then the flow's own value when it is neither; never "local". Core answers
- * "local" or "remote" only with the compute protocol off, so such a flow keeps that pair.
+ * "auto" and the configured backends, then the flow's own value when neither; never "local". A flow core answers
+ * as "local" or "remote" (the compute protocol off) gets that pair.
  */
 export function executionLocationOptions(
   current: ExecutionLocation,
@@ -72,7 +72,7 @@ export function nodeExecutionLocationLabel(location: ExecutionLocation): string 
   return location;
 }
 
-/** "auto", "worker" and the configured backends, then the node's own value when it is none of them; never "local" otherwise. */
+/** "auto", "worker" and the configured backends, then the node's own value ("local" only as that). */
 export function nodeExecutionLocationOptions(
   current: ExecutionLocation,
   rows: BackendRow[],

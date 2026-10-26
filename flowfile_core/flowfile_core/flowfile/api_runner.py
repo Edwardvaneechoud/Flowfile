@@ -1,28 +1,18 @@
 """Synchronous in-process execution of a published flow for the HTTP data API.
 
-Loads a registered flow fresh per request, validates and injects typed query
-parameters, runs the graph in performance mode (with a remote execution location the
-single terminal collect runs on the worker, and a worker that cannot run it fails the
-request with a typed compute error), and serializes the data flowing into the flow's
-single ``api_response`` node. With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a remote run's
-response is instead a sample of the api_response node's result on the backend that
-holds it, bounded by the worker's sample cap. The flow is closed when the call ends,
-once the response is serialised or on any error, so every result the call minted is
-released on the backend that holds it.
+Loads a registered flow fresh per request, injects its validated query parameters, runs it in performance mode and
+serializes the data flowing into its single ``api_response`` node. A remote run's final collect runs on the worker,
+and a worker that cannot run it fails the request with a typed compute error. With ``FLOWFILE_COMPUTE_PROTOCOL``
+on, a remote response is a sample of the node's result, bounded by the worker's sample cap. The flow is closed
+when the call ends, releasing every result it minted.
 
-A freshly opened flow keeps the ``flow_id`` stored in its file, and that id keys
-*process-wide* scratch state: the singleton ``FlowLogger``, the kernel I/O dirs
-``shared_volume/{flow_id}/{node_id}`` and the on-disk cache. Concurrent runs of
-the *same* published flow would therefore corrupt each other, so runs are
-serialized per ``flow_id`` (see :func:`_flow_run_lock`); distinct flows still run
-concurrently.
+A freshly opened flow keeps the ``flow_id`` in its file, and that id keys process-wide scratch state
+(``FlowLogger``, kernel I/O dirs, the cache). Runs are therefore serialized per ``flow_id`` (:func:`_flow_run_lock`).
 
-Untrusted query values reach the flow only as ``${param}`` substitutions, which
-are interpolated into node settings (including a ``polars_code`` node's source,
-later ``exec()``'d with ``pl`` exposed). String-typed parameters are therefore
-validated here (see :func:`_reject_unsafe_string`) so a key holder cannot break
-out of a string literal and inject Polars. Editor/designer flows never pass
-through this seam and keep full expressivity.
+Untrusted query values reach the flow only as ``${param}`` substitutions into node settings, a ``polars_code``
+node's ``exec()``'d source included. String parameters are therefore validated (:func:`_reject_unsafe_string`) so
+a key holder cannot break out of a string literal and inject Polars. Editor flows never pass through this seam,
+so they keep full expressivity.
 """
 
 from __future__ import annotations
@@ -61,8 +51,7 @@ class ApiExecutionError(Exception):
 # The most rows a worker answers for one sample; a published response is never larger.
 _SAMPLE_ROWS_CAP = 10_000
 
-# The typed compute errors by class name, as a run report row names the one that failed its node; not the base,
-# whose name Polars' own ComputeError shares.
+# Compute error subclasses by name, as a report row names them (the base's name clashes with Polars').
 _COMPUTE_ERRORS = {error.__name__: error for error in ComputeError.__subclasses__()}
 
 _run_locks_guard = threading.Lock()
@@ -152,10 +141,9 @@ def _first_error(run_info: RunInformation | None) -> str | None:
 
 
 def _first_compute_error(run_info: RunInformation | None) -> ComputeError | None:
-    """The typed compute error that failed the run's first failed node, rebuilt from its run report row, else None.
+    """The typed compute error of the run's first failed node, rebuilt from its run report row, else None.
 
-    The row keeps the error's class name and its text. The row's text carries ``ComputeUnavailable``'s hint already,
-    and the class does not add it twice, so the rebuilt error reads as the row does.
+    The row's text already carries ``ComputeUnavailable``'s hint, which the class does not add twice.
     """
     if run_info is None:
         return None
@@ -169,28 +157,20 @@ def _first_compute_error(run_info: RunInformation | None) -> ComputeError | None
 
 
 def _materialize(data: Any, max_rows: int | None, flow: Any, api_node: Any):
-    """Collect the api_response input, on the worker when the execution location is remote.
+    """Collect the api_response input: in core for a local run, on the worker for a remote one.
 
-    The flow runs in performance mode, so the whole pipeline is a single lazy plan and
-    this is the one collect that actually executes it. When ``execution_location`` is
-    remote we ship that collect to the worker (it materializes Arrow IPC; the core only
-    reads it back), so the core process does no heavy compute. The row cap is pushed in
-    first so the worker materializes only what's returned. On the remote path the collect
-    never runs in core.
-
-    With ``FLOWFILE_COMPUTE_PROTOCOL`` on, the run already submitted every node to its
-    backend, so a remote response is ``sample(ref, n)`` of the api_response node's reference
-    on the backend that minted it, ``n`` being *max_rows* clamped to the worker's sample cap
-    (an unset *max_rows* too); core receives at most ``n`` rows and collects nothing. A local
-    run collects in core in both flag states.
+    The flow runs in performance mode, so this is the one collect that executes the whole plan. On the remote
+    path the row cap is pushed in first and nothing is collected in core. With ``FLOWFILE_COMPUTE_PROTOCOL`` on,
+    a remote response is ``sample(ref, n)`` of the node's reference on the backend that holds it, ``n`` being
+    *max_rows* clamped to the worker's sample cap (the cap when unset).
 
     Raises:
         ComputeUnavailable: The worker could not be reached to submit the plan.
         ComputeError: The worker could not run the plan (error code -1, typed by
             :func:`~flowfile_core.flowfile.execution.errors.worker_failure`); with the flag
             on, any typed failure of the sample.
-        ApiExecutionError: The plan could not be submitted (core cannot serialise it, or
-            the worker refused it), or it ran on the worker and failed on its data.
+        ApiExecutionError: The plan could not be submitted (not serialisable, or refused),
+            or it failed on its data on the worker.
     """
     if flow.flow_settings.execution_location == "local":
         return data.collect(n_records=max_rows)
@@ -232,8 +212,8 @@ def _materialize(data: Any, max_rows: int | None, flow: Any, api_node: Any):
 def _truncated(df: pl.DataFrame, max_rows: int | None, flow: Any, api_node: Any) -> bool:
     """Whether the worker's sample cap, not the node's *max_rows*, left rows out of a response.
 
-    Only a remote read with ``FLOWFILE_COMPUTE_PROTOCOL`` on is capped (``_materialize``). The result's row count is
-    read from its reference when it carries one, else counted on the backend that holds it.
+    Only a remote read with ``FLOWFILE_COMPUTE_PROTOCOL`` on is capped. The total is the reference's row count,
+    else a ``count`` on the backend that holds it.
     """
     if flow.flow_settings.execution_location == "local" or not FLOWFILE_COMPUTE_PROTOCOL:
         return False
@@ -305,9 +285,9 @@ def run_flow_as_api(
         ApiConfigError: The flow does not have exactly one api_response node.
         ApiExecutionError: The flow failed or produced no data.
         ComputeError: The worker could not be reached (``ComputeUnavailable``) or could
-            not run the final collect; with ``FLOWFILE_COMPUTE_PROTOCOL`` on, also the typed
-            error that failed the run's first failed node, rebuilt from its run report row.
-            Nothing is collected in core instead.
+            not run the final collect. With ``FLOWFILE_COMPUTE_PROTOCOL`` on, also the typed
+            error of the run's first failed node, rebuilt from its run report row. Nothing
+            is collected in core instead.
     """
     flow = open_flow(Path(flow_path), user_id=owner_id)
     try:
@@ -326,17 +306,11 @@ def run_flow_as_api(
             if param.name in resolved:
                 param.default_value = resolved[param.name]
 
-        # Run in performance mode (one lazy plan; no per-node materialization or example
-        # data) and send compute to the worker when the location is remote, so the core process
-        # does no heavy collect (the final collect is offloaded in _materialize). Tests pin
-        # execution_location="local" to stay hermetic.
+        # Performance mode: one lazy plan, whose final collect _materialize sends to the worker when remote.
         flow.flow_settings.execution_location = execution_location or get_global_execution_location()
         flow.flow_settings.execution_mode = "Performance"
 
-        # Serialize concurrent runs of the same published flow: the freshly opened flow
-        # keeps its saved flow_id, which keys process-wide scratch state (FlowLogger,
-        # kernel I/O dirs, cache dir) that overlapping runs would corrupt. Held through
-        # serialization too, since collecting the result reads the flow_id-keyed cache.
+        # One run per flow_id at a time (module docstring); held while serializing, which reads the flow_id cache.
         with _flow_run_lock(flow.flow_id):
             run_info = flow.run_graph()
             if run_info is None or not run_info.success:
@@ -347,10 +321,7 @@ def run_flow_as_api(
 
             deliberately_skipped = {nr.node_id for nr in run_info.node_step_result if nr.skipped}
             if api_node.node_id in deliberately_skipped:
-                # The response node sits behind a closed gate for these parameter
-                # values. Pulling it anyway would lazily execute the gated-off
-                # branch and serve its data as if the gate were open — refuse
-                # explicitly instead.
+                # Gated off: pulling it would run the closed branch and serve it as if the gate were open.
                 raise ApiExecutionError(
                     "API response node was gated off for these parameter values (a gate "
                     "condition upstream evaluated false)"

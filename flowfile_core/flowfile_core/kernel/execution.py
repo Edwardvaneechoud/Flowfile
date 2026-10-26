@@ -70,10 +70,9 @@ def write_parquet_for_kernel(
 ) -> None:
     """Write *lf* as parquet at *path* for a kernel to read.
 
-    The write is the ``file_write`` operation on the backend of the current execution context (``current_context``:
-    the running flow's, else *graph*'s, else the default backend's), so a local flow writes in core and a remote
-    one where its compute runs, and core never collects the rows otherwise. The file is complete when this returns.
-    A failed write raises ``RuntimeError`` naming *what*.
+    The write is the ``file_write`` operation on ``current_context(graph)``'s backend (the running flow's, else
+    *graph*'s, else the default), so core never collects the rows. The file is complete when this returns. A
+    ``ComputeError`` becomes a ``RuntimeError`` naming *what*.
     """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     directory, name = os.path.split(path)

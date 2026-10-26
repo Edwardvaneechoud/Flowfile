@@ -33,7 +33,7 @@ class RemoteExecutionError(Exception):
     bare ``Exception`` used to erase the only class signal core had. This keeps
     whatever class could be recovered on ``original_class`` (None when none could)
     while leaving the user-facing message exactly as it was. ``error_kind`` is the
-    worker's failure kind as the fetcher received it, None when it sent none.
+    worker's failure kind, None when it sent none.
     """
 
     def __init__(self, message: str, original_class: str | None = None, *, error_kind: str | None = None) -> None:
@@ -314,8 +314,8 @@ class NodeResults:
     """
     Stores the outputs of a `FlowNode`'s execution, including data, errors, and metadata.
 
-    ``model_ref`` is the model a Train Model node's fit returned, a blob held on the backend that fit it, which an
-    Apply Model node scores with; ``reset`` leaves it, as it leaves ``result_ref``.
+    ``model_ref`` is a Train Model node's fitted model, a blob held on the backend that fit it, which Apply Model
+    scores with. ``reset`` leaves it, as it leaves ``result_ref``.
     """
 
     _resulting_data: FlowDataEngine | None = None
@@ -352,18 +352,14 @@ class NodeResults:
     def artifact_is_missing(self) -> bool:
         """True when the result this node holds is gone from where it was kept.
 
-        A result with a file on the shared disk is checked there. ``example_data_path`` is the file the last run
-        produced: for a result the worker stored it is the very file ``resulting_data`` scans, for a deferred one
-        the sample its sampler task wrote in the same flow cache dir. It is set only from the backend's
-        ``result_file`` after a task-route submit and cleared before every run, so a path that no longer exists
-        means whatever is held here is a dangling scan.
-
-        A held result with no such file is asked of the backend that minted it (``exists``) when
-        ``settings.FLOWFILE_COMPUTE_PROTOCOL`` is on; with the flag off it counts as present, as does no result.
+        ``example_data_path``, when set, is checked on the shared disk. It is the file a task-route run left (the
+        stored result ``resulting_data`` scans, or a deferred result's sample) and is cleared before every run, so
+        a missing path means a dangling scan. Otherwise, with ``FLOWFILE_COMPUTE_PROTOCOL`` on, the minting
+        backend is asked (``exists``). With the flag off, or no result held, nothing is missing.
 
         Raises:
-            ComputeError: The minting backend could not answer (``ComputeUnavailable`` when the worker cannot be
-                reached). The executor records it as a node failure, never as a missing result.
+            ComputeError: The minting backend could not answer. The executor records it as a node failure, never
+                as a missing result.
         """
         if self.example_data_path is not None:
             return not os.path.exists(self.example_data_path)

@@ -1,10 +1,8 @@
 """Publish a result a backend holds to the artifact store, and fetch a published artifact onto a backend.
 
-Any node that holds a result whose digest it knows publishes it with ``publish_result``, and any node that needs a
-catalog artifact on its backend fetches it with ``fetch_artifact``. Core prepares, finalises and looks up the catalog
-row and moves no bytes: the backend copies them to the store's upload target with ``export`` and from its download
-source with ``import_uri``. A filesystem store's target or source is a ``file://`` URI, an S3 store's a presigned
-``https://`` URL, which carries its own authorisation, so neither takes a credential.
+Core handles the catalog row and moves no bytes: the backend copies them to the store's upload target with ``export``
+and from its download source with ``import_uri``. That target or source is a ``file://`` URI for the filesystem store
+or a presigned ``https://`` URL for the S3 store, which carries its own authorisation, so neither takes a credential.
 """
 
 import logging
@@ -30,10 +28,9 @@ def publish_result(
 ) -> FinalizeUploadResponse:
     """Publish the result ``ref`` that ``backend`` holds as the next version of the artifact ``request`` names.
 
-    The pending version is prepared for ``owner_id``, ``backend`` copies the result's bytes to the store's upload
-    target, and the version is finalised with ``sha256`` and ``size_bytes``, the digest and size the caller knows. A
-    copy or a finalise that fails deletes the pending version before its error propagates, so no version is left
-    without its bytes. The caller decides who may publish where; this function checks no namespace.
+    The version is finalised with the ``sha256`` and ``size_bytes`` the caller knows. A failed copy or finalise
+    deletes the pending version before the error propagates. The caller decides who may publish where; this function
+    checks no namespace.
 
     Raises:
         ArtifactUploadError: The store could not verify the bytes it was given.
@@ -64,8 +61,7 @@ def publish_result(
 def fetch_artifact(backend: ComputeBackend, name: str, version: int | None, namespace_id: int | None) -> ResultRef:
     """Hold the bytes of the artifact ``name`` on ``backend`` as a blob, and answer its reference.
 
-    The version is ``version``, the latest active one when ``None``, looked up as ``ArtifactService`` looks up a name
-    in ``namespace_id``. ``backend`` copies the bytes from the store's download source.
+    ``version`` ``None`` is the latest active version in ``namespace_id``.
 
     Raises:
         ArtifactNotFoundError: No active version matches; nothing is held.

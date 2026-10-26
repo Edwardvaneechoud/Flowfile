@@ -87,9 +87,9 @@ def _first_preview_row(node_input: FlowNode, source_handle: str) -> pl.DataFrame
 def _held_first_row(node_input: FlowNode, source_handle: str) -> pl.DataFrame:
     """First row of a run input's result, read through the backend that holds its reference.
 
-    The default output's row comes from the node's cached sample when it kept one, else from ``sample(ref, 1)``;
-    a secondary output holds no reference of its own, so its first row is read with ``bounded.head_rows`` on the
-    same backend. A node that holds no reference answers the predicted schema-only frame.
+    The default output's row is the cached sample's, else ``sample(ref, 1)``. A secondary output has no reference of
+    its own, so ``bounded.head_rows`` reads it on the same backend. Without a reference: the predicted schema-only
+    frame.
     """
     ref = node_input.results.result_ref
     if ref is None:

@@ -36,9 +36,8 @@ def spawn_flow_subprocess(
     ``extra_env`` is merged over the inherited environment for this child only;
     the parent's ``os.environ`` is never mutated. ``suppress_telemetry`` adds
     the telemetry kill switch to that merge, for runs the app itself started.
-    ``backend`` names the compute backend the run uses and is passed as
-    ``--backend``; without it the command carries none and the child decides
-    from the flow, as a scheduled run does.
+    ``backend`` is passed as ``--backend``; without it the child picks the
+    backend from the flow.
 
     Returns the child PID on success, or ``None`` on failure.
     """

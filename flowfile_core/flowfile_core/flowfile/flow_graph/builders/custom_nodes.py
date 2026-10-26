@@ -323,21 +323,17 @@ class CustomNodeBuildersMixin(GraphMixinBase):
     ) -> Callable:
         """Create the execution function for a non-kernel custom node.
 
-        A node that came from the registry runs as the ``custom_node`` operation
-        on the execution context's backend: a worker runs ``process()`` in a
-        killable subprocess that owns the dataset memory, the worker embedded in
-        this process runs it here. A class with no node file on disk (an inline
-        test class, one registered in process) exists in this process and
-        nowhere else, so it always runs on the worker embedded here, the one
-        compute that has the class. Both read the settings when the node
-        executes, so ``${name}`` references arrive resolved.
+        A node from the registry runs as the ``custom_node`` operation on the
+        execution context's backend. A class with no node file on disk (an
+        inline test class, one registered in process) exists only here, so it
+        always runs on the worker embedded in this process. Both read the
+        settings when the node executes, so ``${name}`` references arrive
+        resolved.
 
-        The operation's refs become the node's outputs the same way for every
-        backend: ``{"result": ref}`` is the node's one output; refs keyed by
-        output handle are its declared outputs, registered on
-        ``_named_outputs``, the first being the primary. A deferred ref is
-        released at once, since the engine holds its plan; a stored one stays
-        held, since its plan reads the stored file.
+        ``{"result": ref}`` is the node's one output; refs keyed by output
+        handle are its declared outputs, registered on ``_named_outputs`` with
+        the first as primary. A deferred ref is released at once, since the
+        engine holds its plan; a stored one stays held for its plan to scan.
         """
         resolved_output_names = output_names or custom_node.output_names or ["main"]
 

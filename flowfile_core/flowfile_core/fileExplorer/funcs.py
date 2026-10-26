@@ -95,8 +95,7 @@ class SecureFileExplorer:
         Args:
             start_path: Initial directory to start in
             sandbox_root: Root directory that user cannot escape from.
-                         If None, the filesystem roots bound it (``_local_filesystem_roots``,
-                         the desktop's whole machine, as ``validate_path_under_cwd`` has it).
+                         If None, the filesystem roots bound it (``_local_filesystem_roots``).
             use_relative_paths: If True, FileInfo will contain relative paths;
                                if False (default), contains absolute paths
         """

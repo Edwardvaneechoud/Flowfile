@@ -17,11 +17,10 @@ import polars as pl
 
 
 def _namespace(**members: Any) -> types.SimpleNamespace:
-    """A read-only stand-in for a module that exposes only ``members``.
+    """A stand-in for a module that exposes only ``members``.
 
-    The sandbox hands user code these in place of whole modules: a real module carries imported
-    submodules (``datetime.sys``, ``pl.config.os``) that a plain attribute walk reaches the ``os``
-    module through, so only the names listed here are ever exposed.
+    A real module carries imported submodules (``datetime.sys``, ``pl.config.os``) that reach ``os`` by
+    attribute walk, so the sandbox hands user code these instead.
     """
     return types.SimpleNamespace(**members)
 
@@ -29,8 +28,8 @@ def _namespace(**members: Any) -> types.SimpleNamespace:
 def _module_namespace(module: types.ModuleType) -> types.SimpleNamespace:
     """A namespace of ``module``'s public, non-module attributes, used for ``pl`` and its subpackages.
 
-    Polars' public API is functions, classes and dtypes; its submodules (``pl.config``, ``pl.plugins``)
-    are what reach ``os``/``sys``, so they are dropped. ``shared/tests`` proves no module survives.
+    Polars' submodules (``pl.config``, ``pl.plugins``) reach ``os``/``sys``, so they are dropped.
+    ``shared/tests`` proves no module survives.
     """
     members = {}
     for name in dir(module):
@@ -286,8 +285,8 @@ def _count(number: int, noun: str) -> str:
 def _assigns_attribute(target: ast.AST) -> bool:
     """Whether an assignment target rebinds an attribute (``pl.X = …``, ``lf.sink = …``), unpacking included.
 
-    Item assignment (``d['k'] = …``) stays allowed; only attribute rebinding is refused, which is how
-    user code would otherwise patch a shared Polars function for a later pooled task.
+    Item assignment (``d['k'] = …``) stays allowed. Attribute rebinding is refused because it is how user
+    code would patch a shared Polars function for a later task.
     """
     if isinstance(target, ast.Attribute):
         return True
@@ -492,8 +491,10 @@ class PolarsCodeParser:
             raise ValueError(f"Error executing code: {str(e)}") from e
 
     def _fresh_globals(self) -> dict[str, Any]:
-        """A copy of the sandbox globals for one executable, its builtins copied too, so no task rebinds a name
-        (``global col``, ``__builtins__[...] = ...``) for the tasks after it."""
+        """A copy of the sandbox globals for one executable, builtins included.
+
+        No task can then rebind a name (``global col``, ``__builtins__[...] = ...``) for the tasks after it.
+        """
         namespace = dict(self.safe_globals)
         namespace["__builtins__"] = dict(self.safe_globals["__builtins__"])
         return namespace

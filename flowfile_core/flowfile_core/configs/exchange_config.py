@@ -1,10 +1,9 @@
 """The exchange store's saved configuration: what the Backends page writes, read under the environment.
 
-``FLOWFILE_EXCHANGE_URI``, ``FLOWFILE_EXCHANGE_CONNECTION`` and ``FLOWFILE_EXCHANGE_MAX_ROWS`` keep winning when set, so
-a deployment's compose file pins the store. Without the URI variable, the store is what the page saved to
-``exchange_store.yaml`` under core's internal storage, read per call as the variables are, so a save takes effect on
-the next run with no restart; the row limit comes from its variable when set, else from the file.
-``settings.get_exchange_uri`` and its siblings answer from ``effective_store`` and ``effective_max_rows``.
+With ``FLOWFILE_EXCHANGE_URI`` set, it and ``FLOWFILE_EXCHANGE_CONNECTION`` replace the saved URI and connection.
+``FLOWFILE_EXCHANGE_MAX_ROWS``, when set, replaces the saved row limit. The file, ``exchange_store.yaml`` under core's
+internal storage, is read per call, so a save takes effect on the next run with no restart.
+``settings.get_exchange_*`` read through ``effective_store`` and ``effective_max_rows``.
 """
 
 from __future__ import annotations

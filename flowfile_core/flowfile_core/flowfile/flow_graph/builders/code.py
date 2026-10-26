@@ -38,8 +38,8 @@ def _user_code_engine(
     """The engine over what a Polars Code or SQL Query job answers on ``backend``.
 
     A run's result is the node's (``FlowNode.run_op``), released at once when deferred, since the engine holds its
-    plan. A schema prediction runs as the job ``<job_id>-schema``, so it never replaces the run's result on the
-    backend; its result is not the node's and is released once its columns are read.
+    plan. A schema prediction runs as ``<job_id>-schema`` so it never replaces the run's result, and is released once
+    its columns are read.
     """
     if predicting:
         ref = run_operation(backend, op, op_payload(replace(job, job_id=f"{job.job_id}-schema"))).refs["result"]
@@ -57,13 +57,10 @@ class CodeBuildersMixin(GraphMixinBase):
     def add_polars_code(self, node_polars_code: input_schema.NodePolarsCode):
         """Adds a node that executes custom Polars code.
 
-        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, the code runs once as the ``polars_code`` operation on the execution
-        context's backend, over the plans its input engines hold, and core never executes it; the node's engine is a
-        plan over the reference the backend answers, with that reference's schema. The designer's prediction is the
-        same call over empty frames of the inputs' predicted schemas, so the backend answers the columns and no rows;
-        a call while the node holds its result is such a prediction, since a run calls the function only while the
-        node holds none, and runs under a job id of its own (``_user_code_engine``). With the flag off the code runs in
-        core to build the plan.
+        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, the code runs as the ``polars_code`` operation on the execution
+        context's backend, so core never executes it. A call while the node already holds a result is a schema
+        prediction (a run calls the function only while the node holds none), made over the predicted inputs' empty
+        frames under its own job id (``_user_code_engine``). With the flag off the code runs in core to build the plan.
 
         Args:
             node_polars_code: The settings for the Polars code node.
@@ -101,13 +98,10 @@ class CodeBuildersMixin(GraphMixinBase):
     def add_sql_query(self, node_sql_query: input_schema.NodeSqlQuery):
         """Adds a node that executes a SQL query against connected data sources.
 
-        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, the query is translated once as the ``sql_query`` operation on the
-        execution context's backend, over the plans its input engines hold, and core translates no SQL; the node's
-        engine is a plan over the reference the backend answers, with that reference's schema. The designer's
-        prediction is the same call over empty frames of the inputs' predicted schemas, so the backend answers the
-        columns and no rows, under a job id of its own (``_user_code_engine``): the node's schema callback, and a call
-        while the node holds its result, since a run calls the function only while the node holds none. With the flag
-        off the query is translated in core to build the plan.
+        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, the query is translated as the ``sql_query`` operation on the
+        execution context's backend, so core translates no SQL. The schema callback, and a call while the node already
+        holds a result, are predictions over the predicted inputs' empty frames under their own job id
+        (``_user_code_engine``). With the flag off the query is translated in core to build the plan.
 
         Args:
             node_sql_query: The settings for the SQL query node.

@@ -1,36 +1,26 @@
 """Compute backends, known by id.
 
-A backend is made by a factory. Core registers its own in process with ``register_backend``; an installed
-package adds one through the ``flowfile.compute_backends`` entry-point group, where the entry point's name
-is the backend id and it loads to the factory. Entry points are scanned once, on the first lookup, and an
-in-process registration wins over an entry point of the same name. Core's own backends are built in: ``_BUILTIN``
-holds the factory of each, which imports the backend's module when it first makes one and is registered on the
-first lookup of an id nothing registered; an entry point never shadows a built-in id. ``backend`` calls a factory
-once per process and hands out that instance from then on.
+A backend is made by its factory once per process; ``backend`` hands out that instance from then on. Factories come
+from:
+
+- ``_BUILTIN``: core's own (``local``, ``worker``), registered on the first lookup of an id nothing registered.
+- ``register_backend``, in process.
+- The ``flowfile.compute_backends`` entry-point group, scanned once on the first lookup: the entry point's name is the
+  backend id and it loads to the factory. An in-process registration wins a name clash, and an entry point never
+  shadows a built-in id.
 
 A configured worker, ``worker:<name>``, is a row of core's ``compute_backends`` table (``ConfiguredBackend``): its URL,
-its bearer token, stored as secret-manager ciphertext, and the CA certificate to trust for it, if any. The first lookup
-of such an id that nothing registered and no entry point names reads the row, decrypts the token and makes a
-``WorkerBackend`` on that URL with that id, token and CA certificate; the instance is cached like every other. No row
-is a ``LookupError``. ``forget`` drops a cached instance, so the next lookup reads the row again, or fails once the row
-is gone.
+its bearer token as secret-manager ciphertext, and an optional CA certificate. Its first lookup reads the row and makes
+a ``WorkerBackend`` from it. No row is a ``LookupError``. ``forget`` drops the cached instance, so the next lookup
+reads the row again.
 
-``default_backend_id`` names the default backend, the one a ``"remote"`` flow and a call without a graph use:
-the process-wide override a headless runner sets (``set_default_override``) when there is one, else
-``FLOWFILE_COMPUTE_BACKEND`` when set, else ``"worker"`` while the ``OFFLOAD_TO_WORKER`` setting is on and
-``"local"`` when it is off; never ``"local"`` in a process that serves.
+A process that serves (the desktop sidecar, the Docker image, the pip server) is marked by ``mark_serving``. Its
+compute is the worker beside it, so its default backend is never ``local`` and a run placed on ``local`` is refused.
+The pip server has no worker beside it: in single-file mode the built-in ``worker`` is the worker embedded in this
+process.
 
-A process that serves (the desktop sidecar, the Docker image, the pip server) is marked by its entry point
-(``mark_serving``): its compute is the worker beside it, so its default backend is never the worker embedded in it,
-a run placed on ``local`` there is refused, and the ``local`` factory leaves the embedded worker's jobs to its pool.
-The pip server has no worker beside it: in single-file mode (``settings.SINGLE_FILE_MODE``, which its ``start_server``
-sets) the built-in ``worker`` is the worker embedded in this process under that id, its jobs in its pool, while a
-``worker:<name>`` row stays a ``WorkerBackend``.
-
-This module is the one place outside ``configs/settings.py`` that reads the worker settings: the offload setting
-above, and ``WORKER_URL``, the URL the built-in worker backend is made with. Every other module asks this registry,
-or the backend it holds, where compute goes and which worker it reaches (``worker_url``); ``child_env`` names the
-variables a child process needs to run on the worker embedded in its own process.
+This is the one module outside ``configs/settings.py`` that reads ``OFFLOAD_TO_WORKER`` and ``WORKER_URL``. Every
+other module asks the registry (``default_backend_id``, ``worker_url``, ``child_env``) or the backend it holds.
 """
 
 from __future__ import annotations
@@ -60,10 +50,8 @@ CONFIGURED_WORKER_PREFIX = "worker:"
 def _local_backend() -> ComputeBackend:
     """The worker embedded in this process.
 
-    A process that does not serve (a headless run, a flow built in code, a test) computes in its own process, so the
-    factory sets the worker's in-process mode before it makes the adapter; in a process that serves
-    (``mark_serving``) it leaves the mode unset, so the embedded worker's jobs run in its pool or a child, never in the
-    serving process.
+    In a process that does not serve (a headless run, a flow built in code, a test) its jobs run in this process
+    (``spawner.in_process``). In one that serves they run in the worker's pool or a child, never in the serving process.
     """
     from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
     from flowfile_worker import spawner
@@ -74,11 +62,10 @@ def _local_backend() -> ComputeBackend:
 
 
 def _worker_backend() -> ComputeBackend:
-    """The worker at ``settings.WORKER_URL``, which ``FLOWFILE_WORKER_URL`` sets, else ``WORKER_HOST`` and the port.
+    """The worker at ``settings.WORKER_URL``; in single-file mode, the worker embedded in this process.
 
-    In single-file mode it is the worker embedded in this process, made as ``local`` is and answering to ``worker``.
-    With neither ``FLOWFILE_WORKER_URL`` nor ``WORKER_HOST`` set it is the worker beside core on this host, which sees
-    core's files, so it is made with ``shares_core_disk``; at a configured address the worker declares that itself.
+    With neither ``FLOWFILE_WORKER_URL`` nor ``WORKER_HOST`` set it is the worker beside core, which sees core's files,
+    so it is made with ``shares_core_disk``. At a configured address the worker declares that itself.
     """
     if settings.SINGLE_FILE_MODE:
         embedded = _local_backend()
@@ -90,13 +77,14 @@ def _worker_backend() -> ComputeBackend:
 
 
 def _configured_worker_backend(backend_id: str) -> ComputeBackend:
-    """The worker the ``compute_backends`` row of ``backend_id`` configures, signing its calls with the row's token
-    and trusting the row's CA certificate for its TLS, when the row has one; a row marked ``shares_core_disk`` makes
-    a backend offering ``file``.
+    """The ``WorkerBackend`` the ``compute_backends`` row of ``backend_id`` configures.
+
+    It signs with the row's token, trusts the row's CA certificate, and offers ``file`` when the row is marked
+    ``shares_core_disk``.
 
     Raises:
-        LookupError: No row configures ``backend_id``, or its token no longer decrypts (the master key changed since
-            it was stored), so the backend cannot be used until it is added again.
+        LookupError: No row configures ``backend_id``, or its token no longer decrypts (the master key changed), so
+            it must be added again.
     """
     from cryptography.fernet import InvalidToken
 
@@ -149,13 +137,11 @@ def register_backend(backend_id: str, factory: BackendFactory) -> None:
 def backend(backend_id: str) -> ComputeBackend:
     """The process's instance of ``backend_id``, made by its factory on first use.
 
-    An id that nothing registered and no entry point names, starting with ``worker:``, is made from its
-    ``compute_backends`` row.
+    A ``worker:`` id with no factory is made from its ``compute_backends`` row.
 
     Raises:
-        LookupError: No factory is registered, built in or installed under ``backend_id``; the message lists the
-            known ids, built-in ones included. For a ``worker:`` id, no row configures it, or its token no longer
-            decrypts.
+        LookupError: No factory is known for ``backend_id`` (the message lists the known ids), or a ``worker:`` id
+            has no row or a token that no longer decrypts.
     """
     with _lock:
         instance = _instances.get(backend_id)
@@ -207,20 +193,17 @@ def default_backend() -> ComputeBackend:
 def fallback_backend_id() -> str:
     """The id of the backend a node goes to when the one its settings name cannot run it.
 
-    The default backend in a process that serves; in one that does not (a headless run, Flowfile in Python), the worker
-    embedded in this process, ``"local"``, since a headless runner makes its run's own backend the default
-    (``set_default_override``).
+    The default backend in a process that serves. In one that does not it is ``"local"``, since a headless runner
+    makes its run's own backend the default (``set_default_override``).
     """
     return default_backend_id() if _serving else LOCAL_BACKEND_ID
 
 
 def set_default_override(backend_id: str | None) -> str | None:
-    """Make ``backend_id`` the default backend of this process, ahead of ``FLOWFILE_COMPUTE_BACKEND`` and the flag.
+    """Make ``backend_id`` this process's default backend, ahead of ``FLOWFILE_COMPUTE_BACKEND`` and the flag.
 
-    The headless flow runners set it to the worker embedded in their process for the run they make. ``None`` removes
-    the override, so
-    the default follows the environment variable and the flag again. Returns the override this call replaced
-    (``None`` when there was none); passing it back here undoes the call.
+    The headless flow runners set it for their run; ``None`` removes it. Returns the override this call replaced
+    (``None`` for none), which passed back undoes the call.
     """
     global _default_override
     with _lock:

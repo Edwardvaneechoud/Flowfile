@@ -33,38 +33,30 @@ if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 
 IN_CORE_NODE_TYPES = frozenset({"output", "api_response", "flow_output", "run_flow"})
-"""Node types whose result is already computed when their function returns: a sink's result is the input it
-wrote, a ``run_flow`` node's the output of the child flow it ran. They are submitted never wide and without an inline
-preview, and materialised only when they read an input that crossed from another backend, so otherwise no backend
-computes or samples their rows during the run."""
+"""Node types whose result is computed when their function returns: a sink's is the input it wrote, a ``run_flow``
+node's the child flow's output. They are never wide, ask no preview, and are materialised only for a boundary input,
+so otherwise no backend computes or samples their rows during the run."""
 
 
 def is_narrow_transform(node: FlowNode) -> bool:
     """Whether ``node`` maps rows without reshaping data across them, by its template's ``transform_type``.
 
-    The node templates mark the narrow types (select, filter, formula, sample, union and the like), and a custom
-    node declares its own in its manifest. A node without a template default (manual input, the readers) is
-    not narrow.
+    A custom node declares its own in its manifest. A node without a template default (manual input, the readers)
+    is not narrow.
     """
     return node.node_default is not None and node.node_default.transform_type == "narrow"
 
 
 def hints_for(node: FlowNode, context: ExecutionContext, performance_mode: bool) -> SubmitHints:
-    """The hints ``node`` submits its plan with; the backend's materialisation policy reads them.
+    """The hints ``node`` submits its plan with, which the backend's materialisation policy reads.
 
-    - ``must_materialise``: the node caches its results (``cache_results``) and is not one of
-      ``IN_CORE_NODE_TYPES``; or it reads an input that crossed from another backend (``_boundary_inputs``), whatever
-      its type, so no result refers to the exchange store's prefix once the run removes it.
-    - ``wide``: the node is not a narrow transform (``is_narrow_transform``) and not one of ``IN_CORE_NODE_TYPES``.
-    - ``fanout``: how many distinct downstream nodes read the result. No backend's policy reads it yet.
-    - ``preview_rows``: the context's ``preview_rows``, or ``DEFAULT_PREVIEW_ROWS`` when the context keeps none
-      but the node still needs a preview. ``None`` in ``performance_mode``, except for a ``cache_results`` node,
-      which keeps its example data in every mode, and ``None`` for ``IN_CORE_NODE_TYPES``.
-
-    Args:
-        node: The node about to submit.
-        context: The run's execution context.
-        performance_mode: The run's Performance mode flag, as the executor received it.
+    - ``must_materialise``: a ``cache_results`` node outside ``IN_CORE_NODE_TYPES``, or any node reading an input
+      that crossed from another backend (``_boundary_inputs``), so no result refers to the exchange prefix once the
+      run removes it.
+    - ``wide``: neither ``is_narrow_transform`` nor in ``IN_CORE_NODE_TYPES``.
+    - ``fanout``: the number of distinct downstream nodes. No backend's policy reads it yet.
+    - ``preview_rows``: the context's, else ``DEFAULT_PREVIEW_ROWS``. ``None`` for ``IN_CORE_NODE_TYPES`` and in
+      *performance_mode*, except for a ``cache_results`` node.
     """
     in_core = node.node_type in IN_CORE_NODE_TYPES
     caches = node.node_settings.cache_results
@@ -149,30 +141,24 @@ class NodeExecutor:
         """
         Main execution entry point.
 
-        Called by FlowNode.execute_node(). Uses _decide_execution() as the
-        single source of truth for whether the node should run; when it runs,
-        the node submits its plan with ``hints_for`` to the backend of the
-        current execution context, whose policy decides how it runs.
+        Called by FlowNode.execute_node(). ``_decide_execution()`` is the single
+        source of truth for whether the node runs. When it runs, the node submits
+        its plan with ``hints_for`` to the current context's backend, whose policy
+        decides how.
 
-        When the decision cannot be made because asking the backend about a cached
-        result failed (any ``ComputeError``: ``ComputeUnavailable`` for a worker that
-        cannot be reached, ``VersionMismatch`` for one running other versions), the
-        node fails through the same path as a failed run: its previous results are
-        cleared and ``_handle_error`` records the typed message. The node is not run,
-        neither on the worker nor in core, and the next run that executes it clears
-        the error again.
-
-        A node that fails keeps the exception it failed with (``_handle_error``), and
-        until the next run clears it every read of the node (``get_resulting_data``)
-        raises that exception, never the frame the run built before it failed.
+        A ``ComputeError`` while deciding (asking a backend about a cached result)
+        fails the node through the normal error path, its previous results cleared.
+        The node is not run, on the worker or in core. A failed node keeps its
+        exception, and every read of it (``get_resulting_data``) raises it until the
+        next run clears it.
 
         Args:
             reset_cache: Force cache invalidation
             performance_mode: Skip example data generation for speed
             retry: Allow retry on recoverable errors
             node_logger: Logger for this node's execution
-            unreachable: The error the handshake of the node's placed backend raised: the node fails with it through
-                the same path, nothing is decided or sent.
+            unreachable: The error the handshake of the node's placed backend raised. The node fails with it and
+                nothing is decided or sent.
         """
         if node_logger is None:
             raise ValueError("node_logger is required")
@@ -267,25 +253,19 @@ class NodeExecutor:
         """
         Single source of truth for whether a node runs.
 
-        A ``cache_results`` node skips while the run's backend still holds the rows its
-        last run stored: the decision asks ``exists`` of the stored result the node holds
-        under its current hash (``FlowNode.held_result``). A node holding no result for its
-        current hash on the run's backend has no cache. A result held as a deferred plan is
-        no cache either, so a cached node holding one follows the ordinary rules below: in
-        Development mode it is skipped after a successful run, and Performance mode reruns it.
+        A ``cache_results`` node skips while the run's backend still ``exists`` the stored
+        result the node holds under its current hash (``FlowNode.held_result``). A node
+        holding none has no cache. A deferred plan is no cache either, so such a node
+        follows the ordinary rules below. A cached node whose last run failed reruns
+        anyway: that clears the error, and ``FlowNode._do_execute`` reads the stored
+        result back.
 
-        A cached node whose last run failed reruns even when the backend still holds its
-        result: skipping it would keep the failed run's error on the node, while running it
-        clears that error and ``FlowNode._do_execute`` reads the stored result back rather
-        than recomputing it.
-
-        Whether the held result vanished is asked only of a node that has run with its current setup, the one the
-        "already ran" rule would skip, so a node reset by a move to another backend never asks the backend it left.
+        Only a node that has run with its current setup is asked whether its result
+        vanished, so a node reset by a move to another backend never asks the one it left.
 
         Raises:
-            ComputeError: Asking the backend whether the stored result still exists
-                failed (``ComputeUnavailable`` when the worker cannot be reached). ``execute``
-                records this as a node failure; it is never read as a missing cache.
+            ComputeError: Asking the backend whether the stored result exists failed.
+                ``execute`` records it as a node failure, never as a missing cache.
         """
         if self.node.node_template.node_group == "output":
             return ExecutionDecision(True, InvalidationReason.OUTPUT_NODE)
@@ -308,7 +288,7 @@ class NodeExecutor:
         if self._source_file_changed(state):
             return ExecutionDecision(True, InvalidationReason.SOURCE_FILE_CHANGED)
 
-        # A vanished result outranks the "already ran" skip below: skipping would hand downstream a dangling plan.
+        # A vanished result outranks the "already ran" skip: skipping would hand downstream a dangling plan.
         if state.has_run_with_current_setup and self.node.results.artifact_is_missing():
             return ExecutionDecision(True, InvalidationReason.CACHE_MISSING)
 
@@ -438,13 +418,11 @@ class NodeExecutor:
     ) -> None:
         """Handle execution errors with retry logic.
 
-        A missing-file error from Polars reruns the node's inputs and then the node once, when ``retry`` is set. With
-        ``settings.FLOWFILE_COMPUTE_PROTOCOL`` off the message alone counts as an input's file gone, as the results are
-        core's own files. With it on an input must also hold a result that is gone (``NodeResults.artifact_is_missing``,
-        which asks the backend that minted it); otherwise the error is the node's own and it fails with it, the inputs'
-        results kept. With it on an input holding a result for its current setup (``FlowNode.held_result``) reruns on
-        that result's backend, and an input the node reads from another backend crosses through its edge again when the
-        node retries; any other input reruns where the node runs, which composes it into its plan.
+        With ``retry`` set, a Polars missing-file error reruns the node's inputs, then the node once. With
+        ``settings.FLOWFILE_COMPUTE_PROTOCOL`` off the message alone is enough, the results being core's own files.
+        With it on, an input must also hold a result that is gone (``NodeResults.artifact_is_missing``). Otherwise
+        the error is the node's own and the inputs' results are kept. An input reruns on the backend that holds its
+        result for its current setup (``FlowNode.held_result``), else where the node runs.
         """
         error_str = str(error)
         state.mark_failed(error_str)

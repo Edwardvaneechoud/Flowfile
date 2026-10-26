@@ -94,9 +94,8 @@ class CloudStorageBuildersMixin(GraphMixinBase):
     def add_cloud_storage_reader(self, node_cloud_storage_reader: input_schema.NodeCloudStorageReader) -> None:
         """Adds a cloud storage read node to the flow graph.
 
-        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a plain read takes its schema from the backend the reader runs on, which
-        resolves the read's connection: a worker in its own process, the embedded worker in this one. A change read,
-        and every read with the flag off, resolves its schema in core.
+        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a plain read takes its schema from the reader's backend, which resolves
+        the read's connection. A change read, and every read with the flag off, resolves its schema in core.
 
         Args:
             node_cloud_storage_reader: The settings for the cloud storage read node.

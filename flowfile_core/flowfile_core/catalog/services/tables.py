@@ -146,7 +146,7 @@ def catalog_table_location(table_path: str, namespace_id: int | None) -> str | N
     key = posixpath.normpath(parts.path)
     if not key.startswith(prefix):
         return None
-    # Rebuilt from the root and the normalised key, yet must equal what was sent: object keys keep "." literally
+    # The rebuilt location must equal what was sent: object keys keep "." literally.
     dir_name = key[len(prefix) :]
     location = join_catalog_uri(target.base, dir_name)
     if not dir_name or "/" in dir_name or location != table_path.rstrip("/"):
@@ -318,10 +318,9 @@ class TableService:
     ) -> tuple[list[dict[str, str]], int, int, int]:
         """Read schema, row_count, column_count, size_bytes from a table.
 
-        When *storage* is set the table is in object storage and the worker reads it; so it does a managed local table
-        when catalog I/O goes to the worker (``uses_worker``). A worker it cannot reach is ``ComputeUnavailable``,
-        never a read here instead. An external local table, whose bare name the worker's routes cannot resolve, is
-        read in this process.
+        The worker reads an object-storage table (*storage* set), and a managed local table when ``uses_worker()``;
+        an unreachable worker is ``ComputeUnavailable``, never a read here instead. An external local table, whose
+        bare name the worker's routes cannot resolve, is read in this process.
         """
         is_cloud = storage is not None
         if is_cloud or (uses_worker() and _is_managed_table_path(table_path)):

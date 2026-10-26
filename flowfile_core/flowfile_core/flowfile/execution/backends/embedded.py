@@ -1,26 +1,18 @@
 """The adapter to the worker embedded in this process: the worker's ``/v1`` bodies called directly, no wire.
 
-``EmbeddedWorkerBackend`` is ``WorkerBackend``'s ``/v1`` half with the wire replaced by a call. Each method builds the
-request model its route takes, as the worker's own class, calls the function in ``flowfile_worker.service`` that the
-route calls, and reads the answer as ``WorkerBackend`` reads the route's: the reference shape, the job handle, the
-keying of an operation's outputs and the decoding of a result's location are the protocol's, unchanged, so a
-reference this backend mints is a worker's reference under this process's id. Nothing is serialised but the plan,
-which crosses as ``serialize()`` bytes so the one ``funcs._load_plan`` serves every placement, and
-``funcs.submit_result`` is the one submit, which makes the worker's materialisation policy this backend's. No token,
-no version header, no socket, no port, no handshake gate, no flag read: the handshake runs through ``capabilities()``
-and the probe jobs like any backend's and finds this process's own versions.
+``EmbeddedWorkerBackend`` is ``WorkerBackend``'s ``/v1`` half with the wire replaced by a call into
+``flowfile_worker.service``. Each method passes the worker's own request model and reads the answer as
+``WorkerBackend`` reads the route's, so its references are a worker's references under this process's id. The plan
+crosses as ``serialize()`` bytes, so ``funcs.submit_result`` is the one submit and its materialisation policy is this
+backend's. There is no token, socket or handshake gate; the handshake runs through ``capabilities()`` and the probe
+jobs like any backend's.
 
-Where a job runs is the host's choice, not this backend's: with ``flowfile_worker.spawner.in_process`` set, every
-job runs in the calling process, as a library host sets it; left unset, the worker's pool or a child runs it, as a
-serving host leaves it. Nothing of the worker is imported until the first call (``_service``). Every ``HTTPException``
-a body raises is mapped to the typed errors (``_typed``): 404 is ``ResultMissing``, 422 ``PlanRejected``, a 500 that
-carries a child's ``status`` goes through ``errors.worker_failure``, and any other code is a ``TaskFailed`` naming it.
-The four kinds the worker still serves on its task routes, the Delta write, merge and SCD2 write and the
-visualisation session, run here through the worker's own job runner (``service._run``) with the operation and the
-keyword arguments those routes build, and through its session registry, so every kind the worker declares runs on this
-backend too. A custom node whose class has no node file, which exists in this process and
-nowhere else, runs its ``process`` here and its outputs are held as the worker holds a child's. The embedded worker is
-on core's host by definition, so it reads and writes ``file`` whatever ``FLOWFILE_WORKER_LOCAL_FILES`` says.
+Where a job runs is the host's choice: with ``flowfile_worker.spawner.in_process`` set, in the calling process; unset,
+in the worker's pool or a child. Nothing of the worker is imported until the first call (``_service``).
+
+The Delta writes and ``viz_session``, which the worker serves on its task routes, run through ``service._run`` and the
+session registry. A custom node whose class has no node file runs ``process`` in this process. The embedded worker is
+on core's host, so it reads and writes ``file`` whatever ``FLOWFILE_WORKER_LOCAL_FILES`` says.
 """
 
 from __future__ import annotations
@@ -110,35 +102,20 @@ def _service() -> worker_service:
 class EmbeddedWorkerBackend(_WorkerReferences):
     """``ComputeBackend`` for the worker embedded in this process, reached by a direct call to its ``/v1`` bodies.
 
-    Its id is ``local``, the id of the compute a process without a worker beside it runs on; a reference or a job
-    handle of any other id is refused with ``ForeignRef``. Its jobs run where the host set
-    ``flowfile_worker.spawner.in_process``: in this process for a library host, in the worker's pool or a child for a
-    serving one. ``capabilities()`` is the embedded worker's own answer, every kind the worker declares among its
-    ``operations``, with ``file`` among its read and write schemes whatever ``FLOWFILE_WORKER_LOCAL_FILES`` says: the
-    embedded worker is on core's host.
+    Its id is ``local``; a reference or job handle of another id is refused with ``ForeignRef``. ``capabilities()``
+    is the embedded worker's own, with ``file`` added to both scheme sets.
 
-    Materialisation policy: the worker's, applied by ``funcs.submit_result``: a plan is written to a file when
-    ``hints.must_materialise`` is set, or when it is ``wide`` and a preview is asked for (``preview_rows`` is not
-    ``None``); every other plan is held deferred, as the bytes it was sent as. ``fanout`` is not read. With
-    ``preview_rows`` set the sample comes inline from the same job. A reference carries the worker's columns, read with
-    ``safe_eval_pl_type``, and a ``WorkerLocation`` JSON as ``location``: ``plan_for`` decodes it without a call, a
-    ``pl.scan_ipc`` of the file the worker wrote or the deferred plan deserialised, and ``sample``, ``count``,
-    ``exists``, ``release`` and ``export`` call the bodies that serve ``/v1/results/{id}``. ``import_uri`` holds a scan
-    of the URI as a deferred result under a fresh id, or with ``kind="blob"`` a copy of the bytes at a ``file://``
-    URI or a presigned ``https://`` URL. A blob is refused by ``plan_for``, ``sample`` and ``count`` with
-    ``OperationUnsupported``, as ``submit`` refuses one among its inputs.
+    Materialisation policy is the worker's (``funcs.submit_result``): a plan is written to a file when
+    ``hints.must_materialise`` is set, or when it is ``wide`` and ``preview_rows`` is not ``None``. Every other plan is
+    held deferred. ``fanout`` is not read. A reference carries a ``WorkerLocation`` JSON, which ``plan_for`` decodes
+    without a call. A blob is refused with ``OperationUnsupported`` by ``plan_for``, ``sample``, ``count`` and as a
+    ``submit`` input.
 
-    ``run_op`` runs the five reads, ``fuzzy_join``, ``random_split``, ``custom_node``, ``ml_train``, ``ml_apply``,
-    ``polars_code``, ``sql_query`` and the file, database and cloud writes through the body of ``POST /v1/ops/<kind>``,
-    the payload's ``job_id`` the job's, so ``status`` and ``cancel`` reach it; the refs are keyed as ``WorkerBackend``
-    keys them, each output the stored result ``<job_id>_<i>``, a training's model the blob ``<job_id>_0``, a Kafka
-    read's offsets and a training's digest, size and type as ``metadata``, a write's none. The three Delta kinds run as
-    the job the payload's ``job_id`` names through the worker's own job runner, with the operation and the keyword
-    arguments their task routes build, no refs and the Delta report as ``metadata``; ``viz_session`` is one request
-    to the worker's session registry, its answer the ``metadata`` in the shape the visualisation routes answer. A
-    custom node whose class has no node file runs ``process`` in this process and holds each output as a stored result
-    ``<job_id>_<i>``. ``cancel`` of a job that already ended, or of one running in this process, which nothing stops,
-    is left as it is.
+    ``run_op`` runs the ``/v1/ops`` and Delta kinds as the job the payload's ``job_id`` names, so ``status`` and
+    ``cancel`` reach it. Its refs are keyed as ``WorkerBackend`` keys them: each output the stored result
+    ``<job_id>_<i>``, a training's model the blob ``<job_id>_0``. ``metadata`` is a Kafka read's offsets, a training's
+    digest, size and type, a Delta write's report or a ``viz_session`` answer; a write answers no refs. ``cancel``
+    leaves a job that already ended, or one running in this process, as it is.
     """
 
     id = LOCAL_BACKEND_ID
@@ -191,18 +168,16 @@ class EmbeddedWorkerBackend(_WorkerReferences):
     def run_op(self, op: OperationKind, payload: OpPayload) -> OpResult:
         """Run ``op`` through the body of ``POST /v1/ops/{kind}`` and key its refs as ``WorkerBackend`` does.
 
-        The payload is unpacked before anything runs, so an empty one is a ``ValueError`` here too; the body is built
-        as the worker's own request model. A training's ``metadata`` is the model's digest, size and type, a Kafka
-        read's the offsets to commit, a Delta write's its report; a write answers no refs. The Delta kinds and
-        ``viz_session`` take the worker's job runner and session registry (``_delta``, ``_viz_session``), a custom
-        node with no node file runs here (``_custom_node_here``).
+        The payload is unpacked before anything runs, so an empty one is a ``ValueError``. The Delta kinds and
+        ``viz_session`` go to the worker's job runner and session registry (``_delta``, ``_viz_session``). A custom node
+        with no node file runs here (``_custom_node_here``).
 
         Raises:
             ForeignRef: An ``ml_apply`` model another backend minted.
             PlanRejected: The worker could not load the operation's plan, or the body refused it before running.
             ResultMissing: An ``ml_apply`` model the worker no longer holds.
             TaskFailed: The operation failed.
-            RuntimeError: The visualisation session could not answer, as the worker's route fails the request.
+            RuntimeError: The visualisation session could not answer.
             ValueError: A custom node did not return one of its declared outputs.
         """
         service = _service()
@@ -397,8 +372,9 @@ class EmbeddedWorkerBackend(_WorkerReferences):
         _call(_service().release, ref.result_id)
 
     def plan_for(self, ref: ResultRef) -> pl.LazyFrame:
-        """The leaf that reads ``ref``, decoded from its location without a call: a scan of the file the worker
-        wrote, or the deferred plan it holds.
+        """The leaf that reads ``ref``, decoded from its location without a call.
+
+        A scan of the file the worker wrote, or the deferred plan it holds.
 
         Raises:
             ForeignRef: Another backend minted ``ref``.
@@ -437,8 +413,9 @@ class EmbeddedWorkerBackend(_WorkerReferences):
         credential: CredentialRef | None,
         kind: Literal["table", "blob"] = "table",
     ) -> ResultRef:
-        """Hold a scan of the parquet at ``uri`` as a deferred result under a fresh id, with the ``schema`` and
-        ``row_count`` given; with ``kind="blob"``, a copy of the bytes at ``uri`` as a blob.
+        """Hold a scan of the parquet at ``uri`` as a deferred result under a fresh id, or a blob of its bytes.
+
+        The ``schema`` and ``row_count`` are the caller's; ``kind="blob"`` makes a blob.
 
         Raises:
             PlanRejected: The worker refused the URI's scheme for a blob.
@@ -481,8 +458,7 @@ class EmbeddedWorkerBackend(_WorkerReferences):
     def task_result(self, handle: JobHandle) -> Any:
         """What the job ``handle`` names reported as its result (its status's ``results``); ``None`` until done.
 
-        Not part of the protocol, as on ``WorkerBackend``: the custom-node dry run starts its job on the worker's task
-        route and reads the job's result here once ``status`` says it is done.
+        Not part of the protocol: the custom-node dry run reads its job's result here once ``status`` says it is done.
 
         Raises:
             ForeignRef: Another backend's handle.
@@ -508,11 +484,10 @@ class EmbeddedWorkerBackend(_WorkerReferences):
     def _delta(
         self, write: DeltaWritePayload | DeltaMergePayload | DeltaScd2Payload, operation: str, kwargs: dict[str, Any]
     ) -> OpResult:
-        """Run a Delta ``operation`` over the payload's plan as the worker's task route would; its report is the
-        metadata.
+        """Run a Delta ``operation`` over the payload's plan as its task route would; its report is the metadata.
 
-        The destination is ``_delta_destination``'s: a catalog table by identity, resolved under the worker's own
-        root, or the payload's path. The job is filed under the cache path the task route gives such a task.
+        The destination is ``_delta_destination``'s: a catalog table by identity, or the payload's path. The job is
+        filed under the cache path the task route gives such a task.
         """
         file_ref = str(_service().result_path(write.flow_id, write.job_id))
         kwargs = {**_delta_destination(write), **kwargs}
@@ -549,10 +524,9 @@ class EmbeddedWorkerBackend(_WorkerReferences):
     def _viz_session(self, request: VizSessionPayload) -> OpResult:
         """Answer one Graphic Walker request in the worker's visualisation session over the payload's plan.
 
-        The session registry holds the plan lazily in a child of its own under the session key, as it does for a
-        worker's route; the answer is shaped as ``/catalog/visualize_fields`` and ``/catalog/visualize_query`` shape
-        theirs, a ``ValueError`` or any other failure of the request as its ``error``. A session that cannot be opened
-        or is busy fails the request as the route fails it, the ``RuntimeError`` the analysis routes answer as 502.
+        The answer is shaped as ``/catalog/visualize_fields`` and ``/catalog/visualize_query`` shape theirs, with a
+        failure of the request as its ``error``. A session that cannot be opened or is busy raises ``RuntimeError``,
+        which the analysis routes answer as 502.
         """
         from flowfile_worker.viz_sessions import viz_session_registry
 
@@ -576,13 +550,11 @@ class EmbeddedWorkerBackend(_WorkerReferences):
     def _custom_node_here(self, job: CustomNodePayload) -> OpResult:
         """Run ``process`` of a custom node whose class has no node file in this process and hold its outputs.
 
-        The instance is built from the payload's ``settings_values`` and, when the payload names a user, reads that
-        user's secrets through core's secret store as ``process`` accesses them. The refs are ``{"result": ref}`` for
-        one frame, one per declared output keyed by its output handle for a dict of them, none otherwise; each frame is
-        collected, then written to the file the worker gives the output ``<job_id>_<i>`` and held with that file's
-        columns and rows, as the worker's child writes them. An output that fails to be written releases the outputs
-        held before it and removes what it wrote, so a failed node holds nothing; collecting first is what makes that
-        hold, since a failing ``sink_ipc`` may create its file after it raised, past the removal.
+        With a payload user, ``process`` reads that user's secrets through core's secret store. The refs are
+        ``{"result": ref}`` for one frame, one per declared output keyed by output handle for a dict, none otherwise.
+        Each output is held as the stored result ``<job_id>_<i>``. A failed write releases the outputs held before it
+        and removes its file, so a failed node holds nothing. Frames are collected before writing because a failing
+        ``sink_ipc`` may create its file after the removal.
 
         Raises:
             ValueError: ``process`` returned a dict without one of the declared outputs.
@@ -629,7 +601,9 @@ def _call(body: Callable[..., Any], *args: Any) -> Any:
 
 
 def _typed(exc: HTTPException) -> ComputeError:
-    """The typed error for the ``HTTPException`` a ``/v1`` body raised, as ``WorkerBackend`` reads the route's answer
-    (``_v1_error``): 404 ``ResultMissing``, 422 ``PlanRejected``, a child's 500 through ``worker_failure``, any other
-    code a ``TaskFailed`` naming it."""
+    """The typed error for an ``HTTPException`` a ``/v1`` body raised, mapped by ``_v1_error`` as a route's answer is.
+
+    404 is ``ResultMissing``, 422 ``PlanRejected``, a child's 500 goes through ``worker_failure``, and any other code
+    is a ``TaskFailed`` naming it.
+    """
     return _v1_error(exc.status_code, exc.detail, answered_by="The embedded worker")

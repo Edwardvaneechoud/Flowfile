@@ -1,29 +1,17 @@
-"""The worker backend: core's client of ``flowfile_worker`` over the worker's task routes.
+"""The worker backend: core's client of ``flowfile_worker``.
 
-It runs everything through the transport in ``flow_data_engine/subprocess_operations``, against the worker at its
-``url``: a plan or an operation becomes a worker task started by the fetcher core uses for it, the status, clear and
-cancel routes follow a task, and a stored result stays in the Arrow IPC file the task wrote. Core and the worker
-share a disk, so schemas, row counts and samples of a stored result are read from that file here, not sent over the
-wire. ``submit`` stores a plan or keeps it deferred in this process; the class docstring has the policy.
+It speaks one of two route families, chosen by ``settings.FLOWFILE_COMPUTE_PROTOCOL`` (read on each call):
 
-With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on, ``submit``, ``status``, ``cancel`` and ``capabilities`` speak the
-worker's versioned ``/v1`` routes instead, and the worker holds what ``submit`` returns, whether stored or deferred:
-its schema, row count and samples come over the wire, never from a file core opens. ``submit`` goes over
-``WS /v1/ws/submit``, and to ``POST /v1/submit`` when the worker declares no such socket, or the socket cannot be opened
-or the plan not sent. ``run_op``
-runs the reads, ``fuzzy_join``, ``random_split``, ``custom_node``, ``ml_train``, ``ml_apply`` and the file, database
-and cloud writes over ``POST /v1/ops/{kind}``, whose outputs the worker holds as it holds a stored submit, a trained
-model as a blob, a write none; the Delta writes and ``viz_session`` stay on the task routes. ``polars_code`` and
-``sql_query`` have no task route and go over ``POST /v1/ops/polars_code`` and ``POST /v1/ops/sql_query`` in either flag
-state, the result held as a submit's is: deferred, as its plan, for code that answered a LazyFrame over sources, stored
-for code that answered a DataFrame or a LazyFrame over rows in memory.
-``import_uri`` asks the worker to hold a scan of the URI (``POST /v1/results/{id}/import``). A result is read and
-exported over the routes that minted it, whatever the flag says when it is read: a ``/v1`` result is exported by a
-child on the worker (``POST /v1/results/{id}/export``), a task-route result by a worker task running the same child.
-A blob, a file of bytes that is not rows, is held by the worker over ``/v1``: ``import_uri(kind="blob")`` has the
-worker copy or fetch it and ``export`` has it copy or ``PUT`` it. Over the task routes a blob is a file on the shared
-disk, a model a training staged in the flow's cache directory or the path a ``file://`` import names, which ``export``
-copies to a ``file://`` URI in core. ``plan_for``, ``sample`` and ``count`` refuse a blob before any call.
+- Task routes (flag off): each plan or operation is a worker task started by the fetcher core uses for it
+  (``flow_data_engine/subprocess_operations``). A stored result stays in the Arrow IPC file the task wrote, and core
+  reads its schema, row count and samples from that file over the disk it shares with the worker.
+- ``/v1`` routes (flag on): the worker holds every result, stored or deferred, and answers its schema, row count and
+  samples over the wire. ``submit`` goes over ``WS /v1/ws/submit``, else ``POST /v1/submit``, and most operations
+  over ``POST /v1/ops/{kind}``.
+
+``polars_code`` and ``sql_query`` have no task route and use ``/v1`` in either flag state. The Delta writes and
+``viz_session`` always use the task routes. A result is read and exported over the routes that minted it, whatever
+the flag says when it is read. See docs/for-developers/compute-protocol.md.
 """
 
 from __future__ import annotations
@@ -185,7 +173,7 @@ _HEADER_VALUE = re.compile(r"[\t\x20-\x7e\x80-\xff]*")
 _OUTPUT_SEPARATOR = "#"
 _SPLIT_RANK = "__split_rank__"
 _NO_FLOW = -1
-# A proxy may keep the connection of a refused upgrade open; websockets' default would wait 10 s for it to close
+# A proxy may hold a refused upgrade's connection open; websockets would wait 10 s for it to close
 _SOCKET_CLOSE_TIMEOUT = 1.0
 _V1_OPERATIONS = frozenset(
     {
@@ -227,8 +215,11 @@ class _DeferredPlan:
 
 
 class _WorkerReferences:
-    """The references and job handles of a worker's ``/v1`` half, as ``WorkerBackend`` and ``EmbeddedWorkerBackend``
-    both mint and check them: each subclass sets ``id``, which they carry and are checked against."""
+    """Minting and checking of a worker's ``/v1`` references and job handles.
+
+    Shared by ``WorkerBackend`` and ``EmbeddedWorkerBackend``. Each subclass sets ``id``, which they carry and are
+    checked against.
+    """
 
     id: str
 
@@ -276,91 +267,29 @@ class _WorkerReferences:
 
 
 class WorkerBackend(_WorkerReferences):
-    """``ComputeBackend`` for ``flowfile_worker``, built on the worker's existing routes.
+    """``ComputeBackend`` for ``flowfile_worker``; every call goes to the worker at ``url``.
 
-    ``url`` is the base URL of the worker this backend runs on; every transport call it makes goes there. The registry's
-    built-in worker backend is made with the URL core's worker settings configure, and a backend made on another URL
-    reaches that worker instead. The handshake checks each backend once per process, on its first use: the verdict is
-    this instance's, and a call that names ``url`` alone gates on it too while it owns the URL (``handshake.owns``).
+    Constructor arguments:
 
-    ``backend_id`` is the id the backend answers to, ``"worker"`` for the built-in one and ``worker:<name>`` for a
-    configured one: the references and job handles it makes carry it, and it refuses those of any other id.
-    ``token`` is the worker's own bearer token, which every ``/v1`` request and the ``/v1`` submit socket's upgrade
-    carry as ``X-Flowfile-Internal``, and ``capabilities`` too in both flag states; ``None`` (the built-in backend)
-    signs them with the process's internal token. The task routes always sign with the process's token; the handshake
-    reads ``capabilities`` and runs its probe jobs through this backend, so each signs as that call does. A token that
-    is no header value (``is_header_value``) fails each call it would sign as a ``TaskFailed`` naming ``TOKEN_RULE``,
-    before any HTTP or socket client is handed it, so no message, log line or traceback carries it.
+    - ``backend_id``: the id it answers to, ``"worker"`` built in or ``worker:<name>`` configured. Its refs and
+      handles carry it, and it refuses those of any other id.
+    - ``token``: the worker's own token, sent as ``X-Flowfile-Internal`` by ``capabilities``, every ``/v1`` request
+      and the ``/v1`` submit socket. ``None`` signs with the process's internal token, as the task routes always do.
+      A token that is no header value (``is_header_value``) fails each call as a ``TaskFailed`` naming
+      ``TOKEN_RULE`` before any client is handed it, so no message or log line carries it.
+    - ``ca_cert``: the PEM of the CA to verify an ``https://`` worker against (``trust_ca``). ``None`` uses the public
+      CAs and drops a CA an earlier backend on ``url`` was given.
+    - ``shares_core_disk``: the worker sees core's files, so ``capabilities`` adds ``file`` to its schemes.
 
-    ``ca_cert`` is the PEM of the CA to verify an ``https://`` worker's certificate against when it is not public (a
-    self-signed worker certificate is its own); the backend hands it to the transport (``trust_ca``) for its ``url``,
-    so the task routes, the handshake gate, the ``/v1`` requests, ``capabilities`` and both submit sockets trust it,
-    and a worker whose certificate it does not verify is unreachable. ``None`` verifies against the public CAs and
-    drops a CA an earlier backend on ``url`` was given, so a worker removed and added again without one is not
-    verified against the certificate it was added with before.
+    Materialisation policy: ``submit`` stores a plan when ``hints.must_materialise`` is set, or when it is ``wide``
+    and a preview is asked for (``preview_rows`` not ``None``), so the preview and the consumers share one
+    computation. Every other plan stays deferred: with no preview (Performance mode) nothing reads a wide plan before
+    the writers do. ``fanout`` is not read yet.
 
-    Materialisation policy: ``submit`` stores a plan on the worker when ``hints.must_materialise`` is set, or when
-    the plan is ``wide`` and a preview is asked for (``preview_rows`` is not ``None``); every other plan stays
-    deferred. A wide plan is stored so its preview and its consumers read rows computed once; with no preview
-    asked (Performance mode) nothing reads them before the run's writers do, so it stays a plan. ``fanout`` is not
-    read yet.
-
-    - Stored, ``"materialised"``: a worker store task wrote the rows to an Arrow IPC file, which the worker keeps
-      until the task is cleared. ``result_id`` is the worker task id, ``location`` the file's path as UTF-8; the
-      inline sample, ``sample``, ``count`` and ``plan_for`` (a ``pl.scan_ipc``) read that file. A custom node's
-      outputs (``run_op``) add ``#<output name>`` to the task id and share the task, so releasing one releases
-      them all.
-    - ``"deferred"``: this backend holds the plan object in process, unserialised, and ``location`` is the result
-      id as UTF-8. ``plan_for`` returns the plan itself, so a consumer's plan composes on it; the inline sample and
-      ``sample(ref, n)`` run a worker sampler task over it, filed under ``result_id``; ``count`` runs the worker's
-      count task. Those tasks serialise the plan when they send it. ``exists`` is true while this backend holds
-      the plan, and ``release`` drops it and clears its sampler task.
-
-    While ``submit`` waits on a task, ``cancel`` with the handle ``JobHandle("worker", result_id)`` reaches that
-    task's fetcher; while a ``run_op`` that runs a worker task waits, so does the handle with its payload's
-    ``job_id``.
-
-    The worker handshake runs before any call reaches the worker: every worker call goes through the transport's
-    worker session or its WebSocket submit, which run it, and the ``/v1`` submit's socket calls ``ensure_handshake``
-    before it dials, as the transport's WebSocket submit does. So every method that calls the worker is gated by this
-    backend's verdict and can raise its ``VersionMismatch`` or ``ComputeUnavailable``, except ``capabilities``: it is
-    the one read that goes around the gate, the one the check itself reads, so a caller can read a worker's versions
-    and compare them with core's itself. A plugin or core's Python functions the verdict finds absent refuse no call
-    here; placement refuses the nodes that need them. The ``/v1`` requests and the ``/v1`` submit's socket give the
-    gate this backend's ``id``, so its ``ComputeUnavailable`` names the backend, as every one this backend makes for a
-    worker it cannot reach does.
-
-    With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on (read on each call), ``submit`` sends a meta JSON (hints, inputs,
-    ids) and the plan over the worker's ``WS /v1/ws/submit``, and posts them to ``POST /v1/submit`` when the worker
-    declares no submit socket (``Capabilities.submit_socket``), or the socket cannot be opened or the plan not sent. A
-    426 on the socket's upgrade is ``VersionMismatch`` and nothing is posted;
-    once the plan is sent nothing is resent: silence past ``FLOWFILE_WORKER_WS_TIMEOUT`` (each frame resets it) is
-    ``TaskFailed`` and a closed socket ``ComputeUnavailable``. The worker applies the same policy and holds the result
-    itself, in its own file or as the plan it was sent. The reference carries the worker's columns, read here with
-    ``safe_eval_pl_type``, and a ``WorkerLocation`` JSON as ``location``. For such a reference ``sample``, ``count``,
-    ``exists`` and ``release`` go to ``/v1/results/{id}`` and ``export`` to ``POST /v1/results/{id}/export``,
-    ``plan_for`` decodes the location without a call (a ``pl.scan_ipc`` of the worker's path, or the deferred plan)
-    and ``result_file`` names no file. ``import_uri`` posts to ``POST /v1/results/{id}/import``, so the worker holds
-    the scan of the URI as a deferred ``/v1`` result, and with ``kind="blob"`` copies a ``file://`` URI or fetches a
-    presigned ``https://`` URL into a blob it holds. A reference is read over the routes that minted it, whatever the
-    flag says when it is read, and only ``/v1`` references go as a submit's ``inputs``. ``run_op`` runs the reads,
-    ``fuzzy_join``, ``random_split``, ``custom_node``, ``ml_train``, ``ml_apply`` and the file, database and cloud
-    writes over ``POST /v1/ops/{kind}`` (``run_op`` has the details), whose refs are ``/v1`` references like a stored
-    submit's, a write's none; every other operation and
-    its results stay on the task routes, but ``polars_code`` and ``sql_query``, which go over ``POST /v1/ops/<kind>``
-    with the flag off too. ``status`` and ``cancel`` of a job no fetcher waits on use ``/v1/jobs/{id}``.
-    Every ``/v1`` request and the socket's upgrade carry ``X-Protocol-Version``. A REST answer, a refused upgrade and
-    an ``error`` frame map alike (``_v1_error``): 426 is ``VersionMismatch``, a 404 ``ResultMissing``, a 422
-    ``PlanRejected``, and a failed child's 500 goes through ``worker_failure``.
-
-    A blob (``ResultRef.kind == "blob"``) has no rows: ``plan_for``, ``sample`` and ``count`` raise
-    ``OperationUnsupported`` for one, as ``submit`` does for one among its inputs, before the worker is called, while
-    ``exists``, ``release`` and ``export`` take a ``/v1`` one like any ``/v1`` result. A task-route blob is a file on
-    the shared disk: a training over the task routes stages its model in the flow's cache directory as worker task
-    ``<job_id>_0``, and with the flag off ``import_uri(kind="blob")`` of a ``file://`` URI answers a reference over the
-    path, nothing copied. Such a blob ``exists`` while its file is there, ``release`` clears its task (a training's
-    file goes, an import's stays), and ``export`` copies the file to a ``file://`` URI in core; a presigned
-    ``https://`` URL needs the ``/v1`` routes.
+    The handshake gates every worker call but ``capabilities``, which the check itself reads, so any other call can
+    raise ``VersionMismatch`` or ``ComputeUnavailable``. Making a backend registers it with that gate for ``url``
+    (``handshake.owns``). An absent plugin refuses no call here; placement refuses the nodes that need it. Wire
+    details: docs/for-developers/compute-protocol.md.
     """
 
     id = WORKER_BACKEND_ID
@@ -409,26 +338,20 @@ class WorkerBackend(_WorkerReferences):
         }
 
     def capabilities(self) -> Capabilities:
-        """The answer of the worker at ``url`` to ``GET /capabilities``, as the worker declares it.
+        """The worker's answer to ``GET /capabilities`` (``GET /v1/capabilities`` with the protocol flag on).
 
-        With the protocol flag on, the answer to ``GET /v1/capabilities``. Either is one request through the worker
-        session around the handshake gate (``gated=False``), signed with this backend's token and carrying its
-        ``X-Protocol-Version``. Its ``operations`` are the kinds the worker runs, the ones ``run_op`` sends it.
-
-        A backend made with ``shares_core_disk`` adds ``file`` to both scheme sets whatever the worker declares: core
-        knows that worker sees its files (the built-in worker at its unconfigured address, a row marked so), which the
+        One request around the handshake gate (``gated=False``), signed with this backend's token and carrying its
+        ``X-Protocol-Version``. Its ``operations`` are the kinds ``run_op`` sends the worker. With
+        ``shares_core_disk``, ``file`` is added to both scheme sets: core knows that worker sees its files, which the
         worker cannot know by itself.
 
         Raises:
-            ComputeUnavailable: The worker could not be reached, or it answered with no ``Capabilities`` and no
-                ``app_version``, so the URL is no Flowfile worker (``capabilities_from_answer``, naming this backend).
-            VersionMismatch: The worker has no route for the capabilities it is asked (a 404 on ``/capabilities``, or
-                on ``/v1/capabilities`` with the flag on), so it predates core; with the flag on, it refused this
-                protocol version (426); in either, its answer carries an ``app_version`` but is no ``Capabilities``,
-                so it is of another release.
-            TaskFailed: This backend's token is no header value (``is_header_value``); nothing was sent.
-            ComputeError: Any other answer that is no success (``_v1_failure``): a refused token is a ``TaskFailed``
-                naming 401.
+            ComputeUnavailable: The worker could not be reached, or the URL answers as no Flowfile worker
+                (``capabilities_from_answer``).
+            VersionMismatch: A 404 (the worker predates core), a refused protocol version (426), or an answer of
+                another release.
+            TaskFailed: This backend's token is no header value; nothing was sent.
+            ComputeError: Any other failed answer (``_v1_failure``); a refused token is a ``TaskFailed`` naming 401.
         """
         route = f"{'/v1' if settings.FLOWFILE_COMPUTE_PROTOCOL else ''}/capabilities"
         try:
@@ -471,27 +394,24 @@ class WorkerBackend(_WorkerReferences):
     ) -> SubmitResult:
         """Store ``plan`` on the worker or hold it deferred, by the policy in the class docstring.
 
-        A stored plan is serialised once, to send it to the worker's store task; a deferred one is held as the
-        object it is. ``inputs`` must be this backend's results; the plan already reads them, so they are only
-        checked. The worker files the store or sampler task as ``result_id`` under flow ``flow_id`` and node
-        ``node_id``, which is where its log lines go.
+        ``inputs`` must be this backend's results; the plan already reads them, so they are only checked. The worker
+        files the task as ``result_id`` under ``flow_id`` and ``node_id``, which is where its log lines go. Over the
+        task routes a stored plan is written to an Arrow IPC file by a worker store task, and a deferred one is held in
+        this process as the object it is.
 
-        With the protocol flag on, the plan goes with the ids of the ``/v1`` results among ``inputs``, which the worker
-        checks it still holds, over ``WS /v1/ws/submit``, or to ``POST /v1/submit`` when the worker declares no submit
-        socket, or the socket cannot be opened or the plan not sent, and the worker's answer is the result. Once the
-        plan is sent over the socket nothing is resent.
+        With the protocol flag on, the plan and the ids of its ``/v1`` inputs go over ``WS /v1/ws/submit``, else
+        ``POST /v1/submit`` (``_v1_socket_submit``). Once the plan is sent over the socket nothing is resent.
 
         Raises:
             ComputeUnavailable: Over ``/v1``, the worker could not be reached, or its socket closed after the plan was
                 sent.
             ForeignRef: An input another backend minted.
-            OperationUnsupported: An input is a blob, which a plan cannot read; nothing was sent.
+            OperationUnsupported: An input is a blob; nothing was sent.
             PlanRejected: The worker could not load the plan.
             ResultMissing: Over ``/v1``, the worker no longer holds an input.
             TaskFailed: The plan failed on the worker, or over ``/v1`` the socket went silent past
                 ``FLOWFILE_WORKER_WS_TIMEOUT``.
-            VersionMismatch: Over ``/v1``, the worker refused this backend's protocol version, on the socket's upgrade
-                or on the REST route.
+            VersionMismatch: Over ``/v1``, the worker refused this backend's protocol version.
         """
         for ref in inputs:
             self._table(ref)
@@ -528,74 +448,52 @@ class WorkerBackend(_WorkerReferences):
         return SubmitResult(ref=ref, sample=sample, handle=JobHandle(self.id, result_id))
 
     def run_op(self, op: OperationKind, payload: OpPayload) -> OpResult:
-        """Run ``op`` as a worker task through the fetcher core uses for it and wait for it to end.
+        """Run ``op`` on the worker and wait for it to end.
 
-        Reads and the catalog writer's SCD2 write take what their fetcher takes, under these keys (``flow_id`` and
-        ``node_id`` name the flow and node the worker logs the task under):
+        Each kind takes its frozen dataclass from ``execution/payloads.py`` under ``"payload"``. Frames are serialised
+        here and credentials sent still encrypted. ``cancel(JobHandle(self.id, job_id))`` with the payload's
+        ``job_id`` reaches the job while the call waits.
 
-        - ``database_read``, ``kafka_read``, ``google_analytics_read``, ``rest_api_read``, ``file_read``: ``payload``,
-          the kind's dataclass from ``execution/payloads.py``, turned here into the worker read settings its fetcher
-          takes (credentials still encrypted, filed under the payload's ``flow_id`` and ``node_id``). The task runs as
-          the payload's ``job_id``, so ``cancel(JobHandle("worker", job_id))`` reaches it while it runs. A
-          ``kafka_read`` reports the offsets to commit as ``metadata["offsets"]`` when it consumed messages.
+        With the protocol flag on, the kinds in ``_V1_OPERATIONS`` go to ``POST /v1/ops/{kind}``, and ``polars_code``
+        and ``sql_query`` do in either flag state. Their refs are keyed as on the task routes, each output a ``/v1``
+        result ``<job_id>_<i>`` of its own. The Delta writes and ``viz_session`` always use the task routes.
 
-        Every other operation takes one dataclass under ``"payload"`` too: the writes ``file_write``,
-        ``database_write``, ``cloud_write``, ``delta_write``, ``delta_merge`` and ``delta_scd2``, and ``fuzzy_join``,
-        ``random_split``, ``custom_node``, ``ml_train`` and ``ml_apply``. Its frames are serialised here, its
-        credentials sent still encrypted, and the worker task is filed under the payload's ``job_id`` (a write's under
-        the id the worker gives it), whose fetcher ``cancel(JobHandle("worker", job_id))`` reaches while the call
-        waits. ``fuzzy_join`` checks the join and selects and renames each side here, over the sides' schemas its
-        payload carries, as the in-process join does, before it sends the sides; ``custom_node`` resolves the
-        ``$ffsec$`` ciphertext of the secrets the node's ``SecretSelector`` fields select here and sends only that.
+        Per kind, its payload and what differs from refs ``{"result": ref}`` and empty ``metadata``:
 
-        A read's and ``fuzzy_join``'s and ``ml_apply``'s refs are ``{"result": ref}``, a stored result. A custom
-        node's refs are one stored result per declared output, keyed by its output handle (``output-0``,
-        ``output-1``, ...). ``random_split`` stores the shuffled rows once, as the payload's ``job_id`` task, and
-        returns one deferred ref per split, keyed by the split's name in the settings' order, whose plan slices that
-        task's file and which carries the split's row count; releasing a split leaves the shuffled rows in place. A
-        write has no refs. ``ml_train``'s refs are ``{"model": ref}``, a blob: the worker task ``<job_id>_0`` stages
-        the model at ``ml_models/<job_id>_0.json`` in the flow's cache directory, and ``release`` clears that task and
-        its file. ``ml_train`` and the Delta writes return the worker's result dict as ``metadata``: the trained
-        model's ``sha256``, ``size_bytes`` and ``model_type``, or the written table's schema, counts, size and version.
-        ``ml_apply`` scores with its model's file; a model the task routes do not hold (a ``/v1`` one, or one whose
-        file is gone) is ``ResultMissing`` before any task.
-
-        ``viz_session`` takes a ``VizSessionPayload`` and runs no task: it sends the payload's plan, serialised, as a
-        ``kind="plan"`` source to the worker's visualisation session named by the payload's ``session_key``, which
-        holds the plan lazily in a child and answers each Graphic Walker request over it (``trigger_visualize_fields``
-        or ``trigger_visualize_query``), and returns the session's answer as ``metadata`` with no refs.
-
-        With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` on, the five reads, ``fuzzy_join``, ``random_split``,
-        ``custom_node``, ``ml_train``, ``ml_apply`` and the three writes go to the worker's ``POST /v1/ops/{kind}``
-        instead: the body is the request the kind's fetcher sends (the read settings, the file to read with the flow
-        and node as query parameters, the fuzzy join's prepared sides, the custom node's request, a random split's
-        shuffled rows with its splits, a training's rows with the model type, the columns and the parameters, an
-        apply's rows with the result id of its model and the output column, a write's plan with its output settings,
-        its database table or its cloud write settings and connection), the payload's ``job_id`` the query parameter
-        the job runs
-        under, so ``cancel(JobHandle("worker", job_id))`` reaches it through ``POST /v1/jobs/{job_id}/cancel`` and
-        ``status`` follows it. The refs are keyed as on the task routes, but every one is a stored ``/v1`` result
-        ``<job_id>_<i>``, read over ``/v1/results/{id}`` like a stored submit's, its columns and row count as the worker
-        answered them: a random split's splits are each a file of their own, releasing one output of a custom node or
-        a split leaves the others, and a training's model is the blob ``<job_id>_0``. A ``kafka_read`` takes its
-        offsets, and an ``ml_train`` the model's digest, size and type, from the answer's ``metadata``; a write has no
-        refs and no ``metadata``. A failure maps as every ``/v1`` answer does: an ``ml_apply`` whose model the worker
-        no longer holds is ``ResultMissing``.
-
-        ``polars_code`` takes a ``PolarsCodePayload`` and has no task route: it goes to ``POST /v1/ops/polars_code`` in
-        either flag state, with the code and each input plan serialised. Its refs are ``{"result": ref}``, a ``/v1``
-        reference ``<job_id>_0`` carrying the columns of the frame the code returned: deferred, its plan decoded by
-        ``plan_for`` as a deferred submit's is, when the code returned a LazyFrame over sources, stored when it returned
-        a DataFrame or a LazyFrame over rows in memory. ``sql_query`` takes a ``SqlQueryPayload`` and goes to
-        ``POST /v1/ops/sql_query`` the same way, with the statement and each input plan serialised, its result keyed
-        and held as a Polars Code result is.
+        - ``database_read``: ``DatabaseReadPayload``.
+        - ``kafka_read``: ``KafkaReadPayload``; ``metadata["offsets"]`` to commit when it consumed messages.
+        - ``google_analytics_read``: ``GoogleAnalyticsReadPayload``.
+        - ``rest_api_read``: ``RestApiReadPayload``.
+        - ``file_read``: ``FileReadPayload``.
+        - ``fuzzy_join``: ``FuzzyJoinPayload``, its sides prepared here over their payload schemas (``_fuzzy_sides``).
+        - ``random_split``: ``RandomSplitPayload``, its rows shuffled once; one stored ref per split, keyed by split
+          name. Over the task routes each split is stored as task ``<job_id>_<i>`` and the shuffle task released.
+        - ``custom_node``: ``CustomNodePayload``, only the ``$ffsec$`` ciphertext of its selected secrets sent; one
+          stored ref per declared output, keyed ``output-0``, ``output-1``, ... Over the task routes the outputs share
+          one task (``<task id>#<name>``), so releasing one releases them all.
+        - ``ml_train``: ``MlTrainPayload``; refs ``{"model": ref}``, the blob ``<job_id>_0`` (over the task routes, a
+          file in the flow's cache directory), and ``metadata`` its ``sha256``, ``size_bytes`` and ``model_type``.
+        - ``ml_apply``: ``MlApplyPayload``, scoring with the blob ``model``.
+        - ``polars_code``: ``PolarsCodePayload``; the ref is deferred when the code returned a LazyFrame over sources,
+          stored for a DataFrame or a LazyFrame over rows in memory.
+        - ``sql_query``: ``SqlQueryPayload``; held as a ``polars_code`` result is.
+        - ``file_write``: ``FileWritePayload``; no refs.
+        - ``database_write``: ``DatabaseWritePayload``; no refs.
+        - ``cloud_write``: ``CloudWritePayload``; no refs.
+        - ``delta_write``: ``DeltaWritePayload``; no refs, ``metadata`` the worker's report (keys in the ``payloads``
+          module docstring).
+        - ``delta_merge``: ``DeltaMergePayload``; as ``delta_write``.
+        - ``delta_scd2``: ``DeltaScd2Payload``; as ``delta_write``.
+        - ``viz_session``: ``VizSessionPayload``; no task, the plan sent to the visualisation session ``session_key``
+          names; no refs, ``metadata`` the session's answer.
 
         Raises:
-            ComputeUnavailable: The worker could not be reached for a ``viz_session`` request.
+            ComputeUnavailable: The worker could not be reached.
             ForeignRef: An ``ml_apply`` model another backend minted; nothing was sent.
             OperationUnsupported: A custom node without a node file.
             PlanRejected: The worker could not load the operation's plan.
-            ResultMissing: An ``ml_apply`` model this backend no longer holds.
+            ResultMissing: An ``ml_apply`` model this backend no longer holds; over the task routes, found before any
+                task.
             RuntimeError: The worker answered a ``viz_session`` request with an error status.
             TaskFailed: The operation failed on the worker.
             ValueError: The worker did not return one of a custom node's declared outputs.
@@ -689,16 +587,13 @@ class WorkerBackend(_WorkerReferences):
     def plan_for(self, ref: ResultRef) -> pl.LazyFrame:
         """The plan of a deferred ``ref``, or a scan of a stored ``ref``'s file; valid only in plans this backend runs.
 
-        A stored result is checked on the shared disk, not with the worker: the scan needs the file, and clearing
-        the task deletes it.
-
-        A ``/v1`` result's location is decoded without a call: a scan of the path the worker wrote, which core does
-        not open, or the deferred plan the worker was sent. A plan composed on a result the worker has released fails
-        when it is submitted, which names it among its inputs.
+        A task-route stored result is checked on the shared disk, not with the worker, since the scan needs the file.
+        A ``/v1`` result's location is decoded without a call: a scan of the worker's path, which core never opens, or
+        the deferred plan. A plan over a ``/v1`` result the worker has released fails when it is submitted.
 
         Raises:
             ForeignRef: Another backend minted ``ref``.
-            OperationUnsupported: ``ref`` is a blob, which has no rows to plan over.
+            OperationUnsupported: ``ref`` is a blob.
             ResultMissing: This backend no longer holds the deferred plan, or the stored result's file is gone.
         """
         self._table(ref)
@@ -717,10 +612,9 @@ class WorkerBackend(_WorkerReferences):
     def result_file(self, ref: ResultRef) -> str | None:
         """The Arrow IPC file on the shared disk that holds ``ref``'s rows or its latest sample.
 
-        A stored result's own file, or the file of a deferred result's last sampler task; ``None`` for a deferred
-        result no sample was taken of, or one this backend no longer holds. Core reads the first rows of a result
-        through it and treats a file that vanished as a result to compute again. ``None`` for a ``/v1`` result, whose
-        file core never opens.
+        A stored result's own file, or a deferred result's last sample file. ``None`` when no sample was taken, when
+        this backend no longer holds the plan, or for a ``/v1`` result, whose file core never opens. Core reads first
+        rows through it and treats a vanished file as a result to compute again.
         """
         if self._is_v1(ref):
             return None
@@ -734,28 +628,24 @@ class WorkerBackend(_WorkerReferences):
     def export(self, ref: ResultRef, uri: str, credential: CredentialRef | None) -> str:
         """Write ``ref``'s rows to ``uri`` as parquet where they are held, and return ``uri``.
 
-        A ``/v1`` result is exported by the worker: ``POST /v1/results/{id}/export`` runs a child that sinks the
-        result's plan to ``uri``. A task-route result is exported by a worker task running that child,
-        ``export_result``, over ``plan_for(ref)``, the scan of its file or the plan this backend holds, as ``sample``
-        and ``count`` send a deferred plan to a task; nothing of it runs in this process. Either way ``credential``
-        crosses as the connection's id and its user's, resolved in the child. A result is exported over the routes
-        that minted it, whatever the flag says.
+        A result is exported over the routes that minted it, whatever the flag says: a ``/v1`` result by a worker child
+        (``POST /v1/results/{id}/export``), a task-route result by a worker task running that child over
+        ``plan_for(ref)``. Nothing of it runs in this process. ``credential`` crosses as the connection's id and its
+        user's, resolved in the child.
 
-        A ``/v1`` blob goes to the same ``/v1`` route, where the worker copies its file to a ``file://`` URI or
-        ``PUT``s it to a presigned ``https://`` URL; such a URL carries its own authorisation, so a blob takes no
-        credential. A task-route blob is a file on the shared disk, which core copies to a ``file://`` URI
-        (``put_blob``); a presigned URL needs the ``/v1`` routes.
+        A blob takes no credential, as a presigned URL carries its own authorisation. The worker copies a ``/v1`` blob
+        to a ``file://`` URI or ``PUT``s it to an ``https://`` URL. Core copies a task-route blob, a file on the shared
+        disk, to a ``file://`` URI only.
 
         Raises:
             ComputeUnavailable: The worker could not be reached.
             ForeignRef: Another backend minted ``ref``.
-            OperationUnsupported: ``ref`` is a task-route blob and ``uri`` is not ``file://``; nothing was sent.
+            OperationUnsupported: A task-route blob and a ``uri`` that is not ``file://``; nothing was sent.
             OSError: The copy of a task-route blob failed.
-            ResultMissing: The worker, or this backend, no longer holds ``ref``; for a task-route blob, its file is
-                gone, found before the copy.
             PlanRejected: The worker refused the URI's scheme for a blob (422).
+            ResultMissing: The worker, or this backend, no longer holds ``ref``.
             TaskFailed: The worker's sink or copy failed.
-            ValueError: ``ref`` is a blob and ``credential`` is set; nothing was sent.
+            ValueError: A blob with a ``credential``; nothing was sent.
         """
         v1 = self._is_v1(ref)
         if ref.kind == "blob" and credential is not None:
@@ -797,23 +687,20 @@ class WorkerBackend(_WorkerReferences):
         credential: CredentialRef | None,
         kind: Literal["table", "blob"] = "table",
     ) -> ResultRef:
-        """Hold a scan of the parquet at ``uri`` as a deferred result with the ``schema`` and ``row_count`` given.
+        """Hold a scan of the parquet at ``uri`` as a deferred result with the caller's ``schema`` and ``row_count``.
 
-        Nothing is read: the schema and the count are the caller's. With the protocol flag on the worker builds and
-        holds the scan under a fresh id (``POST /v1/results/{id}/import``), ``credential`` crossing as the
-        connection's id and its user's, and the answer is a ``/v1`` reference whose ``plan_for`` decodes the scan
-        without a call. With it off the scan is held in this process like every deferred plan, a ``file:`` URI
-        scanned as the local path it names. ``release`` forgets the scan and leaves the file.
+        Nothing is read, and ``credential`` crosses as the connection's id and its user's. With the protocol flag on
+        the worker holds the scan (``POST /v1/results/{id}/import``); with it off this process holds it, a ``file:``
+        URI scanned as its local path. ``release`` leaves the file.
 
-        With ``kind="blob"`` and the flag on, the same route has the worker copy the bytes at a ``file://`` URI or
-        fetch a presigned ``https://`` URL into a blob it holds, before it answers; the reference is a materialised
-        blob with no columns and no row count, and ``release`` removes the worker's copy. With the flag off a
-        ``file://`` URI answers such a reference over the local path it names, as ``file_uri_path`` reads it:
-        nothing is copied and no call is made, and ``release`` leaves the file.
+        A ``kind="blob"`` reference is materialised, with no columns and no row count. With the flag on the worker
+        copies a ``file://`` URI or fetches a presigned ``https://`` URL into a blob it holds, which ``release``
+        removes. With it off only a ``file://`` URI is taken: the reference names its local path, nothing is copied,
+        and ``release`` leaves the file.
 
         Raises:
             ComputeUnavailable: Over ``/v1``, the worker could not be reached.
-            OperationUnsupported: A blob with the protocol flag off whose URI is not ``file://``; nothing was sent.
+            OperationUnsupported: A blob with the flag off whose URI is not ``file://``; nothing was sent.
             PlanRejected: The worker refused the URI's scheme for a blob (422).
             TaskFailed: The worker's copy or fetch failed.
             ValueError: A table without ``schema``, or a blob with a ``schema``, a ``row_count`` or a ``credential``;
@@ -897,7 +784,7 @@ class WorkerBackend(_WorkerReferences):
             raise ComputeUnavailable(f"Could not reach the worker: {e}", backend_id=self.id) from e
 
     def cancel(self, handle: JobHandle) -> None:
-        """Cancel the task ``handle`` names: through its fetcher while ``submit`` waits on it, else on the worker.
+        """Cancel the task ``handle`` names: via its fetcher while ``submit`` or ``run_op`` waits, else on the worker.
 
         A task that already ended is left as it is. With the protocol flag on, a job no fetcher waits on is
         cancelled through ``POST /v1/jobs/{id}/cancel``; a ``/v1`` submit waiting on it then fails with
@@ -937,17 +824,14 @@ class WorkerBackend(_WorkerReferences):
     ) -> requests.Response:
         """Send one request to the worker's ``/v1`` route ``path`` with this backend's protocol version and token.
 
-        ``waits`` is for a call that waits on a worker child (a submit, a sample, a count): its read timeout is the
-        deadline the task routes' poll honours (``FLOWFILE_WORKER_POLL_TIMEOUT``), and an answer that does not come
-        within it fails the call as the poll fails a task, with the job ``job_id`` names cancelled first, when it
-        names one. A 2xx answer is returned, a 404 too with ``missing_ok``. The request goes through the worker
-        session, so the handshake gates it; this backend's token, when it has one, signs it in place of the session's
-        process token.
+        ``waits`` marks a call that waits on a worker child (a submit, a sample, a count): its read timeout is the poll
+        deadline (``FLOWFILE_WORKER_POLL_TIMEOUT``), and past it the job ``job_id`` names is cancelled. A 2xx answer is
+        returned, a 404 too with ``missing_ok``. The worker session's handshake gates the request.
 
         Raises:
             ComputeUnavailable: The worker could not be reached.
-            TaskFailed: This backend's token is no header value (``is_header_value``); nothing was sent. Or a waiting
-                call had no answer within the poll deadline; the handshake stands.
+            TaskFailed: This backend's token is no header value; nothing was sent. Or a waiting call had no answer
+                within the poll deadline; the handshake stands.
             ComputeError: The worker answered anything else (``_v1_failure``).
         """
         timeout = (_WORKER_TIMEOUT[0], _POLL_DEADLINE_SECONDS or None) if waits else _WORKER_TIMEOUT
@@ -987,24 +871,18 @@ class WorkerBackend(_WorkerReferences):
     def _v1_socket_submit(self, meta: str, plan: bytes, result_id: str) -> wire.SubmitResult | None:
         """The worker's answer to a submit over ``WS /v1/ws/submit``, or ``None`` for ``submit`` to post it instead.
 
-        ``None`` means the socket is not dialled, could not be opened or the plan not sent. The worker reads both frames
-        before it runs anything and drops a socket that closed before the plan, so the post never runs a plan twice. The
-        socket is dialled after ``ensure_handshake``, and not at all when the verdict cached for this backend says it
-        declares no submit socket (``Capabilities.submit_socket``) or its upgrade was refused under that same verdict,
-        so a refusal is dialled again only once the backend is checked again. It is dialled with this backend's token
-        (``_internal_token``), its ``X-Protocol-Version``, no frame-size cap (a deferred result's ``complete`` frame
-        carries its plan), the CA the transport trusts for ``url`` (``ssl_context_for``; ``None`` verifies a ``wss://``
-        worker against the public CAs) and a short close timeout, as a proxy may hold a refused upgrade's connection
-        open; a connect that fails at the network re-arms the handshake of the backends on ``url``, as the transport's
-        WebSocket submit does for every backend. Once the plan is sent the answer is the final frame's, and nothing is
+        ``None`` means the socket was not dialled, could not be opened or the plan not sent. The worker reads both
+        frames before it runs anything and drops a socket that closed before the plan, so the post never runs a plan
+        twice. The socket is not dialled when the cached verdict declares no submit socket, or its upgrade was refused
+        under that same verdict, so a refusal is retried only after the backend is checked again. The dial has no
+        frame-size cap, since a deferred result's ``complete`` frame carries its plan. Once the plan is sent nothing is
         resent.
 
         Raises:
             ComputeUnavailable: The socket closed after the plan was sent; the handshake of the backends on ``url`` is
                 re-armed.
-            TaskFailed: The worker sent nothing for longer than ``FLOWFILE_WORKER_WS_TIMEOUT``, and the job is
-                cancelled; or this backend's token is no header value (``is_header_value``), found before the socket
-                is dialled.
+            TaskFailed: No frame for longer than ``FLOWFILE_WORKER_WS_TIMEOUT``, and the job is cancelled; or this
+                backend's token is no header value, found before the dial.
             VersionMismatch: The worker refused the upgrade with 426.
             ComputeError: The handshake failed, or the worker's ``error`` frame (``_v1_error``).
         """
@@ -1606,14 +1484,10 @@ def _run(
 ) -> BaseFetcher:
     """Start a worker task through ``start``, wait for it to end and return its fetcher.
 
-    ``on_started`` receives the fetcher once the task is submitted, before the wait. A worker that cannot be reached
-    while the task is started is a ``ComputeUnavailable`` naming ``backend_id``, except one the handshake gate
-    raised for ``start``'s call, which carries a URL only and so names none. A failed task raises a typed
-    error: error code -1 goes through ``worker_failure``, whose ``error_kind`` tells a plan the worker could not
-    load (``PlanRejected``) from a lost connection (``ComputeUnavailable`` naming ``backend_id``: the socket closed,
-    or the status poll lost the worker) and a killed child; every other code is a ``TaskFailed`` with
-    the fetcher's description, raised from the fetcher's ``RemoteExecutionError`` so the worker-side class
-    stays recoverable from the chain.
+    ``on_started`` receives the fetcher once the task is submitted, before the wait. A ``requests`` error while
+    starting is a ``ComputeUnavailable`` naming ``backend_id``. A failed task with error code -1 goes through
+    ``worker_failure``, a lost connection naming ``backend_id``. Any other code is a ``TaskFailed`` raised from the
+    fetcher's ``RemoteExecutionError``, so the worker-side class stays recoverable from the chain.
     """
     try:
         fetcher = start()
@@ -1635,20 +1509,19 @@ def _run(
 
 
 def _takes_submit_socket(verdict: Verdict) -> bool:
-    """Whether the backend *verdict* checked declared the ``/v1`` submit socket; one whose capabilities were not read
-    is dialled as before."""
+    """Whether ``verdict``'s backend declared the ``/v1`` submit socket; true when its capabilities were not read."""
     return verdict.backend is None or verdict.backend.submit_socket
 
 
 def _final_frame(ws: ClientConnection, worker_url: str, result_id: str, *, backend_id: str) -> dict[str, Any]:
     """The first ``complete`` or ``error`` frame the worker sends on the ``/v1`` submit socket ``ws``.
 
-    Progress frames are read past. Every frame resets the silence clock that the task routes' socket keeps too:
-    nothing received for longer than ``FLOWFILE_WORKER_WS_TIMEOUT`` (0 disables) means the worker is presumed wedged.
+    Progress frames are read past, and each frame resets the silence clock (``FLOWFILE_WORKER_WS_TIMEOUT``, 0
+    disables).
 
     Raises:
-        ComputeUnavailable: The socket closed before a final frame; it names ``backend_id``, and the next use of each
-            backend on ``worker_url`` checks it again, since the worker that comes back may be another one.
+        ComputeUnavailable: The socket closed before a final frame. It names ``backend_id``, and the backends on
+            ``worker_url`` are checked again on their next use, since the worker that comes back may be another one.
         TaskFailed: The worker went silent past the timeout.
     """
     last_frame_at = monotonic()
@@ -1715,13 +1588,14 @@ class _TokenAuth(requests.auth.AuthBase):
 def _v1_error(status_code: int, detail: Any, *, answered_by: str = "The worker") -> ComputeError:
     """The typed error for a ``/v1`` failure the worker answered with ``status_code`` and ``detail``.
 
-    A REST answer, a refused socket upgrade, an ``error`` frame on the socket and an ``HTTPException`` a ``/v1`` body
-    raised in this process (``EmbeddedWorkerBackend``) all come here, so both backends type a failure alike. 426 is a
-    protocol version the worker refuses, 404 a result or input it does not hold, 422 what a body refuses before
-    anything runs (a sample above the cap, a directory scan, a table where a model was expected, a blob's scheme), and
-    a 500 carrying a child's ``status``, ``error_message`` and ``error_kind`` goes through ``worker_failure`` as a
-    failed task does. Any other code (a token the worker refuses, a meta it cannot read) is a ``TaskFailed`` naming
-    the code, as ``answered_by`` answered it.
+    REST answers, refused socket upgrades, ``error`` frames and an ``HTTPException`` a ``/v1`` body raised in this
+    process (``EmbeddedWorkerBackend``) all map here, so both backends type a failure alike:
+
+    - 426: ``VersionMismatch``, a protocol version the worker refuses.
+    - 404: ``ResultMissing``, a result or input it does not hold.
+    - 422: ``PlanRejected``, what a body refuses before anything runs.
+    - 500 carrying a child's ``status``: through ``worker_failure``, as a failed task.
+    - Any other code: a ``TaskFailed`` naming the code and ``answered_by``.
     """
     if status_code == 426:
         return VersionMismatch(str(detail))
@@ -1775,10 +1649,9 @@ def _delta_destination(write: DeltaWritePayload | DeltaMergePayload | DeltaScd2P
 def _credential_kwargs(credential: CredentialRef | None) -> dict[str, Any]:
     """What a scan of a URI takes for ``credential``: its provider and its connection's plain options.
 
-    The provider carries the stored connection's id and user only, and resolves it where the plan runs; the options
-    (``credential_ref_kwargs``, read from core's catalog, no secret among them) carry the connection's endpoint and
-    region, so an S3-compatible store is reached. Without a credential Polars resolves the target as it does for any
-    scan.
+    The provider carries the stored connection's id and user only, and resolves it where the plan runs. The options
+    (``credential_ref_kwargs``, no secret among them) carry the endpoint and region, so an S3-compatible store is
+    reached.
     """
     if credential is None:
         return {}

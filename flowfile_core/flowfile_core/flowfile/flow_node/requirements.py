@@ -1,10 +1,8 @@
 """What a node needs from the compute that runs it, derived from its template and settings.
 
-``requirements_for`` reads a node's ``NodeTemplate`` and its settings model and nothing else: no database, no registry,
-no backend. Each family answers what its builder does on the backend: the operation it runs there (``run_op``), the
-storage schemes the backend reads and writes for it, the plugin packages its work imports, the stored connections it
-names, whether its plan may carry a Python function and whether it runs on a notebook kernel. A node that only submits a
-plan, or works in core, needs none of these.
+``requirements_for`` reads only a node's ``NodeTemplate`` and settings model: no database, no registry, no backend.
+Each family answers what its builder does on the backend. A node that only submits a plan, or works in core, needs
+nothing.
 """
 
 from __future__ import annotations
@@ -37,19 +35,16 @@ class NodeRequirements:
     """What one node needs from the backend that runs it.
 
     Attributes:
-        operation: The operation the node runs on its backend, or ``None`` for a node that submits a plan or
-            works in core.
-        read_schemes: The schemes of the storage the backend reads for the node: ``file`` for a local path,
-            ``s3``, ``az`` or ``gs`` for object storage, a URL's own ``http`` or ``https``, any other URI's own scheme.
-        write_schemes: The schemes of the storage the backend writes for the node, spelled the same way.
-        plugins: The plugin packages the node's work imports, as ``shared.compute_protocol.PLUGIN_PACKAGES``
-            names them.
-        credentials: The names of the stored connections the node uses. Secret names are not connections.
-        python_function: The node's plan may carry a Python function serialised under core's Python, which runs
-            only where core's Python functions do: a formula-family node, whose formulas may compile to one, and a
-            cloud or catalog change read until it is an operation of its own.
-        needs_kernel: The node runs its code on a notebook kernel, which reads the node's inputs from the
-            kernel shared volume, a ``file`` location on core's Docker host.
+        operation: What it runs on its backend (``run_op``), ``None`` for a node that submits a plan or works in core.
+        read_schemes: Schemes the backend reads for it: ``file`` for a local path, ``s3``, ``az`` or ``gs`` for
+            object storage, else the URI's own (``http`` or ``https`` for a URL).
+        write_schemes: Schemes the backend writes for it, spelled the same way.
+        plugins: The ``shared.compute_protocol.PLUGIN_PACKAGES`` its work imports.
+        credentials: Names of the stored connections it uses. Secret names are not connections.
+        python_function: Its plan may carry a Python function serialised under core's Python, so it runs only where
+            that Python does: a formula-family node, or a cloud or catalog change read.
+        needs_kernel: It runs on a notebook kernel, which reads its inputs from the kernel shared volume, a ``file``
+            location on core's Docker host.
     """
 
     operation: OperationKind | None = None
@@ -65,8 +60,8 @@ _ON_KERNEL = NodeRequirements(operation=OperationKind.file_write, write_schemes=
 """A kernel node: its inputs are written as parquet to the kernel shared volume, a ``file_write`` operation."""
 
 _FORMULA = NodeRequirements(plugins=_FORMULA_PLUGINS, python_function=True)
-"""A formula: its plan may load ``polars_ds`` and the formula library ``polars_expr_transformer`` and carry a Python
-function, whichever its formulas compile to, so every formula node needs both, its settings not telling which."""
+"""A formula node: its plan may import ``polars_ds`` and ``polars_expr_transformer`` and carry a Python function.
+Its settings do not tell which its formulas compile to, so it claims all of them."""
 
 
 def requirements_for(
@@ -78,31 +73,25 @@ def requirements_for(
 ) -> NodeRequirements:
     """What the node with *template* and *settings* needs from the backend that runs it.
 
-    A caller passes a ``FlowNode``'s ``node_template`` and ``setting_input``. A catalog reader's or writer's
-    storage is its namespace's, which the caller resolves (``catalog.storage_backend.locate_for_namespace``) and
-    passes as *catalog_target*; without one such a node claims no scheme and no connection. A Train Model node runs
-    ``ml_train`` and an Apply Model node ``ml_apply``; the one that publishes its model to the catalog writes the
-    artifact store and the one that takes its model from the catalog reads it, by the scheme the caller resolves from
-    the store and passes as *artifact_scheme*, and neither claims a scheme otherwise or without one. A cloud reader
-    or writer claims no scheme for a path it refuses itself when it runs: empty, blank, relative, or a URI that is
-    not object storage, a URL included; a path that still holds a ``${…}`` parameter claims the scheme of its text,
-    ``file`` for ``${root}/table``. A ``NodePromise``, a node not set up yet, answers only what its template says:
-    whether it runs on a kernel. An Explore Data node runs ``viz_session`` for its chart, on the backend that holds its
-    result.
+    A caller passes a ``FlowNode``'s ``node_template`` and ``setting_input``. A ``NodePromise`` answers only
+    whether its template puts it on a kernel. A catalog node without *catalog_target* claims no scheme and no
+    connection. A model node claims *artifact_scheme* only when it publishes its model to, or fetches it from, the
+    catalog. A cloud reader or writer claims no scheme for a path its own guard refuses when it runs (empty, blank,
+    relative, or not object storage). A path still holding a ``${…}`` parameter claims the scheme of its text:
+    ``file`` for ``${root}/table``.
 
     Args:
-        template: The node's template.
-        settings: The node's settings model, of the class its builder takes.
-        catalog_target: Where a catalog node's table data lives, for a catalog reader or writer.
-        artifact_scheme: The scheme the artifact store's bytes travel by, for a Train or Apply Model node: ``file``
-            for the filesystem store, ``https`` for the S3 store's presigned URLs.
+        catalog_target: Where a catalog reader's or writer's table data lives, as the caller resolves it
+            (``catalog.storage_backend.locate_for_namespace``).
+        artifact_scheme: How the artifact store's bytes travel, for a Train or Apply Model node: ``file`` for the
+            filesystem store, ``https`` for the S3 store's presigned URLs.
     """
     if isinstance(settings, input_schema.NodePromise):
         return NodeRequirements(needs_kernel=_kernel_by_template(template))
     if template.custom_node:
         return _custom_node(template, settings)
     if template.item == "catalog_reader":
-        # A change read's plan carries a Python function, its change-feed source, as a cloud change read's does.
+        # A change read's plan carries a Python function, its change-feed source.
         return replace(_catalog_storage(catalog_target, write=False), python_function=settings.cdc_mode != "off")
     if template.item == "catalog_writer":
         return _catalog_writer(settings, catalog_target)
@@ -203,10 +192,9 @@ def _output(settings: input_schema.NodeOutput) -> NodeRequirements:
 
 
 def _cloud_scheme(path: str, role: Literal["reader", "writer"]) -> frozenset[str]:
-    """The scheme of a cloud node's path; none for one the node's own guard refuses, so it fails with that message.
+    """The scheme of a cloud node's path, or none for one its own guard refuses, so it fails with that message.
 
-    A path that still holds a ``${…}`` parameter is read before the parameter resolves, and may resolve to a local
-    path the guard accepts, so it is not put to the guard and claims the scheme of its text.
+    A path still holding a ``${…}`` parameter skips the guard, since it may resolve to a path the guard accepts.
     """
     if "${" not in path:
         try:

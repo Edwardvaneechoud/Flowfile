@@ -3,9 +3,9 @@
 On by default with ``default_pool_size()`` members; ``FLOWFILE_WORKER_POOL_SIZE``
 (int, ``0`` = off) overrides it. It keeps up to N spawned children alive between
 tasks so each task skips the interpreter boot and import chain (~0.2s on macOS,
-~0.4-0.7s on Windows). The wire protocol, the funcs
-task signatures, and the spawn-per-task path are untouched - when the pool is off,
-saturated, or the operation is not poolable, callers fall back to today's spawn.
+~0.4-0.7s on Windows). The wire protocol, the funcs task signatures, and the
+spawn-per-task path are untouched - when the pool is off, saturated, or the
+operation is not poolable, callers fall back to today's spawn.
 
 Lifecycle rules:
 
@@ -18,6 +18,11 @@ Lifecycle rules:
 - Members are disposed outside the pool lock; only bookkeeping happens inside.
 - An idle-TTL reaper drains the pool to zero when unused, so an idle desktop does
   not keep warm interpreters around.
+- ``POOLABLE_OPERATIONS`` leaves out ops that run user Python (custom nodes,
+  ``polars_code``), since a patched global would outlive the task. ``sql_query``
+  runs none, only Polars' SQL translation. Also left out: fuzzy (positional-arg
+  spawn), train/apply model (allocator footprints) and the ``generic_task``
+  connectors (state not audited).
 
 Every pool child imports this module (it holds ``member_loop``), so module-level
 imports must stay light: no models/pydantic, no funcs, no polars.
@@ -38,10 +43,7 @@ from flowfile_worker import mp_context
 from flowfile_worker.configs import logger
 from shared.storage_config import storage
 
-# Ops safe to reuse a child for. Excluded: custom nodes and polars_code (user Python runs there,
-# so a patched global must never outlive one task), fuzzy (positional-arg spawn), train/apply model
-# (allocator footprints), generic_task connectors (state not audited). sql_query is pooled: it runs
-# no user Python, only Polars' SQL translation over plans.
+# Ops safe to reuse a child for; the module docstring says what is left out.
 POOLABLE_OPERATIONS = frozenset(
     {
         "store",

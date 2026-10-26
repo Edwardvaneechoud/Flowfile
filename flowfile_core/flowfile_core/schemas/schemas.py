@@ -88,8 +88,7 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
 def get_global_execution_location() -> ExecutionLocationsLiteral:
     """The execution location a flow gets by default with ``FLOWFILE_COMPUTE_PROTOCOL`` off.
 
-    ``"local"`` when the default compute backend (``registry.default_backend_id()``) is core's own process, else
-    ``"remote"``.
+    ``"local"`` when ``registry.default_backend_id()`` is ``local``, else ``"remote"``.
     """
     return "local" if default_backend_id() == LOCAL_BACKEND_ID else "remote"
 
@@ -106,9 +105,8 @@ def default_execution_location() -> ExecutionLocationsLiteral:
 def loaded_execution_location(saved: ExecutionLocationsLiteral) -> ExecutionLocationsLiteral:
     """The execution location a flow file saved with ``saved`` opens with.
 
-    With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a saved ``"local"`` or ``"remote"`` opens as ``"auto"``: the designer runs
-    a flow on the default backend unless the flow names another by id. ``"auto"``, a backend id, and any value with
-    the flag off open as saved.
+    With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a saved ``"local"`` or ``"remote"`` opens as ``"auto"``. Anything else,
+    and any value with the flag off, opens as saved.
     """
     if settings.FLOWFILE_COMPUTE_PROTOCOL and saved in ("local", "remote"):
         return "auto"
@@ -175,9 +173,7 @@ class FlowGraphConfig(BaseModel):
         path (str): The file path associated with the flow.
         execution_mode (ExecutionModeLiteral): The mode of execution ('Development' or 'Performance').
         execution_location (ExecutionLocationsLiteral): The backend the flow runs on: 'auto' (the default
-            backend), or a backend id ('local', 'worker', 'worker:<name>'); 'remote' is the legacy alias of
-            'auto' and 'local' core's own process, which code sets and a saved file no longer keeps with the
-            compute protocol on.
+            backend) or a backend id ('local', 'worker', 'worker:<name>'). 'remote' is the legacy alias of 'auto'.
         max_parallel_workers (int): Maximum number of threads used for parallel node execution within a
             stage. Set to 1 to disable parallelism. Defaults to 4.
         parameters (list[FlowParameter]): Flow-level parameters referenceable via ${name} syntax.
@@ -208,8 +204,7 @@ class FlowGraphConfig(BaseModel):
     def validate_and_set_execution_location(cls, v: ExecutionLocationsLiteral | None) -> ExecutionLocationsLiteral:
         """
         Validates and sets the execution location.
-        1.  **If `None`, `""` or `"auto"` is provided**: It is `default_execution_location()`, so `"auto"` stays
-            `"auto"` with the compute protocol on and is the location global settings determine with it off.
+        1.  **If `None`, `""` or `"auto"` is provided**: It is `default_execution_location()`.
         2.  **If another value is provided**: It checks if the value is compatible with the global
             settings. If not (e.g., requesting 'remote' when only 'local' is possible),
             it corrects the value to a compatible one. A backend id passes unchanged.
@@ -284,9 +279,8 @@ class RawLogInput(BaseModel):
 class FlowfileSettings(BaseModel):
     """Settings for flowfile serialization (YAML/JSON).
 
-    Excludes runtime state fields like is_running, is_canceled, modified_on. ``execution_location`` is kept as the
-    flow had it, ``"auto"`` and backend ids included; what a saved ``"local"`` or ``"remote"`` opens as is
-    ``loaded_execution_location``'s.
+    Excludes runtime state fields like is_running, is_canceled, modified_on. ``execution_location`` is saved as the
+    flow has it; ``loaded_execution_location`` decides what it opens as.
     """
 
     description: str | None = None

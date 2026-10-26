@@ -1,14 +1,11 @@
 """Runtime for the run_flow node: resolve, inspect, and execute catalog flows as subflows.
 
 The child graph runs in-process under the parent run's execution context (fresh
-flow_id, never registered in the FlowfileHandler, per-graph execution settings —
-the global worker-offload flag is untouched). With ``FLOWFILE_COMPUTE_PROTOCOL``
-on, the child takes the parent's ``execution_location``, so a local parent's
-subflow stays local; off, the child is set ``local``. Outputs stay lazy; only the
-small parameter frame is read, at most ``MAX_SUBFLOW_RUNS + 1`` rows: with the flag
-on through ``bounded.head_rows`` on the run's backend, off collected in core. With
-the flag on a data input reaches the child with the input engine's cached schema,
-and the metadata columns are named from the child output engine's cached columns.
+flow_id, never registered in the FlowfileHandler, per-graph execution settings).
+With ``FLOWFILE_COMPUTE_PROTOCOL`` on, the child takes the parent's
+``execution_location``; off, it is set ``local``. Outputs stay lazy; only the
+small parameter frame is read (at most ``MAX_SUBFLOW_RUNS + 1`` rows), with the
+flag on through ``bounded.head_rows`` on the run's backend, off collected in core.
 """
 
 import threading
@@ -597,8 +594,7 @@ def _execute_runs(
         finally:
             if node is not None:
                 node._subflow_cancel_context = None
-            # The child graph is dropped after this run; its outputs keep the plans they read, and the node owns
-            # the stored results those plans scan.
+            # The child graph is dropped; the node takes over the stored results its outputs' plans scan.
             for child_node in child.nodes:
                 child_node.release_deferred_result()
                 if node is not None:

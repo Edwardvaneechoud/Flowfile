@@ -28,9 +28,8 @@ def gcs_filesystem(**storage_options: Any) -> Any:
     """A gcsfs filesystem for ``storage_options``, without gcsfs's zonal/hierarchical-namespace layer.
 
     From gcsfs 2026.10 ``gcsfs.GCSFileSystem`` is ``ExtendedGcsFileSystem``, which first asks each bucket's storage
-    layout over gRPC. An endpoint that serves only the JSON API (fake-gcs-server, a custom endpoint) never answers, so
-    every call waits out a 60 s timeout, and the unknown layout is not cached. The core class is what earlier releases
-    returned. Every gcsfs filesystem in Flowfile is made here.
+    layout over gRPC. An endpoint that serves only the JSON API (fake-gcs-server, a custom endpoint) never answers,
+    so every call waits out an uncached 60 s timeout. Every gcsfs filesystem in Flowfile is made here.
     """
     from gcsfs.core import GCSFileSystem
 

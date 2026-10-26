@@ -5,8 +5,8 @@ import axios from "../services/axios.config";
 const COMPUTE_BACKENDS_URL = "/compute_backends";
 
 /**
- * A configured worker as every user lists it: `url` is null for a user who is no administrator; `verdict` is null
- * until the backend was checked; `shares_core_disk` means core offers the worker local files whatever it declares.
+ * A configured worker as every user lists it: `url` is null for a non-administrator, `verdict` until it was
+ * checked. `shares_core_disk`: core offers the worker local files whatever it declares.
  */
 export interface ComputeBackend {
   id: string;
@@ -15,7 +15,7 @@ export interface ComputeBackend {
   verdict: HandshakeVerdict | null;
 }
 
-/** The add body, an administrator's; the token and the CA certificate are sent once and never answered. */
+/** The add body, an administrator's; the token and CA certificate are sent once and never answered. */
 export interface ComputeBackendInput {
   name: string;
   url: string;
@@ -42,9 +42,9 @@ export interface WorkerCapabilities {
 }
 
 /**
- * `backend` is null and `error` says why when its capabilities could not be read; `ok` false with `error` is a
- * backend refused whole. `absent` names what an `ok` backend does not offer (a plugin, or "python" for core's
- * Python functions) and why, and `offered` is `backend` with the plugins it offers.
+ * `ok` false with `error` is a backend refused whole; `backend` is null when its capabilities could not be read.
+ * `absent` names what an `ok` backend lacks and why ("python": core's Python functions); `offered` is `backend`
+ * with only the plugins it offers.
  */
 export interface HandshakeVerdict {
   id: string;

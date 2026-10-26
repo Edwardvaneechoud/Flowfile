@@ -1,17 +1,11 @@
 """The worker's versioned ``/v1`` routes, which answer a submitted plan or an operation with result references.
 
-Every route needs the internal token, then an ``X-Protocol-Version`` equal to this worker's
-``PROTOCOL_VERSION``: a request without one, or with another, is answered 426. The bodies live in
-``service.py``, one function per route over the wire models, which core's embedded worker adapter calls
-directly when the worker runs in core's own process; each route here reads its request, calls its function
-and answers what it returns, or the ``HTTPException`` it raises. The submit, the reads and the operations are sync
-routes that wait for their child in the threadpool; the short routes (``HEAD`` and ``DELETE`` of a result, a job's
-status and its cancel) and the router's dependencies are ``async``, their blocking part on threads of their own
-(``_QUICK``), so they answer while every thread of the pool waits on a child. ``run_submit`` is the submit itself, which
-``streaming.py``'s ``/v1/ws/submit`` runs too. The names importers take from here (``run_submit``,
-``worker_capabilities``, ``sweep_expired``, the sample caps, ``OPERATIONS`` and the request and answer models)
-are re-exported from ``service``. The legacy routes in ``routes.py`` stay as they are; the two share only
-``status_dict``.
+Every route needs the internal token, then an ``X-Protocol-Version`` equal to ``PROTOCOL_VERSION`` (426 otherwise).
+Each route calls its body in ``service.py`` and answers what it returns, or the ``HTTPException`` it raises. The
+submit, the reads and the operations are sync and wait for their child in the threadpool. The short routes (``HEAD``
+and ``DELETE`` of a result, a job's status and its cancel) are ``async``, any blocking part on ``_QUICK``, so they
+answer while every pool thread waits on a child. The models and helpers importers take from here are re-exported from
+``service``.
 """
 
 import asyncio

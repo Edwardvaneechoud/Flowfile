@@ -3,8 +3,8 @@
 Provides the CloudStorageReader class that translates FullCloudStorageConnection
 objects into storage_options dicts and credential providers, delegating the
 actual options building to shared.cloud_storage.storage_options. With the compute
-protocol flag on, a read of a stored connection names it by reference instead, and
-whichever process runs the plan resolves it.
+protocol flag on, a read of a stored connection carries a reference to it instead,
+resolved where the plan runs.
 
 Importing it registers core's secret decryptor, so provider-carrying plans can execute in core.
 """
@@ -36,10 +36,10 @@ class _NativeCredentials:
 
 
 NATIVE_CREDENTIALS = _NativeCredentials()
-"""The credential provider of a read with none of its own, for a backend that reaches storage with its own identity
-(``credential_resolution`` ``ambient``): the scan is given ``credential_provider=None``, so its plan holds no pickled
-Python provider, which a backend on another Python cannot load, and Polars' native chain finds the identity where the
-plan runs."""
+"""The credential provider of a read with none of its own, on a backend with ``ambient`` credential resolution.
+
+The scan gets ``credential_provider=None``, so its plan holds no pickled Python provider (which a backend on another
+Python cannot load) and Polars' native chain finds the identity where the plan runs."""
 
 
 class CloudStorageReader:
@@ -129,12 +129,10 @@ class CloudStorageReader:
     def get_plan_storage_options(connection: FullCloudStorageConnection) -> dict[str, str]:
         """The options a read's plan carries when the executor resolves its credentials: no secret, nothing resolved.
 
-        The connection's region, endpoint, plain-HTTP, TLS, account and project settings; S3 is built as ``env_vars``,
-        whose branch resolves no credential, and the Azure and GCS builders add a credential only when given one. A
-        GCS endpoint is reached through object_store's ``gcs_base_url``, which only a service-account key carries: a
-        key with no key material and OAuth off, so the plan sends the provider's bearer or, with none, no token. An
-        ``aws-cli`` connection with no region of its own takes its profile's (``_profile_region``), as core's own read
-        of it does, since a Delta read finds no region otherwise.
+        S3 is built as ``env_vars``, which resolves no credential. A GCS endpoint needs object_store's
+        ``gcs_base_url``, which only a service-account key carries, so a stub key with no key material and OAuth off
+        carries it. An ``aws-cli`` connection with no region takes its profile's (``_profile_region``), since a Delta
+        read finds no region otherwise.
         """
         if CloudStorageReader.use_pyarrow_for_gcs(connection):
             stub = {
@@ -166,11 +164,10 @@ class CloudStorageReader:
     ) -> tuple[dict[str, Any], EncryptedCredentialProvider | CredentialRefProvider | None]:
         """The storage options and credential provider of a read's plan.
 
-        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a Polars scan of a stored connection whose method holds a credential
-        carries a ``CredentialRefProvider`` and options with no secret, so whichever process executes the plan resolves
-        the connection; ``env_vars`` and managed identity carry no provider, and a named connection the catalog does
-        not hold for *user_id* is refused, never resolved in core. Otherwise, the flag off or a read with no saved
-        connection, core resolves the options and the plan carries their credentials encrypted.
+        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a stored connection whose method holds a credential gets secret-free
+        options and a ``CredentialRefProvider``, resolved where the plan executes. ``env_vars`` and
+        ``managed_identity`` get no provider. Otherwise (flag off, or no saved connection) core resolves the options
+        and the plan carries their credentials encrypted.
 
         Raises:
             ValueError: With the flag on, the connection is named but not stored for *user_id*, or *user_id* is None.

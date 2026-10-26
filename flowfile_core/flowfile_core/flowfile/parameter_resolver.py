@@ -216,8 +216,8 @@ def node_parameters_resolved(node: Any) -> Iterator[None]:
 def resolved_settings(node: Any) -> Any:
     """A node's settings with its flow ``${name}`` refs substituted as the run substitutes them, the node left as it is.
 
-    The live settings when the flow defines no parameters or the settings name none; otherwise a deep copy resolved by
-    ``apply_parameters_in_place``, so a reader beside an edit or a run never sees, or leaves, a half-resolved node.
+    The live settings when nothing needs resolving; otherwise a resolved deep copy, so a reader beside an edit or a
+    run never sees, or leaves, a half-resolved node.
 
     Raises:
         ValueError: If a referenced parameter is not defined on the flow.

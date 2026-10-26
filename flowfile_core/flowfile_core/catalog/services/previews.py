@@ -120,9 +120,9 @@ class TablePreviewService:
     def _read_virtual_preview(lazy_frame: pl.LazyFrame, ref: ResultRef | None, limit: int) -> CatalogTablePreview:
         """The first *limit* rows of a virtual table and its row count, read through a backend; no file is opened.
 
-        With *ref*, the producer run's output reference, the backend that holds it samples it, and ``total_rows`` is
-        its row count, counted there when the reference carries none. Without one, *lazy_frame* is read through
-        ``head_rows`` and ``count_rows`` on the current context's backend.
+        With *ref* (the producer run's output) the backend holding it samples it, and counts it when the ref carries
+        no row count. Without one, *lazy_frame* is read through ``head_rows`` and ``count_rows`` on the current
+        context's backend.
         """
         if ref is not None:
             backend = registry.backend(ref.backend_id)
@@ -239,9 +239,9 @@ class TablePreviewService:
     ) -> CatalogTablePreview:
         """Read a Delta table preview at a specific version, on the worker or in this process.
 
-        The worker reads an object-storage or managed table when catalog I/O goes to it (``uses_worker``); a worker it
-        cannot reach is ``ComputeUnavailable``, never a read here instead. An external local table, whose bare name the
-        worker's routes cannot resolve, is read here, as its latest preview is.
+        The worker reads an object-storage or managed table when ``uses_worker()``; an unreachable worker is
+        ``ComputeUnavailable``, never a read here instead. An external local table, whose bare name the worker's
+        routes cannot resolve, is read here.
         """
         storage_payload = target.to_worker_payload() if target else None
         storage_options = (target.storage_options or None) if target else None
@@ -299,8 +299,7 @@ class TablePreviewService:
     def get_table_history(self, table_id: int, limit: int | None = None) -> DeltaTableHistory:
         """Return the version history for a Delta catalog table.
 
-        Read as ``_get_delta_version_preview`` reads: on the worker for an object-storage or managed table when catalog
-        I/O goes to it, a worker it cannot reach ``ComputeUnavailable``; an external local table in this process.
+        Read where ``_get_delta_version_preview`` reads, with the same ``ComputeUnavailable`` rule.
         """
         table = self.repo.get_table(table_id)
         if table is None:

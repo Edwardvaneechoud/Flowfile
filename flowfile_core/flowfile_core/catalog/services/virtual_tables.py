@@ -425,10 +425,8 @@ class VirtualTableService:
 
         For optimized tables, deserializes the stored LazyFrame directly.
         For query-based virtual tables, delegates to resolve_query_virtual_table.
-        For non-optimized tables, runs the producer flow's writer node under the execution context of that flow
-        with ``run_location`` as its location; with none given it runs on the current execution context's backend,
-        outside a ``use_context`` block the default one, as an ``"auto"`` flow does. A writer that failed because its
-        compute could not be reached raises that ``ComputeUnavailable``.
+        For non-optimized tables, runs the producer flow's writer node with ``run_location`` as its location, else
+        on the current execution context's backend. A writer that failed on ``ComputeUnavailable`` raises it.
         """
         with self.held_virtual_flow_table(table_id, user_id, run_location, node_logger) as (plan, _):
             return plan
@@ -443,10 +441,9 @@ class VirtualTableService:
     ) -> Iterator[tuple[pl.LazyFrame, ResultRef | None]]:
         """Resolve a virtual flow table as ``resolve_virtual_flow_table`` does; its plan and its producer run's ref.
 
-        A table that resolves without a run (a query table, an optimized table whose sources are current) has no
-        reference (``None``). For one whose producer flow's writer node runs, the reference is that node's result,
-        held for the block: a deferred one is released when the block ends, a stored one stays, since the plan scans
-        it.
+        The ref is ``None`` for a table that resolves without a run (a query table, an optimized one whose sources
+        are current). Otherwise it is the writer node's result, held for the block: a deferred one is released when
+        the block ends, a stored one stays, since the plan scans it.
         """
         if run_location is None:
             run_location = current_context().backend_id
@@ -507,8 +504,7 @@ class VirtualTableService:
         try:
             if flowframe is None or flowframe.data_frame is None:
                 raise ValueError(f"No data produced for table '{table.name}'")
-            # Do not mutate the shared memoized engine; .lazy() is an identity on
-            # LazyFrames and a cheap wrap on eager frames.
+            # .lazy() leaves the shared memoized engine untouched (identity on LazyFrames).
             yield flowframe.data_frame.lazy(), selected_node.results.result_ref
         finally:
             # The producer graph is dropped after the block; the yielded plan keeps what it reads.

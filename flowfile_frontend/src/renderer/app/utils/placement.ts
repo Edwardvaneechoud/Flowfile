@@ -1,4 +1,4 @@
-// Where a node runs when its backend cannot run it: core's placement preview (GET /flow/placement) and a run's rows.
+// Wording for nodes their backend cannot run, from the placement preview and a run's rows.
 
 import type { NodeResult, PlacementFallback, PlacementPreview, PlacementRefusal } from "../types";
 
@@ -15,7 +15,7 @@ export interface FallbackNotice {
   lines: { nodeId: number; label: string; reason: string }[];
 }
 
-/** Why a node runs on the default backend; `ownBackend` when its own Compute backend names the one that cannot. */
+/** Why a node runs on the default backend; `ownBackend` when the one that cannot is the node's own pick. */
 export function fallbackSentence(
   fallback: Pick<PlacementFallback, "backend_id" | "fallback_id" | "reason">,
   ownBackend = false,
@@ -57,9 +57,9 @@ export function nodePlacementNote(
   };
 }
 
-/** The run card's notice for the rows placement ran on the default backend; null when none moved.
+/** The run card's notice for the rows placement moved to the default backend; null when none moved.
  *
- * The title names the two backends when every moved node went the same way; each line is then only the node and why.
+ * When every moved node went the same way the title names both backends and each line only the node and why.
  */
 export function fallbackNotice(rows: NodeResult[] | undefined): FallbackNotice | null {
   const moved = (rows ?? []).filter(

@@ -542,20 +542,15 @@ class FlowDataEngine:
         various authentication methods.
 
         The credentials ride in a credential provider, since the plan is serialized to the worker: encrypted
-        (``EncryptedCredentialProvider``), or with the compute protocol flag on as a reference to the stored
-        connection that the executing process resolves (``CredentialRefProvider``). With the flag on, an ``aws-cli``
-        read with no saved connection carries no credential and no provider, so Polars' default provider resolves the
-        default credential chain of whichever process runs the plan. A read with no provider of its own for a backend
-        that declares ``ambient`` credential resolution (a compute that reaches storage with its own identity, such as
-        a Polars cluster behind a gateway) gets ``credential_provider=None`` instead (``NATIVE_CREDENTIALS``): its plan
-        holds no pickled Python provider, which a compute on another Python could not load, and that compute's native
-        chain finds its own identity (``_ambient``).
+        (``EncryptedCredentialProvider``), or with the compute protocol flag on a reference to the stored connection,
+        resolved where the plan runs (``CredentialRefProvider``). With the flag on, an ``aws-cli`` read with no saved
+        connection carries no provider, so Polars' default chain resolves where the plan runs. A read with no provider
+        on a backend with ``ambient`` credential resolution gets ``NATIVE_CREDENTIALS``, so its plan holds no pickled
+        Python provider that a compute on another Python could not load.
 
-        Given a ``backend``, the scan is held there as a deferred result with no preview while the reference's schema
-        is read, then released, and the engine takes that schema: the backend resolves the read's connection, and core
-        reads no directory's first file. A read given no backend resolves the schema in core, and so does a GCS read
-        with an endpoint with the flag off, which goes through gcsfs; with the flag on it is a native scan like any
-        other.
+        Given a ``backend``, the schema is read from the scan held there as a deferred result, so the backend resolves
+        the connection and core reads no directory's first file. Without one, or for a GCS read with an endpoint and
+        the flag off (gcsfs), core resolves the schema.
 
         Args:
             settings: A `CloudStorageReadSettingsInternal` object containing connection
@@ -1767,7 +1762,7 @@ class FlowDataEngine:
     def cache(self) -> FlowDataEngine:
         """Caches the current DataFrame to disk and updates the internal reference.
 
-        This triggers a background process on the worker the worker backend runs on to
+        This triggers a background process on the worker (``registry.worker_url()``) to
         write the current LazyFrame's result to a temporary file. Subsequent operations on
         this `FlowDataEngine` instance will read from the cached file, which can speed up
         downstream computations.
@@ -1926,9 +1921,6 @@ class FlowDataEngine:
         seed: int | None = None,
     ) -> NamedOutputs:
         """Randomly partition rows into N labeled groups (in-process).
-
-        What core's own compute backend runs for a random split node; the worker
-        backend shuffles the same way on the worker and slices its stored file.
 
         The shuffled frame is materialized once so that each output shares the
         same shuffle — otherwise every handle's ``.collect()`` would re-run the
@@ -2368,8 +2360,8 @@ class FlowDataEngine:
         Args:
             warn: If True, logs a warning if a potentially expensive calculation is triggered.
             force_calculate: If True, forces recalculation even if a value is cached.
-            backend: The compute backend that counts a lazy frame (`bounded.count_rows`); its failure propagates
-                and the frame is never counted in this process instead. Without one, it is counted here.
+            backend: The backend that counts a lazy frame (`bounded.count_rows`), with no fallback to this
+                process. Without one, the frame is counted here.
 
         Returns:
             The total number of records.
@@ -2868,9 +2860,8 @@ class FlowDataEngine:
     def _peek_first_row_as_dict(self) -> dict[str, Any]:
         """Return the first row of the underlying frame keyed by column name.
 
-        The current execution context's backend computes the one row (`bounded.single_row`): in core for a local
-        flow, on the worker for a remote one, so a remote flow's upstream plan never runs in the core process. A
-        failure there propagates as the backend's `ComputeError`; nothing falls back to computing in core.
+        The current execution context's backend computes the row (`bounded.single_row`); nothing falls back to
+        computing in core.
 
         Raises:
             ComputeError: The backend could not compute the row.
@@ -3030,10 +3021,8 @@ class FlowDataEngine:
         Dropping all-null columns is data-dependent, and a lazy plan cannot change its
         schema based on the data flowing through it, so the keep-list has to be resolved
         before the rest of the plan is built. The aggregation is bounded to a single row,
-        which the current execution context's backend computes (`bounded.single_row`): in
-        core for a local flow, on the worker for a remote one, so core stays collect-free
-        on a remote flow's hot path. A failure there propagates as the backend's
-        `ComputeError`; nothing falls back to computing in core.
+        which the current execution context's backend computes (`bounded.single_row`);
+        nothing falls back to computing in core.
 
         Returns:
             The frame height and the per-column null count, both from one aggregation.
@@ -3298,7 +3287,7 @@ class FlowDataEngine:
 
     @classmethod
     def create_from_path_worker(cls, received_table: input_schema.ReceivedTable, flow_id: int, node_id: int | str):
-        """Creates a FlowDataEngine from a path, read by the worker the worker backend runs on."""
+        """Creates a FlowDataEngine from a path, read by the worker at ``registry.worker_url()``."""
         refuse_cloud_path(received_table.path, received_table.file_type)
         received_table.set_absolute_filepath()
         if received_table.scan_mode == "directory":
@@ -3344,9 +3333,8 @@ def execute_polars_code(*flowfile_tables: FlowDataEngine, code: str) -> FlowData
     This function takes a string of Python code that uses Polars and executes it, once.
     Function-form code (a single ``def``) is called with the inputs as positional
     LazyFrames; snippet code reads them as `input_df` (for a single input) or
-    `input_df_1`, `input_df_2`, etc. The backend that runs the ``polars_code``
-    operation in core's process calls it, and so does the Polars Code node's builder
-    with ``FLOWFILE_COMPUTE_PROTOCOL`` off.
+    `input_df_1`, `input_df_2`, etc. The Polars Code node's builder calls it with
+    ``FLOWFILE_COMPUTE_PROTOCOL`` off.
 
     Args:
         *flowfile_tables: A variable number of `FlowDataEngine` objects to be

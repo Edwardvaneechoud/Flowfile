@@ -1,10 +1,7 @@
 """Where a run executes: the backend, how many nodes of a stage run at once, and the preview size.
 
-``current_context`` resolves in this order: the context a ``use_context`` block set in the calling context,
-else the context of the graph passed in, else a default on ``default_backend_id()``. A ``FlowGraph`` derives
-its own from its settings on each access, on the backend its ``execution_location`` names (``"auto"`` and
-``"remote"`` name the default one); ``run_graph`` sets it for the run, and every stage thread runs under
-a copy of the run's context, so a node sees it on whichever thread executes it.
+``current_context`` answers the context a ``use_context`` block set, else the graph's, else one on the default
+backend. ``run_graph`` sets the run's context, and every stage thread runs under a copy of it.
 """
 
 from __future__ import annotations
@@ -48,12 +45,10 @@ class ExecutionContext:
     def for_flow(cls, settings: FlowSettings) -> ExecutionContext:
         """The context of a flow with these settings.
 
-        An ``"auto"`` or ``"remote"`` flow runs on the default backend, a flow with any other location on the
-        backend of that id (``"local"`` on the worker embedded in this process, ``registry.LOCAL_BACKEND_ID``;
-        ``"worker:team"`` on ``worker:team``), which is not looked up here. The embedded worker's jobs run in this
-        process, where the registry makes it, so a stage runs one node at a time on it; on any other backend up to
-        ``max_parallel_workers`` at once. Development mode keeps previews of ``DEFAULT_PREVIEW_ROWS`` rows, Performance
-        mode none.
+        ``"auto"`` and ``"remote"`` run on the default backend, any other location on the backend of that id, which is
+        not looked up here. A stage runs one node at a time on ``local``, whose jobs run in this process, and up to
+        ``max_parallel_workers`` elsewhere. Development mode keeps previews of ``DEFAULT_PREVIEW_ROWS`` rows,
+        Performance mode none.
         """
         location = settings.execution_location
         backend_id = registry.default_backend_id() if location in ("auto", "remote") else location

@@ -21,12 +21,9 @@ Schema: TypeAlias = list[FlowfileColumn]
 """The columns of a result, in order."""
 
 OpPayload: TypeAlias = dict[str, Any]
-"""What one operation needs, by key: its settings models and ids, plus the frames it reads and the in-process hooks
-(a node logger, a cancel check) it reports to. A backend that crosses a process boundary serialises them itself.
+"""What one operation needs: ``{"payload": <the kind's dataclass from execution/payloads.py>}``, for every backend.
 
-The read kinds (``database_read``, ``kafka_read``, ``google_analytics_read``, ``rest_api_read``, ``file_read``) take
-one key, ``"payload"``, holding the kind's frozen dataclass from ``execution/payloads.py``, the same for every
-backend; ``payloads.unpack`` takes it out and raises ``TypeError``/``ValueError`` naming the key when it is wrong."""
+``payloads.unpack`` takes the dataclass out and raises ``TypeError``/``ValueError`` naming the key when it is wrong."""
 
 
 @dataclass(frozen=True)
@@ -35,15 +32,14 @@ class ResultRef:
 
     Attributes:
         backend_id: The backend that minted the reference; no other backend can read it.
-        result_id: The producing node's hash, plus a suffix for a result derived from it (such as one
-            output of a node with several).
+        result_id: The producing node's hash, plus a suffix for a derived result (one output of several).
         schema: The result's columns.
         row_count: The number of rows, when the backend knows it without computing the result.
         state: ``"materialised"`` when the backend holds the rows, ``"deferred"`` when it holds a plan
             that computes them on read.
-        location: Where the backend keeps the result. Opaque to core: only the minting backend reads it.
-        kind: ``"table"`` for rows; ``"blob"`` for a fitted model or another result that is not rows, a file of bytes
-            held ``"materialised"`` with no columns and no row count, which no backend plans over, samples or counts.
+        location: Where the backend keeps the result; opaque to core, only the minting backend reads it.
+        kind: ``"table"`` for rows. ``"blob"`` for bytes that are not rows (a fitted model): materialised, with no
+            columns and no row count, and never planned over, sampled or counted.
     """
 
     backend_id: str
@@ -59,11 +55,10 @@ class ResultRef:
 class SubmitHints:
     """What core knows about a plan that a backend may use to run it.
 
-    Each backend's materialisation policy, in its class docstring, says which hints it reads.
+    Each backend's class docstring says which hints its materialisation policy reads.
 
     Attributes:
-        must_materialise: Core asks for the rows to be computed and held rather than kept as a deferred plan,
-            because the result is cached across runs.
+        must_materialise: Compute and hold the rows rather than keep a deferred plan.
         wide: The plan reshapes data across rows (join, group by, sort, pivot) rather than mapping each row.
         fanout: How many downstream nodes read the result.
         preview_rows: The most rows the inline sample may hold; ``None`` asks for no sample.
@@ -171,11 +166,10 @@ class OperationKind(enum.Enum):
 class ComputeBackend(Protocol):
     """A compute core runs work on and reads results from.
 
-    A ``ResultRef`` is valid only on the backend whose ``id`` it carries: every method that takes one
-    raises ``ForeignRef`` for a reference another backend minted, and ``ResultMissing`` for one this
-    backend no longer holds. A blob result (``kind="blob"``) has no rows: ``plan_for``, ``sample`` and ``count``
-    refuse it with ``OperationUnsupported``, as does ``submit`` among its inputs, while ``exists`` and ``release``
-    treat it like any result, and its bytes cross between backends through ``export`` and ``import_uri``.
+    A ``ResultRef`` is valid only on the backend whose ``id`` it carries: every method that takes one raises
+    ``ForeignRef`` for another backend's reference and ``ResultMissing`` for one this backend no longer holds. A blob
+    (``kind="blob"``) has no rows, so ``plan_for``, ``sample``, ``count`` and ``submit`` (among its inputs) refuse it
+    with ``OperationUnsupported``. Its bytes cross between backends through ``export`` and ``import_uri``.
 
     Attributes:
         id: The id the registry knows this backend by.
@@ -202,12 +196,11 @@ class ComputeBackend(Protocol):
         """Run a Polars plan over ``inputs``, hold its result and return a reference to it.
 
         Args:
-            plan: The plan. A backend that runs it in another process serialises it (``pl.LazyFrame.serialize``)
-                when it sends it; one that runs it in core holds the object as it is.
+            plan: The plan; a backend that runs it in another process serialises it when it sends it.
             inputs: The results of this backend the plan reads.
-            hints: What core knows about the plan; the backend's materialisation policy reads them.
-            result_id: The id the result is minted under: the producing node's hash. Submitting under an id
-                the backend already holds replaces that result.
+            hints: What core knows about the plan, for the backend's materialisation policy.
+            result_id: The id to mint the result under, the producing node's hash. Reusing a held id replaces that
+                result.
             flow_id: The flow the compute files the job and its logs under.
             node_id: The node the compute files the job and its logs under.
         """

@@ -1,40 +1,24 @@
 """Check each compute backend before core sends it work, and say what it offers.
 
-A backend is checked through its own interface, the same for every kind (``verify``): ``capabilities()`` compared with
-``local_capabilities()`` of this process, then each probe plan run on it as an ordinary job: ``submit`` with the
-cheapest hints and a one-row preview, ``sample`` when the answer carries no sample inline, and ``release``. The answer
-is a ``Verdict``, cached per backend instance and kept as the last verdict of its id (``last_verdict``). Placement reads
-it (``verdict_for``), and so does the gate in front of every worker call (``ensure_handshake``), so each backend is
-checked once per core process, on its first use, and again after a call could not reach it (``reset_handshake``); a
-verdict that refuses it is checked again on its next use. Calls that find a backend unchecked at once share one check:
-the first runs it and the others wait for its outcome.
+``verify`` checks any backend through its own interface: ``capabilities()`` compared with this process's
+``local_capabilities()``, then each probe plan run on it as an ordinary job. The ``Verdict`` is cached per backend
+instance and kept as the last of its id (``last_verdict``). Placement (``verdict_for``) and the gate in front of every
+worker call (``ensure_handshake``) read it, so a backend is checked on its first use, after a call could not reach it
+(``reset_handshake``), and on each use while its verdict refuses it. Concurrent calls share one check.
 
-Only what no probe covers refuses a backend whole, a difference in any of these fields making the verdict refuse it,
-and the gate raise ``VersionMismatch`` naming both sides before the backend is sent any work:
+These fields refuse a backend whole, and the gate raises ``VersionMismatch`` before any work is sent:
 
 - ``polars_version`` and ``polars_runtime``: plan bytes are not stable across Polars versions, and the index width makes
   ``pl.len()`` and row indexes ``UInt32`` on one side and ``UInt64`` on the other.
-- ``protocol_version``: the worker contract, the shape of everything core and a worker exchange, so two releases that
-  speak one contract work together.
+- ``protocol_version``: the worker contract, so two releases that speak one contract work together.
 
-Every other difference narrows what the backend offers instead: ``absent`` maps what it lacks to the reason, in words
-that follow "which", and ``offered`` is its capabilities with ``plugins`` cut to what it offers, which is what placement
-compares a node's needs with, so only the nodes that need the missing piece are refused there.
+Every other difference only narrows ``offered``, so placement refuses just the nodes that need the missing piece:
 
-- ``python_version`` is compared to the patch and listed in ``differences``, but the probe plan ``python``, carrying a
-  trivial Python function, decides whether core's Python functions run there; where they do not, the reason is absent
-  under ``placement.PYTHON_FUNCTIONS``.
-- ``plugins``: a package of ``PLUGIN_PACKAGES`` that core has is offered where the backend has it in core's version
-  and, for an expression plugin, its probe plan, an empty frame calling one cheap expression of it, loads it from the
-  path core's plans carry. One missing, in another version or not loadable is absent with the reason naming which; a
-  package with no probe plan is decided by its version alone.
-- ``app_version``, ``platform`` and ``plugin_libs`` are reported in the verdict's ``backend``, not compared.
-
-The probe jobs run as flow ``-1``, node ``-1``, under result ids ``handshake-<probe>-<hex>``. A backend that cannot be
-reached, for its capabilities or during a probe, is a ``ComputeUnavailable``; a worker's answer that is no
-``Capabilities`` is a ``VersionMismatch`` when it carries an ``app_version`` (a worker of another release), naming both
-contract numbers when they differ and both app versions, else a ``ComputeUnavailable``: the URL is no Flowfile worker
-(``capabilities_from_answer``).
+- ``python_version`` is listed in ``differences``, but the ``python`` probe decides whether core's Python functions
+  run there (``placement.PYTHON_FUNCTIONS``).
+- ``plugins``: a ``PLUGIN_PACKAGES`` package core has is offered where the backend has it in core's version and, for
+  an expression plugin, its probe loads it from the path core's plans carry.
+- ``app_version``, ``platform`` and ``plugin_libs`` are reported, not compared.
 """
 
 from __future__ import annotations
@@ -74,17 +58,16 @@ class Verdict(BaseModel):
 
     Attributes:
         id: The backend's id.
-        ok: Its capabilities were read and no field that refuses a backend whole differs from core's.
+        ok: Its capabilities were read and no refusing field differs from core's.
         core: This process's capabilities.
-        backend: The backend's capabilities as it reported them; ``None`` when they could not be read.
-        differences: Each compared field where the backend differs from core, both sides named.
+        backend: The capabilities the backend reported; ``None`` when they could not be read.
+        differences: Each compared field that differs, both sides named.
         offered: ``backend`` with ``plugins`` cut to what it offers; ``None`` unless ``ok``.
-        absent: What it does not offer, by plugin name or ``placement.PYTHON_FUNCTIONS``, and why, in words that
+        absent: What it does not offer (a plugin name or ``placement.PYTHON_FUNCTIONS``) mapped to why, in words that
             follow "which".
         error: Why the backend is refused whole; ``None`` when it is not.
-        error_kind: The class of the error that refused it (``ComputeUnavailable``, ``VersionMismatch``,
-            …), so the refusal can be told without its message, which may name the worker's address; ``None`` when
-            it is not refused.
+        error_kind: The refusing error's class name (``ComputeUnavailable``, ``VersionMismatch``, …), so the refusal
+            can be told without its message, which may name the worker's address; ``None`` when not refused.
     """
 
     id: str
@@ -141,14 +124,12 @@ def capabilities_from_answer(
 ) -> Capabilities:
     """The ``Capabilities`` a 2xx answer to ``GET /capabilities`` from *worker_url* carries.
 
-    An answer that does not validate is a worker of another release when it carries an ``app_version`` (a field
-    added since without a default is missing from it), and otherwise a server that is no Flowfile worker (other
-    JSON, or a body that is no JSON). Either error is raised from pydantic's ``ValidationError``.
+    An answer that does not validate is a worker of another release when it carries an ``app_version``, else a
+    server that is no Flowfile worker. Either error is raised from pydantic's ``ValidationError``.
 
     Raises:
-        VersionMismatch: the answer carries an ``app_version`` but is no ``Capabilities``; the message names both
-            contract numbers when the answer carries one that differs, both app versions and each field this release
-            could not read.
+        VersionMismatch: the answer carries an ``app_version`` but is no ``Capabilities``. The message names both app
+            versions, both contract numbers when they differ, and each field this release could not read.
         ComputeUnavailable: the answer carries no ``app_version``; its ``backend_id`` is *backend_id*.
     """
     try:
@@ -366,9 +347,11 @@ def last_verdict(backend_id: str) -> Verdict | None:
 
 
 def owns(backend: WorkerBackend) -> None:
-    """Make *backend* the backend a gate call that names its URL alone is checked by, unless a backend that signs
-    with the process token holds the URL and *backend* has a token of its own: such a call signs with the process
-    token, so a backend that does too is the one it is checked by, the one made last among them."""
+    """Make *backend* the one a URL-only gate call on its URL is checked by.
+
+    Such a call signs with the process token, so a backend that does too keeps the URL from one with a token of its
+    own. Otherwise the last one made wins.
+    """
     with _lock:
         current = _by_url.get(backend.url)
         if current is None or backend.token is None or current.token is not None:
@@ -379,16 +362,13 @@ def owns(backend: WorkerBackend) -> None:
 def ensure_handshake(worker_url: str, *, backend_id: str | None = None) -> None:
     """Refuse the worker at *worker_url* before a call is sent to it, by the verdict of the backend it is.
 
-    That backend is the one last checked under *backend_id* when it runs on *worker_url*, else the ``WorkerBackend``
-    made on the URL (``owns``), else a ``WorkerBackend`` made here to stand in for a URL no backend was made on, which
-    signs with the process token as the task routes do. Its cached verdict passes at once, so does the verdict that
-    stands while its own check runs (``verify``), and otherwise it is checked now.
-
-    A ``ComputeUnavailable`` names *backend_id* when it is given, no backend when a stand-in was checked, else the
-    backend checked.
+    That backend is the one last checked under *backend_id* when it runs on *worker_url*, else the URL's owner
+    (``owns``), else a stand-in ``WorkerBackend`` that signs with the process token. A cached passing verdict, or the
+    one that stands while its own check runs (``verify``), passes at once; otherwise the backend is checked now.
 
     Raises:
-        ComputeUnavailable: the worker cannot be reached.
+        ComputeUnavailable: the worker cannot be reached. It names *backend_id* when given, no backend for a
+            stand-in, else the backend checked.
         VersionMismatch: the worker is refused whole; the message names every field that refuses it.
     """
     with _lock:

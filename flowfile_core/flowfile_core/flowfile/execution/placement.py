@@ -1,32 +1,20 @@
 """Which backend runs each node of a run, and the nodes a backend cannot run.
 
-``place`` compares what each node needs from its compute (``flow_node.requirements.requirements_for``) with what the
-backend the policy assigns it declares (``Capabilities``): the operation the node runs there, the schemes it reads and
-writes, the plugins its work loads, whether core's Python functions run there for a node whose plan may carry one and,
-for a node on a notebook kernel, ``file`` among the backend's write schemes, because the kernel shared volume is a
-local-disk location on core's host. What a backend's handshake found it does not offer comes with the reason
-(``absent``), which the refusal names. A Train Model node that publishes its model and an Apply Model node that takes
-one from the catalog also need the scheme the artifact store's bytes travel by: ``file`` for the filesystem store,
-``https`` for the S3 store's presigned URLs. A node whose backend falls short is a ``Refusal`` with the reasons in
-words. Stored connections are compared only on a backend whose
-``credential_resolution`` is ``ambient``, a compute that reaches storage with its own identity and holds no catalog: a
-cloud reader or writer, and a catalog reader or writer over an object-storage namespace, is refused there for each
-stored connection it names whose ``auth_method`` is not one a plan leaves to the executor's environment
-(``_AMBIENT_AUTH_METHODS``). A backend declaring ``master_key`` or ``vended`` resolves a stored connection itself. A Run
-Flow node is placed with the flow it runs: that flow is built for the call, the nodes its run would run are placed on
-the node's backend by the same policy, and each of them refused there refuses the Run Flow node.
-Each node's needs are read from its settings with its flow's parameters in them, as the run puts them there before the
-node runs (``parameter_resolver.resolved_settings``, a copy, so the node is never changed), so a path on
-``${dir}`` is placed by where ``dir`` points; a node that refers to a ``${name}`` its flow does not define claims
-nothing, so the run fails it with the resolver's message, and a node whose needs cannot be read from its resolved
-settings is refused with the error, logged with its traceback.
+``place`` compares what each node needs (``flow_node.requirements.requirements_for``) with the ``Capabilities`` of the
+backend its policy assigns: the operation, the schemes read and written, the plugins, whether core's Python functions
+run there, and ``file`` among the write schemes for a notebook-kernel node (the kernel shared volume is on core's
+host). Train and Apply Model nodes also need the artifact store's scheme: ``file`` for the filesystem store, ``https``
+for the S3 store's presigned URLs. A node its backend falls short for is a ``Refusal`` with the reasons in words.
 
-``SingleBackendPolicy`` puts a whole run on one backend, except the node types whose builders always run on a backend
-of their own. ``MixedPlacementPolicy`` puts each node on the backend its own ``execution_location`` names, and ``place``
-lists the edges between two nodes on different backends, whose data crosses through the exchange store. Under it a node
-its backend cannot run goes to the policy's ``fallback_id`` (``registry.fallback_backend_id``) when that backend can,
-a ``Fallback`` saying why, so the importing edges cross like any other; one neither can run is refused with both
-reasons.
+Stored connections are compared only on a backend whose ``credential_resolution`` is ``ambient``, one that reaches
+storage with its own identity and holds no catalog. A Run Flow node is placed with the flow it runs, and each node of
+that flow refused there refuses it. Needs are read from a resolved copy of the settings
+(``parameter_resolver.resolved_settings``), so a path on ``${dir}`` is placed by where ``dir`` points.
+
+``SingleBackendPolicy`` puts a whole run on one backend, except the node types pinned to a backend of their own.
+``MixedPlacementPolicy`` puts each node on the backend its own ``execution_location`` names. Edges between two backends
+cross through the exchange store, and a node its backend cannot run goes to the policy's ``fallback_id`` when that
+backend can run it (a ``Fallback``).
 """
 
 from __future__ import annotations
@@ -56,20 +44,18 @@ if TYPE_CHECKING:
 _PINNED_BACKENDS: dict[str, str] = {
     "google_analytics_reader": registry.WORKER_BACKEND_ID,
 }
-"""Node type -> the backend its builder runs it on whatever the flow's: the Google Analytics reader
-(``builders/connectors.py``) runs on the worker, since core's backend reads no Google Analytics."""
+"""Node type -> the backend its builder pins it to, whatever the flow says. The Google Analytics reader runs on
+the worker (``builders/connectors.py``)."""
 
 PYTHON_FUNCTIONS = "python"
-"""The name an absence map gives core's Python functions: where its reason is, a plan that carries one does not run."""
+"""The absence-map key for core's Python functions: a plan that carries one does not run on that backend."""
 
 SERVING_LOCAL = "this core serves; compute runs on its worker"
 """Why a process that serves (``registry.serving()``) runs no node on ``local``."""
 
 _AMBIENT_AUTH_METHODS = frozenset({"env_vars", "managed_identity"})
-"""The stored-connection methods a backend reaching storage with its own identity can serve: a plan of one carries no
-credential provider, the executor's environment supplying the credentials (``CloudStorageReader.get_read_credentials``),
-where every other method puts a ``CredentialRefProvider`` in the plan, which only a process holding the catalog and the
-master key resolves."""
+"""Connection methods an ``ambient`` backend can serve: their plans carry no credential provider. Every other method
+puts a ``CredentialRefProvider`` in the plan, which only a process with the catalog and the master key resolves."""
 
 
 @dataclass(frozen=True)
@@ -113,11 +99,11 @@ class Placement:
 
     Attributes:
         assignment: Node id -> the id of the backend that runs it.
-        boundaries: The edges whose data crosses from one backend to another, as (source node id, target node id).
+        boundaries: The edges whose data crosses between backends, as (source node id, target node id).
         refusals: The nodes their backend cannot run.
-        unreachable: Backend id -> the error its handshake raised, for the backends that could not be asked; their
-            nodes are assigned to them unchecked and fail with that error when they run.
-        fallbacks: The nodes assigned to the default backend instead of the one their settings name.
+        unreachable: Backend id -> the error its handshake raised. Its nodes are assigned unchecked and fail with that
+            error when they run.
+        fallbacks: The nodes moved to the default backend from the one their settings name.
     """
 
     assignment: dict[int, str]
@@ -179,11 +165,9 @@ _NODE_SETTING = "its Compute backend under General Settings"
 def remedy_for(node: FlowNode, policy: PlacementPolicy, *, fallback_id: str | None = None) -> str | None:
     """The settings that move ``node`` to another backend under ``policy``, named as the designer shows them.
 
-    With an exchange store (``MixedPlacementPolicy``) the node's own Compute backend decides, and the flow's Execution
-    location too while the node's is Auto. Without one (``SingleBackendPolicy``) only the flow's decides, so a node set
-    to a backend of its own is also told that its setting needs a store; given ``fallback_id``, the backend a store
-    would move the node to, the remedy says so. A node type pinned to its backend (``_PINNED_BACKENDS``) has no setting
-    that moves it: ``None``.
+    Without an exchange store (``SingleBackendPolicy``) only the flow's setting moves a node, so a node set to a backend
+    of its own is told that setting needs a store. Given ``fallback_id``, the remedy adds that a store would move the
+    node there. ``None`` for a pinned node type.
     """
     if node.node_type in _PINNED_BACKENDS:
         return None
@@ -259,43 +243,27 @@ def place(
 ) -> Placement:
     """Assign each of ``nodes`` (default all of the flow's) its backend by ``policy``, refusing each it cannot run.
 
-    ``backends`` holds the capabilities in hand of the backends the policy names for them, and of the policy's fallback
-    (``fallback_for``). A node its backend cannot run is assigned to the fallback when that backend is in ``backends``
-    and can run it, a ``Fallback`` naming what the first lacks; else it is refused there, the reason adding what the
-    fallback lacks when it was checked. ``local`` in a process that serves (``registry.serving()``) runs no node
-    (``SERVING_LOCAL``), so such a node falls back too. The Apply Model and formula gate rules read the assignment, so
-    a node they refuse once another moved is checked again, until no node moves: a Train Model node that falls back
-    takes its Apply Model node along. A node whose backend is in
-    ``unreachable`` (its handshake raised that error) is assigned to it unchecked, so it fails with that error when it
-    runs and never runs anywhere else; a node whose backend is in neither map is neither assigned nor refused. An Apply
-    Model node is refused on another backend than the Train Model node whose model it scores (one not among ``nodes``
-    counts as on the backend holding its model, else its policy's), and a formula gate where
-    the backend of the input it probes lacks what the formula needs. ``absent`` maps a backend id to what its
-    ``unreachable`` (its handshake raised that error) is assigned to it unchecked, so it fails with that error when it
-    runs and never runs anywhere else; a node whose backend is in neither map is neither assigned nor refused. An Apply
-    Model node is refused on another backend than the Train Model node whose model it scores, and a formula gate where
-    the backend of the input it probes lacks what the formula needs. ``absent`` maps a backend id to what its
-    handshake found it does not offer, a plugin's name or ``PYTHON_FUNCTIONS``, and the reason, in words that follow
-    "which"; a plugin a backend lacks with no reason there is one ``this backend does not have``. Nothing is asked of a
-    backend; the four lookups are where a catalog reader's or writer's namespace keeps its tables
-    (``locate_for_namespace``, which reads the namespace row and no credential), for a Train or Apply Model node, the
-    kind of the artifact store (``artifacts.get_storage_backend``, whose only side effect is making the store the first
-    time: the filesystem store makes its two folders, the S3 store a client), for a Run Flow node, the flow it runs
-    (``_child_refusals``: its registration and its file, built for the call) and, only on a backend whose
-    ``credential_resolution`` is ``ambient``, the ``auth_method`` of each stored connection a cloud or catalog node
-    names (``_unresolvable_connections``, which reads the connection's row and decrypts nothing).
+    ``backends`` holds the capabilities of the backends the policy names, the fallback's (``fallback_for``) included.
+    A node its backend cannot run moves to the fallback when that backend is in ``backends`` and can run it (a
+    ``Fallback``). Otherwise it is refused, with what the fallback lacks added when it was checked. ``local`` in a
+    process that serves runs no node (``SERVING_LOCAL``), so its nodes fall back too. The Apply Model and formula gate
+    rules (``_model_elsewhere``, ``_probe_elsewhere``) read the assignment, so nodes are checked again until none
+    moves: a Train Model node that falls back takes its Apply Model node along.
 
-    Each node's needs are read from its settings with its flow's parameters in them, as the run puts them there before
-    the node runs (``parameter_resolver.resolved_settings``, a copy, so the node is never changed). A node that refers
-    to a ``${name}`` its flow does not define is assigned and claims nothing, its needs being unknown rather than unmet,
-    so the run fails it with the resolver's message, as it would unplaced. A node whose needs cannot be read from its
-    resolved settings, whatever ``_catalog_target`` or ``requirements_for`` raises (a cloud path that is the whole
-    ``${n}`` of an integer parameter, a fault in either, a catalog database error), is refused with the error's class
-    and message, and with ``log`` a warning with the traceback goes to core's log: its needs were not checked, so it is
-    not sent to a backend that may not meet them, nor to the fallback.
+    A node whose backend is in ``unreachable`` is assigned unchecked and fails with that error when it runs, never
+    elsewhere. A node whose backend is in neither map is neither assigned nor refused. ``absent`` maps a backend id to
+    what its handshake found missing (a plugin's name or ``PYTHON_FUNCTIONS``) and the reason, worded to follow
+    "which".
 
-    ``boundaries`` lists, in the order of ``nodes``, each pair of a node and an input of it assigned to another backend,
-    once; an edge with an end that is not assigned is none.
+    Nothing is asked of a backend. The only lookups read a catalog node's namespace, the artifact store's kind (which
+    makes the store on first use), a Run Flow node's flow and, on an ``ambient`` backend, the ``auth_method`` of the
+    stored connections a node names, decrypting nothing.
+
+    A node naming a ``${name}`` its flow does not define claims nothing, so the run fails it with the resolver's
+    message. A node whose needs cannot be read from its resolved settings is refused with the error, and with ``log``
+    a warning with the traceback goes to core's log: unchecked, it is sent to no backend.
+
+    ``boundaries`` lists each edge between two assigned nodes on different backends once, in the order of ``nodes``.
     """
     placed = flow.nodes if nodes is None else nodes
     assignment: dict[int, str] = {}
@@ -456,10 +424,9 @@ def _unmet(
 ) -> list[str]:
     """What ``requirements`` ask that ``capabilities`` do not offer, one phrase each.
 
-    A catalog node (``namespace`` named) on a backend without ``file`` is refused for its namespace's local disk. A
-    model node (``artifact_scheme`` named) short of the artifact store's scheme is refused for the store: the publish
-    of a Train Model node, the fetch of an Apply Model node, on local disk for the filesystem store. A missing plugin
-    and a plan that may carry a Python function where core's do not run are refused with the reason ``absent`` gives.
+    A catalog node (``namespace`` named) on a backend without ``file`` is refused for its namespace's local disk, and a
+    model node (``artifact_scheme`` named) short of that scheme for the artifact store. A missing plugin, and a Python
+    function where core's do not run, take the reason ``absent`` gives.
     """
     reasons = []
     operation = requirements.operation
@@ -497,10 +464,9 @@ def _unmet(
 def _unresolvable_connections(node: FlowNode, credentials: frozenset[str], namespace_id: int | None) -> list[str]:
     """One phrase per stored connection of ``node`` a backend reaching storage with its own identity cannot resolve.
 
-    A cloud reader's or writer's connection is looked up for the node's user, a catalog reader's or writer's namespace
-    connection for the catalog's owner, as each resolves it when it runs; the lookup is ``get_cloud_connection``'s row
-    and its ``auth_method``, nothing decrypted. A name with no row claims nothing, so the node fails when it runs with
-    its own message. Any other node's connections (a database, Kafka or Google Analytics connection) are not compared.
+    Only cloud and catalog readers and writers are compared. Each connection is looked up for the user that resolves
+    it at run time: the node's user, or the catalog's owner for a namespace connection. Nothing is decrypted. A name
+    with no row claims nothing, so the node fails with its own message when it runs.
     """
     settings = node.setting_input
     cloud = isinstance(settings, input_schema.NodeCloudStorageReader | input_schema.NodeCloudStorageWriter)
@@ -532,18 +498,13 @@ def _child_refusals(
     absent: Mapping[str, Mapping[str, str]] | None,
     log: bool = True,
 ) -> list[str]:
-    """One reason per node the flow a Run Flow node runs would run that its placement on ``backend_id`` refuses.
+    """One reason per node of the flow a Run Flow node runs that placement on ``backend_id`` refuses.
 
-    The node's settings are read with ``flow``'s parameters in them, as the run puts them there before the node runs
-    (``resolved_settings``), so a constant binding ``${name}`` forwards that parameter's value, except one that
-    refers to a parameter each run of ``flow`` takes from a column (its ``_column_bound_parameters``, kept when ``flow``
-    is itself a child walked here), whose value is not known before the run: that binding counts as a column binding.
-    The flow is built for the call (``ephemeral_flow_graph``) at the depth its run would have, and the nodes
-    ``_child_run_nodes`` names are placed by ``policy`` with ``backend_id`` as the run's backend, as the child's own run
-    places them, its own nodes falling back as theirs would, so its Run Flow nodes are walked in turn, with the
-    parameters given to the child here. Past ``subflow.MAX_SUBFLOW_DEPTH``, and for any error while the settings or the
-    flow are resolved, or the flow is built or placed (with ``log``, logged with the node and the flow), it claims
-    nothing, so the node fails when it runs with the run's own message, as it would unplaced.
+    The flow is built for the call (``ephemeral_flow_graph``) and the nodes its run would run (``_child_run_nodes``)
+    are placed by ``policy`` with ``backend_id`` as the run's backend, so its own Run Flow nodes are walked in turn. A
+    constant binding of ``${name}`` forwards ``flow``'s value, unless each run of ``flow`` takes ``name`` from a column
+    (its ``_column_bound_parameters``): then it counts as a column binding. Past ``subflow.MAX_SUBFLOW_DEPTH``, or on
+    any error (logged when ``log``), it claims nothing, so the node fails with the run's own message.
     """
     # Function-local: flow_graph imports this module, and ephemeral_graph imports flow_graph.
     from flowfile_core.flowfile import subflow
@@ -588,17 +549,13 @@ def _child_refusals(
 
 
 def _child_run_nodes(child: FlowGraph, settings: input_schema.NodeRunFlow, forwarded: set[str]) -> list[FlowNode]:
-    """The nodes of ``child`` that its run by a Run Flow node with ``settings`` runs, as ``run_graph`` plans a run.
+    """The nodes of ``child`` a Run Flow node with ``settings`` would run, planned as ``run_graph`` plans a run.
 
-    The child's parameters take the node's constant bindings, as ``subflow.execute_run_flow_node`` sets them, its
-    parameter gates are decided on them (``_evaluate_gate_conditions``), and the execution plan leaves out the nodes
-    behind a closed gate and the ones the classifier error-skips (``compute_execution_plan``). A gate on a parameter
-    the node binds from a column or by a constant in ``forwarded`` (one that refers to a parameter taken from a column
-    a level up), or whose value refers to one, is decided by each run from its row, which is not read before the run:
-    it counts here as closed on both handles, so nothing behind it is placed and the child's own run places those
-    nodes. Those parameters are kept on ``child`` as ``_column_bound_parameters``, for the walk of its own Run Flow
-    nodes. A formula gate is decided when it runs, so the nodes behind one are placed, as the run places them. A
-    binding to a parameter the child lacks or a constant its type refuses raises, as the run does.
+    The child's parameters take the node's constant bindings and its parameter gates are decided on them. A gate on a
+    parameter bound from a column (or by a constant in ``forwarded``), or whose value refers to one, is decided by
+    each run from its row: it counts as closed on both handles, and the child's own run places what is behind it. Those
+    parameters are kept on ``child`` as ``_column_bound_parameters`` for the walk of its Run Flow nodes. A binding to
+    a parameter the child lacks, or a constant its type refuses, raises as the run does.
     """
     # Function-local: these import flow_node, which this module names only for type checking.
     from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
@@ -648,12 +605,10 @@ def _artifact_scheme(node: FlowNode) -> str | None:
 def _catalog_target(settings: object) -> tuple[CatalogStorageTarget | None, str | None, int | None]:
     """Where the namespace of a catalog writer's or reader's ``settings`` keeps its tables, its name and its id.
 
-    ``(None, None, None)`` for any other node's settings. A writer's namespace is the one its ``namespace_full_name``
-    names, else its ``namespace_id``, as the writer resolves it; with neither, its tables go to the local catalog tables
-    directory of the default namespace. A reader's is its ``catalog_namespace_id``; a reader without one (a SQL reader,
-    or a table picked with no namespace) claims no storage, its table's namespace being unknown here. A namespace whose
-    storage cannot be located (an object-storage root without a connection) answers no target either, so the node
-    fails when it runs, as it would unplaced.
+    ``(None, None, None)`` for any other node's settings. A writer's namespace is its ``namespace_full_name``, else its
+    ``namespace_id``; with neither, the default namespace's local catalog tables directory. A reader's is its
+    ``catalog_namespace_id``; a reader without one claims no storage. A namespace whose storage cannot be located
+    answers ``(None, None, None)`` too, so the node fails when it runs.
     """
     if isinstance(settings, input_schema.NodeCatalogWriter):
         write_settings = settings.catalog_write_settings

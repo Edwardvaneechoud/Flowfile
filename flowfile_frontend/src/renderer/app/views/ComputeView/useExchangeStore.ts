@@ -9,8 +9,8 @@ import {
 import { detailOf } from "../../utils/apiDetail";
 
 /**
- * The exchange store as core uses it and the admin's save or clear of it; the caller loads, nothing polls. A save
- * answers the new state, so the card shows what the next run uses, environment override included.
+ * The exchange store as core uses it, and the admin's save or clear of it. The caller loads; nothing polls.
+ * A save answers the new state (environment override included), which is what the next run uses.
  */
 export function useExchangeStore() {
   const state: Ref<ExchangeStoreState | null> = ref(null);

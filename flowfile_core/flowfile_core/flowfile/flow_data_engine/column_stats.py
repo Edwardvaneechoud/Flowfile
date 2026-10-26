@@ -1,16 +1,13 @@
 """On-demand single-column statistics for node result previews.
 
 Runs one bounded, single-pass aggregate (len / null_count / n_unique / min /
-max / mean) over a node's cached result engine on the compute backend it is
-given, and reads back the one row it yields (``bounded.single_row``): the
-aggregate runs as a job of the worker, in this process for the worker embedded
-here and in a child for one beside core, over the scan of a stored result or the
-full upstream plan of a deferred one. The column's dtype comes from resolving the engine's plan, or
-with ``FLOWFILE_COMPUTE_PROTOCOL`` on from the engine's cached schema, so core
-never opens a result a backend stored. The results are written into the
-engine's ``FlowfileColumn``, which stays the single source of truth for column
-statistics; the endpoint just returns that column's existing ``FileColumn``
-representation.
+max / mean) over a node's cached result engine on the given compute backend
+and reads back its one row (``bounded.single_row``). With
+``FLOWFILE_COMPUTE_PROTOCOL`` on, the column's dtype comes from the engine's
+cached schema, so core never opens a result a backend stored. The results are
+written into the engine's ``FlowfileColumn``, which stays the single source of
+truth for column statistics; the endpoint just returns that column's existing
+``FileColumn`` representation.
 """
 
 from __future__ import annotations
@@ -91,14 +88,12 @@ def run_stats_query(backend: ComputeBackend, engine: FlowDataEngine, exprs: list
 def _execute_stats_query(engine: FlowDataEngine, column_name: str, dtype: pl.DataType, backend: ComputeBackend) -> dict:
     """Runs the aggregate on ``backend``, degrading to counts only.
 
-    The site is the backend and is never switched: a failed query on the
-    worker must not re-run in core, where for a locally-run node the engine is
-    the full upstream plan. A failed full query (a ``ComputeError`` from the
-    backend, or a Polars error such as a dtype the aggregate cannot take)
-    retries with the count-only expressions on the same backend: they are
-    valid for every dtype and fail fast when the worker is down. When that
-    retry fails with a ``ComputeError`` the statistics are unavailable; any
-    other error of the retry propagates.
+    The site is never switched: a failed query must not re-run in core, where
+    for a locally-run node the engine is the full upstream plan. A failed full
+    query (a ``ComputeError``, or a Polars error such as a dtype the aggregate
+    cannot take) retries with the count-only expressions on the same backend,
+    which are valid for every dtype. A ``ComputeError`` from that retry raises
+    ``ColumnStatsUnavailable``; any other error propagates.
     """
     try:
         return run_stats_query(backend, engine, build_stats_exprs(column_name, dtype))
@@ -168,9 +163,8 @@ def compute_column_stats(engine: FlowDataEngine, column_name: str, backend: Comp
     ``FileColumn`` representation. Raises
     ``pl.exceptions.ColumnNotFoundError`` for an unknown column and
     ``ColumnStatsUnavailable`` when the backend cannot compute even the
-    counts. Also memoizes the exact row count onto the engine. The column's
-    dtype is resolved from the engine's plan, or with
-    ``FLOWFILE_COMPUTE_PROTOCOL`` on read from the engine's cached schema.
+    counts. Also memoizes the exact row count onto the engine. With
+    ``FLOWFILE_COMPUTE_PROTOCOL`` on, the dtype comes from the cached schema.
     """
     if settings.FLOWFILE_COMPUTE_PROTOCOL:
         column = engine.get_schema_column(column_name)

@@ -3,7 +3,7 @@
 import type { NamespaceTree } from "../../types/catalog.types";
 import { CLOUD_URI_SCHEMES } from "../../utils/storagePath";
 
-/** Why a storage URI and connection pair cannot be saved; null when it can (both blank is local storage). */
+/** Why a storage URI and connection pair cannot be saved; null when it can (both blank means local). */
 export function catalogStorageError(uri: string, connectionName: string | null): string | null {
   const trimmed = uri.trim();
   if (trimmed && !CLOUD_URI_SCHEMES.some((s) => trimmed.startsWith(s))) {
@@ -56,7 +56,7 @@ export function isEmptySchema(schema: NamespaceTree): boolean {
 
 /**
  * Why the catalog cannot be deleted; null when neither it nor its schemas hold anything.
- * Its empty schemas go with it: core deletes only an empty namespace, so the page deletes them first.
+ * The page deletes its empty schemas first, since core deletes only an empty namespace.
  */
 export function deleteBlockedReason(catalog: NamespaceTree): string | null {
   if (isSeededCatalog(catalog)) return SEEDED_CATALOG_REASON;

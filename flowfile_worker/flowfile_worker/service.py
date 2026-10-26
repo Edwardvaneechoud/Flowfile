@@ -1,34 +1,17 @@
 """The bodies of the worker's ``/v1`` routes: one plain function per route over the wire models.
 
-``protocol_routes.py`` mounts each function as its route, and core's embedded worker adapter calls the same functions
-directly when the worker runs in core's own process, so one body serves both the wire and the direct call. Every
-function raises the ``HTTPException`` its route answers: 404 for a result or input this worker does not hold, 422 for
-what the body refuses before anything runs, and a 500 carrying a child's ``status``, ``error_message`` and
-``error_kind`` (``_failure``) when the child did not complete. Nothing here reads a request or writes a response.
+``protocol_routes.py`` mounts each as its route, and core's embedded worker adapter calls them directly, so one body
+serves both. Nothing here reads a request or writes a response. Each function raises the ``HTTPException`` its route
+answers: 404 for a result or input this worker does not hold, 422 for what it refuses before anything runs, and a 500
+carrying a child's ``status``, ``error_message`` and ``error_kind`` (``_failure``) when the child did not complete.
 
-``run_submit`` runs the plan in a ``funcs.submit_result`` child and keeps the result in ``results.results``, written
-to a file or deferred as ``_materialise`` decides; a deferred submit with no preview runs in the child too, which
-resolves the plan's columns and collects nothing. ``sample``, ``count``, ``exists`` and ``release`` read, count, probe
-and release what it holds. A submit's job id is its result id, and every submit first drops what has been held for
-``CACHE_EXPIRATION_TIME``. One job runs under an id at a time (``_claim``): a submit, an import or an operation under an
-id a job still runs under replaces that job, which is stopped and holds nothing, and a release of the id stops it too.
-The operations run a read, a fuzzy join, a random split, a custom node, a model's training
-or its apply in the child its task route spawns, as the job the ``job_id`` names, and hold each output that child wrote
-as the materialised result ``<job_id>_<i>``, which the same functions read, count, probe and release; the file,
-database and cloud writes run the child their task routes spawn and hold nothing. A training's output is the model it
-fitted, held as a blob; an apply scores with a model held here, named by its result id. ``polars_code`` runs a Polars
-Code node's code, and ``sql_query`` translates a SQL Query node's statement, once in a pooled child and holds the
-result as ``<job_id>_0``: deferred, as its plan, when the code answered a LazyFrame over sources, materialised in its
-file when it answered a DataFrame or a LazyFrame over rows in memory.
-``export`` writes a held result to a URI as parquet in a ``funcs.export_result`` child; ``import_uri`` holds a scan of a
-URI as a deferred result, with the columns and row count core sent and nothing read. A credential crosses either as a
-stored connection's id and user, resolved where the plan runs; an import whose connection cannot be read from the
-catalog answers the 500 a failed export does. A blob, a held file of bytes that is not rows, takes the same two
-functions: its export copies the file to a ``file://`` URI or ``PUT``s it to a presigned ``https://`` URL, and an import
-with ``kind="blob"`` copies or ``GET``s one into a blob of this worker's own, in this process; a presigned URL carries
-its own authorisation, so neither takes a credential. ``cancel_job`` stops a job's child, and takes a job still
-``Starting`` too, which then ends as a cancel when it starts. Where a child runs is the spawner's: with
-``spawner.in_process`` set, every job here runs in the calling process instead.
+A submit's job id is its result id; an operation holds its outputs as ``<job_id>_<i>``. One job runs under an id at a
+time (``_claim``): a later job under the id, or a release of it, replaces the running one, which is stopped and holds
+nothing. Every submit, import and operation first drops what has been held for ``CACHE_EXPIRATION_TIME``.
+
+A credential crosses as a stored connection's id and user, resolved where the plan runs. A blob takes none: the
+presigned URL it is copied to or from carries its own authorisation. With ``spawner.in_process`` set, every job runs in
+the calling process instead of a child.
 """
 
 import functools
@@ -119,11 +102,10 @@ OPERATIONS = frozenset(
         "sql_query",
     }
 )
-"""The operation kinds this worker runs, by ``OperationKind`` value; a kind is named while a route runs it.
+"""The operation kinds this worker runs, by ``OperationKind`` value; list a kind only while a route runs it.
 
-Fifteen are the ``POST /v1/ops/<kind>`` routes, whose bodies are here: the reads, the fuzzy join, the custom node, the
-random split, ML training and apply, Polars code, SQL queries and the database, cloud and file writes. The other four
-are served by the task routes in ``routes.py``: the Delta write, merge and SCD2 write, and the visualisation sessions.
+Fifteen are the ``POST /v1/ops/<kind>`` routes, whose bodies are here. The Delta write, merge and SCD2 write and the
+visualisation sessions are served by the task routes in ``routes.py``.
 """
 
 
@@ -154,9 +136,8 @@ class SubmitMeta(BaseModel):
 class OpOutputs(BaseModel):
     """The answer of an operation: the reference of each output, by name, and what it reports besides rows.
 
-    ``metadata`` is empty except for a Kafka read that consumed messages, which reports the ``KafkaReadResult`` its
-    child wrote: the offsets core commits once the flow completes, and a training, which reports the model it fitted:
-    its ``sha256``, ``size_bytes`` and ``model_type``.
+    ``metadata`` is empty except for a Kafka read that consumed messages (its ``KafkaReadResult``, the offsets core
+    commits once the flow completes) and a training (the model's ``sha256``, ``size_bytes`` and ``model_type``).
     """
 
     outputs: dict[str, ResultRef]
@@ -346,10 +327,9 @@ _claims: dict[str, _Claim] = {}
 def _stop(job_id: str) -> bool:
     """Stop the job running under *job_id*; ``False`` when there is none to stop.
 
-    A job still ``Starting`` has no child yet: its entry is marked ``Cancelled`` under ``status_dict_lock`` and the
-    job ends as a cancel when it starts, its child stopped on the monitor's first pass. The check comes first because
-    the spawner registers a job's process before its monitor writes ``Processing`` under that lock, so a job seen
-    ``Processing`` has one to stop. A job that ended, or one running in this process, has nothing to stop.
+    A job still ``Starting`` has no child yet, so it is marked ``Cancelled`` and ends as a cancel when it starts. That
+    check is safe first: the spawner registers the process before the monitor writes ``Processing``. A job that ended,
+    or runs in this process, has nothing to stop.
     """
     with status_dict_lock:
         status = status_dict.get(job_id)
@@ -368,10 +348,8 @@ def _stop(job_id: str) -> bool:
 def _claim(job_id: str) -> Iterator[_Claim]:
     """Hold *job_id* for the block, so no other submit, import or operation runs under it meanwhile.
 
-    A job still running under the id is replaced, as a submit replaces what an id held: it is marked unwanted and
-    stopped (one running in this process cannot be stopped and runs to its end), and the block starts only once that
-    job ended and forgot what it held, since the two would write the same files and the same job entry. A claim marked
-    unwanted while the block ran forgets, as the block ends, every id its job holds.
+    A job still running under the id is marked unwanted and stopped, and the block waits until it ended and forgot
+    what it held: both would write the same files. A claim marked unwanted during the block forgets its ids at the end.
     """
     while True:
         with status_dict_lock:
@@ -408,9 +386,8 @@ def _claimed(op: Callable[..., OpOutputs]) -> Callable[..., OpOutputs]:
 def sweep_expired() -> None:
     """Forget every result and job whose submit ended ``CACHE_EXPIRATION_TIME`` seconds ago or more, failed ones too.
 
-    ``status_dict_lock`` is held across the registry's expiry and the job entries' removal: a resubmit
-    under an expired id registers its job only after the old entry is gone, so no running job loses
-    its entry. The lock is always taken before the registry's, never after.
+    ``status_dict_lock`` is held across the expiry and the job entries' removal, so a resubmit under an expired id
+    registers its job only after the old entry is gone. That lock is always taken before the registry's, never after.
     """
     with status_dict_lock:
         for result_id in results.expire(CACHE_EXPIRATION_TIME):
@@ -421,8 +398,8 @@ def sweep_expired() -> None:
 def _failure(status: models.Status) -> HTTPException:
     """A 500 saying why a child did not complete, in the fields of the legacy WebSocket error frame.
 
-    A job that ran in this process hands over the exception it failed with as the 500's ``__cause__``, taken off its
-    entry; what the 500 says is the same either way.
+    A job that ran in this process hands over its exception as the 500's ``__cause__``, taken off its entry; the
+    detail is the same either way.
     """
     failure = HTTPException(
         status_code=500,
@@ -491,9 +468,9 @@ def _run_child(record: ResultRecord, plan: bytes, operation: str, kwargs: dict |
 def _op_outputs(job_id: str, count: int) -> list[str]:
     """The ids the *count* outputs of operation *job_id* are held under, ``<job_id>_<i>``, none of them held yet.
 
-    Expired results are swept first. What an earlier run under the job id held is released and the job's end stamp
-    dropped, so a rerun replaces its outputs and is not swept while it runs. The ids are recorded on the job's claim,
-    when it has one, so a release of one of them while the job runs stops it.
+    Expired results are swept first. What an earlier run under the job id held is released and its end stamp dropped,
+    so a rerun replaces its outputs and is not swept while it runs. The ids are recorded on the job's claim, so
+    releasing one while the job runs stops it.
     """
     sweep_expired()
     output_ids = [f"{job_id}_{i}" for i in range(count)]
@@ -516,10 +493,9 @@ def _output_file(flow_id: int, result_id: str) -> str:
 def _run_op(job_id: str, start: Callable[[], None], written: list[str]) -> tuple[Any, int | None]:
     """Run an operation's child as job *job_id*; what it reported and the row count it rode along.
 
-    *start* spawns the child and returns once it ended. The job's entry stays, ``Completed`` with its ``results``
-    reset once read, and its end is stamped whether or not it completed, so it ages out like a held result. A child
-    that did not complete, a cancelled one included, leaves none of *written*, the files it was to write, and the
-    caller answers the 500 a failed submit answers.
+    *start* spawns the child and returns once it ended. The job's end is stamped either way, so its entry ages out. A
+    child that did not complete, a cancelled one included, has the files in *written* removed and raises the submit's
+    500 (``_failure``).
     """
     try:
         status = _run_job(job_id, start)
@@ -564,8 +540,7 @@ def _read_into(
 ) -> ResultRef:
     """Run the reader *func* in a ``generic_task`` child as job *job_id*, writing *path*, and hold that file.
 
-    The columns are the file's schema, read here as core reads a read's columns on the task routes; the row count is
-    the one the child rode along.
+    The columns are the file's schema; the row count is the one the child rode along.
     """
     _, row_count = _run_op(
         job_id,
@@ -592,11 +567,9 @@ def _read(job_id: str, func: Callable, kwargs: dict[str, Any], flow_id: int, nod
 def worker_capabilities() -> Capabilities:
     """The capabilities of this process with what this worker declares: ``OPERATIONS`` and the schemes it uses.
 
-    It reads and writes object storage and ``https``, a presigned URL a blob is copied to or from, and the local disk
-    too when ``FLOWFILE_WORKER_LOCAL_FILES`` is ``1`` at the time of the call: the desktop shell and the single-host
-    compose set it for a worker on core's host, which sees core's files. It also reads ``http``: the child that runs a
-    node's plan or its ``file_read`` fetches a Read node's ``http`` or ``https`` URL itself, and nothing writes to an
-    ``http`` URL.
+    It reads and writes object storage and ``https``, plus ``file`` while ``FLOWFILE_WORKER_LOCAL_FILES`` is ``1`` (a
+    worker on core's host). It also reads ``http``, since a Read node's child fetches its URL itself; nothing writes to
+    one.
     """
     schemes = CLOUD_SCHEMES | {"https"}
     if os.environ.get("FLOWFILE_WORKER_LOCAL_FILES") == "1":
@@ -609,15 +582,11 @@ def worker_capabilities() -> Capabilities:
 def run_submit(submit_meta: SubmitMeta, plan: bytes) -> SubmitResult:
     """Run *plan* in a child and hold its result under ``result_id``, written to a file or deferred.
 
-    ``POST /v1/submit``, ``/v1/ws/submit`` and the embedded worker's adapter call this and answer what it returns
-    or raises: 404 for an input that is not held, 500 when the child did not complete. Expired results are
-    swept first; a submit still running under the id is replaced (``_claim``) and a result already held under the id
-    is released. The end of the submit is stamped whether or not it completed, so its job entry ages out like a held
-    result. A job that completed without reporting its result (a pool member that died after its last progress) is
-    the 500 of a failed task, and holds nothing.
+    An input that is not held is 404. A result or job already under the id is replaced (``_claim``). A job that
+    completed without reporting its result (a pool member that died after its last progress) is a failed task's 500.
 
-    A deferred submit with no preview runs in the child too, which loads the plan and resolves its
-    columns, so its UDF modules and plugin libraries never load here, and collects nothing.
+    A deferred submit with no preview still runs in a child to resolve the plan's columns, so its UDF modules and
+    plugin libraries never load here.
     """
     sweep_expired()
     for input_id in submit_meta.inputs:
@@ -678,10 +647,8 @@ def run_submit(submit_meta: SubmitMeta, plan: bytes) -> SubmitResult:
 def sample(result_id: str, n: int) -> bytes:
     """The first *n* rows of a held result as an Arrow IPC stream.
 
-    *n* below 0 or above ``SAMPLE_ROWS_CAP`` is 422 before anything runs; the cap is this worker's rule, checked here
-    because no ``Query`` runs on a direct call. Up to ``SAMPLE_ROWS_IN_PARENT`` rows of a materialised result are read
-    from its file here; more are collected from ``head(n)`` of a scan of the file in a child, as a deferred result's
-    rows are from ``head(n)`` of its plan.
+    *n* outside 0 to ``SAMPLE_ROWS_CAP`` is 422, checked here because a direct call runs no ``Query``. Up to
+    ``SAMPLE_ROWS_IN_PARENT`` rows of a materialised result are read here; more, and a deferred result's, in a child.
     """
     if not 0 <= n <= SAMPLE_ROWS_CAP:
         raise HTTPException(status_code=422, detail=f"A sample is between 0 and {SAMPLE_ROWS_CAP} rows, not {n}")
@@ -714,8 +681,8 @@ def exists(result_id: str) -> bool:
 def release(result_id: str) -> bool:
     """Forget a held result: its file, its record and its job entry; ``False`` when nothing was held under the id.
 
-    A job still running under the id, or running to hold it as one of its outputs, is stopped and holds nothing once
-    it ended (``_claim``); that is ``True`` too.
+    A job running under the id, or to hold it as an output, is stopped and holds nothing once it ended (``_claim``);
+    that is ``True`` too.
     """
     with status_dict_lock:
         claim = next(
@@ -732,13 +699,9 @@ def release(result_id: str) -> bool:
 def export(result_id: str, body: ExportBody) -> str:
     """Write a held result to ``body.uri`` as parquet in a child, and answer the URI written.
 
-    The child sinks the result's plan, a scan of its file when materialised and the held plan when deferred, so the
-    rows stream to the target without passing through this process. A credential reaches the child as the stored
-    connection's id and user, which it resolves against its catalog with its master key. A result that is not held
-    is 404; a sink that fails is the 500 a failed submit answers, and the result stays held.
-
-    A blob is not rows: its file is copied here to a ``file://`` URI or ``PUT`` to a presigned ``https://`` URL, with
-    no child (``put_blob``). A credential or another scheme is 422, a copy that fails the 500, and the blob stays held.
+    The child sinks a scan of the result's file, or its held plan, so no rows pass through this process. It resolves a
+    credential itself. A blob's file is copied here instead (``put_blob``) to a ``file://`` URI or presigned
+    ``https://`` URL; a credential or another scheme is 422. A failed sink or copy is a 500, and the result stays held.
     """
     record = _held(result_id)
     if record is None:
@@ -756,20 +719,14 @@ def export(result_id: str, body: ExportBody) -> str:
 def import_uri(result_id: str, body: ImportBody) -> ResultRef:
     """Hold a scan of the parquet at ``body.uri`` as the deferred result *result_id*, and answer its reference.
 
-    Nothing of the file is read: the scan is built and serialised here, never run, so the file need not exist yet,
-    and the columns and row count are the ones core sent. A credential's connection is read from the catalog here for
-    its endpoint and region (``credential_ref_kwargs``); its secrets are resolved by the child that runs the scan. A
-    catalog that cannot be read is the 500 an export's child answers for the same error, and nothing is held.
-    Expired results are swept first, a job still running under the id is replaced (``_claim``) and a result held under
-    the id is released; the record is stamped now, so it ages out with the rest. ``count`` answers the given row count
-    without a child, ``sample`` and ``export`` run the scan in one, and ``release`` forgets the record and leaves the
-    file, which is not this worker's. An id that is not a ``RESULT_ID`` is 422 before anything runs, as it would name
-    a blob's file.
+    The scan is built here and never run, so the file need not exist yet; the columns and row count are core's. The
+    connection is read here for its endpoint and region (``credential_ref_kwargs``); the child that runs the scan
+    resolves its secrets. An unreadable catalog is a 500. ``release`` leaves the file, which is not this worker's. An id
+    that is not a ``RESULT_ID`` is 422, as it would name a blob's file.
 
-    With ``kind="blob"`` the bytes at ``body.uri`` are copied from a ``file://`` URI or fetched from a presigned
-    ``https://`` URL here (``get_blob``) into ``result_path(-1, id)`` with a ``.blob`` suffix, and held as a blob
-    record of that file, whose ``release`` removes it. Another scheme is 422 and a fetch that fails the 500; either way
-    nothing is held and nothing is left of the file.
+    With ``kind="blob"`` the bytes at a ``file://`` URI or presigned ``https://`` URL are copied into a ``.blob`` file
+    (``get_blob``), which ``release`` removes. Another scheme is 422, a failed fetch a 500. A failed import holds
+    nothing.
     """
     if not RESULT_ID.match(result_id):
         raise HTTPException(status_code=422, detail=f"A result id holds letters, digits, _ and -, not {result_id!r}")
@@ -822,9 +779,8 @@ def _hold_import(result_id: str, body: ImportBody) -> ResultRef:
 def job_status(job_id: str) -> models.Status:
     """The status of a job; a submit's job id is its result id, an operation's the ``job_id`` it was posted with.
 
-    The answer is a copy taken under ``status_dict_lock`` with ``results`` left out: between a child's end and the
-    moment its caller reads it, the entry holds what the child reported, a ``pl.Schema`` and sample bytes for a
-    submit, which do not serialise.
+    The answer is a copy with ``results`` left out: until its caller reads it, the entry holds what the child
+    reported (a ``pl.Schema`` and sample bytes for a submit), which does not serialise.
     """
     with status_dict_lock:
         status = status_dict.get(job_id)
@@ -834,7 +790,7 @@ def job_status(job_id: str) -> models.Status:
 
 
 def cancel_job(job_id: str) -> None:
-    """Stop a running job's child and mark the job cancelled, as ``_stop`` does.
+    """Stop a running job's child and mark the job cancelled (``_stop``).
 
     A job still ``Starting`` ends as a cancel when it starts. A job with no child to stop, one that ended or one
     running in this process, is 404.
@@ -1065,9 +1021,8 @@ def _write(
 ) -> OpOutputs:
     """Run the write *operation* over *plan* in a child as job *job_id*; a write holds nothing, so no outputs.
 
-    The child is the one the write's task route spawns, with the keyword arguments that route builds. Expired results
-    are swept and what an earlier run under the job id left is released first, as for every operation. A write that
-    does not complete answers the 500 a failed submit answers; what it wrote at its target is not this worker's.
+    The child and its keyword arguments are those of the write's task route. A write that does not complete is the
+    submit's 500; what it wrote at its target is left there.
     """
     _op_outputs(job_id, 0)
     _run_op(
@@ -1127,10 +1082,9 @@ def cloud_write(body: models.CloudStorageScriptWrite, job_id: str) -> OpOutputs:
 def polars_code(body: PolarsCodeInput, job_id: str) -> OpOutputs:
     """Run a Polars Code node's code once over its input plans in a child as job *job_id* and hold its result.
 
-    A LazyFrame over sources the code answers is held as the deferred result ``result``, its plan and the columns the
-    child resolved for it, nothing collected, so every dtype of the plan reaches its consumers; a DataFrame, or a
-    LazyFrame over rows in memory, whose plan would carry them to core, is written to its file by the child and held
-    materialised with its height. Either is ``<job_id>_0``.
+    A LazyFrame over sources is held deferred as its plan, so every dtype reaches its consumers. A DataFrame, or a
+    LazyFrame over rows in memory, whose plan would carry them to core, is written and held materialised. Either is
+    ``result``, held as ``<job_id>_0``.
     """
     flow_id, node_id = body.flowfile_flow_id, body.flowfile_node_id
     (result_id,) = _op_outputs(job_id, 1)
@@ -1155,9 +1109,8 @@ def polars_code(body: PolarsCodeInput, job_id: str) -> OpOutputs:
 def sql_query(body: SqlQueryInput, job_id: str) -> OpOutputs:
     """Translate a SQL Query node's statement once over its input plans in a child as job *job_id* and hold its result.
 
-    The child validates the statement itself and registers the inputs as ``input_1``, ``input_2``, …; the result is
-    held as a Polars Code result is: deferred as its plan over sources, materialised in its file over rows in memory.
-    Either is ``<job_id>_0``.
+    The child validates the statement and registers the inputs as ``input_1``, ``input_2``, …. The result is held as a
+    Polars Code result is (``_hold_user_code_result``), as ``<job_id>_0``.
     """
     flow_id, node_id = body.flowfile_flow_id, body.flowfile_node_id
     (result_id,) = _op_outputs(job_id, 1)

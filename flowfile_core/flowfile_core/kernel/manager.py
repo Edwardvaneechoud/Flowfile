@@ -413,7 +413,7 @@ def _notebook_env(kernel: KernelInfo) -> dict[str, str]:
     """A notebook kernel's flowfile never migrates, seeds or GCs anything and holds no catalog database: its engine
     refuses every connection (``flowfile_frame.notebook_kernel``). Its storage folder is the container's own: the
     kernel mounts no host folder, and reads files, catalog tables, flow files and custom node sources through core.
-    It computes on its own process, with the variables the backend registry names for that (``child_env``)."""
+    It computes on the worker embedded in its own process (``registry.child_env``)."""
     if sharing.sharing_enabled() or kernel.image_flavour != ImageFlavour.NOTEBOOK:
         return {}
     return {

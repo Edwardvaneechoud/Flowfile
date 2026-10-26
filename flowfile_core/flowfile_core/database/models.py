@@ -147,14 +147,13 @@ class Kernel(Base):
 class ConfiguredBackend(Base):
     """One configured worker: a compute backend core reaches by id, at its own URL, with its own token.
 
-    ``id`` is the backend id a flow saves, ``worker:<name>``; ``url`` is the worker's base URL without a trailing
-    slash; ``token`` is the worker's bearer token as secret-manager ciphertext (``encrypt_secret``'s
-    ``$ffsec$1$<user>$…``), never the token itself; ``ca_cert`` is the PEM of the certificate authority core trusts
-    for the worker's certificate when it is not public (a self-signed worker certificate is its own), ``None`` for a
-    public certificate or a plain ``http://`` worker; ``shares_core_disk`` says the worker sees core's files (the same
-    host, a shared mount), so core offers it ``file`` whatever it declares. The built-in ``local`` and ``worker`` are
-    never rows. The table shares its name with the ``flowfile.compute_backends`` entry-point group, the other way to
-    add a backend; the registry reads a row on the first lookup of its id.
+    - ``id``: the backend id a flow saves, ``worker:<name>``.
+    - ``url``: the worker's base URL, without a trailing slash.
+    - ``token``: the bearer token as ``encrypt_secret`` ciphertext, never the token itself.
+    - ``ca_cert``: the PEM of the CA core trusts for a non-public worker certificate, else ``None``.
+    - ``shares_core_disk``: the worker sees core's files, so core offers it ``file`` whatever it declares.
+
+    The built-in ``local`` and ``worker`` are never rows. The registry reads a row on the first lookup of its id.
     """
 
     __tablename__ = "compute_backends"

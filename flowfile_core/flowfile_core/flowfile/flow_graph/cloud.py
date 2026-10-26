@@ -104,9 +104,8 @@ def _write_cloud_delta(
 ) -> None:
     """Upsert/update/delete into, or write with change tracking to, a Delta table on a bare cloud path.
 
-    Runs the ``delta_merge`` or ``delta_write`` operation on the current context's backend with the connection
-    encrypted for ``user_id``; the worker decrypts it there, and a local run merges in-process (the sanctioned
-    local-execution collect, since headless runs have no worker to offload to). What the write reports is unused.
+    Runs the ``delta_merge`` or ``delta_write`` operation on the current context's backend, the connection encrypted
+    for ``user_id`` and decrypted where the write runs. What the write reports is unused.
     """
     if connection.storage_type == "gcs":
         raise ValueError("Delta upsert/update/delete and change tracking are not supported on Google Cloud Storage yet")
@@ -146,9 +145,9 @@ def _cloud_change_scan_kwargs(
 ) -> dict[str, Any]:
     """The ``storage_options``/``credential_provider`` kwargs of a cloud change read's plan.
 
-    With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a cloud read's own rule (``CloudStorageReader.get_read_credentials``): a
-    stored connection is named by reference and resolved where the plan runs. Otherwise *storage_options*, as
-    :func:`_cloud_change_read_target` resolved them, travel with their credentials encrypted for *user_id*.
+    With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a stored connection is named by reference and resolved where the plan runs
+    (``CloudStorageReader.get_read_credentials``). Otherwise *storage_options* travel with their credentials
+    encrypted for *user_id*.
     """
     if not FLOWFILE_COMPUTE_PROTOCOL:
         return CloudStorageReader.get_secure_scan_kwargs(storage_options, user_id)

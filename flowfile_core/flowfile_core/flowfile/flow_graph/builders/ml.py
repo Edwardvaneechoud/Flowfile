@@ -33,16 +33,13 @@ class MlBuildersMixin(GraphMixinBase):
     def add_train_model(self, train_settings: input_schema.NodeTrainModel) -> "FlowGraph":
         """Adds a Train Model node.
 
-        Fits a model with the ``ml_train`` operation on the backend the flow
-        runs on (core's own process for a local flow), and passes the input
-        data through unchanged so downstream nodes can keep transforming. The
-        backend holds the fitted model as a blob, which the node keeps as
-        ``results.model_ref`` for an Apply Model node to score with by
-        reference; a refit under another id releases the model it replaces,
-        on the backend that holds it. With ``publish_to_catalog`` the held
-        model is published to the global catalog with ``publish_result``,
-        which has the backend copy it to the artifact store; the flow must be
-        registered and the namespace writable, both checked before the fit.
+        Fits a model with the ``ml_train`` operation on the flow's backend
+        and passes the input data through unchanged. The backend holds the
+        fitted model as a blob, kept as ``results.model_ref`` for an Apply
+        Model node to score with by reference; a refit under another id
+        releases the model it replaces. With ``publish_to_catalog`` the model
+        is published with ``publish_result``; the flow must be registered and
+        the namespace writable, both checked before the fit.
 
         Args:
             train_settings: Settings (model name, target/features, model_type, params).
@@ -140,7 +137,7 @@ class MlBuildersMixin(GraphMixinBase):
                     f"The {backend.id!r} backend did not return the model with its sha256/size_bytes payload, got "
                     f"the outputs {sorted(trained.refs)} and {result!r}"
                 )
-            # run_op released the model this node fitted before; one carried onto it is the source node's to release.
+            # run_op released this node's previous fit; a model carried onto it is its source node's to release.
             node.results.model_ref = model
 
             if prepare_request is not None:
@@ -197,16 +194,12 @@ class MlBuildersMixin(GraphMixinBase):
     def add_apply_model(self, apply_settings: input_schema.NodeApplyModel) -> "FlowGraph":
         """Adds an Apply Model node.
 
-        Scores the input data with the ``ml_apply`` operation on the backend
-        the flow runs on (core's own process for a local flow), returning a
-        LazyFrame with one extra prediction column. The model is sent by
-        reference: the one the upstream Train Model node holds, or a catalog
-        artifact fetched onto that backend with ``fetch_artifact`` for this
-        call and released after it. A model the upstream node fitted that is
-        no longer held fails the node, asking for that Train Model node to run
-        again. The scored rows are the node's result where they were scored: a
-        stored result stays held, and a deferred one is released once the node
-        holds its plan.
+        Scores the input data with the ``ml_apply`` operation on the flow's
+        backend, adding one prediction column. The model is sent by reference:
+        the upstream Train Model node's, or a catalog artifact fetched onto the
+        backend with ``fetch_artifact`` and released after the call. An
+        upstream model that is no longer held fails the node, asking for that
+        Train Model node to run again.
 
         Args:
             apply_settings: Settings (model_name, optional version, output_column).

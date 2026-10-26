@@ -1,10 +1,8 @@
 """The exchange store: an object-storage prefix that a run's results cross between backends through.
 
-``FLOWFILE_EXCHANGE_URI`` names its root, an ``s3://`` URI, and ``FLOWFILE_EXCHANGE_CONNECTION`` the stored cloud
-connection that opens it, as a catalog on object storage is configured. The connection is the operator's, never a
-node's user's: an administrator's connection of that name, looked up once per run. It is named to a backend by its
-``CredentialRef``, which core resolves with its master key and a worker against the shared catalog. A run writes under
-``<uri>/<flow id>/<run id>/``, and ``run_graph`` removes that prefix when the run ends.
+``FLOWFILE_EXCHANGE_URI`` names its ``s3://`` root and ``FLOWFILE_EXCHANGE_CONNECTION`` the stored cloud connection
+that opens it. The connection is the operator's, never a node's user's, and reaches a backend as a ``CredentialRef``.
+A run writes under ``<uri>/<flow id>/<run id>/``, which ``run_graph`` removes when the run ends.
 """
 
 from __future__ import annotations
@@ -29,14 +27,13 @@ class ExchangeStore:
 def exchange_store() -> ExchangeStore | None:
     """The exchange store as configured, opened by the operator's connection; ``None`` when no URI is set.
 
-    The connection is the deployment's, never a node's user's: in multi-user mode the lowest-id cloud connection of
-    that name an administrator owns, so no user's own connection of the name shadows it and none a regular user owns
-    is ever the store's; in single-user mode the lowest-id one of that name, the one user's. Its ``CredentialRef``
-    names the connection's owner.
+    In multi-user mode the connection is the lowest-id one of that name an administrator owns, so no regular user's
+    connection of the name can shadow it. In single-user mode it is the lowest-id one of that name. Its
+    ``CredentialRef`` names the connection and its owner.
 
     Raises:
-        ValueError: ``FLOWFILE_EXCHANGE_URI`` is set without ``FLOWFILE_EXCHANGE_CONNECTION``, its scheme is not
-            ``s3``, or no administrator has a cloud connection of that name.
+        ValueError: The URI is set without a connection name, its scheme is not ``s3``, or no administrator has a
+            cloud connection of that name.
     """
     uri = settings.get_exchange_uri()
     if uri is None:
@@ -101,11 +98,10 @@ class ExchangeRun:
 
 
 def remove_prefix(store: ExchangeStore, prefix: str) -> None:
-    """Delete every object under *prefix*, an ``s3://`` URI in *store*, with core's own resolution of its connection.
+    """Delete every object under *prefix*, an ``s3://`` URI in *store*, resolving its connection as core does.
 
-    The objects are listed a page at a time and each page is deleted in one request, so an empty prefix costs only the
-    listing. ``build_s3_client`` addresses the store path-style when the connection names its own endpoint (MinIO and
-    other S3-compatible stores) and by boto3's default, virtual-hosted, when it names none (a bucket on AWS).
+    Each listed page is deleted in one request, so an empty prefix costs only the listing. Path-style addressing
+    applies only to a connection with its own endpoint (MinIO and other S3-compatible stores).
 
     Raises:
         OSError: The store refused to delete an object; the message names how many and the first reason.

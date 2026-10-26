@@ -201,8 +201,7 @@ const getCurrentSpec = async (): Promise<IChart[] | null> => {
   }
 };
 
-// The charts on screen join the General Settings in one save; a spec that cannot be read
-// toasts and leaves the saved specs as they are, since losing the chart builder is worse.
+// Charts save with the General Settings; an unreadable spec toasts and keeps the saved specs.
 const pushNodeData = async (): Promise<boolean> => {
   const walkerInput = nodeSettings.value?.graphic_walker_input;
   if (showWalker.value && vueGraphicWalkerRef.value && walkerInput) {

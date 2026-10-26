@@ -1,10 +1,9 @@
 """The exchange store's settings: where results cross between compute backends, managed from the Backends page.
 
-Mounted under ``/system`` in :mod:`flowfile_core.main`, admin-only like the worker pool. ``GET`` answers the store a run
-uses now, where it comes from (the environment, the saved file, or nowhere) and the S3 connections it may use; ``POST``
-saves a store, or clears it with no URI, and answers the same. ``FLOWFILE_EXCHANGE_URI`` set in the environment keeps
-winning: the saved values are kept and reported, and ``env_override`` tells the page so. A save takes effect on the
-next run: the settings are read per call (``configs/exchange_config.py``).
+Mounted under ``/system`` in :mod:`flowfile_core.main`, admin-only. ``GET`` answers the store a run uses now, its source
+(the environment, the saved file, or none) and the S3 connections it may use; ``POST`` saves or clears it and answers
+the same. A set ``FLOWFILE_EXCHANGE_URI`` keeps winning over the saved values, and ``env_override`` says so. The
+settings are read per call (``configs/exchange_config.py``), so a save takes effect on the next run.
 """
 
 from __future__ import annotations

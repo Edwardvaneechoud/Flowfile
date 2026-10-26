@@ -136,7 +136,7 @@ export function useNodeSettings<T extends NodeBase>(
   const nodeStore = useNodeStore();
   const isSaving = ref(false);
 
-  // The settings as last loaded or saved; another node in nodeRef is a load, the same node reassigned (v-model) an edit.
+  // Settings as last loaded or saved: another node in nodeRef is a load, a v-model reassignment an edit.
   const snapshot = (): string | null => (nodeRef.value ? JSON.stringify(nodeRef.value) : null);
   const identity = (): string | null =>
     nodeRef.value ? `${nodeRef.value.flow_id}:${nodeRef.value.node_id}` : null;

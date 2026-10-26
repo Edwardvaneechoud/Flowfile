@@ -75,8 +75,8 @@ class CatalogBuildersMixin(GraphMixinBase):
     def _add_catalog_sql_reader(self, node_catalog_reader: input_schema.NodeCatalogReader) -> bool | None:
         """Execute a SQL query against all catalog tables (physical + virtual).
 
-        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a virtual table whose producer flow runs is resolved on the backend the
-        reader runs on, the one placement gave it in a run; with it off, on the flow's location.
+        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a virtual table whose producer flow runs is resolved on the reader's
+        backend (placement's, in a run); with it off, on the flow's location.
 
         Returns:
             Whether all referenced virtual tables are optimized, or None if no virtual tables.
@@ -150,12 +150,10 @@ class CatalogBuildersMixin(GraphMixinBase):
     def _add_catalog_table_reader(self, node_catalog_reader: input_schema.NodeCatalogReader) -> bool | None:
         """Read a single table from the catalog (physical or virtual).
 
-        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a table on object storage takes its schema from the backend the reader
-        runs on: its plan is held there as a deferred result with no preview while the reference's schema is read,
-        then released, so the plan's connection is resolved by that backend, a worker in its own process and the
-        embedded worker in this one. Every other read here resolves its schema from its plan in core. A virtual table
-        whose producer flow runs is resolved, with the flag on, on the backend the reader runs on, the one placement
-        gave it in a run, and with it off on the flow's location.
+        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a table on object storage takes its schema from the reader's backend
+        (its plan held there deferred while the schema is read), so that backend resolves the plan's connection.
+        Every other read here resolves its schema in core. A virtual table whose producer flow runs is resolved on
+        the reader's backend with the flag on, on the flow's location with it off.
 
         Returns:
             Whether the virtual table is optimized, or None if not a virtual table.

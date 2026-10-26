@@ -239,12 +239,10 @@ def streaming_start(
     :func:`streaming_receive` (which closes the connection) or close it
     manually.
 
-    Raises immediately on connection failure or send error. Before connecting it
-    passes ``ensure_handshake`` like every REST call, so a worker whose versions differ
-    from core's is refused before the task is sent (each backend is checked on its first
-    use); a connect that fails re-arms the check of the backends on ``worker_url``, because
-    the worker that comes back there may be another one. A ``wss://`` socket verifies the
-    worker against the CA core trusts for it (``ssl_context_for``), else the public CAs.
+    Raises immediately on connection failure or send error. The worker's versions are
+    checked first (``ensure_handshake``). A failed connect re-arms that check, since the
+    worker that comes back at ``worker_url`` may be another one. A ``wss://`` socket
+    verifies the worker against the CA core trusts for it (``ssl_context_for``).
     """
     # imported here: subprocess_operations imports this module
     from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import ssl_context_for

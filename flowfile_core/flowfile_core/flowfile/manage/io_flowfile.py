@@ -289,8 +289,7 @@ def _load_flow_storage(flow_path: Path) -> schemas.FlowInformation:
     - .yaml / .yml - new YAML format
     - .json - JSON format
 
-    Every format opens with the execution location ``schemas.loaded_execution_location`` gives the saved one: with
-    the compute protocol on, a flow saved ``local`` or ``remote`` opens as ``auto``.
+    Every format opens with the execution location ``schemas.loaded_execution_location`` gives the saved one.
 
     Args:
         flow_path: Path to the flowfile

@@ -4,11 +4,10 @@ Executes a candidate custom node against bounded sample inputs in the worker
 (never in core), returning a per-output preview, buffered logs, and a typed
 error kind. Core ast-parses first so syntax errors never reach the worker;
 sample inputs come from the request or the node's ``example_inputs``; secrets
-resolve for real via the author's own/shared secrets. The run is submitted with
-``trigger_custom_node_operation`` on the worker backend's ``url`` and followed
-through that backend (``status``, ``task_result``, ``cancel``); the task is
-cleared afterwards with ``clear_task_from_worker``, the helper the backend's
-``release`` uses, since the protocol has no call that clears a task by id.
+resolve for real via the author's own/shared secrets. The run is followed
+through the worker backend (``status``, ``task_result``, ``cancel``) and
+cleared with ``clear_task_from_worker``, since the protocol has no call that
+clears a task by id.
 """
 
 import ast
@@ -252,11 +251,9 @@ def _resolve_secrets(request: DryRunRequest, user_id: int | None) -> tuple[dict[
 def _poll_worker(task_id: str, deadline: float) -> tuple[Any, DryRunResponse | None]:
     """Follow the task through the worker backend's ``status`` until it ends or the monotonic *deadline* passes.
 
-    Returns the result the task reported (``task_result``) once it is done. On deadline the task is cancelled and
-    a ``timeout`` error is returned. A worker that cannot be reached (``ComputeUnavailable``) becomes a ``load``
-    error ("worker unavailable") — user code is never run in core for dry runs; a status the worker cannot give
-    (the task is gone) becomes an ``execution`` error. Any other ``ComputeError`` (the worker failed core's
-    handshake on versions) propagates for the route to answer.
+    Returns the result the task reported once it is done. A passed deadline cancels the task (``timeout``), an
+    unreachable worker is a ``load`` error (user code never runs in core), and a missing status an ``execution``
+    error. Any other ``ComputeError`` (a failed handshake) propagates for the route to answer.
     """
     worker = registry.backend(registry.WORKER_BACKEND_ID)
     handle = JobHandle(worker.id, task_id)
@@ -444,10 +441,8 @@ def _read_kernel_output_previews(
     kernel reported published files but none match the expected names, surface a clear
     error instead of silently returning empty outputs.
 
-    Each output's rows and columns are read with ``bounded.head_rows`` and its row count
-    with ``bounded.count_rows`` on the current execution context's backend, the one
-    ``write_inputs_to_parquet`` wrote the run's inputs with, so core collects nothing of
-    the file; a ``ComputeError`` there propagates for the route to answer.
+    Rows and counts are read through ``bounded`` on the current context's backend, the one
+    that wrote the run's inputs, so core collects nothing; a ``ComputeError`` propagates.
     """
     backend = current_context().backend
     outputs: list[DryRunOutput] = []

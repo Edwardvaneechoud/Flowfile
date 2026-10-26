@@ -1,13 +1,11 @@
 """Core's transport to a worker: the REST calls, the task fetchers and the worker session they go through.
 
-Nothing here knows which worker to call. Every function and fetcher takes ``worker_url``, the worker's base URL,
-from its caller: ``WorkerBackend`` passes its own ``url``, and a caller outside it that sends work to the worker
-asks the backend registry for it (``registry.worker_url()``). Whether to call the worker at all is the caller's
-decision too.
+Nothing here holds a worker URL. Every function and fetcher takes ``worker_url``, the worker's base URL, from its
+caller: ``WorkerBackend`` passes its own ``url``, other callers ``registry.worker_url()``. Whether to call the worker
+at all is the caller's decision too.
 
-A worker whose TLS certificate is not public is trusted through ``trust_ca``, which the backend made for it calls with
-its configured CA certificate: the worker session then verifies that worker's URL against it, and both WebSocket clients
-take it from ``ssl_context_for``. Every other worker is verified against the public CAs.
+A worker with a private TLS certificate is trusted through ``trust_ca``; every other worker is verified against the
+public CAs.
 """
 
 import io
@@ -85,15 +83,12 @@ class _WorkerAuth(requests.auth.AuthBase):
 class _WorkerSession(requests.Session):
     """The session every REST call from core to a worker goes through.
 
-    A call names the worker it is for with the keyword ``worker_url``, the worker's base URL, and the route on it
-    as its path (``_worker_session.get("/status/abc", worker_url=...)``); the module never holds a worker URL of
-    its own, its callers pass the one of the backend they serve. Each call first passes ``ensure_handshake``, which
-    checks each backend once per process, on its first use: a worker whose versions differ from core's is refused
-    before it is sent anything. A call that cannot reach the worker re-arms the check of the backends on its URL,
-    because the worker that comes back there may be another one. A caller that knows which
-    backend the worker is names it with the keyword ``backend_id``, which the check's ``ComputeUnavailable`` names.
-    ``gated=False`` sends a call around the check, neither passing nor re-arming it: the gate's own
-    ``GET /capabilities`` and ``WorkerBackend.capabilities``, which read a worker's versions to compare them.
+    A call names its worker with the keyword ``worker_url`` and the route as its path
+    (``_worker_session.get("/status/abc", worker_url=...)``). Each call first passes ``ensure_handshake``, so a worker
+    on other versions is refused before it is sent anything; ``backend_id`` names the backend in the gate's
+    ``ComputeUnavailable``. A call that cannot reach the worker re-arms the check of the backends on its URL, since the
+    worker that comes back there may be another one. ``gated=False`` skips the gate, neither passing nor re-arming it,
+    for the reads of a worker's versions themselves (``GET /capabilities``).
     """
 
     def request(
@@ -128,12 +123,11 @@ _trusted_cas: dict[str, ssl.SSLContext] = {}
 
 
 def trust_ca(worker_url: str, ca_cert: str | None) -> None:
-    """Verify the worker at ``worker_url`` against ``ca_cert``, a PEM, from now on, in place of the public CAs.
+    """Verify the worker at ``worker_url`` against ``ca_cert``, a PEM, in place of the public CAs.
 
-    The PEM is the CA that signed the worker's certificate, or a self-signed certificate itself. The worker session
-    uses it for every call under ``worker_url``, and ``ssl_context_for`` hands it to both WebSocket clients; a later
-    call for the same URL replaces it, and one with no PEM drops it, so the worker is verified against the public CAs
-    again. A replaced or dropped adapter is closed, so none of its connections stays open to the worker. Nothing is
+    The PEM is the CA that signed the worker's certificate, or the self-signed certificate itself. It covers every
+    session call under ``worker_url`` and both WebSocket clients (``ssl_context_for``). A later call replaces it, and
+    one with no PEM drops it. A replaced or dropped adapter is closed so none of its connections stays open. Nothing is
     written to disk.
 
     Raises:
@@ -887,8 +881,8 @@ def clear_task_from_worker(file_ref: str, *, worker_url: str) -> bool:
         worker_url (str): The base URL of the worker that holds the task.
 
     Returns:
-        bool: True if the task was successfully cleared, False otherwise. Best-effort cleanup:
-        a worker this core cannot use (``ComputeError``) is logged and never fails the caller.
+        bool: True if the task was successfully cleared, False otherwise. A worker this core
+        cannot use (``ComputeError``) is logged and gives False.
     """
     try:
         f = _worker_session.delete(f"/clear_task/{file_ref}", worker_url=worker_url, timeout=_WORKER_TIMEOUT)
@@ -940,8 +934,8 @@ def cancel_task(file_ref: str, *, worker_url: str) -> bool:
         worker_url: The base URL of the worker that runs the task
 
     Returns:
-        bool: True if cancellation was successful, False otherwise; also False, logged, when the
-        worker is one this core cannot use (``ComputeError``)
+        bool: True if cancellation was successful, False otherwise. A worker this core cannot
+        use (``ComputeError``) is logged and gives False.
 
     Raises:
         Exception: If there's an error communicating with the worker service
@@ -962,8 +956,8 @@ class BaseFetcher:
     """
     Thread-safe fetcher for polling worker status and retrieving results.
 
-    Every fetcher follows its task on the worker at ``worker_url``, the base URL its caller passes: the status
-    polls, the WebSocket submit and the cancel all go there.
+    Every fetcher follows its task on the worker at ``worker_url``: the status polls, the WebSocket submit and the
+    cancel all go there.
     """
 
     status: Status | None = None
@@ -1369,8 +1363,8 @@ class ExternalDfFetcher(BaseFetcher):
     ):
         """Run a plan on the worker at ``worker_url`` as task ``file_ref`` (a new id when omitted).
 
-        The plan is ``lf``, serialised here, or ``plan_bytes``, the output of ``pl.LazyFrame.serialize()``
-        sent as is so the caller never has to deserialise it; pass exactly one of the two.
+        The plan is ``lf``, serialised here, or ``plan_bytes`` (``pl.LazyFrame.serialize()`` output) sent as
+        is, so the caller need not deserialise it. Pass exactly one.
         """
         super().__init__(file_ref=file_ref, worker_url=worker_url)
         if (lf is None) == (plan_bytes is None):

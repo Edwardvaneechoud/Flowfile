@@ -20,11 +20,9 @@ def run_flow(
         flow_path: Path to the flow file (.yaml, .yml, or .json)
         param_overrides: List of "key=value" strings overriding flow parameters.
         run_id: Optional pre-created run ID to report results back to
-        backend: The compute backend the run uses (``local``, ``worker`` or ``worker:<name>``). Without it, a
-            backend id saved as the flow's ``execution_location`` names one, and a flow saved ``local``, ``remote``
-            or ``auto`` runs in this process. A named backend becomes the process's default and the flow runs
-            ``"remote"`` on it; the flow is closed when its run ends, so no result the run minted stays held there
-            after the process exits.
+        backend: The compute backend (``local``, ``worker`` or ``worker:<name>``). Without it, a backend id saved
+            as the flow's ``execution_location`` is used, else the flow runs in this process. The flow is closed
+            when the run ends, so no result it minted stays held on the backend.
 
     Returns:
         Exit code (0 for success, 1 for failure)

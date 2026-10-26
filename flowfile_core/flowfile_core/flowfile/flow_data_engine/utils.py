@@ -31,21 +31,12 @@ def get_data_type(vals: Iterable[Any]):
 def calculate_schema(
     lf: pl.LazyFrame | pl.DataFrame, backend: ComputeBackend, schema: pl.Schema | None = None
 ) -> list[dict]:
-    """The schema of ``lf`` with the statistics of each column, as the ``PlType`` fields a ``FlowfileColumn`` reads.
+    """The schema of ``lf`` with each column's statistics, as the ``PlType`` fields a ``FlowfileColumn`` reads.
 
-    One statistics plan, built here over the first ``SCHEMA_STATS_MAX_ROWS`` rows, yields every column's statistics
-    as a single row, which ``backend`` computes (``bounded.single_row``); only that row reaches core. Each entry
-    holds ``column_name``, ``col_index`` and ``pl_datatype`` (the column's dtype), ``count`` (values that are not
-    null), ``null_count``, ``mean``, ``std``, ``min``, ``max``, ``n_unique`` (approximate; ``None`` for nested and
-    object columns, which Polars cannot count distinct values of) and ``examples`` (the distinct texts of ``min`` and
-    ``max``, ``min`` first).
-
-    The statistics are those of Polars' ``describe``: a mean for numeric, temporal and boolean columns, a standard
-    deviation for numeric ones, and a minimum and maximum for every column but nested, extension, categorical,
-    enum, null, object and unknown ones. A numeric, boolean, nested or null column states its mean, minimum and
-    maximum as the text of their float value, any other column as the text of the value; a statistic a column has
-    none of is ``None``. A frame without columns has no statistics. The columns and dtypes are ``schema`` when the
-    caller passes ``lf``'s, which then is not resolved in core, else ``lf``'s resolved schema.
+    One aggregate over the first ``SCHEMA_STATS_MAX_ROWS`` rows yields every column's statistics as a single row,
+    which ``backend`` computes (``bounded.single_row``), so only that row reaches core. The statistics follow Polars'
+    ``describe``: ``mean``, ``min`` and ``max`` are text, ``n_unique`` is approximate, and a statistic a dtype has none
+    of is ``None``. Pass ``lf``'s ``schema`` so it is not resolved in core.
 
     Raises:
         ComputeError: ``backend`` could not compute the statistics.

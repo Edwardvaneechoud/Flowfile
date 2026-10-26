@@ -76,10 +76,9 @@ async def request_validation_without_input(request: Request, exc: RequestValidat
 def _supervising_shell(request: Request) -> bool:
     """Whether the caller can be the desktop shell that runs this worker: a loopback peer, when a shell supervises it.
 
-    The shell sets ``FLOWFILE_SUPERVISOR_PID`` for its sidecars only. The peer is the one uvicorn reports, which its
-    proxy-headers middleware takes from ``X-Forwarded-For`` when the socket peer is a trusted proxy (loopback by
-    default), so behind a proxy on the same host that sends no such header every client reads as loopback: no worker
-    a shell does not supervise trusts the peer. A missing client or a host that is not an IP address is never it.
+    The shell sets ``FLOWFILE_SUPERVISOR_PID`` for its sidecars only. Uvicorn takes the peer from ``X-Forwarded-For``
+    behind a trusted (loopback) proxy, so behind a same-host proxy that sends none every client reads as loopback.
+    That is why no worker a shell does not supervise trusts the peer.
     """
     if not os.environ.get("FLOWFILE_SUPERVISOR_PID"):
         return False
@@ -119,8 +118,10 @@ def signal_handler(signum, frame):
 
 
 def run(host: str = None, port: int = None):
-    """Run the FastAPI app with graceful shutdown, over TLS when `FLOWFILE_WORKER_TLS_CERT` and
-    `FLOWFILE_WORKER_TLS_KEY` name a certificate and its key."""
+    """Run the FastAPI app with graceful shutdown.
+
+    Serves TLS when ``FLOWFILE_WORKER_TLS_CERT`` and ``FLOWFILE_WORKER_TLS_KEY`` name a certificate and its key.
+    """
     global server_instance
 
     if host is None:

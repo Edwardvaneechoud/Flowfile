@@ -18,7 +18,7 @@ from flowfile_worker.task_errors import keeping_failures, record_task_failure, s
 
 process_manager = ProcessManager()
 
-# The host's choice: True runs every job in the calling process (a library host), False in a child (a serving host).
+# True runs every job in this process (a library host), False in a child (a serving host).
 in_process: bool = False
 
 flowfile_node_id_type = int | str
@@ -110,10 +110,8 @@ def handle_task(
 
     Notes:
         - Updates task status in status_dict while process is running
-        - An entry a cancel marked ``Cancelled`` while the job was still ``Starting`` stays so, and the loop's
-          first pass stops the child
-        - A failure ends ``Error`` with progress -1 whether or not the loop saw the -1 before the child exited,
-          its description decoded with a character cut at the buffer's end replaced
+        - An entry marked ``Cancelled`` while still ``Starting`` stays so, and the first poll stops the child
+        - A failure ends ``Error`` with progress -1 even when the child exits before the loop sees the -1
         - Handles task cancellation, completion, and error states
         - Cleans up process resources after completion
     """
@@ -230,13 +228,10 @@ def handle_task(
 def run_inline(task_id: str, target: Callable, kwargs: dict) -> None:
     """Run *target* in this process as job *task_id* and write how it ended in ``status_dict`` as ``handle_task`` does.
 
-    The in-process mode a host chooses with ``in_process``: *target* gets the three primitives a child gets, its queue
-    a ``pool._ResultSlot`` as in a pool member. With no child there is no monitor, no time limit and no cancel, given
-    up by design; a job a cancel marked ``Cancelled`` keeps that mark and runs to its end. An ``Exception`` or a Polars
-    ``PanicException`` that escapes the target is recorded as a child records one, so the job ends ``Error`` with its
-    description, as a child's panic ends its job; any other ``BaseException`` propagates, as it ends a child. A job
-    that ends ``Error`` also keeps the exception it recorded on its entry (``Status._raised``), which a child's parent
-    never has.
+    The ``in_process`` mode. *target* gets a child's three primitives, its queue a ``pool._ResultSlot``. There is no
+    monitor, time limit or cancel, by design: a job marked ``Cancelled`` keeps the mark and runs to its end. An
+    escaping ``Exception`` or Polars ``PanicException`` is recorded and ends the job ``Error``. Any other
+    ``BaseException`` propagates. An ``Error`` job keeps the recorded exception on ``Status._raised``.
     """
     progress = mp_context.Value("i", 0)
     error_message = mp_context.Array("c", 1024)

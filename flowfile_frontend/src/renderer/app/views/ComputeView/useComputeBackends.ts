@@ -49,9 +49,8 @@ export function backendInputFrom(form: BackendForm): ComputeBackendInput {
 }
 
 /**
- * What a row's "Server's files" cell says: marked on its row, else declared by the worker itself (the schemes its last
- * verdict offers, or for a refused worker the ones it reported, as with `FLOWFILE_WORKER_LOCAL_FILES=1`), else no; a
- * worker never checked reads "Not checked", and one whose handshake reached no worker "Unknown".
+ * A row's "Server's files" cell: marked on the row, else declared when its last verdict offers `file` (or a
+ * refused worker reported it), else "No". No verdict reads "Not checked", one without capabilities "Unknown".
  */
 export function serverFilesLabel(
   backend: ComputeBackend,
@@ -67,8 +66,8 @@ export function serverFilesLabel(
 }
 
 /**
- * The configured workers and the admin's actions on them; the caller loads, nothing polls. Loading seeds each
- * worker's verdict from the listing, so one a run produced shows without pressing Handshake.
+ * The configured workers and the admin's actions on them; the caller loads, nothing polls. A load seeds the
+ * verdicts from the listing, so one a run produced shows without pressing Handshake.
  */
 export function useComputeBackends() {
   const backends: Ref<ComputeBackend[]> = ref([]);

@@ -265,9 +265,9 @@ def pre_calculate_pivot_schema(
 ) -> list[FlowfileColumn]:
     """The predicted columns of a pivot: its index columns, then one column per pivot value and aggregation.
 
-    With ``output_fields`` those are the pivot columns; otherwise the pivot values are the first 200 distinct values
-    of the pivot column in ascending order, as text, which the current execution context's backend reads from
-    ``input_lf`` (``bounded.unique_values``), as the pivot itself does when it runs (``FlowDataEngine.do_pivot``).
+    With ``output_fields`` those are the pivot columns. Otherwise the pivot values are the first 200 distinct values
+    of the pivot column, ascending, as text, read on the current context's backend (``bounded.unique_values``) as
+    ``FlowDataEngine.do_pivot`` reads them.
     """
     index_columns_schema = [
         get_schema_of_column(node_input_schema, index_col) for index_col in pivot_input.index_columns

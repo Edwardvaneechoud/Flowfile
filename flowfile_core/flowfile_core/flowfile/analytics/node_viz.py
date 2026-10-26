@@ -3,12 +3,10 @@
 Mirrors the catalog visualization path (``catalog/services/visualizations.py``)
 so a chart built on a flow node and the same chart built on a catalog table run
 through one aggregation implementation — ``polars_gw`` inside a spawned worker
-child — and agree. Each request is a ``viz_session`` operation. With the compute
-protocol flag on it runs on the backend that holds the node's result when that
-backend declares ``viz_session``, else on the worker backend
-(``registry.WORKER_BACKEND_ID``), since core's own backend has no visualisation
-child; a configured worker without it refuses the node at placement. With the
-flag off it runs on the worker backend whatever the flow's execution location.
+child — and agree. Each request is a ``viz_session`` operation: with the compute
+protocol flag on, on the backend that holds the node's result when it offers
+``viz_session``, else on the worker backend; with the flag off, on the worker
+backend.
 
 Core never collects here, and nothing is materialised: the operation ships the
 node's LazyFrame, serialised, and the worker child holds it lazily, exactly as
@@ -90,9 +88,8 @@ def viz_request(
 ) -> VizSessionPayload:
     """The ``viz_session`` payload of one Graphic Walker request over *node*'s result, without materialising it.
 
-    The plan is the node's result LazyFrame. The session key is content-addressed, ``sha256`` of the serialised
-    plan, plus the run token, never ``flow_id`` (regenerated on every flow open), so repeated requests on one run
-    reuse one warm child and a re-run gets a fresh one.
+    The session key is ``sha256`` of the serialised plan plus the run token, never ``flow_id`` (regenerated on every
+    flow open), so requests on one run share a warm child and a re-run gets a fresh one.
 
     Raises:
         NodeNotRunError: The node has no result yet.

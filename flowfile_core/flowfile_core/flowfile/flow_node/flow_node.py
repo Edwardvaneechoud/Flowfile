@@ -92,10 +92,10 @@ def _failed_class(error: BaseException) -> str | None:
 def run_operation(backend: ComputeBackend, op: OperationKind, payload: OpPayload) -> OpResult:
     """``backend.run_op(op, payload)`` under the failure rule a node's operations follow.
 
-    A ``TaskFailed`` whose job names the exception class it failed with is re-raised as ``RemoteExecutionError``
-    carrying that class, so the class reaches the node's error record; every other error, ``PlanRejected`` and
-    ``ComputeUnavailable`` among them, propagates as raised. ``FlowNode.run_op`` is this plus the node's in-flight
-    job; this is for an operation run before the node is bound (a new read node's schema prefetch).
+    A ``TaskFailed`` naming the exception class its job failed with is re-raised as ``RemoteExecutionError`` with
+    that class, so the class reaches the node's error record. Every other error propagates as raised.
+    ``FlowNode.run_op`` adds the node's in-flight job. Use this for an operation run before the node is bound (a new
+    read node's schema prefetch).
     """
     try:
         return backend.run_op(op, payload)
@@ -244,13 +244,13 @@ class FlowNode:
     # at assembly — per-handle so a two-output gate feeding the union is
     # judged per edge
     _skipped_input_ids_this_run: frozenset
-    # set per run by the graph: (source id, source handle) -> the BoundaryEdge an input crosses from another backend by
+    # set per run: (source id, source handle) -> the BoundaryEdge an input crosses backends by
     _boundary_inputs: dict[tuple[int, str], Any]
-    # handle -> the result a node that read such an input stored for that output beside its own (_store_other_outputs)
+    # handle -> an output stored beside the result after a boundary read (_store_other_outputs)
     _stored_outputs: dict[str, ResultRef]
     # output name -> a materialised result the node's operation minted (run_op), released with the node's result
     _operation_refs: dict[str, ResultRef]
-    # the stored results of a run_flow child graph's nodes this node took over (adopt_results), released with its own
+    # stored results of a run_flow child's nodes taken over (adopt_results), released with this node's
     _adopted_refs: list[ResultRef]
     # the exception the last run failed with; a read raises it while results.errors is set
     _last_run_error: BaseException | None
@@ -1335,10 +1335,9 @@ class FlowNode:
     def _in_execution_context(self) -> Generator[None, None, None]:
         """Run the block in the execution context of the node's graph, when the graph gave the node one.
 
-        During a run that is the run's context, unchanged; outside one (a build-time read of a FlowFrame, a schema
-        prediction that calls the node's function) it is the graph's own, so the bounded reads the function makes
-        through ``current_context()`` (a pivot's distinct values, a first row, a null profile) run where the graph
-        runs: in core for a local graph, on the default backend for a remote one.
+        During a run that is the run's context. Outside one (a FlowFrame's build-time read, a schema prediction) it
+        is the graph's own, so the bounded reads the node's function makes through ``current_context()`` run where
+        the graph runs: in core for a local graph, on the default backend for a remote one.
         """
         if self._execution_context_getter is None:
             yield
@@ -1361,9 +1360,8 @@ class FlowNode:
             A FlowDataEngine instance containing the result, or None on error.
 
         Raises:
-            Exception: Propagates exceptions from the node's function execution. While the node's last run failed
-                (``results.errors`` set), every read raises the exception that run failed with, never the frame it
-                built before the failure.
+            Exception: Propagates exceptions from the node's function execution. While the last run's failure
+                stands (``results.errors`` set), every read raises that exception, never the frame built before it.
         """
         if self.is_setup:
             with self._execution_lock_held():
@@ -1620,23 +1618,21 @@ class FlowNode:
     def remove_cache(self):
         """Lets the backend that holds this node's last result drop it (``release_result``).
 
-        A result the worker stored is cleared unguarded by ``exists``: a task whose result file is already gone
-        still holds a worker status entry, and that is exactly the case that needs clearing.
+        Unguarded by ``exists``: a task whose result file is already gone still holds a worker status entry, and
+        that is exactly the case that needs clearing.
         """
         self.release_result()
 
     def release_result(self) -> None:
         """Releases every result this node minted on the backend that holds it and forgets the references.
 
-        What the node owns goes together: its result (``results.result_ref``), the other outputs it stored beside it
-        (``_store_other_outputs``) and the stored outputs of its operation (``_operation_refs``: a read's result, a
-        fuzzy join's, a random split's per split, a custom node's per output, the model a Train Model node fitted),
-        each id released once. ``results.model_ref`` is forgotten with the model it names when that model is among the
-        operation's outputs; one the node did not fit (carried onto a combined graph's node, held by the node it was
-        carried from) is left as it is. It is called on a rerun under another hash or on another backend, on removal,
-        when the graph closes and when the node fails after storing part of its outputs. A release that fails (an
-        unreachable backend, one removed or of another version, a refused task) is logged and the reference dropped,
-        never raised: releasing is cleanup, and a close, a delete or a run's end must not stop on it.
+        That is its result (``results.result_ref``), the outputs stored beside it (``_store_other_outputs``), its
+        operation's stored outputs (``_operation_refs``) and the results it adopted, each id released once.
+        ``results.model_ref`` is forgotten only when the node fitted that model. One carried onto a combined graph's
+        node is left as it is.
+
+        A failed release (an unreachable backend, one removed or of another version, a refused task) is logged and
+        the reference dropped, never raised, so a close, a delete or a run's end never stops on it.
         """
         ref = self.results.result_ref
         self.results.result_ref = None
@@ -1672,7 +1668,7 @@ class FlowNode:
         """Takes over every result ``other`` holds, released with this node's own (``release_result``).
 
         For a ``run_flow`` child graph's node once the child run ended: the parent's output may scan the child's
-        stored results, so they live as long as the Run Flow node's result does, not as long as the child graph.
+        stored results, so they must outlive the child graph.
         """
         held = [
             other.results.result_ref,
@@ -1695,8 +1691,8 @@ class FlowNode:
     def release_superseded(self, previous: list[ResultRef]) -> bool:
         """Releases the results of ``previous`` this node no longer adopts; whether it released any.
 
-        A ``run_flow`` node's child runs under a fresh graph each time, so its stored results come back under new ids
-        and the previous run's are released once the new ones are adopted.
+        A ``run_flow`` node's child runs under a fresh graph each time, so its stored results come back under new
+        ids. The previous run's go once the new ones are adopted.
         """
         kept = {(ref.backend_id, ref.result_id) for ref in self._adopted_refs}
         released: set[tuple[str, str]] = set()
@@ -1711,9 +1707,8 @@ class FlowNode:
     def drop_downstream_results(self) -> None:
         """Every node downstream releases what it holds and counts as not run with its current setup.
 
-        For a node whose operation outputs were just released under a rerun of its own (a preview fetch): those
-        outputs come back under new ids, so a plan downstream built over the old ones can no longer be read, and the
-        next read or run of those nodes computes them again.
+        For a node whose rerun (a preview fetch) just released its operation outputs: they come back under new ids,
+        so a downstream plan built over the old ones can no longer be read.
         """
         seen: set[int] = set()
         stack = list(self.leads_to_nodes)
@@ -1731,12 +1726,11 @@ class FlowNode:
             stack.extend(node.leads_to_nodes)
 
     def release_deferred_result(self) -> None:
-        """Releases the held result when it is a deferred plan; a stored one is left to whatever scans its file.
+        """Releases the held result if it is a deferred plan, leaving a stored one to whatever scans its file.
 
-        For a graph that is discarded while what it computed lives on (a ``run_flow`` child's output in its
-        parent's result): a consumer holds a deferred plan itself, so only the backend's holding goes. The node's
-        other stored results (the outputs it stored beside its result, its operation's outputs, a fitted model) stay
-        held, since that plan may scan them.
+        For a graph discarded while what it computed lives on (a ``run_flow`` child's output in its parent's
+        result). A consumer holds a deferred plan itself, so only the backend's copy goes. The node's other stored
+        results stay held, since that plan may scan them.
         """
         ref = self.results.result_ref
         if ref is None or ref.state != "deferred":
@@ -1761,9 +1755,9 @@ class FlowNode:
     def held_output(self, handle: str) -> ResultRef | None:
         """The stored result this node holds for its output ``handle``, else ``None``.
 
-        The output it stored beside its result (``_store_other_outputs``) when there is one, else the operation output
-        the handle names (a custom node's are keyed by handle), else, when its operation answered one output per
-        handle, as a random split does by split name, the output at the handle's position.
+        In order: the output stored beside its result (``_store_other_outputs``), the operation output keyed by the
+        handle (a custom node's), else, when the operation answered one output per handle (a random split's, by
+        split name), the one at the handle's position.
         """
         ref = self._stored_outputs.get(handle) or self._operation_refs.get(handle)
         if ref is not None:
@@ -1783,9 +1777,8 @@ class FlowNode:
     def needs_run(self, performance_mode: bool, node_logger: NodeLogger = None) -> bool:
         """Determines if the node needs to be executed.
 
-        The decision is based on its run state, caching settings, and execution mode. The result the node
-        holds counts only when the backend that minted it still holds it under the node's current hash
-        (``exists``); a node holding none has no cached result.
+        The decision is based on its run state, caching settings, and execution mode. A cached result counts
+        only while the backend that minted it still holds it under the node's current hash.
 
         Args:
             performance_mode: True if the flow is in performance mode.
@@ -1860,33 +1853,21 @@ class FlowNode:
     def _do_execute(self, hints: SubmitHints, performance_mode: bool, node_logger: NodeLogger) -> None:
         """Builds this node's plan and submits it to the run's backend, which holds the result by its policy.
 
-        Internal method called by NodeExecutor, inside the run's execution context (``current_context``). The
-        result the backend holds becomes ``results.resulting_data`` through ``plan_for``; the node keeps its
-        reference and job handle on ``results``. A ``cache_results`` node whose stored result the backend still
-        holds reads it back instead (a rerun past the cache after a failed run); if that fails, it builds and
-        submits again. The preview is the backend's inline sample when it returned one, else, outside
-        Performance mode, a sample read from the backend the first time the preview is opened. A node that read an
-        input which crossed from another backend stores its other outputs beside its result
-        (``_store_other_outputs``). A node that holds no result under its hash on this backend releases what it holds
-        (``release_result``) before its function runs, so a rerun under another hash or on another backend releases
-        the last run's results before its operation mints the next; a node that fails while storing its other outputs
-        releases what it stored.
+        The held result becomes ``results.resulting_data`` through ``plan_for``. The preview is the backend's
+        inline sample, else (outside Performance mode) a sample read when first opened.
 
-        A CSV read whose type inference fails on submit is submitted again at a higher ``infer_schema_length``
-        (configured, then 10k, then 100k rows) under the node's hash, without changing the saved setting, so the
-        widened result is the node's held result.
-
-        Args:
-            hints: What the node submits its plan with (``executor.hints_for``).
-            performance_mode: True when the node keeps no preview.
-            node_logger: The logger for this node execution; its flow id files the backend's job.
+        - A ``cache_results`` node whose stored result the backend still holds reads it back instead.
+        - A node holding no result under its hash on this backend first releases what it holds, so a rerun under
+          another hash or backend frees the last generation before minting the next.
+        - A node that read a boundary input stores its other outputs beside its result, releasing all it holds if
+          that fails.
+        - A CSV read whose type inference fails is resubmitted at a higher ``infer_schema_length`` under the same
+          id, so the widened result is the node's held result.
 
         Raises:
-            ComputeError: From the backend (``PlanRejected``, ``TaskFailed``, ``ComputeUnavailable``,
-                ``VersionMismatch``).
-            RemoteExecutionError: The plan ran and failed with an exception class its message names (a
-                ``TaskFailed`` re-raised with that class), or a CSV read still failed its type inference at the
-                last escalation.
+            ComputeError: From the backend.
+            RemoteExecutionError: The plan failed with an exception class its message names, or a CSV read still
+                failed type inference at the last escalation.
         """
         backend = current_context().backend
         held = self.held_result(backend.id)
@@ -1909,12 +1890,10 @@ class FlowNode:
                 raise
 
     def _store_other_outputs(self, backend: ComputeBackend, hints: SubmitHints, node_logger: NodeLogger) -> None:
-        """Stores each of this node's outputs but the default on ``backend`` beside its result.
+        """Stores each output but the default on ``backend`` beside this node's result, as ``<hash>_<handle>``.
 
-        For a node that read an input which crossed from another backend: each other output is submitted with
-        ``hints`` and no preview under ``<hash>_<handle>`` and read through the stored result from then on, and the
-        default handle reads the node's result, so no output refers to the import, whose object the run's prefix in
-        the exchange store holds only while the run lasts.
+        For a node that read a boundary input: every output then reads a stored result (the default the node's own),
+        so none refers to the import, whose exchange-store object lasts only as long as the run.
         """
         if DEFAULT_OUTPUT_HANDLE in self._named_outputs:
             self._named_outputs[DEFAULT_OUTPUT_HANDLE] = self.results.resulting_data
@@ -1960,8 +1939,7 @@ class FlowNode:
     def _submit(
         self, backend: ComputeBackend, engine: FlowDataEngine, hints: SubmitHints, node_logger: NodeLogger
     ) -> SubmitResult:
-        """Submits ``engine``'s plan under this node's hash, escalating a CSV read's type inference on failure under the
-        same id."""
+        """Submits ``engine``'s plan under the node's hash, retrying failed CSV type inference under that id."""
         inputs = self._input_refs(backend.id)
         frame = engine.data_frame
         current_infer = self._eligible_infer_length()
@@ -1998,15 +1976,11 @@ class FlowNode:
     def run_op(self, backend: ComputeBackend, op: OperationKind, payload: OpPayload, *, job_id: str) -> OpResult:
         """Run ``op`` on ``backend`` for this node, so that ``cancel`` reaches it while it runs.
 
-        ``job_id`` is the id the payload gives the backend for the job (the payload's ``job_id``): while the call
-        runs, ``cancel`` hands ``JobHandle(backend.id, job_id)`` to ``backend.cancel``, as it does for a submit.
-        Each stored result the operation answers is the node's from then on (``_operation_refs``, by output name),
-        released with its result (``release_result``); a deferred one stays the caller's to release, since the
-        engine built over it holds its plan. One it replaces under the same output name with another id (a rerun
-        under the same hash whose operation mints fresh ids, as a random split or a database read does) is released
-        first, so no earlier generation stays held untracked.
-
-        Failures follow ``run_operation``'s rule, which is ``_submit``'s.
+        *job_id* is the payload's ``job_id``: while the call runs, ``cancel`` hands ``JobHandle(backend.id, job_id)``
+        to ``backend.cancel``. Each stored result the operation answers is the node's from then on
+        (``_operation_refs``, by output name), released with its result. A deferred one stays the caller's to
+        release, since the engine built over it holds its plan. A stored output replaced under the same name by
+        another id (a random split or database read rerun) is released first. Failures follow ``run_operation``.
         """
         self._submit_in_flight = JobHandle(backend.id, job_id)
         try:
@@ -2043,11 +2017,11 @@ class FlowNode:
         preview_rows: int | None,
         performance_mode: bool,
     ) -> None:
-        """Holds ``result`` and makes the result ``backend`` holds this node's resulting data and preview.
+        """Holds ``result`` and makes it this node's resulting data and preview.
 
-        A deferred result is this node's own plan, so its engine keeps what ``engine`` knew of it (schema, a
-        known row count, streamability); a stored one is read like any scan, with the schema and the row count its
-        reference carries, so core never resolves a stored result's schema from the backend's storage.
+        A deferred result is this node's own plan, so its engine keeps what ``engine`` knew (schema, a known row
+        count, streamability). A stored one takes the schema and row count its reference carries, so core never
+        resolves a stored result's schema from the backend's storage.
         """
         ref = result.ref
         self.results.result_ref = ref
@@ -2137,8 +2111,8 @@ class FlowNode:
             performance_mode: Skip example data generation for speed
             retry: Allow retry on recoverable errors
             node_logger: Logger for this node's execution
-            unreachable: The error the handshake of the backend placement assigned the node raised; the node fails
-                with it and nothing runs.
+            unreachable: The handshake error of the backend placement assigned the node. The node fails with it
+                and nothing runs.
         """
         if node_logger is None:
             raise ValueError("node_logger is required")
@@ -2469,18 +2443,16 @@ class FlowNode:
         The stats land on the result engine's ``FlowfileColumn`` (the single
         source of truth), so this run's later previews carry them too; the
         return value is that column's ordinary ``FileColumn`` representation.
-        The aggregate runs on ``backend``, by default the current execution
-        context's. With ``FLOWFILE_COMPUTE_PROTOCOL`` on it is the backend that
-        holds the output's result, else the one read in the context of the
-        node's graph: the run's during a run, the flow's own outside one, and
-        the default backend only for a node with no graph.
-        With it off, outside a run it is the default backend, not the flow's,
-        so with the worker configured a locally-run node's result (its full
-        upstream plan) is aggregated on the worker, and in core only when the
-        default backend is core's own. Raises ``ColumnStatsUnavailable`` when
-        there is no cached result to aggregate over without executing or
-        re-pulling data, or the backend cannot compute even the counts, and
-        ``pl.exceptions.ColumnNotFoundError`` for an unknown column.
+
+        The aggregate runs on *backend*. By default, with ``FLOWFILE_COMPUTE_PROTOCOL``
+        on, that is the backend holding the output's result, else the context of the
+        node's graph. With it off it is ``current_context()``'s, which outside a run
+        is the default backend, not the flow's.
+
+        Raises ``ColumnStatsUnavailable`` when there is no cached result to
+        aggregate over without executing or re-pulling data, or the backend
+        cannot compute even the counts, and ``pl.exceptions.ColumnNotFoundError``
+        for an unknown column.
         """
         if sink := self._sink_source():
             return sink[0].get_column_stats(column_name, output_handle=sink[1], backend=backend)
@@ -2506,15 +2478,13 @@ class FlowNode:
         """Generates a `TableExample` model summarizing the node's output.
 
         This can optionally include a sample of the data. For multi-output
-        nodes, ``output_handle`` selects which named output to preview. With
-        ``FLOWFILE_COMPUTE_PROTOCOL`` on and a reference held, the default
-        output's rows are the node's cached sample when it kept one; any other
-        output's are a sample of the result the node holds for it
-        (``held_output``) on the backend that holds it, and those of an output
-        with none, and the default's when no sample was kept, are read through
-        ``bounded.head_rows`` of the output's plan on the backend that holds
-        the node's reference; neither is cached. With the flag off, or for a
-        node that holds no reference, an output's first rows are collected in
+        nodes, ``output_handle`` selects which named output to preview.
+
+        With ``FLOWFILE_COMPUTE_PROTOCOL`` on and a reference held, a named
+        output's rows never come from core: the default output's cached sample,
+        else a ``sample`` of the result held for it (``held_output``), else
+        ``bounded.head_rows`` of its plan on the backend of the node's reference
+        (not cached). With the flag off, or no reference, they are collected in
         core.
 
         Args:

@@ -1,12 +1,11 @@
 """Keep decrypted cloud credentials out of serialized Polars query plans.
 
-Polars inlines ``storage_options`` into a serialized plan, so a plan carries its credentials through one of two
-providers instead. ``EncryptedCredentialProvider`` holds them as a ``$ffsec$`` ciphertext and decrypts through
-whatever the executing process registered with :func:`register_secret_decryptor`. ``CredentialRefProvider`` holds
-only a stored connection's id and the user it runs for; the executing process reads that connection from its own
-catalog database and resolves it there; ``credential_ref_kwargs`` gives a sink or scan of a URI that provider and the
-connection's plain options. Stdlib-only at import and outside ``shared.cloud_storage`` (whose
-``__init__`` loads ``shared.delta_utils``): every spawned worker child imports this module.
+Polars inlines ``storage_options`` into a serialized plan, so a plan carries its credentials through a provider
+instead. ``EncryptedCredentialProvider`` holds a ``$ffsec$`` ciphertext and decrypts through whatever the executing
+process registered with :func:`register_secret_decryptor`. ``CredentialRefProvider`` holds only a stored
+connection's id and user, resolved against the executing process's own catalog. Stdlib-only at import and outside
+``shared.cloud_storage`` (whose ``__init__`` loads ``shared.delta_utils``): every spawned worker child imports this
+module.
 """
 
 from __future__ import annotations
@@ -93,7 +92,7 @@ class CredentialRefProvider:
     def __init__(self, connection_id: int, user_id: int):
         self.connection_id = connection_id
         self.user_id = user_id
-        # Polars caches resolved credentials by the provider's pickled bytes: one entry per plan, as a ciphertext gives.
+        # Polars caches credentials by the pickled provider; the nonce keeps one entry per plan.
         self.nonce = os.urandom(8).hex()
 
     def __call__(self) -> tuple[dict[str, str], int | None]:
@@ -106,9 +105,8 @@ class CredentialRefProvider:
 def resolve_credential_ref(connection_id: int, user_id: int) -> tuple[dict[str, str], int | None]:
     """The Polars credentials of stored cloud connection *connection_id* and their expiry, resolved in this process.
 
-    The connection comes from the catalog database this process is configured for, its secrets are decrypted with
-    this process's master key, and the options are built here, so an ``aws-cli`` profile or ``iam_role`` role
-    resolves with this process's AWS identity.
+    Reads the connection from this process's catalog database and decrypts its secrets with this process's master
+    key. An ``aws-cli`` profile or ``iam_role`` role therefore resolves with this process's AWS identity.
     """
     from shared.cloud_storage.storage_options import build_storage_options
     from shared.database import cloud_connection_record
@@ -138,12 +136,10 @@ AMBIENT_AUTH_METHODS = frozenset({"env_vars", "managed_identity"})
 def credential_ref_kwargs(connection_id: int, user_id: int) -> dict[str, Any]:
     """What a sink or scan of a URI takes for stored connection *connection_id*: its provider and its plain options.
 
-    The provider resolves the connection's credentials where the sink or scan runs. The options are the connection's
-    region, endpoint, plain-HTTP, TLS, account and project settings, read here from this process's catalog database
-    with no secret decrypted and built as a cloud read's plan carries them (S3 as ``env_vars``, which resolves
-    nothing), so an S3-compatible store is reached at its own endpoint. A connection whose method holds no credential
-    (``AMBIENT_AUTH_METHODS``) gets no provider, so the executing process's default chain applies, as a cloud read of
-    one does. A connection the catalog lacks gets the provider alone, which raises ``CredentialResolutionError`` if
+    The provider resolves the credentials where the sink or scan runs. The options (region, endpoint, plain HTTP,
+    TLS, account, project) are read here with no secret decrypted, so an S3-compatible store is reached at its own
+    endpoint. A connection in ``AMBIENT_AUTH_METHODS`` gets no provider, so the executing process's default chain
+    applies. A connection the catalog lacks gets the provider alone, which raises ``CredentialResolutionError`` if
     Polars calls it.
 
     Raises:
@@ -197,7 +193,7 @@ def _provider_credentials(storage_type: str, options: Mapping[str, str]) -> tupl
     """What a Polars provider may return for resolved *options*: S3 keys, an Azure key, SAS or bearer, a GCS bearer."""
     if storage_type == "s3":
         keys = ("aws_access_key_id", "aws_secret_access_key", "aws_session_token")
-        # The builder's "" session token stays: it keeps an ambient AWS_SESSION_TOKEN out, as in split_credentials.
+        # Keep the builder's "" session token: it keeps an ambient AWS_SESSION_TOKEN out.
         return {key: options[key] for key in keys if options.get(key) is not None}, None
     if storage_type == "adls":
         if options.get("client_secret"):

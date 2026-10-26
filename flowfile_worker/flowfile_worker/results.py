@@ -1,13 +1,10 @@
 """The results this worker holds for the ``/v1`` routes, by result id.
 
-A result is either materialised (an Arrow IPC file the submit child wrote under ``CACHE_DIR``)
-or deferred (the submitted plan, run again when rows or a count are asked for). Both keep the
-columns the child read from the plan's schema. A blob is a materialised record of another kind: a
-file of bytes under ``CACHE_DIR``, such as a fitted model, with no columns and no row count, which
-the routes copy and never read as rows. The registry lives in the FastAPI process only;
-nothing a spawned child imports reaches it, and like ``status_dict`` it does not survive a restart.
-It also stamps when the submit under an id ended, failed ones included, so ``expire`` can drop
-what has been held for too long.
+A result is materialised (an Arrow IPC file under ``CACHE_DIR``) or deferred (the submitted plan, run again when rows
+or a count are asked for). A blob is a materialised record of a file of bytes, such as a fitted model, with no columns
+and no row count, which the routes copy and never read as rows. The registry lives in the FastAPI process only and
+does not survive a restart. It also stamps when the submit under an id ended, failed ones included, so ``expire`` can
+drop what has been held too long.
 """
 
 import os

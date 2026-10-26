@@ -102,9 +102,8 @@ def _delta_target(
 ) -> str:
     """The table a Delta operation writes: *output_path* as given, or the catalog table *table_name*.
 
-    *table_name* is a bare directory name, joined onto the payload's ``base_uri`` for object storage or onto this
-    worker's catalog tables directory, unresolved, as ``/catalog/materialize`` joins a new table's directory. A name
-    with a path separator or ``..`` raises ``ValueError``.
+    *table_name* is a bare directory name, joined unresolved onto the payload's ``base_uri`` or onto this worker's
+    catalog tables directory. A name with a path separator or ``..`` raises ``ValueError``.
     """
     if table_name is None:
         return output_path
@@ -371,12 +370,9 @@ def submit_result(
 ):
     """Run a submitted plan for the ``/v1`` routes and queue what its result reference needs.
 
-    Materialised, the plan is collected once and written as IPC to *file_path*, and the row count
-    is that frame's height. Deferred, nothing is written and the row count stays ``None``. With
-    *preview_rows* set, the first rows also come back as an Arrow IPC stream: from the collected
-    frame, or from ``head(preview_rows)`` of the plan. The queued dict carries the plan's
-    ``pl.Schema``, never one read back from the file, because an extension dtype Polars has not
-    registered comes back from an IPC file as its storage type.
+    Materialised: collected once and written as IPC to *file_path*. Deferred: nothing written, row count ``None``.
+    With *preview_rows*, the first rows also come back as an Arrow IPC stream. The schema queued is the plan's,
+    not the file's, because an unregistered extension dtype reads back from IPC as its storage type.
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info(f"Starting submit ({'materialised' if materialise else 'deferred'})")
@@ -422,13 +418,11 @@ def export_result(
 ):
     """Write a held result's plan to *uri* as parquet by a streaming sink, for ``POST /v1/results/{id}/export``.
 
-    The task routes run it too, as the operation ``export_result`` with *uri* and *credential* as kwargs, when core
-    exports a result it minted over them. Nothing is collected: the rows stream from the plan's source to the target.
-    *credential*, a stored connection's ``connection_id`` and ``user_id``, becomes a ``CredentialRefProvider`` that
-    this child resolves against its catalog with its master key when the sink opens the target, beside the
-    connection's endpoint and region read from that catalog (``credential_ref_kwargs``). A ``file:`` URI is sunk to
-    the local path it names (``file_uri_path``), whose folder is the caller's. The URI written is queued. *file_path*
-    is not read. A failure is logged with the target cut at its query, where a presigned URL's signature is.
+    The task routes run it too, as the ``export_result`` operation. Nothing is collected. *credential* (a stored
+    connection's ``connection_id`` and ``user_id``) becomes a ``CredentialRefProvider`` this child resolves with its
+    own catalog and master key (``credential_ref_kwargs``). A ``file:`` URI is sunk to the local path it names
+    (``file_uri_path``). The URI written is queued. A failure is logged with the target cut at its query, where a
+    presigned URL's signature is.
     """
     from shared.cloud_credential_provider import credential_ref_kwargs
     from shared.compute_protocol import file_uri_path
@@ -464,9 +458,8 @@ def split_result(
 ):
     """Collect a plan of shuffled rows once and write consecutive slices of it, one Arrow IPC file per split.
 
-    Split *i* is written to ``paths[i]`` and takes ``round(total * percentages[i] / 100)`` rows, the last split the
-    rest, so the splits partition the rows. The queued dict carries the plan's ``pl.Schema``, never one read back from
-    a file (see ``submit_result``), and each split's row count. *file_path* is not read.
+    Split *i* goes to ``paths[i]`` with ``round(total * percentages[i] / 100)`` rows, the last split the rest. The
+    queued dict carries the plan's ``pl.Schema`` (see ``submit_result``) and each split's row count.
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info(f"Starting random split into {len(paths)} parts")
@@ -500,10 +493,8 @@ def split_result(
 def _scans_rows_in_memory(lf: pl.LazyFrame) -> bool:
     """Whether *lf* reads a frame held in memory, whose rows its serialised plan carries whole.
 
-    Polars prints such a leaf (``input_df.collect().lazy()``, ``pl.LazyFrame({...})``) as ``DF [<columns>]`` in the
-    plan before optimisation, which is the plan that is serialised, and a scan of a source as the scan
-    (``Ipc SCAN [<path>]``). A string literal spelling such a line matches too, and the result is then written to a
-    file it did not need.
+    Polars prints such a leaf as ``DF [<columns>]`` in the unoptimised plan, the one that is serialised. A string
+    literal spelling such a line matches too, which only costs a file write the result did not need.
     """
     return any(line.lstrip().startswith("DF [") for line in lf.explain(optimized=False).splitlines())
 
@@ -511,11 +502,10 @@ def _scans_rows_in_memory(lf: pl.LazyFrame) -> bool:
 def _user_code_result(result: pl.LazyFrame | pl.DataFrame | None, file_path: str) -> dict:
     """What a Polars Code or SQL Query child queues for the frame the user's code answered.
 
-    A ``LazyFrame`` over sources is reported as its resolved ``pl.Schema`` and its serialised plan, with no row count,
-    nothing collected and nothing written. A ``DataFrame``, or a ``LazyFrame`` that reads a frame held in memory
-    (``_scans_rows_in_memory``), whose plan would carry those rows to core, is collected if lazy and written as IPC to
-    *file_path*, and its ``pl.Schema`` and height are reported. The schema is the result's own, never one read back
-    from a file (see ``submit_result``). Code that answers nothing, a sink's ``None``, answers an empty frame.
+    A ``LazyFrame`` over sources: its ``pl.Schema`` and serialised plan, no row count, nothing written. A
+    ``DataFrame``, or a ``LazyFrame`` over rows in memory (``_scans_rows_in_memory``), whose plan would carry those
+    rows to core: collected and written as IPC to *file_path*, reported with its ``pl.Schema`` and height. The schema
+    is the result's own (see ``submit_result``). ``None``, a sink's answer, is an empty frame.
     """
     if result is None:
         result = pl.DataFrame()
@@ -541,10 +531,8 @@ def polars_code(
 ):
     """Run a Polars Code node's code once over its input plans, for ``POST /v1/ops/polars_code``.
 
-    The code runs in the Polars Code sandbox (``shared.polars_code_parser``), given the plans of *inputs* in order, and
-    what it returns is queued as ``_user_code_result`` reports it: a ``LazyFrame`` over sources as its plan, a
-    ``DataFrame`` or a ``LazyFrame`` over rows in memory written to *file_path*. *polars_serializable_object* is not
-    read: the plans come as *inputs*.
+    The code runs in the ``shared.polars_code_parser`` sandbox over the plans of *inputs*, in order, and its result
+    is queued as ``_user_code_result`` reports it. *polars_serializable_object* is not read.
     """
     from shared.polars_code_parser import polars_code_parser
 
@@ -579,11 +567,10 @@ def sql_query(
 ):
     """Translate a SQL Query node's statement once over its input plans, for ``POST /v1/ops/sql_query``.
 
-    This is the SQL Query node's child, apart from the catalog SQL editor's ``execute_sql_query`` below. The statement
-    is validated here first, as the worker does not trust the core caller, then the plans of *inputs* are registered
-    in order as ``input_1``, ``input_2``, … in a ``pl.SQLContext`` and the statement is translated over them. What it
-    answers is queued as ``_user_code_result`` reports it: a plan over sources as its plan, one over rows in memory
-    written to *file_path*. *polars_serializable_object* is not read: the plans come as *inputs*.
+    Not the catalog SQL editor's ``execute_sql_query``. The statement is validated here, since the worker does not
+    trust its caller. The plans of *inputs* are registered in order as ``input_1``, ``input_2``, … in a
+    ``pl.SQLContext``, and the result is queued as ``_user_code_result`` reports it. *polars_serializable_object* is
+    not read.
     """
     from shared.sql_validation import validate_sql_query
 

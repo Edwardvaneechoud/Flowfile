@@ -1,17 +1,11 @@
 """Bounded reads of a plan through a compute backend: its row count, its first rows, one row, its distinct values.
 
-Each helper submits the plan to the backend as a deferred result under a fresh result id, makes one bounded read of
-it (``count`` or ``sample``) and releases it, whether the read succeeded or not. The submit asks for no
-materialisation and no inline sample (``DEFERRED_HINTS``), which both of core's backends honour by holding the plan
-as it is: the worker, embedded in this process or beside it, stores a plan only when it must be materialised or is
-wide with a preview asked for. So nothing is computed before the one read, and the read computes only what it
-returns: a count, or at most the rows asked for (the worker runs ``plan.head(n)`` as a job, in this process for the
-embedded worker and in a child for one beside core, and core reads that many rows back).
+Each helper submits the plan as a deferred result (``DEFERRED_HINTS``), makes one bounded read of it (``count`` or
+``sample``) and releases it, whether the read succeeded or not. Nothing is computed before that read, and the read
+computes only what it returns: a count, or at most the rows asked for.
 
-Where the work runs is the backend's to decide, never the helper's: a failure comes back as the ``ComputeError`` the
-backend raised (``ComputeUnavailable``, ``TaskFailed``, ``PlanRejected``, ...), and nothing here computes the plan in
-core instead. A plan crosses as the ``pl.LazyFrame`` itself (an eager frame is turned lazy first); a backend that runs
-it elsewhere serialises it there. The jobs are filed under no flow and no node (``-1``).
+Where the work runs is the backend's choice. A failure is the ``ComputeError`` the backend raised, and nothing here
+computes the plan in core instead. The jobs are filed under no flow and no node (``-1``).
 """
 
 from __future__ import annotations
@@ -33,8 +27,8 @@ if TYPE_CHECKING:
 DEFERRED_HINTS = SubmitHints(must_materialise=False, wide=False, fanout=1, preview_rows=None)
 """Hints that keep a submitted plan deferred with no inline sample on every core backend.
 
-``must_materialise`` is off because nothing is cached, ``preview_rows`` is ``None`` because the one bounded read is the
-only rows core takes, and ``wide`` is off because no consumer reads the result twice. ``fanout`` is the one read."""
+Nothing is cached (``must_materialise`` off), the one bounded read is the only rows core takes (no ``preview_rows``),
+and no consumer reads the result twice (``wide`` off, ``fanout`` the one read)."""
 
 _NO_FLOW = -1
 _RESULT_ID_PREFIX = "bounded_"
@@ -80,11 +74,9 @@ def unique_values(
 ) -> pl.Series:
     """The distinct values of ``plan``'s one column in ascending order (null first), at most ``limit`` of them.
 
-    The plan computes the distinct values and sorts them (``plan.unique().sort(...)``) where ``backend`` runs it, and
-    only the first ``limit`` reach core, in the column's own dtype: a caller that needs them as text casts the series,
-    so they are ordered by the column's values, not by their text. A caller that selected the column by name passes it
-    as ``column``; the plan's schema is then not resolved in core, where its leaf may scan a file only ``backend`` can
-    read.
+    The values are deduplicated and sorted where ``backend`` runs the plan, and come back in the column's own dtype,
+    so they are ordered by value, not by text. Pass ``column`` when the caller knows it: the plan's schema is then not
+    resolved in core, where its leaf may scan a file only ``backend`` can read.
 
     Raises:
         ComputeError: ``backend`` could not compute them.

@@ -9,11 +9,10 @@ override that beats the saved value at boot; ``env_override`` in the
 response tells the UI when that is the case.
 
 The frontend never talks to the worker directly (it only knows core), so
-core forwards to ``GET/POST /pool`` on the worker the backend registry's
-worker backend runs on. A worker that is down or
-unreachable surfaces as 503 ``WORKER_UNAVAILABLE`` — never 401, which the
-frontend axios interceptor would treat as JWT expiry. So does a worker that
-fails core's handshake (``VersionMismatch``): it is unavailable to this core.
+core forwards to the worker's ``GET/POST /pool`` (``registry.worker_url()``).
+A worker that is down, unreachable or fails core's handshake surfaces as 503
+``WORKER_UNAVAILABLE`` — never 401, which the frontend axios interceptor
+would treat as JWT expiry.
 """
 
 from __future__ import annotations
@@ -70,7 +69,7 @@ class WorkerPoolState(BaseModel):
 
 
 def _forward(method: str, json_body: dict | None = None) -> WorkerPoolState:
-    """Send ``method`` to ``/pool`` on the worker the worker backend runs on, through the worker session."""
+    """Send ``method`` to the worker's ``/pool`` through the worker session."""
     try:
         response = _worker_session.request(
             method, "/pool", worker_url=registry.worker_url(), json=json_body, timeout=_TIMEOUT

@@ -247,8 +247,7 @@ def _annotation_roots(entry: ast.FunctionDef) -> set[str]:
     }
 
 
-# The sandbox hands user code narrow namespaces in place of these modules; exported code, which runs
-# outside the sandbox, imports the real module (or polars subpackage) the namespace was built from.
+# Exported code runs outside the sandbox, so each namespace imports the real module it stands for.
 _SANDBOX_NAMESPACE_IMPORTS = {
     "cs": "import polars.selectors as cs",
     "expr": "import polars.expr as expr",

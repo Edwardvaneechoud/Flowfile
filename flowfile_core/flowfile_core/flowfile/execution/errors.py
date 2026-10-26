@@ -8,8 +8,7 @@ class ComputeError(Exception):
 class ComputeUnavailable(ComputeError):
     """Compute cannot be reached.
 
-    ``backend_id`` is the id of the backend that could not be reached, when the code that made the error knows it
-    (``WorkerBackend`` and the handshake gate it hands its id to), else ``None``.
+    ``backend_id`` names the unreachable backend when the code raising the error knows it, else ``None``.
     """
 
     def __init__(self, message: str, *, backend_id: str | None = None) -> None:
@@ -17,13 +16,9 @@ class ComputeUnavailable(ComputeError):
         self.backend_id = backend_id
 
     def __str__(self) -> str:
-        """The message, plus what to do about it when the connection was refused.
+        """The message, plus a hint to start the backend when the connection was refused (POSIX or Windows wording).
 
-        A refused connection reads ``Connection refused`` on POSIX and ``the target machine actively refused it``
-        on Windows (``WinError 10061``); both get the hint: ``Is backend "<backend_id>" running? Start it, or check
-        the Backends page.``, or ``Is the compute backend running? …`` when the error has no ``backend_id``. The hint
-        is added once: a message that already ends with the advice, as an error rebuilt from its own text (a run
-        report row's) does, is read as it is, whichever backend it names.
+        The hint is added once, so an error rebuilt from a run report row's text keeps the one it has.
         """
         message = super().__str__()
         if "refused" not in message.lower() or message.endswith(_ADVICE):
@@ -58,19 +53,14 @@ class TaskFailed(ComputeError):
 
 
 def worker_failure(error_kind: str | None, description: str) -> ComputeError:
-    """Typed error for a worker task the fetcher reports with error code -1.
+    """Typed error for a worker task the fetcher reports with error code -1, by the worker's ``error_kind``.
 
-    The fetcher folds several failures into code -1; the worker's ``error_kind`` tells them apart:
+    - ``"environment"``: :class:`PlanRejected`. The worker could not load the plan or write the result, or killed
+      the task at its time limit.
+    - ``"connection"``: :class:`ComputeUnavailable`. The socket to the worker closed mid-task with no cancel in flight.
+    - otherwise: :class:`TaskFailed`. The child was killed, or core failed to read the result.
 
-    - ``"environment"``: the worker could not load the plan (bytes that do not deserialise, a UDF
-      module or plugin it cannot import), could not write the result, or terminated the task at
-      its time limit. The worker labels its own time-limit kill "environment" too, so a timeout
-      surfaces as :class:`PlanRejected` whose message says the task exceeded the time limit.
-    - ``"connection"``: the socket to the worker closed mid-task with no cancel in flight.
-    - no kind: the child was killed ("Unknown Error" over REST, "Process ended unexpectedly" over
-      the WebSocket), or core failed to read the result the worker produced.
-
-    Codes 1, 2 and -2 are not routed through here. The message is kept verbatim.
+    Codes 1, 2 and -2 do not come here. The message is kept verbatim.
     """
     if error_kind == "connection":
         return ComputeUnavailable(description)

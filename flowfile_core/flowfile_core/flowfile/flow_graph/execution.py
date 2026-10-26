@@ -104,16 +104,13 @@ def _gate_formula_matches(source: FlowDataEngine, formula: str, graph: GraphMixi
 
     The formula is the Filter node's flowfile expression language applied as
     a row predicate; matching is existence — ``filter(pred).head(1)``. With
-    ``FLOWFILE_COMPUTE_PROTOCOL`` off that one row is collected in core; with
-    it on it is read through ``bounded.head_rows`` on the backend of
-    ``current_context(graph)``, the context its caller sets: on the backend
-    that holds the gate's source's result, else the run's during a run and,
-    outside one (a FlowFrame's ``Gate.is_open``), the graph's own, so core
-    never opens a result that backend stored and a formula error comes back
-    as its ``ComputeError``. An empty
-    formula, a formula that does not parse, or one referencing unknown
-    columns raises, failing the gate visibly instead of silently picking a
-    branch. An empty input (zero rows) is simply "no match": the gate closes.
+    ``FLOWFILE_COMPUTE_PROTOCOL`` on, that row is read through
+    ``bounded.head_rows`` on the backend of ``current_context(graph)``, so a
+    formula error comes back as its ``ComputeError``; off, it is collected in
+    core. An empty formula, a formula that does not parse, or one referencing
+    unknown columns raises, failing the gate visibly instead of silently
+    picking a branch. An empty input (zero rows) is simply "no match": the
+    gate closes.
     """
     if not formula.strip():
         raise ValueError("Gate is set to route on a formula, but no formula is configured")
@@ -175,10 +172,9 @@ class BoundaryEdge:
     def cost(self) -> tuple[int, int] | None:
         """The rows and columns the output holds when core knows them before ``target`` reads it, else ``None``.
 
-        For the default output, the reference ``source`` holds on ``source_backend_id`` under its current hash, when it
-        carries a row count; otherwise the engine core holds for the output without running ``source``: the last run's
-        while ``source`` has run with its current setup, or for the default output the node's own frame (a manual
-        input's rows), when it knows its count. Nothing is counted, sampled or collected to price an edge.
+        Taken from the reference ``source`` holds on ``source_backend_id`` (default output only), else from an engine
+        core already holds: the last run's while ``source`` has run with its current setup, or a manual input's own
+        frame. Nothing is counted, sampled or collected to price an edge.
         """
         if self.handle == DEFAULT_OUTPUT_HANDLE:
             ref = self.source.held_result(self.source_backend_id)
@@ -197,11 +193,9 @@ class BoundaryEdge:
     def cross(self) -> FlowDataEngine:
         """The engine ``target`` composes on for this input: the plan of its import on ``target_backend_id``.
 
-        The first call exports the output and imports it, with the output's schema and the exported reference's row
-        count, else the count the output's engine knows. The default output is exported as the reference ``source``
-        holds; another output (a filter's second side), which ``source`` holds as an engine, is submitted on
-        ``source_backend_id`` as a deferred plan for the export, under ``<source hash>_<handle>_<target id>``, an id of
-        this edge's own, and released after it.
+        The first call exports the output and imports it. The default output is exported as the reference ``source``
+        holds. Another output (a filter's second side) is submitted on ``source_backend_id`` as a deferred plan under
+        ``<source hash>_<handle>_<target id>``, exported, and released.
 
         Raises:
             ValueError: ``source`` holds no result on ``source_backend_id`` for its default output.
@@ -445,12 +439,10 @@ class ExecutionMixin(GraphMixinBase):
         ``claimed`` says the caller already holds the run slot (``try_claim_run``),
         as the fetch route does before it answers; the slot is released here either way.
 
-        The node and the nodes it reads from are placed as a run's nodes are (``_place_run``), under an
-        ``exchange_run`` of the fetch's own, removed when the fetch ends, and the report lists the boundaries into the
-        node. A refusal runs nothing; each refused node is a failed row of the report. A placement that raises runs
-        nothing either: the node's row fails with the error, which is raised again. Otherwise the node runs under
-        ``current_context(self)`` on the backend placement assigned it: an input that ran with its current setup on
-        another backend crosses through the exchange store as in a run, and one that has not run is composed into the
+        The node and its inputs are placed as a run's nodes are (``_place_run``), under an ``exchange_run`` of the
+        fetch's own. A refusal runs nothing, each refused node a failed row. A placement that raises fails the node's
+        row and is raised again. Otherwise the node runs on its assigned backend: an input that ran with its current
+        setup on another backend crosses through the exchange store, and one that has not run is composed into the
         node's plan.
         """
         if not claimed and not self.try_claim_run():
@@ -655,14 +647,10 @@ class ExecutionMixin(GraphMixinBase):
             node: The node to execute.
             performance_mode: Whether to run in performance mode.
             run_info_lock: Lock protecting shared RunInformation state.
-            backend_id: The backend placement assigned the node, ``None`` when nothing was placed. A node on another
-                backend than the run's runs under the run's context on that backend.
-            edges: The run's boundary edges into the node, which it reads those inputs through while it runs; every
-                import is released once it ran.
-            unreachable: The error the handshake of the node's backend raised, when it could not be asked; the node
-                fails with it and nothing is sent.
-            fallback: Why placement put the node on the default backend instead of the one its settings name, which
-                its result row reports.
+            backend_id: The backend placement assigned the node; ``None`` when nothing was placed.
+            edges: The run's boundary edges into the node; every import is released once it ran.
+            unreachable: The error the handshake of the node's backend raised; the node fails with it, nothing sent.
+            fallback: Why placement moved the node to the default backend, for its result row.
 
         Returns:
             A (NodeResult, FlowNode) tuple for post-stage failure propagation.
@@ -1009,10 +997,9 @@ class ExecutionMixin(GraphMixinBase):
         refs in the formula render as typed expression literals (strings
         quoted) like every other expression field — the stage loop sees the
         restored (unsubstituted) settings. Raises on a missing/unparsable
-        formula — the caller fails the gate visibly. The probe runs under the
-        current context on the backend that holds the source's result for its
-        current setup, or on the current context's own backend when the source
-        holds none.
+        formula — the caller fails the gate visibly. The probe runs on the
+        backend that holds the source's result for its current setup, else on
+        the current context's.
         """
         gate_input = node.setting_input.gate_input
         source_node = node.node_inputs.right_input
@@ -1067,33 +1054,18 @@ class ExecutionMixin(GraphMixinBase):
     ) -> tuple[Placement | None, list[BoundaryEdge]]:
         """Place the nodes ``execution_plan`` runs and resolve its crossings; ``(None, [])`` with the protocol flag off.
 
-        With an exchange store configured (``FLOWFILE_EXCHANGE_URI``) each node goes to the backend its own
-        ``execution_location`` names, ``"auto"`` to the run's (``MixedPlacementPolicy``); without one every node goes
-        to the run's backend whatever its own setting says, but the ones their builders pin to the worker
-        (``SingleBackendPolicy``). With a store, a node the backend it is placed on cannot run goes to the fallback
-        backend (``registry.fallback_backend_id``) when that one can run it, whose verdict is read with the others. In a
-        process that serves (``registry.serving()``) ``local`` runs no node, "this core serves; compute runs on its
-        worker", and is never asked: its nodes fall back with a store and are refused without one. Each other backend
-        named is read through its handshake verdict (``handshake.verdict_for``,
-        which checks it on its first use in this process). One whose verdict refuses it whole, or whose check raises a
-        ``VersionMismatch``, refuses every node assigned to it with that error, as an id the registry does not know does
-        with the registry's message; one whose check raises any other ``ComputeError`` (``ComputeUnavailable``) keeps
-        its nodes, unchecked, and each fails with that error when it runs, before anything is sent, never running on
-        another backend (``Placement.unreachable``). Every other backend's offered capabilities go into that map and
-        what its verdict found it does not offer into ``place``'s ``absent``, so a node that needs it is refused there
-        with the reason.
+        With an exchange store (``FLOWFILE_EXCHANGE_URI``) the policy is ``MixedPlacementPolicy``, falling back to
+        ``registry.fallback_backend_id``; without one it is ``SingleBackendPolicy`` on the run's backend. Each backend
+        named is read through its handshake verdict (``handshake.verdict_for``), except ``local`` in a process that
+        serves, which runs no node and is never asked. A backend refused whole, a ``VersionMismatch`` or an id the
+        registry does not know refuses every node assigned to it. Any other ``ComputeError`` keeps the backend's nodes
+        on it unchecked, and each fails with that error when it runs (``Placement.unreachable``).
 
-        Every boundary crosses through the run's prefix in the exchange store (the ``exchange_run`` given), resolved
-        once per run as the operator's connection: one ``BoundaryEdge`` per output of the upstream node that the
-        importing node reads, to ``<prefix><from>-<handle>-<to>.parquet``, keyed by the handle the node looks that input
-        up by. A store that cannot be used (no connection named, a scheme other than ``s3``, no administrator's
-        connection of that name) refuses the importing node with the store's message, so the run starts no node. So does
-        an edge whose output core knows before the run to hold more rows than ``FLOWFILE_EXCHANGE_MAX_ROWS``
-        (``BoundaryEdge.cost``), the message naming the rows, the columns and the limit, and a limit that is not a whole
-        number; an edge whose count core does not know crosses whatever its size. A node is refused once, for the first
-        of its crossings refused. Every refusal carries the settings that move its node elsewhere (``remedy_for``),
-        without a store naming the store as what would move a node its backend lacks something for. ``log`` false (the
-        placement preview) keeps core's log free of the warnings placement writes.
+        Each boundary becomes one ``BoundaryEdge`` per output the importing node reads, written to
+        ``<prefix><from>-<handle>-<to>.parquet`` under the run's exchange prefix. The importing node is refused, once,
+        when the store cannot be used, when the limit is not a whole number, or when core knows the output holds more
+        rows than ``FLOWFILE_EXCHANGE_MAX_ROWS`` (``BoundaryEdge.cost``). An edge of unknown size crosses. Every refusal
+        carries its ``remedy_for``. ``log`` false (the placement preview) writes no warnings to core's log.
         """
         if not settings.FLOWFILE_COMPUTE_PROTOCOL:
             return None, []
@@ -1202,10 +1174,9 @@ class ExecutionMixin(GraphMixinBase):
     def preview_placement(self) -> Placement | None:
         """Where a run would place each of the flow's nodes now, without running, logging or changing anything.
 
-        ``None`` with the protocol flag off. Every node is placed, as if every gate were open, by ``_place_run`` under
-        an exchange run of its own that is never collected, so nothing reaches the store; the boundary edges are
-        dropped. Placement reads each node's settings through a resolved copy, so a preview beside an edit or a run
-        leaves both as they are.
+        ``None`` with the protocol flag off. Every node is placed as if every gate were open, under an exchange run that
+        is never collected, and the boundary edges are dropped. Placement reads a resolved copy of each node's settings,
+        so a preview beside an edit or a run leaves both as they are.
         """
         stage = ExecutionStage(nodes=list(self.nodes))
         placement, _ = self._place_run(
@@ -1482,19 +1453,16 @@ class ExecutionMixin(GraphMixinBase):
         using threads. Stages are processed sequentially so that all dependencies
         are satisfied before a stage begins.
 
-        The run and every node it executes see ``current_context(self)``: the graph's
-        ``execution_context``, or, for a run started inside another run (a subflow's), the
-        outer run's context, so a subflow executes where the flow that runs it does.
+        The run and every node it executes see ``current_context(self)``, so a subflow keeps the context of the run
+        around it.
 
-        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, the nodes the execution plan runs are placed first (``_place_run``): a
-        node its backend cannot run ends the run before any node starts, each refused node a failed result. Each node
-        then runs on the backend placement assigned it, an input from another backend crossing through the exchange
-        store (``BoundaryEdge``). The run report lists the edges placement put between two backends
-        (``RunInformation.boundaries``), a refused run's included.
+        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, the nodes are placed first (``_place_run``). Any refusal ends the run
+        before a node starts, each refused node a failed result. Otherwise each node runs on its assigned backend, an
+        input from another backend crossing through the exchange store. ``RunInformation.boundaries`` lists those
+        edges, a refused run's included.
 
-        The run holds ``exchange_run``, its prefix ``<uri>/<flow id>/<run id>/`` in the exchange store, from before
-        ``flow_run_started`` is published; when the run ends, however it ends, what was written under the prefix is
-        removed and ``exchange_run`` is ``None`` again (``_end_exchange_run``).
+        The run holds ``exchange_run`` from before ``flow_run_started`` is published. However the run ends, its prefix
+        is removed and ``exchange_run`` is ``None`` again (``_end_exchange_run``).
 
         Args:
             node_ids: Restrict the run to these nodes; pass a closed set (each node together with
@@ -1655,9 +1623,8 @@ class ExecutionMixin(GraphMixinBase):
     def close_flow(self):
         """Releases every result the flow's nodes hold; never raises.
 
-        A flow with a run in flight is closed when the run releases its slot (``release_run``): the run finishes as it
-        would have, no result is released under a node that still reads it, and none it mints after this call is left
-        held.
+        A flow with a run in flight is closed when the run releases its slot (``release_run``), so nothing is released
+        under a node still reading it and nothing the run mints is left held.
         """
         with self._run_claim_lock:
             running = self.flow_settings.is_running
