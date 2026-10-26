@@ -1,5 +1,7 @@
 import {
   ref,
+  shallowRef,
+  shallowReactive,
   computed,
   onUnmounted,
   Ref,
@@ -33,20 +35,44 @@ interface NotificationConfig {
   type: "success" | "error";
 }
 
+// Timer lifecycle is shared; entries still belong to either the persistent map or one caller.
+class PollingEntry {
+  interval: number | null;
+
+  constructor(
+    public check: () => Promise<void>,
+    public delay: number,
+    public dispose: (() => void) | undefined,
+    public completionCallbacks: Array<() => void>,
+    public target?: OperationTarget,
+  ) {
+    this.interval = setInterval(check, delay) as unknown as number;
+  }
+
+  pause() {
+    if (this.interval !== null) clearInterval(this.interval);
+    this.interval = null;
+  }
+
+  resume(delay = this.delay) {
+    if (this.interval !== null) return;
+    if (this.target) {
+      this.target.failures = 0;
+      this.target.paused = false;
+    }
+    this.interval = setInterval(this.check, delay) as unknown as number;
+  }
+
+  stop() {
+    this.pause();
+    this.dispose?.();
+  }
+}
+
 // Singleton state that persists across component instances
 class FlowExecutionState {
   private static instance: FlowExecutionState;
-  private pollingIntervals = new Map<
-    string,
-    {
-      interval: number | null;
-      dispose?: () => void;
-      completionCallbacks: Array<() => void>;
-      check: () => Promise<void>;
-      target?: OperationTarget;
-      delay: number;
-    }
-  >();
+  private pollingIntervals = new Map<string, PollingEntry>();
   private activeExecutions = new Map<
     number,
     { starting?: boolean; cancelled?: boolean; terminal?: boolean; owner?: OperationTarget }
@@ -59,23 +85,8 @@ class FlowExecutionState {
     return FlowExecutionState.instance;
   }
 
-  setPollingInterval(
-    key: string,
-    interval: number,
-    dispose: (() => void) | undefined,
-    completionCallbacks: Array<() => void>,
-    check: () => Promise<void>,
-    target: OperationTarget | undefined,
-    delay: number,
-  ) {
-    this.pollingIntervals.set(key, {
-      interval,
-      dispose,
-      completionCallbacks,
-      check,
-      target,
-      delay,
-    });
+  setPollingInterval(key: string, entry: PollingEntry) {
+    this.pollingIntervals.set(key, entry);
   }
 
   hasStatusPolling(id: number): boolean {
@@ -94,19 +105,12 @@ class FlowExecutionState {
   }
 
   pausePollingInterval(key: string) {
-    const entry = this.pollingIntervals.get(key);
-    if (entry?.interval != null) {
-      clearInterval(entry.interval);
-      entry.interval = null;
-    }
+    this.pollingIntervals.get(key)?.pause();
   }
 
   resumeStatusPolling(id: number) {
     this.pollingIntervals.forEach((entry) => {
-      if (entry.target?.id !== id || entry.interval !== null) return;
-      entry.target.failures = 0;
-      entry.target.paused = false;
-      entry.interval = setInterval(entry.check, entry.delay) as unknown as number;
+      if (entry.target?.id === id) entry.resume();
     });
   }
 
@@ -124,8 +128,7 @@ class FlowExecutionState {
   clearPollingInterval(key: string) {
     const interval = this.pollingIntervals.get(key);
     if (interval) {
-      if (interval.interval !== null) clearInterval(interval.interval);
-      interval.dispose?.();
+      interval.stop();
       this.pollingIntervals.delete(key);
     }
   }
@@ -265,10 +268,7 @@ export function useFlowExecution(
   const resultsStore = useResultsStore();
   const flowSync = useFlowSyncStore();
   const state = FlowExecutionState.getInstance();
-  const localPollingInterval = ref<number | null>(null);
-  let localPollingCleanup: (() => void) | undefined;
-  let localPollingCheck: (() => Promise<void>) | undefined;
-  let localPollingResume: (() => void) | undefined;
+  const localPollingEntry = shallowRef<PollingEntry>();
   const isExecuting = ref(false);
   const cancelTarget = ref<OperationTarget | null>(null);
 
@@ -372,50 +372,24 @@ export function useFlowExecution(
   ) => {
     const key = getPollingKey(pollingKeySuffix, id);
 
-    if (options.persistPolling) {
-      const existing = state.getPollingEntry(key);
-      if (!existing && pollingConfig.enabled) {
-        const interval = setInterval(checkFn, pollingConfig.interval || 2000) as unknown as number;
-        state.setPollingInterval(
-          key,
-          interval,
-          dispose,
-          completionCallbacks,
-          checkFn,
-          target,
-          pollingConfig.interval || 2000,
-        );
-        return true;
-      } else {
-        state.resumeStatusPolling(id);
-        state.addCompletionCallbacks(key, completionCallbacks);
-        dispose?.();
-      }
-    } else {
-      if (!localPollingCleanup && localPollingInterval.value === null && pollingConfig.enabled) {
-        localPollingInterval.value = setInterval(
-          checkFn,
-          pollingConfig.interval || 2000,
-        ) as unknown as number;
-        localPollingCleanup = dispose;
-        localPollingCheck = checkFn;
-        localPollingResume = () => {
-          if (localPollingInterval.value !== null) return;
-          if (target) {
-            target.failures = 0;
-            target.paused = false;
-          }
-          localPollingInterval.value = setInterval(
-            checkFn,
-            pollingConfig.interval || 2000,
-          ) as unknown as number;
-        };
-        return true;
-      } else {
-        localPollingResume?.();
-        dispose?.();
-      }
+    const existing = options.persistPolling ? state.getPollingEntry(key) : isPollingActive();
+    if (!existing && pollingConfig.enabled) {
+      const entry = new PollingEntry(
+        checkFn,
+        pollingConfig.interval || 2000,
+        dispose,
+        completionCallbacks,
+        target,
+      );
+      if (options.persistPolling) state.setPollingInterval(key, entry);
+      else localPollingEntry.value = shallowReactive(entry);
+      return true;
     }
+    if (options.persistPolling) {
+      state.resumeStatusPolling(id);
+      state.addCompletionCallbacks(key, completionCallbacks);
+    } else localPollingEntry.value?.resume(pollingConfig.interval || 2000);
+    dispose?.();
     return false;
   };
 
@@ -426,7 +400,7 @@ export function useFlowExecution(
       state.setCancelled(target.id, editorStore.isCanceled);
     if (target.polling) {
       state.resumeStatusPolling(target.id);
-      localPollingResume?.();
+      localPollingEntry.value?.resume(pollingConfig.interval || 2000);
       return;
     }
     if (typeof targetOrId === "number" && state.isStarting(target.id)) {
@@ -451,14 +425,8 @@ export function useFlowExecution(
       const key = getPollingKey(pollingKeySuffix, id);
       state.clearPollingInterval(key);
     } else {
-      if (localPollingInterval.value !== null) {
-        clearInterval(localPollingInterval.value);
-        localPollingInterval.value = null;
-      }
-      localPollingCleanup?.();
-      localPollingCleanup = undefined;
-      localPollingCheck = undefined;
-      localPollingResume = undefined;
+      localPollingEntry.value?.stop();
+      localPollingEntry.value = undefined;
     }
   };
 
@@ -468,7 +436,10 @@ export function useFlowExecution(
       // A paused status timer still owns an operation with an unknown outcome.
       return !!state.getPollingEntry(key);
     }
-    return localPollingCleanup !== undefined || localPollingInterval.value !== null;
+    return (
+      !!localPollingEntry.value &&
+      (localPollingEntry.value.dispose !== undefined || localPollingEntry.value.interval !== null)
+    );
   };
 
   const createNotificationConfig = (runInfo: RunInformation): NotificationConfig => ({
@@ -583,10 +554,7 @@ export function useFlowExecution(
           targetId.generation = (targetId.generation || 0) + 1;
           if (options.persistPolling)
             state.pausePollingInterval(getPollingKey(pollingKeySuffix, requestedId));
-          else if (localPollingInterval.value !== null) {
-            clearInterval(localPollingInterval.value);
-            localPollingInterval.value = null;
-          }
+          else localPollingEntry.value?.pause();
           if (isSelectedFlow(requestedId))
             showNotification(
               "Status unavailable",
@@ -759,7 +727,7 @@ export function useFlowExecution(
     target.startPolling = () => {
       if (target.polling) {
         state.resumeStatusPolling(target.id);
-        localPollingResume?.();
+        localPollingEntry.value?.resume(pollingConfig.interval || 2000);
         return;
       }
       target.polling = startPolling(
@@ -855,7 +823,7 @@ export function useFlowExecution(
       startStatusPolling(target, false);
       if (!target.stopped) await checkRunStatus(undefined, "", false, undefined, target);
       else if (options.persistPolling) state.checkStatusPolling(target.id);
-      else void localPollingCheck?.();
+      else void localPollingEntry.value?.check();
     } catch (error) {
       if (!ownsOperation()) return;
       const owner = issuedOwner && currentOwner(issuedOwner);
