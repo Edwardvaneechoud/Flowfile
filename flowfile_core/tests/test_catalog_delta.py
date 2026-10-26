@@ -388,6 +388,9 @@ class TestKernelTableRoutes:
             "s3://bucket/catalog/..",
             "s3://bucket/catalog",
             "s3://bucket/catalogue/kernel_t",
+            "s3://bucket/catalog/./kernel_t",
+            "s3://bucket/catalog//kernel_t",
+            "s3://bucket/catalog/kernel_t?versionId=1",
         ],
     )
     def test_from_data_refuses_an_object_storage_path_off_the_namespace_root(self, client, table_path):

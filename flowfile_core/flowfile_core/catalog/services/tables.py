@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import posixpath
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from deltalake import DeltaTable
@@ -135,9 +137,19 @@ def catalog_table_location(table_path: str, namespace_id: int | None) -> str | N
     if not _is_cloud_uri(table_path):
         return managed_table_path(table_path)
     target = locate_for_namespace(namespace_id)
-    dir_name = _catalog_table_dir_name(table_path)
+    if not target.is_cloud:
+        return None
+    root, parts = urlsplit(target.base), urlsplit(table_path.rstrip("/"))
+    if (parts.scheme, parts.netloc) != (root.scheme, root.netloc):
+        return None
+    prefix = posixpath.normpath(root.path or "/").rstrip("/") + "/"
+    key = posixpath.normpath(parts.path)
+    if not key.startswith(prefix):
+        return None
+    # Rebuilt from the root and the normalised key, yet must equal what was sent: object keys keep "." literally
+    dir_name = key[len(prefix) :]
     location = join_catalog_uri(target.base, dir_name)
-    if not target.is_cloud or dir_name in (".", "..") or location != table_path.rstrip("/"):
+    if not dir_name or "/" in dir_name or location != table_path.rstrip("/"):
         return None
     return location
 
