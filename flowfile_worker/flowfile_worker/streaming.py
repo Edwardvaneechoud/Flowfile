@@ -49,15 +49,12 @@ streaming_router = APIRouter()
 
 _POLARS_RESULT_OPERATIONS = frozenset({"store"})
 
-# Poll the child's progress with exponential backoff: snappy at first, capped low
-# so the async monitor yields to the event loop without busy-waiting.
+# Progress polls back off exponentially: fast at first, capped so the monitor never busy-waits.
 _MONITOR_INITIAL_DELAY = 0.005
 _MONITOR_MAX_DELAY = 0.3
 _MONITOR_BACKOFF = 1.5
 
-# Re-send the progress frame at least this often even when the value hasn't
-# changed. Core uses these as liveness heartbeats: its receive loop treats
-# prolonged silence as a wedged worker (FLOWFILE_WORKER_WS_TIMEOUT).
+# Resend progress at least this often: core reads silence past FLOWFILE_WORKER_WS_TIMEOUT as a wedge.
 _HEARTBEAT_INTERVAL = 10.0
 
 
@@ -216,9 +213,7 @@ async def _monitor_progress(websocket: WebSocket, p: Process, progress, error_me
             await websocket.send_json(_task_error_frame(msg, kind))
             return True
 
-        # A child that put() a large result blocks in its feeder thread and never
-        # exits, so p.is_alive() would spin here forever. Break on the completion
-        # signal; the caller drains the queue (which unblocks the child) before joining.
+        # A child blocked on a large put() never exits, so stop here; the caller drains its queue.
         if current == 100:
             return False
 
@@ -361,6 +356,11 @@ async def ws_submit(websocket: WebSocket):
         - JSON: {"type": "error", "error_message": "...", "status": "Error"?, "error_kind": "task"|"environment"?}
           (status and error_kind only when the task ran and failed; "environment" = the worker
           could not load the plan, write the result or finish in time, so core degrades)
+
+    A pool member puts one completion envelope per task, on error too, which is the result on
+    success. Only a member that finished on its own is drained and reused: one the monitor
+    terminated, even after it reached 100, or one that died is not, since a killed writer's
+    partial envelope can block the read.
     """
     if not websocket_authorized(websocket):
         await websocket.close(code=1008)
@@ -386,26 +386,17 @@ async def ws_submit(websocket: WebSocket):
 
         had_error = await _monitor_progress(websocket, p, progress, error_message, task_id)
 
-        # A pool member puts one completion envelope per task (also on task error); it is
-        # drained under a watchdog bound and doubles as the result on the success path.
-        # A member the monitor terminated (timeout) or that died is never drained - a
-        # partial envelope from a killed writer can block the recv.
         raw = None
         if member is not None:
             with progress.get_lock():
                 final = progress.value
-            # had_error with final==100 is the timeout branch racing a completion:
-            # the monitor terminated the member after its last read, then the child
-            # flipped to 100. Like handle_task's timed_out guard, a member the
-            # monitor terminated is never drained or reused.
+            # At 100 with had_error the monitor timed the member out after its last read.
             if final in (100, -1) and not (had_error and final == 100):
-                # Over for the process manager either way; unmapping first means a
-                # stale /cancel_task can no longer terminate a reusable member.
+                # Unmap first so a stale /cancel_task cannot terminate a reusable member.
                 process_manager.remove_process(task_id)
                 envelope_received, raw = await asyncio.to_thread(drain_member_envelope, queue, p)
             elif not had_error and p.is_alive():
-                # The socket died mid-task (progress send failed): let the task finish
-                # off-socket, mirroring the spawn path's join-to-completion semantics.
+                # The socket died mid-task: let the task finish off-socket, as the spawn path does.
                 _handoff_to_background(task_id, p, progress, error_message, queue, member)
                 p = None
                 progress = None
@@ -420,8 +411,7 @@ async def ws_submit(websocket: WebSocket):
 
         if final == 100:
             if member is None:
-                # Drain the queue BEFORE joining: a large put() blocks the child's feeder
-                # thread until read, so joining first would deadlock.
+                # Drain before joining: a large put() blocks the child until read, so joining deadlocks.
                 raw = await asyncio.to_thread(drain_result_queue, queue, p)
                 await asyncio.to_thread(p.join)
             result_data, number_of_records = unpack_result(raw)
@@ -433,9 +423,7 @@ async def ws_submit(websocket: WebSocket):
 
     except WebSocketDisconnect:
         logger.warning(f"[WS] Client disconnected for task {task_id}")
-        # Once a member's envelope is drained the task is already terminal in
-        # status_dict; handing off would re-drain an empty queue for 30s and
-        # retire a healthy member - fall through to the checkin instead.
+        # A drained member's task is terminal; a hand-off would re-drain and retire a healthy member.
         if p is not None and p.is_alive() and queue is not None and not envelope_received:
             _handoff_to_background(task_id, p, progress, error_message, queue, member)
             # Prevent finally block from cleaning up - handle_task owns these now

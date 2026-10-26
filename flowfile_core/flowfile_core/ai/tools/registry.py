@@ -135,8 +135,7 @@ def _inline_ref_schema(schema: dict[str, Any]) -> dict[str, Any]:
                 target = defs.get(key)
                 if target is not None:
                     resolved = copy.deepcopy(target)
-                    # Sibling overrides on a $ref node win over the resolved
-                    # target's keys (JSON Schema $ref-with-siblings semantics).
+                    # Sibling keys on a $ref node override the target's ($ref-with-siblings semantics).
                     for k, v in node.items():
                         if k == "$ref":
                             continue
@@ -162,13 +161,10 @@ def _node_settings_to_tool_spec(node_type: str, settings_cls: type) -> ToolSpec:
     nested-Pydantic shapes are visible without follow-up resolution.
     """
     schema = _inline_ref_schema(dict(settings_cls.model_json_schema()))
-    # Pydantic doesn't emit $schema by default; declare the 2020-12 dialect
-    # explicitly so MCP clients (and future MCP server shim) don't have to
-    # guess the dialect.
+    # Pydantic omits $schema; declare the 2020-12 dialect so MCP clients don't have to guess it.
     schema.setdefault("$schema", JSON_SCHEMA_DIALECT)
     description = (settings_cls.__doc__ or f"Create a {node_type} node.").strip()
-    # Some settings classes have multi-line docstrings; collapse to the first
-    # paragraph to keep the prompt cheap.
+    # First paragraph only, to keep the prompt cheap.
     description = description.split("\n\n", 1)[0].strip()
     return ToolSpec(
         name=mcp_tool_name("graph", f"add_{node_type}"),
@@ -180,38 +176,6 @@ def _node_settings_to_tool_spec(node_type: str, settings_cls: type) -> ToolSpec:
     )
 
 
-# Fields the planner injects into ``add_<node_type>`` tool args from
-# session state, before Pydantic validation runs. The stripped tool
-# spec used at the ``fill_settings`` stage of ``agent_staged`` removes
-# these from the LLM-facing JSON Schema so the LLM only sees the
-# actual settings shape (``groupby_input``, ``filter_input``, etc.).
-# The executor's existing ``_handle_add_node`` path is unchanged — it
-# still validates the same way once the planner has populated the
-# missing fields.
-#
-# Includes the original (flow_id/node_id/depending_on_id/
-# depending_on_ids) plus all the rest of NodeBase's metadata.
-# llama-3.3-70b has been observed filling ``output_field_config`` /
-# ``description`` / etc. with garbage strings; stripping these means
-# the LLM never sees the noise. Pydantic uses the defaults for these
-# fields at validation time.
-#
-# * ``flow_id`` / ``node_id`` — required on ``NodeBase``; planner sets via
-#   ``planner._allocate_node_id`` and ``session.flow_id``.
-# * ``depending_on_id`` / ``depending_on_ids`` — legacy single-/multi-input
-#   dependency fields on ``NodeSingleInput`` / ``NodeMultiInput``; resolver
-#   canonicalises against ``InsertionContext.upstream_node_ids`` so the LLM
-#   does not need to fill them.
-# * ``cache_results`` / ``execution_location`` / ``pos_x`` / ``pos_y`` / ``group_id`` / ``is_setup``
-#   / ``description`` / ``node_reference`` / ``user_id`` / ``is_flow_output``
-#   / ``is_user_defined`` / ``output_field_config`` — NodeBase metadata not
-#   needed for stage-3 settings authoring. All have safe defaults; positions
-#   and ``user_id`` are filled by other planner machinery. ``group_id`` is
-#   visual group membership (organizational only, no execution impact) — the
-#   agent leaves new nodes ungrouped at the ``None`` default. Stripping it
-#   also keeps single-input inner-shape detection working: an unfiltered
-#   NodeBase field would make ``_resolve_inner_input_field`` see two
-#   type-specific fields and fall back to the enveloped spec.
 _PLANNER_INJECTED_SETTINGS_FIELDS: Final[frozenset[str]] = frozenset(
     {
         "flow_id",
@@ -232,6 +196,11 @@ _PLANNER_INJECTED_SETTINGS_FIELDS: Final[frozenset[str]] = frozenset(
         "output_field_config",
     }
 )
+"""``NodeBase`` fields the planner fills from session state, or leaves to their defaults, before validation.
+
+The ``fill_settings`` tool spec strips them so the LLM sees only the settings shape (models were seen filling them with
+garbage), and ``_resolve_inner_input_field`` ignores them to find a single-input type's one field.
+"""
 
 
 def _unwrap_optional_annotation(annotation: Any) -> Any:
@@ -287,10 +256,7 @@ def _resolve_inner_input_field(settings_cls: type) -> tuple[str, type] | None:
         return None
     field_name, annotation = next(iter(type_specific.items()))
     inner = _unwrap_optional_annotation(annotation)
-    # Reject parametrized generics (``list[X]``, ``dict[X, Y]``, ...) before
-    # the issubclass call: on Python 3.10 ``isinstance(list[X], type)`` is
-    # True (fixed in 3.11), and ``BaseModel``'s ABCMeta-derived metaclass
-    # then raises ``TypeError: issubclass() arg 1 must be a class``.
+    # On Python 3.10 list[X] passes isinstance(_, type) and issubclass on it raises TypeError.
     if get_origin(inner) is not None:
         return None
     if isinstance(inner, type) and issubclass(inner, BaseModel):
@@ -441,8 +407,7 @@ def _iter_node_types() -> list[str]:
         if node_type not in seen:
             seen.add(node_type)
             types.append(node_type)
-    # Lazy import — keeps ``import flowfile_core.ai.tools`` cheap and avoids
-    # pulling the configs package during catalog-only callers (e.g. tests).
+    # Lazy, so catalog-only callers of flowfile_core.ai.tools don't pull in the configs package.
     from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
 
     for node_type in CUSTOM_NODE_STORE:
@@ -458,18 +423,13 @@ def _build_node_type_tools() -> list[ToolSpec]:
     for node_type in _iter_node_types():
         settings_cls = get_settings_class_for_node_type(node_type)
         if settings_cls is None:
-            # Defensive: _iter_node_types already filters to known types, but
-            # if a custom node falls out of the store between enumeration and
-            # lookup we skip rather than crash the whole catalog.
+            # A custom node can leave the store between enumeration and lookup; skip it.
             continue
         tools.append(_node_settings_to_tool_spec(node_type, settings_cls))
     return tools
 
 
-# Universal ops that apply to every category — the executor needs schema
-# introspection and basic graph mutation regardless of which category was
-# picked. ``meta`` is excluded from this set so the agent doesn't loop on
-# pick_category mid-stream.
+# Needed in every category; meta ops stay out so the agent can't loop on pick_category mid-stream.
 _UNIVERSAL_OP_NAMES: Final[frozenset[str]] = frozenset({tool.name for tool in (*GRAPH_OPS_TOOLS, *SCHEMA_OPS_TOOLS)})
 
 
@@ -513,39 +473,21 @@ SURFACE_PRESETS: Final[dict[str, frozenset[str]]] = {
             "flowfile.schema.read_node_preview",
         }
     ),
-    # ``agent_complex`` exposes the full catalog in a single call —
-    # used when context budgets and provider quality both allow it
-    # (e.g. Opus on a paid tier). The executor decides which surface
-    # to pick at runtime.
+    # The full catalog in one call, for when context budget and provider quality allow it.
     "agent_complex": frozenset(),  # populated below after _build_node_type_tools
-    # ``agent_staged`` is the wrapper surface that
-    # ``AgentSession.surface`` carries. The planner never queries this
-    # preset directly: it dispatches on ``session.stage`` to one of
-    # the per-stage entries below. The empty frozenset is a
-    # placeholder that satisfies ``_check_preset_coverage``.
+    # Placeholder: the planner dispatches on session.stage to the per-stage presets below.
     "agent_staged": frozenset(),
-    # Pre-classify "plan" stage. The LLM emits a brief numbered plan
-    # before the classify→pick→fill cycle starts; one tool advertised
-    # so the LLM is forced through the function-calling API like every
-    # other staged stage.
+    # One tool, so the up-front plan goes through function calling like every other staged stage.
     "staged_plan": frozenset({EMIT_PLAN_TOOL_NAME}),
     "staged_classify": frozenset({CLASSIFY_INTENT_TOOL_NAME}),
     "staged_pick_type": frozenset({PICK_NODE_TYPE_TOOL_NAME}),
-    # ``staged_pick_upstream`` is a placeholder — at runtime the planner
-    # builds a per-turn spec via ``meta_ops.build_pick_upstream_spec`` so the
-    # upstream-id enum is fresh. The preset is here only so callers that
-    # round-trip through ``build_tool_catalog`` get a correct (if static)
-    # tool list and ``_check_preset_coverage`` passes.
+    # Static placeholder; the planner builds a per-turn spec so the upstream-id enum stays fresh.
     "staged_pick_upstream": frozenset({PICK_UPSTREAM_TOOL_NAME}),
     "staged_modify": frozenset({"flowfile.graph.update_node_settings"}),
     "staged_delete": frozenset({"flowfile.graph.delete_node"}),
     "staged_connect": frozenset({"flowfile.graph.connect"}),
     "staged_disconnect": frozenset({"flowfile.graph.delete_connection"}),
-    # Opt-in verify-completion gate. Reached only when classify picks
-    # op_kind="other" AND session.verify_plan_completion=true. One
-    # tool exposed: the LLM certifies whether the plan is complete
-    # (is_complete=true → terminate) or signals more work is needed
-    # (is_complete=false → loop back to classify).
+    # Opt-in: reached only when classify picks op_kind="other" and verify_plan_completion is set.
     "staged_verify_completion": frozenset({VERIFY_COMPLETION_TOOL_NAME}),
     "docgen": frozenset(
         {
@@ -553,23 +495,13 @@ SURFACE_PRESETS: Final[dict[str, frozenset[str]]] = {
             "flowfile.schema.read_node_preview",
         }
     ),
-    # Settings autocomplete is text-only — the LLM emits formula
-    # expressions / join-key pairs as JSON, never invoking tools. The
-    # empty frozenset is intentional:
-    # ``build_tool_catalog(surface="settings_autocomplete")`` returns
-    # ``[]`` so callers can short-circuit cleanly.
+    # Text-only: the LLM answers in JSON and never calls a tool, so the catalog is deliberately empty.
     "settings_autocomplete": frozenset(),
-    # Lineage Q&A is a read-only Assist surface — same posture as
-    # ``docgen`` and ``explain``. The route passes ``tools=None`` to
-    # the provider; the empty frozenset keeps the surface lockstep
-    # happy without surfacing tools the LLM would never call.
+    # Read-only Assist surface; the route passes tools=None.
     "lineage": frozenset(),
-    # Intent classifier — single-shot judgement; the route passes
-    # ``tools=None`` and reads strict JSON. No tool catalog needed.
+    # Single-shot judgement read as strict JSON; the route passes tools=None.
     "intent_classifier": frozenset(),
-    # Cron NL→expression — single-shot JSON, no tools. The route passes
-    # ``tools=None`` and reads strict JSON; the empty frozenset keeps the
-    # surface lockstep happy.
+    # Single-shot NL-to-cron JSON; the route passes tools=None.
     "cron": frozenset(),
 }
 
@@ -622,10 +554,7 @@ def build_tool_catalog(*, surface: str | None = None) -> list[ToolSpec]:
     if surface is None:
         return catalog
     if surface == "agent_complex":
-        # ``agent_complex`` is documented as the full catalog; resolve
-        # it explicitly so callers don't have to know about the
-        # SURFACE_PRESETS quirk. Writers are always filtered out for
-        # agent surfaces.
+        # Its preset is empty, so resolve it to the full catalog here (minus writers).
         return _strip_writers(catalog)
     if surface in SURFACE_PRESETS:
         names = SURFACE_PRESETS[surface]
@@ -641,9 +570,7 @@ def build_tool_catalog(*, surface: str | None = None) -> list[ToolSpec]:
     return filtered
 
 
-# Sanity check at import time: every literal in the public type aliases
-# corresponds to a real preset key. This catches the "I added a surface
-# but forgot the preset entry" class of bug at module load.
+# Fails at import when a surface literal has no preset entry, or the reverse.
 def _check_preset_coverage() -> None:
     surface_keys = set(get_args(SurfaceLiteral))
     preset_keys = set(SURFACE_PRESETS) | {"agent_complex"}

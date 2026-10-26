@@ -130,10 +130,7 @@ def get_settings_class_for_node_type(node_type: str, setting_data: dict | None =
     referencing a custom node that is missing from the store still resolve to
     ``UserDefinedNode`` instead of failing as an unknown type.
     """
-    # A user-defined node whose key collides with a built-in type must still
-    # resolve to UserDefinedNode. Built-in schemas drop ``is_user_defined`` on
-    # serialization, so a truthy marker means a genuine custom node — it wins
-    # over the built-in type->schema mapping.
+    # Built-in schemas never serialize ``is_user_defined``, so the marker wins over a colliding key.
     if isinstance(setting_data, dict) and setting_data.get("is_user_defined"):
         return input_schema.UserDefinedNode
     model_class = NODE_TYPE_TO_SETTINGS_CLASS.get(node_type)
@@ -338,9 +335,7 @@ class FlowfileNode(BaseModel):
     right_input_id: int | None = None
     input_ids: list[int] | None = Field(default_factory=list)
     outputs: list[int] | None = Field(default_factory=list)
-    # Parallel to ``outputs``: the source-side output handle for each connection
-    # (e.g. ["output-0", "output-1"]). Older flowfiles omit this — loaders treat
-    # missing entries as "output-0".
+    # Source handle per entry of ``outputs``; older flowfiles omit it and loaders read "output-0".
     output_handles: list[str] | None = None
     # Keyed edges for dynamic-input nodes; None for every other node type.
     input_connections: list[FlowfileInputConnection] | None = None
@@ -373,8 +368,7 @@ class FlowfileNode(BaseModel):
         if hasattr(value, "to_yaml_dict"):
             return value.to_yaml_dict()
         if isinstance(value, input_schema.UserDefinedNode):
-            # Persist the marker so flows reopen gracefully even when the node
-            # type is no longer installed (settings-class resolution).
+            # The marker lets the flow reopen once the node type is no longer installed.
             data = value.model_dump(exclude=self._setting_input_exclude)
             data["is_user_defined"] = True
             return data
@@ -731,20 +725,13 @@ class NodeTemplate(BaseModel):
     publishes: list[ArtifactDecl] | None = None
     laziness: LazinessLiteral = "eager"
     output_names: list[str] | None = None
-    # Display-only names for the canvas input handles, index i <-> "input-{i}".
-    # Purely cosmetic: unlike output_names these are never dict keys and nothing
-    # reads them at execution time. Distinct from NodeInput.input_names, which is
-    # the per-instance dynamic-handle list (run_flow) with a reserved index 0.
+    # Display-only names for the input handles ("input-{i}"); nothing reads them at execution time.
     input_labels: list[str] | None = None
-    # When set, the arity check accepts min_inputs..input connections instead of
-    # exactly `input` — for nodes with optional inputs (gate's control input).
+    # Accepts min_inputs..input connections instead of exactly ``input`` (gate's optional control).
     min_inputs: int | None = None
-    # Purely cosmetic (like input_labels): input handle indices the canvas
-    # renders as bottom-center "parameter" pips instead of left data handles
-    # (gate's control input). Never read at execution time.
+    # Display-only: input indices the canvas draws as bottom "parameter" pips (gate's control input).
     control_input_indices: list[int] | None = None
-    # Per-instance input handles (run_flow): connections are keyed by target
-    # handle instead of collapsing onto input-0. See flow_node/input_handles.py.
+    # Connections keyed by target handle instead of all onto input-0 (run_flow); see input_handles.py.
     dynamic_inputs: bool = False
     tags: list[NodeTag] = Field(default_factory=list)
 
@@ -870,8 +857,7 @@ class NodeInput(NodeTemplate):
     pos_y: float
     group_id: int | None = None
     output_names: list[str] | None = None
-    # Dynamic-input nodes: label per input handle, index i <-> "input-{i}"
-    # (index 0 is the reserved parameter handle). None for static nodes.
+    # Dynamic-input nodes: a label per input handle, index 0 the reserved parameter handle.
     input_names: list[str] | None = None
     node_reference: str | None = None
     # Set by core on the way out (canvas cache seed); ignored on the way in.
@@ -913,11 +899,6 @@ class VueFlowInput(BaseModel):
     node_inputs: list[NodeInput]
     groups: list[FlowfileGroup] = Field(default_factory=list)
     comments: list[FlowfileComment] = Field(default_factory=list)
-
-
-# ============================================================================
-# Node-group editor request bodies (organizational only; no execution impact)
-# ============================================================================
 
 
 class CreateGroupRequest(BaseModel):

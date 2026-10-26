@@ -26,8 +26,7 @@ from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.events import publish
 from flowfile_core.flowfile.execution import registry as compute_registry
 
-# Re-exported: the image tags moved to a docker-free module so matching.py can
-# read them, but manager stays their public home for existing callers/tests.
+# Re-exported for existing callers; the tags live in docker-free images.py so matching.py can read them.
 from flowfile_core.kernel.images import (  # noqa: F401
     _KERNEL_IMAGE_BASE_DEFAULT,
     _KERNEL_IMAGE_LITE_DEFAULT,
@@ -70,8 +69,7 @@ _CELL_EXECUTION_TIMEOUT = 86_400.0
 
 @functools.lru_cache(maxsize=1)
 def _http_ssl_context():
-    # httpx builds a fresh SSL context per client (~250ms on Windows: cert-bundle parse);
-    # kernel calls are plain http, so one shared context serves every short-lived client.
+    # httpx builds an SSL context per client (~250ms on Windows), so short-lived clients share one.
     return httpx.create_ssl_context()
 
 
@@ -135,8 +133,7 @@ def _resolve_local_image(
     if not images:
         return None
 
-    # A stale dev build or retag must not shadow a newer pinned release: drop any
-    # candidate a sibling release tag proves older (unknown versions stay trusted).
+    # A stale dev build must not shadow a newer pin; images of unknown version stay trusted.
     pinned = parse_image_version(registry_default)
     if pinned is not None:
         kept = []
@@ -233,18 +230,13 @@ def _friendly_pull_error(exc: Exception, image_tag: str) -> str:
     return first[:200]
 
 
-# Pip package specifier (PEP 508-ish, conservative): rejects anything with
-# shell metacharacters so we can pass the list straight into a docker build.
-# \A / \Z anchor strictly — `$` would let a trailing newline through.
+# No shell metacharacters, so specs go straight into a docker build; \Z because `$` allows a trailing newline.
 _VALID_PACKAGE_SPEC = re.compile(r"\A[A-Za-z0-9_.\-+\[\]<>=!~,]+\Z")
 _KERNEL_ID_TAG_RE = re.compile(r"[^a-z0-9._-]")
 _VALID_TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,127}$")
 _DIGEST_RE = re.compile(r"@sha256:[A-Fa-f0-9]{12,}$")
 
-# Docker labels stamped on every derived image so orphan GC can filter by
-# (a) which Core instance built it, and (b) which kernel id it belongs to —
-# without parsing the tag. Multiple Core instances against the same daemon
-# can coexist because GC only touches images carrying this Core's instance id.
+# Derived-image labels, so orphan GC touches only this install's images without parsing tags.
 _IMAGE_LABEL_CORE_INSTANCE = "flowfile_core_instance"
 _IMAGE_LABEL_KERNEL_ID = "flowfile_kernel_id"
 # The FROM tag a derived image was baked on, so a moved pin rebuilds it instead of reusing a stale bake.
@@ -476,35 +468,20 @@ class KernelManager:
     def __init__(self, shared_volume_path: str | None = None):
         _probe_docker()
         self._docker = docker.from_env()
-        # Stable id for this Core install; stamped onto every derived image
-        # so orphan GC only touches images this Core built.
+        # Stable per-install id stamped on derived images, so orphan GC touches only this install's images.
         self._core_instance_id = _load_or_create_core_instance_id()
         # Per-process, unlike the install id: only the starter may tear a container down.
         self._runtime_id = uuid.uuid4().hex
         self._started_here: set[str] = set()
         self._kernels: dict[str, KernelInfo] = {}
         self._kernel_owners: dict[str, int] = {}  # kernel_id -> user_id
-        # Serialises mutations of the in-memory kernel registry (_kernels /
-        # _kernel_owners / _scratch_flow_ids) across reconcile, restore, create,
-        # launch (port allocation) and delete so concurrent operations by
-        # different users don't clobber each other's entries, double-allocate a
-        # port, or trigger _cleanup_container on the wrong kernel (L11). RLock so
-        # reconcile's nested same-thread acquisitions are safe. Never held across
-        # the scratch-flow DB path (_scratch_flow_lock) to avoid lock-order
-        # coupling; long Docker build/start/stop I/O runs outside it.
+        # Guards the registry dicts and port allocation; reentrant, never held over Docker I/O or the scratch lock.
         self._kernels_lock = threading.RLock()
-        # Cached scratch FlowRegistration ids — one per kernel. Populated on
-        # create_kernel and during _restore_kernels_from_db; consulted in the
-        # execute path so ``flowfile_ctx.publish_global`` / ``schema.publish_artifact``
-        # have a valid producer to point at when no real source_registration_id
-        # is in scope. Cleared on delete_kernel.
+        # Scratch FlowRegistration per kernel: the artifact producer when no source_registration_id is in scope.
         self._scratch_flow_ids: dict[str, int] = {}
-        # Serialises _provision_scratch_flow so two concurrent create / publish
-        # paths for the same kernel can't both insert a FlowRegistration row.
+        # So two concurrent create/publish paths can't both insert a kernel's scratch FlowRegistration.
         self._scratch_flow_lock = threading.Lock()
-        # Background image-pull state: image-tag -> "pulling" or "error:<msg>".
-        # Absent key means idle. Lock is held only for read/write, never across
-        # a network call (the actual pull runs on a thread without the lock).
+        # image tag -> "pulling" or "error:<msg>", absent when idle; the lock is never held over a pull.
         self._pull_state: dict[str, str] = {}
         self._pull_state_lock = threading.Lock()
         # Keyed per op: an image can serve `complete` and still 404 a newer /lsp endpoint.
@@ -515,36 +492,24 @@ class KernelManager:
         # Per-derived-tag build locks so concurrent starts bake an image once.
         self._build_locks: dict[str, threading.Lock] = {}
         self._build_locks_lock = threading.Lock()
-        # Per-kernel execution locks: one cell at a time per kernel — the kernel
-        # runtime execs cells into a shared namespace in one interpreter, so
-        # concurrent cells race imports and clobber globals. Lock order: exec
-        # lock first, then flight/leaf locks; interrupt takes no locks at all.
+        # One cell per kernel, as cells share one namespace; taken before flight/leaf locks, never by interrupt.
         self._exec_locks: dict[str, threading.Lock] = {}
         self._exec_locks_lock = threading.Lock()
-        # kernel_id -> exec_token of the cell holding that kernel's exec lock.
-        # Written only by the lock holder, read lock-free by interrupt.
+        # kernel_id -> exec_token holding its exec lock; written by the holder, read lock-free by interrupt.
         self._active_execs: dict[str, str] = {}
         # resolve() so the kernel's host-path prefix translation matches the resolved paths core returns
         self._shared_volume = str(Path(shared_volume_path or storage.cache_directory).resolve())
-        # Catalog tables (Delta-format) live outside the shared volume. The
-        # kernel needs a separate mount so ``flowfile_ctx.read_catalog_table`` /
-        # ``write_catalog_table`` can read/write Delta directories directly.
+        # Catalog Delta tables live outside the shared volume, so kernels mount them separately.
         self._catalog_tables_dir = str(storage.catalog_tables_directory.resolve())
 
-        # Docker-in-Docker settings: when core itself runs in a container,
-        # kernel containers must use a named volume (not a bind mount) and
-        # connect to the same Docker network for service discovery.
+        # When core runs in a container, kernels join its network for service discovery.
         self._docker_network: str | None = os.environ.get("FLOWFILE_DOCKER_NETWORK") or self._detect_docker_network()
 
-        # In Docker mode, discover the volume that covers _shared_volume
-        # (e.g. flowfile-internal-storage mounted at /app/internal_storage).
-        # Kernel containers will mount the same volume at the same path so
-        # all file paths are identical across core, worker, and kernel.
+        # In Docker mode kernels mount the volume covering _shared_volume at the same path, so paths match.
         self._kernel_volume: str | None = None
         self._kernel_volume_type: str | None = None
         self._kernel_mount_target: str | None = None  # mount point inside containers
-        # Catalog volume (separate from _kernel_volume when catalog_tables is
-        # under user_data_directory rather than the internal storage volume).
+        # Separate from _kernel_volume when catalog tables sit under the user data directory.
         self._catalog_volume: str | None = None
         self._catalog_volume_type: str | None = None
         self._catalog_mount_target: str | None = None
@@ -714,8 +679,7 @@ class KernelManager:
             "outputs",
         )
 
-        # Discover parquet files in the input directory and group by input name.
-        # Files are named {name}_{index}.parquet (e.g. orders_0.parquet, clients_1.parquet).
+        # Inputs are {name}_{index}.parquet (e.g. orders_0.parquet), grouped by name.
         if os.path.isdir(input_dir):
             parquet_files = ordered_input_files(f for f in os.listdir(input_dir) if f.endswith(".parquet"))
             if parquet_files:
@@ -758,8 +722,7 @@ class KernelManager:
         }
 
         if self._kernel_volume:
-            # Docker-in-Docker: mount the same volume at the same path so
-            # all file paths are identical in core, worker, and kernel.
+            # The same volume at the same path, so file paths match in core, worker and kernel.
             mount_type = self._kernel_volume_type or "volume"
             mount_target = self._kernel_mount_target or "/app/internal_storage"
             mounts = [
@@ -770,9 +733,7 @@ class KernelManager:
                     read_only=False,
                 )
             ]
-            # Add the catalog volume if it's separate (catalog_tables lives
-            # under user_data_directory, which is typically a different volume
-            # than internal storage).
+            # Catalog tables sit under the user data directory, usually a volume of its own.
             if self._catalog_volume:
                 mounts.append(
                     docker.types.Mount(
@@ -834,18 +795,13 @@ class KernelManager:
                     self._kernels[config.id] = kernel
                     self._kernel_owners[config.id] = user_id
                     logger.info("Restored kernel '%s' for user %d from database", config.id, user_id)
-                # Hydrate the in-memory scratch-flow id cache so the execute
-                # path doesn't have to hit the DB on each call. Missing values
-                # (e.g. kernels created before this migration ran) are filled
-                # in lazily by get_scratch_flow_id.
+                # Missing ids (kernels older than the column) are filled in lazily by get_scratch_flow_id.
                 for kernel_id, scratch_id in scratch_ids.items():
                     if scratch_id is not None:
                         self._scratch_flow_ids[kernel_id] = scratch_id
             return True
         except Exception:
-            # Log with full traceback so a silently-swallowed schema-drift bug
-            # can't lurk again (a missing column here used to disappear into a
-            # one-line warning).
+            # Full traceback: a missing column here once hid behind a one-line warning.
             logger.exception("Could not restore kernels from database")
             return False
 
@@ -958,15 +914,11 @@ class KernelManager:
         except Exception as exc:
             logger.warning("Could not remove kernel '%s' from database: %s", kernel_id, exc)
 
-    # Scratch FlowRegistration management
-    #
-    # Each kernel owns an auto-created FlowRegistration row that gets used as
-    # ``source_registration_id`` whenever a publish call has no real flow in
-    # scope. This preserves Core's invariant that every artifact has a
-    # producing flow without requiring the user to register one manually.
-
     def _provision_scratch_flow(self, kernel_id: str, user_id: int) -> None:
         """Create a scratch FlowRegistration row for *kernel_id* if missing.
+
+        It is the ``source_registration_id`` of a publish with no flow in scope, so every artifact keeps a
+        producing flow without the user registering one.
 
         The scratch flow is registered inside the seeded ``General/default``
         schema so that artifacts published from cells without an explicit
@@ -977,9 +929,7 @@ class KernelManager:
         calls then fall back to the legacy "no source registration" path
         (warning + return -1).
         """
-        # Serialise check-then-insert so concurrent callers don't both create
-        # a FlowRegistration row for the same kernel. The path is rare (once
-        # per kernel) so a single dict-wide lock is fine.
+        # Check-then-insert under one lock; the path runs once per kernel, so contention is rare.
         with self._scratch_flow_lock:
             if kernel_id in self._scratch_flow_ids:
                 return
@@ -991,11 +941,7 @@ class KernelManager:
                 from flowfile_core.kernel.persistence import set_kernel_scratch_flow_id
 
                 with get_db_context() as db:
-                    # Place the scratch flow under the seeded default schema so
-                    # artifacts published from cells appear in the catalog tree.
-                    # If the default schema hasn't been initialised yet, fall back
-                    # to namespace_id=None (artifacts will exist but won't show
-                    # in the tree until a default schema exists).
+                    # Without a default schema yet, artifacts still publish but stay out of the catalog tree.
                     try:
                         default_namespace_id = CatalogService(
                             SQLAlchemyCatalogRepository(db)
@@ -1353,11 +1299,8 @@ class KernelManager:
         # Pull the FROM image ourselves: docker build would otherwise reach the registry with a confusing error.
         self._ensure_image(base_image)
 
-        # JSON exec form keeps each package as a discrete argv item — no shell
-        # interpretation, no quoting bugs.
+        # JSON exec form: each package is its own argv item, with no shell and no quoting.
         pip_args = ["pip", "install", "--no-cache-dir", "--constraint", "/opt/constraints.txt"] + list(kernel.packages)
-        # Stamp Core-instance + kernel-id labels so orphan GC can find images
-        # owned by this Core without relying on tag-name parsing.
         safe_kernel_id = _KERNEL_ID_TAG_RE.sub("-", kernel.id.lower())
         dockerfile = (
             f"FROM {base_image}\n"
@@ -1446,8 +1389,7 @@ class KernelManager:
             name = _spec_to_name(spec)
             version = installed_by_name.get(name)
             if version:
-                # Use the package's canonical name as reported by pip if we have it,
-                # otherwise fall back to whatever the user typed before any specifier.
+                # pip's canonical name, else the name the user typed before any extras.
                 display_name = next(
                     (
                         str(p["name"])
@@ -1499,8 +1441,7 @@ class KernelManager:
             labels = image.labels or {}
             safe_id = labels.get(_IMAGE_LABEL_KERNEL_ID)
             if not safe_id:
-                # Legacy image built before labelling existed — fall back to
-                # the tag prefix. Skip if even the tag is missing.
+                # An image built before the labels: read the kernel id from its tag.
                 for tag in image.tags or []:
                     if tag.startswith(prefix):
                         safe_id = tag.split(":", 1)[0][len(prefix) :]
@@ -1511,8 +1452,7 @@ class KernelManager:
             if _too_young_to_reap((image.attrs or {}).get("Created")):
                 logger.info("Leaving derived image for '%s' alone: created too recently", safe_id)
                 continue
-            # Prefer the canonical tag; fall back to the image id when the
-            # image has no remaining tags.
+            # The canonical tag, else the image id when no tag is left.
             target = next(
                 (t for t in (image.tags or []) if t.startswith(prefix)),
                 image.id,
@@ -1529,8 +1469,7 @@ class KernelManager:
         """Remove pip-resolver and build-step containers left by an interrupted
         bake; kernel containers are excluded by name so adopted ones survive."""
         try:
-            # Skip running resolvers — they may belong to a sibling core and
-            # remove themselves when done.
+            # A running resolver may be a sibling core's, and removes itself when done.
             candidates = [
                 c
                 for c in self._docker.containers.list(all=True, filters={"name": "flowfile-pipresolve-"})
@@ -1563,14 +1502,11 @@ class KernelManager:
         This centralizes all environment variables passed to kernel containers,
         including Core API connection, authentication, and persistence settings.
         """
-        # Packages are pre-baked into the derived image when present, so the
-        # entrypoint's KERNEL_PACKAGES install loop must be a no-op.
+        # Packages are pre-baked into the derived image, so the entrypoint's install loop must do nothing.
         env = {"KERNEL_PACKAGES": ""}
         # FLOWFILE_CORE_URL: how kernel reaches Core API from inside Docker.
         env["FLOWFILE_CORE_URL"] = core_base_url(bool(self._docker_network))
-        # FLOWFILE_INTERNAL_TOKEN: service-to-service auth for kernel → Core
-        # Use get_internal_token() instead of reading env directly so that in
-        # Electron mode the token is auto-generated before the kernel starts.
+        # Kernel-to-core auth; get_internal_token() mints the token in Electron mode before the kernel starts.
         try:
             from flowfile_core.auth.jwt import get_internal_token
 
@@ -1582,23 +1518,12 @@ class KernelManager:
                 env["FLOWFILE_INTERNAL_TOKEN"] = internal_token
         # FLOWFILE_KERNEL_ID: pass kernel ID for lineage tracking
         env["FLOWFILE_KERNEL_ID"] = kernel_id
-        # FLOWFILE_HOST_SHARED_DIR tells the kernel how to translate Core
-        # API paths to container paths.  Only needed in local mode where the
-        # shared dir is bind-mounted at /shared.  In Docker-in-Docker mode
-        # the volume is mounted at the *same* path in core, worker and
-        # kernel, so no translation is required and the variable is omitted.
+        # Lets the kernel translate core's paths to /shared; in Docker-in-Docker the paths already match.
         if not self._kernel_volume:
             env["FLOWFILE_HOST_SHARED_DIR"] = self._shared_volume
-        # FLOWFILE_KERNEL_SHARED_DIR tells the kernel the absolute path of
-        # the shared directory *as seen from inside the kernel container*.
-        # Used by flowfile_ctx.get_shared_location() to resolve user file paths.
+        # The shared directory as the kernel sees it, for flowfile_ctx.get_shared_location().
         env["FLOWFILE_KERNEL_SHARED_DIR"] = self.to_kernel_path(self._shared_volume)
-        # Catalog tables: kernel needs to translate host catalog paths returned
-        # by Core (e.g. ~/.flowfile/catalog_tables/orders_abc123/) to the
-        # in-container path under the new mount. Mirror the shared-dir pattern:
-        # ``FLOWFILE_HOST_CATALOG_TABLES_DIR`` is the host path (only set in
-        # local mode), ``FLOWFILE_KERNEL_CATALOG_TABLES_DIR`` is what the kernel
-        # sees inside its container.
+        # Catalog table paths translate like the shared dir: the host path (local mode only), the kernel's view.
         if not self._kernel_volume:
             env["FLOWFILE_HOST_CATALOG_TABLES_DIR"] = self._catalog_tables_dir
         env["FLOWFILE_KERNEL_CATALOG_TABLES_DIR"] = self.to_kernel_path(self._catalog_tables_dir)
@@ -1611,22 +1536,18 @@ class KernelManager:
         return env
 
     async def create_kernel(self, config: KernelConfig, user_id: int) -> KernelInfo:
-        # Validate image flavour and packages up-front so nothing invalid is
-        # ever registered or kicks off a long-running pull or build.
+        # Validate first, so nothing invalid is registered or starts a long pull or build.
         try:
             base_image = _resolve_image(config.image_flavour, config.custom_image, self._docker)
             _validate_packages(config.packages)
         except ValueError as exc:
             raise ValueError(str(exc)) from exc
 
-        # Check-and-register atomically so two concurrent creates can't pass
-        # the existence check or grab the same port. Registering as CREATING
-        # makes the kernel visible to list/get while the image bakes.
+        # One lock for the check, the port and the registration; CREATING shows the kernel while it bakes.
         with self._kernels_lock:
             if config.id in self._kernels:
                 raise ValueError(f"Kernel '{config.id}' already exists")
-            # In Docker-in-Docker mode we don't map host ports — kernels are
-            # reached via container name on the shared Docker network.
+            # Docker-in-Docker reaches kernels by container name on the shared network, so no host port.
             port = None if self._kernel_volume else self._allocate_port()
             kernel = KernelInfo(
                 id=config.id,
@@ -1646,10 +1567,7 @@ class KernelManager:
             self._kernels[config.id] = kernel
             self._kernel_owners[config.id] = user_id
 
-        # Download the base image if it is missing, then pre-bake packages into a
-        # derived image so subsequent kernel starts don't re-run pip in the
-        # entrypoint. Run in a thread to keep the event loop responsive — pulls
-        # and image builds can take 30–60 s.
+        # Pull the base and pre-bake packages so starts skip pip; in threads, as both can take 30-60 s.
         try:
             try:
                 await asyncio.to_thread(self._ensure_image, base_image)
@@ -1662,8 +1580,7 @@ class KernelManager:
                     self._resolve_installed_versions, derived_tag, config.packages
                 )
         except BaseException:
-            # Pull or build failed or the request was cancelled — the kernel never existed.
-            # Identity-checked so this can never remove a later re-create's entry.
+            # The kernel never existed; the identity check spares a later re-create's entry.
             with self._kernels_lock:
                 if self._kernels.get(config.id) is kernel:
                     self._kernels.pop(config.id, None)
@@ -1672,8 +1589,7 @@ class KernelManager:
 
         kernel.state = KernelState.STOPPED
         self._persist_kernel(kernel, user_id)
-        # Auto-register a scratch FlowRegistration so artifacts published from
-        # interactive cells have a valid producer. See ``_create_scratch_flow``.
+        # So artifacts published from interactive cells have a producer.
         self._provision_scratch_flow(config.id, user_id)
         logger.info("Created kernel '%s' on port %s for user %d", config.id, port, user_id)
         return kernel
@@ -1765,9 +1681,7 @@ class KernelManager:
                 flow_logger.error(kernel.error_message)
             raise RuntimeError(kernel.error_message) from exc
 
-        # If the kernel was created with extra packages, use the derived image
-        # (built once at create_kernel time). Rebuild on the fly if a previous
-        # core run was interrupted before the image landed.
+        # Reuses the derived image create_kernel baked, or bakes it if an interrupted run never did.
         if kernel.packages:
             try:
                 image = self._build_derived_image(kernel)
@@ -1924,8 +1838,7 @@ class KernelManager:
         if old_packages:
             self._remove_derived_image(kernel_id)
 
-        # Build the new derived image; on failure, roll back the package list
-        # so the persisted state matches what's actually on disk.
+        # On failure roll the package list back, so the persisted state matches the images on disk.
         if packages:
             try:
                 derived_tag = await asyncio.to_thread(self._build_derived_image, kernel)
@@ -1958,12 +1871,9 @@ class KernelManager:
             raise ValueError(f"Kernel '{kernel_id}' is still being created — wait for creation to finish")
         owner_id = self._kernel_owners.get(kernel_id)  # capture before the pop, for the project hook
         # Unconditional: a STOPPED/ERROR kernel may still track a leftover container.
-        # stop_kernel waits out any in-progress start flight itself.
         await self.stop_kernel(kernel_id)
         had_packages = bool(kernel.packages)
-        # Delete the scratch FlowRegistration first so the FK ON DELETE SET NULL
-        # doesn't fire as a side-effect; explicit deletion keeps the catalog
-        # tidy. Tolerant of a missing row (manual removal, downgrade-then-upgrade).
+        # Explicitly, or the scratch flow outlives its kernel; a missing row is tolerated.
         self._discard_scratch_flow(kernel_id)
         with self._kernels_lock:
             del self._kernels[kernel_id]
@@ -1971,9 +1881,7 @@ class KernelManager:
         self._remove_kernel_from_db(kernel_id)
         if had_packages:
             self._remove_derived_image(kernel_id)
-        # Re-project the kernels manifest (regenerated wholesale, so firing after the row is gone is
-        # correct). Owner may be None for a kernel restored before owners were tracked — the hook
-        # no-ops on None.
+        # Fine after the row is gone, as the manifest is regenerated whole; a None owner (older kernel) no-ops.
         from flowfile_core.project import project_sync
 
         project_sync.kernels_changed(owner_id)
@@ -1981,8 +1889,7 @@ class KernelManager:
 
     def shutdown_all(self) -> None:
         """Stop and remove all running kernel containers. Called on core shutdown."""
-        # Briefly wait out in-progress starts so a leader can't re-create a
-        # container after the sweep.
+        # Wait out starts in flight, so a leader can't re-create a container after the sweep.
         with self._start_flights_lock:
             starting = list(self._start_flights)
         for kernel_id in starting:
@@ -2021,8 +1928,7 @@ class KernelManager:
             return False
 
     def _is_container_running(self, kernel_id: str) -> bool:
-        # Best-effort liveness probe; True on transient Docker errors so a brief
-        # daemon hiccup doesn't falsely mark a kernel down.
+        # True on transient Docker errors, so a daemon hiccup doesn't mark the kernel down.
         kernel = self._kernels.get(kernel_id)
         ref = (kernel.container_id if kernel else None) or f"flowfile-kernel-{kernel_id}"
         try:
@@ -2062,21 +1968,15 @@ class KernelManager:
         so the caller can be unblocked promptly when the event is set.
         """
         kernel = self._get_kernel_or_raise(kernel_id)
-        # Pre-lock ensure so concurrent callers share one start flight (and
-        # share its failure) instead of retrying a bad start one by one.
+        # Before the lock, so concurrent callers share one start flight and its failure.
         if kernel.state not in (KernelState.IDLE, KernelState.EXECUTING):
             self._ensure_running_sync(kernel_id, flow_logger=flow_logger)
 
-        # Fall back to the per-kernel scratch FlowRegistration so artifacts
-        # published from interactive cells have a valid producer to point at.
-        # Registered-flow execution paths set ``source_registration_id`` ahead
-        # of time, so this short-circuits when it's already populated.
+        # The scratch flow is the producer when no registered flow set source_registration_id.
         if request.source_registration_id is None:
             request.source_registration_id = self.get_scratch_flow_id(kernel_id)
 
-        # Stamp server-side: the notebook /execute[_cell] routes take the request
-        # straight from the client (no token), and a reclaimed or adopted
-        # container may still carry a stale FLOWFILE_INTERNAL_TOKEN.
+        # Stamped server-side: client requests carry no token, and an adopted container may hold a stale one.
         try:
             from flowfile_core.auth.jwt import get_internal_token
 
@@ -2084,16 +1984,13 @@ class KernelManager:
         except (ValueError, ImportError):
             pass
 
-        # One identity per execution, so a cancel names a cell and not a kernel.
-        # The flow-run path mints it up front (the node needs it to cancel itself);
-        # every other caller — notebook cells, dry runs — gets one here.
+        # One token per execution, so a cancel names a cell; a flow run mints its own up front.
         if not request.exec_token:
             request.exec_token = uuid.uuid4().hex
 
         lock = self._exec_lock_for(kernel_id)
         if not self._acquire_cancellable(lock, cancel_event):
-            # Nothing was submitted — do NOT interrupt (that would kill the
-            # cell another node is currently running on this kernel).
+            # Nothing was submitted, so no interrupt: it would kill another node's cell on this kernel.
             return ExecuteResult(success=False, error="Execution cancelled by user")
         try:
             self._active_execs[kernel_id] = request.exec_token
@@ -2127,7 +2024,7 @@ class KernelManager:
                     response.raise_for_status()
                     return ExecuteResult(**response.json())
 
-            # --- cancellation-aware path ---
+            # Cancellation-aware path.
             result_holder: list[ExecuteResult | None] = [None]
             error_holder: list[BaseException | None] = [None]
 
@@ -2169,15 +2066,13 @@ class KernelManager:
                     flow_logger.error(oom_msg)
                 return ExecuteResult(success=False, error=oom_msg)
             if not self._is_container_running(kernel_id):
-                # Keep container_id: the stopped container still holds the name,
-                # and the tracked cleanup on the next start replaces it cleanly.
+                # Keep container_id: the stopped container holds the name until the next start's cleanup.
                 kernel.state = KernelState.STOPPED
                 if flow_logger:
                     flow_logger.error(_KERNEL_DOWN_MSG)
                 return ExecuteResult(success=False, error=_KERNEL_DOWN_MSG)
             if isinstance(exc, httpx.TimeoutException):
-                # Tell the kernel to interrupt the still-running cell, otherwise it
-                # keeps mutating the namespace and the next cell runs concurrently.
+                # Interrupt the cell, or it keeps mutating the namespace while the next cell runs.
                 self.interrupt_execution_sync(kernel_id, request.exec_token)
                 return ExecuteResult(
                     success=False,
@@ -2219,7 +2114,7 @@ class KernelManager:
             )
             return False
 
-        # --- Try HTTP /interrupt (preferred) ---
+        # Try HTTP /interrupt first.
         should_try_http = self._docker_network is not None or kernel.port is not None
         if should_try_http:
             try:
@@ -2232,7 +2127,7 @@ class KernelManager:
             except (httpx.HTTPError, OSError):
                 logger.debug("HTTP /interrupt failed for kernel '%s', falling back to SIGUSR1", kernel_id)
 
-        # --- Fallback: Docker SIGUSR1 ---
+        # Fallback: Docker SIGUSR1.
         try:
             container = self._docker.containers.get(kernel.container_id)
             container.kill(signal="SIGUSR1")

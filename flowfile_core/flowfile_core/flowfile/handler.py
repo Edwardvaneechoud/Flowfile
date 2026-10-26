@@ -104,8 +104,7 @@ class FlowfileHandler:
         if replaced is not None:
             replaced.close_flow()
         imported_flow.flow_settings = self.get_flow_info(imported_flow.flow_id)
-        # The stored id is machine-local and a copied file carries the original's; callers
-        # re-resolve it from the path (same reasoning as save_as_flow and project normalize).
+        # The id is machine-local and a copied file carries the original's; callers re-resolve it by path.
         try:
             imported_flow.flow_settings.source_registration_id = None
         except (AttributeError, ValueError):
@@ -283,8 +282,7 @@ class FlowfileHandler:
         try:
             dirty = flow.has_unsaved_changes()
         except Exception:
-            # Match HistoryManager.has_unsaved_changes: on error, assume dirty so
-            # unsaved-changes prompts err on the safe side.
+            # As HistoryManager.has_unsaved_changes does, assume dirty on error so prompts err safe.
             dirty = True
         return FlowSettingsResponse(**flow_settings.model_dump(), has_unsaved_changes=dirty)
 

@@ -224,13 +224,9 @@ def apply_model_task(
         record_task_failure(error_message, progress, e, limit=1024)
         if not isinstance(e, Exception):
             raise
-        # Intentional early return: file_path was never written, so the
-        # scan_ipc/queue.put below would either crash or push a serialised
-        # plan over a non-existent file. The framework already inspects
-        # progress.value before reading the queue; this keeps that contract.
+        # file_path was never written, so queue no plan over it; callers read progress before the queue.
         return
-    # put THEN signal done: consumers key completion off progress == 100, so the
-    # result must already be on the queue when that flips (matches store/fuzzy/train).
+    # Put before signalling done: consumers take progress 100 to mean the result is on the queue.
     lf = pl.scan_ipc(file_path)
     queue.put(lf.serialize())
     with progress.get_lock():
@@ -901,8 +897,7 @@ def write_parquet(
         df = collect_lazy_frame(lf)
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         df.write_parquet(output_path)
-        # Flush to disk to prevent race conditions when another process reads.
-        # "rb+" — os.fsync needs a writable fd on Windows (EBADF on read-only handles)
+        # fsync so another process reads the whole file; "rb+" since Windows can't fsync a read-only fd.
         with open(output_path, "rb+") as f:
             os.fsync(f.fileno())
         flowfile_logger.info(f"write_parquet completed: {len(df)} records written to {output_path}")

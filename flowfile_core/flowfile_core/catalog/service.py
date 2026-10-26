@@ -63,8 +63,7 @@ from flowfile_core.catalog.services.virtual_tables import _UNSET as _VERSIONS_UN
 from flowfile_core.catalog.services.virtual_tables import VirtualTableService
 from flowfile_core.catalog.services.visualizations import VisualizationService
 
-# Re-exports preserved so external callers / tests that still reach for the
-# underscore-prefixed names continue to work.
+# Re-exported under the underscore names external callers and tests still use.
 from flowfile_core.catalog.text_utils import hash_source_versions as _hash_source_versions  # noqa: F401
 from flowfile_core.catalog.text_utils import is_table_reference as _is_table_reference  # noqa: F401
 from flowfile_core.catalog.text_utils import parse_delta_history as _parse_delta_history  # noqa: F401
@@ -90,10 +89,7 @@ from flowfile_core.database.models import (
     TableFavorite,
 )
 
-# Worker-trigger re-imports kept here because sub-services do
-# ``from flowfile_core.catalog import service as _service_module`` and call
-# ``_service_module.trigger_*`` so test monkeypatches against this module's
-# attributes flow through to the sub-services.
+# Sub-services call these as _service_module.trigger_*, so tests that patch this module reach them.
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (  # noqa: F401
     trigger_catalog_materialize,
     trigger_resolve_virtual_table,
@@ -164,15 +160,12 @@ class CatalogService:
     # Re-exported on the class so tests can reference ``CatalogService.CatalogMaterializationResult``.
     CatalogMaterializationResult = CatalogMaterializationResult
 
-    # Re-exported as a class-level static so tests can call
-    # ``CatalogService._compute_laziness_blockers(flow_path)`` directly.
+    # Re-exported so tests can call CatalogService._compute_laziness_blockers(flow_path) directly.
     _compute_laziness_blockers = staticmethod(TableService._compute_laziness_blockers)
 
     def __init__(self, repo: CatalogRepository, access: AccessResolver | None = None) -> None:
         self.repo = repo
-        # None for internal callers (scheduler, kafka sync, flow execution),
-        # electron mode, and tests → fully unrestricted, today's behavior.
-        # Set by routes/catalog.py for per-request private-by-default filtering.
+        # None (internal callers, electron mode, tests) is unrestricted; routes/catalog.py sets one per request.
         self.access = access
         self._namespaces = NamespaceService(repo)
         self._flows = FlowRegistrationService(repo, self._namespaces)
@@ -181,9 +174,7 @@ class CatalogService:
         self._schedules = ScheduleService(repo, self._runs, self._namespaces)
         self._tables = TableService(repo, self._namespaces, self._flows, self._schedules, access=access)
 
-        # SqlService and VirtualTableService form a cycle: SqlService.execute_sql_query
-        # uses VirtualTableService for resolution, and VirtualTableService.create_query_virtual_table
-        # uses SqlService to derive the schema. Late-bind to break the cycle.
+        # SqlService and VirtualTableService use each other, so they are bound after construction.
         self._sql = SqlService(repo, self._flows)
         self._virtual_tables = VirtualTableService(repo, self._namespaces, self._tables, self._schedules)
         self._sql.bind(virtual_tables=self._virtual_tables)
@@ -193,9 +184,7 @@ class CatalogService:
         self._visualizations = VisualizationService(
             repo, self._namespaces, self._tables, self._virtual_tables, self._sql
         )
-        # Tests monkeypatch ``CatalogService.resolve_virtual_flow_table`` and
-        # ``CatalogService._fire_table_trigger_schedules``; binding the facade
-        # on these sub-services lets those overrides flow through.
+        # Bound to the facade, so tests that patch its methods reach these sub-services.
         self._visualizations.bind_facade(self)
         self._sql.bind_facade(self)
         self._schedules.bind_facade(self)
@@ -204,9 +193,7 @@ class CatalogService:
 
         self._stats = StatsService(repo, self._flows, self._runs, self._tables)
 
-    # ------------------------------------------------------------------ #
     # Authorization helpers (no-op when self.access is None / unrestricted)
-    # ------------------------------------------------------------------ #
 
     @property
     def _restricted(self) -> bool:
@@ -400,9 +387,7 @@ class CatalogService:
                 item.access = details[item.id]
         return items
 
-    # ------------------------------------------------------------------ #
     # Private helpers
-    # ------------------------------------------------------------------ #
 
     _reject_dot_in_name = staticmethod(reject_dot_in_name)
     _format_full_name = staticmethod(format_full_name)
@@ -460,9 +445,7 @@ class CatalogService:
         """Convert a FlowRun ORM row to its FlowRunOut DTO."""
         return self._runs.run_to_out(run)
 
-    # ------------------------------------------------------------------ #
     # Namespace operations
-    # ------------------------------------------------------------------ #
 
     def create_namespace(
         self,
@@ -590,9 +573,7 @@ class CatalogService:
             if node.id in visible_ns:
                 return node
             if has_items:
-                # Context-only ancestor: kept so granted children can render, but its
-                # own metadata is not the user's to read — redact the description (the
-                # name stays: it is the breadcrumb to the granted item).
+                # An ancestor kept only as a granted item's breadcrumb: the name stays, the description goes.
                 node.description = None
                 return node
             return None
@@ -603,9 +584,7 @@ class CatalogService:
         """Return the ID of the ``General > default`` schema."""
         return self._namespaces.get_default_namespace_id()
 
-    # ------------------------------------------------------------------ #
     # Flow registration operations
-    # ------------------------------------------------------------------ #
 
     def register_flow(
         self,
@@ -706,9 +685,7 @@ class CatalogService:
         self._require_use("flow", registration_id)
         return self._stamp_access(self._flows.list_artifacts_for_flow(registration_id), "global_artifact")
 
-    # ------------------------------------------------------------------ #
     # Run operations
-    # ------------------------------------------------------------------ #
 
     def list_runs(
         self,
@@ -727,8 +704,7 @@ class CatalogService:
             self._require_use("flow", schedule.registration_id)
         result = self._runs.list_runs(registration_id, schedule_id, run_type, limit, offset, search)
         if self._restricted and registration_id is None and schedule_id is None:
-            # Global list: best-effort page filter to own runs ∪ runs of accessible
-            # flows (page totals may drift; by-id run reads are separately guarded).
+            # Best-effort page filter, so totals may drift; by-id run reads are guarded separately.
             allowed_flows = self.access.accessible_ids("flow")
             user_id = self.access.user_id
             result.items = [r for r in result.items if r.user_id == user_id or (r.registration_id in allowed_flows)]
@@ -864,9 +840,7 @@ class CatalogService:
         self._require_use_run(run_id)
         return self._runs.get_run_snapshot(run_id)
 
-    # ------------------------------------------------------------------ #
     # Favorites
-    # ------------------------------------------------------------------ #
 
     def add_favorite(self, user_id: int, registration_id: int) -> FlowFavorite:
         """Add a flow to the user's favourites (idempotent)."""
@@ -896,9 +870,7 @@ class CatalogService:
         flows = self._filter_by_access(self._engagement.list_following(user_id), "flow")
         return self._stamp_access(flows, "flow")
 
-    # ------------------------------------------------------------------ #
     # Catalog table operations
-    # ------------------------------------------------------------------ #
 
     def _table_to_out(
         self,
@@ -976,9 +948,7 @@ class CatalogService:
         source_run_id: int | None = None,
     ) -> CatalogTableOut:
         """Backward-compatible alias for ``register_table_from_data`` with parquet storage."""
-        # Body kept on the facade — a test monkeypatches
-        # ``CatalogService.register_table_from_data`` and expects this
-        # alias to route through it.
+        # On the facade, as a test patches register_table_from_data and expects the alias to use it.
         return self.register_table_from_data(
             name=name,
             table_path=parquet_path,
@@ -1079,8 +1049,7 @@ class CatalogService:
     ) -> CatalogTableOut:
         """Update a catalog table's metadata."""
         self._require_manage("catalog_table", table_id)
-        # The association exposes the target's name on every later read, so it needs read
-        # access to the target itself — not just manage on the table being edited.
+        # Later reads show the target's name, so the association needs use on the target too.
         if prediction_table_id is not KEEP_PREDICTION and prediction_table_id is not None:
             self._require_use("catalog_table", prediction_table_id)
         if namespace_id is not None:
@@ -1092,9 +1061,7 @@ class CatalogService:
         self._require_manage("catalog_table", table_id)
         self._tables.delete_table(table_id, delete_file)
 
-    # ------------------------------------------------------------------ #
     # Virtual Flow Table operations
-    # ------------------------------------------------------------------ #
 
     def create_virtual_flow_table(
         self,
@@ -1374,8 +1341,7 @@ class CatalogService:
         description: str | None = None,
     ) -> FlowScheduleOut:
         """Create a new schedule (interval, cron, table_trigger or table_set_trigger) for a flow."""
-        # use-level on the flow is enough: the schedule runs as its creator
-        # (FlowSchedule.owner_id), so secret/connection resolution stays self-consistent.
+        # Use suffices: the schedule runs as its creator, so it resolves secrets and connections as them.
         self._require_use("flow", registration_id)
         return self._schedules.create_schedule(
             registration_id=registration_id,
@@ -1437,9 +1403,7 @@ class CatalogService:
             schedules = [s for s in schedules if s.owner_id == user_id or s.registration_id in allowed]
         return schedules
 
-    # ------------------------------------------------------------------ #
     # Trigger schedule now
-    # ------------------------------------------------------------------ #
 
     def _spawn_flow_subprocess(self, flow_path: str, run_id: int) -> int | None:
         """Fire-and-forget a ``flowfile run flow`` subprocess; returns the child PID or None."""
@@ -1467,9 +1431,7 @@ class CatalogService:
             self._require_use("flow", schedule.registration_id)
         return self._schedules.trigger_schedule_now(schedule_id, user_id, suppress_telemetry=suppress_telemetry)
 
-    # ------------------------------------------------------------------ #
     # Active runs + cancel
-    # ------------------------------------------------------------------ #
 
     def list_active_runs(self) -> list[ActiveFlowRun]:
         """List all currently running flows (``ended_at IS NULL``)."""
@@ -1485,17 +1447,13 @@ class CatalogService:
         self._require_use_run(run_id)
         self._runs.cancel_run(run_id)
 
-    # ------------------------------------------------------------------ #
     # Dashboard / Stats
-    # ------------------------------------------------------------------ #
 
     def get_catalog_stats(self, user_id: int) -> CatalogStats:
         """Return an overview of the catalog for the dashboard."""
         return self._stats.get_catalog_stats(user_id)
 
-    # ------------------------------------------------------------------ #
     # SQL Query
-    # ------------------------------------------------------------------ #
 
     def resolve_all_delta_tables(self) -> dict[str, str]:
         """Return a mapping of logical table name → directory name for LOCAL Delta catalog tables
@@ -1530,14 +1488,13 @@ class CatalogService:
     ) -> int:
         """Create a registered flow from a SQL query and return the registration ID."""
         self._require_namespace_writable(namespace_id)
-        # Only embed catalog_reader nodes for tables the caller may read, so the
-        # generated flow can't be used to exfiltrate another user's table.
+        # Only tables the caller may read, so the generated flow can't exfiltrate another user's table.
         accessible = self.access.accessible_ids("catalog_table") if self._restricted else None
         return self._sql.save_sql_query_as_flow(
             query, name, owner_id, namespace_id, description, used_tables, accessible_table_ids=accessible
         )
 
-    # ================== Visualizations =====================================
+    # Visualizations
 
     def list_visualizations_for_table(self, table_id: int, user_id: int | None = None) -> list[VisualizationOut]:
         """List visualizations bound to a specific catalog table."""
@@ -1567,8 +1524,7 @@ class CatalogService:
         """Create a new visualization (table-source or sql-source)."""
         if payload.catalog_table_id is not None:
             self._require_use("catalog_table", payload.catalog_table_id)
-        # When namespace_id is None it defaults to the source table's namespace,
-        # which the table-use check above already covers.
+        # A None namespace_id defaults to the source table's, which the use check above covers.
         self._require_namespace_writable(payload.namespace_id)
         return self._stamp_access([self._visualizations.create_visualization(payload, user_id)], "visualization")[0]
 
@@ -1616,7 +1572,7 @@ class CatalogService:
         self._require_manage_notebook(notebook_id)
         self._notebooks.delete_notebook(notebook_id, user_id)
 
-    # ================== Dashboards =========================================
+    # Dashboards
 
     def list_dashboards(self, user_id: int | None = None) -> list[DashboardOut]:
         """List all dashboards."""
@@ -1650,7 +1606,7 @@ class CatalogService:
         self._require_manage_dashboard(dashboard_id)
         self._visualizations.delete_dashboard(dashboard_id, user_id)
 
-    # ---- Compute ----------------------------------------------------------
+    # Compute
 
     def compute_saved_visualization_rows(
         self,
@@ -1696,6 +1652,5 @@ class CatalogService:
         return self._visualizations.get_table_column_stats(table_id, column, limit, user_id)
 
 
-# Backward-compat re-export for external code that imported the
-# underscore-prefixed module-level helper.
+# Backward-compatible re-export under the underscore name.
 _format_pyarrow_preview = format_pyarrow_preview

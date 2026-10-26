@@ -180,10 +180,7 @@ def build_execute_request(
     available_artifacts: dict[str, int] | None = None,
 ) -> ExecuteRequest:
     """Assemble the kernel ExecuteRequest with log callback URL and auth token."""
-    # Keyed on the network, not the volume: the kernel can only resolve core by
-    # service name when it was actually joined to core's network. The two used
-    # to disagree, so a Docker setup with one but not the other sent the log
-    # callback somewhere the API callbacks did not go.
+    # Keyed on the network: the kernel resolves core by service name only once joined to core's network.
     log_callback_url = f"{core_base_url(bool(manager._docker_network))}/raw_logs"
 
     internal_token: str | None = None
@@ -204,8 +201,7 @@ def build_execute_request(
         log_callback_url=log_callback_url,
         internal_token=internal_token,
         available_artifacts=available_artifacts,
-        # Minted here, not in execute_sync: the node stores it as its cancel
-        # address before the call, so a cancel can only hit this one cell.
+        # Minted here so the node holds it as its cancel address before the call; a cancel hits only this cell.
         exec_token=uuid.uuid4().hex,
     )
 

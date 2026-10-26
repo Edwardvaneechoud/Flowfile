@@ -22,9 +22,7 @@ class NodeResult(BaseModel):
     start_timestamp: float = Field(default_factory=time.time)
     end_timestamp: float = 0
     success: bool | None = None
-    # True when the node was deliberately skipped (e.g. a closed gate upstream).
-    # Deliberate skips carry success=True so a gated run stays green; nodes
-    # skipped because of an upstream *failure* still produce no result at all.
+    # A deliberate skip (a closed gate upstream) carries success=True, so a gated run stays green.
     skipped: bool = False
     error: str = ""
     compute_error: str | None = Field(
@@ -266,8 +264,7 @@ class NodeData(BaseModel):
     setting_input: Any = None
     # The settings' digest at read time; a save echoes it as `expected_settings_fingerprint` (409 when moved).
     settings_fingerprint: str | None = None
-    # Set when column prediction for this node (or one of its inputs) would
-    # require executing an un-run kernel node — the user-facing warning text.
+    # The warning shown when predicting columns here would mean running an un-run kernel node.
     prediction_warning: str | None = None
 
 

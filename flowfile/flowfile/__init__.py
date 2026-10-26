@@ -35,8 +35,7 @@ def start_web_ui(*args, **kwargs):
     return _start_web_ui(*args, **kwargs)
 
 
-# Bind node_designer as a real submodule so `from flowfile.node_designer import ...`
-# resolves (it is otherwise only an attribute); the os.path idiom.
+# A real submodule, so `from flowfile.node_designer import ...` resolves (the os.path idiom).
 sys.modules[f"{__name__}.node_designer"] = node_designer
 
 __all__ = ["open_graph_in_editor", "start_web_ui"]

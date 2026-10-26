@@ -118,9 +118,7 @@ def _output_path(file_path: str, name: str, primary_name: str) -> str:
 
 
 def _json_default(obj):
-    # Preview rows carry native polars values (Date/Datetime/Time/Duration/Decimal/binary,
-    # or those nested in struct/list) that json can't encode — stringify them so a
-    # date-producing custom node still previews in the Test panel.
+    # Make the Polars values in preview rows (dates, durations, decimals, binary) JSON-encodable.
     if isinstance(obj, datetime.datetime | datetime.date | datetime.time):
         return obj.isoformat()
     if isinstance(obj, datetime.timedelta):
@@ -164,9 +162,7 @@ def execute_custom_node_task(
     root_logger = logging.getLogger()
     prev_root_level = root_logger.level
     if dry_run:
-        # Capture the author's own root-logger output (bare logging.debug/info(...))
-        # plus the framework lines into one ordered buffer surfaced in the Test panel.
-        # This child is a dedicated spawned process, so mutating the root logger is safe.
+        # One ordered buffer of the author's root-logger output and the framework lines, for the Test panel.
         buffer_handler = _BufferingLogHandler()
         buffer_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
         root_capture_handler = buffer_handler
@@ -189,8 +185,7 @@ def execute_custom_node_task(
 
         install_import_aliases()
         module = load_node_module(source=node_source)
-        # The designer never emits `import logging`, so bind it in the node's module
-        # namespace — otherwise a bare `logging.debug(...)` in process() raises NameError.
+        # The designer emits no `import logging`; bind it so a bare `logging.debug(...)` works.
         module.__dict__.setdefault("logging", logging)
         node_cls = find_custom_node_class(module, class_name)
         node = node_cls()
@@ -234,8 +229,7 @@ def execute_custom_node_task(
             progress.value = 100
     except BaseException as e:
         if dry_run:
-            # Full traceback rides back in the error message for the Test panel;
-            # the 1024-byte Array truncates, so keep the exception first.
+            # The traceback goes to the Test panel; the 1024-byte Array truncates, so the exception leads.
             record_task_failure_text(
                 error_message, progress, f"{describe_exception(e)}\n{traceback.format_exc()}", limit=1020
             )

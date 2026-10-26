@@ -26,8 +26,7 @@ _STRING_PREFIX = re.compile(r"[a-zA-Z]*")
 _FSTRING_START = getattr(tokenize, "FSTRING_START", None)
 _FSTRING_END = getattr(tokenize, "FSTRING_END", None)
 
-# Type alias: list of (object, field_name_or_key_or_index, original_value) triples
-# used to restore mutated fields after node execution.
+# (object, field name/key/index, original value) triples that restore mutated fields after a run.
 _Restorations = list[tuple[Any, str | int, Any]]
 
 

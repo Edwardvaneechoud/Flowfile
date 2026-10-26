@@ -215,8 +215,7 @@ class NodeExecutor:
             self.state_provider.save_state(self.node.node_id, self.node.parent_uuid, state)
         except Exception as e:
             if state.is_canceled:
-                # Cancelled mid-run (e.g. a cancel_check-aborted DB read): record a clean
-                # cancellation instead of a failure, and skip the error/retry path.
+                # Cancelled mid-run: record a clean cancellation, not a failure, and skip the retry path.
                 node_logger.info("Node execution cancelled")
                 state.reset_results_only()
                 self._sync_state_to_legacy(state)
@@ -271,20 +270,17 @@ class NodeExecutor:
             return ExecutionDecision(True, InvalidationReason.OUTPUT_NODE)
 
         if self.node.node_type == "run_flow":
-            # The referenced flow file can change without any parent-settings
-            # change, so a subflow node is never considered up to date.
+            # The referenced flow file can change without any settings change, so it always reruns.
             return ExecutionDecision(True, InvalidationReason.OUTPUT_NODE)
 
         if self.node.node_type == "gate" and self._gate_routes_on_formula():
-            # The formula's source data can change without any hash changing,
-            # so the gate must re-evaluate its routing decision every run.
+            # The formula's data can change without any hash changing, so the gate re-decides every run.
             return ExecutionDecision(True, InvalidationReason.OUTPUT_NODE)
 
         if force_refresh:
             return ExecutionDecision(True, InvalidationReason.FORCED_REFRESH)
 
-        # Changed source data outranks every cache: the node hash does not rotate when a file
-        # on disk changes, so a cache hit here would serve data the user just replaced.
+        # Changed source data outranks every cache: the node hash does not rotate when a file changes.
         if self._source_file_changed(state):
             return ExecutionDecision(True, InvalidationReason.SOURCE_FILE_CHANGED)
 
@@ -292,9 +288,7 @@ class NodeExecutor:
         if state.has_run_with_current_setup and self.node.results.artifact_is_missing():
             return ExecutionDecision(True, InvalidationReason.CACHE_MISSING)
 
-        # Cache-enabled nodes: check the stored result is still held.
-        # This must come before performance_mode so cached results are preserved
-        # even when upstream nodes produce no new data.
+        # Before performance_mode, so a cached result is kept even when upstream produces no new data.
         if self.node.node_settings.cache_results:
             backend = current_context().backend
             held = self.node.held_result(backend.id)
@@ -309,8 +303,6 @@ class NodeExecutor:
         if not state.has_run_with_current_setup:
             return ExecutionDecision(True, InvalidationReason.NEVER_RAN)
 
-        # Already ran with current settings → skip
-        # Results are available in memory from previous execution
         return ExecutionDecision(False, None)
 
     def _gate_routes_on_formula(self) -> bool:

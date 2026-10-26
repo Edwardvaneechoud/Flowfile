@@ -142,9 +142,7 @@ class VisualizationService:
         )
 
     def _viz_to_out(self, viz: CatalogVisualization) -> VisualizationOut:
-        # Specs are stored as JSON. The current shape is ``list[IChart]``
-        # (one per chart tab). Older 008-era rows store a single ``IChart``
-        # dict — coerce to a one-element list on read.
+        # Specs are a ``list[IChart]``, one per tab; older rows hold one ``IChart`` dict, read as a list of one.
         try:
             raw = json.loads(viz.spec_json) if viz.spec_json else []
         except (TypeError, ValueError):
@@ -494,8 +492,7 @@ class VisualizationService:
                 }
 
             if table.sql_query:
-                # The spec's own digest is version-aware; the table row's
-                # updated_at never moves when the underlying sources change.
+                # The spec's digest is version-aware; the row's updated_at never moves when its sources change.
                 return self._build_sql_worker_source(table.sql_query, user_id=user_id)
 
             from flowfile_core.catalog import service as _service_module
@@ -543,12 +540,10 @@ class VisualizationService:
             if ipc_path is not None:
                 virtual_refs[vname] = ipc_path
 
-        # Only ship the delta_map subset that's actually referenced — keeps the
-        # session key compact and the worker's SQLContext small.
+        # Ship only the referenced tables, keeping the session key and the worker's SQLContext small.
         referenced_delta = {n: d for n, d in delta_map.items() if is_table_reference(n, rewritten)}
 
-        # Live delta versions rotate the digest when any referenced table's data
-        # changes; an unreadable table hashes as None (rotates again once readable).
+        # Live versions rotate the digest on a data change; an unreadable table hashes as None.
         delta_versions: dict[str, int | None] = {}
         for name, dir_name in referenced_delta.items():
             try:

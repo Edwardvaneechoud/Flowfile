@@ -361,9 +361,7 @@ class NamespaceService:
                 version_counts=self.repo.artifact_version_counts_for_namespace(ns_id),
             )
 
-        # Visualizations are surfaced as a peer of flows / tables / artifacts in
-        # whatever namespace they were saved into (their own ``namespace_id``,
-        # not the parent table's). Resolve once and bucket by namespace.
+        # A visualization sits in the namespace it was saved into, not its table's.
         viz_by_namespace: dict[int, list[VisualizationOut]] = {}
         for v in list_visualizations(user_id):
             if v.namespace_id is None:

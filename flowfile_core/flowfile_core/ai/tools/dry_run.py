@@ -173,8 +173,7 @@ def _run_kernel_for_dry_run(
     monkey-patch this function directly to avoid Docker. Raises if the kernel
     call fails — the caller (executor) catches and surfaces as a refusal.
     """
-    # Local imports — keep the kernel client off the module's import path.
-    # The kernel client pulls in httpx + the Docker manager.
+    # Local import, keeping the engine off this module's import path.
     from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 
     sample_engine = sample if isinstance(sample, FlowDataEngine) else FlowDataEngine(sample)

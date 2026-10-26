@@ -114,18 +114,10 @@ async def observe_after_apply(flow: Any, node_id: int) -> ObservationResult:
     try:
         execution_mode = str(flow.flow_settings.execution_mode or "")
     except Exception:
-        # Settings access shouldn't fail, but if it does we treat
-        # the run as Development (cheap path) — never block on a
-        # missing settings field.
+        # Never block on a missing settings field; treat the run as Development (the cheap path).
         pass
 
-    # ``explore_data`` is the user-facing data inspector; the chat
-    # trail's *"You can view the data in the explore_data panel to
-    # inspect the results"* announcement is meaningless if the panel
-    # is empty. Force the Performance-mode path (real
-    # ``trigger_fetch_node``) for this node type regardless of the
-    # flow's configured execution_mode so the panel always has data
-    # by the time the LLM advertises it.
+    # explore_data always runs for real, so its panel has data by the time the LLM points the user at it.
     if node_type == "explore_data" or execution_mode.lower() == "performance":
         return await _observe_performance(flow, node, node_id, node_type)
     return await _observe_development(node, node_id, node_type)
@@ -171,9 +163,7 @@ async def _observe_performance(flow: Any, node: Any, node_id: int, node_type: st
         except Exception as exc:
             return _failure_from_exc(node_id, node_type, exc)
 
-    # ``trigger_fetch_node`` writes the runtime error (if any) into
-    # ``node.results.errors`` rather than re-raising. Surface it as
-    # a failure observation so the planner's auto-undo path fires.
+    # trigger_fetch_node records the error instead of raising; fail here so the planner's auto-undo fires.
     run_error = getattr(node.results, "errors", None)
     if run_error:
         return ObservationResult(
@@ -304,19 +294,13 @@ def _dev_mode_sample_rows(node: Any) -> list[dict[str, Any]]:
     """Best-effort sample-row collection in Development mode. Most
     node types don't expose a cheap "predicted sample" so we return
     an empty list; the LLM still sees the schema."""
-    # Hook for future enhancement: some upstream nodes carry a
-    # predicted-sample frame on their schema_callback. We currently
-    # skip — schema-only observation is enough for the LLM to decide
-    # what to do next without an actual collect.
     del node
     return []
 
 
 def _failure_from_exc(node_id: int, node_type: str, exc: Exception) -> ObservationResult:
     msg = str(exc).strip() or repr(exc)
-    # Truncate very long messages so they don't blow the LLM
-    # context. Polars stack traces can be 5+ KB; the first 800
-    # chars almost always carry the actionable error line.
+    # Polars traces can pass 5 KB; the first 800 characters carry the actionable line.
     if len(msg) > 800:
         msg = msg[:800] + " … [truncated]"
     return ObservationResult(

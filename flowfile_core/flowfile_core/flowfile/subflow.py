@@ -429,8 +429,7 @@ def _metadata_literals(
         value = run_params.get(binding.parameter_name)
         if value is None:
             value = spec.typed_default() if spec else ""
-        # Cast so the materialized dtype matches the predicted schema
-        # (pl.lit(int) alone yields Int32, prediction promises Int64).
+        # Cast to the predicted dtype: pl.lit(int) alone yields Int32 where the prediction says Int64.
         dtype = _PARAM_TYPE_TO_PL.get(spec.type if spec else "string", pl.String)
         literals.append(pl.lit(value).cast(dtype).alias(names[binding.parameter_name]))
     literals.append(pl.lit(run_index).cast(pl.UInt32).alias(names[RUN_INDEX_COLUMN]))
@@ -543,8 +542,7 @@ def _execute_runs(
     if unbound:
         node_logger.warning(f"Subflow input(s) not connected: {', '.join(unbound)}; using their sample data")
 
-    # Must match predict_run_flow_named_schemas (_appends_metadata): appending is
-    # driven by the settings alone, even for a single run without parameter data.
+    # Must match predict_run_flow_named_schemas: the settings alone decide, even for a single run.
     append_metadata = _appends_metadata(settings)
     collected: dict[str, list[tuple[FlowDataEngine, pl.LazyFrame, list[pl.Expr] | None]]] = {
         name: [] for name in settings.output_slots
@@ -557,9 +555,7 @@ def _execute_runs(
 
         child = open_flow(resolved.path, user_id=settings.user_id)
         child.flow_id = create_unique_id()
-        # The setter does not rebuild the per-flow_id logger; without this, child
-        # runs log into the subflow file's own editor log (and collide when the
-        # same subflow runs from two parents at once).
+        # The setter keeps the old logger, which would log child runs into the subflow's editor log.
         child.flow_logger = FlowLogger(child.flow_id)
         child.flow_settings.execution_location = (
             parent_graph.flow_settings.execution_location if FLOWFILE_COMPUTE_PROTOCOL else "local"
@@ -600,8 +596,7 @@ def _execute_runs(
                 if node is not None:
                     node.adopt_results(child_node)
 
-        # Cancel first: a mid-node cancel leaves node results unsuccessful, which
-        # would otherwise surface as a bogus "run failed" error.
+        # Check cancel first: a mid-node cancel leaves unsuccessful results that would read as a failure.
         if parent_graph.flow_settings.is_canceled or child.flow_settings.is_canceled:
             raise Exception("Flow run was canceled")
         if run_info is None or run_info.success is False:
@@ -617,10 +612,7 @@ def _execute_runs(
                     "connect it or remove the flow_output node"
                 )
             if out_node.node_id in deliberately_skipped:
-                # The output sits behind a closed gate in the child: pulling it
-                # would lazily execute the gated-off branch. The slot still has
-                # to yield something, so contribute a zero-row frame with its
-                # predicted schema.
+                # Behind a closed gate: pulling it would run the gated-off branch, so yield zero rows.
                 try:
                     skipped_schema = out_node.schema
                 except Exception:
@@ -657,8 +649,7 @@ def _execute_runs(
             ]
             if len(stepped) == 1:
                 return stepped[0]
-            # Iterated runs may legitimately drift schema (parameter-driven selects);
-            # relaxed diagonal concat fills gaps with nulls and unifies supertypes.
+            # Iterated runs may differ in schema (parameter-driven selects), so concat diagonally.
             return pl.concat(stepped, how="diagonal_relaxed")
 
         engines[slot_name] = FlowDataEngine(

@@ -218,9 +218,7 @@ class SecureFileExplorer:
                     check_cancelled()
                     current_dir, depth = dirs_to_process.pop(0)
 
-                    # Key the visited set on the REAL path: a symlink pointing at an
-                    # ancestor yields a fresh Path every level, so an unresolved key
-                    # never repeats and the cycle is walked once per depth level.
+                    # Key on the real path: through a symlink to an ancestor an unresolved path never repeats.
                     try:
                         dir_key = Path(os.path.realpath(current_dir))
                     except OSError:

@@ -81,17 +81,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Sentinel: the caller did not speak about scd2_config, so leave whatever is stored untouched.
-# ``/refresh`` and the kernel write paths must preserve the flag; only the flow writer is
-# authoritative and always passes an explicit dict (SCD2) or ``None`` (any other mode, which
-# destroyed the history and therefore clears the flag).
 _KEEP_SCD2 = object()
+"""Sentinel: the caller says nothing about ``scd2_config``, so the stored value is kept.
 
-# Sentinel: the caller did not speak about prediction_table_id, so leave the association untouched.
-# An explicit ``None`` clears it; only the update route distinguishes the two.
-# Public, unlike the sibling _KEEP_SCD2: the update route needs it to distinguish
-# "field absent" from an explicit null.
+``/refresh`` and the kernel writes pass it. Only the flow writer decides: a dict for SCD2, or ``None`` for any other
+mode, which destroyed the history and so clears the flag.
+"""
+
 KEEP_PREDICTION = object()
+"""Sentinel: the caller says nothing about ``prediction_table_id``, so the association is kept; ``None`` clears it.
+
+Public, unlike ``_KEEP_SCD2``: the update route needs it to tell an absent field from an explicit null.
+"""
 
 
 def _scd2_columns_missing_from_schema(raw_scd2_config: str | None, schema_list: list[dict[str, str]] | None) -> bool:
@@ -202,7 +203,7 @@ class TableService:
         # Per-request cache of cloud connection availability by namespace_id (resolved once per catalog).
         self._cloud_conn_cache: dict[int | None, bool] = {}
 
-    # ---- Validation + resolution ----------------------------------------- #
+    # Validation + resolution
 
     def validate_table_registration(self, name: str, namespace_id: int | None) -> None:
         """Check that the namespace exists and the table name is unique."""
@@ -310,7 +311,7 @@ class TableService:
         )
         return matches[0]
 
-    # ---- Metadata helpers ------------------------------------------------ #
+    # Metadata helpers
 
     @staticmethod
     def _read_table_metadata(
@@ -488,7 +489,7 @@ class TableService:
         _, reasons = result
         return reasons
 
-    # ---- DTO conversion + bulk enrichment -------------------------------- #
+    # DTO conversion + bulk enrichment
 
     def table_to_out(
         self,
@@ -639,7 +640,7 @@ class TableService:
             )
         return result
 
-    # ---- Materialisation + registration ---------------------------------- #
+    # Materialisation + registration
 
     def _materialize_table_with_worker(
         self,
@@ -647,8 +648,7 @@ class TableService:
         table_name: str | None = None,
         storage: dict | None = None,
     ) -> CatalogMaterializationResult:
-        # Lazy module lookup so monkeypatches on ``catalog.service.trigger_catalog_materialize``
-        # — used by tests — flow through.
+        # Looked up at call time, so tests that patch catalog.service.trigger_catalog_materialize reach it.
         from flowfile_core.catalog import service as _service_module
 
         response = _service_module.trigger_catalog_materialize(
@@ -850,13 +850,10 @@ class TableService:
         if partition_columns is not None:
             table.partition_columns = json.dumps(partition_columns) if partition_columns else None
         if scd2_config is not _KEEP_SCD2:
-            # Explicit ``None`` clears the flag: a plain overwrite/append over an SCD2 table
-            # destroys the version history, so the table stops being SCD2.
+            # An explicit None clears the flag: a plain overwrite or append destroys the SCD2 history.
             table.scd2_config = json.dumps(scd2_config) if scd2_config else None
         elif _scd2_columns_missing_from_schema(table.scd2_config, schema_list):
-            # An unaware caller (kernel write, /refresh) replaced the data with something that no
-            # longer carries the SCD2 system columns. Keeping the flag would leave readers filtering
-            # on columns that do not exist, so the record self-heals into a plain table.
+            # A kernel write or /refresh dropped the SCD2 columns; readers would filter on columns that are gone.
             logger.warning(
                 "Catalog table %s: clearing stale SCD2 tracking: table data no longer carries its SCD2 columns",
                 table.id,
@@ -913,7 +910,7 @@ class TableService:
         _project_sync_tables(owner_id)
         return self.table_to_out(table)
 
-    # ---- Delta maintenance (optimize / vacuum) --------------------------- #
+    # Delta maintenance (optimize / vacuum)
 
     def _require_delta_table_path(self, table: CatalogTable) -> str:
         """Guard: ensure *table* is a physical Delta table, else raise ``ValueError``.
@@ -937,8 +934,7 @@ class TableService:
         if size_bytes is None:
             return
         table.size_bytes = size_bytes
-        # Maintenance must not look like a data change: table-trigger schedules fire on
-        # updated_at, so force the current value into the UPDATE to suppress onupdate.
+        # Not a data change: table-trigger schedules fire on updated_at, so suppress its onupdate.
         flag_modified(table, "updated_at")
         self.repo.update_table(table)
 
@@ -1033,7 +1029,7 @@ class TableService:
             size_bytes=size_bytes,
         )
 
-    # ---- Change tracking (CDC) ------------------------------------------- #
+    # Change tracking (CDC)
 
     def _require_cdc_capable_path(self, table: CatalogTable) -> str:
         """Guard: only a physical, non-SCD2 Delta table can carry a change data feed.
@@ -1156,7 +1152,7 @@ class TableService:
             at_risk.append(self._cursor_out(cursor, head).model_dump(mode="json"))
         return at_risk
 
-    # ---- In-place table edits (catalog edit surface) --------------------- #
+    # In-place table edits (catalog edit surface)
 
     def _require_editable_delta_path(self, table: CatalogTable) -> str:
         """Guard: only physical, non-SCD2 Delta tables accept in-place edits.
@@ -1221,11 +1217,7 @@ class TableService:
         if edited_by:
             commit_metadata = {"flowfile_user": edited_by, "flowfile_operation": "catalog_table_edit"}
 
-        # The worker resolves catalog routes by bare directory name under its managed
-        # catalog dir, so only managed (or cloud) tables may offload: an externally
-        # registered path's basename could collide with a managed table and the edit
-        # would land on the wrong table. External local tables run in-process — their
-        # payloads are UI-sized and this mirrors how local previews read in core.
+        # The worker finds a table by bare directory name, so an external table's basename could hit a managed one.
         offload = uses_worker() and (is_cloud or _is_managed_table_path(data_path))
 
         try:
@@ -1267,9 +1259,7 @@ class TableService:
         except (StaleWriteError, ValueError):
             raise
         except Exception:
-            # A failure mid-sequence (edits apply as up to three commits) may have
-            # landed some of them; refresh the catalog record from disk so it stays
-            # truthful before surfacing the error.
+            # Edits land as up to three commits, so refresh the record from disk before raising.
             try:
                 self.overwrite_table_data(table_id, table_path=data_path, storage_format="delta")
             except Exception:
@@ -1311,8 +1301,7 @@ class TableService:
         is_cloud = _is_cloud_uri(data_path)
         target = resolve_for_namespace(table.namespace_id) if is_cloud else None
 
-        # Same offload gate as apply_table_edits: bare-name resolution is only
-        # unambiguous for managed catalog directories.
+        # The gate of apply_table_edits: bare directory names are unambiguous only for managed tables.
         offload = uses_worker() and (is_cloud or _is_managed_table_path(data_path))
 
         try:
@@ -1342,8 +1331,7 @@ class TableService:
         except (StaleWriteError, ValueError):
             raise
         except Exception:
-            # Mirrors apply_table_edits: a response lost after the rewrite committed
-            # would leave schema_json describing the pre-rewrite schema.
+            # As in apply_table_edits: a response lost after the commit would leave schema_json stale.
             try:
                 self.overwrite_table_data(table_id, table_path=data_path, storage_format="delta")
             except Exception:
@@ -1362,7 +1350,7 @@ class TableService:
         )
         return table_out, result
 
-    # ---- Path resolution ------------------------------------------------- #
+    # Path resolution
 
     def resolve_write_destination(
         self,
@@ -1374,7 +1362,9 @@ class TableService:
         """Resolve the destination (local path or object-storage URI) and Delta write mode.
 
         Forward-only: an existing table writes back to its own stored location; *target*
-        only chooses where a new table is created.
+        only chooses where a new table is created. An SCD2 table overwritten as a plain one gets a fresh
+        directory instead, as it is partitioned on its is-current column and a Delta overwrite cannot drop a
+        partition column. The record moves there at registration; the old local directory is removed after.
         """
         existing = self.repo.get_table_by_name(table_name, namespace_id)
 
@@ -1383,10 +1373,6 @@ class TableService:
                 raise TableExistsError(name=table_name, namespace_id=namespace_id)
 
             if write_mode == "overwrite" and getattr(existing, "scd2_config", None):
-                # Rebuilding an SCD2 table as a normal one needs a fresh Delta log: the old table
-                # is partitioned by its is-current column and Delta cannot drop partition columns
-                # on overwrite. The record is repointed at registration; the old directory is
-                # cleaned up afterwards (local only, mirroring the delete posture for cloud).
                 dir_name = f"{table_name}_{uuid4().hex[:8]}"
                 return existing, join_catalog_uri(target.base, dir_name), write_mode
 
@@ -1422,7 +1408,7 @@ class TableService:
                 return table.file_path
         return None
 
-    # ---- CRUD ------------------------------------------------------------ #
+    # CRUD
 
     def get_table(self, table_id: int, user_id: int | None = None) -> CatalogTableOut:
         """Get a catalog table by ID."""
@@ -1507,8 +1493,7 @@ class TableService:
                 if self.repo.get_table(prediction_table_id) is None:
                     raise TableNotFoundError(table_id=prediction_table_id)
             table.prediction_table_id = prediction_table_id
-        # A metadata edit is not a data change: force the current value into the UPDATE
-        # to suppress onupdate, so table-trigger schedules don't fire on a rename.
+        # Not a data change: suppress updated_at's onupdate, so table-trigger schedules don't fire.
         flag_modified(table, "updated_at")
         table = self.repo.update_table(table)
         _project_sync_tables(table.owner_id)
@@ -1539,7 +1524,7 @@ class TableService:
             except OSError:
                 logger.warning("Failed to delete materialized storage %s", file_path, exc_info=True)
 
-    # ---- Favourites ------------------------------------------------------ #
+    # Favourites
 
     def add_table_favorite(self, user_id: int, table_id: int) -> TableFavorite:
         """Add a table to user's favourites (idempotent)."""

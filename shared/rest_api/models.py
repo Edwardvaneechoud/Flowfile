@@ -121,16 +121,14 @@ class RestApiReadSettings(BaseModel):
     auth: AuthConfig = Field(default_factory=AuthConfig)
     pagination: PaginationConfig = Field(default_factory=PaginationConfig)
 
-    # Dot-path locating the record array in the JSON response (e.g. ``data.items``).
-    # Empty -> use the top-level response (a list, or a single object => one row).
+    # Dot-path to the record array (e.g. data.items); empty takes the whole response, an object as one row.
     record_path: str = ""
 
     # request behaviour
     timeout_seconds: float = 30.0
     max_retries: int = 3
 
-    # When set, cap the read to roughly this many records and a single page so a
-    # quick schema sample can be fetched. Overrides the pagination caps.
+    # Caps the read at about this many records and one page, for a quick sample; wins over pagination.
     sample_size: int | None = None
 
     flowfile_flow_id: int = 1

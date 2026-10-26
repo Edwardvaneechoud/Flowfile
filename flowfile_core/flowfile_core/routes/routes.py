@@ -142,11 +142,8 @@ from shared.storage_config import storage
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
-# A flow's name is a free-form display label. Only the derived on-disk filename
-# must be filesystem-safe, so we slugify the name to this alphabet (the same
-# allowlist enforced by resolve_managed_flow_path) by replacing every run of
-# disallowed characters with a single underscore.
 _MANAGED_FLOW_STEM_DISALLOWED_RE = re.compile(r"[^A-Za-z0-9_-]+")
+"""Characters a managed flow filename may not hold (``resolve_managed_flow_path``'s allowlist), slugged to ``_``."""
 
 
 def get_flow_or_404(flow_id: int | None, current_user, detail: str = "could not find the flow"):
@@ -246,8 +243,6 @@ async def get_directory_contents(
         A list of `FileInfo` objects representing the directory's contents.
     """
 
-    # In Electron mode, allow browsing the entire filesystem (no sandbox).
-    # In other modes, sandbox to the user data directory.
     sandbox_root = None if is_electron_mode() else storage.user_data_directory
     try:
         directory_explorer = SecureFileExplorer(directory, sandbox_root)
@@ -435,19 +430,14 @@ def _resolve_run_identity(flow) -> tuple[int | None, str, str | None]:
 
 def _open_run_record(flow, user_id: int | None, node_ids: set[int] | None) -> tuple:
     """The pre-work of a tracked run: registration, the snapshot and the run record (phase 1)."""
-    # Resolve source_registration_id before execution so kernel nodes
-    # (e.g. publish_global) can reference the catalog registration.
+    # Before execution, so kernel nodes (e.g. publish_global) can reference the registration.
     resolve_source_registration_id(flow)
-    # First run promotes an unregistered (ephemeral scratch) flow into the catalog so it
-    # gains a source_registration_id. This intentionally re-registers any unregistered flow;
-    # making a deliberate catalog deletion durable would need a tombstone (separate follow-up).
+    # A first run registers any unregistered flow, also one whose registration was deleted.
     if user_id is not None and getattr(flow.flow_settings, "source_registration_id", None) is None:
         reg_path = flow.flow_settings.path or flow.flow_settings.save_location
         if reg_path:
             try:
-                # Only materialise a file that doesn't exist yet (ephemeral flows).
-                # An opened file must never be rewritten as a side effect of running —
-                # that would silently commit unsaved canvas edits to disk.
+                # Never rewrite an opened file: a run must not commit unsaved canvas edits to disk.
                 if not os.path.exists(reg_path):
                     flow.save_flow(flow_path=reg_path)
                 auto_register_flow(reg_path, flow.flow_settings.name, user_id)
@@ -830,8 +820,7 @@ def update_db_connection(
     db_connection = get_database_connection(db, input_connection.connection_name, current_user.id)
     if db_connection is None:
         raise HTTPException(404, "Database connection not found")
-    # Only gate a CHANGED type: legacy rows may hold pre-registry values (e.g. redshift)
-    # and must stay updatable (password rotation) as long as the type is untouched.
+    # Only a changed type is checked, so legacy rows (e.g. redshift) stay updatable.
     if input_connection.database_type.lower() != (db_connection.database_type or "").lower():
         _require_known_database_type(input_connection.database_type)
     if authorize_connection_mutation(db, current_user, "database_connection", db_connection):
@@ -1458,8 +1447,7 @@ def create_flow(
         raise HTTPException(404, "Namespace not found")
     _require_flow_save_permitted(flow_path, namespace_id, current_user)
     if namespace_id is not None and flow_path is not None:
-        # Pre-validate before add_flow writes any YAML so a rejected create
-        # leaves no orphaned file or session behind.
+        # Before add_flow writes YAML, so a rejected create leaves no file or session behind.
         reg_name = name or Path(flow_path).stem
         existing_by_name = find_registration_by_name(reg_name, namespace_id)
         if existing_by_name is not None and existing_by_name.flow_path != flow_path:
@@ -1562,20 +1550,15 @@ def rename_flow(body: RenameFlowInput, current_user=Depends(get_current_active_u
                 pass
     # Only after catalog success, so a 403/409 leaves the session name untouched.
     flow.flow_settings.name = name
-    # __name__ is what gets serialised as ``flowfile_name``; without this the next
-    # same-path save would write the stale name back over the rename.
+    # __name__ is serialised as flowfile_name; a stale one would undo the rename on the next save.
     flow.__name__ = name
     if reg_id is None:
         _persist_rename_of_unregistered_flow(flow)
     response = _with_display_name(flow_file_handler.get_flow_info_with_runtime(body.flow_id))
     if renamed_registration:
-        # Prefer the write we just made: a by-path lookup misses when the
-        # registration's flow_path has drifted from the session's path.
+        # A by-path lookup misses when the registration's flow_path drifted from the session's.
         response.display_name = name
     return response
-
-
-# ==================== History/Undo-Redo Endpoints ====================
 
 
 def _history_step(flow_id: int, current_user, step: Callable[[Any], UndoRedoResult]) -> UndoRedoResult:
@@ -1671,9 +1654,6 @@ def clear_history(flow_id: int, current_user=Depends(get_current_active_user)):
     return {"message": "History cleared successfully"}
 
 
-# ==================== End History Endpoints ====================
-
-
 def _format_validation_error(error: ValidationError) -> str:
     """Turn a Pydantic ValidationError into a short, user-facing message."""
     messages = []
@@ -1699,9 +1679,7 @@ def _validate_catalog_writer_target(node: input_schema.NodeCatalogWriter, curren
         (current.table_name, current.namespace_id, current.namespace_full_name)
         == (settings.table_name, settings.namespace_id, settings.namespace_full_name)
     ):
-        # Unchanged target (the drawer re-POSTs on close): preserve the original
-        # author's id so a viewer merely inspecting the node can't re-stamp the
-        # run-time executing principal and break the owner's later runs.
+        # Keep the author's id: it is the run's executing principal, which a viewer must not re-stamp.
         prior_user_id = getattr(existing_settings, "user_id", None)
         if prior_user_id is not None:
             node.user_id = prior_user_id
@@ -1912,8 +1890,7 @@ def fetch_rest_api_sample(
 
     flow = get_flow_or_404(node.flow_id, current_user)
 
-    # Resolve the credential to an encrypted token (stored secret by name, or an
-    # inline plaintext); the worker decrypts it. Never persist inline plaintext.
+    # The worker decrypts the token; clearing the secret keeps inline plaintext from being persisted.
     auth = node.rest_api_settings.auth
     secret_encrypted = resolve_auth_secret_encrypted(auth, node.user_id)
     auth.secret = None
@@ -1978,10 +1955,7 @@ def get_node_list() -> list[schemas.NodeTemplate]:
     """Retrieves the list of all available node types and their templates."""
     from flowfile_core.flowfile.community_nodes.receipts import community_icon_overrides_by_node_key
 
-    # Installed community icons live namespaced on disk (<id>__icon.png) while the
-    # template keeps the node's original icon name; point the palette/canvas image at
-    # the on-disk file so it loads (mirrors _node_info_from_entry for the catalog list).
-    # model_copy, not in-place: the same NodeTemplate object is shared with node_dict.
+    # Community icons are namespaced on disk; copy, since node_dict shares these templates.
     overrides = community_icon_overrides_by_node_key()
     if not overrides:
         return nodes_list
@@ -2028,8 +2002,7 @@ def preview_dynamic_rename(request: DynamicRenamePreviewRequest) -> DynamicRenam
     except ValueError as exc:
         return DynamicRenamePreviewResponse(rename_map={}, error=str(exc))
     except Exception as exc:  # noqa: BLE001 - formula parse errors bubble up as various types
-        # Log the full traceback so real bugs don't get silently reported as
-        # "Formula error" to the user.
+        # Log the traceback so a real bug is not reported only as a "Formula error".
         logger.exception("Unexpected error while resolving dynamic rename preview")
         return DynamicRenamePreviewResponse(rename_map={}, error=f"Formula error: {exc}")
     return DynamicRenamePreviewResponse(rename_map=rename_map)
@@ -2385,8 +2358,7 @@ def _save_flow_impl(
 
     is_new_path = bool(normalized_current) and flow_path != normalized_current
 
-    # Refuse before any YAML write so a rejected save leaves no orphan file and
-    # never overwrites another user's registered flow file.
+    # Before any YAML write: a refused save leaves no orphan and overwrites no other user's flow.
     _require_flow_save_permitted(flow_path, namespace_id, current_user)
 
     if is_new_path:
@@ -2489,29 +2461,21 @@ def save_flow_to_catalog(
     each other. Returns the (possibly new) flow id so the frontend can switch to it.
     """
     display_name = flow_name.strip()
-    # Strip a managed extension the user may have typed so the display name and
-    # the on-disk filename stay in sync (``.yaml`` is appended below).
+    # Drop a typed extension so the display name and filename agree (``.yaml`` is added below).
     display_name = re.sub(r"\.(ya?ml|json)$", "", display_name, flags=re.IGNORECASE).strip()
     if not display_name:
         raise HTTPException(422, "flow_name must not be empty")
-    # The name is a free-form DISPLAY label (spaces, mixed case and punctuation
-    # are all fine) — it is stored as the registration name and used for the
-    # collision check below. Only the derived on-disk filename must be safe, so
-    # slugify a separate stem and prefix it with the flow id; path separators and
-    # ``..`` cannot survive the slug, and resolve_managed_flow_path re-validates
-    # the result against the same allowlist as a defense-in-depth backstop.
+    # Only the filename is slugged; the free-form display name is what gets registered.
     safe_stem = _MANAGED_FLOW_STEM_DISALLOWED_RE.sub("_", display_name).strip("_-") or "flow"
 
     flow = get_flow_or_404(flow_id, current_user, detail="Flow not found")
 
-    # Refuse before any side effect (ghost cleanup, YAML write) when the caller
-    # may neither write the target namespace nor manage a flow already at the path.
+    # Refuse before any side effect (ghost cleanup, YAML write).
     _require_flow_save_permitted(flow_path=None, namespace_id=namespace_id, current_user=current_user)
 
     source_registration_id = getattr(flow.flow_settings, "source_registration_id", None)
 
-    # Pre-save name-collision check: reject BEFORE writing any YAML so a failed save doesn't leave orphaned files
-    # on disk.
+    # Reject a name collision before any YAML write, so a failed save leaves no orphaned file.
     existing_by_name = find_registration_by_name(display_name, namespace_id)
     if existing_by_name is not None and existing_by_name.id != source_registration_id:
         name_conflict = HTTPException(
@@ -2523,14 +2487,10 @@ def save_flow_to_catalog(
         )
         if os.path.exists(existing_by_name.flow_path):
             raise name_conflict
-        # Ghost registration: its backing file was deleted (e.g. by an older
-        # Save-As). Reclaim the name by removing the dead row instead of blocking
-        # the user with a 409 they can't act on. Best-effort — fall back to the
-        # conflict if it can't be cleanly removed (e.g. it still has artifacts).
+        # A ghost registration (its file is gone): reclaim the name, else fall back to the 409.
         try:
             with get_db_context() as db:
-                # Resolver-injected so delete_flow's manage gate applies: only the
-                # ghost's owner (or admin/manage-grantee) may reclaim the name.
+                # The resolver lets only the ghost's owner, an admin or a manage-grantee reclaim it.
                 CatalogService(
                     SQLAlchemyCatalogRepository(db),
                     access=AccessResolver(db, current_user),
@@ -2549,8 +2509,6 @@ def save_flow_to_catalog(
     normalized_current = validate_path_under_cwd(current_path) if current_path else None
     is_new_path = bool(normalized_current) and flow_path != normalized_current
 
-    # Overwrite guard: if the resolved target file is already registered to a
-    # different flow, or exists on disk without any registration, refuse.
     existing_reg = find_registration_by_path(flow_path)
     if existing_reg is not None and existing_reg.id != source_registration_id:
         raise HTTPException(
@@ -2565,10 +2523,7 @@ def save_flow_to_catalog(
 
     user_id = current_user.id if current_user else None
 
-    # Always register under the user-typed ``display_name`` rather than the
-    # filename (``{flow_id}_{safe_stem}``) so the catalog picker shows exactly
-    # what the user typed — and so the name-collision check above compares apples
-    # to apples.
+    # Register the typed name, not the filename: the picker shows it and the collision check compares it.
     def _register(fp: str, _n: str, uid: int | None) -> None:
         register_flow_in_namespace(fp, display_name, uid, namespace_id, requesting_user=current_user)
 
@@ -2633,8 +2588,7 @@ def overwrite_flow_in_catalog(
     if target is None:
         raise HTTPException(404, "Target catalog registration not found")
 
-    # Overwrite is destructive — gate strictly on ownership even though
-    # ``update_flow`` itself does not.
+    # Overwrite is destructive: require ownership, which update_flow itself does not check.
     if user_id is None or user_id != target.owner_id:
         raise HTTPException(
             status_code=403,
@@ -2647,8 +2601,6 @@ def overwrite_flow_in_catalog(
     current_path = flow.flow_settings.path or flow.flow_settings.save_location
     normalized_current = validate_path_under_cwd(current_path) if current_path else None
 
-    # Same-path case: current flow already lives at the target path, so just
-    # re-save in place and keep the registration pointer fresh.
     if normalized_current == target_path:
         resolve_source_registration_id(flow)
         flow.save_flow(flow_path=target_path)
@@ -2663,10 +2615,7 @@ def overwrite_flow_in_catalog(
         on_resolve_registration=resolve_source_registration_id,
     )
 
-    # If the source flow lived inside the managed dir on a different file,
-    # unlink the abandoned file so we don't leak orphaned YAML.  We only clean
-    # up files under the managed root; user-owned paths elsewhere are left
-    # alone since we don't want to silently delete files the user manages.
+    # Unlink the abandoned managed file; a file the user keeps outside the managed root stays.
     if normalized_current and normalized_current != target_path and normalized_current.startswith(managed_root):
         try:
             os.unlink(normalized_current)

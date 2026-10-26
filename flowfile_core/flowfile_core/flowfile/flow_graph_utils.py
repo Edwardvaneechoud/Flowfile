@@ -277,10 +277,7 @@ def _add_node_to_graph(
             rebuilt from settings alone
     """
     if node_type == "polars_lazy_frame" and source_node is not None:
-        # No add_polars_lazy_frame(settings) exists — the node's function closes
-        # over an in-memory LazyFrame that settings can't carry. Recreate it from
-        # the source node's frame, or the merged node stays an unrunnable
-        # promise whose result is None.
+        # Settings cannot carry the in-memory LazyFrame, so rebuild the node from the source node's frame.
         result = source_node.get_resulting_data()
         if result is not None:
             frame = result.data_frame

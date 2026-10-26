@@ -103,8 +103,7 @@ async def shutdown_handler(app: FastAPI):
 
     print("Starting core application...")
 
-    # Mint the kernel<->core token before anything can spawn a CLI child: an
-    # unstamped env makes the child mint its own and 401 on kernel callbacks.
+    # Mint the internal token before any CLI child spawns, else it mints its own and 401s on callbacks.
     try:
         from flowfile_core.auth.jwt import get_internal_token
 
@@ -112,8 +111,7 @@ async def shutdown_handler(app: FastAPI):
     except ValueError as exc:
         logging.getLogger(__name__).warning("Internal service token unavailable: %s", exc)
 
-    # Runs whose process died with the last app instance would otherwise stay "active"
-    # forever and block every relaunch. Best-effort; must never fail startup.
+    # Runs whose process died would stay "active" and block every relaunch; must never fail startup.
     try:
         reaped = reap_orphaned_runs()
         if reaped:
@@ -137,8 +135,7 @@ async def shutdown_handler(app: FastAPI):
         set_scheduler(scheduler)
         print("Flow scheduler started")
 
-    # Warm the kernel manager off the request path: its first construction makes
-    # slow Docker daemon calls that would otherwise land on the first /kernels/.
+    # Off the request path: the kernel manager's first construction makes slow Docker daemon calls.
     if os.environ.get("FLOWFILE_KERNEL_WARMUP", "1").lower() in ("true", "1", "yes"):
         threading.Thread(target=_warm_kernel_manager, name="kernel-manager-warmup", daemon=True).start()
 
@@ -209,11 +206,7 @@ async def request_validation_without_input(request: Request, exc: RequestValidat
     return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
 
 
-# The Tauri 2 desktop shell loads the renderer from a custom protocol — the
-# exact origin differs per OS (`tauri://localhost` on macOS/iOS, `http://tauri.localhost`
-# on Linux, `https://tauri.localhost` on Windows/Android). A regex covers all
-# of them without us having to enumerate. The explicit list below stays for
-# the web/Docker/dev flows that hit the backend over plain HTTP.
+# Web, Docker and dev origins; the regex below matches the Tauri shell's per-OS origins.
 origins = [
     "http://localhost",
     "http://localhost:5173",
@@ -272,8 +265,7 @@ app.include_router(notebook_router, prefix="/notebook", tags=["notebook"])
 install_notebook_runner()
 app.include_router(telemetry_router)
 app.include_router(ai_router, prefix="/ai", tags=["ai"])
-# Feature-flag admin endpoints. Mounted on /system (NOT /ai or /lsp) so admins can flip
-# a gate from the UI without first satisfying the gate they're trying to flip.
+# On /system, not /ai or /lsp, so an admin can flip a feature gate without passing it first.
 app.include_router(ai_admin_router, prefix="/system", tags=["system"])
 app.include_router(lsp_admin_router, prefix="/system", tags=["system"])
 app.include_router(system_worker_router, prefix="/system", tags=["system"])

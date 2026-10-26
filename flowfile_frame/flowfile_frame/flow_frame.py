@@ -540,8 +540,7 @@ class FlowFrame:
             instance._deferred = deferred
             return instance
         elif flow_graph is not None and not isinstance(data, pl.LazyFrame):
-            # create_from_any_type creates a new source node which always emits
-            # output-0; no need to forward output_handle.
+            # create_from_any_type adds a source node, which always emits output-0.
             instance = cls.create_from_any_type(
                 data=data,
                 schema=schema,
@@ -670,8 +669,7 @@ class FlowFrame:
         """
         deferred = self._deferred if deferred is None else deferred
         self._add_connection(self.node_id, new_node_id, output_handle=getattr(self, "output_handle", "output-0"))
-        # If a precomputed result was provided (e.g. serialization fallback),
-        # inject it into the node AFTER the connection is added (which resets the node).
+        # Inject a precomputed result only after the connection, since adding one resets the node.
         if precomputed_result is not None:
             from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 
@@ -2960,8 +2958,7 @@ class FlowFrame:
         try:
             yield self
         finally:
-            # Group only nodes that are new in this block AND not already grouped
-            # (so an inner `with df.group(...)` keeps its own membership).
+            # Skip nodes already grouped, so an inner `with df.group(...)` keeps its own membership.
             new_node_ids = [
                 node_id
                 for node_id, node in self.flow_graph._node_db.items()
@@ -3822,11 +3819,7 @@ class FlowFrame:
 
         new_node_id = generate_node_id()
 
-        # Build a stable, deduplicated view of upstream sources. The graph wires
-        # each (source_node, input_slot) pair at most once (add_connection is
-        # idempotent), so when the same FlowFrame appears in `all_frames` more
-        # than once we must reuse the same input variable rather than fan out
-        # to phantom input_df_N slots that will not be bound at execute-time.
+        # The graph wires each source once, so a repeated frame must reuse its input variable.
         unique_node_ids: list[int] = []
         position_by_node_id: dict[int, int] = {}
         handle_by_node_id: dict[int, str] = {}
@@ -3842,8 +3835,7 @@ class FlowFrame:
                 )
         has_duplicate_sources = len(unique_node_ids) < len(all_frames)
 
-        # NodeUnion can't express "include this input twice"; fall back to the
-        # polars-code path (which can, positionally) when duplicates are present.
+        # NodeUnion cannot read an input twice; the polars-code path can, positionally.
         use_native = how == "diagonal_relaxed" and parallel and not rechunk and not has_duplicate_sources
         if use_native:
             union_input = transform_schema.UnionInput(
@@ -3871,9 +3863,7 @@ class FlowFrame:
                 seen_sources.add(f.node_id)
                 f._add_connection(f.node_id, new_node_id, "main", output_handle=f.output_handle)
         else:
-            # Match execute_polars_code's binding convention: a single unique
-            # source binds as `input_df` (singular); two or more bind as
-            # `input_df_1`, `input_df_2`, ... in upstream-discovery order.
+            # execute_polars_code binds one source as `input_df`, several as `input_df_1`, `input_df_2`, ...
             if len(unique_node_ids) == 1:
                 input_vars = ["input_df"] * len(all_frames)
             else:
@@ -4071,8 +4061,7 @@ class FlowFrame:
                 formula_entries = [(e.column_name, e._ff_repr) for e in actual_exprs_to_process]
                 if len(formula_entries) == 1:
                     return self._with_flowfile_formula(formula_entries[0][1], formula_entries[0][0], description)
-                # A Formula node evaluates sequentially; only independent expressions mean the
-                # same thing there as they do in a single parallel Polars with_columns call.
+                # A Formula node evaluates in sequence, so only independent expressions keep their meaning.
                 resolved_entries = [(name, resolve_expression_parameters(f, params)) for name, f in formula_entries]
                 if entries_are_independent(resolved_entries):
                     return self._with_flowfile_formulas(
@@ -4127,12 +4116,7 @@ class FlowFrame:
             if output_column_datatypes is not None and len(output_column_datatypes) != len(flowfile_formulas):
                 raise ValueError("Length of output_column_datatypes must match the number of formulas")
 
-            # When the user did not request explicit output datatypes, try to
-            # upgrade flowfile formulas to native polars/flowframe expressions
-            # for a more efficient node type. Falls back transparently when
-            # the upstream translator can't handle a given formula.
-            # Only independent formulas may take the translated route: it re-enters
-            # with_columns, whose expression path assumes parallel semantics.
+            # Try native expressions for independent formulas only: with_columns assumes parallel semantics.
             independent = entries_are_independent(list(zip(output_column_names, flowfile_formulas, strict=False)))
             if output_column_datatypes is None and independent:
                 translated = _try_translate_flowfile_formulas(flowfile_formulas, output_column_names)

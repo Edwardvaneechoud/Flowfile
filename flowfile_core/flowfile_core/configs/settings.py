@@ -27,9 +27,7 @@ FEATURE_FLAG_AI: MutableBool = MutableBool(
     os.environ.get("FEATURE_FLAG_AI", "1").strip().lower() in ("true", "1", "yes", "on")
 )
 
-# Gates the notebook code-intelligence (Jedi) bridge to the kernel. Mutable so the admin
-# endpoint can flip it live; when off, the `/lsp/*` surfaces degrade to empty 200 (never 503)
-# so the editor silently falls back to its client-side completion sources.
+# The kernel's Jedi bridge; off, `/lsp/*` answers an empty 200 so the editor falls back silently.
 FLOWFILE_LSP_ENABLED: MutableBool = MutableBool(
     os.environ.get("FLOWFILE_LSP_ENABLED", "1").strip().lower() in ("true", "1", "yes", "on")
 )
@@ -44,9 +42,7 @@ FLOWFILE_AI_LOG_PROMPTS_SCRUB: MutableBool = MutableBool(
     os.environ.get("FLOWFILE_AI_LOG_PROMPTS_SCRUB", "0").strip().lower() in ("true", "1", "yes", "on")
 )
 
-# Ops opt-in for the `/project` git-tracking router in docker mode. The router is meant for
-# single-user/package use; in docker it 404s by default unless an operator deliberately enables
-# multi-tenant projects (the per-owner confinement in project/service.py then keeps tenants isolated).
+# Docker opt-in for the `/project` router, which 404s there by default; projects stay per owner.
 FLOWFILE_ENABLE_PROJECTS: MutableBool = MutableBool(
     os.environ.get("FLOWFILE_ENABLE_PROJECTS", "0").strip().lower() in ("true", "1", "yes", "on")
 )
@@ -160,9 +156,7 @@ def get_community_cache_ttl() -> int:
         return 3600
 
 
-# OAuth App client id for GitHub device-flow publishing ("Flowfile Community
-# Publishing", public by design; no secret exists). Empty ⇒ device flow disabled
-# (PAT paste + bundle download still work).
+# The "Flowfile Community Publishing" OAuth App's client id: public by design, no secret exists.
 COMMUNITY_GITHUB_CLIENT_ID_DEFAULT = "Ov23liiN1Z7z70Reg0zI"
 
 
@@ -247,8 +241,7 @@ WORKER_URL = config("FLOWFILE_WORKER_URL", cast=str, default=get_default_worker_
 WORKER_ADDRESS_CONFIGURED = bool(config("FLOWFILE_WORKER_URL", cast=str, default="")) or bool(os.getenv("WORKER_HOST"))
 TEMP_DIR = storage.temp_directory
 
-# FLOWFILE_MODE: Determines the runtime environment
-# Possible values: "electron" (desktop app), "package" (Python package), "docker" (container)
+# "electron" (desktop app), "package" (Python package) or "docker" (container).
 FLOWFILE_MODE = os.getenv("FLOWFILE_MODE", "electron")
 
 

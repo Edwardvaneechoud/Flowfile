@@ -149,12 +149,7 @@ from shared.storage_config import storage
 router = APIRouter(
     prefix="/catalog",
     tags=["catalog"],
-    # Router-level auth accepts either JWT or the kernel's ``X-Internal-Token``.
-    # Endpoints that should remain JWT-only keep ``current_user=Depends(get_current_active_user)``
-    # which re-checks at the endpoint level and rejects internal tokens. Endpoints that
-    # the kernel needs to call (table resolve / register / update / fetch) use
-    # ``get_user_or_internal_service`` for their ``current_user`` so the internal
-    # token is accepted there.
+    # JWT or the kernel's X-Internal-Token; a JWT-only endpoint re-checks with get_current_active_user.
     dependencies=[Depends(get_user_or_internal_service)],
 )
 
@@ -626,9 +621,7 @@ def open_run_snapshot(
     """Write the run's flow snapshot to a temp file and import it into the designer."""
     snapshot_data = service.get_run_snapshot(run_id)
 
-    # Parse snapshot and assign a new unique flow_id so the imported
-    # snapshot opens as a separate tab instead of overwriting an
-    # already-open flow that shares the same original ID.
+    # A new flow_id, so the snapshot opens in its own tab instead of over the open flow with its id.
     try:
         parsed = json.loads(snapshot_data)
         suffix = ".json"

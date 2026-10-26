@@ -57,8 +57,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Explicit-clear sentinel: distinguishes "leave source_table_versions untouched"
-# (argument omitted) from "clear it" (None passed).
+# Sentinel default: omitted leaves source_table_versions untouched, None clears it.
 _UNSET: str = "\x00unset\x00"
 
 _ABS_PATH_RE = re.compile(r"(?:/[\w.\-]+){2,}")
@@ -100,8 +99,6 @@ class VirtualTableService:
         if self._sql is None:
             raise RuntimeError("VirtualTableService.bind(sql=...) was not called")
         return self._sql
-
-    # ---- Virtual flow table CRUD ---------------------------------------- #
 
     def create_virtual_flow_table(
         self,
@@ -192,8 +189,6 @@ class VirtualTableService:
         self._schedules.safely_fire_table_trigger_schedules(table.id, table.updated_at)
 
         return self._tables.table_to_out(table)
-
-    # ---- Query-based virtual table CRUD --------------------------------- #
 
     def create_query_virtual_table(
         self,
@@ -292,8 +287,6 @@ class VirtualTableService:
 
         return self._tables.table_to_out(table)
 
-    # ---- Resolution ------------------------------------------------------ #
-
     def _table_query_aliases(self, table: CatalogTable, bare_unique: bool, path_cache: dict) -> set[str]:
         """SQL-registerable names for a table: fully-qualified ``catalog.schema.table``,
         the 2-part ``schema.table``, and the bare name when globally unique. ``path_cache``
@@ -332,8 +325,7 @@ class VirtualTableService:
 
         from shared.sql_validation import validate_sql_query
 
-        # Re-validate the stored query at resolve time: a query persisted before
-        # validation existed (or written straight to the DB) must not run unchecked.
+        # A query stored before validation existed, or written straight to the DB, must not run unchecked.
         validate_sql_query(table.sql_query)
 
         all_tables = [t for t in self.repo.list_tables() if t.id != table_id]
@@ -483,8 +475,7 @@ class VirtualTableService:
 
         if selected_node is None:
             raise ValueError(f"No catalog_writer node for table '{table.name}' in flow '{producer.name}'")
-        # Running the writer directly bypasses the producer flow's run loop, so its own
-        # ${name} refs and those of the upstream nodes it pulls are still unresolved.
+        # Outside the producer's run loop, the writer's and its upstream nodes' ${name} refs are unresolved.
         upstream = [flow.get_node(i) for i in flow._get_upstream_node_ids(selected_node.node_id)]
         producer_context = ExecutionContext.for_flow(
             flow.flow_settings.model_copy(update={"execution_location": run_location})
@@ -557,8 +548,6 @@ class VirtualTableService:
             row_count=result["row_count"],
             mtime=result["mtime"],
         )
-
-    # ---- Discovery ------------------------------------------------------- #
 
     def resolve_all_delta_tables(self) -> dict[str, str]:
         """Return a mapping of logical table name -> directory name for LOCAL Delta catalog tables.

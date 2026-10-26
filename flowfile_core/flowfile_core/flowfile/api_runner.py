@@ -77,13 +77,12 @@ def _flow_run_lock(flow_id: int) -> threading.Lock:
         return lock
 
 
-# Characters and tokens that let a raw query value break out of a Polars string
-# literal or splice in new code once it is regex-substituted into node settings
-# and, for a ``polars_code`` node, ``exec()``'d. Quotes/parentheses are what an
-# attacker needs to escape ``'${param}'`` and reach ``pl.read_csv``/DB calls or
-# rewrite a filter predicate; backslash enables escapes, ``;``/newlines splice new
-# statements, and ``${`` would introduce a fresh substitution token.
 _UNSAFE_STRING_CHARS = frozenset("'\"()\\;\r\n")
+"""Characters that let a query value escape a string literal once substituted into settings or exec'd code.
+
+Quotes and parentheses escape ``'${param}'``, a backslash starts an escape, and ``;`` or a newline splices a
+statement; ``_reject_unsafe_string`` refuses ``${`` separately.
+"""
 
 
 def _reject_unsafe_string(spec: ApiParamSpec, value: str) -> str:

@@ -102,8 +102,7 @@ class TablePreviewService:
         Honours the core-never-collects rule — the plan is shipped to the
         worker, written as IPC, then read back via ``read_top_n``.
         """
-        # Post-resolution read: resolution may have re-stamped source_table_versions,
-        # and *table* was fetched before it ran.
+        # After resolution, which may have re-stamped source_table_versions since *table* was fetched.
         versions_hash = self._virtual_tables.fresh_versions_hash(table.id)
         worker_url = registry.worker_url()
         try:

@@ -172,9 +172,7 @@ def calculate_join_schema(
       a `_right` suffix via `auto_rename`.
     """
     if j_input.input.how in ("semi", "anti"):
-        # Semi/anti joins pass the full left input through unchanged and drop the
-        # right side (mirrors FlowDataEngine.join), so the output schema is exactly
-        # the left schema.
+        # Semi/anti joins keep the left input whole and drop the right, as FlowDataEngine.join does.
         return [
             FlowfileColumn.from_input(col.column_name, col.data_type, example_values=col.example_values)
             for col in left_schema

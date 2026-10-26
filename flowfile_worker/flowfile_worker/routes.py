@@ -503,8 +503,7 @@ def create_table(
     """
     logger.info(f"Creating table of type: {file_type}")
     if received_table.scan_mode == "directory":
-        # Mirrors core's create_from_path_worker guard: no worker reader can execute a glob,
-        # so refuse here instead of stat'ing a pattern as if it were a file.
+        # As in core's create_from_path_worker: no worker reader can run a glob, so refuse it here.
         raise HTTPException(status_code=422, detail="Directory scan mode is not supported by the worker file reader.")
     try:
         task_id = str(uuid.uuid4())
@@ -1042,8 +1041,7 @@ def validate_result(task_id: str) -> bool | None:
     logger.debug(f"Validating result for task: {task_id}")
     status = status_dict.get(task_id)
     if status.status == "Completed" and status.result_type == "polars":
-        # Not pl.scan_ipc: scanning is lazy and succeeds on a path that no longer
-        # exists, which made this probe - and core's results_exists - always say yes.
+        # Not pl.scan_ipc: a lazy scan succeeds on a path that no longer exists.
         if os.path.exists(status.file_ref):
             return True
         logger.error(f"Validation failed for task {task_id}: result file is gone ({status.file_ref})")

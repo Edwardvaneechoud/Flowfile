@@ -31,11 +31,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import
 # How often the receive loop wakes up to check for cancellation/inactivity.
 _WS_RECV_POLL_SECONDS = 2.0
 
-# Abort the receive when the worker has sent NOTHING for this long. The worker
-# heartbeats a progress frame at least every ~10s while a task is alive, so
-# prolonged silence means the worker parent is wedged or gone (protocol-level
-# pings don't catch an app-level wedge). 0 disables. Mirrors the REST path's
-# FLOWFILE_WORKER_POLL_TIMEOUT.
+# The worker heartbeats every ~10s during a task, so a longer silence means it is wedged; 0 disables.
 _WS_INACTIVITY_TIMEOUT = float(os.getenv("FLOWFILE_WORKER_WS_TIMEOUT", "300"))
 
 
@@ -82,11 +78,6 @@ def _get_ws_url(worker_url: str) -> str:
     return worker_url.replace("http://", "ws://").replace("https://", "wss://")
 
 
-# ---------------------------------------------------------------------------
-# Message building
-# ---------------------------------------------------------------------------
-
-
 def _build_metadata(
     task_id: str,
     operation_type: str,
@@ -104,11 +95,6 @@ def _build_metadata(
     if kwargs:
         metadata["kwargs"] = kwargs
     return metadata
-
-
-# ---------------------------------------------------------------------------
-# Message receiving
-# ---------------------------------------------------------------------------
 
 
 def _handle_complete_message(data: dict, task_id: str) -> Status:
@@ -166,11 +152,7 @@ def _receive_raw_result(
                 ) from None
             continue
         except ConnectionClosed:
-            # cancel() sets the stop event and then closes the socket, which
-            # aborts a blocked recv with ConnectionClosed (never TimeoutError).
-            # Only map to an interrupt when a cancel is actually in flight — a
-            # worker-initiated close with no cancel must keep its original
-            # exception so callers preserve the degrade-gracefully semantics.
+            # cancel() closes the socket under a blocked recv; a close without a cancel keeps its exception.
             if should_abort is not None and should_abort():
                 raise WorkerStreamInterrupted(f"Canceled while waiting for worker result (task {task_id})") from None
             raise

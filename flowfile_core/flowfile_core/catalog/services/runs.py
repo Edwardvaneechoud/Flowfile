@@ -183,8 +183,7 @@ class FlowRunService:
         if number_of_nodes is not None and number_of_nodes > 0:
             run.number_of_nodes = number_of_nodes
         if run.started_at:
-            # SQLite stores naive datetimes, so started_at may lack tzinfo —
-            # normalise both sides for the duration calc.
+            # SQLite stores naive datetimes, so compare both sides without tzinfo.
             started_utc = run.started_at.replace(tzinfo=None)
             now_utc = now.replace(tzinfo=None)
             run.duration_seconds = (now_utc - started_utc).total_seconds()

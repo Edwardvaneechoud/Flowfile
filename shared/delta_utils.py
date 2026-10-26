@@ -23,11 +23,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Sentinel cache key for a virtual table with no recorded source-version
-# fingerprint. The worker must recognise it without importing core: a
-# "noversions" key can never prove freshness, so caches keyed on it must
-# always rebuild instead of serving the first snapshot forever.
 NO_VERSIONS_HASH = "noversions"
+"""Cache key of a virtual table with no source-version fingerprint, which proves no freshness.
+
+Caches keyed on it always rebuild. It lives here so the worker recognises it without importing core.
+"""
 
 
 # JSON serialisation helpers
@@ -705,8 +705,7 @@ def apply_delta_edits(
             f"({key_dupes} duplicated key groups); pick different key columns or add a record id column"
         )
 
-    # Validate and build every frame before the first commit, so a rejected
-    # payload never leaves a partially-applied sequence behind.
+    # Validate and build every frame before the first commit, so a rejected payload applies nothing.
     source: pl.DataFrame | None = None
     if upsert_rows:
         if not upsert_columns:
@@ -734,10 +733,7 @@ def apply_delta_edits(
         if latest != current_version:
             raise DeltaEditStaleError(expected=expected_version, current=latest)
 
-    # Schema evolution for declared new columns the upsert payload does not carry:
-    # merge_into_delta only evolves columns present in its source frame, so a
-    # column added without any values yet needs an explicit 0-row append.
-    # Keyed off the shipped frame — a declared column with no rows never reaches Delta.
+    # merge_into_delta evolves only its source's columns, so a declared column it lacks needs a 0-row append.
     covered = set(source.columns) if source is not None else set()
     uncovered = [spec for spec in new_columns if spec["name"] not in covered]
     if uncovered:
@@ -811,8 +807,7 @@ def add_delta_row_id_column(
 
     df = pl_.scan_delta(table_path, storage_options=storage_options).collect()
     df = df.with_row_index(column_name, offset=1).with_columns(pl_.col(column_name).cast(pl_.Int64))
-    # Re-check right before the overwrite: a commit that landed while we collected
-    # would otherwise be silently erased by the full rewrite.
+    # Re-check before the overwrite: the full rewrite would erase a commit that landed meanwhile.
     latest = DeltaTable(table_path, without_files=True, storage_options=storage_options).version()
     if latest != current_version:
         raise DeltaEditStaleError(expected=current_version, current=latest)
@@ -1102,9 +1097,7 @@ def _scd2_guard_input(
             f"SCD2 system column name(s) {collide} collide with input columns. "
             f"Rename the input column(s) or change the SCD2 column names in the node settings."
         )
-    # The whole prefix is reserved, not just the three staging columns: the classify join also
-    # renames the target's tracked columns to ``__scd2_t{i}``, and an input column of that name
-    # would silently be compared in their place.
+    # The classify join also renames tracked target columns to __scd2_t{i}, so the whole prefix is reserved.
     reserved = [c for c in df.columns if c.startswith(_SCD2_RESERVED_PREFIX)]
     if reserved:
         raise ValueError(f"Input uses reserved SCD2 internal column name(s): {reserved}")
@@ -1141,16 +1134,17 @@ def _scd2_initial_load(
     partition_on_current: bool,
     storage_options: dict[str, str] | None,
 ) -> Scd2Result:
-    """Create the table from *df*, every row current. A 0-row batch still creates it."""
+    """Create the table from *df*, every row current. A 0-row batch still creates it.
+
+    With *partition_on_current* the is-current column is the innermost partition, below any *partition_by*:
+    closed rows sit in files later merges never rewrite, and current-state scans prune to one partition.
+    Partition columns are validated after stamping, so the generated column is legal.
+    """
     import os
 
     from deltalake import DeltaTable
 
     staged = _scd2_stamp(df, business_keys, ts, valid_from_iso, system_columns)
-    # The is-current flag partitions new SCD2 tables by default: closed rows are quarantined into
-    # files later merges never rewrite, and current-state scans prune to a single partition per
-    # user-partition. Explicit partition_by columns nest above it; *partition_on_current* is the
-    # deliberate opt-out. Validated after stamping so the generated column is legal.
     effective_partition_by = list(partition_by or [])
     if partition_on_current and system_columns[3] not in effective_partition_by:
         effective_partition_by.append(system_columns[3])
@@ -1391,8 +1385,7 @@ def _scd2_once(
             storage_options,
         )
     if df.height == 0:
-        # An empty batch never end-dates anything, full_snapshot included: an upstream that
-        # produced nothing is far more likely to be broken than to mean "everything is gone".
+        # An empty batch end-dates nothing, full_snapshot included: an empty upstream is likelier broken.
         return Scd2Result(skipped=True, version=dt.version())
 
     target_schema = _scd2_validate_target(

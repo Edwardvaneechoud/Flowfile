@@ -333,11 +333,7 @@ class TaskPool:
             target=member_loop,
             args=(task_q, result_q, progress, error_message),
             name="flowfile-pool-member",
-            # Daemonic: multiprocessing's atexit TERMINATES daemons but JOINS
-            # non-daemons, and an idle member blocks in task_q.get() forever -
-            # a process that never ran the lifespan shutdown (pytest, embedding)
-            # would hang at interpreter exit. Poolable funcs spawn no children,
-            # so the daemon no-children restriction cannot bite.
+            # atexit joins non-daemons, and an idle member blocks in task_q.get() forever.
             daemon=True,
         )
         process.start()
@@ -357,8 +353,7 @@ class TaskPool:
         process = member.process
         if process.is_alive():
             try:
-                # Non-blocking: a wedged member that never consumed its task leaves the
-                # maxsize=1 queue full, and a blocking put would hang this thread.
+                # A wedged member leaves the maxsize=1 queue full, so a blocking put would hang.
                 member.task_q.put_nowait(None)
                 process.join(timeout=_DISPOSE_JOIN_TIMEOUT)
             except _queue.Full:

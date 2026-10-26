@@ -90,8 +90,7 @@ from shared.path_utils import (
 
 T = TypeVar("T", pl.DataFrame, pl.LazyFrame)
 
-# Stamped by the cloud readers so __len__/get_number_of_records never query the
-# provider for a count; a placeholder, never a real total.
+# Cloud readers stamp it so record counts never query the provider; a placeholder, never a real total.
 CLOUD_PLACEHOLDER_RECORD_COUNT = 6_666_666
 
 
@@ -1585,8 +1584,7 @@ class FlowDataEngine:
         pivot_column = pivot_input.get_pivot_column()
 
         number_of_aggregations = len(pivot_input.aggregations)
-        # Aggregations where missing combinations should be filled with 0 to match
-        # native polars pivot behavior (polars >= 1.32)
+        # Missing combinations of these fill with 0, as polars' native pivot does (>= 1.32).
         _zero_fill_aggs = {"sum", "count", "len"}
 
         def pivoted(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
@@ -2125,9 +2123,7 @@ class FlowDataEngine:
         left_lf = self.data_frame.lazy()
         right_lf = other.data_frame.lazy()
         if join_manager.how in ("semi", "anti"):
-            # Semi/anti joins push the full left input downstream unchanged (all columns,
-            # original order, no rename or drop); the right frame only supplies the join
-            # keys for matching. Stale entries in left_select are therefore irrelevant here.
+            # Semi/anti pass the left input through unchanged, so stale left_select entries don't matter.
             left_on = [jm.left_col for jm in join_manager.join_mapping]
             right_on = [jm.right_col for jm in join_manager.join_mapping]
 
@@ -2781,9 +2777,7 @@ class FlowDataEngine:
             expr = to_expr(settings.formula)
             tmp = pl.DataFrame({"column_name": targets})
             results = tmp.select(expr.alias("__ff_rename__"))["__ff_rename__"].to_list()
-            # A scalar/literal formula (e.g. `"x"`) returns a single row; broadcast
-            # it to match `targets`. Any other length mismatch means the formula
-            # changed cardinality (e.g. an aggregation), which is not a valid rename.
+            # A scalar formula broadcasts; any other length change (an aggregation) is not a valid rename.
             if len(results) == 1 and len(targets) > 1:
                 results = results * len(targets)
             elif len(results) != len(targets):

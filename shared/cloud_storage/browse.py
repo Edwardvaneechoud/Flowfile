@@ -387,8 +387,7 @@ def _build_blob_service_client(storage_options: dict[str, Any] | None):
     if account_key:
         credential: Any = account_key
     elif sas_token:
-        # A bare string credential is interpreted as an account key unless it parses
-        # as a SAS query string; be explicit so a malformed token fails clearly.
+        # A bare string reads as an account key unless it parses as SAS; be explicit so a bad token fails clearly.
         credential = AzureSasCredential(sas_token)
     else:
         raise BrowseUnsupported(_ADLS_UNSUPPORTED_AUTH["service_principal"])

@@ -23,19 +23,15 @@ in_process: bool = False
 
 flowfile_node_id_type = int | str
 
-# Bound the result drain so a wedged child can't hang the monitor forever, while
-# still allowing a large payload's feeder thread time to flush to the pipe.
+# Bounds the result drain: a wedged child cannot hang the monitor, and a large payload still flushes.
 RESULT_QUEUE_TIMEOUT = 30.0
 
-# Poll the child with exponential backoff: snappy at first, but capped so idle
-# long-running jobs don't busy-wait. The 1.0s steady-state cap is deliberate.
+# Poll backoff: fast at first, capped at 1.0s so long-running jobs do not busy-wait.
 _POLL_INITIAL_DELAY = 0.01
 _POLL_MAX_DELAY = 1.0
 _POLL_BACKOFF = 1.5
 
-# Wall-clock ceiling for a single task. A child that stays alive but never signals
-# completion (wedged in a native call, deadlocked) would otherwise spin the monitor
-# forever. Generous so real long jobs aren't killed; 0 disables. Env-tunable.
+# Wall-clock limit per task, so a wedged child cannot spin the monitor forever; 0 disables.
 _TASK_TIMEOUT = float(os.environ.get("FLOWFILE_WORKER_TASK_TIMEOUT", "3600"))
 
 
@@ -103,10 +99,11 @@ def handle_task(
         progress (mp_context.Value): Shared value object tracking task progress (0-100)
         error_message (mp_context.Array): Shared array for storing error messages
         q (Queue): Queue for storing task results
-        member (PoolMember | None): Set when *p* is a leased pool member. Its completion
-            envelope is then always drained (never joined mid-task), and instead of the
-            terminate/join teardown the member is checked back in - reusable only if the
-            envelope arrived; cancel, timeout, or a crash retire it.
+        member (PoolMember | None): Set when *p* is a leased pool member. It puts one completion
+            envelope per task, on error too, which is drained rather than joined mid-task. A member
+            that was cancelled, timed out or died is not drained, since a killed writer's partial
+            envelope can block the read. Instead of the terminate/join teardown the member is
+            checked back in, reusable only if the envelope arrived.
 
     Notes:
         - Updates task status in status_dict while process is running
@@ -143,9 +140,7 @@ def handle_task(
                     status_dict[task_id].error_kind = kind
                 break
 
-            # A child that put() a large result blocks in its feeder thread and never
-            # exits, so p.is_alive() would spin here forever. Break on the completion
-            # signal and let the drain below read the queue (which unblocks the child).
+            # A child blocked on a large put() never exits, so stop here; the drain below unblocks it.
             if current_progress == 100:
                 break
 
@@ -162,16 +157,11 @@ def handle_task(
         with progress.get_lock():
             final_progress = progress.value
 
-        # Drain the queue BEFORE joining (see drain_result_queue). Only the success path
-        # (progress == 100) puts a result; errors travel via the shared Array. A pool
-        # member puts one envelope per task (also on task error), drained under a
-        # watchdog bound - but a member we terminated (cancel/timeout) or that died is
-        # never drained: a partial envelope from a killed writer can block the recv.
+        # Drain before joining (see drain_result_queue); errors travel in the shared Array, not the queue.
         result = None
         number_of_records = None
         if member is not None:
-            # This task is over for the process manager either way; unmapping first
-            # means a stale /cancel_task can no longer terminate a reusable member.
+            # Unmap first so a stale /cancel_task cannot terminate a reusable member.
             process_manager.remove_process(task_id)
             if not cancelled and not timed_out and final_progress in (100, -1):
                 envelope_received, payload = drain_member_envelope(q, p)
@@ -200,9 +190,6 @@ def handle_task(
                     status.error_message = f"Task exceeded the {_TASK_TIMEOUT:.0f}s time limit and was terminated"
                     status.error_kind = "environment"
                 elif final_progress == -1:
-                    # The child signalled an error but the monitor loop may not have observed
-                    # it (a child can die before we read progress == -1). Surface a terminal
-                    # Error so the core poller doesn't wait on "Processing" forever.
                     status.status = "Error"
                     status.progress = -1
                     if not status.error_message:

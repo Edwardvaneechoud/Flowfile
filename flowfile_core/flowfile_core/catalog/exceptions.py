@@ -133,8 +133,7 @@ class NotAuthorizedError(CatalogError):
     """Raised when a user attempts an action they are not permitted to perform."""
 
     def __init__(self, user_id: int, action: str = "perform this action"):
-        # user_id is kept for logging/telemetry but deliberately left out of the
-        # message: it becomes the HTTP 403 detail shown to end users.
+        # user_id stays out of the message, which becomes the 403 detail shown to end users.
         self.user_id = user_id
         self.action = action
         super().__init__(f"Not authorized to {action}")

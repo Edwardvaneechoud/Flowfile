@@ -45,9 +45,7 @@ _DEFAULT_TIMEOUT = 30
 _MAX_TIMEOUT = 120
 _POLL_INTERVAL = 0.25
 _DRY_RUN_FLOW_ID = -1
-# Sample inputs are materialized in core (schema-typed FlowDataEngine construction) before shipping
-# to the worker/kernel, so bound them: core never materializes full datasets, and dry-run test data
-# is small.
+# Sample inputs are built in core before they ship to the worker or kernel, so they are bounded.
 _MAX_SAMPLE_ROWS = 10_000
 _MAX_SAMPLE_CELLS = 200_000
 
@@ -69,9 +67,7 @@ class DryRunRequest(BaseModel):
     designer_state: DesignerState | None = None
     code: str | None = None
     settings_values: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    # Typed RawData (schema + columnar data) preferred; bare {col: values} dicts still
-    # accepted, with dtypes inferred (mixed int/float columns promote to Float64).
-    # left_to_right: smart union would match a RawData payload as the bare dict.
+    # left_to_right: a smart union would read a RawData payload as a bare {col: values} dict.
     sample_inputs: list[Annotated[RawData | dict[str, list], Field(union_mode="left_to_right")]] | None = None
     row_limit: int = _DEFAULT_ROW_LIMIT
     timeout_seconds: int = _DEFAULT_TIMEOUT
@@ -165,9 +161,7 @@ def _resolve_sample_inputs(request: DryRunRequest, source: str) -> tuple[list[Ra
     lifted = extract_example_inputs(source)
     if lifted:
         return _coerce_samples(lifted)
-    # No sample data at all: run against one empty frame per declared input (none for
-    # a source node) so nodes that don't need input data are still testable, rather
-    # than hard-blocking with "add sample data".
+    # No sample data: one empty frame per declared input, so nodes that need no data stay testable.
     n = (
         request.designer_state.number_of_inputs
         if request.designer_state is not None
@@ -201,8 +195,7 @@ def _check_sample_size(samples: list[RawData]) -> DryRunResponse | None:
 
 
 def _serialize_inputs(samples: list[RawData]) -> tuple[list[bytes] | None, DryRunResponse | None]:
-    # FlowDataEngine applies the RawData schema — the same typed construction as manual input,
-    # so declared dtypes (e.g. Float64 over mixed int/float cells) cast instead of erroring.
+    # FlowDataEngine applies the RawData schema, so declared dtypes cast instead of erroring.
     from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 
     serialized: list[bytes] = []
@@ -349,9 +342,7 @@ def run_dry_run(request: DryRunRequest, user_id: int | None) -> DryRunResponse:
     if err is not None:
         return err
 
-    # Kernel-environment nodes run in their Docker kernel (which has the node's pip
-    # deps), not the worker. designer-state carries the environment kind directly;
-    # code-only nodes surface it via the exec-free manifest.
+    # Kernel-environment nodes run in their Docker kernel, which has the node's pip deps.
     env_kind = (
         request.designer_state.environment.kind
         if request.designer_state is not None

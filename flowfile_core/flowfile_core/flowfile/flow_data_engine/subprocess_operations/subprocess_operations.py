@@ -155,8 +155,7 @@ def ssl_context_for(worker_url: str) -> ssl.SSLContext | None:
 
 _JSON_HEADERS = {"Content-Type": "application/json"}
 
-# (connect, read) timeout for the short worker control calls so a dead/wedged
-# worker surfaces promptly instead of hanging a request thread indefinitely.
+# (connect, read) for short control calls, so a dead worker cannot hang a request thread.
 _WORKER_TIMEOUT = (5, 30)
 
 # Generous so large offloads aren't killed; 0 disables. Env-tunable.
@@ -1148,9 +1147,7 @@ class BaseFetcher:
         """
         logger.warning("Cancelling the operation")
 
-        # Mark cancel intent BEFORE tearing down the socket: the receive path
-        # classifies the resulting ConnectionClosed as a user cancel only if
-        # the stop event is already set when the close reaches it.
+        # Set before closing the socket: the receive path reads ConnectionClosed as a cancel only then.
         self._stop_event.set()
 
         # Close WebSocket if streaming (causes recv thread to exit)
@@ -1254,8 +1251,7 @@ class BaseFetcher:
                 kwargs=kwargs,
                 worker_url=self.worker_url,
             )
-            # Store the socket so cancel() can close it mid-receive, and pass the
-            # stop event so the bounded receive loop observes cancellation too.
+            # cancel() closes this socket mid-receive; the stop event lets the receive loop see it too.
             with self._lock:
                 self._ws = ws
                 self._running = True
@@ -1266,9 +1262,7 @@ class BaseFetcher:
                 self._record_task_failure(str(e), e.error_code, e.kind)
                 return
             except Exception:
-                # Reset to pristine: the caller's REST fallback (generic errors
-                # only) relies on `running = True` auto-starting its poll thread,
-                # which requires _started to be False again.
+                # Reset fully: the caller's REST fallback starts its poll thread via `running = True` only if unstarted.
                 with self._lock:
                     self._ws = None
                     self._running = False
@@ -1382,8 +1376,7 @@ class ExternalDfFetcher(BaseFetcher):
                 blocking=wait_on_completion,
             )
         except WorkerStreamInterrupted:
-            # The task already reached the worker; re-submitting via REST would
-            # duplicate work against a wedged worker or a cancelled run.
+            # The task already reached the worker; resubmitting via REST would run it twice.
             raise
         except ComputeError:
             # The handshake refused this worker; the REST path would refuse it again.

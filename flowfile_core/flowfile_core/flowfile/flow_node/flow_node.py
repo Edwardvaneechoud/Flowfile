@@ -239,10 +239,7 @@ class FlowNode:
     _state_needs_reset: bool
     # invoked by run_graph() once all downstream dependents finish; e.g. Kafka commits offsets on success
     _on_flow_complete: Callable[[bool], None] | None
-    # set per run by the graph on ANY-rule nodes (union): (source id, source
-    # handle) pairs deliberately skipped this run, dropped from the input set
-    # at assembly — per-handle so a two-output gate feeding the union is
-    # judged per edge
+    # set per run on union nodes: (source id, source handle) pairs deliberately skipped, dropped at assembly
     _skipped_input_ids_this_run: frozenset
     # set per run: (source id, source handle) -> the BoundaryEdge an input crosses backends by
     _boundary_inputs: dict[tuple[int, str], Any]
@@ -698,9 +695,7 @@ class FlowNode:
             return False
         connected = len(self.node_inputs.get_all_inputs())
         min_inputs = self.node_template.min_inputs
-        # min_inputs marks trailing inputs optional (gate's control input) — the
-        # main (data) input must still be wired, or the control frame would be
-        # passed through as if it were the data.
+        # Trailing inputs are optional, but the data input must be wired or a gate's control frame passes as data.
         min_inputs_satisfied = (
             min_inputs is not None
             and min_inputs <= connected <= self.node_template.input
@@ -876,8 +871,7 @@ class FlowNode:
                 if laziness == "eager":
                     reasons.append(f"Node '{current.node_template.name}' (id={current.node_id}) is eager")
                 elif laziness == "conditional":
-                    # TODO: resolve conditional nodes (read_data, polars_code, cloud_storage_reader)
-                    # via isinstance checks like catalog_reader, then raise ValueError here instead
+                    # TODO: resolve conditional nodes by isinstance like catalog_reader, then raise ValueError here.
                     reasons.append(
                         f"Node '{current.node_template.name}' (id={current.node_id}) is conditional"
                         " — defaulting to non-optimized"
@@ -896,8 +890,7 @@ class FlowNode:
             A string hash value.
         """
         if self.accepts_dynamic_inputs:
-            # Fold in the target handle and source handle so re-wiring the same
-            # upstream node to a different named input invalidates caches.
+            # Fold in both handles so rewiring an upstream to another named input invalidates caches.
             source_handles = self.node_inputs.keyed_source_handles or {}
             depends_on_hashes = [
                 f"{handle}:{source_handles.get(handle, DEFAULT_OUTPUT_HANDLE)}:{_node.hash}"
@@ -1037,8 +1030,7 @@ class FlowNode:
         from_node.leads_to_nodes.append(self)
         inputs.keyed_inputs[target_handle] = from_node
         inputs.keyed_source_handles[target_handle] = output_handle
-        # Legacy readers key by source node id; ambiguous when one source feeds
-        # two handles — keyed_source_handles is authoritative for this node.
+        # Legacy readers key by source id, ambiguous for one source on two handles; keyed_source_handles wins.
         self._input_output_handles[from_node.node_id] = output_handle
         inputs.rebuild_keyed_projection()
         self.reset()
@@ -1186,15 +1178,12 @@ class FlowNode:
         if self._schema_prediction_blocked is None and (self._prediction_requires_data or self._executes_on_kernel):
             self._schema_prediction_blocked = kernel_block_reason(self, include_self=True)
         if self._schema_prediction_blocked:
-            # Prediction would require executing an un-run kernel node: never do
-            # that implicitly — surface the warning and skip the exec tier.
+            # Never run an un-run kernel node to predict; warn and skip the exec tier.
             self.results.warnings = self._schema_prediction_blocked
             return self.node_schema.predicted_schema
 
         logger.debug(f"get_predicted_schema: node_id={self.node_id} - falling back to _predicted_data_getter")
-        # Serialize the fallback: without a callback, prediction executes the node's
-        # real function (kernel/worker for custom nodes) — concurrent callers must
-        # not run it twice into the same working dirs.
+        # Without a callback, prediction runs the node's real function; concurrent callers must not run it twice.
         with self._execution_lock:
             if self.node_schema.predicted_schema and not force:
                 return self.node_schema.predicted_schema
@@ -1269,8 +1258,7 @@ class FlowNode:
     @staticmethod
     def _resolve_input_result_for_handle(input_node: "FlowNode", handle: str) -> FlowDataEngine | None:
         if handle != DEFAULT_OUTPUT_HANDLE:
-            # get_output triggers execution first, then routes by handle. Required
-            # for the first-call case where _named_outputs is still empty.
+            # get_output executes first, then routes by handle, so it works before _named_outputs fills.
             return input_node.get_output(handle)
         return input_node.get_resulting_data()
 
@@ -1321,10 +1309,7 @@ class FlowNode:
         """
         while not self._execution_lock.acquire(timeout=poll):
             if self._execution_state.is_canceled:
-                # Deliberately record nothing on results here: we do not hold
-                # the lock, and writing results.errors would race the current
-                # holder (the success path never clears errors). The executor's
-                # state.is_canceled reclassification records the clean cancel.
+                # Without the lock, writing results.errors races the holder; the executor records the cancel.
                 raise Exception("Node execution canceled")
         try:
             yield
@@ -1396,28 +1381,14 @@ class FlowNode:
                                     # gated-off inputs are dropped: the union outputs only what ran
                                     continue
                                 self.print(f"Getting resulting data from input {i} (node {v.node_id})")
-                                # Read the upstream via its own get_resulting_data(), which
-                                # single-flights materialization under the upstream's own
-                                # _execution_lock (memoized into results.resulting_data). We do
-                                # NOT acquire the upstream's lock here: a node holds only its own
-                                # lock, so lock acquisition always follows the DAG (a node -> its
-                                # parents) and can never form a cross-node cycle. Taking upstream
-                                # locks in per-input slot order used to deadlock a parallel stage
-                                # when two sibling nodes consumed the same two upstreams in
-                                # opposite left/right order (AB-BA).
+                                # Never take an input's lock here: in slot order it deadlocked siblings (AB-BA).
                                 edge = self._boundary_inputs.get((v.node_id, src_handle))
                                 if edge is not None:
                                     input_result = edge.cross()
                                 else:
                                     input_result = self._resolve_input_result_for_handle(v, src_handle)
                                 if input_result is not None:
-                                    # De-alias: hand the node function a private view. Some node
-                                    # functions mutate their input (df.lazy = True in the writers,
-                                    # cross_join/fuzzy prep) or return it unchanged (output,
-                                    # filter passthrough, ...), and this node's own post-processing
-                                    # (set_streamable, output_field_config) mutates whatever the
-                                    # function returned — the copy keeps all of that off the
-                                    # engine shared with sibling consumers in the same stage.
+                                    # A private view: functions mutate or pass on inputs that siblings share.
                                     input_result = input_result.shallow_copy()
                                 # Truthiness on a FlowDataEngine hits __len__ -> collect(); keep it "is not None".
                                 _df_type = type(input_result.data_frame) if input_result is not None else "None"
@@ -1431,9 +1402,7 @@ class FlowNode:
                             self._named_schemas = {h: e.schema for h, e in self._named_outputs.items()}
                             for v in self._named_outputs.values():
                                 v.set_streamable(self.node_settings.streamable)
-                            # Default downstream-without-handle consumers to the first output.
-                            # output_field_config (below) only applies to this default; future
-                            # multi-output nodes that need per-output config must extend the loop.
+                            # Handle-less consumers read the first output; output_field_config applies to it only.
                             fl = self._named_outputs[DEFAULT_OUTPUT_HANDLE]
                         else:
                             fl.set_streamable(self.node_settings.streamable)
@@ -1491,8 +1460,7 @@ class FlowNode:
                 fl = self._function(*predicted_inputs)
             fl = self._as_default_output(fl)
 
-            # Apply output field configuration if enabled (mirrors get_resulting_data behavior)
-            # This ensures schema prediction accounts for output_field_config validation
+            # As get_resulting_data does, so the prediction reflects output_field_config.
             if hasattr(self._setting_input, "output_field_config") and self._setting_input.output_field_config:
                 if self._setting_input.output_field_config.enabled:
                     fl = apply_output_field_config(fl, self._setting_input.output_field_config)
@@ -1540,16 +1508,13 @@ class FlowNode:
             run_needed = True
         if run_needed and self.schema_callback is not None or self.node_schema.result_schema is not None:
             self.print("Getting data based on the schema")
-            # Running the schema callback populates _named_schemas for multi-output
-            # nodes; re-check the handle cache afterward before falling back.
+            # The schema callback fills _named_schemas, so check the handle cache again.
             if self.node_schema.result_schema is None:
                 _s = self.schema_callback()
                 if handle != DEFAULT_OUTPUT_HANDLE and handle in self._named_schemas:
                     _s = self._named_schemas[handle]
                 if not _s:
-                    # Empty is the callback's "no declared schema" sentinel (e.g. a
-                    # predict_output_schema hook opting out) — use the full prediction
-                    # ladder, which falls back to execution-based prediction.
+                    # Empty means no declared schema (a hook opting out); use the full prediction ladder.
                     _s = self.get_predicted_schema()
                     if handle != DEFAULT_OUTPUT_HANDLE:
                         # The exec fallback fills the per-handle caches; prefer them.
@@ -2074,8 +2039,7 @@ class FlowNode:
             if self._kernel_cancel_event is not None:
                 self._kernel_cancel_event.set()
             try:
-                # Addressed to this node's own cell: a node still queued behind
-                # another flow on this shared kernel interrupts nothing.
+                # Addressed to this node's own cell, so a node queued behind another flow interrupts nothing.
                 manager.interrupt_execution_sync(kernel_id, exec_token)
             except Exception:
                 logger.exception("Failed to interrupt kernel execution for kernel '%s'", kernel_id)
@@ -2174,11 +2138,7 @@ class FlowNode:
 
             if self.is_correct:
                 self._schema_callback = None
-                # Eagerly prefetch only for source/start nodes — they have no
-                # upstream dependencies, so a background fetch is safe and
-                # masks I/O latency. Downstream nodes' callbacks read upstream
-                # node state, so eagerly starting them races with the cascade
-                # of resets that graph.reset() is currently performing.
+                # Prefetch start nodes only: others read upstream state that graph.reset() is still resetting.
                 prefetch = self.is_start and not self.deferred_until_run and not schema_prefetch_blocked.get()
                 if prefetch and self.schema_callback:
                     logger.info(f"{self.node_id}: Resetting the schema callback")
@@ -2466,8 +2426,7 @@ class FlowNode:
             else:
                 backend = current_context().backend
         stats = compute_column_stats(engine, column_name, backend=backend)
-        # compute rebinds the engine's schema list (copy-on-write); follow it on
-        # this node so previews via self.schema carry the stats too.
+        # The engine's schema list was rebound (copy-on-write); follow it so self.schema carries the stats.
         if engine is self.results.resulting_data:
             self.node_schema.result_schema = engine.schema
         return stats
@@ -2627,9 +2586,7 @@ class FlowNode:
         )
         if include_inputs:
             if self.accepts_dynamic_inputs:
-                # The settings panel's main_input is the parameter-data connection
-                # (handle input-0) specifically — not whichever slot happens to be
-                # connected first.
+                # The panel's main_input is the parameter connection (input-0), not the first connected slot.
                 param_node = (self.node_inputs.keyed_inputs or {}).get(PARAM_INPUT_HANDLE)
                 if param_node is not None:
                     node.main_input = param_node.get_table_example()
@@ -2639,15 +2596,10 @@ class FlowNode:
                 node.left_input = self.left_input.get_table_example()
             if self.right_input:
                 node.right_input = self.right_input.get_table_example()
-            # The get_table_example calls above cascade the inputs' predictions,
-            # setting the kernel-gate flag; walk the whole upstream chain so the
-            # warning reaches every downstream node.
+            # Those calls set the inputs' kernel-gate flags; walk the whole upstream chain for the warning.
             warning = first_upstream_prediction_warning(self)
             if warning and not (self.node_schema.result_schema or self.node_schema.predicted_schema):
-                # This node may resolve its own columns independently (declared in
-                # the Schema Validator). Compute its prediction — cheap here since
-                # the blocked upstream means it either resolves from the
-                # declaration or hits the gate, never materializing through it.
+                # A Schema Validator may declare this node's columns; predicting is cheap behind the blocked input.
                 try:
                     self.get_predicted_schema()
                 except Exception:
@@ -2698,15 +2650,12 @@ class FlowNode:
         node_reference = getattr(self.setting_input, "node_reference", None)
         template_fields = {**self.node_template.__dict__}
         if self.accepts_dynamic_inputs:
-            # Per-instance handles: pass names verbatim (may be [] -> zero outputs,
-            # or a single labeled output) so the frontend derives counts from them.
+            # Per-instance names travel verbatim ([] means zero outputs); the frontend counts from them.
             template_fields["output_names"] = output_names
         elif output_names and (len(output_names) > 1 or template_fields["output"] == 0):
-            # A sink template gains its only handle from the settings (SCD2 catalog writer),
-            # so a single declared name has to travel too.
+            # A sink template gains its only handle from settings (SCD2 catalog writer), so one name travels too.
             template_fields["output_names"] = output_names
-        # else: keep the template's own names — an unconfigured node has no
-        # settings snapshot yet, and clobbering here would drop the tooltips.
+        # Else keep the template's names: an unconfigured node has no settings, and its tooltips would go.
         description, is_auto_generated = self.resolve_description()
         return schemas.NodeInput(
             pos_y=self.setting_input.pos_y,
