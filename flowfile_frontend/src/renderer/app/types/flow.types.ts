@@ -38,6 +38,7 @@ export interface FlowSettings {
   show_detailed_progress: boolean;
   show_edge_labels: boolean;
   is_running: boolean;
+  is_canceled: boolean;
   max_parallel_workers: number;
   parameters?: FlowParameter[];
   has_unsaved_changes?: boolean;

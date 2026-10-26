@@ -139,7 +139,7 @@
   <!-- Hidden run-button instance kept solely to back loadFlowSettings()'s
        polling-restoration path. The user-visible run-button now lives in
        RightActionCluster; this off-screen instance preserves the existing
-       runButton.value.startPolling()/stopPolling() calls below without
+       runButton.value.startStatusPolling()/stopPolling() calls below without
        refactoring the polling restore. v-show:false stays in the layout
        tree so the ref resolves. -->
   <run-button v-show="false" ref="runButton" :flow-id="nodeStore.flow_id" aria-hidden="true" />
@@ -296,7 +296,7 @@ import {
   updateFlowSettings,
   ExecutionMode,
   ExecutionLocation,
-  updateRunStatus,
+  getRunStatus,
 } from "../../nodes/nodeLogic";
 import { MODIFIER_LABEL } from "../../../utils/shortcuts";
 
@@ -390,8 +390,26 @@ const loadFlowSettings = async (): Promise<void> => {
   if (!(flowId && flowId > 0)) return;
   if (settingsLoad && settingsLoad.id === flowId) return settingsLoad.promise;
 
-  const promise = (async () => {
-    flowSettings.value = await getFlowSettings(flowId);
+  const wasRunning = editorStore.isRunning;
+  const wasCanceled = editorStore.isCanceled;
+  const owner = runButton.value?.getOperationOwner();
+  const refreshCounter = flowStore.pendingRunStateCounter;
+  let stale = false;
+  let promise = Promise.resolve();
+  promise = (async () => {
+    const settings = await getFlowSettings(flowId);
+    if (settingsLoad?.promise !== promise) return;
+    if (
+      nodeStore.flow_id !== flowId ||
+      runButton.value?.getOperationOwner() !== owner ||
+      flowStore.pendingRunStateCounter !== refreshCounter ||
+      editorStore.isRunning !== wasRunning ||
+      editorStore.isCanceled !== wasCanceled
+    ) {
+      stale = true;
+      return;
+    }
+    flowSettings.value = settings;
     if (!flowSettings.value) return;
 
     flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
@@ -400,16 +418,28 @@ const loadFlowSettings = async (): Promise<void> => {
     flowStore.setParameters(flowSettings.value.parameters);
     editorStore.displayLogViewer = flowSettings.value.show_detailed_progress;
     editorStore.showEdgeLabels = flowSettings.value.show_edge_labels;
+    editorStore.isCanceled = flowSettings.value.is_running && flowSettings.value.is_canceled;
 
-    if (!runButton.value) return;
+    const button = runButton.value;
+    if (!button) return;
 
     if (flowSettings.value.is_running) {
       editorStore.isRunning = true;
-      runButton.value.startPolling(runButton.value.checkRunStatus);
+      button.freezeFlow();
+      button.startStatusPolling(flowId, !flowSettings.value.is_canceled);
     } else {
       editorStore.isRunning = false;
-      runButton.value.stopPolling();
-      updateRunStatus(flowId, nodeStore);
+      button.unFreezeFlow();
+      if (!button.checkStatusPolling()) {
+        void getRunStatus(flowId)
+          .then((response) => {
+            if (nodeStore.flow_id === flowId && response.status === 200)
+              nodeStore.insertRunResult(response.data);
+          })
+          .catch(() => {
+            /* An idle flow may have been evicted; leave its results unchanged. */
+          });
+      }
     }
   })();
 
@@ -417,7 +447,14 @@ const loadFlowSettings = async (): Promise<void> => {
   try {
     await promise;
   } finally {
-    if (settingsLoad?.id === flowId) settingsLoad = null;
+    if (settingsLoad?.promise === promise) {
+      settingsLoad = null;
+      if (
+        nodeStore.flow_id === flowId &&
+        (stale || flowStore.pendingRunStateCounter !== refreshCounter)
+      )
+        await loadFlowSettings();
+    }
   }
 };
 
