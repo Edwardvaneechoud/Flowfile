@@ -1,20 +1,29 @@
 <template>
   <div class="button-group">
     <el-button size="small" :disabled="nodeStore.isRunning" round @click="runFlow()">
-      <span class="material-icons run-icon">play_arrow</span>
-      Run
+      <span v-if="!isCancelling" class="material-icons run-icon">play_arrow</span>
+      {{ isCancelling ? "Cancelling…" : "Run" }}
     </el-button>
-    <el-button v-if="nodeStore.isRunning" size="small" round @click="cancelFlow()">
+    <el-button
+      v-if="nodeStore.isRunning"
+      :disabled="cancelPending"
+      size="small"
+      round
+      @click="cancelFlow()"
+    >
       Cancel
     </el-button>
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
 import { useNodeStore } from "../../../stores/column-store";
+import { useEditorStore } from "../../../stores/editor-store";
 import { useFlowExecution } from "../../../composables/useFlowExecution";
 
 const nodeStore = useNodeStore();
+const editorStore = useEditorStore();
 
 const props = defineProps({
   flowId: { type: Number, required: true },
@@ -23,30 +32,49 @@ const props = defineProps({
     default: () => ({
       interval: 2000,
       enabled: true,
-      maxAttempts: Infinity,
+      maxAttempts: 5,
     }),
   },
   persistPolling: {
     type: Boolean,
-    default: false,
+    default: true,
   },
 });
 
 // Pass a getter so the composable always reads the *current* prop value.
 // Without this, Save As re-keys nodeStore.flow_id but the run button keeps
 // firing /flow/run/ and getFlowSettings against the old (template) id.
-const { runFlow, cancelFlow, showNotification, startPolling, stopPolling, checkRunStatus } =
-  useFlowExecution(() => props.flowId, props.pollingConfig, {
-    persistPolling: props.persistPolling,
-    pollingKey: `run_button_${props.flowId}`,
-  });
+const {
+  runFlow,
+  cancelFlow,
+  isCancelling: cancelPending,
+  showNotification,
+  startPolling,
+  startStatusPolling,
+  stopPolling,
+  checkRunStatus,
+  checkStatusPolling,
+  getOperationOwner,
+  freezeFlow,
+  unFreezeFlow,
+} = useFlowExecution(() => props.flowId, props.pollingConfig, {
+  persistPolling: props.persistPolling,
+});
+const isCancelling = computed(
+  () => nodeStore.isRunning && (editorStore.isCanceled || cancelPending.value),
+);
 
 defineEmits(["logs-start", "logs-stop"]);
 
 defineExpose({
   startPolling,
+  startStatusPolling,
   stopPolling,
   checkRunStatus,
+  checkStatusPolling,
+  getOperationOwner,
+  freezeFlow,
+  unFreezeFlow,
   showNotification,
   runFlow,
   cancelFlow,
