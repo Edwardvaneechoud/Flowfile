@@ -373,7 +373,7 @@ def test_a_fuzzy_match_is_refused_on_a_backend_without_the_fuzzy_join_operation(
 
     run_info = graph.run_graph()
 
-    assert_refused_before_any_node(graph, run_info, backend, {3: ["it runs the fuzzy_join operation"]})
+    assert_refused_before_any_node(graph, run_info, backend, {3: ["it needs the fuzzy_join operation"]})
 
 
 def test_a_polars_code_node_is_refused_on_a_backend_without_the_polars_code_operation(protocol_on, declare):
@@ -393,7 +393,7 @@ def test_a_polars_code_node_is_refused_on_a_backend_without_the_polars_code_oper
 
     run_info = graph.run_graph()
 
-    assert_refused_before_any_node(graph, run_info, backend, {2: ["it runs the polars_code operation"]})
+    assert_refused_before_any_node(graph, run_info, backend, {2: ["it needs the polars_code operation"]})
 
 
 def test_a_sql_query_node_is_refused_on_a_backend_without_the_sql_query_operation(protocol_on, declare):
@@ -413,7 +413,7 @@ def test_a_sql_query_node_is_refused_on_a_backend_without_the_sql_query_operatio
 
     run_info = graph.run_graph()
 
-    assert_refused_before_any_node(graph, run_info, backend, {2: ["it runs the sql_query operation"]})
+    assert_refused_before_any_node(graph, run_info, backend, {2: ["it needs the sql_query operation"]})
 
 
 def test_a_fuzzy_match_is_refused_on_a_backend_without_its_plugin(protocol_on, declare):
@@ -961,7 +961,7 @@ def test_a_node_the_run_skips_is_not_placed(protocol_on, declare):
 
     run_info = graph.run_graph()
 
-    assert_refused_before_any_node(graph, run_info, backend, {3: ["it runs the fuzzy_join operation"]})
+    assert_refused_before_any_node(graph, run_info, backend, {3: ["it needs the fuzzy_join operation"]})
     assert run_info.number_of_nodes == 3
 
 
