@@ -25,7 +25,9 @@ class ResultRecord:
 
     ``flow_id`` and ``node_id`` are those of the submit, so a later sample or count of a deferred
     result logs under the node that produced it. A ``kind="blob"`` record is a path and nothing
-    else: materialised, the file of its bytes at ``path``, no columns and no row count.
+    else: materialised, the file of its bytes at ``path``, no columns and no row count. A record
+    whose fields do not fit its state is a ``ValueError`` at construction, never a failure in the
+    child that later loads it.
     """
 
     result_id: str
@@ -37,6 +39,14 @@ class ResultRecord:
     path: str | None = None
     plan: bytes | None = None
     kind: Literal["table", "blob"] = "table"
+
+    def __post_init__(self) -> None:
+        if self.state == "materialised" and (not self.path or self.plan is not None):
+            raise ValueError(f"A materialised result holds a file and no plan: {self.result_id}")
+        if self.state == "deferred" and (self.plan is None or self.path is not None):
+            raise ValueError(f"A deferred result holds a plan and no file: {self.result_id}")
+        if self.kind == "blob" and (self.state != "materialised" or self.columns or self.row_count is not None):
+            raise ValueError(f"A blob is a materialised file with no columns and no row count: {self.result_id}")
 
     def ref(self) -> ResultRef:
         """The wire reference core keeps for this result; its ``location`` is a ``WorkerLocation``'s JSON."""

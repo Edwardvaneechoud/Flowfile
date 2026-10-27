@@ -71,7 +71,7 @@ Every `/v1` request carries `X-Protocol-Version`; a worker answers a different v
 
 1. **Cache check.** A node with **Cache Results** on that still holds a stored result under its hash on this backend (`held_result`, then `exists`) takes it and skips the submit.
 2. **Build the plan.** `get_resulting_data()` runs the node function over its inputs' engines, each built on `plan_for` of the input's reference, so the function only composes a plan.
-3. **Hints.** `flow_node/executor.py::hints_for` describes the plan: `must_materialise` (Cache Results, or an input that crossed from another backend), `wide` (not a narrow transform), `fanout` and `preview_rows`.
+3. **Hints.** `flow_node/executor.py::hints_for` describes the plan: `must_materialise` (Cache Results, or an input that crossed from another backend), `wide` (not a narrow transform), `fanout` (the distinct consumers among the nodes this run executes) and `preview_rows`.
 4. **Submit.** `backend.submit` runs it under the node's hash; on the worker, `service.run_submit` runs `funcs.submit_result` in a child.
 5. **Take the result.** `_take_result` keeps the `ResultRef` on `results.result_ref`, sets `resulting_data` to an engine over `plan_for(ref)` with the schema the reference carries, and the preview from the inline sample.
 
@@ -79,9 +79,9 @@ The next node's function composes on `plan_for(ref)`, a leaf valid only on that 
 
 The worker's `service._materialise` reads the hints:
 
-![How service._materialise reads SubmitHints: with must_materialise set the result is materialised, a file on the worker that plan_for reads with scan_ipc; otherwise a plan that is wide with preview_rows set is materialised too; anything else is deferred, the plan kept on the worker, and plan_for answers the plan itself.](../assets/images/architecture/materialise-rule.svg)
+![How service._materialise reads SubmitHints: with must_materialise set the result is materialised, a file on the worker that plan_for reads with scan_ipc; otherwise a plan that is wide and either previewed (preview_rows set) or read by more than one running consumer (fanout above one) is materialised too; anything else is deferred, the plan kept on the worker, and plan_for answers the plan itself.](../assets/images/architecture/materialise-rule.svg)
 
-A join, group by, sort or pivot previewed in Development mode is therefore stored, and a chain of narrow nodes reaches the worker as one composed plan and runs as one Polars query. `fanout` is carried but read by no policy yet.
+A join, group by, sort or pivot previewed in Development mode is therefore stored, and a chain of narrow nodes reaches the worker as one composed plan and runs as one Polars query. A wide result that more than one consumer reads (`fanout > 1`) is stored in either mode, written once instead of computed again inside each consumer's plan; core counts only the consumers the run at hand executes, so a single-node fetch counts none.
 
 ## Plans and operations
 

@@ -99,7 +99,7 @@ The plan crosses as the `LazyFrame` itself; a backend that sends it to another p
     class SubmitHints:
         must_materialise: bool                   # cache_results
         wide: bool                               # not a narrow transform: join, group_by, sort, pivot, …
-        fanout: int                              # downstream consumers
+        fanout: int                              # downstream consumers that run in this run
         preview_rows: int | None                 # 100 in Development mode; None in Performance mode unless the node caches
 
     @dataclass(frozen=True)
@@ -148,16 +148,16 @@ A node owns every reference it minted (its result, the outputs it stored beside 
 
 Core marks only what correctness needs. `must_materialise` is set when a node has **Cache Results** on or reads an input that crossed from another backend. Reads whose source can change between calls (a database, Kafka, REST, Google Analytics) and random splits are operations, so the backend holds what each produced once and two consumers never see different answers. `wide`, `fanout` and `preview_rows` are hints.
 
-The worker materialises when `must_materialise or (wide and preview_rows is not None)`. The embedded worker runs the same `funcs.submit_result`, so this is the one policy wherever the worker runs. `fanout` is carried, but no policy reads it yet.
+The worker materialises when `must_materialise or (wide and (preview_rows is not None or fanout > 1))`: a wide result that several consumers read is written once instead of computed again inside each consumer's plan, since each consumer's plan inlines the plans of the deferred results it reads. A narrow result stays deferred whatever its fan-out, so projections and filters keep pushing through it. The embedded worker runs the same `service._materialise`, so this is the one policy wherever the worker runs. Core counts only the consumers that run in the run at hand (a single-node fetch counts none).
 
 | Flow | Hints | Result |
 |---|---|---|
 | read → filter → one consumer | narrow, fanout 1 | deferred; the preview is a streaming `head(100)` job |
-| join → group by | wide | materialised |
-| group by → two writers | wide, fanout 2 | materialised |
+| join → group by | wide, fanout 1 | materialised in Development mode (the preview); deferred in Performance mode, computed once at the sink |
+| group by → two writers | wide, fanout 2 | materialised in both modes; each writer scans the file |
 | database read → two nodes | an operation | materialised by the read |
 | any node with **Cache Results** | required | materialised |
-| any node in Performance mode | `preview_rows=None` | no sample job; a wide node stays deferred unless required |
+| any node in Performance mode | `preview_rows=None` | no sample job; a wide node stays deferred unless required or read by several consumers |
 
 ## Operations
 

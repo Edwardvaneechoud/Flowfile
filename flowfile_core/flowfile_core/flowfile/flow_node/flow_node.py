@@ -1,7 +1,7 @@
 import hashlib
 import io
 import threading
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Collection, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import replace
@@ -2061,6 +2061,7 @@ class FlowNode:
         retry: bool = True,
         node_logger: NodeLogger | None = None,
         unreachable: Exception | None = None,
+        running: Collection[int | str] | None = None,
     ) -> None:
         """Execute the node based on its current state and settings.
 
@@ -2077,6 +2078,8 @@ class FlowNode:
             node_logger: Logger for this node's execution
             unreachable: The handshake error of the backend placement assigned the node. The node fails with it
                 and nothing runs.
+            running: The ids of the nodes the run executes, among which the hints count this node's consumers
+                (``executor.hints_for``); ``None`` counts every consumer.
         """
         if node_logger is None:
             raise ValueError("node_logger is required")
@@ -2090,6 +2093,7 @@ class FlowNode:
             retry=retry,
             node_logger=node_logger,
             unreachable=unreachable,
+            running=running,
         )
 
     def needs_reset(self) -> bool:

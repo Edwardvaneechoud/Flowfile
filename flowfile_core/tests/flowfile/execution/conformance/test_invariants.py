@@ -76,8 +76,10 @@ DOWNSTREAM = [
 STATES = pytest.mark.parametrize("must_materialise", [False, True], ids=["deferred", "materialised"])
 
 POLICIES: dict[str, Callable[[SubmitHints], bool]] = {
-    "embedded": lambda given: given.must_materialise or (given.wide and given.preview_rows is not None),
-    "worker": lambda given: given.must_materialise or (given.wide and given.preview_rows is not None),
+    "embedded": lambda given: given.must_materialise
+    or (given.wide and (given.preview_rows is not None or given.fanout > 1)),
+    "worker": lambda given: given.must_materialise
+    or (given.wide and (given.preview_rows is not None or given.fanout > 1)),
 }
 """Whether each backend in ``conftest.BACKENDS`` stores a submit with these hints, as its class docstring says."""
 
@@ -104,8 +106,10 @@ CALLS_WITH_A_REF: dict[str, Callable[[ComputeBackend, ResultRef], object]] = {
 }
 
 
-def hints(*, must_materialise: bool = False, wide: bool = False, preview_rows: int | None = None) -> SubmitHints:
-    return SubmitHints(must_materialise=must_materialise, wide=wide, fanout=1, preview_rows=preview_rows)
+def hints(
+    *, must_materialise: bool = False, wide: bool = False, fanout: int = 1, preview_rows: int | None = None
+) -> SubmitHints:
+    return SubmitHints(must_materialise=must_materialise, wide=wide, fanout=fanout, preview_rows=preview_rows)
 
 
 def submit_people(
@@ -293,11 +297,12 @@ def test_a_result_that_need_not_be_materialised_stays_deferred(backend, submitte
     assert backend.count(ref) == PEOPLE.height
 
 
+@pytest.mark.parametrize("fanout", [1, 2])
 @pytest.mark.parametrize("preview_rows", [None, 4])
-def test_a_wide_plan_follows_the_backend_policy(backend_name, submitted, preview_rows):
-    ref = submitted(wide=True, preview_rows=preview_rows).ref
+def test_a_wide_plan_follows_the_backend_policy(backend_name, submitted, preview_rows, fanout):
+    ref = submitted(wide=True, preview_rows=preview_rows, fanout=fanout).ref
 
-    stored = POLICIES[backend_name](hints(wide=True, preview_rows=preview_rows))
+    stored = POLICIES[backend_name](hints(wide=True, preview_rows=preview_rows, fanout=fanout))
     assert ref.state == ("materialised" if stored else "deferred")
 
 

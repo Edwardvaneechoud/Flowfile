@@ -1,7 +1,7 @@
 """Each backend's materialisation policy: what ``submit`` holds for each combination of hints.
 
-The worker's policy is the one policy: a plan is stored when it must be materialised, or when it is wide and a
-preview is asked for, and the sample comes inline from the same job. ``EmbeddedWorkerBackend`` stores it in a file
+The worker's policy is the one policy: a plan is stored when it must be materialised, or when it is wide and either a
+preview is asked for or more than one consumer reads it, and the sample comes inline from the same job. ``EmbeddedWorkerBackend`` stores it in a file
 under core's cache directory that ``release`` removes, in both flag states; ``WorkerBackend`` stores it on the worker,
 and with the flag off every other plan stays deferred in core, its samples from a worker sampler task.
 """
@@ -28,9 +28,16 @@ from flowfile_worker.results import result_path
 
 PEOPLE = pl.DataFrame({"id": list(range(10)), "name": [f"n{i}" for i in range(10)]})
 HINT_COMBINATIONS = [
-    pytest.param(must_materialise, wide, preview_rows, id=f"materialise={must_materialise}-wide={wide}-{preview_rows}")
+    pytest.param(
+        must_materialise,
+        wide,
+        fanout,
+        preview_rows,
+        id=f"materialise={must_materialise}-wide={wide}-fanout={fanout}-{preview_rows}",
+    )
     for must_materialise in (True, False)
     for wide in (True, False)
+    for fanout in (1, 2)
     for preview_rows in (4, None)
 ]
 
@@ -106,15 +113,17 @@ def sampler_tasks(monkeypatch) -> list[dict]:
     return started
 
 
-@pytest.mark.parametrize(("must_materialise", "wide", "preview_rows"), HINT_COMBINATIONS)
-def test_the_embedded_worker_stores_what_must_be_materialised_or_is_wide_with_a_preview(
-    must_materialise, wide, preview_rows
+@pytest.mark.parametrize(("must_materialise", "wide", "fanout", "preview_rows"), HINT_COMBINATIONS)
+def test_the_embedded_worker_stores_what_must_be_materialised_or_is_wide_with_a_preview_or_several_consumers(
+    must_materialise, wide, fanout, preview_rows
 ):
     backend = EmbeddedWorkerBackend()
-    stored = must_materialise or (wide and preview_rows is not None)
+    stored = must_materialise or (wide and (preview_rows is not None or fanout > 1))
     stored_file = result_path(1, "hash")
 
-    result = backend.submit(plan(), [], hints(must_materialise, wide, preview_rows), "hash", flow_id=1, node_id=1)
+    result = backend.submit(
+        plan(), [], hints(must_materialise, wide, preview_rows, fanout), "hash", flow_id=1, node_id=1
+    )
 
     assert result.ref.state == ("materialised" if stored else "deferred")
     assert result.ref.result_id == "hash"
@@ -136,13 +145,13 @@ def test_the_embedded_worker_stores_what_must_be_materialised_or_is_wide_with_a_
     assert not stored_file.exists()
 
 
-@pytest.mark.parametrize(("must_materialise", "wide", "preview_rows"), HINT_COMBINATIONS)
-def test_the_worker_stores_what_must_be_materialised_or_is_wide_with_a_preview(
-    worker, kept, must_materialise, wide, preview_rows
+@pytest.mark.parametrize(("must_materialise", "wide", "fanout", "preview_rows"), HINT_COMBINATIONS)
+def test_the_worker_stores_what_must_be_materialised_or_is_wide_with_a_preview_or_several_consumers(
+    worker, kept, must_materialise, wide, fanout, preview_rows
 ):
-    result = submit_to_worker(worker, kept, hints(must_materialise, wide, preview_rows))
+    result = submit_to_worker(worker, kept, hints(must_materialise, wide, preview_rows, fanout))
 
-    stored = must_materialise or (wide and preview_rows is not None)
+    stored = must_materialise or (wide and (preview_rows is not None or fanout > 1))
     assert result.ref.state == ("materialised" if stored else "deferred")
     assert result.handle == JobHandle("worker", result.ref.result_id)
     if preview_rows is None:

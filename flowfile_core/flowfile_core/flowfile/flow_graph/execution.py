@@ -443,7 +443,7 @@ class ExecutionMixin(GraphMixinBase):
         fetch's own. A refusal runs nothing, each refused node a failed row. A placement that raises fails the node's
         row and is raised again. Otherwise the node runs on its assigned backend: an input that ran with its current
         setup on another backend crosses through the exchange store, and one that has not run is composed into the
-        node's plan.
+        node's plan. The fetch's nodes are the node and its inputs, so its hints count no consumer.
         """
         if not claimed and not self.try_claim_run():
             raise Exception("Flow is already running")
@@ -506,6 +506,7 @@ class ExecutionMixin(GraphMixinBase):
                         node_logger=node_logger,
                         reset_cache=reset_cache,
                         unreachable=unreachable,
+                        running=frozenset(node.node_id for node in stage.nodes),
                     )
             finally:
                 _release_boundary_inputs(flow_node, edges_into)
@@ -638,6 +639,7 @@ class ExecutionMixin(GraphMixinBase):
         edges: Sequence[BoundaryEdge],
         unreachable: ComputeError | None = None,
         fallback: Fallback | None = None,
+        running: frozenset[int | str] | None = None,
     ) -> tuple[NodeResult, FlowNode]:
         """Executes a single node, records its result, and returns both.
 
@@ -651,6 +653,7 @@ class ExecutionMixin(GraphMixinBase):
             edges: The run's boundary edges into the node; every import is released once it ran.
             unreachable: The error the handshake of the node's backend raised; the node fails with it, nothing sent.
             fallback: Why placement moved the node to the default backend, for its result row.
+            running: The ids of the nodes the run executes, among which the node's hints count its consumers.
 
         Returns:
             A (NodeResult, FlowNode) tuple for post-stage failure propagation.
@@ -685,7 +688,9 @@ class ExecutionMixin(GraphMixinBase):
                 return node_result, node
 
             logger.info(f"Starting to run: node {node.node_id}, start time: {node_result.start_timestamp}")
-            node.execute_node(performance_mode=performance_mode, node_logger=node_logger, unreachable=unreachable)
+            node.execute_node(
+                performance_mode=performance_mode, node_logger=node_logger, unreachable=unreachable, running=running
+            )
         try:
             errors = node.results.errors
             if self.flow_settings.is_canceled:
@@ -783,7 +788,10 @@ class ExecutionMixin(GraphMixinBase):
         mutated in place, same dict the caller created — as they execute and
         evaluate. ``placement`` (``None`` when nothing was placed) names the
         backend each node runs on, and each of ``edges`` goes to the node that
-        reads through it.
+        reads through it. Each node runs with ``running``, the plan's nodes less
+        those skipped so far, so its hints count only the consumers that run; a
+        consumer a formula gate closes later still counts, which only stores a
+        result nothing reads.
 
         Returns:
             Set of node IDs that failed during execution.
@@ -809,6 +817,7 @@ class ExecutionMixin(GraphMixinBase):
         for edge in edges:
             edges_into.setdefault(edge.target.node_id, []).append(edge)
 
+        planned = {node.node_id for stage in execution_plan.stages for node in stage.nodes}
         any_rule_nodes_touched: list[FlowNode] = []
         try:
             for stage in execution_plan.stages:
@@ -849,6 +858,7 @@ class ExecutionMixin(GraphMixinBase):
                 if not nodes_to_run:
                     continue
 
+                running = frozenset(planned - skip_node_ids)
                 max_workers = current_context(self).parallelism
                 if len(nodes_to_run) == 1 or max_workers == 1:
                     stage_results = [
@@ -860,6 +870,7 @@ class ExecutionMixin(GraphMixinBase):
                             edges_into.get(node.node_id, []),
                             unreachable.get(assignment.get(node.node_id)),
                             moved.get(node.node_id),
+                            running,
                         )
                         for node in nodes_to_run
                     ]
@@ -879,6 +890,7 @@ class ExecutionMixin(GraphMixinBase):
                                 edges_into.get(node.node_id, []),
                                 unreachable.get(assignment.get(node.node_id)),
                                 moved.get(node.node_id),
+                                running,
                             ): node
                             for node in nodes_to_run
                         }

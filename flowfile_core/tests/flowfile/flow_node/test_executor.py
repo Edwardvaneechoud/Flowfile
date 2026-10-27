@@ -2121,5 +2121,54 @@ class TestDeferredUntilRun:
         assert calls == []
 
 
+def create_graph_with_sort_read_twice(execution_location: ExecutionLocationLit = "local") -> FlowGraph:
+    """manual_input(1) -> sort(2) -> select(3), and sort(2) -> sample(4): the sort has two consumers."""
+    graph = create_graph_with_sort_and_select(flow_id=44, execution_location=execution_location)
+    add_node_promise(graph, "sample", node_id=4)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 4))
+    graph.add_sample(input_schema.NodeSample(flow_id=graph.flow_id, node_id=4, depending_on_id=2))
+    return graph
+
+
+class TestFanoutCountsTheConsumersThatRun:
+    """``fanout`` counts a node's consumers among the nodes the run executes, every consumer without a run."""
+
+    def test_only_the_consumers_among_the_running_nodes_count(self):
+        graph = create_graph_with_sort_read_twice()
+        sort_node = graph.get_node(2)
+        context = graph.execution_context
+
+        assert hints_for(sort_node, context, False).fanout == 2
+        assert hints_for(sort_node, context, False, running={1, 2, 3}).fanout == 1
+        assert hints_for(sort_node, context, False, running={1, 2}).fanout == 0
+        assert hints_for(sort_node, context, False, running={1, 2, 3, 4, 99}).fanout == 2
+
+    def test_a_lineage_run_and_a_single_node_fetch_count_the_consumers_they_run(self, monkeypatch):
+        """A run over nodes 1 to 3 counts the select only; a fetch of the sort runs no consumer at all."""
+        from flowfile_core.flowfile.flow_node import executor as executor_module
+
+        graph = create_graph_with_sort_read_twice()
+        recorded: dict[int, int] = {}
+        real_hints_for = executor_module.hints_for
+
+        def recording_hints_for(node, context, performance_mode, running=None):
+            hints = real_hints_for(node, context, performance_mode, running)
+            recorded[node.node_id] = hints.fanout
+            return hints
+
+        monkeypatch.setattr(executor_module, "hints_for", recording_hints_for)
+
+        assert graph.run_graph(node_ids=[1, 2, 3]).success
+        assert recorded[2] == 1
+        assert recorded[1] == 1
+
+        graph.get_node(1).invalidate_cache()  # Development mode would otherwise skip the nodes that ran
+        assert graph.run_graph().success
+        assert recorded[2] == 2
+
+        graph.trigger_fetch_node(2)
+        assert recorded[2] == 0
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

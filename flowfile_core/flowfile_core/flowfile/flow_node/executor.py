@@ -7,6 +7,7 @@ Enables stateless execution by accepting external state providers.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import replace
 from typing import TYPE_CHECKING, Protocol
 
@@ -47,14 +48,21 @@ def is_narrow_transform(node: FlowNode) -> bool:
     return node.node_default is not None and node.node_default.transform_type == "narrow"
 
 
-def hints_for(node: FlowNode, context: ExecutionContext, performance_mode: bool) -> SubmitHints:
+def hints_for(
+    node: FlowNode,
+    context: ExecutionContext,
+    performance_mode: bool,
+    running: Collection[int | str] | None = None,
+) -> SubmitHints:
     """The hints ``node`` submits its plan with, which the backend's materialisation policy reads.
 
     - ``must_materialise``: a ``cache_results`` node outside ``IN_CORE_NODE_TYPES``, or any node reading an input
       that crossed from another backend (``_boundary_inputs``), so no result refers to the exchange prefix once the
       run removes it.
     - ``wide``: neither ``is_narrow_transform`` nor in ``IN_CORE_NODE_TYPES``.
-    - ``fanout``: the number of distinct downstream nodes. No backend's policy reads it yet.
+    - ``fanout``: the number of distinct downstream nodes among *running*, the ids of the nodes this run executes,
+      or of every downstream node when *running* is ``None``. The worker stores a wide result read by more than one,
+      which would otherwise be computed again inside each consumer's plan.
     - ``preview_rows``: the context's, else ``DEFAULT_PREVIEW_ROWS``. ``None`` for ``IN_CORE_NODE_TYPES`` and in
       *performance_mode*, except for a ``cache_results`` node.
     """
@@ -63,10 +71,13 @@ def hints_for(node: FlowNode, context: ExecutionContext, performance_mode: bool)
     preview_rows = None
     if not in_core and (caches or not performance_mode):
         preview_rows = context.preview_rows if context.preview_rows is not None else DEFAULT_PREVIEW_ROWS
+    consumers = {consumer.node_id for consumer in node.leads_to_nodes}
+    if running is not None:
+        consumers = {consumer for consumer in consumers if consumer in running}
     return SubmitHints(
         must_materialise=(caches and not in_core) or bool(node._boundary_inputs),
         wide=not in_core and not is_narrow_transform(node),
-        fanout=len({consumer.node_id for consumer in node.leads_to_nodes}),
+        fanout=len(consumers),
         preview_rows=preview_rows,
     )
 
@@ -137,6 +148,7 @@ class NodeExecutor:
         retry: bool = True,
         node_logger: NodeLogger = None,
         unreachable: Exception | None = None,
+        running: Collection[int | str] | None = None,
     ) -> None:
         """
         Main execution entry point.
@@ -159,6 +171,8 @@ class NodeExecutor:
             node_logger: Logger for this node's execution
             unreachable: The error the handshake of the node's placed backend raised. The node fails with it and
                 nothing is decided or sent.
+            running: The ids of the nodes this run executes, which ``hints_for`` counts the consumers among;
+                ``None`` counts every consumer.
         """
         if node_logger is None:
             raise ValueError("node_logger is required")
@@ -170,20 +184,20 @@ class NodeExecutor:
 
         if unreachable is not None:
             self._prepare_for_execution(state)
-            self._handle_error(state, unreachable, performance_mode, False, node_logger)
+            self._handle_error(state, unreachable, performance_mode, False, node_logger, running)
             return
 
         try:
             decision = self._decide_execution(state, performance_mode, reset_cache)
         except ComputeError as e:
             self._prepare_for_execution(state)
-            self._handle_error(state, e, performance_mode, retry, node_logger)
+            self._handle_error(state, e, performance_mode, retry, node_logger, running)
             return
         if not decision.should_run:
             return
 
         context = current_context()
-        hints = hints_for(self.node, context, performance_mode)
+        hints = hints_for(self.node, context, performance_mode, running)
         reason_str = decision.reason.name if decision.reason else "UNKNOWN"
         node_logger.info(f"Starting to run {self.node.__name__} ({reason_str} -> {context.backend_id}, {hints})")
 
@@ -220,7 +234,7 @@ class NodeExecutor:
                 state.reset_results_only()
                 self._sync_state_to_legacy(state)
                 return
-            self._handle_error(state, e, effective_performance_mode, retry, node_logger)
+            self._handle_error(state, e, effective_performance_mode, retry, node_logger, running)
 
     def _raise_on_invalid_expression(self) -> None:
         """Fail a formula/advanced-filter node whose expression cannot run against its input.
@@ -407,6 +421,7 @@ class NodeExecutor:
         performance_mode: bool,
         retry: bool,
         node_logger: NodeLogger,
+        running: Collection[int | str] | None = None,
     ) -> None:
         """Handle execution errors with retry logic.
 
@@ -450,6 +465,7 @@ class NodeExecutor:
                             retry=True,
                             reset_cache=True,
                             node_logger=node_logger,
+                            running=running,
                         )
                 except ValueError as e:
                     node_logger.error(f"Could not retry upstream node {node_input.node_id}: {e}")
@@ -458,6 +474,7 @@ class NodeExecutor:
                 performance_mode=performance_mode,
                 retry=False,
                 node_logger=node_logger,
+                running=running,
             )
             return
 

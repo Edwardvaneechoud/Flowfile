@@ -257,8 +257,11 @@ def test_capabilities_reports_this_process():
         (True, False, 1, None, "materialised"),
         (False, True, 1, 100, "materialised"),
         (False, True, 1, None, "deferred"),
+        (False, True, 2, None, "materialised"),
+        (False, True, 0, None, "deferred"),
         (False, False, 1, 100, "deferred"),
         (False, False, 3, 100, "deferred"),
+        (False, False, 3, None, "deferred"),
     ],
 )
 def test_the_hints_decide_whether_a_result_is_written(held, must_materialise, wide, fanout, preview_rows, state):

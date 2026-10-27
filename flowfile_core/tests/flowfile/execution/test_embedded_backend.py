@@ -20,6 +20,7 @@ import socket
 import sys
 import threading
 import uuid
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -324,6 +325,23 @@ def test_an_apply_with_a_table_as_its_model_is_refused_by_the_body(backend, kept
 
     with pytest.raises(PlanRejected, match="holds rows, not a model"):
         backend.run_op(OperationKind.ml_apply, op_payload(ml_apply_payload(table)))
+
+
+def test_a_body_the_worker_model_refuses_is_rejected_before_anything_runs(backend, kept, inline_jobs, monkeypatch):
+    """The body is checked as its route checks it: a field the worker's model forbids is the route's 422."""
+    table = submit(backend, kept, must_materialise=True).ref
+    spec = worker_module.V1_OPS[OperationKind.ml_apply]
+    monkeypatch.setitem(
+        worker_module.V1_OPS,
+        OperationKind.ml_apply,
+        replace(spec, request=lambda job: {**spec.request(job), "model_path": "/nowhere"}),
+    )
+    inline_jobs.clear()
+
+    with pytest.raises(PlanRejected, match="model_path"):
+        backend.run_op(OperationKind.ml_apply, op_payload(ml_apply_payload(table)))
+
+    assert inline_jobs == []
 
 
 def test_a_directory_scan_is_refused_before_the_call(backend, tmp_path, inline_jobs):

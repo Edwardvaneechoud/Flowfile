@@ -124,6 +124,7 @@ In Performance mode, Flowfile fully embraces Polars' lazy evaluation. Each node 
 
 - **Output nodes** (writing to a file, a database or cloud storage) run their write as an operation on the flow's backend, which computes the plan it is given.
 - **Nodes with `cache_results` enabled** submit with `must_materialise`, so the backend stores their rows whatever the mode.
+- **Wide nodes read by more than one node** (a join, a group by or a sort feeding two writers) submit with `fanout > 1`, so the backend stores their rows once instead of computing them inside each consumer's plan.
 
 This minimizes computation and memory usage by avoiding unnecessary intermediate materializations.
 
@@ -137,7 +138,7 @@ This minimizes computation and memory usage by avoiding unnecessary intermediate
 hints = SubmitHints(
     must_materialise=node.node_settings.cache_results,  # correctness: the user asked for a stored result
     wide=not is_narrow_transform(node),                  # join, group_by, sort, …
-    fanout=len(node.leads_to_nodes),                     # downstream consumers
+    fanout=len({n.node_id for n in node.leads_to_nodes} & running),  # consumers that run in this run
     preview_rows=None if performance_mode and not node.node_settings.cache_results else 100,
 )
 # The backend's policy decides from the hints whether to store the rows or keep the plan.
@@ -152,7 +153,7 @@ Crucially, with a worker as the flow's backend, **bulk data processing happens i
 
 Flowfile uses Apache Arrow IPC format for the data the Core and Worker services exchange, and keeps results where they were computed:
 
-1.  **Worker Processing & Storage**: When the backend's policy stores a result (a `must_materialise` node, or a wide one with a preview asked for), the worker computes it in a child process and writes it as an Arrow IPC file under its own storage directory; otherwise it keeps the plan.
+1.  **Worker Processing & Storage**: When the backend's policy stores a result (a `must_materialise` node, or a wide one with a preview asked for or more than one consumer), the worker computes it in a child process and writes it as an Arrow IPC file under its own storage directory; otherwise it keeps the plan.
 2.  **Result References**: The worker answers a result reference (`ResultRef`): the result's schema, its row count when known, and a location that is opaque to core. Core composes the next node's plan on `plan_for(ref)`, a scan of the worker's file that core sends back to the same worker and never opens itself.
 3.  **UI Sampling**: A preview arrives inline with the submit, or later from `sample(ref, n)`, an Arrow IPC stream of at most `n` rows, which core forwards to the Designer.
 4.  **Crossing backends**: Data moves to another backend only through `export` and `import_uri`, never implicitly; the [compute protocol](compute-protocol.md) describes the exchange store that carries it.

@@ -17,6 +17,7 @@ on core's host, so it reads and writes ``file`` whatever ``FLOWFILE_WORKER_LOCAL
 
 from __future__ import annotations
 
+import functools
 import io
 import uuid
 from collections.abc import Callable
@@ -26,22 +27,12 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import polars as pl
 from fastapi import HTTPException
+from pydantic import ValidationError, validate_call
 
 from flowfile_core.flowfile.execution.backends.worker import (
     _JOB_STATES,
-    _cloud_write_settings,
-    _custom_node_request,
-    _database_read_settings,
-    _database_write_settings,
-    _declared_outputs,
+    V1_OPS,
     _delta_destination,
-    _file_to_read,
-    _fuzzy_sides,
-    _google_analytics_read_settings,
-    _kafka_offsets,
-    _kafka_read_settings,
-    _rest_api_read_settings,
-    _shuffled_rows,
     _v1_error,
     _wire_columns,
     _wire_credential,
@@ -49,24 +40,10 @@ from flowfile_core.flowfile.execution.backends.worker import (
 )
 from flowfile_core.flowfile.execution.errors import ComputeError, OperationUnsupported
 from flowfile_core.flowfile.execution.payloads import (
-    CloudWritePayload,
     CustomNodePayload,
-    DatabaseReadPayload,
-    DatabaseWritePayload,
     DeltaMergePayload,
     DeltaScd2Payload,
     DeltaWritePayload,
-    FileReadPayload,
-    FileWritePayload,
-    FuzzyJoinPayload,
-    GoogleAnalyticsReadPayload,
-    KafkaReadPayload,
-    MlApplyPayload,
-    MlTrainPayload,
-    PolarsCodePayload,
-    RandomSplitPayload,
-    RestApiReadPayload,
-    SqlQueryPayload,
     VizSessionPayload,
     unpack,
 )
@@ -83,7 +60,6 @@ from flowfile_core.flowfile.execution.protocol import (
     SubmitResult,
 )
 from flowfile_core.flowfile.execution.registry import LOCAL_BACKEND_ID
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import FuzzyJoinInput, PolarsOperation
 from flowfile_core.flowfile.flow_node.multi_output import output_handle
 from shared import compute_protocol as wire
 from shared.compute_protocol import PROTOCOL_VERSION, Capabilities
@@ -105,11 +81,11 @@ class EmbeddedWorkerBackend(_WorkerReferences):
     Its id is ``local``; a reference or job handle of another id is refused with ``ForeignRef``. ``capabilities()``
     is the embedded worker's own, with ``file`` added to both scheme sets.
 
-    Materialisation policy is the worker's (``funcs.submit_result``): a plan is written to a file when
-    ``hints.must_materialise`` is set, or when it is ``wide`` and ``preview_rows`` is not ``None``. Every other plan is
-    held deferred. ``fanout`` is not read. A reference carries a ``WorkerLocation`` JSON, which ``plan_for`` decodes
-    without a call. A blob is refused with ``OperationUnsupported`` by ``plan_for``, ``sample``, ``count`` and as a
-    ``submit`` input.
+    Materialisation policy is the worker's (``service._materialise``): a plan is written to a file when
+    ``hints.must_materialise`` is set, or when it is ``wide`` and either ``preview_rows`` is not ``None`` or ``fanout``
+    is above one. Every other plan is held deferred. A reference carries a ``WorkerLocation`` JSON, which ``plan_for``
+    decodes without a call. A blob is refused with ``OperationUnsupported`` by ``plan_for``, ``sample``, ``count`` and
+    as a ``submit`` input.
 
     ``run_op`` runs the ``/v1/ops`` and Delta kinds as the job the payload's ``job_id`` names, so ``status`` and
     ``cancel`` reach it. Its refs are keyed as ``WorkerBackend`` keys them: each output the stored result
@@ -174,40 +150,14 @@ class EmbeddedWorkerBackend(_WorkerReferences):
 
         Raises:
             ForeignRef: An ``ml_apply`` model another backend minted.
+            OperationUnsupported: A kind this backend has no body for; nothing was run.
             PlanRejected: The worker could not load the operation's plan, or the body refused it before running.
             ResultMissing: An ``ml_apply`` model the worker no longer holds.
             TaskFailed: The operation failed.
             RuntimeError: The visualisation session could not answer.
             ValueError: A custom node did not return one of its declared outputs.
         """
-        service = _service()
-        args: tuple[Any, ...] = ()
         match op:
-            case OperationKind.file_write:
-                job = unpack(payload, FileWritePayload)
-                settings = job.settings
-                body = service.models.PolarsScriptWrite(
-                    operation=job.plan.serialize(),
-                    data_type=settings.file_type,
-                    path=settings.abs_file_path,
-                    write_mode=settings.write_mode,
-                    sheet_name=settings.sheet_name,
-                    delimiter=settings.delimiter,
-                    compression=settings.compression,
-                    flowfile_flow_id=job.flow_id,
-                    flowfile_node_id=job.node_id,
-                )
-                run = service.file_write
-            case OperationKind.database_write:
-                job = unpack(payload, DatabaseWritePayload)
-                sent = _database_write_settings(job).model_dump_json()
-                body = service.models.DatabaseScriptWrite.model_validate_json(sent)
-                run = service.database_write
-            case OperationKind.cloud_write:
-                job = unpack(payload, CloudWritePayload)
-                sent = _cloud_write_settings(job).model_dump_json()
-                body = service.models.CloudStorageScriptWrite.model_validate_json(sent)
-                run = service.cloud_write
             case OperationKind.delta_write:
                 write = unpack(payload, DeltaWritePayload)
                 kwargs = {"mode": write.mode, "partition_by": write.partition_by, "enable_cdf": write.enable_cdf}
@@ -238,111 +188,17 @@ class EmbeddedWorkerBackend(_WorkerReferences):
                 return self._delta(write, "scd2_delta", kwargs)
             case OperationKind.viz_session:
                 return self._viz_session(unpack(payload, VizSessionPayload))
-            case OperationKind.database_read:
-                job = unpack(payload, DatabaseReadPayload)
-                body = service.DatabaseReadSettings.model_validate(_database_read_settings(job).model_dump(mode="json"))
-                run = service.database_read
-            case OperationKind.kafka_read:
-                job = unpack(payload, KafkaReadPayload)
-                body = service.KafkaReadSettings.model_validate(_kafka_read_settings(job).model_dump(mode="json"))
-                run = service.kafka_read
-            case OperationKind.google_analytics_read:
-                job = unpack(payload, GoogleAnalyticsReadPayload)
-                body = service.GoogleAnalyticsReadSettings.model_validate(
-                    _google_analytics_read_settings(job).model_dump(mode="json")
-                )
-                run = service.google_analytics_read
-            case OperationKind.rest_api_read:
-                job = unpack(payload, RestApiReadPayload)
-                body = service.RestApiReadSettings.model_validate(_rest_api_read_settings(job).model_dump(mode="json"))
-                run = service.rest_api_read
-            case OperationKind.file_read:
-                job = unpack(payload, FileReadPayload)
-                body = service.ReceivedTable.model_validate(_file_to_read(job).model_dump(mode="json"))
-                run = service.file_read
-                args = (job.flow_id, job.node_id)
-            case OperationKind.fuzzy_join:
-                job = unpack(payload, FuzzyJoinPayload)
-                left, right, fuzzy_maps = _fuzzy_sides(job)
-                sides = FuzzyJoinInput(
-                    left_df_operation=PolarsOperation(operation=left.serialize()),
-                    right_df_operation=PolarsOperation(operation=right.serialize()),
-                    fuzzy_maps=fuzzy_maps,
-                    task_id=job.job_id,
-                    flowfile_flow_id=job.flow_id,
-                    flowfile_node_id=job.node_id,
-                )
-                body = service.models.FuzzyJoinInput.model_validate(sides.model_dump(mode="json"))
-                run = service.fuzzy_join
-            case OperationKind.custom_node:
-                job = unpack(payload, CustomNodePayload)
-                if job.node_source is None:
-                    return self._custom_node_here(job)
-                body = service.models.CustomNodeExecuteInput.model_validate(
-                    _custom_node_request(job).model_dump(mode="json")
-                )
-                run = service.custom_node
-            case OperationKind.ml_train:
-                job = unpack(payload, MlTrainPayload)
-                body = service.MlTrainInput(
-                    operation=job.plan.serialize(),
-                    flowfile_flow_id=job.flow_id,
-                    flowfile_node_id=job.node_id,
-                    model_type=job.model_type,
-                    target_column=job.target_column,
-                    feature_columns=job.feature_columns,
-                    params=job.params,
-                )
-                run = service.ml_train
-            case OperationKind.ml_apply:
-                job = unpack(payload, MlApplyPayload)
-                self._check(job.model)
-                body = service.MlApplyInput(
-                    operation=job.plan.serialize(),
-                    flowfile_flow_id=job.flow_id,
-                    flowfile_node_id=job.node_id,
-                    model=job.model.result_id,
-                    output_column=job.output_column,
-                )
-                run = service.ml_apply
-            case OperationKind.polars_code:
-                job = unpack(payload, PolarsCodePayload)
-                body = service.PolarsCodeInput(
-                    code=job.code,
-                    inputs=[plan.serialize() for plan in job.inputs],
-                    flowfile_flow_id=job.flow_id,
-                    flowfile_node_id=job.node_id,
-                )
-                run = service.polars_code
-            case OperationKind.sql_query:
-                job = unpack(payload, SqlQueryPayload)
-                body = service.SqlQueryInput(
-                    sql_code=job.sql_code,
-                    inputs=[plan.serialize() for plan in job.inputs],
-                    flowfile_flow_id=job.flow_id,
-                    flowfile_node_id=job.node_id,
-                )
-                run = service.sql_query
-            case _:
-                job = unpack(payload, RandomSplitPayload)
-                body = service.RandomSplitInput(
-                    operation=_shuffled_rows(job).serialize(),
-                    flowfile_flow_id=job.flow_id,
-                    flowfile_node_id=job.node_id,
-                    splits=[(group.name, group.percentage) for group in job.settings.splits],
-                )
-                run = service.random_split
-        answer = _call(run, body, job.job_id, *args)
+        spec = V1_OPS.get(op)
+        if spec is None:
+            raise OperationUnsupported(f"The embedded worker backend does not run the {op.value} operation")
+        job = unpack(payload, spec.payload)
+        if op is OperationKind.custom_node and job.node_source is None:
+            return self._custom_node_here(job)
+        for ref in spec.held(job):
+            self._check(ref)
+        answer = _call(_route_body(op), spec.request(job), job.job_id, **spec.params(job))
         refs = {name: self._ref_from_wire(ref) for name, ref in answer.outputs.items()}
-        if op is OperationKind.custom_node:
-            refs = _declared_outputs(refs, job.output_names)
-        elif op is OperationKind.random_split:
-            refs = {group.name: refs[group.name] for group in job.settings.splits}
-        if op is OperationKind.kafka_read:
-            metadata = _kafka_offsets(answer.metadata)
-        else:
-            metadata = answer.metadata if op is OperationKind.ml_train else {}
-        return OpResult(refs=refs, metadata=metadata)
+        return spec.result(job, refs, answer.metadata)
 
     def sample(self, ref: ResultRef, n: int) -> bytes:
         """The first ``n`` rows of ``ref`` as an Arrow IPC stream, as ``GET /v1/results/{id}/sample`` answers them.
@@ -592,12 +448,23 @@ class EmbeddedWorkerBackend(_WorkerReferences):
         return OpResult(refs=refs)
 
 
-def _call(body: Callable[..., Any], *args: Any) -> Any:
-    """Call a ``/v1`` body with ``args`` and answer what it returns; what it raises comes back typed (``_typed``)."""
+def _call(body: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Call a ``/v1`` body with ``args`` and answer what it returns; what it raises comes back typed (``_typed``).
+
+    Arguments a body refuses (``_route_body`` validates them as its route does) are ``PlanRejected``, the route's 422.
+    """
     try:
-        return body(*args)
+        return body(*args, **kwargs)
     except HTTPException as e:
         raise _typed(e) from e
+    except ValidationError as e:
+        raise _v1_error(422, str(e), answered_by="The embedded worker") from e
+
+
+@functools.cache
+def _route_body(op: OperationKind) -> Callable[..., Any]:
+    """The ``/v1/ops/<kind>`` body for ``op``, its arguments validated from its own signature as its route's are."""
+    return validate_call(getattr(_service(), op.value))
 
 
 def _typed(exc: HTTPException) -> ComputeError:

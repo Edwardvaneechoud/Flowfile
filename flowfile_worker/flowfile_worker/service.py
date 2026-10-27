@@ -270,11 +270,12 @@ def _copy_blob(copy: Callable[[], None]) -> None:
 
 
 def _materialise(hints: SubmitHints) -> bool:
-    """Whether a submit writes its result to a file: when core requires it, or when a wide result is previewed anyway.
+    """Whether a submit writes its result to a file: when core requires it, or when a wide result is previewed anyway
+    or read by more than one consumer (``fanout``), which would otherwise each compute it again.
 
-    Anything else stays deferred and runs again when rows or a count are asked for. ``fanout`` is not read.
+    Anything else stays deferred and runs again when rows or a count are asked for.
     """
-    return hints.must_materialise or (hints.wide and hints.preview_rows is not None)
+    return hints.must_materialise or (hints.wide and (hints.preview_rows is not None or hints.fanout > 1))
 
 
 def _held(result_id: str) -> ResultRecord | None:

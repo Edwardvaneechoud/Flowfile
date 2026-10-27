@@ -60,7 +60,8 @@ class SubmitHints:
     Attributes:
         must_materialise: Compute and hold the rows rather than keep a deferred plan.
         wide: The plan reshapes data across rows (join, group by, sort, pivot) rather than mapping each row.
-        fanout: How many downstream nodes read the result.
+        fanout: How many downstream nodes read the result in this run; a backend may store a wide result
+            several consumers would otherwise each compute again.
         preview_rows: The most rows the inline sample may hold; ``None`` asks for no sample.
     """
 

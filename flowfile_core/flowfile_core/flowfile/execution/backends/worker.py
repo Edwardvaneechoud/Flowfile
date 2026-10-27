@@ -175,25 +175,6 @@ _SPLIT_RANK = "__split_rank__"
 _NO_FLOW = -1
 # A proxy may hold a refused upgrade's connection open; websockets would wait 10 s for it to close
 _SOCKET_CLOSE_TIMEOUT = 1.0
-_V1_OPERATIONS = frozenset(
-    {
-        OperationKind.database_read,
-        OperationKind.kafka_read,
-        OperationKind.google_analytics_read,
-        OperationKind.rest_api_read,
-        OperationKind.file_read,
-        OperationKind.fuzzy_join,
-        OperationKind.random_split,
-        OperationKind.custom_node,
-        OperationKind.ml_train,
-        OperationKind.ml_apply,
-        OperationKind.polars_code,
-        OperationKind.sql_query,
-        OperationKind.file_write,
-        OperationKind.database_write,
-        OperationKind.cloud_write,
-    }
-)
 _JOB_STATES: dict[str, Literal["running", "done", "failed", "cancelled"]] = {
     "Starting": "running",
     "Processing": "running",
@@ -282,9 +263,9 @@ class WorkerBackend(_WorkerReferences):
     - ``shares_core_disk``: the worker sees core's files, so ``capabilities`` adds ``file`` to its schemes.
 
     Materialisation policy: ``submit`` stores a plan when ``hints.must_materialise`` is set, or when it is ``wide``
-    and a preview is asked for (``preview_rows`` not ``None``), so the preview and the consumers share one
-    computation. Every other plan stays deferred: with no preview (Performance mode) nothing reads a wide plan before
-    the writers do. ``fanout`` is not read yet.
+    and either a preview is asked for (``preview_rows`` not ``None``) or more than one consumer reads it (``fanout``),
+    so the preview and the consumers share one computation. Every other plan stays deferred: with no preview
+    (Performance mode) nothing reads a wide plan with one consumer before the writer does.
 
     The handshake gates every worker call but ``capabilities``, which the check itself reads, so any other call can
     raise ``VersionMismatch`` or ``ComputeUnavailable``. Making a backend registers it with that gate for ``url``
@@ -440,7 +421,7 @@ class WorkerBackend(_WorkerReferences):
                 )
                 answer = wire.SubmitResult.model_validate_json(response.content)
             return self._from_wire(answer)
-        if hints.must_materialise or (hints.wide and hints.preview_rows is not None):
+        if hints.must_materialise or (hints.wide and (hints.preview_rows is not None or hints.fanout > 1)):
             ref = self._store(plan, result_id, flow_id, node_id)
             sample = None if hints.preview_rows is None else self.sample(ref, hints.preview_rows)
         else:
@@ -454,7 +435,7 @@ class WorkerBackend(_WorkerReferences):
         here and credentials sent still encrypted. ``cancel(JobHandle(self.id, job_id))`` with the payload's
         ``job_id`` reaches the job while the call waits.
 
-        With the protocol flag on, the kinds in ``_V1_OPERATIONS`` go to ``POST /v1/ops/{kind}``, and ``polars_code``
+        With the protocol flag on, the kinds in ``V1_OPS`` go to ``POST /v1/ops/{kind}``, and ``polars_code``
         and ``sql_query`` do in either flag state. Their refs are keyed as on the task routes, each output a ``/v1``
         result ``<job_id>_<i>`` of its own. The Delta writes and ``viz_session`` always use the task routes.
 
@@ -501,7 +482,7 @@ class WorkerBackend(_WorkerReferences):
         operation = self._operations.get(op)
         if operation is None:
             raise OperationUnsupported(f"The worker backend does not run the {op.value} operation")
-        if settings.FLOWFILE_COMPUTE_PROTOCOL and op in _V1_OPERATIONS:
+        if settings.FLOWFILE_COMPUTE_PROTOCOL and op in V1_OPS:
             return self._v1_op(op, payload)
         return operation(payload)
 
@@ -972,123 +953,24 @@ class WorkerBackend(_WorkerReferences):
             OperationUnsupported: A custom node without a node file.
             ValueError: The worker did not return one of a custom node's declared outputs.
         """
-        params: dict[str, Any] = {}
-        match op:
-            case OperationKind.database_read:
-                job = unpack(payload, DatabaseReadPayload)
-                body = _database_read_settings(job).model_dump(mode="json")
-            case OperationKind.kafka_read:
-                job = unpack(payload, KafkaReadPayload)
-                body = _kafka_read_settings(job).model_dump(mode="json")
-            case OperationKind.google_analytics_read:
-                job = unpack(payload, GoogleAnalyticsReadPayload)
-                body = _google_analytics_read_settings(job).model_dump(mode="json")
-            case OperationKind.rest_api_read:
-                job = unpack(payload, RestApiReadPayload)
-                body = _rest_api_read_settings(job).model_dump(mode="json")
-            case OperationKind.file_read:
-                job = unpack(payload, FileReadPayload)
-                body = _file_to_read(job).model_dump(mode="json")
-                params = {"flowfile_flow_id": job.flow_id, "flowfile_node_id": job.node_id}
-            case OperationKind.fuzzy_join:
-                job = unpack(payload, FuzzyJoinPayload)
-                left, right, fuzzy_maps = _fuzzy_sides(job)
-                body = FuzzyJoinInput(
-                    left_df_operation=PolarsOperation(operation=left.serialize()),
-                    right_df_operation=PolarsOperation(operation=right.serialize()),
-                    fuzzy_maps=fuzzy_maps,
-                    task_id=job.job_id,
-                    flowfile_flow_id=job.flow_id,
-                    flowfile_node_id=job.node_id,
-                ).model_dump(mode="json")
-            case OperationKind.custom_node:
-                job = unpack(payload, CustomNodePayload)
-                body = _custom_node_request(job).model_dump(mode="json")
-            case OperationKind.ml_train:
-                job = unpack(payload, MlTrainPayload)
-                body = {
-                    "operation": base64.b64encode(job.plan.serialize()).decode("ascii"),
-                    "flowfile_flow_id": job.flow_id,
-                    "flowfile_node_id": job.node_id,
-                    "model_type": job.model_type,
-                    "target_column": job.target_column,
-                    "feature_columns": job.feature_columns,
-                    "params": job.params,
-                }
-            case OperationKind.ml_apply:
-                job = unpack(payload, MlApplyPayload)
-                self._check(job.model)
-                body = {
-                    "operation": base64.b64encode(job.plan.serialize()).decode("ascii"),
-                    "flowfile_flow_id": job.flow_id,
-                    "flowfile_node_id": job.node_id,
-                    "model": job.model.result_id,
-                    "output_column": job.output_column,
-                }
-            case OperationKind.polars_code:
-                job = unpack(payload, PolarsCodePayload)
-                body = {
-                    "code": job.code,
-                    "inputs": [base64.b64encode(plan.serialize()).decode("ascii") for plan in job.inputs],
-                    "flowfile_flow_id": job.flow_id,
-                    "flowfile_node_id": job.node_id,
-                }
-            case OperationKind.sql_query:
-                job = unpack(payload, SqlQueryPayload)
-                body = {
-                    "sql_code": job.sql_code,
-                    "inputs": [base64.b64encode(plan.serialize()).decode("ascii") for plan in job.inputs],
-                    "flowfile_flow_id": job.flow_id,
-                    "flowfile_node_id": job.node_id,
-                }
-            case OperationKind.file_write:
-                job = unpack(payload, FileWritePayload)
-                settings = job.settings
-                body = {
-                    "operation": base64.b64encode(job.plan.serialize()).decode("ascii"),
-                    "data_type": settings.file_type,
-                    "path": settings.abs_file_path,
-                    "write_mode": settings.write_mode,
-                    "sheet_name": settings.sheet_name,
-                    "delimiter": settings.delimiter,
-                    "compression": settings.compression,
-                    "flowfile_flow_id": job.flow_id,
-                    "flowfile_node_id": job.node_id,
-                }
-            case OperationKind.database_write:
-                job = unpack(payload, DatabaseWritePayload)
-                body = json.loads(_database_write_settings(job).model_dump_json())
-            case OperationKind.cloud_write:
-                job = unpack(payload, CloudWritePayload)
-                body = json.loads(_cloud_write_settings(job).model_dump_json())
-            case _:
-                job = unpack(payload, RandomSplitPayload)
-                body = {
-                    "operation": base64.b64encode(_shuffled_rows(job).serialize()).decode("ascii"),
-                    "flowfile_flow_id": job.flow_id,
-                    "flowfile_node_id": job.node_id,
-                    "splits": [[group.name, group.percentage] for group in job.settings.splits],
-                }
+        spec = V1_OPS.get(op)
+        if spec is None:
+            raise OperationUnsupported(f"The worker backend does not run the {op.value} operation over /v1")
+        job = unpack(payload, spec.payload)
+        for ref in spec.held(job):
+            self._check(ref)
         answer = self._v1(
             "POST",
             f"/ops/{op.value}",
             waits=True,
             job_id=job.job_id,
-            params={"job_id": job.job_id, **params},
-            json=body,
+            params={"job_id": job.job_id, **spec.params(job)},
+            json=_json_body(spec.request(job)),
         ).json()
         refs = {
             name: self._ref_from_wire(wire.ResultRef.model_validate(raw)) for name, raw in answer["outputs"].items()
         }
-        if op is OperationKind.custom_node:
-            refs = _declared_outputs(refs, job.output_names)
-        elif op is OperationKind.random_split:
-            refs = {group.name: refs[group.name] for group in job.settings.splits}
-        if op is OperationKind.kafka_read:
-            metadata = _kafka_offsets(answer["metadata"])
-        else:
-            metadata = answer["metadata"] if op is OperationKind.ml_train else {}
-        return OpResult(refs=refs, metadata=metadata)
+        return spec.result(job, refs, answer["metadata"])
 
     def _store(
         self, plan: pl.LazyFrame, result_id: str, flow_id: int, node_id: int | str, *, tracked_as: str | None = None
@@ -1880,3 +1762,175 @@ def _declared_outputs(refs: dict[str, ResultRef], output_names: list[str]) -> di
             raise ValueError(f"Worker did not return declared output '{name}'")
         handles[output_handle(i)] = ref
     return handles
+
+
+def _json_body(body: Any) -> Any:
+    """``body`` with every ``bytes`` value base64-encoded, as the worker's models read bytes from JSON."""
+    if isinstance(body, bytes):
+        return base64.b64encode(body).decode("ascii")
+    if isinstance(body, dict):
+        return {key: _json_body(value) for key, value in body.items()}
+    if isinstance(body, list | tuple):
+        return [_json_body(value) for value in body]
+    return body
+
+
+def _no_params(job: Any) -> dict[str, Any]:
+    return {}
+
+
+def _no_refs(job: Any) -> tuple[ResultRef, ...]:
+    return ()
+
+
+def _all_outputs(job: Any, refs: dict[str, ResultRef]) -> dict[str, ResultRef]:
+    return refs
+
+
+def _no_metadata(answered: dict[str, Any]) -> dict[str, Any]:
+    return {}
+
+
+def _all_metadata(answered: dict[str, Any]) -> dict[str, Any]:
+    return answered
+
+
+@dataclass(frozen=True)
+class V1Op:
+    """How one kind runs over ``POST /v1/ops/<kind>``, the same on ``WorkerBackend`` and ``EmbeddedWorkerBackend``.
+
+    ``request`` is the route's body as plain data (``bytes`` left raw: the worker's models read raw bytes or base64,
+    and ``_json_body`` encodes them for the wire), ``params`` the query parameters besides ``job_id``, ``held`` the
+    references the payload names that must be the running backend's, ``outputs`` the refs keyed as the caller reads
+    them and ``metadata`` what the caller keeps of the answer's ``metadata``.
+    """
+
+    payload: type
+    request: Callable[[Any], dict[str, Any]]
+    params: Callable[[Any], dict[str, Any]] = _no_params
+    held: Callable[[Any], tuple[ResultRef, ...]] = _no_refs
+    outputs: Callable[[Any, dict[str, ResultRef]], dict[str, ResultRef]] = _all_outputs
+    metadata: Callable[[dict[str, Any]], dict[str, Any]] = _no_metadata
+
+    def result(self, job: Any, refs: dict[str, ResultRef], metadata: dict[str, Any]) -> OpResult:
+        """The ``OpResult`` for an answer's refs, already the backend's, and its ``metadata``."""
+        return OpResult(refs=self.outputs(job, refs), metadata=self.metadata(metadata))
+
+
+def _fuzzy_join_body(job: FuzzyJoinPayload) -> dict[str, Any]:
+    left, right, fuzzy_maps = _fuzzy_sides(job)
+    return FuzzyJoinInput(
+        left_df_operation=PolarsOperation(operation=left.serialize()),
+        right_df_operation=PolarsOperation(operation=right.serialize()),
+        fuzzy_maps=fuzzy_maps,
+        task_id=job.job_id,
+        flowfile_flow_id=job.flow_id,
+        flowfile_node_id=job.node_id,
+    ).model_dump(mode="json")
+
+
+def _ml_train_body(job: MlTrainPayload) -> dict[str, Any]:
+    return {
+        "operation": job.plan.serialize(),
+        "flowfile_flow_id": job.flow_id,
+        "flowfile_node_id": job.node_id,
+        "model_type": job.model_type,
+        "target_column": job.target_column,
+        "feature_columns": job.feature_columns,
+        "params": job.params,
+    }
+
+
+def _ml_apply_body(job: MlApplyPayload) -> dict[str, Any]:
+    return {
+        "operation": job.plan.serialize(),
+        "flowfile_flow_id": job.flow_id,
+        "flowfile_node_id": job.node_id,
+        "model": job.model.result_id,
+        "output_column": job.output_column,
+    }
+
+
+def _polars_code_body(job: PolarsCodePayload) -> dict[str, Any]:
+    return {
+        "code": job.code,
+        "inputs": [plan.serialize() for plan in job.inputs],
+        "flowfile_flow_id": job.flow_id,
+        "flowfile_node_id": job.node_id,
+    }
+
+
+def _sql_query_body(job: SqlQueryPayload) -> dict[str, Any]:
+    return {
+        "sql_code": job.sql_code,
+        "inputs": [plan.serialize() for plan in job.inputs],
+        "flowfile_flow_id": job.flow_id,
+        "flowfile_node_id": job.node_id,
+    }
+
+
+def _file_write_body(job: FileWritePayload) -> dict[str, Any]:
+    settings = job.settings
+    return {
+        "operation": job.plan.serialize(),
+        "data_type": settings.file_type,
+        "path": settings.abs_file_path,
+        "write_mode": settings.write_mode,
+        "sheet_name": settings.sheet_name,
+        "delimiter": settings.delimiter,
+        "compression": settings.compression,
+        "flowfile_flow_id": job.flow_id,
+        "flowfile_node_id": job.node_id,
+    }
+
+
+def _random_split_body(job: RandomSplitPayload) -> dict[str, Any]:
+    return {
+        "operation": _shuffled_rows(job).serialize(),
+        "flowfile_flow_id": job.flow_id,
+        "flowfile_node_id": job.node_id,
+        "splits": [[group.name, group.percentage] for group in job.settings.splits],
+    }
+
+
+V1_OPS: dict[OperationKind, V1Op] = {
+    OperationKind.database_read: V1Op(
+        DatabaseReadPayload, lambda job: _database_read_settings(job).model_dump(mode="json")
+    ),
+    OperationKind.kafka_read: V1Op(
+        KafkaReadPayload, lambda job: _kafka_read_settings(job).model_dump(mode="json"), metadata=_kafka_offsets
+    ),
+    OperationKind.google_analytics_read: V1Op(
+        GoogleAnalyticsReadPayload, lambda job: _google_analytics_read_settings(job).model_dump(mode="json")
+    ),
+    OperationKind.rest_api_read: V1Op(
+        RestApiReadPayload, lambda job: _rest_api_read_settings(job).model_dump(mode="json")
+    ),
+    OperationKind.file_read: V1Op(
+        FileReadPayload,
+        lambda job: _file_to_read(job).model_dump(mode="json"),
+        params=lambda job: {"flowfile_flow_id": job.flow_id, "flowfile_node_id": job.node_id},
+    ),
+    OperationKind.fuzzy_join: V1Op(FuzzyJoinPayload, _fuzzy_join_body),
+    OperationKind.random_split: V1Op(
+        RandomSplitPayload,
+        _random_split_body,
+        outputs=lambda job, refs: {group.name: refs[group.name] for group in job.settings.splits},
+    ),
+    OperationKind.custom_node: V1Op(
+        CustomNodePayload,
+        lambda job: _custom_node_request(job).model_dump(mode="json"),
+        outputs=lambda job, refs: _declared_outputs(refs, job.output_names),
+    ),
+    OperationKind.ml_train: V1Op(MlTrainPayload, _ml_train_body, metadata=_all_metadata),
+    OperationKind.ml_apply: V1Op(MlApplyPayload, _ml_apply_body, held=lambda job: (job.model,)),
+    OperationKind.polars_code: V1Op(PolarsCodePayload, _polars_code_body),
+    OperationKind.sql_query: V1Op(SqlQueryPayload, _sql_query_body),
+    OperationKind.file_write: V1Op(FileWritePayload, _file_write_body),
+    OperationKind.database_write: V1Op(
+        DatabaseWritePayload, lambda job: json.loads(_database_write_settings(job).model_dump_json())
+    ),
+    OperationKind.cloud_write: V1Op(
+        CloudWritePayload, lambda job: json.loads(_cloud_write_settings(job).model_dump_json())
+    ),
+}
