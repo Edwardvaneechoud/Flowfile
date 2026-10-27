@@ -470,9 +470,9 @@ def test_a_submit_socket_that_cannot_be_opened_falls_back_without_rechecking_its
 @pytest.mark.parametrize(
     ("changes", "failing", "which"),
     [
-        ({}, "polars_ds", "this backend could not load from the path core's plans carry (core {lib}, backend {lib}): "),
-        ({"plugins": "other"}, None, "this backend has in version 0.0.1 where core has {version}"),
-        ({"plugins": "missing"}, None, "this backend does not have"),
+        ({}, "polars_ds", "fails to load"),
+        ({"plugins": "other"}, None, "version 0.0.1, core has {version}"),
+        ({"plugins": "missing"}, None, "not installed"),
     ],
     ids=["not-loadable", "other-version", "missing"],
 )
@@ -488,10 +488,10 @@ def test_a_formula_is_refused_where_polars_ds_is_absent_and_a_select_still_runs(
 
     refused = graph.run_graph()
 
-    reason = which.format(lib=core.plugin_libs["polars_ds"], version=core.plugins["polars_ds"])
+    reason = which.format(version=core.plugins["polars_ds"])
     [(node_id, error)] = [(result.node_id, result.error) for result in refused.node_step_result]
     assert node_id == 2
-    assert error.startswith(f'cannot run on backend "{TEAM}": it needs polars_ds, which {reason}'), error
+    assert error.startswith(f'cannot run on backend "{TEAM}": it needs polars_ds ({reason})'), error
     assert refused.success is False
 
     graph.delete_node(2)
@@ -502,7 +502,6 @@ def test_a_formula_is_refused_where_polars_ds_is_absent_and_a_select_still_runs(
 
 
 def test_a_formula_is_refused_where_core_s_python_functions_do_not_run_and_a_select_still_runs(protocol_on):
-    python = local_capabilities().python_version
     register_team(CoreAsTeam(PYTHON_FUNCTIONS))
     graph = formula_and_select_graph(9212)
 
@@ -511,8 +510,7 @@ def test_a_formula_is_refused_where_core_s_python_functions_do_not_run_and_a_sel
     [(node_id, error)] = [(result.node_id, result.error) for result in refused.node_step_result]
     assert node_id == 2
     assert error == (
-        f'cannot run on backend "{TEAM}": its plan may carry a Python function, which core\'s Python functions do not '
-        f"run on this backend (Python: core {python}, backend {python}): the python probe could not be loaded. "
+        f'cannot run on backend "{TEAM}": its plan may carry a Python function, which this backend cannot run. '
         f"{FLOW_STORE_REMEDY}"
     )
 
@@ -538,7 +536,7 @@ def test_a_cloud_change_read_is_refused_where_core_s_python_functions_do_not_run
 
     assert placement.assignment == {1: TEAM, 2: TEAM}
     assert placement.refusals == [
-        Refusal(1, TEAM, f"its plan may carry a Python function, which {verdict.absent[PYTHON_FUNCTIONS]}")
+        Refusal(1, TEAM, "its plan may carry a Python function, which this backend cannot run")
     ]
 
 

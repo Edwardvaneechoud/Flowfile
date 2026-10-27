@@ -10,7 +10,7 @@ const preview = (overrides: Partial<PlacementPreview> = {}): PlacementPreview =>
       node_id: 1,
       backend_id: "worker:polars",
       fallback_id: "worker",
-      reason: "it reads storage this backend does not read: https",
+      reason: "it reads https URLs",
     },
   ],
   refusals: [],
@@ -29,22 +29,24 @@ const row = (overrides: Partial<NodeResult>): NodeResult => ({
 });
 
 describe("nodePlacementNote", () => {
-  it("says a moved node runs on the default backend and that its data crosses", () => {
+  it("says in one sentence where a moved node runs, and adds what its backend lacks for the drawer", () => {
+    const text =
+      'Runs on the default worker, because backend "worker:polars" doesn\'t support this node.';
+
     expect(nodePlacementNote(preview(), 1)).toEqual({
       kind: "fallback",
-      label: "→ worker",
-      text:
-        'Runs on the default backend "worker": Backend "worker:polars" cannot run it (it reads storage this ' +
-        "backend does not read: https). Its data crosses to the other nodes through the exchange store.",
+      label: "→ default worker",
+      text,
+      detail: `${text}\nIt reads https URLs.`,
     });
   });
 
-  it("names the node's own Compute backend and leaves out the crossing when nothing crosses", () => {
-    const note = nodePlacementNote(preview({ boundaries: [] }), 1, true);
+  it("names the node's own Compute backend", () => {
+    const note = nodePlacementNote(preview(), 1, true);
 
     expect(note?.text).toBe(
-      'Runs on the default backend "worker": Its Compute backend "worker:polars" cannot run it (it reads ' +
-        "storage this backend does not read: https).",
+      'Runs on the default worker, because its Compute backend "worker:polars" doesn\'t support ' +
+        "this node.",
     );
   });
 
@@ -65,6 +67,7 @@ describe("nodePlacementNote", () => {
       kind: "refused",
       label: "can't run",
       text: 'Cannot run on backend "worker:polars": it needs polars_ds. Set it.',
+      detail: 'Cannot run on backend "worker:polars": it needs polars_ds. Set it.',
     });
   });
 
@@ -93,7 +96,8 @@ describe("fallbackNotice", () => {
         row({ node_id: 3 }),
       ]),
     ).toEqual({
-      title: '2 nodes ran on "worker" because "worker:polars" cannot run them',
+      title:
+        '2 nodes ran on the default worker because backend "worker:polars" doesn\'t support them',
       lines: [
         { nodeId: 1, label: "read #1", reason: "it reads https" },
         { nodeId: 2, label: "read #2", reason: "it needs polars_ds" },
@@ -105,14 +109,14 @@ describe("fallbackNotice", () => {
     const notice = fallbackNotice([moved(1), moved(2, "worker:team")]);
 
     expect(notice?.title).toBe(
-      "2 nodes ran on the default backend because their backend cannot run them",
+      "2 nodes ran on the default worker because their backend doesn't support them",
     );
-    expect(notice?.lines[1].reason).toBe('"worker:team" → "worker": it reads https');
+    expect(notice?.lines[1].reason).toBe("worker:team → default worker: it reads https");
   });
 
   it("is singular for one node and null when none moved", () => {
     expect(fallbackNotice([moved(1)])?.title).toBe(
-      '1 node ran on "worker" because "worker:polars" cannot run it',
+      '1 node ran on the default worker because backend "worker:polars" doesn\'t support it',
     );
     expect(fallbackNotice([row({ backend_id: "worker" })])).toBeNull();
     expect(fallbackNotice(undefined)).toBeNull();

@@ -110,7 +110,7 @@ def test_an_explore_data_node_is_refused_on_a_configured_worker_without_the_viz_
 
     if flag:
         assert_refused_before_any_node(
-            graph, run_info, second, {2: ["it runs the viz_session operation, which this backend does not offer"]}
+            graph, run_info, second, {2: ["it needs the viz_session operation"]}
         )
     else:
         assert run_info.success is True, [result.error for result in run_info.node_step_result]

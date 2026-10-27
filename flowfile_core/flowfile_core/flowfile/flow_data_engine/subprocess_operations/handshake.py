@@ -200,7 +200,10 @@ def verify(backend: ComputeBackend) -> Verdict:
         ComputeError: The backend's capabilities could not be read (``ComputeUnavailable`` when it cannot be
             reached), or it could not be reached during a probe; the verdict kept refuses it with the error.
     """
-    from flowfile_core.flowfile.execution.placement import PYTHON_FUNCTIONS  # imported here: placement imports a lot
+    from flowfile_core.flowfile.execution.placement import (  # imported here: placement imports a lot
+        PLUGIN_MISSING,
+        PYTHON_FUNCTIONS,
+    )
 
     core = local_capabilities()
     try:
@@ -227,9 +230,9 @@ def verify(backend: ComputeBackend) -> Verdict:
     for name, version in core.plugins.items():
         theirs = reported.plugins.get(name)
         if theirs is None:
-            absent[name] = "this backend does not have"
+            absent[name] = PLUGIN_MISSING
         elif theirs != version:
-            absent[name] = f"this backend has in version {theirs} where core has {version}"
+            absent[name] = f"version {theirs}, core has {version}"
     verdict = Verdict(
         id=backend.id,
         ok=True,
@@ -257,7 +260,7 @@ def verify(backend: ComputeBackend) -> Verdict:
                     )
                 else:
                     absent[name] = (
-                        f"this backend could not load from the path core's plans carry (core "
+                        f"fails to load (core "
                         f"{core.plugin_libs.get(name, _NOT_INSTALLED)}, backend "
                         f"{reported.plugin_libs.get(name, _NOT_INSTALLED)}): {e}"
                     )

@@ -187,7 +187,10 @@ _JOB_STATES: dict[str, Literal["running", "done", "failed", "cancelled"]] = {
 
 @dataclass
 class _DeferredPlan:
-    """A deferred result: its plan, where its worker tasks are filed, and the file its last sample task wrote."""
+    """A deferred result: its plan, where its worker tasks are filed, and the file its last sample task wrote.
+
+    Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+    """
 
     plan: pl.LazyFrame
     flow_id: int
@@ -782,10 +785,12 @@ class WorkerBackend(_WorkerReferences):
             cancel_task(handle.job_id, worker_url=self.url)
 
     def _file(self, ref: ResultRef) -> str:
+        """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
         self._check(ref)
         return ref.location.decode()
 
     def _held_plan(self, ref: ResultRef) -> _DeferredPlan:
+        """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
         self._check(ref)
         with self._lock:
             held = self._deferred.get(ref.result_id)
@@ -923,7 +928,8 @@ class WorkerBackend(_WorkerReferences):
     def _is_v1(self, ref: ResultRef) -> bool:
         """Whether ``/v1`` minted ``ref``: its location is a ``WorkerLocation`` JSON, which is not decoded here.
 
-        A task-route result's location is a file path or its result id, never JSON.
+        A task-route result's location is a file path or its result id, never JSON. Only runs with
+        ``FLOWFILE_COMPUTE_PROTOCOL`` off mint one, so each branch on ``False`` is removed with the flag.
 
         Raises:
             ForeignRef: Another backend minted ``ref``.
@@ -977,6 +983,8 @@ class WorkerBackend(_WorkerReferences):
     ) -> ResultRef:
         """Run ``plan`` as worker store task ``result_id`` and return the result it wrote.
 
+        Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+
         ``tracked_as`` is the job id ``cancel`` reaches the task under, ``result_id`` by default.
         """
         with self._lock:
@@ -1009,6 +1017,8 @@ class WorkerBackend(_WorkerReferences):
     ) -> tuple[ResultRef, bytes | None]:
         """Hold ``plan`` deferred as ``result_id``, with a sample of ``preview_rows`` rows when that is not ``None``.
 
+        Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+
         ``schema`` spares resolving the plan's schema and ``row_count`` is carried on the ref, when the caller knows
         them.
         """
@@ -1030,7 +1040,10 @@ class WorkerBackend(_WorkerReferences):
         return ref, sample
 
     def _run_sampler(self, held: _DeferredPlan, task_id: str, n: int) -> str:
-        """Run a worker sampler task over ``held``'s plan for ``n`` rows and return the file it wrote."""
+        """Run a worker sampler task over ``held``'s plan for ``n`` rows and return the file it wrote.
+
+        Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+        """
         fetcher = self._run_tracked(
             task_id,
             lambda: ExternalSampler(
@@ -1059,6 +1072,7 @@ class WorkerBackend(_WorkerReferences):
                 self._in_flight.pop(task_id, None)
 
     def _result_ref(self, result_id: str, path: str, row_count: int | None = None) -> ResultRef:
+        """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
         # Reads the worker's file over the shared disk.
         return ResultRef(
             backend_id=self.id,
@@ -1070,16 +1084,23 @@ class WorkerBackend(_WorkerReferences):
         )
 
     def _read(self, start: Callable[[], BaseFetcher], job_id: str | None = None) -> OpResult:
-        """Run a task that writes one result and return it as ``{"result": ref}``; tracked under ``job_id`` if given."""
+        """Run a task that writes one result and return it as ``{"result": ref}``; tracked under ``job_id`` if given.
+
+        Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+        """
         fetcher = _run(start, backend_id=self.id) if job_id is None else self._run_tracked(job_id, start)
         return OpResult(refs={"result": self._result_ref(fetcher.file_ref, _written_file(fetcher))})
 
     def _read_tracked(self, job_id: str, start: Callable[[], BaseFetcher]) -> tuple[BaseFetcher, ResultRef]:
-        """Run a read task as job ``job_id``, which ``cancel`` reaches while it waits; its fetcher and stored result."""
+        """Run a read task as job ``job_id``, which ``cancel`` reaches while it waits; its fetcher and stored result.
+
+        Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+        """
         fetcher = self._run_tracked(job_id, start)
         return fetcher, self._result_ref(fetcher.file_ref, _written_file(fetcher))
 
     def _database_read(self, payload: OpPayload) -> OpResult:
+        """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
         read = unpack(payload, DatabaseReadPayload)
         settings = _database_read_settings(read)
         _, ref = self._read_tracked(
@@ -1088,6 +1109,7 @@ class WorkerBackend(_WorkerReferences):
         return OpResult(refs={"result": ref})
 
     def _kafka_read(self, payload: OpPayload) -> OpResult:
+        """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
         read = unpack(payload, KafkaReadPayload)
         settings = _kafka_read_settings(read)
         fetcher, ref = self._read_tracked(
@@ -1097,6 +1119,7 @@ class WorkerBackend(_WorkerReferences):
         return OpResult(refs={"result": ref}, metadata=_kafka_offsets(consumed))
 
     def _google_analytics_read(self, payload: OpPayload) -> OpResult:
+        """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
         read = unpack(payload, GoogleAnalyticsReadPayload)
         settings = _google_analytics_read_settings(read)
         _, ref = self._read_tracked(
@@ -1105,6 +1128,7 @@ class WorkerBackend(_WorkerReferences):
         return OpResult(refs={"result": ref})
 
     def _rest_api_read(self, payload: OpPayload) -> OpResult:
+        """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
         read = unpack(payload, RestApiReadPayload)
         settings = _rest_api_read_settings(read)
         _, ref = self._read_tracked(
@@ -1113,6 +1137,7 @@ class WorkerBackend(_WorkerReferences):
         return OpResult(refs={"result": ref})
 
     def _file_read(self, payload: OpPayload) -> OpResult:
+        """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
         read = unpack(payload, FileReadPayload)
         received_table = _file_to_read(read)
         _, ref = self._read_tracked(
@@ -1129,6 +1154,7 @@ class WorkerBackend(_WorkerReferences):
         return OpResult(refs={"result": ref})
 
     def _fuzzy_join(self, payload: OpPayload) -> OpResult:
+        """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
         join = unpack(payload, FuzzyJoinPayload)
         left, right, fuzzy_maps = _fuzzy_sides(join)
         return self._read(
@@ -1146,6 +1172,7 @@ class WorkerBackend(_WorkerReferences):
         )
 
     def _random_split(self, payload: OpPayload) -> OpResult:
+        """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
         split = unpack(payload, RandomSplitPayload)
         stored = self._store(_shuffled_rows(split), split.job_id, split.flow_id, split.node_id)
         total = stored.row_count
@@ -1175,6 +1202,7 @@ class WorkerBackend(_WorkerReferences):
         return OpResult(refs=refs)
 
     def _ml_apply(self, payload: OpPayload) -> OpResult:
+        """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
         apply = unpack(payload, MlApplyPayload)
         model = apply.model
         if self._is_v1(model) or not os.path.isfile(model.location.decode()):
@@ -1194,6 +1222,7 @@ class WorkerBackend(_WorkerReferences):
         )
 
     def _custom_node(self, payload: OpPayload) -> OpResult:
+        """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
         job = unpack(payload, CustomNodePayload)
         request = _custom_node_request(job)
         fetcher = self._run_tracked(job.job_id, lambda: ExternalCustomNodeFetcher(request, worker_url=self.url))
@@ -1216,7 +1245,10 @@ class WorkerBackend(_WorkerReferences):
         return self._v1_op(OperationKind.sql_query, payload)
 
     def _ml_train(self, payload: OpPayload) -> OpResult:
-        """Stage the model in the flow's cache directory as worker task ``<job_id>_0``, apart from the node's task."""
+        """Stage the model in the flow's cache directory as worker task ``<job_id>_0``, apart from the node's task.
+
+        Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+        """
         train = unpack(payload, MlTrainPayload)
         model_id = f"{train.job_id}_0"
         staged = str(storage.get_flow_cache_directory(train.flow_id) / "ml_models" / f"{model_id}.json")
@@ -1248,6 +1280,7 @@ class WorkerBackend(_WorkerReferences):
         return OpResult(refs={"model": model}, metadata=_reported(fetcher))
 
     def _database_write(self, payload: OpPayload) -> OpResult:
+        """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
         write = unpack(payload, DatabaseWritePayload)
         settings = _database_write_settings(write)
         self._run_tracked(
@@ -1256,6 +1289,7 @@ class WorkerBackend(_WorkerReferences):
         return OpResult(refs={})
 
     def _cloud_write(self, payload: OpPayload) -> OpResult:
+        """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
         write = unpack(payload, CloudWritePayload)
         settings = _cloud_write_settings(write)
         self._run_tracked(
@@ -1264,6 +1298,7 @@ class WorkerBackend(_WorkerReferences):
         return OpResult(refs={})
 
     def _file_write(self, payload: OpPayload) -> OpResult:
+        """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
         write = unpack(payload, FileWritePayload)
         settings = write.settings
         self._run_tracked(
@@ -1531,6 +1566,8 @@ def _delta_destination(write: DeltaWritePayload | DeltaMergePayload | DeltaScd2P
 def _credential_kwargs(credential: CredentialRef | None) -> dict[str, Any]:
     """What a scan of a URI takes for ``credential``: its provider and its connection's plain options.
 
+    Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+
     The provider carries the stored connection's id and user only, and resolves it where the plan runs. The options
     (``credential_ref_kwargs``, no secret among them) carry the endpoint and region, so an S3-compatible store is
     reached.
@@ -1557,6 +1594,7 @@ def _reported(fetcher: BaseFetcher) -> dict[str, Any]:
 
 
 def _written_file(fetcher: BaseFetcher) -> str:
+    """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
     status = fetcher.status
     if status is None or not status.file_ref:
         raise TaskFailed(f"The worker did not say where task {fetcher.file_ref!r} wrote its result")
@@ -1564,6 +1602,7 @@ def _written_file(fetcher: BaseFetcher) -> str:
 
 
 def _row_count(path: str) -> int:
+    """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
     return pl.scan_ipc(path).select(pl.len()).collect().item()
 
 
@@ -1574,7 +1613,10 @@ def _flowfile_schema(columns: pl.Schema) -> Schema:
 
 
 def _read_sample(ref: ResultRef, path: str, n: int) -> bytes:
-    """The first ``n`` rows of the Arrow IPC file at ``path`` as an Arrow IPC stream."""
+    """The first ``n`` rows of the Arrow IPC file at ``path`` as an Arrow IPC stream.
+
+    Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+    """
     with _held(ref):
         table = get_read_top_n(path, n)()
     sink = pa.BufferOutputStream()
@@ -1584,12 +1626,16 @@ def _read_sample(ref: ResultRef, path: str, n: int) -> bytes:
 
 
 def _task_id(ref: ResultRef) -> str:
+    """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
     return ref.result_id.partition(_OUTPUT_SEPARATOR)[0]
 
 
 @contextmanager
 def _held(ref: ResultRef) -> Iterator[None]:
-    """Turn a result file that is gone into ``ResultMissing``."""
+    """Turn a result file that is gone into ``ResultMissing``.
+
+    Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+    """
     try:
         yield
     except FileNotFoundError as e:

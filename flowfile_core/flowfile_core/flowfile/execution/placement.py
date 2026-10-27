@@ -50,6 +50,9 @@ the worker (``builders/connectors.py``)."""
 PYTHON_FUNCTIONS = "python"
 """The absence-map key for core's Python functions: a plan that carries one does not run on that backend."""
 
+PLUGIN_MISSING = "not installed"
+"""The absence reason for a plugin the backend lacks, the handshake's and placement's default."""
+
 SERVING_LOCAL = "this core serves; compute runs on its worker"
 """Why a process that serves (``registry.serving()``) runs no node on ``local``."""
 
@@ -425,40 +428,45 @@ def _unmet(
     """What ``requirements`` ask that ``capabilities`` do not offer, one phrase each.
 
     A catalog node (``namespace`` named) on a backend without ``file`` is refused for its namespace's local disk, and a
-    model node (``artifact_scheme`` named) short of that scheme for the artifact store. A missing plugin, and a Python
-    function where core's do not run, take the reason ``absent`` gives.
+    model node (``artifact_scheme`` named) short of that scheme for the artifact store. A missing plugin takes the
+    reason ``absent`` gives up to its parenthesised detail, which the Backends page shows; a Python function is refused
+    where ``absent`` holds core's.
     """
     reasons = []
     operation = requirements.operation
     if operation is not None and operation.value not in capabilities.operations:
-        reasons.append(f"it runs the {operation.value} operation, which this backend does not offer")
+        reasons.append(f"it needs the {operation.value} operation")
     for verb, needed, offered in (
         ("read", requirements.read_schemes, capabilities.read_schemes),
         ("write", requirements.write_schemes, capabilities.write_schemes),
     ):
         missing = needed - offered
         if namespace is not None and "file" in missing:
-            reasons.append(
-                f'namespace "{namespace}" is on local disk; remote execution needs an object-storage namespace'
-            )
+            reasons.append(f'namespace "{namespace}" is on local disk, not object storage')
         elif artifact_scheme is not None and artifact_scheme in missing:
             store = f"it {'publishes its model to' if verb == 'write' else 'fetches its model from'} the artifact store"
             if artifact_scheme == "file":
-                reasons.append(f"{store}, which is on local disk; remote execution needs the S3 artifact store")
+                reasons.append(f"{store}, which is on local disk, not S3")
             else:
-                reasons.append(f"{store} over {artifact_scheme}, which this backend does not {verb}")
+                reasons.append(f"{store} over {artifact_scheme}")
         elif missing:
-            reasons.append(f"it {verb}s storage this backend does not {verb}: {', '.join(sorted(missing))}")
+            reasons.append(f"it {verb}s {' and '.join(_storage_words(scheme) for scheme in sorted(missing))}")
     for plugin in sorted(requirements.plugins - capabilities.plugins.keys()):
-        reasons.append(f"it needs {plugin}, which {absent.get(plugin, 'this backend does not have')}")
+        reasons.append(f"it needs {plugin} ({absent.get(plugin, PLUGIN_MISSING).split(' (', 1)[0]})")
     if requirements.python_function and PYTHON_FUNCTIONS in absent:
-        reasons.append(f"its plan may carry a Python function, which {absent[PYTHON_FUNCTIONS]}")
+        reasons.append("its plan may carry a Python function, which this backend cannot run")
     if requirements.needs_kernel and "file" not in capabilities.write_schemes:
-        reasons.append(
-            "it runs on a notebook kernel, which reads its inputs from the kernel shared volume on core's host, "
-            "where this backend does not write"
-        )
+        reasons.append("it runs on a notebook kernel, which reads its inputs from core's disk")
     return reasons
+
+
+def _storage_words(scheme: str) -> str:
+    """A storage scheme as a refusal names it: ``file`` as local files, a URL scheme as URLs, any other as paths."""
+    if scheme == "file":
+        return "local files"
+    if scheme in ("http", "https"):
+        return f"{scheme} URLs"
+    return f"{scheme}:// paths"
 
 
 def _unresolvable_connections(node: FlowNode, credentials: frozenset[str], namespace_id: int | None) -> list[str]:
@@ -483,8 +491,8 @@ def _unresolvable_connections(node: FlowNode, credentials: frozenset[str], names
             row = db_connections.get_cloud_connection(db, name, user_id)
             if row is not None and row.auth_method not in _AMBIENT_AUTH_METHODS:
                 reasons.append(
-                    f'connection "{name}" uses {row.auth_method}, which this backend cannot resolve; it reaches '
-                    "storage with its own identity, as env_vars and managed_identity connections do"
+                    f'connection "{name}" uses {row.auth_method}, but this backend only resolves env_vars and '
+                    "managed_identity connections"
                 )
     return reasons
 

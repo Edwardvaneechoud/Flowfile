@@ -56,7 +56,7 @@ async def warn_on_foreign_protocol_version(request: Request) -> None:
 
 
 async def deprecated_route(response: Response) -> None:
-    """Answer with ``Deprecation: true``: the worker's versioned ``/v1`` routes do this route's work."""
+    """Answer with ``Deprecation: true``: core does not call this task route with ``FLOWFILE_COMPUTE_PROTOCOL`` on."""
     response.headers["Deprecation"] = "true"
 
 
@@ -91,7 +91,10 @@ def create_and_get_default_cache_dir(flowfile_flow_id: int) -> str:
 
 @router.get("/capabilities", response_model=Capabilities)
 async def capabilities() -> Capabilities:
-    """What this worker can run: versions, platform, plugins, and the operations and schemes it declares."""
+    """What this worker can run: versions, platform, plugins, and the operations and schemes it declares.
+
+    Core asks it only with ``FLOWFILE_COMPUTE_PROTOCOL`` off; with it on core asks ``GET /v1/capabilities``.
+    """
     return worker_capabilities()
 
 
@@ -144,7 +147,10 @@ async def submit_query(request: Request, background_tasks: BackgroundTasks) -> m
 
 @router.post("/store_sample/", dependencies=[Depends(deprecated_route)])
 async def store_sample(request: Request, background_tasks: BackgroundTasks) -> models.Status:
-    """Accept raw binary data with metadata in headers for efficient transfer."""
+    """Accept raw binary data with metadata in headers for efficient transfer.
+
+    Core calls it only with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+    """
     try:
         polars_serializable_object = await request.body()
 
@@ -184,12 +190,15 @@ async def store_sample(request: Request, background_tasks: BackgroundTasks) -> m
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/write_data_to_cloud/")
+@router.post("/write_data_to_cloud/", dependencies=[Depends(deprecated_route)])
 def write_data_to_cloud(
     cloud_storage_script_write: models.CloudStorageScriptWrite, background_tasks: BackgroundTasks
 ) -> models.Status:
     """
     Write polars dataframe to a file in cloud storage.
+
+    Core calls it only with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+
     Args:
         cloud_storage_script_write (): Contains dataframe and write options for cloud storage
         background_tasks (): FastAPI background tasks handler
@@ -220,12 +229,14 @@ def write_data_to_cloud(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/store_database_write_result/")
+@router.post("/store_database_write_result/", dependencies=[Depends(deprecated_route)])
 def store_in_database(
     database_script_write: models.DatabaseScriptWrite, background_tasks: BackgroundTasks
 ) -> models.Status:
     """
     Write polars dataframe to a file in specified format.
+
+    Core calls it only with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
 
     Args:
         database_script_write (models.DatabaseScriptWrite): Contains dataframe and write options for database
@@ -260,10 +271,12 @@ def store_in_database(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/write_results/")
+@router.post("/write_results/", dependencies=[Depends(deprecated_route)])
 def write_results(polars_script_write: models.PolarsScriptWrite, background_tasks: BackgroundTasks) -> models.Status:
     """
     Write polars dataframe to a file in specified format.
+
+    Core calls it only with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
 
     Args:
         polars_script_write (models.PolarsScriptWrite): Contains dataframe and write options
@@ -315,6 +328,8 @@ def store_sql_db_result(
     """
     Store the result of an sql source operation.
 
+    Core calls it only with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+
     Args:
         database_read_settings (SQLSourceSettings): Settings for the SQL source operation
         background_tasks (BackgroundTasks): FastAPI background tasks handler
@@ -351,6 +366,8 @@ def store_sql_db_result(
 @router.post("/store_kafka_read_result", dependencies=[Depends(deprecated_route)])
 def store_kafka_result(kafka_read_settings: KafkaReadSettings, background_tasks: BackgroundTasks) -> models.Status:
     """Consume messages from a Kafka topic and store the result as an IPC file.
+
+    Core calls it only with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
 
     Follows the same pattern as store_database_read_result.
     """
@@ -391,6 +408,8 @@ def store_google_analytics_result(
 ) -> models.Status:
     """Fetch a GA4 report in the background and persist it as an Arrow IPC file.
 
+    Core calls it only with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+
     Follows the same offload pattern as ``store_database_read_result`` /
     ``store_kafka_read_result``: the network I/O, token refresh, and pagination
     run in a worker subprocess so the core's event loop never blocks on the
@@ -430,6 +449,8 @@ def store_rest_api_result(
 ) -> models.Status:
     """Fetch from a REST API in the background and persist it as an Arrow IPC file.
 
+    Core calls it only with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+
     Follows the same offload pattern as ``store_google_analytics_read_result`` /
     ``store_database_read_result``: the HTTP round-trips, pagination, and retries
     run in a worker subprocess so the core's event loop never blocks on the API.
@@ -463,6 +484,8 @@ def store_rest_api_result(
 def get_kafka_offsets(task_id: str):
     """Return deferred Kafka offset data for a completed task.
 
+    Core calls it only with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+
     The worker writes a sidecar JSON file (``<file_ref>.offsets.json``)
     during Kafka consumption.  Core calls this endpoint after the task
     completes to retrieve the offsets for deferred commit.
@@ -490,6 +513,8 @@ def create_table(
 ) -> models.Status:
     """
     Create a Polars table from received dictionary data based on specified file type.
+
+    Core calls it only with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
 
     Args:
         file_type (FileType): Type of file/format for table creation
@@ -1074,9 +1099,11 @@ def get_status(task_id: str) -> models.Status:
     return status
 
 
-@router.get("/memory_usage/{task_id}")
+@router.get("/memory_usage/{task_id}", dependencies=[Depends(deprecated_route)])
 async def memory_usage(task_id: str):
     """Get memory usage for a specific task.
+
+    Core does not call it; removed with the task routes when ``FLOWFILE_COMPUTE_PROTOCOL`` goes.
 
     Args:
         task_id: Unique identifier of the task
@@ -1098,6 +1125,8 @@ async def memory_usage(task_id: str):
 @router.post("/train_ml_model", dependencies=[Depends(deprecated_route)])
 async def train_ml_model(polars_script: models.TrainModelInput, background_tasks: BackgroundTasks) -> models.Status:
     """Fit a regression model and write its serialised bytes to ``staging_path``.
+
+    Core calls it only with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
 
     Core has already called ``ArtifactService.prepare_upload`` and reserved the
     staging path, so the worker only needs to write the file there. The
@@ -1140,7 +1169,10 @@ async def train_ml_model(polars_script: models.TrainModelInput, background_tasks
 
 @router.post("/apply_ml_model", dependencies=[Depends(deprecated_route)])
 async def apply_ml_model(polars_script: models.ApplyModelInput, background_tasks: BackgroundTasks) -> models.Status:
-    """Score input data using a previously trained model artifact."""
+    """Score input data using a previously trained model artifact.
+
+    Core calls it only with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+    """
     logger.info("Starting apply_ml_model task: model_path=%s", polars_script.model_path)
     try:
         default_cache_dir = create_and_get_default_cache_dir(polars_script.flowfile_flow_id)
@@ -1176,6 +1208,8 @@ async def apply_ml_model(polars_script: models.ApplyModelInput, background_tasks
 @router.post("/add_fuzzy_join", dependencies=[Depends(deprecated_route)])
 async def add_fuzzy_join(polars_script: models.FuzzyJoinInput, background_tasks: BackgroundTasks) -> models.Status:
     """Start a fuzzy join operation between two dataframes.
+
+    Core calls it only with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
 
     Args:
         polars_script: Input containing left and right dataframes and fuzzy mapping config
@@ -1338,9 +1372,11 @@ def cancel_task(task_id: str):
     return {"message": f"Task {task_id} has been cancelled."}
 
 
-@router.get("/ids")
+@router.get("/ids", dependencies=[Depends(deprecated_route)])
 async def get_all_ids():
     """Get list of all task IDs in the system.
+
+    Core does not call it; removed with the task routes when ``FLOWFILE_COMPUTE_PROTOCOL`` goes.
 
     Returns:
         list: List of all task IDs currently tracked

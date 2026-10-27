@@ -65,11 +65,11 @@ Core checks every node against the worker it is placed on before any node runs. 
 
 | Reason | Cause |
 |---|---|
-| `it reads storage this backend does not read: file` (or `write`) | A local path, or a file uploaded through the File Manager, on a worker that does not see core's files. Use object storage or a URL, or a worker marked **Sees this server's files**. |
-| `namespace "<name>" is on local disk; remote execution needs an object-storage namespace` | A catalog whose tables live on core's disk, on a worker on another host. |
-| `it runs on a notebook kernel, which reads its inputs from the kernel shared volume on core's host, where this backend does not write` | A **Python Script** node, or a custom node that runs on a kernel, on a worker on another host. |
-| `it needs <plugin>, which <reason>` | The worker lacks a plugin the node uses, or has it in another version. |
-| `its plan may carry a Python function, which <reason>` | A formula node on a worker where core's Python functions do not run, because its Python differs from core's. |
+| `it reads local files` (or `writes`) | A local path, or a file uploaded through the File Manager, on a worker that does not see core's files. Use object storage or a URL, or a worker marked **Sees this server's files**. |
+| `namespace "<name>" is on local disk, not object storage` | A catalog whose tables live on core's disk, on a worker on another host. |
+| `it runs on a notebook kernel, which reads its inputs from core's disk` | A **Python Script** node, or a custom node that runs on a kernel, on a worker on another host. |
+| `it needs <plugin> (not installed)`, `(version <x>, core has <y>)` or `(fails to load)` | The worker lacks a plugin the node uses, has it in another version, or cannot load it. The Backends page shows the details. |
+| `its plan may carry a Python function, which this backend cannot run` | A formula node on a worker where core's Python functions do not run, because its Python differs from core's. |
 | `Backend "<id>" does not match core (…)` | The worker runs another Polars version or another worker contract. Upgrade one side. |
 
 A worker that cannot be reached is not refused before the run. Its nodes fail when they run, with a message that names the worker and ends `Is backend "<id>" running? Start it, or check the Backends page.` Flowfile never runs such a node somewhere else in its place and never reads an unreachable worker as a missing cache.

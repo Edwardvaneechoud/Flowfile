@@ -343,7 +343,7 @@ def test_a_worker_on_this_process_versions_passes_the_handshake_with_the_rows_to
     assert verdict["backend"]["polars_version"] == verdict["core"]["polars_version"] == pl.__version__
     assert sorted(verdict["absent"]) == sorted([*EXPRESSION_PLUGINS, PYTHON_FUNCTIONS])
     for plugin in EXPRESSION_PLUGINS:
-        assert verdict["absent"][plugin].startswith("this backend could not load from the path core's plans carry")
+        assert verdict["absent"][plugin].startswith("fails to load (core ")
         assert plugin not in verdict["offered"]["plugins"]
     assert verdict["absent"][PYTHON_FUNCTIONS].startswith("core's Python functions do not run on this backend")
 
@@ -484,7 +484,7 @@ def test_a_non_admin_lists_the_ids_and_last_verdicts_without_the_urls_and_is_ref
             "backend": verdict.backend.model_copy(update=without_host),
             "offered": verdict.offered.model_copy(update=without_host),
             "absent": {
-                **{plugin: "this backend could not load from the path core's plans carry" for plugin in EXPRESSION_PLUGINS},
+                **{plugin: "fails to load" for plugin in EXPRESSION_PLUGINS},
                 PYTHON_FUNCTIONS: "core's Python functions do not run on this backend",
             },
         }

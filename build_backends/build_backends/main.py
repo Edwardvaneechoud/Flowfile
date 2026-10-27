@@ -30,6 +30,16 @@ def merge_directories(directories: list[str], target_dir: str, cleanup_after_mer
 # The in-core notebook runner imports frame modules lazily, so collect them all.
 NOTEBOOK_COLLECTED_PACKAGES = ["flowfile_frame"]
 
+# shared.compute_protocol.PLUGIN_PACKAGES: the handshake reports each by its installed version, so its metadata ships.
+HANDSHAKE_METADATA_PACKAGES = (
+    "polars_grouper",
+    "polars_simed",
+    "polars_ds",
+    "deltalake",
+    "pl_fuzzy_frame_match",
+    "polars_expr_transformer",
+)
+
 
 def create_spec_file(directory, script_name, output_name, hidden_imports, collected_packages=()):
     """Create an optimized spec file for faster startup.
@@ -248,6 +258,11 @@ for _pkg in _polars_plugins:
     except Exception as _e:
         print(f"WARN: could not collect plugin {{_pkg}}: {{_e}}")
 
+# No try: a bundle without one of these refuses every node that needs it.
+handshake_metadata_datas = []
+for _pkg in {list(HANDSHAKE_METADATA_PACKAGES)!r}:
+    handshake_metadata_datas += copy_metadata(_pkg)
+
 # polars' Rust side imports polars._utils.threading (and .cloud) at runtime —
 # invisible to static analysis, so collect every polars submodule explicitly.
 polars_hiddenimports = [m for m in collect_submodules("polars") if not m.startswith("polars.testing")]
@@ -300,7 +315,8 @@ a = Analysis(
     binaries=plugin_binaries + ai_binaries,
     datas=numpy_datas + pyarrow_datas + connectorx_datas + alembic_datas
     + code_generator_datas + demo_flows_datas + standard_icons_datas
-    + kernel_manifest_datas + share_manifest_datas + plugin_datas + litellm_datas + ai_datas,
+    + kernel_manifest_datas + share_manifest_datas + plugin_datas + handshake_metadata_datas
+    + litellm_datas + ai_datas,
     hiddenimports={hidden_imports} + plugin_hiddenimports + polars_hiddenimports
     + litellm_hiddenimports + ai_hiddenimports + collected_hiddenimports + [
         'numpy',

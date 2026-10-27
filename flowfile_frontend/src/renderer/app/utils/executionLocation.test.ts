@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import type { HandshakeVerdict, WorkerCapabilities } from "../api/computeBackends.api";
 import {
+  backendInSentence,
+  backendName,
   executionLocationLabel,
   executionLocationOptions,
   nodeExecutionLocationLabel,
@@ -48,7 +50,7 @@ const VERDICTS: [string, HandshakeVerdict | null, string][] = [
     "narrowed",
     verdict({
       absent: {
-        polars_ds: "this backend has in version 0.0.1 where core has 0.10.0",
+        polars_ds: "version 0.0.1, core has 0.10.0",
         python:
           "core's Python functions do not run on this backend (Python: core 3.12.15, backend 3.12.8): …",
       },
@@ -174,5 +176,14 @@ describe("nodeExecutionLocationLabel", () => {
     expect(nodeExecutionLocationLabel("worker")).toBe("Default worker");
     expect(nodeExecutionLocationLabel("local")).toBe("Local");
     expect(nodeExecutionLocationLabel("worker:team")).toBe("worker:team");
+  });
+});
+
+describe("backend names in placement text", () => {
+  it("calls the built-in worker the default worker and quotes any other id", () => {
+    expect(backendName("worker")).toBe("default worker");
+    expect(backendName("worker:polars")).toBe("worker:polars");
+    expect(backendInSentence("worker")).toBe("the default worker");
+    expect(backendInSentence("local")).toBe('backend "local"');
   });
 });

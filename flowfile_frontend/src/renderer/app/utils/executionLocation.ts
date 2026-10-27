@@ -72,6 +72,16 @@ export function nodeExecutionLocationLabel(location: ExecutionLocation): string 
   return location;
 }
 
+/** A backend id as a badge names it: the built-in worker as "default worker", any other as it is. */
+export function backendName(id: string): string {
+  return id === "worker" ? "default worker" : id;
+}
+
+/** A backend id inside a sentence: "the default worker", or `backend "<id>"` for any other. */
+export function backendInSentence(id: string): string {
+  return id === "worker" ? "the default worker" : `backend "${id}"`;
+}
+
 /** "auto", "worker" and the configured backends, then the node's own value ("local" only as that). */
 export function nodeExecutionLocationOptions(
   current: ExecutionLocation,

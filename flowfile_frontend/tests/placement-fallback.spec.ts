@@ -54,18 +54,22 @@ test.describe("Placement fallback", () => {
     const node = page.locator('.vue-flow__node[data-id="1"]');
     await expect(node).toBeVisible({ timeout: 15_000 });
     const badge = node.getByTestId("placement-badge");
-    await expect(badge).toHaveText("→ worker", { timeout: 15_000 });
+    await expect(badge).toHaveText("→ default worker", { timeout: 15_000 });
     const tooltip = node.getByTestId("placement-badge-tooltip");
     await expect(tooltip).toBeHidden();
     await badge.hover();
     await expect(tooltip).toBeVisible({ timeout: 1_000 });
-    await expect(tooltip).toContainText("this core serves; compute runs on its worker");
+    await expect(tooltip).toHaveText(
+      'Runs on the default worker, because backend "local" doesn\'t support this node.',
+    );
 
     await clickRun(page);
 
     const notice = page.getByTestId("placement-notice");
     await expect(notice).toBeVisible({ timeout: 30_000 });
-    await expect(notice).toContainText('1 node ran on "worker" because "local" cannot run it');
+    await expect(notice).toContainText(
+      '1 node ran on the default worker because backend "local" doesn\'t support it',
+    );
     await expect(notice.locator("li")).toHaveCount(0);
     await notice.getByRole("button", { name: "Show details" }).click();
     await expect(notice.locator("li")).toContainText(

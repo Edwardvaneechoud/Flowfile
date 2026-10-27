@@ -127,7 +127,7 @@ describe("handshakeComputeBackend", () => {
       backend: { ...capabilities, python_version: "3.12.7" },
       offered: { ...capabilities, python_version: "3.12.7", plugins: {} },
       differences: ["python_version: core 3.12.8, backend 3.12.7"],
-      absent: { polars_ds: "this backend does not have" },
+      absent: { polars_ds: "not installed" },
       error: null,
     };
     mocks.post.mockResolvedValue({ data: verdict });

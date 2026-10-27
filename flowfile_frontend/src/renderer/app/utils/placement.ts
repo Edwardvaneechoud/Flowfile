@@ -1,13 +1,16 @@
 // Wording for nodes their backend cannot run, from the placement preview and a run's rows.
 
 import type { NodeResult, PlacementFallback, PlacementPreview, PlacementRefusal } from "../types";
+import { backendInSentence, backendName } from "./executionLocation";
 
 export interface NodePlacementNote {
   kind: "fallback" | "refused";
   // The canvas badge's text.
   label: string;
-  // The sentence the badge's tooltip and the drawer show.
+  // The badge's tooltip: where the node runs and why, in one sentence.
   text: string;
+  // The drawer's note: the tooltip, then what the backend lacks.
+  detail: string;
 }
 
 export interface FallbackNotice {
@@ -15,21 +18,25 @@ export interface FallbackNotice {
   lines: { nodeId: number; label: string; reason: string }[];
 }
 
-/** Why a node runs on the default backend; `ownBackend` when the one that cannot is the node's own pick. */
+/** Where a node runs instead and why; `ownBackend` when the one that cannot is the node's own pick. */
 export function fallbackSentence(
-  fallback: Pick<PlacementFallback, "backend_id" | "fallback_id" | "reason">,
+  fallback: Pick<PlacementFallback, "backend_id" | "fallback_id">,
   ownBackend = false,
 ): string {
-  const subject = ownBackend ? "Its Compute backend" : "Backend";
-  return (
-    `Runs on the default backend "${fallback.fallback_id}": ${subject} "${fallback.backend_id}" ` +
-    `cannot run it (${fallback.reason}).`
-  );
+  const from =
+    ownBackend && fallback.backend_id !== "worker"
+      ? `its Compute backend "${fallback.backend_id}"`
+      : backendInSentence(fallback.backend_id);
+  return `Runs on ${backendInSentence(fallback.fallback_id)}, because ${from} doesn't support this node.`;
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 /** The refusal as core words it on the node's row. */
 export function refusalSentence(refusal: PlacementRefusal): string {
-  const sentence = `Cannot run on backend "${refusal.backend_id}": ${refusal.reason}`;
+  const sentence = `Cannot run on ${backendInSentence(refusal.backend_id)}: ${refusal.reason}`;
   return refusal.remedy ? `${sentence}. ${refusal.remedy}` : `${sentence}.`;
 }
 
@@ -41,19 +48,18 @@ export function nodePlacementNote(
 ): NodePlacementNote | null {
   if (!preview?.available) return null;
   const refusal = preview.refusals.find((item) => item.node_id === nodeId);
-  if (refusal) return { kind: "refused", label: "can't run", text: refusalSentence(refusal) };
+  if (refusal) {
+    const text = refusalSentence(refusal);
+    return { kind: "refused", label: "can't run", text, detail: text };
+  }
   const fallback = preview.fallbacks.find((item) => item.node_id === nodeId);
   if (!fallback) return null;
-  const crosses = preview.boundaries.some(
-    ([source, target]) => source === nodeId || target === nodeId,
-  );
   const text = fallbackSentence(fallback, ownBackend);
   return {
     kind: "fallback",
-    label: `→ ${fallback.fallback_id}`,
-    text: crosses
-      ? `${text} Its data crosses to the other nodes through the exchange store.`
-      : text,
+    label: `→ ${backendName(fallback.fallback_id)}`,
+    text,
+    detail: `${text}\n${capitalize(fallback.reason)}.`,
   };
 }
 
@@ -73,14 +79,16 @@ export function fallbackNotice(rows: NodeResult[] | undefined): FallbackNotice |
   const sameRoute = routes.size === 1;
   return {
     title: sameRoute
-      ? `${count} ran on "${first.backend_id}" because "${first.fallback_from}" cannot run ${them}`
-      : `${count} ran on the default backend because their backend cannot run ${them}`,
+      ? `${count} ran on ${backendInSentence(first.backend_id as string)} because ` +
+        `${backendInSentence(first.fallback_from as string)} doesn't support ${them}`
+      : `${count} ran on the default worker because their backend doesn't support ${them}`,
     lines: moved.map((row) => ({
       nodeId: row.node_id,
       label: `${row.node_name || "node"} #${row.node_id}`,
       reason: sameRoute
         ? (row.fallback_reason as string)
-        : `"${row.fallback_from}" → "${row.backend_id}": ${row.fallback_reason}`,
+        : `${backendName(row.fallback_from as string)} → ${backendName(row.backend_id as string)}: ` +
+          `${row.fallback_reason}`,
     })),
   };
 }

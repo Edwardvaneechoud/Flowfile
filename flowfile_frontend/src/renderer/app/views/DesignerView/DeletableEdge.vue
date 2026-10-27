@@ -4,7 +4,7 @@ import { BaseEdge, EdgeLabelRenderer, getBezierPath, useVueFlow } from "@vue-flo
 import type { EdgeProps } from "@vue-flow/core";
 import { useFlowStore } from "../../stores/flow-store";
 import { useResultsStore } from "../../stores/results-store";
-import { crossesBackends, runNodeLabel } from "../../utils/boundaryEdges";
+import { crossesBackends, crossingNote, runNodeLabel } from "../../utils/boundaryEdges";
 
 const props = defineProps<EdgeProps>();
 
@@ -36,6 +36,7 @@ const crosses = computed(() => crossesBackends(lastRun.value, props.source, prop
 const badgeHovered = ref(false);
 const sourceLabel = computed(() => runNodeLabel(lastRun.value, props.source));
 const targetLabel = computed(() => runNodeLabel(lastRun.value, props.target));
+const note = computed(() => crossingNote(lastRun.value, props.source, props.target));
 
 function onDelete() {
   removeEdges([props.id]);
@@ -74,7 +75,7 @@ function onButtonLeave() {
       data-testid="boundary-badge"
       :data-edge="`${props.source}-${props.target}`"
       :style="{ transform: `translate(-50%, -100%) translate(${labelX}px, ${labelY - 14}px)` }"
-      aria-label="This connection crossed between two compute backends in the last run"
+      aria-label="This data is copied between two compute backends"
       @mouseenter="badgeHovered = true"
       @mouseleave="badgeHovered = false"
     >
@@ -85,11 +86,9 @@ function onButtonLeave() {
         role="tooltip"
         data-testid="boundary-tooltip"
       >
-        <span class="edge-boundary-tooltip-title">Crossed compute backends</span>
+        <span class="edge-boundary-tooltip-title">Data copied between backends</span>
         <span class="edge-boundary-tooltip-route">{{ sourceLabel }} → {{ targetLabel }}</span>
-        <span class="edge-boundary-tooltip-note">
-          The last run moved this data from one backend to another.
-        </span>
+        <span class="edge-boundary-tooltip-note">{{ note }}</span>
       </span>
     </span>
     <button
@@ -181,11 +180,17 @@ function onButtonLeave() {
   background: var(--color-background-primary);
   color: var(--color-text-primary);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  width: max-content;
+  max-width: 320px;
   font-size: 12px;
   line-height: 1.4;
-  white-space: nowrap;
   pointer-events: none;
   animation: edge-boundary-tooltip-in 0.12s ease-out;
+}
+
+.edge-boundary-tooltip-title,
+.edge-boundary-tooltip-route {
+  white-space: nowrap;
 }
 
 .edge-boundary-tooltip-title {

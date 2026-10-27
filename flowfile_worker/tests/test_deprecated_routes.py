@@ -1,4 +1,4 @@
-"""The task routes whose work the versioned ``/v1`` routes do answer ``Deprecation: true``; the other routes do not."""
+"""The task routes core does not call with the protocol flag on answer ``Deprecation: true``; the other routes do not."""
 
 import uuid
 
@@ -24,6 +24,11 @@ DEPRECATED = {
     ("POST", "/train_ml_model"),
     ("POST", "/apply_ml_model"),
     ("POST", "/add_fuzzy_join"),
+    ("POST", "/write_results/"),
+    ("POST", "/store_database_write_result/"),
+    ("POST", "/write_data_to_cloud/"),
+    ("GET", "/memory_usage/{task_id}"),
+    ("GET", "/ids"),
 }
 
 
@@ -59,7 +64,7 @@ def test_a_marked_route_answers_with_the_deprecation_header(finished_task):
     assert response.headers["Deprecation"] == "true"
 
 
-@pytest.mark.parametrize("path", ["/capabilities", "/ids"])
+@pytest.mark.parametrize("path", ["/capabilities", "/pool"])
 def test_an_unmarked_route_answers_without_it(path):
     response = client.get(path)
 

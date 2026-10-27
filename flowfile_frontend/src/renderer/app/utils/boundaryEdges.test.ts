@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { RunInformation } from "../types";
-import { crossesBackends, runNodeLabel } from "./boundaryEdges";
+import { crossesBackends, crossingNote, runNodeLabel } from "./boundaryEdges";
 
 const run = (boundaries?: [number, number][]) => ({ flow_id: 1, boundaries }) as RunInformation;
 
@@ -40,5 +40,30 @@ describe("runNodeLabel", () => {
     expect(runNodeLabel(withResults, "3")).toBe("Node 3");
     expect(runNodeLabel(run([[1, 2]]), "1")).toBe("Node 1");
     expect(runNodeLabel(null, 4)).toBe("Node 4");
+  });
+});
+
+describe("crossingNote", () => {
+  const placed = {
+    flow_id: 1,
+    node_step_result: [
+      { node_id: 4, backend_id: "worker" },
+      { node_id: 6, backend_id: "worker:polars" },
+    ],
+  } as RunInformation;
+
+  it("names both backends and says the output goes through the exchange store", () => {
+    expect(crossingNote(placed, "4", "6")).toBe(
+      'Node 4 runs on the default worker and node 6 on backend "worker:polars", so node 4\'s output is ' +
+        "written to the exchange store for node 6 to read. That copy adds time to the run.",
+    );
+  });
+
+  it("leaves the backends out when the run did not report both", () => {
+    expect(crossingNote(placed, "4", "7")).toBe(
+      "These nodes run on different backends, so node 4's output is written to the exchange store for " +
+        "node 7 to read. That copy adds time to the run.",
+    );
+    expect(crossingNote(null, 1, 2)).toMatch(/^These nodes run on different backends/);
   });
 });

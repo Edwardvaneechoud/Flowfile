@@ -114,7 +114,7 @@
               :class="['placement-note', `placement-note--${placementNote.kind}`]"
               data-testid="node-placement-note"
             >
-              {{ placementNote.text }}
+              {{ placementNote.detail }}
             </p>
             <BackendHandshakeStatus
               v-if="selectedBackend?.verdict"
@@ -813,6 +813,7 @@ const loadFieldsFromSchema = async () => {
   padding: 0.4rem 0.6rem;
   font-size: 0.75rem;
   line-height: 1.4;
+  white-space: pre-line;
   border-left: 3px solid var(--el-color-warning);
   color: var(--el-text-color-regular);
 }

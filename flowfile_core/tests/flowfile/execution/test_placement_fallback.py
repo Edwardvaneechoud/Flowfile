@@ -43,7 +43,7 @@ csv_url = test_placement.csv_url
 protocol_on = test_placement.protocol_on
 
 TEAM, DEFAULT = "worker:team", "worker"
-NO_FUZZY = "it runs the fuzzy_join operation, which this backend does not offer"
+NO_FUZZY = "it needs the fuzzy_join operation"
 
 
 @pytest.fixture
@@ -179,7 +179,7 @@ def test_placement_reads_a_parameter_without_changing_the_node(tmp_path: Path):
         MixedPlacementPolicy(TEAM, fallback_id=DEFAULT),
     )
 
-    assert placed.fallbacks == [Fallback(1, TEAM, DEFAULT, "it reads storage this backend does not read: file")]
+    assert placed.fallbacks == [Fallback(1, TEAM, DEFAULT, "it reads local files")]
     assert (node.setting_input.model_dump(), node._hash) == before
     assert node.setting_input.received_file.path == "${dir}/rows.csv"
 
@@ -220,12 +220,12 @@ def test_a_run_reads_over_http_on_the_fallback_when_its_backend_does_not(
     assert run_info.success is True, [result.error for result in run_info.node_step_result]
     (row,) = run_info.node_step_result
     assert (row.backend_id, row.fallback_from) == (registry.LOCAL_BACKEND_ID, BACKEND_ID)
-    assert row.fallback_reason == "it reads storage this backend does not read: http"
+    assert row.fallback_reason == "it reads http URLs"
     assert backend.work == []
     assert no_s3_client == []
     flow_log = Path(graph.flow_logger.log_file_path).read_text()
     assert (
-        'backend "declaring" cannot run it: it reads storage this backend does not read: http; '
+        'backend "declaring" cannot run it: it reads http URLs; '
         'it runs on the default backend "local" instead'
     ) in flow_log, flow_log
     assert "1 node(s) run on the default backend local instead of the backend their settings name: 1" in flow_log

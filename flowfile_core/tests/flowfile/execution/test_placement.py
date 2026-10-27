@@ -74,7 +74,7 @@ OWN_WITHOUT_STORE_REMEDY = (
     "To run it elsewhere, set the flow's Execution location under Flow Settings; "
     "a node's own Compute backend applies only when an exchange store is configured (Settings → Execution → Backends)."
 )
-LOCAL_DISK = 'namespace "TestCat.TestSch" is on local disk; remote execution needs an object-storage namespace'
+LOCAL_DISK = 'namespace "TestCat.TestSch" is on local disk, not object storage'
 
 
 def everything() -> Capabilities:
@@ -423,7 +423,7 @@ def test_a_fuzzy_match_is_refused_on_a_backend_without_its_plugin(protocol_on, d
     run_info = graph.run_graph()
 
     assert_refused_before_any_node(
-        graph, run_info, backend, {3: ["it needs polars_simed, which this backend does not have"]}
+        graph, run_info, backend, {3: ["it needs polars_simed (not installed)"]}
     )
 
 
@@ -514,7 +514,7 @@ def test_each_formula_node_is_refused_on_a_backend_without_the_formula_library_a
         graph,
         run_info,
         backend,
-        {n: ["it needs polars_expr_transformer, which this backend does not have"] for n in range(2, 7)},
+        {n: ["it needs polars_expr_transformer (not installed)"] for n in range(2, 7)},
     )
     for node_id in range(2, 7):
         graph.delete_node(node_id)
@@ -542,7 +542,7 @@ def test_a_python_script_node_is_refused_on_a_backend_off_cores_host(protocol_on
     run_info = graph.run_graph()
 
     assert_refused_before_any_node(
-        graph, run_info, backend, {2: ["it runs on a notebook kernel", "the kernel shared volume on core's host"]}
+        graph, run_info, backend, {2: ["it runs on a notebook kernel, which reads its inputs from core's disk"]}
     )
 
 
@@ -990,14 +990,8 @@ def test_a_model_published_to_or_fetched_from_a_filesystem_store_is_refused_off_
         run_info,
         backend,
         {
-            2: [
-                "it publishes its model to the artifact store, which is on local disk; "
-                "remote execution needs the S3 artifact store"
-            ],
-            3: [
-                "it fetches its model from the artifact store, which is on local disk; "
-                "remote execution needs the S3 artifact store"
-            ],
+            2: ["it publishes its model to the artifact store, which is on local disk, not S3"],
+            3: ["it fetches its model from the artifact store, which is on local disk, not S3"],
         },
     )
     assert not any("operation" in result.error for result in run_info.node_step_result)
@@ -1038,12 +1032,8 @@ def test_an_s3_artifact_store_needs_https_where_a_model_crosses_it(s3_artifact_s
     without_file = place(graph, {BACKEND_ID: without(everything(), scheme="file")}, policy)
 
     assert without_https.refusals == [
-        Refusal(
-            2, BACKEND_ID, "it publishes its model to the artifact store over https, which this backend does not write"
-        ),
-        Refusal(
-            3, BACKEND_ID, "it fetches its model from the artifact store over https, which this backend does not read"
-        ),
+        Refusal(2, BACKEND_ID, "it publishes its model to the artifact store over https"),
+        Refusal(3, BACKEND_ID, "it fetches its model from the artifact store over https"),
     ]
     assert without_file.refusals == []
 
@@ -1108,7 +1098,7 @@ def test_a_read_from_a_url_is_refused_on_a_backend_that_does_not_read_its_scheme
 
     run_info = graph.run_graph()
 
-    assert_refused_before_any_node(graph, run_info, backend, {1: ["it reads storage this backend does not read: http"]})
+    assert_refused_before_any_node(graph, run_info, backend, {1: ["it reads http URLs"]})
 
 
 @pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
@@ -1127,8 +1117,7 @@ def test_a_read_from_a_url_runs_on_a_backend_that_reads_its_scheme(declare, monk
 def cannot_resolve(name: str, method: str) -> str:
     """The reason a backend that reaches storage with its own identity is refused a stored connection of ``method``."""
     return (
-        f'connection "{name}" uses {method}, which this backend cannot resolve; '
-        "it reaches storage with its own identity, as env_vars and managed_identity connections do"
+        f'connection "{name}" uses {method}, but this backend only resolves env_vars and managed_identity connections'
     )
 
 
@@ -1253,7 +1242,7 @@ def test_a_catalog_node_over_an_object_storage_namespace_is_refused_on_an_ambien
     ("flow_id", "directory", "refusals"),
     [
         (8444, "s3://bucket/prefix", []),
-        (8445, None, [Refusal(1, BACKEND_ID, "it reads storage this backend does not read: file")]),
+        (8445, None, [Refusal(1, BACKEND_ID, "it reads local files")]),
     ],
     ids=["object_storage", "local"],
 )

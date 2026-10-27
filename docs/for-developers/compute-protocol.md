@@ -27,7 +27,7 @@ Three rules carry the design, and each one opens a deployment shape:
 | One place decides where work runs | `execution/registry.py`, `ExecutionContext` | a choice of compute per run and per node |
 | Every node states what it needs, every backend what it offers | `flow_node/requirements.py`, `Capabilities`, `place()` | a node refused before the run when its backend cannot run it |
 
-The protocol is on by default. `FLOWFILE_COMPUTE_PROTOCOL=0` sends core back to the worker's task routes, and every task route a `/v1` route replaces answers with `Deprecation: true`.
+The protocol is on by default. `FLOWFILE_COMPUTE_PROTOCOL=0` sends core back to the worker's task routes, and every task route core does not call with the protocol on answers with `Deprecation: true`.
 
 | Term | Meaning |
 |---|---|
@@ -199,7 +199,7 @@ A worker on another host therefore needs core's catalog database (the shared Pos
 Intermediate results are private to the backend that computed them, object storage holds catalog data, and nothing is staged unless a deployment configures it.
 
 - **Catalog tables** are addressed by identity. The storage target (`catalog/storage_backend.py`) resolves the identity to a path or URI for whoever executes. A table stored outside its catalog's root (registered from its own path, left behind by a moved catalog directory, or under a namespace whose storage URI changed) is refused by the catalog writer on every backend, and its data is left untouched.
-- **The `file` scheme** is offered only to a worker that sees core's disk: the embedded worker; the built-in `worker` at its unconfigured address (neither `FLOWFILE_WORKER_URL` nor `WORKER_HOST` set); a configured row marked `shares_core_disk`; a worker started with `FLOWFILE_WORKER_LOCAL_FILES=1`. Core adds `file` for the first three itself, because what a worker sees of core's disk is core's knowledge. A local path or a local-disk namespace on any other backend is refused before the run: `namespace "sales" is on local disk; remote execution needs an object-storage namespace`.
+- **The `file` scheme** is offered only to a worker that sees core's disk: the embedded worker; the built-in `worker` at its unconfigured address (neither `FLOWFILE_WORKER_URL` nor `WORKER_HOST` set); a configured row marked `shares_core_disk`; a worker started with `FLOWFILE_WORKER_LOCAL_FILES=1`. Core adds `file` for the first three itself, because what a worker sees of core's disk is core's knowledge. A local path or a local-disk namespace on any other backend is refused before the run: `namespace "sales" is on local disk, not object storage`.
 - **Kernel nodes** (Python Script, custom nodes that run on a kernel) read their inputs from the kernel shared volume on core's host, so they run only on a worker that writes there. Under the mixed policy, only the kernel node's own backend must qualify.
 - **Artifacts** move between a backend and the artifact store through a `file://` URI on a co-located backend and a presigned `https://` URL anywhere else, and placement checks the scheme against the backend's `read_schemes` or `write_schemes`. An unpublished model stays on the backend that fitted it until a later fit replaces it.
 - **The exchange store** is the one place results are staged, and only when a deployment configures it; see [mixed placement](#mixed-placement).

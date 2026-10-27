@@ -303,7 +303,7 @@ describe("handshake", () => {
     narrowed: {
       ...checked,
       offered: { ...core, plugins: {} },
-      absent: { polars_ds: "this backend does not have" },
+      absent: { polars_ds: "not installed" },
     },
     mismatch: {
       ...checked,

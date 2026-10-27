@@ -193,6 +193,7 @@ def trigger_df_operation(
 def trigger_sample_operation(
     lf: pl.LazyFrame, file_ref: str, flow_id: int, node_id: str | int, sample_size: int = 100, *, worker_url: str
 ) -> Status:
+    """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
     # Send raw bytes directly - no base64 encoding overhead
     headers = {
         "Content-Type": "application/octet-stream",
@@ -220,6 +221,7 @@ def trigger_fuzzy_match_operation(
     *,
     worker_url: str,
 ) -> Status:
+    """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
     # Use raw bytes - Pydantic will handle single base64 encoding for JSON transport
     left_serializable_object = PolarsOperation(operation=left_df.serialize())
     right_serializable_object = PolarsOperation(operation=right_df.serialize())
@@ -266,6 +268,8 @@ def trigger_train_model_operation(
 ) -> Status:
     """Submit a training job to the worker.
 
+    Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+
     The worker writes the model bytes to *staging_path*; the resulting Status's
     ``results`` field carries ``{sha256, size_bytes, model_type}`` once complete.
     """
@@ -298,7 +302,10 @@ def trigger_apply_model_operation(
     *,
     worker_url: str,
 ) -> Status:
-    """Submit an apply-model job to the worker."""
+    """Submit an apply-model job to the worker.
+
+    Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+    """
     payload = ApplyModelInput(
         df_operation=PolarsOperation(operation=lf.serialize()),
         model_path=model_path,
@@ -323,6 +330,7 @@ def trigger_create_operation(
     *,
     worker_url: str,
 ):
+    """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
     f = _worker_session.post(
         f"/create_table/{file_type}",
         worker_url=worker_url,
@@ -336,6 +344,7 @@ def trigger_create_operation(
 
 
 def trigger_database_read_collector(database_external_read_settings: DatabaseExternalReadSettings, *, worker_url: str):
+    """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
     f = _worker_session.post(
         "/store_database_read_result",
         worker_url=worker_url,
@@ -348,7 +357,10 @@ def trigger_database_read_collector(database_external_read_settings: DatabaseExt
 
 
 def trigger_kafka_read(kafka_read_settings, *, worker_url: str) -> Status:
-    """Send a Kafka read request to the worker service."""
+    """Send a Kafka read request to the worker service.
+
+    Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+    """
     f = _worker_session.post(
         "/store_kafka_read_result",
         worker_url=worker_url,
@@ -363,6 +375,8 @@ def trigger_kafka_read(kafka_read_settings, *, worker_url: str) -> Status:
 def fetch_kafka_offsets(task_id: str, *, worker_url: str) -> dict | None:
     """Fetch deferred Kafka offset data from the worker for a completed task.
 
+    Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+
     Returns a dict with ``new_offsets``, ``messages_consumed``, etc. from the
     KafkaReadResult that was saved as a sidecar file, or ``None`` if no
     offsets were recorded (e.g. empty topic).
@@ -376,7 +390,10 @@ def fetch_kafka_offsets(task_id: str, *, worker_url: str) -> dict | None:
 
 
 def trigger_google_analytics_read(ga_read_settings, *, worker_url: str) -> Status:
-    """Send a Google Analytics 4 read request to the worker service."""
+    """Send a Google Analytics 4 read request to the worker service.
+
+    Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+    """
     f = _worker_session.post(
         "/store_google_analytics_read_result",
         worker_url=worker_url,
@@ -389,7 +406,10 @@ def trigger_google_analytics_read(ga_read_settings, *, worker_url: str) -> Statu
 
 
 def trigger_rest_api_read(settings, *, worker_url: str) -> Status:
-    """Send a REST API read request to the worker service."""
+    """Send a REST API read request to the worker service.
+
+    Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+    """
     f = _worker_session.post(
         "/store_rest_api_read_result",
         worker_url=worker_url,
@@ -403,6 +423,7 @@ def trigger_rest_api_read(settings, *, worker_url: str) -> Status:
 
 
 def trigger_database_write(database_external_write_settings: DatabaseExternalWriteSettings, *, worker_url: str):
+    """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
     f = _worker_session.post(
         "/store_database_write_result",
         worker_url=worker_url,
@@ -417,6 +438,7 @@ def trigger_database_write(database_external_write_settings: DatabaseExternalWri
 def trigger_cloud_storage_write(
     database_external_write_settings: CloudStorageWriteSettingsWorkerInterface, *, worker_url: str
 ):
+    """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
     f = _worker_session.post(
         "/write_data_to_cloud",
         worker_url=worker_url,
@@ -441,6 +463,7 @@ def trigger_write_output(
     *,
     worker_url: str,
 ) -> Status:
+    """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
     from base64 import encodebytes
 
     serializable_df = lf.serialize()
@@ -855,6 +878,8 @@ def get_results(file_ref: str, *, worker_url: str) -> Status | None:
 
 def results_exists(file_ref: str, *, worker_url: str) -> bool:
     """Whether the worker at ``worker_url`` holds task ``file_ref`` as completed.
+
+    Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
 
     ``False`` means only that the worker answered and the task is not there (or not finished); the caller decides
     whether to ask at all.
@@ -1405,6 +1430,8 @@ class ExternalDfFetcher(BaseFetcher):
 
 
 class ExternalSampler(BaseFetcher):
+    """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
+
     def __init__(
         self,
         lf: pl.LazyFrame | pl.DataFrame,
@@ -1454,6 +1481,8 @@ class ExternalSampler(BaseFetcher):
 
 
 class ExternalFuzzyMatchFetcher(BaseFetcher):
+    """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
+
     def __init__(
         self,
         left_df: pl.LazyFrame,
@@ -1486,6 +1515,8 @@ class ExternalFuzzyMatchFetcher(BaseFetcher):
 class MLTrainFetcher(BaseFetcher):
     """Fetches the training-completion result, which is a metadata dict
     (``{sha256, size_bytes, model_type}``) rather than a LazyFrame.
+
+    Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
 
     ``BaseFetcher._handle_completion`` already routes non-polars results
     straight through ``status.results``, so no overrides are needed.
@@ -1527,7 +1558,10 @@ class MLTrainFetcher(BaseFetcher):
 
 
 class MLApplyFetcher(BaseFetcher):
-    """Fetches the scored LazyFrame produced by :func:`trigger_apply_model_operation`."""
+    """Fetches the scored LazyFrame produced by :func:`trigger_apply_model_operation`.
+
+    Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+    """
 
     def __init__(
         self,
@@ -1560,7 +1594,10 @@ class MLApplyFetcher(BaseFetcher):
 
 class ExternalCustomNodeFetcher(BaseFetcher):
     """Runs a custom node's process() in the worker; result is the JSON payload
-    with per-output IPC paths and row counts (result_type="other")."""
+    with per-output IPC paths and row counts (result_type="other").
+
+    Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+    """
 
     def __init__(self, request: CustomNodeExecuteInput, wait_on_completion: bool = False, *, worker_url: str):
         super().__init__(file_ref=request.task_id, worker_url=worker_url)
@@ -1577,6 +1614,8 @@ class ExternalCustomNodeFetcher(BaseFetcher):
 
 
 class ExternalCreateFetcher(BaseFetcher):
+    """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
+
     def __init__(
         self,
         received_table: ReceivedTable,
@@ -1597,6 +1636,8 @@ class ExternalCreateFetcher(BaseFetcher):
 
 
 class ExternalDatabaseFetcher(BaseFetcher):
+    """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
+
     def __init__(
         self,
         database_external_read_settings: DatabaseExternalReadSettings,
@@ -1614,7 +1655,10 @@ class ExternalDatabaseFetcher(BaseFetcher):
 
 
 class ExternalKafkaFetcher(BaseFetcher):
-    """Fetches data from Kafka via the worker service. Same pattern as ExternalDatabaseFetcher."""
+    """Fetches data from Kafka via the worker service. Same pattern as ExternalDatabaseFetcher.
+
+    Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+    """
 
     def __init__(self, kafka_read_settings, wait_on_completion: bool = True, *, worker_url: str):
         r = trigger_kafka_read(kafka_read_settings=kafka_read_settings, worker_url=worker_url)
@@ -1625,7 +1669,10 @@ class ExternalKafkaFetcher(BaseFetcher):
 
 
 class ExternalGoogleAnalyticsFetcher(BaseFetcher):
-    """Fetches GA4 data via the worker service. Same pattern as ExternalDatabaseFetcher."""
+    """Fetches GA4 data via the worker service. Same pattern as ExternalDatabaseFetcher.
+
+    Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+    """
 
     def __init__(self, ga_read_settings, wait_on_completion: bool = True, *, worker_url: str):
         r = trigger_google_analytics_read(ga_read_settings=ga_read_settings, worker_url=worker_url)
@@ -1636,7 +1683,10 @@ class ExternalGoogleAnalyticsFetcher(BaseFetcher):
 
 
 class ExternalRestApiFetcher(BaseFetcher):
-    """Fetches REST API data via the worker service. Same pattern as ExternalDatabaseFetcher."""
+    """Fetches REST API data via the worker service. Same pattern as ExternalDatabaseFetcher.
+
+    Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+    """
 
     def __init__(self, settings, wait_on_completion: bool = True, *, worker_url: str):
         r = trigger_rest_api_read(settings=settings, worker_url=worker_url)
@@ -1647,6 +1697,8 @@ class ExternalRestApiFetcher(BaseFetcher):
 
 
 class ExternalDatabaseWriter(BaseFetcher):
+    """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
+
     def __init__(
         self,
         database_external_write_settings: DatabaseExternalWriteSettings,
@@ -1664,6 +1716,8 @@ class ExternalDatabaseWriter(BaseFetcher):
 
 
 class ExternalCloudWriter(BaseFetcher):
+    """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
+
     def __init__(
         self,
         cloud_storage_write_settings: CloudStorageWriteSettingsWorkerInterface,
@@ -1682,6 +1736,8 @@ class ExternalCloudWriter(BaseFetcher):
 
 class ExternalOutputWriter(BaseFetcher):
     """Writes output to disk via the worker's /write_results/ endpoint.
+
+    Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
 
     Inherits BaseFetcher.cancel(), so a flow cancel propagates to the worker
     as a POST /cancel_task/{task_id} and terminates the running sink process.

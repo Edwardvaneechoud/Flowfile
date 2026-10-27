@@ -68,7 +68,7 @@ def test_it_answers_the_node_that_would_run_on_the_default_backend(client, http_
                 "node_id": 1,
                 "backend_id": BACKEND_ID,
                 "fallback_id": registry.LOCAL_BACKEND_ID,
-                "reason": "it reads storage this backend does not read: http",
+                "reason": "it reads http URLs",
             }
         ],
         "refusals": [],
