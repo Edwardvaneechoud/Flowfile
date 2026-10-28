@@ -424,7 +424,7 @@ class TestGcsCredentials:
 
 
 class FakeGcsFileSystem:
-    """Stands in for gcsfs.GCSFileSystem; replays one canned full listing."""
+    """Stands in for a gcsfs filesystem; replays one canned full listing."""
 
     def __init__(self, items):
         self.items = items
@@ -439,9 +439,9 @@ class FakeGcsFileSystem:
 @pytest.fixture
 def use_fake_gcs(monkeypatch):
     def _install(items):
-        import gcsfs
+        from shared.cloud_storage import gcs
 
-        monkeypatch.setattr(gcsfs, "GCSFileSystem", lambda **_options: FakeGcsFileSystem(items))
+        monkeypatch.setattr(gcs, "gcs_filesystem", lambda **_options: FakeGcsFileSystem(items))
 
     return _install
 

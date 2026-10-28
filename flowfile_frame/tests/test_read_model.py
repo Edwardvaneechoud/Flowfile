@@ -1,5 +1,7 @@
 """``FlowFrame.read_model``: the model a Train Model node fitted, as a ``TrainedModel``."""
 
+import dataclasses
+
 import pytest
 
 import flowfile_frame as ff
@@ -101,3 +103,35 @@ def test_a_model_survives_a_merge_of_its_frame_onto_another_graph():
 
     assert trained.read_model().coefficients == {"x": pytest.approx(2.0)}
     assert "Coefficients: x=2" in repr(trained)
+
+
+def test_a_train_model_frame_whose_backend_is_gone_prints_as_unreadable():
+    trained = ff.from_dict(LINE).train_model(target="y", features=["x"])
+    node = trained.flow_graph.get_node(trained.node_id)
+    ref = node.results.model_ref
+    node.results.model_ref = dataclasses.replace(ref, backend_id="worker:gone")
+    try:
+        display = repr(trained)
+    finally:
+        node.results.model_ref = ref
+
+    assert display.endswith("Model: unreadable (LookupError)")
+
+
+def test_a_fit_leaves_a_model_carried_from_another_graph_held():
+    """A Train Model node fitting anew leaves a model ref carried onto it (as merge_frames does) to its source."""
+    from flowfile_core.flowfile.execution import registry
+
+    source = ff.from_dict(LINE).train_model(target="y", features=["x"])
+    source.read_model()
+    carried = source.flow_graph.get_node(source.node_id).results.model_ref
+    other = ff.from_dict({"x": [1.0, 2.0, 3.0], "y": [2.0, 4.0, 6.0]}).train_model(target="y", features=["x"])
+    node = other.flow_graph.get_node(other.node_id)
+    node.results.model_ref = carried
+    node.invalidate_cache()
+
+    assert other.flow_graph.run_graph().success
+
+    assert node.results.model_ref not in (None, carried)
+    assert registry.backend(carried.backend_id).exists(carried)
+    assert source.read_model().model_type == "linear_regression"

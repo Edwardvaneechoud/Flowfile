@@ -4,7 +4,10 @@ Executes a candidate custom node against bounded sample inputs in the worker
 (never in core), returning a per-output preview, buffered logs, and a typed
 error kind. Core ast-parses first so syntax errors never reach the worker;
 sample inputs come from the request or the node's ``example_inputs``; secrets
-resolve for real via the author's own/shared secrets.
+resolve for real via the author's own/shared secrets. The run is followed
+through the worker backend (``status``, ``task_result``, ``cancel``) and
+cleared with ``clear_task_from_worker``, since the protocol has no call that
+clears a task by id.
 """
 
 import ast
@@ -16,14 +19,17 @@ import uuid
 from typing import Annotated, Any, Literal
 
 import polars as pl
-import requests
 from pydantic import BaseModel, Field, model_validator
 
 from flowfile_core.configs import logger
-from flowfile_core.configs.settings import WORKER_URL
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable
+from flowfile_core.flowfile.execution.protocol import JobHandle
+from flowfile_core.flowfile.flow_data_engine.bounded import count_rows, head_rows
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import CustomNodeExecuteInput
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-    _worker_session,
+    clear_task_from_worker,
     trigger_custom_node_operation,
 )
 from flowfile_core.flowfile.node_designer.codegen import CodegenError, generate_source
@@ -39,9 +45,7 @@ _DEFAULT_TIMEOUT = 30
 _MAX_TIMEOUT = 120
 _POLL_INTERVAL = 0.25
 _DRY_RUN_FLOW_ID = -1
-# Sample inputs are materialized in core (schema-typed FlowDataEngine construction) before shipping
-# to the worker/kernel, so bound them: core never materializes full datasets, and dry-run test data
-# is small.
+# Sample inputs are built in core before they ship to the worker or kernel, so they are bounded.
 _MAX_SAMPLE_ROWS = 10_000
 _MAX_SAMPLE_CELLS = 200_000
 
@@ -63,9 +67,7 @@ class DryRunRequest(BaseModel):
     designer_state: DesignerState | None = None
     code: str | None = None
     settings_values: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    # Typed RawData (schema + columnar data) preferred; bare {col: values} dicts still
-    # accepted, with dtypes inferred (mixed int/float columns promote to Float64).
-    # left_to_right: smart union would match a RawData payload as the bare dict.
+    # left_to_right: a smart union would read a RawData payload as a bare {col: values} dict.
     sample_inputs: list[Annotated[RawData | dict[str, list], Field(union_mode="left_to_right")]] | None = None
     row_limit: int = _DEFAULT_ROW_LIMIT
     timeout_seconds: int = _DEFAULT_TIMEOUT
@@ -159,9 +161,7 @@ def _resolve_sample_inputs(request: DryRunRequest, source: str) -> tuple[list[Ra
     lifted = extract_example_inputs(source)
     if lifted:
         return _coerce_samples(lifted)
-    # No sample data at all: run against one empty frame per declared input (none for
-    # a source node) so nodes that don't need input data are still testable, rather
-    # than hard-blocking with "add sample data".
+    # No sample data: one empty frame per declared input, so nodes that need no data stay testable.
     n = (
         request.designer_state.number_of_inputs
         if request.designer_state is not None
@@ -195,8 +195,7 @@ def _check_sample_size(samples: list[RawData]) -> DryRunResponse | None:
 
 
 def _serialize_inputs(samples: list[RawData]) -> tuple[list[bytes] | None, DryRunResponse | None]:
-    # FlowDataEngine applies the RawData schema — the same typed construction as manual input,
-    # so declared dtypes (e.g. Float64 over mixed int/float cells) cast instead of erroring.
+    # FlowDataEngine applies the RawData schema, so declared dtypes cast instead of erroring.
     from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 
     serialized: list[bytes] = []
@@ -242,34 +241,33 @@ def _resolve_secrets(request: DryRunRequest, user_id: int | None) -> tuple[dict[
     return payload, None
 
 
-def _poll_worker(task_id: str, deadline: float) -> tuple[dict | None, DryRunResponse | None]:
-    """Poll ``/status/{task}`` until completion or the monotonic *deadline*.
+def _poll_worker(task_id: str, deadline: float) -> tuple[Any, DryRunResponse | None]:
+    """Follow the task through the worker backend's ``status`` until it ends or the monotonic *deadline* passes.
 
-    On deadline the task is cancelled and a ``timeout`` error is returned. A
-    connection error becomes a ``load`` error ("worker unavailable") — user code
-    is never run in core for dry runs.
+    Returns the result the task reported once it is done. A passed deadline cancels the task (``timeout``), an
+    unreachable worker is a ``load`` error (user code never runs in core), and a missing status an ``execution``
+    error. Any other ``ComputeError`` (a failed handshake) propagates for the route to answer.
     """
+    worker = registry.backend(registry.WORKER_BACKEND_ID)
+    handle = JobHandle(worker.id, task_id)
     while True:
         if time.monotonic() >= deadline:
             _cancel(task_id)
             return None, _fail("timeout", "Dry run exceeded the time limit and was cancelled.")
         try:
-            resp = _worker_session.get(f"{WORKER_URL}/status/{task_id}", timeout=10)
-        except requests.RequestException as e:
+            job = worker.status(handle)
+            if job.state == "done":
+                return worker.task_result(handle), None
+        except ComputeUnavailable as e:
             return None, _fail("load", f"The compute worker is unavailable: {e}")
-        if resp.status_code == 404:
-            return None, _fail("execution", "The dry-run task disappeared from the worker before completing.")
-        if resp.status_code != 200:
-            return None, _fail("execution", f"Worker returned HTTP {resp.status_code}: {resp.text[:300]}")
-        status = resp.json()
-        state = status.get("status")
-        if state == "Completed":
-            return status, None
-        if state in ("Error", "Unknown Error"):
-            message = status.get("error_message") or "Unknown execution error"
-            error, tb = _split_traceback(message)
+        except ComputeError:
+            raise
+        except Exception as e:
+            return None, _fail("execution", f"The worker has no status for the dry-run task: {e}")
+        if job.state == "failed":
+            error, tb = _split_traceback(job.error or "Unknown execution error")
             return None, _fail("execution", error, traceback=tb)
-        if state == "Cancelled":
+        if job.state == "cancelled":
             return None, _fail("timeout", "Dry run was cancelled.")
         time.sleep(_POLL_INTERVAL)
 
@@ -283,17 +281,17 @@ def _split_traceback(message: str) -> tuple[str, str | None]:
 
 
 def _cancel(task_id: str) -> None:
+    """Cancel the task through the worker backend; best effort, a failure is only logged."""
+    worker = registry.backend(registry.WORKER_BACKEND_ID)
     try:
-        _worker_session.post(f"{WORKER_URL}/cancel_task/{task_id}", timeout=10)
-    except requests.RequestException:
-        logger.debug("Dry-run cancel for task %s failed (worker unreachable)", task_id)
+        worker.cancel(JobHandle(worker.id, task_id))
+    except Exception as e:
+        logger.debug("Dry-run cancel for task %s failed: %s", task_id, e)
 
 
 def _clear(task_id: str) -> None:
-    try:
-        _worker_session.delete(f"{WORKER_URL}/clear_task/{task_id}", timeout=10)
-    except requests.RequestException:
-        logger.debug("Dry-run clear for task %s failed (worker unreachable)", task_id)
+    """Clear the task and its output files from the worker; best effort, ``clear_task_from_worker`` logs a failure."""
+    clear_task_from_worker(task_id, worker_url=registry.worker_url())
 
 
 def _map_payload(payload: dict, output_names: list[str]) -> DryRunResponse:
@@ -344,9 +342,7 @@ def run_dry_run(request: DryRunRequest, user_id: int | None) -> DryRunResponse:
     if err is not None:
         return err
 
-    # Kernel-environment nodes run in their Docker kernel (which has the node's pip
-    # deps), not the worker. designer-state carries the environment kind directly;
-    # code-only nodes surface it via the exec-free manifest.
+    # Kernel-environment nodes run in their Docker kernel, which has the node's pip deps.
     env_kind = (
         request.designer_state.environment.kind
         if request.designer_state is not None
@@ -384,18 +380,17 @@ def run_dry_run(request: DryRunRequest, user_id: int | None) -> DryRunResponse:
     )
 
     try:
-        start_status = trigger_custom_node_operation(execute_input)
+        start_status = trigger_custom_node_operation(execute_input, worker_url=registry.worker_url())
     except Exception as e:
         return _fail("load", f"The compute worker is unavailable: {e}")
 
     task_id = start_status.background_task_id
     deadline = time.monotonic() + request.timeout_seconds
     try:
-        status, err = _poll_worker(task_id, deadline)
+        raw, err = _poll_worker(task_id, deadline)
         if err is not None:
             return err
         try:
-            raw = status.get("results")
             payload = json.loads(raw) if isinstance(raw, str) else raw
         except (TypeError, ValueError) as e:
             return _fail("execution", f"Could not read the dry-run result payload: {e}")
@@ -436,7 +431,11 @@ def _read_kernel_output_previews(
     Mirrors read_kernel_outputs' ``<name>.parquet`` convention and its guard: if the
     kernel reported published files but none match the expected names, surface a clear
     error instead of silently returning empty outputs.
+
+    Rows and counts are read through ``bounded`` on the current context's backend, the one
+    that wrote the run's inputs, so core collects nothing; a ``ComputeError`` propagates.
     """
+    backend = current_context().backend
     outputs: list[DryRunOutput] = []
     found = False
     for name in output_names:
@@ -446,8 +445,8 @@ def _read_kernel_output_previews(
             continue
         found = True
         lf = pl.scan_parquet(path)
-        head = lf.head(row_limit).collect()
-        row_count = int(lf.select(pl.len()).collect().item())
+        head = pl.from_arrow(head_rows(backend, lf, row_limit))
+        row_count = count_rows(backend, lf)
         outputs.append(
             DryRunOutput(
                 name=name,

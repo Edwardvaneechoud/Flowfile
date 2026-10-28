@@ -16,6 +16,7 @@ from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, register_missing_node_template
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.artifacts import ArtifactContext
+from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
@@ -175,6 +176,8 @@ class FlowGraph(
         self._comment_id_seq: int = 0
         # The bare check-then-set on is_running raced from non-asyncio threads.
         self._run_claim_lock = threading.Lock()
+        # Set by a close_flow that found a run in flight: release_run closes the flow when the run ends.
+        self._close_when_released = False
         # Serializes graph mutations, undo/redo and saves; always taken before _run_claim_lock.
         self._edit_lock = threading.RLock()
         self._transaction_depth = 0
@@ -470,6 +473,7 @@ class FlowGraph(
                     logger.debug(f"Removing lead_to reference {node_id} from node {depend_on}")
                     depend_on.delete_lead_to_node(node_id)
 
+            node.release_result()
             self._node_db.pop(node_id)
             if isinstance(node_id, int):
                 self._node_id_seq = max(self._node_id_seq, node_id)
@@ -608,6 +612,7 @@ class FlowGraph(
             return typed_parameter_values(_graph.flow_settings.parameters)
 
         node._params_getter = _get_params
+        node._execution_context_getter = lambda: current_context(_graph)
         self._notify_node_observers(node, is_new=existing_node is None)
         return node
 

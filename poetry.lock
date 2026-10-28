@@ -4075,6 +4075,25 @@ files = [
 ]
 
 [[package]]
+name = "polars-runtime-64"
+version = "1.43.2"
+description = "Blazingly fast DataFrame library"
+optional = false
+python-versions = ">=3.10"
+groups = ["runtime64"]
+files = [
+    {file = "polars_runtime_64-1.43.2-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:485d3230a8f4b6633758bcb1922c5d9f8f259bb5a2b68ce818f1f0577b3f7a48"},
+    {file = "polars_runtime_64-1.43.2-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:8a3ec3900cf4f14a2e52a5ca283820fdf75afee14537b1e38fed40b2858fbdc7"},
+    {file = "polars_runtime_64-1.43.2-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:4b8ff8bd4f1a1ed42886bbed4ce9fcedc87d63247f40bd8cba91c2a28fe09f09"},
+    {file = "polars_runtime_64-1.43.2-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:169ec1aa9f463ef6d9ed13aa179fd46a14109ff47ba970e86ab0cf1ebf4497fd"},
+    {file = "polars_runtime_64-1.43.2-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:0233e7f103663d996ae16dd812c9dbcf4098aa2d001b8968d7527a3453b979d0"},
+    {file = "polars_runtime_64-1.43.2-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:c77f58f54b01cf042a338ccd6d5c383b1e680295967050982bb5f6e89a5ce2b3"},
+    {file = "polars_runtime_64-1.43.2-cp310-abi3-win_amd64.whl", hash = "sha256:7fe097d414e596c6a6085401c98f46bd632a6e257868d39a31bb2ecce57b677c"},
+    {file = "polars_runtime_64-1.43.2-cp310-abi3-win_arm64.whl", hash = "sha256:f51dc94a479dfc79dfe9b02700964a33864b4382521d55dfd4c5a0a93a174a16"},
+    {file = "polars_runtime_64-1.43.2.tar.gz", hash = "sha256:096eb2817d3ff566508883e66acb95cc54a0480976a00b822d669a738854ad13"},
+]
+
+[[package]]
 name = "polars-simed"
 version = "0.4.0"
 description = "Fast similarity join for polars DataFrames. Fork by Edwardvaneechoud with fixes."
@@ -6705,4 +6724,4 @@ yxdb = ["yxdb"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.14"
-content-hash = "1a9dd325833db6a09c6065858af11f2a35f20412c97a5b78c303b9e136b28384"
+content-hash = "2d3943ffad3085ebdfd9b75dcb631f4d4eff2b9f1b3f00c6a930aa1021ed87bf"

@@ -2,6 +2,7 @@ import logging
 import os
 import socket
 import sys
+import uuid
 
 import pytest
 
@@ -13,7 +14,15 @@ INTERNAL_AUTH_HEADERS = {"X-Flowfile-Internal": os.environ["FLOWFILE_INTERNAL_TO
 from tests.utils import is_docker_available
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+from shared.compute_protocol import PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER, ResultRef, WorkerLocation
 from test_utils.postgres import fixtures as pg_fixtures
+
+V1_HEADERS = {**INTERNAL_AUTH_HEADERS, PROTOCOL_VERSION_HEADER: str(PROTOCOL_VERSION)}
+
+
+def ref_location(ref: ResultRef) -> WorkerLocation:
+    """Where the worker holds the result *ref* names."""
+    return WorkerLocation.model_validate_json(ref.location)
 
 
 def is_port_in_use(port, host="localhost"):
@@ -36,7 +45,7 @@ def shutdown_worker_pool():
     """Retire the module-singleton warm pool's members at session end.
 
     Tests that don't patch pool.task_pool lease members from the env-configured
-    singleton (CI sets FLOWFILE_WORKER_POOL_SIZE; Windows defaults it on), and a
+    singleton (on by default; CI sets FLOWFILE_WORKER_POOL_SIZE), and a
     bare pytest process never runs the app lifespan that would shut it down.
     """
     yield
@@ -65,6 +74,29 @@ def postgres_db():
         if not db_info:
             pytest.fail("PostgreSQL container could not be started")
         yield db_info
+
+
+@pytest.fixture
+def held():
+    """Fresh ids a test submits or runs an operation under.
+
+    When the test ends each id is released with the outputs ``<id>_0`` to ``<id>_3`` an operation holds under it, as
+    ``DELETE /v1/results/{id}`` releases them, and its job entry is dropped.
+    """
+    from flowfile_worker import service, status_dict, status_dict_lock
+
+    ids: list[str] = []
+
+    def new_id() -> str:
+        ids.append(uuid.uuid4().hex)
+        return ids[-1]
+
+    yield new_id
+    for held_id in ids:
+        for result_id in (*(f"{held_id}_{i}" for i in range(4)), held_id):
+            service.release(result_id)
+        with status_dict_lock:
+            status_dict.pop(held_id, None)
 
 
 @pytest.fixture

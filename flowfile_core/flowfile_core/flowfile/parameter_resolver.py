@@ -26,8 +26,7 @@ _STRING_PREFIX = re.compile(r"[a-zA-Z]*")
 _FSTRING_START = getattr(tokenize, "FSTRING_START", None)
 _FSTRING_END = getattr(tokenize, "FSTRING_END", None)
 
-# Type alias: list of (object, field_name_or_key_or_index, original_value) triples
-# used to restore mutated fields after node execution.
+# (object, field name/key/index, original value) triples that restore mutated fields after a run.
 _Restorations = list[tuple[Any, str | int, Any]]
 
 
@@ -211,6 +210,25 @@ def node_parameters_resolved(node: Any) -> Iterator[None]:
     finally:
         restore_parameters(restorations)
         node._hash = saved_hash
+
+
+def resolved_settings(node: Any) -> Any:
+    """A node's settings with its flow ``${name}`` refs substituted as the run substitutes them, the node left as it is.
+
+    The live settings when nothing needs resolving; otherwise a resolved deep copy, so a reader beside an edit or a
+    run never sees, or leaves, a half-resolved node.
+
+    Raises:
+        ValueError: If a referenced parameter is not defined on the flow.
+    """
+    params_getter = getattr(node, "_params_getter", None)
+    params = params_getter() if params_getter is not None else {}
+    settings = node.setting_input
+    if not params or not find_unresolved_in_model(settings):
+        return settings
+    resolved = settings.model_copy(deep=True)
+    apply_parameters_in_place(resolved, params)
+    return resolved
 
 
 def _apply_recursive(

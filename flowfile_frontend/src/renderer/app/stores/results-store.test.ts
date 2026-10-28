@@ -5,6 +5,7 @@
 import { setActivePinia, createPinia } from "pinia";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { FlowSettingsValidation, NodeResult, RunInformation } from "../types";
+import { crossesBackends } from "../utils/boundaryEdges";
 
 import { useResultsStore } from "./results-store";
 
@@ -106,5 +107,39 @@ describe("insertRunResult", () => {
     expect(store.currentRunResult?.flow_id).toBe(2);
     expect(store.getRunResult(1)?.flow_id).toBe(1);
     expect(store.runNodeResults[1][3].success).toBe(true);
+  });
+
+  const report = (
+    runType: RunInformation["run_type"],
+    boundaries: [number, number][],
+  ): RunInformation => ({ ...run(1), run_type: runType, boundaries });
+
+  const edges: [number, number][] = [
+    [1, 2],
+    [2, 3],
+  ];
+
+  const badged = (store: ReturnType<typeof useResultsStore>) =>
+    edges.filter(([source, target]) => crossesBackends(store.getRunResult(1), source, target));
+
+  it("keeps the badges of the edges a single-node fetch did not run into", () => {
+    const store = useResultsStore();
+    store.insertRunResult(report("full_run", edges));
+
+    store.insertRunResult(report("fetch_one", [[2, 3]]));
+    store.insertRunResult(report("fetch_one", [[2, 3]]));
+    expect(badged(store)).toEqual(edges);
+
+    store.insertRunResult(report("fetch_one", []));
+    expect(badged(store)).toEqual([[1, 2]]);
+  });
+
+  it("lets a full run replace the badges a fetch kept", () => {
+    const store = useResultsStore();
+    store.insertRunResult(report("full_run", edges));
+    store.insertRunResult(report("fetch_one", [[2, 3]]));
+
+    store.insertRunResult(report("full_run", []));
+    expect(badged(store)).toEqual([]);
   });
 });

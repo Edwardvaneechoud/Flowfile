@@ -67,6 +67,15 @@ class NamespaceNotEmptyError(CatalogError):
         super().__init__(f"Cannot delete namespace: still contains {detail}")
 
 
+class SeededNamespaceError(CatalogError):
+    """Raised when deleting a namespace the application seeds and relies on (the root catalog, its default schema)."""
+
+    def __init__(self, namespace_id: int, name: str):
+        self.namespace_id = namespace_id
+        self.name = name
+        super().__init__(f"Cannot delete namespace {name!r}: the application creates and relies on it")
+
+
 class InvalidNamespaceStorageError(CatalogError):
     """Raised when per-catalog storage config is invalid (non-root, bad URI, or unresolved connection)."""
 
@@ -124,8 +133,7 @@ class NotAuthorizedError(CatalogError):
     """Raised when a user attempts an action they are not permitted to perform."""
 
     def __init__(self, user_id: int, action: str = "perform this action"):
-        # user_id is kept for logging/telemetry but deliberately left out of the
-        # message: it becomes the HTTP 403 detail shown to end users.
+        # user_id stays out of the message, which becomes the 403 detail shown to end users.
         self.user_id = user_id
         self.action = action
         super().__init__(f"Not authorized to {action}")

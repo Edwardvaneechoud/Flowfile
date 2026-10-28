@@ -7,7 +7,8 @@ import type { Position } from "@vue-flow/core";
 // Flow Execution Types
 
 export type ExecutionMode = "Development" | "Performance";
-export type ExecutionLocation = "local" | "remote";
+// "auto" or a backend id; core answers "local" or "remote" with the compute protocol off.
+export type ExecutionLocation = string;
 
 // Flow Parameters
 
@@ -65,6 +66,29 @@ export interface FlowSettingsValidation {
   nodes: NodeSettingsValidation[];
 }
 
+// Where a run would place each node now (GET /flow/placement); `available` is false with the protocol off.
+export interface PlacementFallback {
+  node_id: number;
+  backend_id: string;
+  fallback_id: string;
+  reason: string;
+}
+
+export interface PlacementRefusal {
+  node_id: number;
+  backend_id: string;
+  reason: string;
+  remedy?: string | null;
+}
+
+export interface PlacementPreview {
+  available: boolean;
+  assignment: Record<number, string>;
+  fallbacks: PlacementFallback[];
+  refusals: PlacementRefusal[];
+  boundaries: [number, number][];
+}
+
 // Run Information
 
 export interface RunInformation {
@@ -78,6 +102,8 @@ export interface RunInformation {
   number_of_nodes: number;
   node_step_result: NodeResult[];
   run_type: "fetch_one" | "full_run" | "init";
+  // The edges the run's placement put between two backends; absent from an older core.
+  boundaries?: [number, number][];
 }
 
 export interface RunInformationDictionary {

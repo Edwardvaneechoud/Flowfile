@@ -2,7 +2,9 @@
 
 Provides the CloudStorageReader class that translates FullCloudStorageConnection
 objects into storage_options dicts and credential providers, delegating the
-actual options building to shared.cloud_storage.storage_options.
+actual options building to shared.cloud_storage.storage_options. With the compute
+protocol flag on, a read of a stored connection carries a reference to it instead,
+resolved where the plan runs.
 
 Importing it registers core's secret decryptor, so provider-carrying plans can execute in core.
 """
@@ -10,9 +12,12 @@ Importing it registers core's secret decryptor, so provider-carrying plans can e
 import json
 from typing import Any
 
+from flowfile_core.configs import settings
+from flowfile_core.flowfile.execution.protocol import CredentialRef
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 from flowfile_core.secret_manager.secret_manager import _encrypt_with_master_key, decrypt_secret, encrypt_secret
 from shared.cloud_credential_provider import (
+    CredentialRefProvider,
     EncryptedCredentialProvider,
     register_secret_decryptor,
     split_credentials,
@@ -23,6 +28,18 @@ from shared.cloud_storage.directory import get_first_file_from_cloud_dir  # noqa
 from shared.cloud_storage.gcs import use_pyarrow_for_gcs as _use_pyarrow_for_gcs
 from shared.cloud_storage.storage_options import build_storage_options
 from shared.cloud_storage.utils import ensure_path_has_wildcard_pattern  # noqa: F401
+
+
+class _NativeCredentials:
+    def __repr__(self) -> str:
+        return "NATIVE_CREDENTIALS"
+
+
+NATIVE_CREDENTIALS = _NativeCredentials()
+"""The credential provider of a read with none of its own, on a backend with ``ambient`` credential resolution.
+
+The scan gets ``credential_provider=None``, so its plan holds no pickled Python provider (which a backend on another
+Python cannot load) and Polars' native chain finds the identity where the plan runs."""
 
 
 class CloudStorageReader:
@@ -94,11 +111,95 @@ class CloudStorageReader:
         return EncryptedCredentialProvider(encrypted)
 
     @staticmethod
+    def credential_ref(connection: FullCloudStorageConnection, user_id: int | None) -> CredentialRef | None:
+        """The catalog's reference to *connection* as resolved for *user_id*, or None for one the catalog does not hold.
+
+        Looked up by the rule the connection was resolved by: the user's own first, then the lowest-id group grant.
+        """
+        if user_id is None or not connection.connection_name:
+            return None
+        from flowfile_core.database.connection import get_db_context
+        from flowfile_core.flowfile.database_connection_manager.db_connections import get_cloud_connection
+
+        with get_db_context() as db:
+            row = get_cloud_connection(db, connection.connection_name, user_id)
+            return CredentialRef(connection_id=row.id, user_id=user_id) if row is not None else None
+
+    @staticmethod
+    def get_plan_storage_options(connection: FullCloudStorageConnection) -> dict[str, str]:
+        """The options a read's plan carries when the executor resolves its credentials: no secret, nothing resolved.
+
+        S3 is built as ``env_vars``, which resolves no credential. A GCS endpoint needs object_store's
+        ``gcs_base_url``, which only a service-account key carries, so a stub key with no key material and OAuth off
+        carries it. An ``aws-cli`` connection with no region takes its profile's (``_profile_region``), since a Delta
+        read finds no region otherwise.
+        """
+        if CloudStorageReader.use_pyarrow_for_gcs(connection):
+            stub = {
+                "gcs_base_url": connection.endpoint_url,
+                "disable_oauth": True,
+                "client_email": "",
+                "private_key": "",
+                "private_key_id": "",
+            }
+            return {"service_account_key": json.dumps(stub)}
+        region = connection.aws_region
+        if not region and connection.storage_type == "s3" and connection.auth_method == "aws-cli":
+            region = _profile_region(connection.aws_profile)
+        return build_storage_options(
+            storage_type=connection.storage_type,
+            auth_method="env_vars" if connection.storage_type == "s3" else connection.auth_method,
+            connection_name=connection.connection_name,
+            aws_region=region,
+            aws_allow_unsafe_html=connection.aws_allow_unsafe_html,
+            azure_account_name=connection.azure_account_name,
+            gcs_project_id=connection.gcs_project_id,
+            endpoint_url=connection.endpoint_url,
+            verify_ssl=connection.verify_ssl,
+        )
+
+    @staticmethod
+    def get_read_credentials(
+        connection: FullCloudStorageConnection, user_id: int | None
+    ) -> tuple[dict[str, Any], EncryptedCredentialProvider | CredentialRefProvider | None]:
+        """The storage options and credential provider of a read's plan.
+
+        With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a stored connection whose method holds a credential gets secret-free
+        options and a ``CredentialRefProvider``, resolved where the plan executes. ``env_vars`` and
+        ``managed_identity`` get no provider. Otherwise (flag off, or no saved connection) core resolves the options
+        and the plan carries their credentials encrypted.
+
+        Raises:
+            ValueError: With the flag on, the connection is named but not stored for *user_id*, or *user_id* is None.
+        """
+        if settings.FLOWFILE_COMPUTE_PROTOCOL:
+            if connection.auth_method in ("env_vars", "managed_identity"):
+                return CloudStorageReader.get_plan_storage_options(connection), None
+            ref = CloudStorageReader.credential_ref(connection, user_id)
+            if ref is not None:
+                provider = CredentialRefProvider(ref.connection_id, ref.user_id)
+                return CloudStorageReader.get_plan_storage_options(connection), provider
+            if connection.connection_name:
+                reason = "is read with no user" if user_id is None else f"is not stored for user {user_id}"
+                raise ValueError(
+                    f'Cloud connection "{connection.connection_name}" {reason}: '
+                    "a read names a connection stored for the user it runs as"
+                )
+        storage_options = CloudStorageReader.get_storage_options(connection)
+        return storage_options, CloudStorageReader.get_credential_provider(storage_options, user_id)
+
+    @staticmethod
     def get_scan_kwargs(
-        storage_options: dict[str, Any] | None, credential_provider: EncryptedCredentialProvider | None
+        storage_options: dict[str, Any] | None,
+        credential_provider: EncryptedCredentialProvider | CredentialRefProvider | _NativeCredentials | None,
     ) -> dict[str, Any]:
-        """``storage_options``/``credential_provider`` kwargs for a lazy scan, with no credential in the options."""
+        """``storage_options``/``credential_provider`` kwargs for a lazy scan, with no credential in the options.
+
+        ``NATIVE_CREDENTIALS`` is ``credential_provider=None``; ``None`` leaves Polars' default, its ``auto`` provider.
+        """
         kwargs: dict[str, Any] = {}
+        if credential_provider is NATIVE_CREDENTIALS:
+            kwargs["credential_provider"] = credential_provider = None
         if storage_options:
             kwargs["storage_options"] = (
                 split_credentials(storage_options)[0] if credential_provider is not None else storage_options
@@ -116,6 +217,18 @@ class CloudStorageReader:
         return CloudStorageReader.get_scan_kwargs(
             storage_options, CloudStorageReader.get_credential_provider(storage_options, user_id)
         )
+
+
+def _profile_region(profile: str | None) -> str | None:
+    """The region the AWS profile *profile* (blank: the default chain) configures; ``None`` when it names none or
+    the profile does not exist. No credential is resolved."""
+    import boto3
+    from botocore.exceptions import BotoCoreError
+
+    try:
+        return boto3.Session(profile_name=(profile or "").strip() or None).region_name
+    except BotoCoreError:
+        return None
 
 
 def _decrypt_plan_credentials(encrypted: str) -> str:

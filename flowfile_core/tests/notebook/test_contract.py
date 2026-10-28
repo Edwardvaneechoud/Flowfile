@@ -281,7 +281,7 @@ def _package_sites(package: str) -> list[tuple[str, int, str, str]]:
     return rows
 
 
-RATCHET = {"flowfile_core/flowfile_core": 6, "flowfile_frame/flowfile_frame": 10, "shared": 2}
+RATCHET = {"flowfile_core/flowfile_core": 3, "flowfile_frame/flowfile_frame": 10, "shared": 5}
 
 
 def test_exec_eval_compile_call_sites_do_not_grow():

@@ -2,17 +2,18 @@ import os
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from shared.path_utils import default_scan_extension, ensure_glob_pattern, is_cloud_path, is_url
+from shared.wire_model import WireModel
 
 
-class MinimalFieldInfo(BaseModel):
+class MinimalFieldInfo(WireModel):
     name: str
     data_type: str
 
 
-class InputTableBase(BaseModel):
+class InputTableBase(WireModel):
     """Base settings for input file operations."""
 
     file_type: str  # Will be overridden with Literal in subclasses
@@ -118,7 +119,7 @@ InputTableSettings = Annotated[
 ]
 
 
-class ReceivedTable(BaseModel):
+class ReceivedTable(WireModel):
     """Model for defining a table received from an external source."""
 
     # Metadata fields

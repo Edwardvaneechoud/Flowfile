@@ -47,11 +47,12 @@ def _unset(options) -> dict:
 
 @pytest.mark.parametrize("unset", [*((o,) for o in CSV_OPTIONS), CSV_OPTIONS], ids=lambda u: "+".join(u))
 def test_engine_reads_csv_with_unset_options(csv_prefix, unset):
+    ensure_cloud_storage_connection_is_available_and_get_connection()
     read_settings = CloudStorageReadSettings(
         resource_path=f"{csv_prefix}/a.csv", file_format="csv", scan_mode="single_file", **_unset(unset)
     )
     engine = FlowDataEngine.from_cloud_storage_obj(
-        CloudStorageReadSettingsInternal(connection=get_cloud_connection(), read_settings=read_settings)
+        CloudStorageReadSettingsInternal(connection=get_cloud_connection(), read_settings=read_settings), user_id=1
     )
 
     assert engine.data_frame.collect().to_dicts() == EXPECTED_ROWS

@@ -13,6 +13,7 @@ import type {
   OperationResponse,
   FlowArtifactData,
   FlowSettingsValidation,
+  PlacementPreview,
   CreateGroupRequest,
   UpdateGroupRequest,
   UpdateLayoutRequest,
@@ -464,6 +465,17 @@ export class FlowApi {
    */
   static async getSettingsValidation(flowId: number): Promise<FlowSettingsValidation> {
     const response = await axios.get<FlowSettingsValidation>("/flow/settings_validation", {
+      params: { flow_id: flowId },
+      headers: { accept: "application/json" },
+    });
+    return response.data;
+  }
+
+  /**
+   * Get where a run would place each node now: the nodes moved to the default backend and the ones refused.
+   */
+  static async getPlacement(flowId: number): Promise<PlacementPreview> {
+    const response = await axios.get<PlacementPreview>("/flow/placement", {
       params: { flow_id: flowId },
       headers: { accept: "application/json" },
     });

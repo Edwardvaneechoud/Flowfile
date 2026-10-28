@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 362" role="img" aria-label="What happens when a flow runs, in four steps: the editor sends Run to core; first, core places every node and checks what each needs; second, on its first use of a worker, core sends it versions and a few test plans and the worker answers what it runs, reads and writes; third, for each node in order, core sends the node's plan, the worker runs it in a child process and answers a result handle, its columns and preview rows; fourth, core sends the run report and previews to the editor while the results stay on the worker.">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2DD5D3"/><stop offset="0.55" stop-color="#26A8E0"/><stop offset="1" stop-color="#1D76D6"/>
+    </linearGradient>
+    <marker id="ah" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto"><path d="M1,1 L8,4.5 L1,8 Z" fill="#9aa8b6"/></marker>
+    <marker id="ahc" markerWidth="11" markerHeight="11" refX="7.8" refY="5" orient="auto"><path d="M1,1.2 L8.6,5 L1,8.8 Z" fill="#2DD5D3"/></marker>
+  </defs>
+  <style>
+    .box  { fill:#ffffff; stroke:#9aa0a6; stroke-width:1.4; }
+    .frm  { fill:none; stroke:#b9c2d0; stroke-width:1.4; stroke-dasharray:6 5; }
+    .life { fill:none; stroke:#c7cdd5; stroke-width:1.4; stroke-dasharray:2 5; stroke-linecap:round; }
+    .chip { fill:#eef0f2; }
+    .chipw{ fill:#ffffff; fill-opacity:0.16; }
+    .ic   { fill:none; stroke:#5b6470; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icw  { fill:none; stroke:#ffffff; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+    .t    { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:14px; fill:#233588; }
+    .tw   { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:14px; fill:#ffffff; }
+    .s    { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#6b7280; }
+    .tag  { font-family:Roboto,Arial,sans-serif; font-weight:500; font-size:11px; fill:#5b6470; }
+    .bc   { fill:#ffffff; stroke:#233588; stroke-width:1.3; }
+    .bdg  { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:11px; fill:#233588; }
+    .albl { font-family:Roboto,Arial,sans-serif; font-size:11.5px; fill:#8a93a3; }
+    .cap  { font-family:Roboto,Arial,sans-serif; font-size:11.5px; fill:#6b7280; }
+    .arw  { fill:none; stroke:#b3bcc9; stroke-width:1.8; }
+    .arwc { fill:none; stroke:#2DD5D3; stroke-width:3; }
+    .mt   { fill:#ffffff; stroke:#9aa0a6; stroke-width:1.2; }
+    .mh   { stroke:#9cc4ea; stroke-width:2; stroke-linecap:round; }
+    .mc   { stroke:#a9b2bd; stroke-width:2; stroke-linecap:round; }
+    @media (prefers-color-scheme: dark) { .albl, .cap { fill:#aeb6c0; } }
+    [data-md-color-scheme="slate"] .albl, [data-md-color-scheme="slate"] .cap { fill:#aeb6c0; }
+  </style>
+
+  <!-- ============ LIFELINES ============ -->
+  <path class="life" d="M134,62 H944"/>
+  <path class="life" d="M134,158 H944"/>
+  <path class="life" d="M134,302 H944"/>
+
+  <!-- ============ LANE HEADS ============ -->
+  <g>
+    <rect class="box" x="20" y="40" width="112" height="44" rx="10"/>
+    <g class="ic" transform="translate(34,50)">
+      <rect x="1" y="2.5" width="22" height="17" rx="2.5"/>
+      <line x1="1" y1="8" x2="23" y2="8"/>
+      <circle cx="4.5" cy="5.2" r="0.9"/><circle cx="7.5" cy="5.2" r="0.9"/>
+    </g>
+    <text class="t" x="68" y="67">Editor</text>
+  </g>
+  <g>
+    <rect class="box" x="20" y="128" width="112" height="60" rx="11"/>
+    <rect class="chip" x="32" y="140" width="36" height="36" rx="8"/>
+    <g class="ic" transform="translate(38,146)">
+      <circle cx="5" cy="6" r="2.4"/><circle cx="5" cy="18" r="2.4"/><circle cx="19" cy="12" r="2.4"/>
+      <path d="M7.3,7 L16.7,11"/><path d="M7.3,17 L16.7,13"/>
+    </g>
+    <text class="t" x="78" y="163">Core</text>
+  </g>
+  <g>
+    <rect x="20" y="270" width="112" height="64" rx="11" fill="url(#brand)"/>
+    <rect class="chipw" x="32" y="284" width="36" height="36" rx="8"/>
+    <g class="icw" transform="translate(38,290)">
+      <circle cx="12" cy="12" r="6.4"/><circle cx="12" cy="12" r="2.5"/>
+      <g stroke-width="2.1">
+        <line x1="18.4" y1="12" x2="21" y2="12"/><line x1="16.5" y1="16.5" x2="18.4" y2="18.4"/>
+        <line x1="12" y1="18.4" x2="12" y2="21"/><line x1="7.5" y1="16.5" x2="5.6" y2="18.4"/>
+        <line x1="5.6" y1="12" x2="3" y2="12"/><line x1="7.5" y1="7.5" x2="5.6" y2="5.6"/>
+        <line x1="12" y1="5.6" x2="12" y2="3"/><line x1="16.5" y1="7.5" x2="18.4" y2="5.6"/>
+      </g>
+    </g>
+    <text class="tw" x="76" y="307">Worker</text>
+  </g>
+
+  <!-- ============ STEP 1 · PLACE ============ -->
+  <path class="arw" d="M206,64 V130" marker-end="url(#ah)"/>
+  <text class="albl" x="214" y="101">Run</text>
+  <g>
+    <rect class="box" x="168" y="134" width="168" height="48" rx="10"/>
+    <text class="t" x="252" y="154" text-anchor="middle">Place every node</text>
+    <text class="s" x="252" y="171" text-anchor="middle">check what each needs</text>
+    <circle class="bc" cx="170" cy="134" r="10"/><text class="bdg" x="170" y="138" text-anchor="middle">1</text>
+  </g>
+
+  <!-- ============ STEP 2 · CHECK ONCE ============ -->
+  <rect class="frm" x="356" y="108" width="200" height="236" rx="12"/>
+  <rect class="chip" x="366" y="116" width="138" height="20" rx="10"/>
+  <text class="tag" x="435" y="130" text-anchor="middle">first use of a worker</text>
+  <circle class="bc" cx="358" cy="110" r="10"/><text class="bdg" x="358" y="114" text-anchor="middle">2</text>
+  <path class="arw" d="M440,160 V296" marker-end="url(#ah)"/>
+  <text class="albl" x="432" y="216" text-anchor="end">versions,</text>
+  <text class="albl" x="432" y="231" text-anchor="end">test plans</text>
+  <path class="arw" d="M472,300 V164" marker-end="url(#ah)"/>
+  <text class="albl" x="480" y="216">what it runs,</text>
+  <text class="albl" x="480" y="231">reads and</text>
+  <text class="albl" x="480" y="246">writes</text>
+
+  <!-- ============ STEP 3 · EACH NODE, IN ORDER ============ -->
+  <rect class="frm" x="580" y="108" width="204" height="236" rx="12"/>
+  <rect class="chip" x="590" y="116" width="130" height="20" rx="10"/>
+  <text class="tag" x="655" y="130" text-anchor="middle">each node, in order</text>
+  <circle class="bc" cx="582" cy="110" r="10"/><text class="bdg" x="582" y="114" text-anchor="middle">3</text>
+  <path class="arwc" d="M604,160 V278" marker-end="url(#ahc)"/>
+  <text class="albl" x="612" y="196">the node&#8217;s plan</text>
+  <path class="arw" d="M762,280 V164" marker-end="url(#ah)"/>
+  <text class="albl" x="754" y="232" text-anchor="end">handle, columns,</text>
+  <text class="albl" x="754" y="247" text-anchor="end">preview rows</text>
+  <g>
+    <rect class="box" x="620" y="282" width="126" height="44" rx="10"/>
+    <text class="s" x="683" y="300" text-anchor="middle">runs it in a</text>
+    <text class="s" x="683" y="315" text-anchor="middle">child process</text>
+  </g>
+
+  <!-- ============ STEP 4 · REPORT, RESULTS STAY ============ -->
+  <path class="arw" d="M830,156 V68" marker-end="url(#ah)"/>
+  <circle class="bc" cx="830" cy="174" r="10"/><text class="bdg" x="830" y="178" text-anchor="middle">4</text>
+  <text class="albl" x="840" y="104">run report</text>
+  <text class="albl" x="840" y="119">and previews</text>
+  <g>
+    <rect class="mt" x="806" y="282" width="40" height="30" rx="4"/>
+    <line class="mh" x1="812" y1="290" x2="824" y2="290"/><line class="mh" x1="830" y1="290" x2="840" y2="290"/>
+    <line class="mc" x1="812" y1="298" x2="822" y2="298"/><line class="mc" x1="830" y1="298" x2="840" y2="298"/>
+    <line class="mc" x1="812" y1="305" x2="820" y2="305"/><line class="mc" x1="830" y1="305" x2="838" y2="305"/>
+    <rect class="mt" x="852" y="282" width="40" height="30" rx="4"/>
+    <line class="mh" x1="858" y1="290" x2="870" y2="290"/><line class="mh" x1="876" y1="290" x2="886" y2="290"/>
+    <line class="mc" x1="858" y1="298" x2="868" y2="298"/><line class="mc" x1="876" y1="298" x2="886" y2="298"/>
+    <line class="mc" x1="858" y1="305" x2="866" y2="305"/><line class="mc" x1="876" y1="305" x2="884" y2="305"/>
+    <rect class="mt" x="898" y="282" width="40" height="30" rx="4"/>
+    <line class="mh" x1="904" y1="290" x2="916" y2="290"/><line class="mh" x1="922" y1="290" x2="932" y2="290"/>
+    <line class="mc" x1="904" y1="298" x2="914" y2="298"/><line class="mc" x1="922" y1="298" x2="932" y2="298"/>
+    <line class="mc" x1="904" y1="305" x2="912" y2="305"/><line class="mc" x1="922" y1="305" x2="930" y2="305"/>
+    <text class="cap" x="872" y="332" text-anchor="middle">results stay</text>
+  </g>
+</svg>

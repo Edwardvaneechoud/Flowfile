@@ -41,10 +41,7 @@ class SingleExecutionFuture(Generic[T]):
         self._exception = None
         self._has_completed = False
         self._has_started = False
-        # Bumped on every reset(); _func_wrapper only commits its result if its
-        # captured generation still matches. Without this, an in-flight task
-        # whose executor was shut down with wait=False can land its writes
-        # after reset() clears state, poisoning the cached result.
+        # Bumped by reset(), so a task still in flight after it does not commit a stale result.
         self._generation = 0
 
     def _ensure_executor(self) -> ThreadPoolExecutor:
@@ -58,6 +55,8 @@ class SingleExecutionFuture(Generic[T]):
 
         The function runs in a copy of the starting thread's context, so the caller's
         context-local state (such as notebook build mode) reaches it and no other thread's does.
+        The executor is shut down right after the one submit: the call still runs, and its thread
+        exits once it has, instead of idling for as long as the node holds this future.
         """
         with self._lock:
             if self._has_started:
@@ -68,6 +67,7 @@ class SingleExecutionFuture(Generic[T]):
             executor: ThreadPoolExecutor = self._ensure_executor()
             generation = self._generation
             self._future = executor.submit(contextvars.copy_context().run, self._func_wrapper, generation)
+            executor.shutdown(wait=False)
             self._has_started = True
 
     def _func_wrapper(self, generation: int) -> T:
@@ -107,8 +107,7 @@ class SingleExecutionFuture(Generic[T]):
             # Start if not already started
             if not self._has_started:
                 self.start()
-            # Capture under the lock: a concurrent reset() nulls self._future,
-            # which would make this call return None instead of the result.
+            # Capture under the lock: a concurrent reset() nulls self._future.
             future = self._future
 
         # Wait for completion outside the lock to avoid blocking other threads
@@ -131,8 +130,7 @@ class SingleExecutionFuture(Generic[T]):
         with self._lock:
             logger.info("Resetting single execution future")
 
-            # Bump generation first so any in-flight _func_wrapper that finishes
-            # after this point sees a stale generation and skips its writes.
+            # First, so an in-flight _func_wrapper that finishes after this skips its writes.
             self._generation += 1
 
             # Cancel any pending execution

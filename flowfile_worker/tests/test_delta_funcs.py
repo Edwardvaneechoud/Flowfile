@@ -25,9 +25,11 @@ from flowfile_worker.funcs import (
     _get_delta_size_bytes,
     get_delta_history,
     materialize_catalog_table_task,
+    merge_delta,
     optimize_catalog_table_task,
     read_delta_version_preview,
     read_table_metadata,
+    scd2_delta,
     vacuum_catalog_table_task,
     write_delta,
 )
@@ -247,6 +249,59 @@ class TestWriteDelta:
 
         assert progress.value == 100
         assert DeltaTable(output_path).metadata().partition_columns == ["b"]
+
+
+class TestDeltaTargetByIdentity:
+    """A catalog table named by identity is written under this worker's catalog directory, which it answers."""
+
+    @pytest.mark.parametrize(
+        "target, kwargs",
+        [
+            (write_delta, {"mode": "overwrite"}),
+            (merge_delta, {"merge_mode": "upsert", "merge_keys": ["a"]}),
+            (
+                scd2_delta,
+                {"run_timestamp": "2024-01-01T00:00:00+00:00", "business_keys": ["a"], "compare_columns": ["b"]},
+            ),
+        ],
+        ids=["write", "merge", "scd2"],
+    )
+    def test_the_table_lands_under_the_catalog_directory(self, target, kwargs):
+        progress = mp_context.Value("i", 0)
+        error_message = mp_context.Array("c", 1024)
+        queue = Queue(maxsize=1)
+
+        target(
+            polars_serializable_object=pl.LazyFrame({"a": [1, 2], "b": ["x", "y"]}).serialize(),
+            progress=progress,
+            error_message=error_message,
+            queue=queue,
+            file_path="",
+            table_name="dim_ab12",
+            table_id=7,
+            **kwargs,
+        )
+
+        expected = str(storage.catalog_tables_directory / "dim_ab12")
+        assert progress.value == 100
+        assert queue.get(timeout=5)["table_path"] == expected
+        assert pl.read_delta(expected).height == 2
+
+    def test_a_name_that_is_a_path_fails_the_task(self):
+        progress = mp_context.Value("i", 0)
+        error_message = mp_context.Array("c", 1024)
+
+        write_delta(
+            polars_serializable_object=pl.LazyFrame({"a": [1]}).serialize(),
+            progress=progress,
+            error_message=error_message,
+            queue=Queue(maxsize=1),
+            file_path="",
+            table_name="../escape",
+        )
+
+        assert progress.value == -1
+        assert b"path separators" in error_message.value
 
 
 # optimize / vacuum catalog tasks

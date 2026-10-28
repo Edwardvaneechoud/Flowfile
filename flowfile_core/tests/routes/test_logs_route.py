@@ -135,9 +135,11 @@ def test_post_to_flow_log_route_is_not_allowed(own_flow):
 
 
 def test_worker_log_handler_lands_lines_in_core(own_flow, live_core, monkeypatch):
-    from flowfile_worker import flow_logger
+    """The handler as a worker process runs it, where ``spawner.in_process`` is never set; the suite sets it here."""
+    from flowfile_worker import flow_logger, spawner
 
     get_internal_token()  # core resolves (in electron: mints) the token at startup; the worker reads the same one
+    monkeypatch.setattr(spawner, "in_process", False)
     monkeypatch.setattr(flow_logger, "LOGGING_URL", f"{live_core}/raw_logs")
     flow_logger.get_worker_logger(own_flow, 4).warning("shipped by the worker")
     assert "shipped by the worker" in _flow_log_text(own_flow)

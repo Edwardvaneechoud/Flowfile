@@ -19,8 +19,14 @@ def _header_matches(supplied: str) -> bool:
     return bool(token) and secrets.compare_digest(supplied, token)
 
 
-def verify_internal_token(request: Request) -> None:
-    if not _header_matches(request.headers.get(INTERNAL_TOKEN_HEADER, "")):
+def carries_internal_token(request: Request) -> bool:
+    """Whether the request's ``X-Flowfile-Internal`` header is the internal token."""
+    return _header_matches(request.headers.get(INTERNAL_TOKEN_HEADER, ""))
+
+
+async def verify_internal_token(request: Request) -> None:
+    """Answer 401 unless the request carries the internal token; ``async``, so it never waits for a pool thread."""
+    if not carries_internal_token(request):
         raise HTTPException(status_code=401, detail="Invalid or missing internal token")
 
 

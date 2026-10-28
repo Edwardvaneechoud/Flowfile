@@ -1,33 +1,36 @@
 """Train Model and Apply Model on a local flow run in core, never on the worker.
 
 A graph built with ``flowfile_frame`` (and every headless run) is local, and a script that never started a
-worker must still train and score. The worker fetchers are replaced with ones that fail the test, so a local
-flow that reaches for the worker fails here.
+worker must still train and score. Every socket connection fails the test, so a local flow that reaches for
+the worker fails here.
 """
 
 import hashlib
 import shutil
+import socket
 
 import polars as pl
 import pytest
 
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+from flowfile_core.flowfile.execution.payloads import MlApplyPayload, op_payload
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
-from flowfile_core.flowfile.flow_graph.builders.ml import _apply_in_process, ml_flow_model_path
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas
+from shared.compute_protocol import file_uri
 from shared.ml.trainers import get_trainer
-
-
-class _WorkerRefused:
-    def __init__(self, *args, **kwargs):
-        raise AssertionError("a local flow called the worker")
+from shared.storage_config import storage
 
 
 @pytest.fixture
 def no_worker(monkeypatch):
-    monkeypatch.setattr("flowfile_core.flowfile.flow_graph.MLTrainFetcher", _WorkerRefused)
-    monkeypatch.setattr("flowfile_core.flowfile.flow_graph.MLApplyFetcher", _WorkerRefused)
+    def refuse(sock, address, *args):
+        raise AssertionError(f"a local flow called the worker at {address}")
+
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(socket.socket, "connect_ex", refuse)
 
 
 @pytest.fixture
@@ -40,14 +43,14 @@ def local_graph():
     flow_ids: list[int] = []
 
     def build(flow_id: int) -> FlowGraph:
-        shutil.rmtree(ml_flow_model_path(flow_id, 0).parent.parent, ignore_errors=True)
+        shutil.rmtree(storage.cache_directory / str(flow_id), ignore_errors=True)
         flow_ids.append(flow_id)
         return _local_graph(handler, flow_id)
 
     yield build
     for flow_id in flow_ids:
         handler.delete_flow(flow_id)
-        shutil.rmtree(ml_flow_model_path(flow_id, 0).parent.parent, ignore_errors=True)
+        shutil.rmtree(storage.cache_directory / str(flow_id), ignore_errors=True)
 
 
 def _local_graph(handler: FlowfileHandler, flow_id: int) -> FlowGraph:
@@ -111,7 +114,8 @@ def test_a_local_flow_trains_and_scores_in_core(no_worker, local_graph):
     assert run_info.success is True, [result.error for result in run_info.node_step_result]
     scored = graph.get_node(20).get_resulting_data().collect()
     assert scored["pred"].to_list() == pytest.approx([5.0, 13.0])
-    assert ml_flow_model_path(graph.flow_id, 10).exists()
+    model = graph.get_node(10).results.model_ref
+    assert model is not None and registry.backend(registry.LOCAL_BACKEND_ID).exists(model)
 
 
 def test_a_local_flow_keeps_the_scored_rows_lazy(no_worker, local_graph):
@@ -134,8 +138,11 @@ def test_a_local_knn_apply_keeps_each_prediction_on_its_row(tmp_path):
         )
     )
     unordered = rows.group_by("g").agg(pl.col("x").first())
+    local = registry.backend(registry.LOCAL_BACKEND_ID)
+    model = local.import_uri(file_uri(model_path), None, None, None, kind="blob")
+    apply = MlApplyPayload(plan=unordered, model=model, output_column="pred", flow_id=-1, node_id=-1)
 
-    scored = _apply_in_process(FlowDataEngine(unordered), str(model_path), "pred")
+    scored = local.plan_for(local.run_op(OperationKind.ml_apply, op_payload(apply)).refs["result"])
 
     for _ in range(2):
         assert scored.collect().filter(pl.col("pred") != expected).height == 0
@@ -143,9 +150,10 @@ def test_a_local_knn_apply_keeps_each_prediction_on_its_row(tmp_path):
 
 def test_a_local_flow_publishes_the_model_it_fitted_in_core(no_worker, monkeypatch, tmp_path, local_graph):
     from flowfile_core.artifacts import service as artifact_service_mod
-    from flowfile_core.schemas.artifact_schema import PrepareUploadResponse
+    from flowfile_core.schemas.artifact_schema import FinalizeUploadResponse, PrepareUploadResponse
 
     staging = tmp_path / "staging" / "model.json"
+    staging.parent.mkdir()  # the filesystem store's staging folder exists before any upload
     finalized: dict = {}
 
     def _prepare_upload(self, request, owner_id, _max_retries=3):
@@ -153,6 +161,7 @@ def test_a_local_flow_publishes_the_model_it_fitted_in_core(no_worker, monkeypat
 
     def _finalize_upload(self, artifact_id, storage_key, sha256, size_bytes):
         finalized.update(sha256=sha256, size_bytes=size_bytes)
+        return FinalizeUploadResponse(artifact_id=artifact_id, version=1)
 
     monkeypatch.setattr(artifact_service_mod.ArtifactService, "prepare_upload", _prepare_upload)
     monkeypatch.setattr(artifact_service_mod.ArtifactService, "finalize_upload", _finalize_upload)
@@ -165,18 +174,19 @@ def test_a_local_flow_publishes_the_model_it_fitted_in_core(no_worker, monkeypat
 
     model = staging.read_bytes()
     assert finalized == {"sha256": hashlib.sha256(model).hexdigest(), "size_bytes": len(model)}
-    assert ml_flow_model_path(graph.flow_id, 10).read_bytes() == model
+    held = graph.get_node(10).results.model_ref
+    registry.backend(held.backend_id).export(held, file_uri(tmp_path / "held.json"), None)
+    assert (tmp_path / "held.json").read_bytes() == model
 
 
 def test_a_remote_flow_still_trains_on_the_worker(monkeypatch, local_graph):
     called = []
 
-    class _Fetcher:
-        def __init__(self, *args, **kwargs):
-            called.append(kwargs["model_type"])
-            raise RuntimeError("worker reached")
+    def run_op(self, op, payload):
+        called.append(payload["payload"].model_type)
+        raise RuntimeError("worker reached")
 
-    monkeypatch.setattr("flowfile_core.flowfile.flow_graph.MLTrainFetcher", _Fetcher)
+    monkeypatch.setattr(WorkerBackend, "run_op", run_op)
     graph = local_graph(7104)
     graph.execution_location = "remote"
     _wire(graph, "train_model", node_id=10, upstream_id=1)

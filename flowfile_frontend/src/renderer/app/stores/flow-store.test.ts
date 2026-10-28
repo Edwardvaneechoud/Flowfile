@@ -1,12 +1,12 @@
 // @vitest-environment happy-dom
-// The `../api` barrel and sibling stores are mocked: they reach axios.config at import time.
+// `../api/flow.api` and sibling stores are mocked: they reach axios.config at import time.
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { HistoryState } from "../types";
 
 const mocks = vi.hoisted(() => ({ bumpGraphVersion: vi.fn() }));
 
-vi.mock("../api", () => ({ FlowApi: {} }));
+vi.mock("../api/flow.api", () => ({ FlowApi: {} }));
 vi.mock("./editor-store", () => ({
   useEditorStore: () => ({ bumpGraphVersion: mocks.bumpGraphVersion }),
 }));

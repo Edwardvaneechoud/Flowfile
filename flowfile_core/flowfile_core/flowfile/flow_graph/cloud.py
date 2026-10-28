@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi.exceptions import HTTPException
 
 from flowfile_core.auth import sharing
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     get_local_cloud_connection,
 )
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.payloads import DeltaMergePayload, DeltaWritePayload, op_payload
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
 from flowfile_core.flowfile.flow_graph._root import root
-from flowfile_core.flowfile.flow_graph.catalog_write import _delta_op
 from flowfile_core.flowfile.flow_node.flow_node import (
     FlowNode,
 )
@@ -29,10 +32,6 @@ from flowfile_core.schemas.cloud_storage_schemas import (
 from flowfile_core.schemas.delta_write import MERGE_MODES
 from shared.cloud_storage.uri import storage_type_for_uri
 from shared.cloud_storage.utils import normalize_delta_path, validate_cloud_resource_path
-from shared.delta_utils import (
-    merge_into_delta,
-)
-from shared.delta_utils import write_delta as _write_delta
 
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_graph.graph import FlowGraph
@@ -95,13 +94,6 @@ def _cloud_write_uses_delta_ops(settings: CloudStorageWriteSettings) -> bool:
     return settings.file_format == "delta" and (settings.write_mode in MERGE_MODES or settings.track_changes)
 
 
-def _write_cloud_delta_remote(flow_id: int, node: FlowNode, df: FlowDataEngine, op_type: str, op_kwargs: dict) -> None:
-    """Run a cloud writer's Delta merge or tracked write on the worker; the table metadata it returns is unused."""
-    root()._write_catalog_delta_remote(
-        flow_id, node, df, op_type, op_kwargs, table_label=f"at '{op_kwargs['output_path']}'"
-    )
-
-
 def _write_cloud_delta(
     graph: FlowGraph,
     node: FlowNode,
@@ -112,44 +104,27 @@ def _write_cloud_delta(
 ) -> None:
     """Upsert/update/delete into, or write with change tracking to, a Delta table on a bare cloud path.
 
-    Dispatches the same ``merge_delta`` / ``write_delta`` operations the catalog writer uses, with the
-    connection shipped owner-encrypted for the worker to decrypt. Local execution merges in-process: the
-    sanctioned local-execution collect, since headless runs have no worker to offload to.
+    Runs the ``delta_merge`` or ``delta_write`` operation on the current context's backend, the connection encrypted
+    for ``user_id`` and decrypted where the write runs. What the write reports is unused.
     """
     if connection.storage_type == "gcs":
         raise ValueError("Delta upsert/update/delete and change tracking are not supported on Google Cloud Storage yet")
-    path = normalize_delta_path(settings.resource_path)
-    op_type, op_kwargs = _delta_op(
-        settings.write_mode,
-        output_path=path,
-        merge_keys=settings.merge_keys,
-        partition_by=settings.partition_by,
-        enable_cdf=settings.track_changes,
-    )
-    if graph.execution_location != "local":
-        op_kwargs["storage_payload"] = {"connection": connection.get_worker_interface(user_id).model_dump()}
-        root()._write_cloud_delta_remote(graph.flow_id, node, df, op_type, op_kwargs)
-        return
-    storage_options = CloudStorageReader.get_storage_options(connection)
-    if op_type == "merge_delta":
-        merge_into_delta(
-            df.data_frame.collect(),
-            path,
-            merge_mode=settings.write_mode,
-            merge_keys=settings.merge_keys,
-            partition_by=settings.partition_by,
-            storage_options=storage_options,
-            enable_cdf=settings.track_changes,
-        )
+    common = {
+        "plan": df.data_frame,
+        "path": normalize_delta_path(settings.resource_path),
+        "partition_by": settings.partition_by,
+        "enable_cdf": settings.track_changes,
+        "connection": connection.get_worker_interface(user_id),
+        "flow_id": graph.flow_id,
+        "node_id": node.node_id,
+    }
+    if settings.write_mode in MERGE_MODES:
+        operation = OperationKind.delta_merge
+        write = DeltaMergePayload(merge_mode=settings.write_mode, merge_keys=settings.merge_keys, **common)
     else:
-        _write_delta(
-            df.data_frame,
-            path,
-            mode=settings.write_mode,
-            partition_by=settings.partition_by,
-            storage_options=storage_options,
-            enable_cdf=settings.track_changes,
-        )
+        operation = OperationKind.delta_write
+        write = DeltaWritePayload(mode=settings.write_mode, **common)
+    node.run_op(current_context(graph).backend, operation, op_payload(write), job_id=write.job_id)
 
 
 def _is_cloud_change_read(settings: CloudStorageReadSettings) -> bool:
@@ -163,3 +138,18 @@ def _cloud_change_read_target(settings: CloudStorageReadSettings, user_id: int) 
     if connection.storage_type == "gcs":
         raise ValueError("Reading Delta changes is not supported on Google Cloud Storage yet")
     return normalize_delta_path(settings.resource_path), CloudStorageReader.get_storage_options(connection)
+
+
+def _cloud_change_scan_kwargs(
+    settings: CloudStorageReadSettings, user_id: int, storage_options: dict
+) -> dict[str, Any]:
+    """The ``storage_options``/``credential_provider`` kwargs of a cloud change read's plan.
+
+    With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a stored connection is named by reference and resolved where the plan runs
+    (``CloudStorageReader.get_read_credentials``). Otherwise *storage_options* travel with their credentials
+    encrypted for *user_id*.
+    """
+    if not FLOWFILE_COMPUTE_PROTOCOL:
+        return CloudStorageReader.get_secure_scan_kwargs(storage_options, user_id)
+    connection = _resolve_cloud_node_connection(settings, user_id, role="reader")
+    return CloudStorageReader.get_scan_kwargs(*CloudStorageReader.get_read_credentials(connection, user_id))

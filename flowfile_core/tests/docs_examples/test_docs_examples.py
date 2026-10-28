@@ -5,7 +5,8 @@ Core examples (docs/examples/*.py) must always pass. Integration examples
 unavailable, reusing the same fixture helpers the rest of the suite gates on.
 
 An example with a docs/examples/output/<name>.txt must print exactly that text; pages
-include the file as the example's output. Refresh it from a fresh run:
+include the file as the example's output. Refresh it from a fresh run on the 32-bit index
+runtime a `pip install flowfile` gets (`pl.get_index_type()` is `UInt32`):
 python docs/examples/<name>.py > docs/examples/output/<name>.txt
 """
 
@@ -14,12 +15,22 @@ import re
 import runpy
 from pathlib import Path
 
+import polars as pl
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLES_DIR = REPO_ROOT / "docs" / "examples"
 INTEGRATIONS_DIR = EXAMPLES_DIR / "integrations"
 EXPECTED_OUTPUT_DIR = EXAMPLES_DIR / "output"
+_INTEGER_WIDTH = re.compile(r"(?<= )([ui])(?:32|64)(?= )")
+
+
+def _on_this_runtime(text: str) -> str:
+    """The text as compared here: on the 64-bit index runtime a count prints ``u64`` (and ``i64`` read back from
+    Delta), so there an output's integer widths are not compared."""
+    if pl.get_index_type() == pl.UInt32:
+        return text
+    return _INTEGER_WIDTH.sub(r"\1NN", text)
 
 
 def _core_examples() -> list[Path]:
@@ -110,7 +121,8 @@ def test_core_example_runs(example_path: Path, monkeypatch, tmp_path, tmp_path_f
         set_node_id(0)  # printed node ids then match a fresh `python <example>.py`
     runpy.run_path(str(example_path), run_name="__main__")
     if expected_output.exists():
-        assert capsys.readouterr().out == expected_output.read_text(encoding="utf-8")
+        printed = _on_this_runtime(capsys.readouterr().out)
+        assert printed == _on_this_runtime(expected_output.read_text(encoding="utf-8"))
 
 
 def _postgres_available() -> bool:

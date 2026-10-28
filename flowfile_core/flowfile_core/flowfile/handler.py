@@ -99,10 +99,12 @@ class FlowfileHandler:
             imported_flow.flow_id = create_unique_id()
             # The setter keeps the per-id logger, which would share the other user's log file.
             imported_flow.flow_logger = FlowLogger(imported_flow.flow_id)
+        replaced = self._flows.get(imported_flow.flow_id)
         self._flows[imported_flow.flow_id] = imported_flow
+        if replaced is not None:
+            replaced.close_flow()
         imported_flow.flow_settings = self.get_flow_info(imported_flow.flow_id)
-        # The stored id is machine-local and a copied file carries the original's; callers
-        # re-resolve it from the path (same reasoning as save_as_flow and project normalize).
+        # The id is machine-local and a copied file carries the original's; callers re-resolve it by path.
         try:
             imported_flow.flow_settings.source_registration_id = None
         except (AttributeError, ValueError):
@@ -135,20 +137,21 @@ class FlowfileHandler:
         return flow
 
     def delete_flow(self, flow_id: int, user_id: int | None = None):
-        """Remove flow from user's session. Flow data remains until all users close it."""
+        """Remove flow from user's session. Flow data remains until all users close it.
+
+        A flow that leaves the registry releases the results its nodes hold (``FlowGraph.close_flow``).
+        """
         if user_id is not None:
             if not self.user_has_flow(user_id, flow_id):
                 raise Exception(f"Flow {flow_id} not found in user's session")
             self._unregister_user_session(user_id, flow_id)
             flow_still_open = any(flow_id in flows for flows in self._user_sessions.values())
             if not flow_still_open and flow_id in self._flows:
-                flow = self._flows.pop(flow_id)
-                del flow
+                self._flows.pop(flow_id).close_flow()
                 publish("flow_closed", flow_id=flow_id)
         else:
             if flow_id in self._flows:
-                flow = self._flows.pop(flow_id)
-                del flow
+                self._flows.pop(flow_id).close_flow()
                 publish("flow_closed", flow_id=flow_id)
 
     def evict_flow_by_path(self, flow_path: str) -> int | None:
@@ -161,7 +164,7 @@ class FlowfileHandler:
         )
         if target_id is None:
             return None
-        self._flows.pop(target_id, None)
+        self._flows.pop(target_id).close_flow()
         for flow_ids in self._user_sessions.values():
             flow_ids.discard(target_id)
         publish("flow_closed", flow_id=target_id)
@@ -279,8 +282,7 @@ class FlowfileHandler:
         try:
             dirty = flow.has_unsaved_changes()
         except Exception:
-            # Match HistoryManager.has_unsaved_changes: on error, assume dirty so
-            # unsaved-changes prompts err on the safe side.
+            # As HistoryManager.has_unsaved_changes does, assume dirty on error so prompts err safe.
             dirty = True
         return FlowSettingsResponse(**flow_settings.model_dump(), has_unsaved_changes=dirty)
 

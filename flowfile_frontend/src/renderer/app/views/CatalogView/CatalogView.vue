@@ -161,6 +161,7 @@
               @delete-flow="handleDeleteFlow($event)"
               @namespace-share="openNamespaceShare($event)"
               @cleanup-namespace="handleCleanupNamespace($event)"
+              @delete-namespace="handleDeleteSchema($event)"
             />
           </div>
         </div>
@@ -1428,6 +1429,31 @@ async function handleDeleteFlow(flowId: number) {
     ]);
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail ?? "Failed to delete flow");
+  }
+}
+
+async function handleDeleteSchema(schema: NamespaceTree) {
+  try {
+    await ElMessageBox.confirm(`Delete the empty schema "${schema.name}"?`, "Delete schema", {
+      confirmButtonText: "Delete",
+      cancelButtonText: "Cancel",
+      type: "warning",
+    });
+  } catch {
+    return;
+  }
+  try {
+    await CatalogApi.deleteNamespace(schema.id);
+    ElMessage.success(`Deleted schema ${schema.name}`);
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? "Could not delete the schema");
+  }
+  await Promise.all([catalogStore.loadTree(), catalogStore.loadStats()]);
+  // The open catalog panel reads its schemas from the selected node, which the reload replaced
+  if (catalogStore.selectedNamespaceId !== null) {
+    catalogStore.selectedNamespace = catalogStore.findNamespaceInTree(
+      catalogStore.selectedNamespaceId,
+    );
   }
 }
 

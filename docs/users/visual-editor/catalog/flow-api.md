@@ -13,7 +13,7 @@ The node has two settings:
 | Setting | Effect |
 |---------|--------|
 | **Orientation** | `records` (list of row objects, default) or `columns` (one array per column) |
-| **Max rows** | Optional cap on the number of rows returned |
+| **Max rows** | Optional cap on the number of rows returned; a flow that runs on a worker returns at most 10,000 |
 
 Save the flow. A saved, registered flow with exactly one API Response node shows up as publishable.
 
@@ -49,9 +49,12 @@ The response carries the data plus a row count:
     {"region": "EMEA", "product": "Monitor", "amount": 350.0}
   ],
   "row_count": 2,
-  "orientation": "records"
+  "orientation": "records",
+  "truncated": false
 }
 ```
+
+A flow that runs on a worker returns at most 10,000 rows per call, whatever **Max rows** says. When that limit leaves rows out, `truncated` is `true` and `row_count` is the number of rows returned, not the size of the result. A flow that runs locally returns every row up to **Max rows**, and `truncated` is always `false`.
 
 With `columns` orientation, `data` is instead an object mapping each column name to an array of values — cheaper to parse when you're loading the result straight into a dataframe.
 

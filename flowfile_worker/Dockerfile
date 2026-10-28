@@ -1,5 +1,5 @@
 # Build stage
-FROM python:3.12-slim AS builder
+FROM python:3.12.15-slim AS builder
 
 WORKDIR /build
 
@@ -26,7 +26,7 @@ ENV CARGO_PROFILE_RELEASE_STRIP=symbols \
 COPY pyproject.toml poetry.lock* ./
 
 # Install dependencies AND strip in the same layer (in builder)
-RUN poetry install --only=main --no-root && \
+RUN poetry install --only=main,runtime64 --no-root && \
     rm -rf $POETRY_CACHE_DIR && \
     pip install --no-cache-dir psycopg2-binary==2.9.9 pymysql==1.1.0 && \
     # Strip debug symbols from compiled libraries
@@ -40,7 +40,7 @@ RUN poetry install --only=main --no-root && \
     rm -rf /root/.cache /root/.cargo/registry /root/.cargo/git
 
 # Runtime stage
-FROM python:3.12-slim
+FROM python:3.12.15-slim
 
 WORKDIR /app
 

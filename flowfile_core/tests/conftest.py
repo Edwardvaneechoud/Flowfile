@@ -8,6 +8,7 @@ import tempfile
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 # Patch bcrypt for passlib 1.7.4 / bcrypt 5.0.0+ compatibility
@@ -152,6 +153,14 @@ STARTUP_CHECK_INTERVAL = 2  # seconds
 SHUTDOWN_TIMEOUT = int(os.environ.get("FLOWFILE_SHUTDOWN_TIMEOUT", 15))  # seconds
 
 
+@pytest.fixture(autouse=True)
+def exchange_store_file_in_tmp(tmp_path, monkeypatch):
+    """A store saved on the developer's machine never reaches a test: each test starts with no saved exchange store."""
+    from flowfile_core.configs import exchange_config
+
+    monkeypatch.setattr(exchange_config, "_settings_file", lambda: tmp_path / "exchange_store.yaml")
+
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_db():
     """Setup the test database and clean up after tests"""
@@ -241,6 +250,8 @@ def start_worker() -> tuple[subprocess.Popen, bool]:
         Tuple containing the process object and a success flag
     """
     logger.info("Starting flowfile_worker process on port %s...", WORKER_PORT)
+    # The worker runs on this host and reads the suite's local files, so it declares the file scheme.
+    env = {**os.environ, "FLOWFILE_WORKER_LOCAL_FILES": "1"}
 
     if platform.system() == "Windows":
         # Use shell=True on Windows
@@ -250,6 +261,7 @@ def start_worker() -> tuple[subprocess.Popen, bool]:
             stdout=sys.stdout,
             stderr=sys.stderr,
             universal_newlines=True,
+            env=env,
             # On Windows, CREATE_NEW_PROCESS_GROUP flag allows sending Ctrl+C to child process
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP') else 0
         )
@@ -262,6 +274,7 @@ def start_worker() -> tuple[subprocess.Popen, bool]:
             stdout=sys.stdout,
             stderr=sys.stderr,
             universal_newlines=True,
+            env=env,
             # On Unix, start in a new process group for clean signal handling
             preexec_fn=os.setsid if hasattr(os, 'setsid') else None
         )
@@ -366,6 +379,20 @@ def managed_worker() -> Generator[None, None, None]:
     finally:
         if proc is not None and proc.poll() is None:
             stop_worker(proc)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def embedded_worker_jobs_in_process():
+    """The test process is a library host: the worker embedded in it runs its jobs here.
+
+    The registry's ``local`` factory sets this when it makes the embedded worker; the backends tests make under
+    other ids, subclasses of ``EmbeddedWorkerBackend`` with factories of their own, rely on this instead.
+    """
+    from flowfile_worker import spawner
+
+    spawner.in_process = True
+    yield
+    spawner.in_process = False
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -565,15 +592,104 @@ def execution_location(request):
     downgrades "remote" to "local". Both params would then exercise the same
     path and report twice the passes while proving nothing about remote.
     """
-    from flowfile_core.schemas.schemas import (
-        is_valid_execution_location_in_current_global_settings,
-    )
-
-    if request.param == "remote" and not (
-        is_worker_running() and is_valid_execution_location_in_current_global_settings("remote")
-    ):
+    if request.param == "remote" and not _remote_execution_active():
         pytest.skip("Remote execution not active")
     return request.param
+
+
+def _remote_execution_active() -> bool:
+    from flowfile_core.schemas.schemas import is_valid_execution_location_in_current_global_settings
+
+    return is_worker_running() and is_valid_execution_location_in_current_global_settings("remote")
+
+
+@pytest.fixture
+def running_worker():
+    """Skips the test unless the session's flowfile_worker answers."""
+    if not is_worker_running():
+        pytest.skip("flowfile_worker is not running")
+
+
+@pytest.fixture
+def remote_worker():
+    """Skips unless remote execution reaches a running worker (see the ``execution_location`` fixture)."""
+    if not _remote_execution_active():
+        pytest.skip("Remote execution not active")
+
+
+def closed_url() -> str:
+    """An ``http://`` URL on a loopback port nothing listens on."""
+    return f"http://127.0.0.1:{_free_port()}"
+
+
+@pytest.fixture
+def closed_port_url() -> str:
+    return closed_url()
+
+
+def _set_protocol(monkeypatch, on: bool) -> None:
+    from flowfile_core.configs import settings
+
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", on)
+
+
+@pytest.fixture
+def protocol_on(monkeypatch):
+    """The compute protocol flag on for the test, back to what it was when the test ends."""
+    _set_protocol(monkeypatch, True)
+
+
+@pytest.fixture
+def protocol_off(monkeypatch):
+    """The compute protocol flag off for the test, so the worker backend reaches the worker over its task routes."""
+    _set_protocol(monkeypatch, False)
+
+
+def protocol_states(off_id: str = "flag-off", on_id: str = "flag-on"):
+    """A fixture that sets the compute protocol flag off, then on, and answers the state; the ids name the cases.
+
+    ``protocol`` is the one with the default ids. A module whose cases go by other ids, or whose tests name the
+    fixture otherwise, assigns its own: ``protocol = protocol_states("flag_off", "flag_on")``.
+    """
+
+    @pytest.fixture(params=[False, True], ids=[off_id, on_id])
+    def fixture(request, monkeypatch) -> bool:
+        _set_protocol(monkeypatch, request.param)
+        return request.param
+
+    return fixture
+
+
+protocol = protocol_states()
+
+
+@dataclass
+class Call:
+    """One call a ``spy`` saw: its arguments, then what it answered or raised."""
+
+    args: tuple
+    kwargs: dict
+    result: object = None
+    error: BaseException | None = None
+
+
+def spy(monkeypatch, owner, name: str) -> list[Call]:
+    """Wrap ``owner.<name>`` so every call is recorded before the real one runs; answers the record list."""
+    calls: list[Call] = []
+    real = getattr(owner, name)
+
+    def recording(*args, **kwargs):
+        call = Call(args, kwargs)
+        calls.append(call)
+        try:
+            call.result = real(*args, **kwargs)
+        except BaseException as error:
+            call.error = error
+            raise
+        return call.result
+
+    monkeypatch.setattr(owner, name, recording)
+    return calls
 
 
 @pytest.fixture
@@ -596,3 +712,115 @@ def cleanup_global_artifacts():
     _cleanup()
     yield
     _cleanup()
+
+
+def _client_as(user_id: int, username: str, is_admin: bool):
+    """A TestClient on core's app logged in as that user, through dependency overrides undone after."""
+    from fastapi.testclient import TestClient
+
+    from flowfile_core import main
+    from flowfile_core.auth.jwt import get_current_active_user, get_current_user
+    from flowfile_core.auth.models import User
+
+    user = User(username=username, id=user_id, disabled=False, is_admin=is_admin, must_change_password=False)
+    main.app.dependency_overrides[get_current_active_user] = lambda: user
+    main.app.dependency_overrides[get_current_user] = lambda: user
+    try:
+        yield TestClient(main.app)
+    finally:
+        main.app.dependency_overrides.pop(get_current_active_user, None)
+        main.app.dependency_overrides.pop(get_current_user, None)
+
+
+@pytest.fixture
+def admin_client():
+    """A TestClient on core's app as the administrator ``local_user`` (id 1)."""
+    yield from _client_as(1, "local_user", is_admin=True)
+
+
+@pytest.fixture
+def non_admin_client():
+    """A TestClient on core's app as ``not_admin`` (id 2), who is no administrator."""
+    yield from _client_as(2, "not_admin", is_admin=False)
+
+
+@pytest.fixture
+def registration():
+    """A namespace and a flow registered in it, ``(namespace_id, registration_id)``; their rows go after the test."""
+    import uuid
+
+    from flowfile_core.database.connection import get_db_context
+    from flowfile_core.database.models import CatalogNamespace, FlowRegistration, GlobalArtifact
+    from tests.flowfile.conftest import create_test_flow_registration, create_test_namespace
+
+    namespace_id = create_test_namespace()
+    registration_id = create_test_flow_registration(namespace_id, name=f"flow_{uuid.uuid4().hex[:8]}")
+    yield namespace_id, registration_id
+    with get_db_context() as db:
+        db.query(GlobalArtifact).filter_by(source_registration_id=registration_id).delete()
+        db.query(FlowRegistration).filter_by(id=registration_id).delete()
+        schema = db.get(CatalogNamespace, namespace_id)
+        catalog_id = schema.parent_id
+        db.delete(schema)
+        db.query(CatalogNamespace).filter_by(id=catalog_id).delete()
+        db.commit()
+
+
+def _default_backend_state() -> tuple:
+    """What decides which backend a ``remote`` flow runs on, as one comparable value."""
+    from flowfile_core.configs import settings
+    from flowfile_core.flowfile.execution import context, registry
+
+    current = context._current.get()
+    return (
+        registry.default_backend_id(),
+        os.environ.get(registry.BACKEND_ENV_VAR),
+        bool(settings.OFFLOAD_TO_WORKER),
+        settings.OFFLOAD_TO_WORKER,
+        None if current is None else current.backend_id,
+        registry.default_override(),
+    )
+
+
+_default_backend_at_start: tuple | None = None
+
+
+def pytest_sessionstart(session):
+    global _default_backend_at_start
+    _default_backend_at_start = _default_backend_state()
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_runtest_teardown(item, nextitem):
+    """A test leaves the default compute backend as it found it.
+
+    The registry reads its default override, ``FLOWFILE_COMPUTE_BACKEND`` and the offload setting live, so a test
+    that leaves an override set (an in-process headless run sets one), swaps the setting object, clears the flag,
+    sets the variable or leaves an execution context behind and does not undo it would silently move every later
+    ``remote`` flow onto the local backend. This runs after every fixture teardown, puts the state back, and fails
+    the test that changed it, so the culprit is named where it happened.
+    """
+    if _default_backend_at_start is None:
+        return
+    state = _default_backend_state()
+    rebound = state[3] is not _default_backend_at_start[3]
+    if state[:3] == _default_backend_at_start[:3] and state[4:] == _default_backend_at_start[4:] and not rebound:
+        return
+    from flowfile_core.configs import settings
+    from flowfile_core.flowfile.execution import context, registry
+
+    backend_id, env_value, flag, flag_object, _, override = _default_backend_at_start
+    registry.set_default_override(override)
+    settings.OFFLOAD_TO_WORKER = flag_object
+    flag_object.set(flag)
+    if env_value is None:
+        os.environ.pop(registry.BACKEND_ENV_VAR, None)
+    else:
+        os.environ[registry.BACKEND_ENV_VAR] = env_value
+    context._current.set(None)
+    what = "rebound the offload setting object" if rebound else "left the default compute backend changed"
+    pytest.fail(
+        f"{item.nodeid} {what}: {state[:3] + state[4:]} "
+        f"instead of {_default_backend_at_start[:3] + _default_backend_at_start[4:]}; restored.",
+        pytrace=False,
+    )

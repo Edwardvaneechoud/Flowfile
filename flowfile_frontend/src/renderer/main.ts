@@ -18,13 +18,13 @@ import authService from "./app/services/auth.service";
 import setupService from "./app/services/setup.service";
 import "./app/services/axios.config";
 import { useThemeStore } from "./app/stores/theme-store";
+import { useAuthStore } from "./app/stores/auth-store";
 import { shouldBlockStrayDrop } from "./app/utils/fileDropStrategy";
 
 const app = createApp(App);
 
 app.directive("click-outside", ClickOutsideDirective);
 app.use(stores);
-app.use(router);
 app.use(i18n);
 app.use(ElementPlus, {
   size: "small",
@@ -50,12 +50,14 @@ setupService
   .getSetupStatus()
   .then((status) => {
     authService.setModeFromBackend(status.mode);
-    return authService.initialize();
+    // Load the user's role before the first route renders its admin-only navigation.
+    return useAuthStore(stores).initialize();
   })
   .then((authenticated) => {
     console.log("Auth initialized:", authenticated ? "Authenticated" : "Not authenticated");
     console.log("Desktop mode:", authService.isInDesktopMode());
 
+    app.use(router);
     app.mount("#app");
 
     if (!authenticated && !authService.isInDesktopMode()) {
@@ -65,6 +67,7 @@ setupService
   })
   .catch((error) => {
     console.error("Auth initialization failed:", error);
+    app.use(router);
     app.mount("#app");
 
     if (!authService.isInDesktopMode()) {

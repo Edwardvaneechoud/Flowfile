@@ -1,14 +1,17 @@
 import os
 
 from flowfile_core.configs import logger
+from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
 from flowfile_core.schemas.input_schema import NewDirectory, RemoveItem, RemoveItemsInput
 
 local_database_connection = None
 
 
 def create_dir(new_directory: NewDirectory) -> tuple[bool, Exception | None]:
-    full_path: str = os.path.join(new_directory.source_path, new_directory.dir_name)
+    """Create ``dir_name`` in ``source_path``; the error is the 403 ``validate_path_under_cwd`` raises for a target
+    outside the allowed roots, or the ``OSError`` of the ``mkdir``."""
     try:
+        full_path = validate_path_under_cwd(os.path.join(new_directory.source_path, new_directory.dir_name))
         os.mkdir(full_path)
         logger.info("Successfully created a new folder")
         return True, None

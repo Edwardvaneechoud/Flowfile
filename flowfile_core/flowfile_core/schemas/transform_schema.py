@@ -1042,7 +1042,7 @@ def get_window_output_type(func: str, input_type: str | None = None) -> str | No
     if func in {"cum_count", "tile"}:
         return "Int64"
     if func in {"rank", "count"}:
-        return "UInt32"
+        return str(pl.get_index_type())
     return input_type
 
 
@@ -1417,9 +1417,7 @@ class MultiFieldFormulaInput(BaseModel):
 CleansingCaseMode = Literal["none", "uppercase", "lowercase", "titlecase"]
 CleansingSelectionMode = Literal["all", "list"]
 
-# Single source of truth for the data-cleansing character classes. The code generator
-# interpolates these very constants into exported scripts, so the patterns must never be
-# re-typed anywhere else.
+# The code generator interpolates these constants into exported scripts: never retype the patterns.
 CLEANSING_LETTERS_REGEX = r"\p{L}"
 CLEANSING_NUMBERS_REGEX = r"\d"
 # The four contiguous ASCII ranges that make up exactly `string.punctuation`.

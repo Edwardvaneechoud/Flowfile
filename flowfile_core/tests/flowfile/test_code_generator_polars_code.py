@@ -195,13 +195,21 @@ def test_polars_code_to_flowframe(code, expected):
 
 
 def test_every_sandbox_name_gets_an_import_binding_the_same_object():
+    import types
+
     for name, value in PolarsCodeParser().safe_globals.items():
         if name in {"__builtins__", "pl"} or hasattr(builtins, name):
             continue
         (statement,) = _sandbox_imports(f"x = {name}")
         namespace: dict = {}
         exec(statement, namespace)
-        assert namespace[name] is value, name
+        imported = namespace[name]
+        if isinstance(value, types.SimpleNamespace):
+            # The sandbox exposes a narrow namespace; the import binds the real module it was built from.
+            for member, member_value in vars(value).items():
+                assert getattr(imported, member) is member_value, f"{name}.{member}"
+        else:
+            assert imported is value, name
 
 
 @pytest.mark.parametrize("export", _EXPORTS)

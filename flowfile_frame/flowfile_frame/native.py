@@ -29,6 +29,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_graph_utils import _create_group_id_mapping, combine_flow_graphs_with_mapping
 from flowfile_core.flowfile.flow_node.flow_node import DeferredNodeError, FlowNode
 from flowfile_core.flowfile.flow_node.input_handles import input_handle
+from flowfile_core.flowfile.flow_node.models import RemoteExecutionError
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE, output_handle
 from flowfile_core.flowfile.parameter_resolver import find_unresolved_in_model, node_parameters_resolved
 from flowfile_core.notebook.compare import DROPPED_FIELDS, normalise
@@ -740,6 +741,7 @@ def materialise(node: FlowNode, handle: str | None = None) -> FlowDataEngine:
 
 
 def _read(node: FlowNode, handle: str | None) -> FlowDataEngine:
+    """``node``'s output; a node whose job failed in this process raises the Polars error it raised, as Polars would."""
     with contextlib.ExitStack() as stack:
         for upstream in _nodes_a_read_executes(node):
             _resolve_parameters_for_read(stack, upstream)
@@ -747,6 +749,23 @@ def _read(node: FlowNode, handle: str | None) -> FlowDataEngine:
             return node.get_output(handle) if handle is not None else node.get_resulting_data()
         except DeferredNodeError as exc:
             raise lost_placeholder_error(node) from exc
+        except RemoteExecutionError as exc:
+            raised = _raised_in_this_process(exc)
+            if raised is None:
+                raise
+    raise raised
+
+
+def _raised_in_this_process(error: RemoteExecutionError) -> pl.exceptions.PolarsError | None:
+    """The Polars error at the root of ``error``'s causes, else ``None``.
+
+    A job the embedded worker ran in this process hands its exception up the typed errors as their cause; a job run
+    anywhere else reports its failure as text, so a Polars error object there was raised here.
+    """
+    cause = error.__cause__
+    while cause is not None and cause.__cause__ is not None:
+        cause = cause.__cause__
+    return cause if isinstance(cause, pl.exceptions.PolarsError) else None
 
 
 def _below_column_less(node: FlowNode) -> bool:

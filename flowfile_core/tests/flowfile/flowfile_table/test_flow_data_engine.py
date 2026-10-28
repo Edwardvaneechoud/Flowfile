@@ -1074,6 +1074,88 @@ class TestPolarsCodeParserSecurity:
         result = func(pl.LazyFrame({"a": [1]}))
         assert result is not None
 
+    # --- Module-escape paths: a sandbox global must not reach a dangerous module ---
+
+    def test_blocks_single_underscore_attribute(self):
+        with pytest.raises(ValueError, match="Access to '_tzpath' is not allowed"):
+            self.parser.get_executable("x = zoneinfo._tzpath\noutput_df = input_df")
+
+    def test_zoneinfo_namespace_exposes_no_module(self):
+        func = self.parser.get_executable("x = zoneinfo.ZoneInfo\noutput_df = input_df")
+        func(pl.LazyFrame({"a": [1]}))  # ZoneInfo itself is fine
+        leak = self.parser.get_executable("x = datetime.sys\noutput_df = input_df")
+        with pytest.raises(AttributeError):
+            leak(pl.LazyFrame({"a": [1]}))
+
+    def test_datetime_sys_modules_os_is_unreachable(self):
+        func = self.parser.get_executable("x = datetime.sys\noutput_df = input_df")
+        with pytest.raises(AttributeError):
+            func(pl.LazyFrame({"a": [1]}))
+
+    def test_pl_submodule_to_os_is_unreachable(self):
+        func = self.parser.get_executable("x = pl.config\noutput_df = input_df")
+        with pytest.raises(AttributeError):
+            func(pl.LazyFrame({"a": [1]}))
+
+    def test_no_sandbox_global_reaches_a_dangerous_module(self):
+        """Walk every sandbox value's non-underscore attributes a few levels deep; reach no module."""
+        import types as _types
+
+        dangerous = {
+            "os", "sys", "subprocess", "builtins", "importlib", "shutil", "socket",
+            "ctypes", "io", "pathlib", "runpy", "pickle", "multiprocessing",
+            "threading", "signal", "posix", "nt", "inspect", "gc",
+        }
+
+        def walk(obj, depth, seen):
+            if isinstance(obj, _types.ModuleType):
+                top = obj.__name__.split(".")[0]
+                assert obj.__name__ not in dangerous and top not in dangerous, obj.__name__
+                return
+            if depth < 0 or id(obj) in seen:
+                return
+            seen.add(id(obj))
+            for name in dir(obj):
+                if name.startswith("_"):
+                    continue
+                try:
+                    walk(getattr(obj, name), depth - 1, seen)
+                except AssertionError:
+                    raise
+                except Exception:
+                    continue
+
+        for name, value in self.parser.safe_globals.items():
+            if name == "__builtins__":
+                continue
+            walk(value, 3, set())
+
+    # --- Attribute assignment: a task must not patch a shared Polars global ---
+
+    def test_blocks_attribute_assignment(self):
+        with pytest.raises(ValueError, match="Assigning to an attribute is not allowed"):
+            self.parser.get_executable(
+                "pl.LazyFrame.sink_parquet = lambda self, *a, **k: None\noutput_df = input_df"
+            )
+
+    def test_blocks_attribute_assignment_through_alias(self):
+        with pytest.raises(ValueError, match="Assigning to an attribute is not allowed"):
+            self.parser.get_executable(
+                "lf = pl.LazyFrame\nlf.sink_parquet = lambda self, *a, **k: None\noutput_df = input_df"
+            )
+
+    def test_blocks_attribute_delete(self):
+        with pytest.raises(ValueError, match="Assigning to an attribute is not allowed"):
+            self.parser.get_executable("del pl.col\noutput_df = input_df")
+
+    def test_blocks_attribute_assignment_in_unpacking(self):
+        with pytest.raises(ValueError, match="Assigning to an attribute is not allowed"):
+            self.parser.get_executable("a, pl.x = 1, 2\noutput_df = input_df")
+
+    def test_item_assignment_still_allowed(self):
+        func = self.parser.get_executable("d = {}\nd['x'] = 1\noutput_df = input_df")
+        assert func(pl.LazyFrame({"a": [1]})) is not None
+
 
 class TestRawDataNestedTypes:
     """RawData -> FlowDataEngine keeps List/Struct columns nested (with nulls) instead of stringifying."""

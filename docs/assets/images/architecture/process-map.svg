@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1340 900" role="img" aria-label="Flowfile process and execution map. The Frontend (Tauri shell + Vue) talks only to the Core process over HTTP + JWT. The Core process (FastAPI :63578) groups four services: the Core API (DAG engine, routers, auth), SqlService, Kernel Manager (Docker SDK) and the embedded Scheduler loop. Five numbered execution paths radiate downward: (1) run flow — Core API serializes a LazyFrame and POSTs it to the Worker (FastAPI :63579), which computes in spawned subprocesses and returns Arrow IPC file paths; (2) SQL — SqlService executes SQL on the Worker; (3) notebook — Kernel Manager runs Python cells in a Docker kernel container that writes Delta and POSTs metadata back, while SqlService runs SQL cells on the Worker; (4) scheduled — the Scheduler loop polls due triggers in the SQLite catalog DB and spawns a detached headless flow run that writes Delta tables locally with no worker offload; (5) API endpoint — an external API consumer calls GET /api/data/{slug} with an API key, which runs the published flow synchronously and returns its api_response node output as JSON. Core writes metadata to the SQLite catalog DB, and the Worker and kernel read and write datasets in Delta tables (local or S3). The two storage substrates are drawn distinct from the process nodes.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1340 900" role="img" aria-label="Flowfile process and execution map under the compute protocol. The Frontend (Tauri shell + Vue) talks only to the Core process over HTTP + JWT. The Core process (FastAPI :63578) groups four services: the Core API (DAG engine, routers, auth), SqlService, Kernel Manager (Docker SDK) and the embedded Scheduler loop. Five numbered execution paths radiate downward: (1) run flow: the Core API sends one plan per node over the worker's /v1 routes to the compute backend the run is placed on, the Worker (FastAPI :63579) or another configured worker, which runs it in a spawned child or its warm pool, keeps the result and answers a ResultRef with its schema and up to 100 preview rows; (2) SQL: SqlService executes SQL on the Worker; (3) notebook: Kernel Manager runs Python cells in a Docker kernel container that writes Delta and POSTs metadata back, while SqlService runs SQL cells on the Worker; (4) scheduled: the Scheduler loop polls due triggers in the catalog DB and spawns a detached headless flow run, which computes on a worker embedded in its own process unless --backend names one; (5) API endpoint: an external API consumer calls GET /api/data/{slug} with an API key, which runs the published flow and returns its api_response node output as JSON. Core writes metadata to the catalog DB (SQLite or PostgreSQL), the workers and kernels read and write datasets in Delta tables (local or S3), and results that cross between workers go through the optional S3 exchange store, under a per-run prefix removed when the run ends.">
   <defs>
     <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#2DD5D3"/><stop offset="0.55" stop-color="#26A8E0"/><stop offset="1" stop-color="#1D76D6"/>
@@ -44,7 +44,7 @@
   <line x1="972" y1="74" x2="1004" y2="74" stroke="#b3bcc9" stroke-width="2.2"/>
   <text class="lgd" x="1012" y="78">control / call</text>
   <line x1="972" y1="96" x2="1004" y2="96" stroke="#b3bcc9" stroke-width="2.2" stroke-dasharray="5 5" stroke-linecap="round"/>
-  <text class="lgd" x="1012" y="100">data &#183; Arrow IPC / Delta</text>
+  <text class="lgd" x="1012" y="100">data &#183; results, Delta, metadata</text>
   <text class="nl" x="972" y="124">&#9312;&#9313;&#9314;&#9315;&#9316;<tspan class="lgd" fill="#8a93a3" font-weight="400" dx="8">run-flow &#183; SQL &#183; notebook &#183; scheduled &#183; API</tspan></text>
 
   <!-- ============ FRONTEND (row 0) ============ -->
@@ -154,9 +154,22 @@
   <path class="arw" d="M650,256 H698" marker-end="url(#ah)"/>
 
   <!-- ============ ROW 2 PROCESSES ============ -->
+  <!-- Compute backends cluster: the Worker and any configured worker a run can be placed on -->
+  <rect class="cluster" x="52" y="414" width="494" height="166" rx="16"/>
+  <text class="ctitle" x="70" y="438">Compute backends</text>
+
+  <!-- Other configured workers -->
+  <g>
+    <rect class="box" x="68" y="452" width="156" height="108" rx="11"/>
+    <text class="t" x="84" y="484">Other workers</text>
+    <text class="mono" x="84" y="503">worker:&lt;name&gt;</text>
+    <text class="s" x="84" y="522">other hosts &#183; /v1</text>
+    <text class="ss" x="84" y="539">picked per flow or node</text>
+  </g>
+
   <!-- Worker -->
   <g>
-    <rect class="box" x="240" y="452" width="286" height="108" rx="11"/>
+    <rect class="box" x="240" y="452" width="290" height="108" rx="11"/>
     <rect class="chip" x="256" y="483" width="46" height="46" rx="10"/>
     <g class="ic" transform="translate(267,494)">
       <circle cx="12" cy="12" r="4.6"/><circle cx="12" cy="12" r="1.9"/>
@@ -165,9 +178,10 @@
       <line x1="6.75" y1="6.75" x2="8.45" y2="8.45"/><line x1="15.55" y1="15.55" x2="17.25" y2="17.25"/>
       <line x1="15.55" y1="8.45" x2="17.25" y2="6.75"/><line x1="6.75" y1="17.25" x2="8.45" y2="15.55"/>
     </g>
-    <text class="t" x="314" y="494">Worker &#183; FastAPI :63579</text>
-    <text class="s" x="314" y="513">compute in spawned</text>
-    <text class="ss" x="314" y="530">subprocesses &#183; Arrow IPC</text>
+    <text class="t" x="314" y="486">Worker &#183; FastAPI :63579</text>
+    <text class="s" x="314" y="505">runs each node, keeps results</text>
+    <text class="ss" x="314" y="522">spawned children &#183; warm pool</text>
+    <text class="ss" x="314" y="539">in core&#8217;s process for <tspan class="mono">flowfile run ui</tspan></text>
   </g>
 
   <!-- Kernel container -->
@@ -192,12 +206,27 @@
       <rect x="3.5" y="3.5" width="17" height="17" rx="3.5"/>
       <path d="M9.5,8 L15.5,12 L9.5,16 Z"/>
     </g>
-    <text class="t" x="1044" y="494">Headless flow run</text>
-    <text class="s" x="1044" y="513">detached subprocess</text>
-    <text class="mono" x="1044" y="530">flowfile run flow --run-id</text>
+    <text class="t" x="1044" y="486">Headless flow run</text>
+    <text class="s" x="1044" y="505">on its embedded worker</text>
+    <text class="mono" x="1044" y="522">flowfile run flow --run-id</text>
+    <text class="mono" x="1044" y="539">[--backend &lt;id&gt;]</text>
   </g>
 
   <!-- ============ STORAGE SUBSTRATES (row 3) ============ -->
+  <!-- Exchange store (optional) -->
+  <g>
+    <rect class="store" x="70" y="732" width="320" height="116" rx="13"/>
+    <rect class="chipn" x="86" y="767" width="46" height="46" rx="10"/>
+    <g class="icn" transform="translate(97,778)">
+      <path d="M3.5,6 H20.5 L18.6,19.4 A1.6,1.6 0 0 1 17,20.8 H7 A1.6,1.6 0 0 1 5.4,19.4 Z"/>
+      <ellipse cx="12" cy="6" rx="8.5" ry="2.4"/>
+      <path d="M9,12.5 H15"/>
+    </g>
+    <text class="t" x="144" y="778" fill="#233588">Exchange store</text>
+    <text class="s" x="144" y="797" fill="#4a5578">S3 &#183; optional</text>
+    <text class="ss" x="144" y="814" fill="#6b74a0">per-run prefix, removed at run end</text>
+  </g>
+
   <!-- Delta tables -->
   <g>
     <rect class="store" x="450" y="732" width="340" height="116" rx="13"/>
@@ -212,7 +241,7 @@
     <text class="ss" x="524" y="814" fill="#6b74a0">one dir per table</text>
   </g>
 
-  <!-- SQLite catalog DB -->
+  <!-- Catalog DB -->
   <g>
     <rect class="store" x="1075" y="732" width="210" height="116" rx="13"/>
     <rect class="chipn" x="1091" y="767" width="46" height="46" rx="10"/>
@@ -221,8 +250,8 @@
       <path d="M4.5,5.5 V16 C4.5,17.6 7.9,18.9 12,18.9 C16.1,18.9 19.5,17.6 19.5,16 V5.5"/>
       <path d="M4.5,10.7 C4.5,12.3 7.9,13.6 12,13.6 C16.1,13.6 19.5,12.3 19.5,10.7"/>
     </g>
-    <text class="ts" x="1149" y="778" fill="#233588">SQLite catalog DB</text>
-    <text class="s" x="1149" y="797" fill="#4a5578">shared metadata</text>
+    <text class="ts" x="1149" y="778" fill="#233588">Catalog DB</text>
+    <text class="s" x="1149" y="797" fill="#4a5578">SQLite or PostgreSQL</text>
     <text class="ss" x="1149" y="814" fill="#6b74a0">rows + grants</text>
   </g>
 
@@ -231,11 +260,12 @@
   <!-- (1) Core API -> Worker : PRIMARY cyan (straight drop) -->
   <path class="arwc" d="M460,312 V452" marker-end="url(#ahc)"/>
   <text class="nlc" x="448" y="352" text-anchor="end">&#9312; run flow / execute graph</text>
-  <text class="albl" x="448" y="368" text-anchor="end">serialize LazyFrame &#8594; POST</text>
+  <text class="albl" x="448" y="368" text-anchor="end">one plan per node &#183; /v1</text>
 
-  <!-- Worker -> Core API : Arrow IPC return (dotted, straight rise beside the primary) -->
+  <!-- Worker -> Core API : a reference and the preview come back (dotted, straight rise beside the primary) -->
   <path class="dash" d="M510,452 V314" marker-end="url(#ah)"/>
-  <text class="albl" x="522" y="395">Arrow IPC file paths</text>
+  <text class="albl" x="520" y="380">ResultRef +</text>
+  <text class="albl" x="520" y="395">preview rows</text>
 
   <!-- (2)+(3) SqlService -> Worker : one shared path, used by the SQL editor and by notebook SQL cells -->
   <path class="arw" d="M300,312 V452" marker-end="url(#ah)"/>
@@ -254,17 +284,17 @@
   <path class="arw" d="M1060,312 V452" marker-end="url(#ah)"/>
   <text class="nl" x="1074" y="392">&#9315; spawn_flow_run</text>
 
-  <!-- (4) Scheduler loop -> SQLite catalog DB : poll due triggers -->
+  <!-- (4) Scheduler loop -> catalog DB : poll due triggers -->
   <path class="arw" d="M1200,312 V732" marker-end="url(#ahn)"/>
   <text class="albl" x="1212" y="596">poll due</text>
   <text class="albl" x="1212" y="611">triggers</text>
 
-  <!-- (4) Headless flow run -> Delta tables : runs locally, no worker offload -->
+  <!-- (4) Headless flow run -> Delta tables : computes in its own process unless a backend is named -->
   <path class="arw" d="M1060,560 V672 H760 V732" marker-end="url(#ahn)"/>
-  <text class="albl" x="900" y="648" text-anchor="middle">runs flow locally,</text>
-  <text class="albl" x="900" y="663" text-anchor="middle">no worker offload</text>
+  <text class="albl" x="900" y="648" text-anchor="middle">in its own process,</text>
+  <text class="albl" x="900" y="663" text-anchor="middle">unless --backend</text>
 
-  <!-- Core API -> SQLite catalog DB : metadata (dotted data) -->
+  <!-- Core API -> catalog DB : metadata (dotted data) -->
   <path class="dash" d="M590,312 V700 H1120 V732" marker-end="url(#ahn)"/>
   <text class="albl" x="856" y="692">metadata</text>
 
@@ -275,4 +305,9 @@
   <!-- Kernel container -> Delta tables : read / write (dotted data) -->
   <path class="dash" d="M720,560 V690 H680 V732" marker-end="url(#ahn)"/>
   <text class="albl" x="700" y="636" text-anchor="middle">read / write</text>
+
+  <!-- Compute backends -> Exchange store : results crossing between workers (dotted data) -->
+  <path class="dash" d="M200,580 V732" marker-end="url(#ahn)"/>
+  <text class="albl" x="212" y="650">results crossing</text>
+  <text class="albl" x="212" y="665">between workers</text>
 </svg>

@@ -13,11 +13,8 @@ __version__ = get_version()
 
 import functools
 import logging
-import os
 import sys
 
-os.environ["FLOWFILE_WORKER_PORT"] = "63578"
-os.environ["FLOWFILE_SINGLE_FILE_MODE"] = "1"
 from flowfile.api import open_graph_in_editor as _open_graph_in_editor
 from flowfile.web import start_server as _start_web_ui
 from flowfile_frame import _fl_namespace
@@ -38,8 +35,7 @@ def start_web_ui(*args, **kwargs):
     return _start_web_ui(*args, **kwargs)
 
 
-# Bind node_designer as a real submodule so `from flowfile.node_designer import ...`
-# resolves (it is otherwise only an attribute); the os.path idiom.
+# A real submodule, so `from flowfile.node_designer import ...` resolves (the os.path idiom).
 sys.modules[f"{__name__}.node_designer"] = node_designer
 
 __all__ = ["open_graph_in_editor", "start_web_ui"]

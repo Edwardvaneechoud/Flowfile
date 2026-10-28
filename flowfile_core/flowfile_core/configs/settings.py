@@ -7,6 +7,7 @@ import tempfile
 from passlib.context import CryptContext
 from starlette.config import Config
 
+from flowfile_core.configs import exchange_config
 from flowfile_core.configs.utils import MutableBool
 from shared.storage_config import storage
 
@@ -15,7 +16,7 @@ DEFAULT_SERVER_HOST = "0.0.0.0"
 DEFAULT_SERVER_PORT = 63578
 DEFAULT_WORKER_PORT = 63579
 
-# Single file mode flag, this determines where worker requests are being send to.
+# Single-file mode, set by the pip server's start_server: its worker is embedded in this process.
 SINGLE_FILE_MODE: MutableBool = MutableBool(os.environ.get("FLOWFILE_SINGLE_FILE_MODE", "0") == "1")
 
 # Offload to worker flag, this determines if the worker should handle processing tasks.
@@ -26,14 +27,12 @@ FEATURE_FLAG_AI: MutableBool = MutableBool(
     os.environ.get("FEATURE_FLAG_AI", "1").strip().lower() in ("true", "1", "yes", "on")
 )
 
-# Gates the notebook code-intelligence (Jedi) bridge to the kernel. Mutable so the admin
-# endpoint can flip it live; when off, the `/lsp/*` surfaces degrade to empty 200 (never 503)
-# so the editor silently falls back to its client-side completion sources.
+# The kernel's Jedi bridge; off, `/lsp/*` answers an empty 200 so the editor falls back silently.
 FLOWFILE_LSP_ENABLED: MutableBool = MutableBool(
     os.environ.get("FLOWFILE_LSP_ENABLED", "1").strip().lower() in ("true", "1", "yes", "on")
 )
 
-# When True, every LLM call appends a JSONL line to `{FLOWFILE_STORAGE_DIR}/ai_prompts/{YYYY-MM-DD}.jsonl` for debugging.
+# When True, every LLM call appends a JSONL line to `{FLOWFILE_STORAGE_DIR}/ai_prompts/{YYYY-MM-DD}.jsonl`.
 FLOWFILE_AI_LOG_PROMPTS: MutableBool = MutableBool(
     os.environ.get("FLOWFILE_AI_LOG_PROMPTS", "0").strip().lower() in ("true", "1", "yes", "on")
 )
@@ -43,9 +42,7 @@ FLOWFILE_AI_LOG_PROMPTS_SCRUB: MutableBool = MutableBool(
     os.environ.get("FLOWFILE_AI_LOG_PROMPTS_SCRUB", "0").strip().lower() in ("true", "1", "yes", "on")
 )
 
-# Ops opt-in for the `/project` git-tracking router in docker mode. The router is meant for
-# single-user/package use; in docker it 404s by default unless an operator deliberately enables
-# multi-tenant projects (the per-owner confinement in project/service.py then keeps tenants isolated).
+# Docker opt-in for the `/project` router, which 404s there by default; projects stay per owner.
 FLOWFILE_ENABLE_PROJECTS: MutableBool = MutableBool(
     os.environ.get("FLOWFILE_ENABLE_PROJECTS", "0").strip().lower() in ("true", "1", "yes", "on")
 )
@@ -54,6 +51,12 @@ FLOWFILE_ENABLE_PROJECTS: MutableBool = MutableBool(
 FLOWFILE_CUSTOM_NODE_HOT_RELOAD: MutableBool = MutableBool(
     os.environ.get("FLOWFILE_CUSTOM_NODE_HOT_RELOAD", "1").strip().lower() in ("true", "1", "yes", "on")
 )
+
+# Default on: the worker backend uses /v1 routes; any value but true/1/yes/on means the task routes.
+FLOWFILE_COMPUTE_PROTOCOL: MutableBool = MutableBool(
+    os.environ.get("FLOWFILE_COMPUTE_PROTOCOL", "1").strip().lower() in ("true", "1", "yes", "on")
+)
+
 
 def get_catalog_storage_uri() -> str | None:
     """Object-storage root for catalog table data, e.g. ``s3://bucket/catalog``.
@@ -70,6 +73,34 @@ def get_catalog_storage_connection() -> str | None:
     Only consulted when ``get_catalog_storage_uri()`` is set; required in that case.
     """
     return os.environ.get("FLOWFILE_CATALOG_STORAGE_CONNECTION") or None
+
+
+def get_exchange_uri() -> str | None:
+    """Object-storage root of the exchange store results cross between backends through, e.g. ``s3://bucket/exchange``.
+
+    ``FLOWFILE_EXCHANGE_URI`` when set, else what the Backends page saved (``exchange_config``); read per call.
+    ``None`` ⇒ no exchange store.
+    """
+    return exchange_config.effective_store().uri
+
+
+def get_exchange_connection() -> str | None:
+    """Name of the ``CloudStorageConnection`` that opens the exchange store, from the environment or the saved store.
+
+    Only consulted when ``get_exchange_uri()`` is set; required in that case.
+    """
+    return exchange_config.effective_store().connection
+
+
+def get_exchange_max_rows() -> int | None:
+    """The most rows a result may cross between backends with through the exchange store; ``None`` ⇒ no limit.
+
+    ``FLOWFILE_EXCHANGE_MAX_ROWS`` when set, else what the Backends page saved; read per call.
+
+    Raises:
+        ValueError: ``FLOWFILE_EXCHANGE_MAX_ROWS`` is set to something other than a whole number.
+    """
+    return exchange_config.effective_max_rows()
 
 
 COMMUNITY_DEFAULT_REPO = "edwardvaneechoud/flowfile-community-nodes"
@@ -125,9 +156,7 @@ def get_community_cache_ttl() -> int:
         return 3600
 
 
-# OAuth App client id for GitHub device-flow publishing ("Flowfile Community
-# Publishing", public by design; no secret exists). Empty ⇒ device flow disabled
-# (PAT paste + bundle download still work).
+# The "Flowfile Community Publishing" OAuth App's client id: public by design, no secret exists.
 COMMUNITY_GITHUB_CLIENT_ID_DEFAULT = "Ov23liiN1Z7z70Reg0zI"
 
 
@@ -191,7 +220,6 @@ def get_default_worker_url(worker_port=None):
         worker_url = f"http://127.0.0.1:{worker_port}"
     else:
         worker_url = f"http://0.0.0.0:{worker_port}"
-    worker_url += "/worker" if SINGLE_FILE_MODE else ""
     return worker_url
 
 
@@ -209,10 +237,11 @@ DEBUG: bool = config("DEBUG", cast=bool, default=False)
 FILE_LOCATION = config("FILE_LOCATION", cast=str, default=".\\files\\")
 AVAILABLE_RAM = config("AVAILABLE_RAM", cast=int, default=8)
 WORKER_URL = config("FLOWFILE_WORKER_URL", cast=str, default=get_default_worker_url(WORKER_PORT))
+# No FLOWFILE_WORKER_URL and no WORKER_HOST: the built-in worker is the one beside core, on this host.
+WORKER_ADDRESS_CONFIGURED = bool(config("FLOWFILE_WORKER_URL", cast=str, default="")) or bool(os.getenv("WORKER_HOST"))
 TEMP_DIR = storage.temp_directory
 
-# FLOWFILE_MODE: Determines the runtime environment
-# Possible values: "electron" (desktop app), "package" (Python package), "docker" (container)
+# "electron" (desktop app), "package" (Python package) or "docker" (container).
 FLOWFILE_MODE = os.getenv("FLOWFILE_MODE", "electron")
 
 

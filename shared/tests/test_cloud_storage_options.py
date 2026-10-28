@@ -1,9 +1,4 @@
-import asyncio
-import datetime
-import ipaddress
 import os
-import ssl
-import threading
 import uuid
 from functools import partial
 
@@ -30,6 +25,7 @@ except ModuleNotFoundError:  # pragma: no cover - import shim for ad-hoc runs
     from test_utils.s3.fixtures import MINIO_ACCESS_KEY, MINIO_ENDPOINT_URL, MINIO_SECRET_KEY, get_minio_client
 
 from test_utils.s3.aws_profiles import NOT_MINIO_KEYS, append_aws_profile, isolate_aws
+from test_utils.tls import tls_forwarder
 
 _BUCKET = "flowfile-test"
 
@@ -432,61 +428,8 @@ def test_aws_cli_connection_round_trip_on_minio(hermetic_aws, monkeypatch, minio
 @pytest.fixture
 def minio_behind_self_signed_tls(tmp_path):
     """An HTTPS endpoint with a self-signed certificate that forwards to MinIO; yields its URL."""
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.x509.oid import NameOID
-
-    key = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
-    now = datetime.datetime.now(datetime.timezone.utc)
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - datetime.timedelta(minutes=5))
-        .not_valid_after(now + datetime.timedelta(hours=1))
-        .add_extension(
-            x509.SubjectAlternativeName([x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]),
-            critical=False,
-        )
-        .sign(key, hashes.SHA256())
-    )
-    (tmp_path / "cert.pem").write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-    (tmp_path / "key.pem").write_bytes(
-        key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
-    )
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.load_cert_chain(tmp_path / "cert.pem", tmp_path / "key.pem")
-    upstream_host, upstream_port = MINIO_ENDPOINT_URL.removeprefix("http://").split(":")
-
-    async def pipe(reader, writer):
-        try:
-            while data := await reader.read(65536):
-                writer.write(data)
-                await writer.drain()
-        except (ConnectionError, OSError):
-            pass
-        finally:
-            writer.close()
-
-    async def forward(client_reader, client_writer):
-        upstream_reader, upstream_writer = await asyncio.open_connection(upstream_host, int(upstream_port))
-        await asyncio.gather(pipe(client_reader, upstream_writer), pipe(upstream_reader, client_writer))
-
-    loop = asyncio.new_event_loop()
-    loop.set_exception_handler(lambda _loop, _context: None)  # rejected handshakes are the point of the test
-    server = loop.run_until_complete(asyncio.start_server(forward, "127.0.0.1", 0, ssl=context))
-    thread = threading.Thread(target=loop.run_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"https://localhost:{server.sockets[0].getsockname()[1]}"
-    finally:
-        loop.call_soon_threadsafe(server.close)
-        loop.call_soon_threadsafe(loop.stop)
-        thread.join(timeout=5)
+    with tls_forwarder(MINIO_ENDPOINT_URL, tmp_path) as (url, _certificate):
+        yield url
 
 
 @requires_minio

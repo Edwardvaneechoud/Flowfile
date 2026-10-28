@@ -5,10 +5,10 @@ export const computeHelp: PageHelpContent = {
   icon: "fa-solid fa-server",
   sections: [
     {
-      title: "Two kinds of compute",
+      title: "Where your flows run",
       icon: "fa-solid fa-info-circle",
       description:
-        "Flowfile runs your flows with two separate systems. This page manages both — each on its own tab.",
+        "Python Script and custom kernel nodes run in Python kernels; every other node runs on a worker. Kernels have their own tab, workers are on the Backends tab.",
       features: [
         {
           icon: "fa-brands fa-python",
@@ -17,10 +17,16 @@ export const computeHelp: PageHelpContent = {
             "Docker containers that run Python Script and custom nodes. You create them, pick their packages, and start or stop them on the Python Kernels tab.",
         },
         {
-          icon: "fa-solid fa-gauge-high",
-          title: "Warm worker pool",
+          icon: "fa-solid fa-house-laptop",
+          title: "Default worker",
           description:
-            "A speed setting for all the regular data nodes (joins, filters, formulas, …). Warm worker processes start on demand when a flow runs and retire after sitting idle, skipping the per-node start-up cost. Admins manage it on the Performance tab.",
+            "The built-in worker on this server that runs the regular data nodes (joins, filters, formulas, …). Its warm pool keeps processes ready between nodes, skipping the per-node start-up cost; they start on demand when a flow runs and retire after sitting idle. Admins manage it at the top of the Backends tab.",
+        },
+        {
+          icon: "fa-solid fa-network-wired",
+          title: "Other workers",
+          description:
+            "Workers on other hosts that admins add on the Backends tab. A flow or node picks one by its id in its settings, and the Handshake button checks that a worker matches this Flowfile. Each keeps its own warm pool.",
         },
       ],
     },

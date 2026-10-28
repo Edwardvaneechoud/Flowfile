@@ -48,6 +48,7 @@ from flowfile_core.catalog import (
     NotebookNotFoundError,
     RunNotFoundError,
     ScheduleNotFoundError,
+    SeededNamespaceError,
     SQLAlchemyCatalogRepository,
     StaleWriteError,
     TableExistsError,
@@ -60,11 +61,13 @@ from flowfile_core.catalog import (
     WorkerUnavailableError,
 )
 from flowfile_core.catalog.access import AccessResolver
+from flowfile_core.catalog.services.tables import catalog_table_location
 from flowfile_core.catalog.validators import validate_cron_expression, validate_cron_timezone
 from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db
 from flowfile_core.database.models import RunType, SchedulerLock
 from flowfile_core.fileExplorer import validate_path_under_cwd
+from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
 from flowfile_core.schemas.catalog_schema import (
@@ -146,12 +149,7 @@ from shared.storage_config import storage
 router = APIRouter(
     prefix="/catalog",
     tags=["catalog"],
-    # Router-level auth accepts either JWT or the kernel's ``X-Internal-Token``.
-    # Endpoints that should remain JWT-only keep ``current_user=Depends(get_current_active_user)``
-    # which re-checks at the endpoint level and rejects internal tokens. Endpoints that
-    # the kernel needs to call (table resolve / register / update / fetch) use
-    # ``get_user_or_internal_service`` for their ``current_user`` so the internal
-    # token is accepted there.
+    # JWT or the kernel's X-Internal-Token; a JWT-only endpoint re-checks with get_current_active_user.
     dependencies=[Depends(get_user_or_internal_service)],
 )
 
@@ -171,11 +169,15 @@ def get_catalog_service(
 
 # Exception → HTTP mapping
 
+COMPUTE_UNAVAILABLE_DETAIL = "Compute unavailable"
+"""The detail of a catalog 503: the typed message names the worker's address, so it goes to the log only."""
+
 _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     NamespaceNotFoundError: (404, "Namespace not found"),
     NamespaceExistsError: (409, "Namespace with this name already exists at this level"),
     NestingLimitError: (422, "Cannot nest deeper than catalog -> schema"),
     NamespaceNotEmptyError: (422, "Cannot delete namespace with children or flows"),
+    SeededNamespaceError: (422, None),
     NamespaceStorageLockedError: (409, None),
     InvalidNamespaceStorageError: (422, None),
     NotAuthorizedError: (403, None),
@@ -186,7 +188,8 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     TableNotFoundError: (404, "Catalog table not found"),
     TableVersionUnavailableError: (410, None),
     NotAVirtualTableError: (400, None),
-    WorkerUnavailableError: (503, None),
+    WorkerUnavailableError: (503, COMPUTE_UNAVAILABLE_DETAIL),
+    ComputeUnavailable: (503, COMPUTE_UNAVAILABLE_DETAIL),
     TableExistsError: (409, "A table with this name already exists in this namespace"),
     AmbiguousTableError: (409, None),
     RunNotFoundError: (404, "Run not found"),
@@ -209,6 +212,17 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
 }
 
 _HANDLED_EXCEPTIONS = tuple(_CATALOG_EXCEPTION_MAP.keys())
+
+
+def _kernel_table_path(table_path: str, namespace_id: int | None = None) -> str:
+    """A table directory in the catalog's storage (``catalog_table_location``); 403 for any other path.
+
+    Without *namespace_id* only a directory under the catalog tables directory is one.
+    """
+    resolved = catalog_table_location(table_path, namespace_id)
+    if resolved is None:
+        raise HTTPException(403, "Access denied: table_path must be a table directory in the catalog's storage")
+    return resolved
 
 
 def _stale_token(value):
@@ -240,6 +254,8 @@ def handle_catalog_exceptions(**overrides: str):
                 for exc_type in type(exc).__mro__:
                     if exc_type in _CATALOG_EXCEPTION_MAP:
                         status_code, default_msg = _CATALOG_EXCEPTION_MAP[exc_type]
+                        if status_code == 503:
+                            logger.error("Catalog request %s could not reach compute: %s", func.__name__, exc)
                         msg = override_map.get(exc_type, default_msg)
                         if msg is None:
                             msg = str(exc)
@@ -605,9 +621,7 @@ def open_run_snapshot(
     """Write the run's flow snapshot to a temp file and import it into the designer."""
     snapshot_data = service.get_run_snapshot(run_id)
 
-    # Parse snapshot and assign a new unique flow_id so the imported
-    # snapshot opens as a separate tab instead of overwriting an
-    # already-open flow that shares the same original ID.
+    # A new flow_id, so the snapshot opens in its own tab instead of over the open flow with its id.
     try:
         parsed = json.loads(snapshot_data)
         suffix = ".json"
@@ -749,11 +763,13 @@ def register_table_from_data(
 
     Used by ``flowfile_ctx.write_catalog_table`` once the kernel has written
     the Delta directory locally — Core only persists the metadata record (no
-    worker-side materialization).
+    worker-side materialization). The directory must be under the catalog's
+    tables directory, where the kernel writes it, or a table directory under
+    the namespace's object-storage root (403 otherwise).
     """
     return service.register_table_from_data(
         name=body.name,
-        table_path=body.table_path,
+        table_path=_kernel_table_path(body.table_path, body.namespace_id),
         owner_id=current_user.id,
         namespace_id=body.namespace_id,
         description=body.description,
@@ -778,11 +794,12 @@ def refresh_table_metadata(
     Used by ``flowfile_ctx.write_catalog_table`` for append / upsert / update /
     delete modes — the kernel writes new data to the existing Delta directory
     and then reports back the new row_count / size_bytes / schema so Core's
-    record stays consistent.
+    record stays consistent. A ``table_path`` must be under the catalog's
+    tables directory (403 otherwise).
     """
     return service.overwrite_table_data(
         table_id=table_id,
-        table_path=body.table_path,
+        table_path=_kernel_table_path(body.table_path) if body.table_path is not None else None,
         description=body.description,
         storage_format=body.storage_format,
         schema=body.schema_columns,

@@ -1,12 +1,13 @@
 from typing import Literal
 
-from pydantic import BaseModel, SecretStr
+from pydantic import SecretStr
 
 from flowfile_worker.secrets import decrypt_secret
 from shared.sql_utils import construct_sql_uri, get_sqlalchemy_uri
+from shared.wire_model import WireModel
 
 
-class DataBaseConnection(BaseModel):
+class DataBaseConnection(WireModel):
     """Database connection configuration with secure password handling."""
 
     username: str | None = None
@@ -58,7 +59,7 @@ class DataBaseConnection(BaseModel):
         return get_sqlalchemy_uri(self.create_uri())
 
 
-class DatabaseReadSettings(BaseModel):
+class DatabaseReadSettings(WireModel):
     """Settings for SQL source."""
 
     connection: DataBaseConnection
@@ -67,7 +68,7 @@ class DatabaseReadSettings(BaseModel):
     flowfile_node_id: int | str = -1
 
 
-class DatabaseWriteSettings(BaseModel):
+class DatabaseWriteSettings(WireModel):
     """Settings for SQL sink."""
 
     connection: DataBaseConnection

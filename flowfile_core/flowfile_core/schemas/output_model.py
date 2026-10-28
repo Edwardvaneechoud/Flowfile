@@ -22,11 +22,31 @@ class NodeResult(BaseModel):
     start_timestamp: float = Field(default_factory=time.time)
     end_timestamp: float = 0
     success: bool | None = None
-    # True when the node was deliberately skipped (e.g. a closed gate upstream).
-    # Deliberate skips carry success=True so a gated run stays green; nodes
-    # skipped because of an upstream *failure* still produce no result at all.
+    # A deliberate skip (a closed gate upstream) carries success=True, so a gated run stays green.
     skipped: bool = False
     error: str = ""
+    compute_error: str | None = Field(
+        default=None,
+        description=(
+            "The class name of the typed compute error that failed the node (ComputeUnavailable, VersionMismatch, "
+            "... as execution/errors.py names them), or 'Refusal' when placement refused the node before the run "
+            "started; None for any other outcome."
+        ),
+    )
+    backend_id: str | None = Field(
+        default=None,
+        description="The backend placement assigned the node; None when nothing was placed (the protocol flag off).",
+    )
+    fallback_from: str | None = Field(
+        default=None,
+        description=(
+            "The backend the node's settings name, when placement ran it on the default backend instead because that "
+            "backend cannot run it; None otherwise."
+        ),
+    )
+    fallback_reason: str | None = Field(
+        default=None, description="What the backend in fallback_from does not offer the node, in words."
+    )
     run_time_ms: int = Field(
         default=-1,
         description="Run time in milliseconds",
@@ -56,6 +76,46 @@ class RunInformation(BaseModel):
     number_of_nodes: int = 0
     node_step_result: list[NodeResult]
     run_type: Literal["fetch_one", "full_run", "init"]
+    boundaries: list[tuple[int, int]] = Field(
+        default_factory=list,
+        description=(
+            "The run's Placement.boundaries: (source node id, target node id) of each edge whose two nodes were "
+            "placed on different backends; empty when nothing was placed."
+        ),
+    )
+
+
+class PlacementFallback(BaseModel):
+    """A node a run places on the default backend because the backend its settings name cannot run it."""
+
+    node_id: int
+    backend_id: str = Field(description="The backend the node's settings name.")
+    fallback_id: str = Field(description="The default backend it runs on instead.")
+    reason: str = Field(description="What backend_id does not offer the node, in words.")
+
+
+class PlacementRefusal(BaseModel):
+    """A node no backend a run may use can run, so the run would start no node."""
+
+    node_id: int
+    backend_id: str
+    reason: str
+    remedy: str | None = None
+
+
+class PlacementPreview(BaseModel):
+    """Where a run of the flow would place each node now (``FlowGraph.preview_placement``), for the designer.
+
+    ``available`` is false with the compute protocol off, when nothing is placed.
+    """
+
+    available: bool
+    assignment: dict[int, str] = Field(default_factory=dict, description="Node id -> the backend that would run it.")
+    fallbacks: list[PlacementFallback] = Field(default_factory=list)
+    refusals: list[PlacementRefusal] = Field(default_factory=list)
+    boundaries: list[tuple[int, int]] = Field(
+        default_factory=list, description="(source node id, target node id) of each edge that would cross backends."
+    )
 
 
 class BaseItem(BaseModel):
@@ -204,8 +264,7 @@ class NodeData(BaseModel):
     setting_input: Any = None
     # The settings' digest at read time; a save echoes it as `expected_settings_fingerprint` (409 when moved).
     settings_fingerprint: str | None = None
-    # Set when column prediction for this node (or one of its inputs) would
-    # require executing an un-run kernel node — the user-facing warning text.
+    # The warning shown when predicting columns here would mean running an un-run kernel node.
     prediction_warning: str | None = None
 
 

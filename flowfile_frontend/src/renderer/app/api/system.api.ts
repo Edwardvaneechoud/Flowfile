@@ -153,3 +153,74 @@ export async function createDbBackup(reason: "manual" | "pre_update"): Promise<D
   const response = await axios.post<PyDbBackup>(DB_BACKUPS_URL, { reason });
   return fromPyBackup(response.data);
 }
+
+// The exchange store, where results cross between compute backends: `/system/exchange_store` (admin-only).
+const EXCHANGE_STORE_URL = "/system/exchange_store";
+
+export interface ExchangeStoreSaved {
+  uri: string | null;
+  connection: string | null;
+  maxRows: number | null;
+}
+
+/** The store a run uses now, where it comes from, what is saved, and the S3 connections a store may use. */
+export interface ExchangeStoreState {
+  uri: string | null;
+  connection: string | null;
+  maxRows: number | null;
+  /** Why the environment's row limit is not a whole number; every crossing is refused until it is fixed. */
+  maxRowsError: string | null;
+  source: "env" | "saved" | "none";
+  envOverride: boolean;
+  saved: ExchangeStoreSaved;
+  connections: string[];
+}
+
+export interface ExchangeStoreInput {
+  uri: string | null;
+  connection: string | null;
+  maxRows: number | null;
+}
+
+interface PyExchangeStoreSaved {
+  uri: string | null;
+  connection: string | null;
+  max_rows: number | null;
+}
+
+interface PyExchangeStoreState {
+  uri: string | null;
+  connection: string | null;
+  max_rows: number | null;
+  max_rows_error?: string | null;
+  source: "env" | "saved" | "none";
+  env_override: boolean;
+  saved: PyExchangeStoreSaved;
+  connections: string[];
+}
+
+const fromPyExchangeStore = (raw: PyExchangeStoreState): ExchangeStoreState => ({
+  uri: raw.uri,
+  connection: raw.connection,
+  maxRows: raw.max_rows,
+  maxRowsError: raw.max_rows_error ?? null,
+  source: raw.source,
+  envOverride: raw.env_override,
+  saved: { uri: raw.saved.uri, connection: raw.saved.connection, maxRows: raw.saved.max_rows },
+  connections: raw.connections,
+});
+
+export async function getExchangeStore(): Promise<ExchangeStoreState> {
+  const response = await axios.get<PyExchangeStoreState>(EXCHANGE_STORE_URL);
+  return fromPyExchangeStore(response.data);
+}
+
+/** Saves the store; a null `uri` clears it. */
+export async function setExchangeStore(input: ExchangeStoreInput): Promise<ExchangeStoreState> {
+  const response = await axios.post<PyExchangeStoreState>(EXCHANGE_STORE_URL, {
+    uri: input.uri,
+    connection: input.connection,
+    max_rows: input.maxRows,
+  });
+  return fromPyExchangeStore(response.data);
+}

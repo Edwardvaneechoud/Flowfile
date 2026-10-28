@@ -111,3 +111,31 @@ def test_worker_catalog_cloud_write_read_metadata():
     # The Delta log actually exists in object storage.
     listed = get_minio_client().list_objects_v2(Bucket=_BUCKET, Prefix="catalog/wtbl/_delta_log/")
     assert listed.get("KeyCount", 0) > 0
+
+
+@requires_minio
+def test_worker_writes_a_catalog_table_named_by_identity_into_object_storage():
+    from multiprocessing import Queue
+
+    from flowfile_worker import mp_context
+
+    _ensure_bucket()
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+    queue = Queue(maxsize=1)
+
+    funcs.write_delta(
+        polars_serializable_object=pl.LazyFrame({"a": [1, 2]}).serialize(),
+        progress=progress,
+        error_message=error_message,
+        queue=queue,
+        file_path="",
+        table_name="byid",
+        table_id=4,
+        storage_payload=_catalog_payload(),
+    )
+
+    assert progress.value == 100
+    assert queue.get(timeout=5)["table_path"] == _BASE_URI + "/byid"
+    listed = get_minio_client().list_objects_v2(Bucket=_BUCKET, Prefix="catalog/byid/_delta_log/")
+    assert listed.get("KeyCount", 0) > 0

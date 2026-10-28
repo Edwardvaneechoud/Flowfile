@@ -5,8 +5,8 @@
       <h2 class="page-title">Python kernels</h2>
       <p class="page-description">
         Isolated Python environments that run your Python Script and custom nodes. Each kernel is a
-        Docker container with its own packages. Regular data nodes don't need one — they run in
-        Flowfile's worker service (see the Performance tab).
+        Docker container with its own packages. Regular data nodes don't need one — they run on
+        Flowfile's default worker (see the Backends tab).
       </p>
     </div>
 

@@ -97,6 +97,7 @@ def test_window_node_round_trips_through_save():
     w = node.setting_input.window_input
     assert w.partition_by == ["g"]
     assert [(x.column, x.function, x.new_column_name) for x in w.window_functions] == [("a", "mean", "m")]
+    reopened.execution_location = "local"
     reopened.run_graph()
     result = node.get_resulting_data().data_frame
     if isinstance(result, pl.LazyFrame):

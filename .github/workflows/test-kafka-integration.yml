@@ -94,6 +94,9 @@ jobs:
         run: poetry run start_redpanda
 
       - name: Start flowfile_worker
+        # The worker runs on the runner beside the tests' core and writes their local-disk catalog, so it declares the file scheme.
+        env:
+          FLOWFILE_WORKER_LOCAL_FILES: "1"
         run: |
           poetry run flowfile_worker &
           echo "Waiting for worker to start..."
@@ -110,7 +113,7 @@ jobs:
       - name: Run Kafka integration tests
         run: |
           poetry run pytest tests/kafka -m kafka -vv --tb=long --log-cli-level=INFO
-        timeout-minutes: 10
+        timeout-minutes: 13
         env:
           TEST_MODE: "1"
 

@@ -1,0 +1,341 @@
+"""What every compute backend guarantees, checked on each backend in ``conftest.BACKENDS``: the worker embedded in
+this process and the session worker.
+
+- Core receives at most ``n`` rows of a result: ``sample`` and the sample ``submit`` returns are the only rows,
+  ``count`` answers a number and ``plan_for`` a plan. With the protocol flag on, every backend returns that sample
+  from ``submit`` when ``preview_rows`` asks for one.
+- Only the backend that minted a result reads it: every other backend refuses its reference with ``ForeignRef``, in
+  every method that takes one, and leaves the result where it is.
+- Core learns a result's schema from its reference: every table result carries the columns of its rows, core predicts
+  the columns downstream from them, and a stored result whose file core cannot open is still known by its reference. A
+  blob result has none: it is held as bytes, crosses as bytes and is never planned over, sampled or counted.
+- Data crosses a backend boundary only through ``export`` and ``import_uri``: ``export`` writes a result to a URI and
+  answers the URI, no rows, and ``import_uri`` holds what is at a URI as a deferred result of the importing backend,
+  known by the schema and row count it was given; releasing it leaves the file.
+- Materialising is the backend's choice except where core marks it required: a required result is computed once and
+  answers the same rows on every read, a plan that need not be materialised stays deferred, and a wide plan follows
+  the backend's documented policy.
+- A backend runs the operations its capabilities name and refuses every other kind with ``OperationUnsupported``.
+- Failures are typed: a compute out of reach is ``ComputeUnavailable``, never a missing result; a released result is
+  missing; a compute on other versions is refused with ``VersionMismatch`` before it runs anything.
+"""
+
+import io
+import uuid
+from collections.abc import Callable, Iterator
+from datetime import date, datetime
+
+import polars as pl
+import pyarrow as pa
+import pytest
+
+from flowfile_core.configs import settings
+from flowfile_core.flowfile.execution.errors import (
+    ComputeUnavailable,
+    ForeignRef,
+    OperationUnsupported,
+    ResultMissing,
+    VersionMismatch,
+)
+from flowfile_core.flowfile.execution.protocol import (
+    ComputeBackend,
+    JobHandle,
+    OperationKind,
+    ResultRef,
+    SubmitHints,
+    SubmitResult,
+)
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from shared.compute_protocol import file_uri
+
+PEOPLE = pl.DataFrame({"id": list(range(10)), "name": [f"n{i}" for i in range(10)]})
+
+MIXED = pl.DataFrame(
+    {
+        "id": [0, 1, 2],
+        "name": ["a", None, "c"],
+        "score": [0.5, 1.5, 2.5],
+        "active": [True, False, True],
+        "day": [date(2026, 1, 1), date(2026, 1, 2), date(2026, 1, 3)],
+        "seen": [datetime(2026, 1, 1, 12), datetime(2026, 1, 2, 12), datetime(2026, 1, 3, 12)],
+        "tags": [[1, 2], [], [3]],
+        "point": [{"x": 1, "label": "a"}, {"x": 2, "label": "b"}, {"x": 3, "label": None}],
+    },
+    schema_overrides={"seen": pl.Datetime("us", "UTC")},
+)
+
+DOWNSTREAM = [
+    (pl.col("score") * pl.col("id")).alias("weighted"),
+    pl.col("day").dt.offset_by("1mo").alias("next_month"),
+    pl.col("seen").dt.offset_by("1d").alias("next_day"),
+    pl.col("tags").list.first().alias("first_tag"),
+    pl.col("point").struct.field("label"),
+]
+"""Each column's dtype follows from an input column's, so a wrong dtype in the reference shows downstream."""
+
+STATES = pytest.mark.parametrize("must_materialise", [False, True], ids=["deferred", "materialised"])
+
+SHUFFLED = pl.LazyFrame({"id": list(range(1000))}).select(pl.col("id").shuffle())
+"""A plan whose rows come in another order each time it runs."""
+
+BLOB = bytes(range(256)) * 64
+"""Bytes that are no rows and no UTF-8, as a fitted model's are."""
+
+CALLS_WITH_A_REF: dict[str, Callable[[ComputeBackend, ResultRef], object]] = {
+    "plan_for": lambda backend, ref: backend.plan_for(ref),
+    "sample": lambda backend, ref: backend.sample(ref, 1),
+    "count": lambda backend, ref: backend.count(ref),
+    "exists": lambda backend, ref: backend.exists(ref),
+    "release": lambda backend, ref: backend.release(ref),
+    "export": lambda backend, ref: backend.export(ref, "file:///nowhere/out.parquet", None),
+}
+
+
+def hints(
+    *, must_materialise: bool = False, wide: bool = False, fanout: int = 1, preview_rows: int | None = None
+) -> SubmitHints:
+    return SubmitHints(must_materialise=must_materialise, wide=wide, fanout=fanout, preview_rows=preview_rows)
+
+
+def stored(given: SubmitHints) -> bool:
+    """Whether a backend in ``conftest.BACKENDS`` stores a submit with these hints: each documents this policy."""
+    return given.must_materialise or (given.wide and (given.preview_rows is not None or given.fanout > 1))
+
+
+def submit_people(
+    backend: ComputeBackend,
+    submit_hints: SubmitHints,
+    frame: pl.DataFrame = PEOPLE,
+    plan: pl.LazyFrame | None = None,
+) -> SubmitResult:
+    if plan is None:
+        plan = frame.lazy().filter(pl.col("id") >= 0)
+    return backend.submit(plan, [], submit_hints, f"conformance-{uuid.uuid4().hex}", flow_id=-1, node_id=-1)
+
+
+def rows(stream: bytes) -> int:
+    return pa.ipc.open_stream(io.BytesIO(stream)).read_all().num_rows
+
+
+def ids(stream: bytes) -> list[int]:
+    return pl.read_ipc_stream(stream)["id"].to_list()
+
+
+def polars_columns(schema: pl.Schema) -> list[tuple[str, str]]:
+    return [(name, str(dtype)) for name, dtype in schema.items()]
+
+
+def flowfile_columns(schema: list[FlowfileColumn]) -> list[tuple[str, str]]:
+    return [(column.column_name, column.data_type) for column in schema]
+
+
+@pytest.fixture
+def submitted(backend: ComputeBackend) -> Iterator[Callable[..., SubmitResult]]:
+    """Submits ``PEOPLE``, ``frame`` or ``plan`` to ``backend`` with the given hints; each is released at the end."""
+    refs = []
+
+    def submit(frame: pl.DataFrame = PEOPLE, plan: pl.LazyFrame | None = None, **hint_values) -> SubmitResult:
+        result = submit_people(backend, hints(**hint_values), frame, plan)
+        refs.append(result.ref)
+        return result
+
+    yield submit
+    for ref in refs:
+        backend.release(ref)
+
+
+@STATES
+def test_sample_returns_at_most_n_rows(backend, submitted, must_materialise):
+    ref = submitted(must_materialise=must_materialise).ref
+
+    for n in (0, 1, 4, PEOPLE.height + 5):
+        assert rows(backend.sample(ref, n)) == min(n, PEOPLE.height), f"sample(ref, {n})"
+
+
+@STATES
+@pytest.mark.parametrize("preview_rows", [None, 1, 4])
+def test_the_inline_sample_holds_at_most_preview_rows(backend, submitted, must_materialise, preview_rows):
+    result = submitted(must_materialise=must_materialise, preview_rows=preview_rows)
+
+    assert (result.ref.backend_id, result.handle) == (backend.id, JobHandle(backend.id, result.ref.result_id))
+    assert result.ref.state == ("materialised" if stored(hints(must_materialise=must_materialise)) else "deferred")
+    if preview_rows is None:
+        assert result.sample is None
+    else:
+        assert pl.read_ipc_stream(result.sample).equals(PEOPLE.head(preview_rows))
+
+
+@STATES
+def test_count_answers_a_number_and_plan_for_a_plan(backend, submitted, must_materialise):
+    ref = submitted(must_materialise=must_materialise).ref
+
+    assert backend.count(ref) == PEOPLE.height
+    assert isinstance(backend.plan_for(ref), pl.LazyFrame)
+
+
+@pytest.mark.parametrize("call", list(CALLS_WITH_A_REF))
+def test_another_backend_refuses_a_result_it_did_not_mint(backend, minted_elsewhere, call):
+    for minter, ref in minted_elsewhere:
+        with pytest.raises(ForeignRef):
+            CALLS_WITH_A_REF[call](backend, ref)
+        assert minter.exists(ref), f"the {minter.id} backend lost its {ref.state} result"
+
+
+@STATES
+def test_every_table_result_carries_the_schema_of_its_rows(backend, submitted, must_materialise):
+    ref = submitted(frame=MIXED, must_materialise=must_materialise).ref
+    expected = polars_columns(MIXED.schema)
+
+    assert flowfile_columns(ref.schema) == expected
+    assert polars_columns(pl.read_ipc_stream(backend.sample(ref, 0)).schema) == expected
+
+
+def test_a_blob_is_held_as_bytes_crosses_as_bytes_and_is_never_read_as_rows(backend, backend_name, tmp_path):
+    """The source is removed once imported, so what the backend exports is the copy it holds."""
+    if backend_name == "worker" and not settings.FLOWFILE_COMPUTE_PROTOCOL:
+        pytest.skip("the worker backend holds a blob over its /v1 routes, with the protocol flag on")
+    source = tmp_path / "model.bin"
+    source.write_bytes(BLOB)
+    target = tmp_path / "copy.bin"
+
+    ref = backend.import_uri(file_uri(source), None, None, None, kind="blob")
+
+    try:
+        assert (ref.backend_id, ref.kind, ref.state, ref.schema, ref.row_count) == (
+            backend.id,
+            "blob",
+            "materialised",
+            [],
+            None,
+        )
+        assert backend.exists(ref)
+        source.unlink()
+        for read in (backend.plan_for, backend.count, lambda blob: backend.sample(blob, 1)):
+            with pytest.raises(OperationUnsupported):
+                read(ref)
+        assert backend.export(ref, file_uri(target), None) == file_uri(target)
+        assert target.read_bytes() == BLOB
+    finally:
+        backend.release(ref)
+    assert backend.exists(ref) is False
+    assert target.read_bytes() == BLOB
+
+
+@STATES
+def test_core_predicts_downstream_columns_from_the_reference(submitted, must_materialise):
+    ref = submitted(frame=MIXED, must_materialise=must_materialise).ref
+
+    predicted = FlowDataEngine.create_from_schema(ref.schema).data_frame.select(DOWNSTREAM).collect_schema()
+
+    assert predicted == MIXED.lazy().select(DOWNSTREAM).collect_schema()
+
+
+@STATES
+def test_a_stored_result_is_known_by_its_reference_where_core_cannot_open_it(unreadable, submitted, must_materialise):
+    ref = submitted(frame=MIXED, must_materialise=must_materialise).ref
+    leaf = unreadable.plan_for(ref)
+    if ref.state == "materialised":
+        with pytest.raises(FileNotFoundError):
+            leaf.collect_schema()
+
+    engine = FlowDataEngine(leaf, schema=ref.schema, number_of_records=ref.row_count)
+
+    assert flowfile_columns(engine.schema) == polars_columns(MIXED.schema)
+    assert unreadable.count(ref) == MIXED.height
+    assert rows(unreadable.sample(ref, 2)) == 2
+
+
+@STATES
+def test_a_result_crosses_a_boundary_only_through_export_and_import_uri(backend, submitted, must_materialise, tmp_path):
+    ref = submitted(frame=MIXED, must_materialise=must_materialise).ref
+    target = file_uri(tmp_path / "out.parquet")
+
+    uri = backend.export(ref, target, None)
+
+    assert isinstance(uri, str) and uri == target
+    assert pl.read_parquet(tmp_path / "out.parquet").equals(MIXED)
+    imported = backend.import_uri(uri, ref.schema, MIXED.height, None)
+    try:
+        assert (imported.backend_id, imported.state) == (backend.id, "deferred")
+        assert flowfile_columns(imported.schema) == polars_columns(MIXED.schema)
+        assert backend.count(imported) == MIXED.height
+        assert rows(backend.sample(imported, 2)) == 2
+    finally:
+        backend.release(imported)
+    assert backend.exists(imported) is False
+    assert (tmp_path / "out.parquet").is_file()
+
+
+def test_a_required_result_is_computed_once_and_read_the_same_twice(backend, submitted):
+    deferred = submitted(plan=SHUFFLED).ref
+    assert ids(backend.sample(deferred, 1000)) != ids(backend.sample(deferred, 1000)), "the plan reads one order"
+
+    ref = submitted(plan=SHUFFLED, must_materialise=True).ref
+
+    assert ref.state == "materialised"
+    first, second = ids(backend.sample(ref, 1000)), ids(backend.sample(ref, 1000))
+    assert first == second
+    assert sorted(first) == list(range(1000))
+    assert backend.count(ref) == 1000
+
+
+def test_a_result_that_need_not_be_materialised_stays_deferred(backend, submitted):
+    ref = submitted().ref
+
+    assert ref.state == "deferred"
+    assert ref.row_count is None
+    assert backend.count(ref) == PEOPLE.height
+
+
+@pytest.mark.parametrize("fanout", [1, 2])
+@pytest.mark.parametrize("preview_rows", [None, 4])
+def test_a_wide_plan_follows_the_backend_policy(submitted, preview_rows, fanout):
+    ref = submitted(wide=True, preview_rows=preview_rows, fanout=fanout).ref
+
+    expected = "materialised" if stored(hints(wide=True, preview_rows=preview_rows, fanout=fanout)) else "deferred"
+    assert ref.state == expected
+
+
+def test_capabilities_name_only_operation_kinds(backend):
+    assert backend.capabilities().operations <= {kind.value for kind in OperationKind}
+
+
+@pytest.mark.parametrize("kind", list(OperationKind), ids=lambda kind: kind.value)
+def test_run_op_refuses_exactly_the_operations_capabilities_leave_out(backend, kind):
+    if kind.value in backend.capabilities().operations:
+        # a declared kind reaches its handler, which refuses the empty payload
+        with pytest.raises((TypeError, ValueError)):
+            backend.run_op(kind, {})
+    else:
+        with pytest.raises(OperationUnsupported):
+            backend.run_op(kind, {})
+
+
+def test_a_compute_out_of_reach_is_unavailable_never_missing(backend, unreachable, submitted):
+    ref = submitted(must_materialise=True).ref
+
+    with pytest.raises(ComputeUnavailable):
+        unreachable.exists(ref)
+    with pytest.raises(ComputeUnavailable):
+        unreachable.capabilities()
+    with pytest.raises(ComputeUnavailable):
+        submit_people(unreachable, hints(must_materialise=True))
+
+
+@STATES
+def test_a_released_result_is_missing(backend, submitted, must_materialise):
+    ref = submitted(must_materialise=must_materialise).ref
+    assert backend.exists(ref)
+
+    backend.release(ref)
+
+    assert backend.exists(ref) is False
+    for read in (lambda: backend.sample(ref, 1), lambda: backend.count(ref)):
+        with pytest.raises(ResultMissing, match=ref.result_id):
+            read()
+
+
+def test_a_compute_on_other_versions_runs_nothing(on_other_versions):
+    with pytest.raises(VersionMismatch, match="polars_version"):
+        submit_people(on_other_versions, hints(must_materialise=True))

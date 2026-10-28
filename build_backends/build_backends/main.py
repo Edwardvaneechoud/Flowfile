@@ -30,6 +30,16 @@ def merge_directories(directories: list[str], target_dir: str, cleanup_after_mer
 # The in-core notebook runner imports frame modules lazily, so collect them all.
 NOTEBOOK_COLLECTED_PACKAGES = ["flowfile_frame"]
 
+# shared.compute_protocol.PLUGIN_PACKAGES: the handshake reports each by its installed version, so its metadata ships.
+HANDSHAKE_METADATA_PACKAGES = (
+    "polars_grouper",
+    "polars_simed",
+    "polars_ds",
+    "deltalake",
+    "pl_fuzzy_frame_match",
+    "polars_expr_transformer",
+)
+
 
 def create_spec_file(directory, script_name, output_name, hidden_imports, collected_packages=()):
     """Create an optimized spec file for faster startup.
@@ -248,6 +258,11 @@ for _pkg in _polars_plugins:
     except Exception as _e:
         print(f"WARN: could not collect plugin {{_pkg}}: {{_e}}")
 
+# No try: a bundle without one of these refuses every node that needs it.
+handshake_metadata_datas = []
+for _pkg in {list(HANDSHAKE_METADATA_PACKAGES)!r}:
+    handshake_metadata_datas += copy_metadata(_pkg)
+
 # polars' Rust side imports polars._utils.threading (and .cloud) at runtime —
 # invisible to static analysis, so collect every polars submodule explicitly.
 polars_hiddenimports = [m for m in collect_submodules("polars") if not m.startswith("polars.testing")]
@@ -300,7 +315,8 @@ a = Analysis(
     binaries=plugin_binaries + ai_binaries,
     datas=numpy_datas + pyarrow_datas + connectorx_datas + alembic_datas
     + code_generator_datas + demo_flows_datas + standard_icons_datas
-    + kernel_manifest_datas + share_manifest_datas + plugin_datas + litellm_datas + ai_datas,
+    + kernel_manifest_datas + share_manifest_datas + plugin_datas + handshake_metadata_datas
+    + litellm_datas + ai_datas,
     hiddenimports={hidden_imports} + plugin_hiddenimports + polars_hiddenimports
     + litellm_hiddenimports + ai_hiddenimports + collected_hiddenimports + [
         'numpy',
@@ -462,7 +478,22 @@ def combine_packages():
                 shutil.move(temp_target_exe, target_exe)
 
 
+def require_64bit_polars_runtime() -> None:
+    """Refuse to bundle a venv whose Polars does not load its 64-bit index runtime.
+
+    The desktop app and the Docker images ship that runtime from the ``runtime64`` dependency group; a bundle on the
+    32-bit one is refused by every 64-bit worker at the handshake.
+    """
+    import polars as pl
+
+    if pl.get_index_type() != pl.UInt64:
+        raise SystemExit(
+            "Polars loads its 32-bit index runtime here; run `poetry install --with build,runtime64` before bundling"
+        )
+
+
 def main():
+    require_64bit_polars_runtime()
     for dir_name in ["services_dist"]:
         if os.path.exists(dir_name):
             shutil.rmtree(dir_name)
@@ -474,6 +505,8 @@ def main():
         # below row 1.
         "xlsx2csv",
         "polars",
+        # polars._plr imports its runtime inside a function; the bundle ships the 64-bit one.
+        "_polars_runtime_64",
         "numpy",
         "numpy.core._methods",
         "pyarrow",

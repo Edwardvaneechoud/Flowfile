@@ -32,6 +32,27 @@ class TestCreateDir:
         assert success is False
         assert error is not None
 
+    def test_create_with_a_dot_dot_name_is_refused(self, tmp_path):
+        (tmp_path / "inner").mkdir()
+        success, error = create_dir(NewDirectory(source_path=str(tmp_path / "inner"), dir_name="../escaped"))
+        assert success is False
+        assert getattr(error, "status_code", None) == 403
+        assert not (tmp_path / "escaped").exists()
+
+    def test_create_outside_the_allowed_roots_is_refused_off_desktop(self, tmp_path, monkeypatch):
+        from flowfile_core.configs import settings
+        from shared.storage_config import storage
+
+        monkeypatch.setattr(settings, "is_electron_mode", lambda: False)
+        monkeypatch.setattr(storage, "_user_data_dir", tmp_path / "user")
+        (tmp_path / "user").mkdir()
+        success, error = create_dir(NewDirectory(source_path=str(tmp_path), dir_name="outside"))
+        assert success is False
+        assert getattr(error, "status_code", None) == 403
+        assert not (tmp_path / "outside").exists()
+        assert create_dir(NewDirectory(source_path=str(tmp_path / "user"), dir_name="inside")) == (True, None)
+        assert (tmp_path / "user" / "inside").is_dir()
+
 
 class TestRemovePath:
     """Test remove_path function."""

@@ -1,9 +1,11 @@
 """Runtime for the run_flow node: resolve, inspect, and execute catalog flows as subflows.
 
-The child graph always runs in-process and local (fresh flow_id, never registered
-in the FlowfileHandler, per-graph execution settings — the global worker-offload
-flag is untouched). Outputs stay lazy; only the small parameter frame is
-bounded-collected in core.
+The child graph runs in-process under the parent run's execution context (fresh
+flow_id, never registered in the FlowfileHandler, per-graph execution settings).
+With ``FLOWFILE_COMPUTE_PROTOCOL`` on, the child takes the parent's
+``execution_location``; off, it is set ``local``. Outputs stay lazy; only the
+small parameter frame is read (at most ``MAX_SUBFLOW_RUNS + 1`` rows), with the
+flag on through ``bounded.head_rows`` on the run's backend, off collected in core.
 """
 
 import threading
@@ -20,8 +22,11 @@ from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.service import CatalogService
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.flow_data_engine.bounded import head_rows
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, _derived_schema
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_node.multi_output import NamedOutputs, output_handle
 from flowfile_core.flowfile.param_types import (
@@ -360,7 +365,10 @@ def _build_run_params(
         return [base]
 
     n_records = 1 if settings.iteration_mode == "first_value" else MAX_SUBFLOW_RUNS + 1
-    param_df = param_input.collect(n_records=n_records)
+    if FLOWFILE_COMPUTE_PROTOCOL:
+        param_df = pl.from_arrow(head_rows(current_context().backend, param_input.data_frame, n_records))
+    else:
+        param_df = param_input.collect(n_records=n_records)
     missing = sorted({b.column_name for b in column_bindings} - set(param_df.columns))
     if missing:
         raise ValueError(f"Parameter input is missing mapped column(s): {', '.join(missing)}")
@@ -421,8 +429,7 @@ def _metadata_literals(
         value = run_params.get(binding.parameter_name)
         if value is None:
             value = spec.typed_default() if spec else ""
-        # Cast so the materialized dtype matches the predicted schema
-        # (pl.lit(int) alone yields Int32, prediction promises Int64).
+        # Cast to the predicted dtype: pl.lit(int) alone yields Int32 where the prediction says Int64.
         dtype = _PARAM_TYPE_TO_PL.get(spec.type if spec else "string", pl.String)
         literals.append(pl.lit(value).cast(dtype).alias(names[binding.parameter_name]))
     literals.append(pl.lit(run_index).cast(pl.UInt32).alias(names[RUN_INDEX_COLUMN]))
@@ -475,7 +482,27 @@ def execute_run_flow_node(
     param_input: FlowDataEngine | None,
     data_inputs: tuple,
 ) -> "NamedOutputs | FlowDataEngine":
-    """Execute the referenced subflow once (or once per parameter row) and collect outputs."""
+    """Execute the referenced subflow once (or once per parameter row) and collect outputs.
+
+    Each child run comes back under fresh ids, so the stored child results the Run Flow node adopted on its previous
+    run are released once this run ends, and the nodes downstream, whose plans scanned them, count as not run.
+    """
+    node = parent_graph.get_node(settings.node_id)
+    previous = node.take_adopted_results() if node is not None else []
+    try:
+        return _execute_runs(parent_graph, settings, param_input, data_inputs)
+    finally:
+        if node is not None and node.release_superseded(previous):
+            node.drop_downstream_results()
+
+
+def _execute_runs(
+    parent_graph: "FlowGraph",
+    settings: input_schema.NodeRunFlow,
+    param_input: FlowDataEngine | None,
+    data_inputs: tuple,
+) -> "NamedOutputs | FlowDataEngine":
+    """The child runs of ``execute_run_flow_node``, each adopting its child's stored results onto the node."""
     from flowfile_core.flowfile.manage.io_flowfile import open_flow
 
     node = parent_graph.get_node(settings.node_id)
@@ -515,10 +542,11 @@ def execute_run_flow_node(
     if unbound:
         node_logger.warning(f"Subflow input(s) not connected: {', '.join(unbound)}; using their sample data")
 
-    # Must match predict_run_flow_named_schemas (_appends_metadata): appending is
-    # driven by the settings alone, even for a single run without parameter data.
+    # Must match predict_run_flow_named_schemas: the settings alone decide, even for a single run.
     append_metadata = _appends_metadata(settings)
-    collected: dict[str, list[pl.LazyFrame]] = {name: [] for name in settings.output_slots}
+    collected: dict[str, list[tuple[FlowDataEngine, pl.LazyFrame, list[pl.Expr] | None]]] = {
+        name: [] for name in settings.output_slots
+    }
 
     for run_index, run_params in enumerate(runs, start=1):
         if parent_graph.flow_settings.is_canceled:
@@ -527,11 +555,11 @@ def execute_run_flow_node(
 
         child = open_flow(resolved.path, user_id=settings.user_id)
         child.flow_id = create_unique_id()
-        # The setter does not rebuild the per-flow_id logger; without this, child
-        # runs log into the subflow file's own editor log (and collide when the
-        # same subflow runs from two parents at once).
+        # The setter keeps the old logger, which would log child runs into the subflow's editor log.
         child.flow_logger = FlowLogger(child.flow_id)
-        child.flow_settings.execution_location = "local"
+        child.flow_settings.execution_location = (
+            parent_graph.flow_settings.execution_location if FLOWFILE_COMPUTE_PROTOCOL else "local"
+        )
         child.flow_settings.execution_mode = "Performance"
         child.flow_settings.auto_save = False
         child._subflow_ancestry = ancestry | {path_key}
@@ -549,7 +577,9 @@ def execute_run_flow_node(
             child_node = child.get_node(input_ports[slot_name].node_id)
             if child_node is None:
                 raise ValueError(f"Subflow input node for '{slot_name}' could not be loaded")
-            child_node.function = FlowDataEngine(engine.data_frame)
+            child_node.function = FlowDataEngine(
+                engine.data_frame, schema=engine.schema if FLOWFILE_COMPUTE_PROTOCOL else None
+            )
 
         if node is not None:
             node._subflow_cancel_context = child
@@ -560,9 +590,13 @@ def execute_run_flow_node(
         finally:
             if node is not None:
                 node._subflow_cancel_context = None
+            # The child graph is dropped; the node takes over the stored results its outputs' plans scan.
+            for child_node in child.nodes:
+                child_node.release_deferred_result()
+                if node is not None:
+                    node.adopt_results(child_node)
 
-        # Cancel first: a mid-node cancel leaves node results unsuccessful, which
-        # would otherwise surface as a bogus "run failed" error.
+        # Check cancel first: a mid-node cancel leaves unsuccessful results that would read as a failure.
         if parent_graph.flow_settings.is_canceled or child.flow_settings.is_canceled:
             raise Exception("Flow run was canceled")
         if run_info is None or run_info.success is False:
@@ -578,10 +612,7 @@ def execute_run_flow_node(
                     "connect it or remove the flow_output node"
                 )
             if out_node.node_id in deliberately_skipped:
-                # The output sits behind a closed gate in the child: pulling it
-                # would lazily execute the gated-off branch. The slot still has
-                # to yield something, so contribute a zero-row frame with its
-                # predicted schema.
+                # Behind a closed gate: pulling it would run the gated-off branch, so yield zero rows.
                 try:
                     skipped_schema = out_node.schema
                 except Exception:
@@ -592,13 +623,15 @@ def execute_run_flow_node(
                 )
             else:
                 result = out_node.get_resulting_data()
+            kept = result if result is not None else FlowDataEngine()
             lf = result.data_frame if result is not None else pl.DataFrame().lazy()
             if not isinstance(lf, pl.LazyFrame):
                 lf = lf.lazy()
+            literals = None
             if append_metadata:
-                existing = list(lf.collect_schema().names())
-                lf = lf.with_columns(_metadata_literals(settings, interface, run_params, run_index, existing))
-            collected[slot_name].append(lf)
+                existing = list(kept.polars_schema().names())
+                literals = _metadata_literals(settings, interface, run_params, run_index, existing)
+            collected[slot_name].append((kept, lf, literals))
         node_logger.info(f"Subflow '{resolved.name}' run {run_index}/{len(runs)} completed")
 
     if not settings.output_slots:
@@ -606,11 +639,21 @@ def execute_run_flow_node(
 
     engines: dict[str, FlowDataEngine] = {}
     for slot_name in settings.output_slots:
-        frames = collected[slot_name]
-        if len(frames) == 1:
-            engines[slot_name] = FlowDataEngine(frames[0])
-        else:
-            # Iterated runs may legitimately drift schema (parameter-driven selects);
-            # relaxed diagonal concat fills gaps with nulls and unifies supertypes.
-            engines[slot_name] = FlowDataEngine(pl.concat(frames, how="diagonal_relaxed"))
+        outputs = collected[slot_name]
+        steps = tuple(literals for _, _, literals in outputs)
+
+        def combined(*frames: pl.LazyFrame, steps=steps) -> pl.LazyFrame:
+            stepped = [
+                frame if literals is None else frame.with_columns(literals)
+                for frame, literals in zip(frames, steps, strict=True)
+            ]
+            if len(stepped) == 1:
+                return stepped[0]
+            # Iterated runs may differ in schema (parameter-driven selects), so concat diagonally.
+            return pl.concat(stepped, how="diagonal_relaxed")
+
+        engines[slot_name] = FlowDataEngine(
+            combined(*(lf for _, lf, _ in outputs)),
+            schema=_derived_schema(combined, *(engine for engine, _, _ in outputs)),
+        )
     return NamedOutputs(engines)

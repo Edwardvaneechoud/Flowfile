@@ -1,6 +1,6 @@
 ---
 name: flowfile-architecture-contract
-description: The system map and load-bearing design contracts of Flowfile's core/worker/frontend/kernel/scheduler/shared architecture — who talks to whom, why core never materializes LazyFrames, the worker offload wire protocol, the $ffsec$ secrets format, dual node-execution state, node-hash caching discipline, and the pending/vision directions for execution and catalog decentralization. Use when onboarding to the codebase, deciding which service a new code path belongs in, debugging cross-service contract breaks (secrets, worker offload, kernel containers, scheduler), or evaluating whether a design change would foreclose the maintainer's decentralization vision.
+description: The system map and load-bearing design contracts of Flowfile's core/worker/frontend/kernel/scheduler/shared architecture — who talks to whom, why core never materializes LazyFrames, the worker offload wire protocol, the $ffsec$ secrets format, dual node-execution state, node-hash caching discipline, the compute protocol behind which the worker is the only compute, and the vision direction for catalog decentralization. Use when onboarding to the codebase, deciding which service a new code path belongs in, debugging cross-service contract breaks (secrets, worker offload, kernel containers, scheduler), or evaluating whether a design change would foreclose the maintainer's decentralization vision.
 ---
 
 # Flowfile architecture contract
@@ -378,37 +378,50 @@ events** and must call the cleanup explicitly.
 
 ---
 
-## 12. PENDING DIRECTION — unmerged, not yet true of `main`
+## 12. Directions that shipped: the compute protocol and the notebook kernel
 
-As of 2026-07-03 there is an **unmerged** branch,
-`claude/core-abstraction-flowgraph-001hrn`, carrying 7 commits (5 substantive
-+ a docs commit + a merge of `main` — matching `flowfile-failure-archaeology`'s
-branch inventory) that begin
-decomposing the seams in §2, §3, and §6. **None of this is on `main` or any
-release — treat it as a candidate design, not current behavior**, until it
-lands:
+### Compute protocol: one `ComputeBackend` seam, the worker the only compute
 
-- `WorkerTransport` (`flowfile/execution/transport.py`) — proposed sole owner
-  of worker URLs/HTTP/WS, with typed exceptions instead of §3's ad-hoc
-  error-code scheme.
-- `ExecutionBackend` ABC with `LocalBackend`/`RemoteWorkerBackend`
-  (`flowfile/execution/backends/`) — proposes replacing inline
-  `if execution_location == "local"` branches (§3) with one
-  `backend.run_lazyframe/sample/count_records` call per node. Adds a
-  **ratchet test** pinning the count of remaining inline branches in
-  the `flow_graph/` package, failing if it goes up — worth reusing regardless of
-  whether this branch lands.
-- `NodeSpec` registry (`flowfile/node_registry/`) — proposed single source of
-  truth for built-in node types, unifying four independently-maintained
-  catalogs (`get_all_standard_nodes()`, `NODE_TYPE_TO_SETTINGS_CLASS`,
-  `nodes_with_defaults`, `ai/tools/classification._NODE_CLASS_MAP` — see
-  `flowfile-node-development` for why keeping these in sync today is a known
-  parity hazard) as derived views over one `NodeSpec` per type.
+All compute sits behind one interface, `ComputeBackend`
+(`flowfile_core/flowfile_core/flowfile/execution/protocol.py`, a
+`runtime_checkable` Protocol; the design is
+`docs/for-developers/compute-protocol.md`). A node's plan crosses it as a
+`pl.LazyFrame` and comes back as a `ResultRef` (schema, row count, an opaque
+location), so core holds references and never rows beyond `preview_rows`;
+anything that is not a plain plan is a declared operation (`run_op`), and
+errors are typed (`execution/errors.py`). Two backends, both the worker:
 
-**If asked to work near these seams**, check whether the branch has merged
-(`git log --oneline origin/main..origin/claude/core-abstraction-flowgraph-001hrn` — empty
-means merged or superseded) before assuming either the old inline-branch
-shape or the new backend/registry shape is current truth.
+- `EmbeddedWorkerBackend` (`execution/backends/embedded.py`), id `local`: the
+  worker embedded in this process, reached by calling the bodies of its `/v1`
+  routes directly, with no port, token or socket. A scheduled run,
+  `flowfile run flow` and Flowfile in Python compute on it, each job in the
+  process itself; so does the pip server, its jobs in the worker's pool.
+- `WorkerBackend` (`execution/backends/worker.py`): the HTTP and WebSocket
+  client to a `flowfile_worker` on any host, one method to one `/v1` route,
+  checked once per process through its own `capabilities()` handshake. Ids
+  are `worker` (the built-in default) and `worker:<name>` for each row of the
+  backends table (`compute_backends`, Settings → Execution → Backends); other
+  kinds register through the `flowfile.compute_backends` entry-point group.
+
+A core that serves (the desktop sidecar, the Docker image, the pip server;
+`registry.mark_serving()`) never defaults to `local` and refuses a run placed
+on it before any node starts: `cannot run on backend "local": this core
+serves; compute runs on its worker`. Placement (`execution/placement.py`)
+compares each node's requirements with the backends' capabilities and
+refuses before the run, with the reason in words. With `FLOWFILE_EXCHANGE_URI`
+set, the mixed policy places each node on the backend its own
+`execution_location` names, and the data of every boundary edge crosses
+through the exchange store (`execution/exchange.py`) by `export` and
+`import_uri`; without one, every node of a run goes to the run's backend. No
+inline `execution_location == "local"` branch remains in core
+(`tests/flowfile/execution/test_inline_location_branches.py` holds the count
+at zero).
+
+`FLOWFILE_COMPUTE_PROTOCOL` (default on) still gates the path: with it off,
+core uses the worker's task routes of §3, which answer `Deprecation: true`
+where a `/v1` route replaced them. The flag is removed later. **If asked to
+work near these seams**, read `compute-protocol.md` first; the conformance
+suite (`tests/flowfile/execution/conformance/`) is what every backend passes.
 
 ### Notebook kernel: canvas fallback everywhere, no database copy (planned 2026-10-02, landed 2026-10-03)
 
@@ -607,7 +620,7 @@ read-only command against the repo at commit `f6963c77` (branch
 `feature/claude-skills`), app version **0.12.7**, dated **2026-07-03**. Every
 volatile fact below should be re-checked with its command if this skill feels
 stale — architecture facts like these drift slower than config defaults, but
-line numbers and the pending-branch status will drift fastest.
+line numbers will drift fastest.
 
 ```bash
 # system map / "worker doesn't touch the catalog DB" claim
@@ -648,9 +661,10 @@ grep -n "419" flowfile_core/flowfile_core/routes/routes.py
 # catalog storage per-namespace resolution (vision seam)
 sed -n '1,40p' flowfile_core/flowfile_core/catalog/storage_backend.py
 
-# pending-branch status: has it merged / is it still distinct?
-git log --oneline origin/main..origin/claude/core-abstraction-flowgraph-001hrn 2>/dev/null \
-  || git log --oneline f6963c77..claude/core-abstraction-flowgraph-001hrn
+# compute protocol: the seam, its two backends, the serving core's refusal of `local`
+grep -n "class ComputeBackend" flowfile_core/flowfile_core/flowfile/execution/protocol.py
+grep -n "^class " flowfile_core/flowfile_core/flowfile/execution/backends/*.py
+grep -n "this core serves" flowfile_core/flowfile_core/flowfile/flow_graph/execution.py
 
 # app version
 grep -n '^version' pyproject.toml

@@ -1,20 +1,20 @@
 """A frame's graph is local, so training and scoring a model needs no worker."""
 
+import socket
+
 import polars as pl
 import pytest
 
 import flowfile_frame as ff
 
 
-class _WorkerRefused:
-    def __init__(self, *args, **kwargs):
-        raise AssertionError("a local flow called the worker")
-
-
 @pytest.fixture
 def no_worker(monkeypatch):
-    monkeypatch.setattr("flowfile_core.flowfile.flow_graph.MLTrainFetcher", _WorkerRefused)
-    monkeypatch.setattr("flowfile_core.flowfile.flow_graph.MLApplyFetcher", _WorkerRefused)
+    def refuse(sock, address, *args):
+        raise AssertionError(f"a local flow called the worker at {address}")
+
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(socket.socket, "connect_ex", refuse)
 
 
 def test_train_wait_for_apply_runs_without_a_worker(no_worker):

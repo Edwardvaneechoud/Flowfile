@@ -320,4 +320,4 @@ def test_partition_aggregate_output_types() -> None:
     assert transform_schema.get_window_output_type("std", "Int64") == "Float64"
     assert transform_schema.get_window_output_type("sum", "Int32") == "Int32"
     assert transform_schema.get_window_output_type("min", "String") == "String"
-    assert transform_schema.get_window_output_type("count", "String") == "UInt32"
+    assert transform_schema.get_window_output_type("count", "String") == str(pl.get_index_type())

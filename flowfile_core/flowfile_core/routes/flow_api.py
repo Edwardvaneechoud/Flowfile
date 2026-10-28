@@ -32,6 +32,7 @@ from flowfile_core.flowfile.api_runner import (
     _effective_specs,
     run_flow_as_api,
 )
+from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.schemas.flow_api_schema import (
     ApiConsumerOut,
@@ -50,10 +51,7 @@ from flowfile_core.schemas.flow_api_schema import (
 
 _API_RUN_TIMEOUT = float(os.environ.get("FLOWFILE_API_RUN_TIMEOUT_SECONDS", "120"))
 
-# Global cap on concurrent public API runs. Each request executes a full graph
-# synchronously on a worker thread, so an unbounded fan-in could exhaust the
-# threadpool and memory. Requests beyond the cap get a fast 503 instead of
-# queueing. (Per-flow serialization is handled separately, in the runner.)
+# Each run holds a threadpool thread for a whole graph, so runs past this cap get a fast 503.
 _API_MAX_CONCURRENT_RUNS = int(os.environ.get("FLOWFILE_API_MAX_CONCURRENT_RUNS", "4"))
 _API_RUN_SEMAPHORE = asyncio.Semaphore(_API_MAX_CONCURRENT_RUNS)
 
@@ -172,9 +170,7 @@ async def run_published_flow(
     flow_path = registration.flow_path
     owner_id = endpoint.owner_id
 
-    # Reject fast with 503 when every run slot is busy rather than queueing
-    # unbounded synchronous graph runs onto the threadpool. Checked-then-acquired
-    # without an await in between, so the acquire never blocks (single event loop).
+    # No await between this check and the acquire, so the acquire never blocks.
     if _API_RUN_SEMAPHORE.locked():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -187,12 +183,18 @@ async def run_published_flow(
     await _API_RUN_SEMAPHORE.acquire()
     try:
         return await asyncio.wait_for(anyio.to_thread.run_sync(_run), timeout=_API_RUN_TIMEOUT)
+    except ComputeUnavailable as exc:
+        # Generic detail: the typed message can name the worker URL or the worker's load error.
+        logger.error("Published flow '%s' could not reach compute: %s", slug, exc)
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Compute unavailable") from exc
+    except ComputeError as exc:
+        logger.error("Published flow '%s' failed in compute (%s): %s", slug, type(exc).__name__, exc)
+        raise HTTPException(status_code=500, detail="Flow execution failed") from exc
     except ApiParamError as exc:
         # Parameter errors describe the caller's own input and are safe to return.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except (ApiConfigError, ApiExecutionError) as exc:
-        # Don't leak node-level detail (file paths, SQL, column names) to the public
-        # caller; log it server-side for the owner/operator to inspect instead.
+        # Node-level detail (paths, SQL, columns) is logged for the owner, never returned to the caller.
         logger.error("Published flow '%s' failed: %s", slug, exc)
         raise HTTPException(status_code=500, detail="Flow execution failed") from exc
     except asyncio.TimeoutError as exc:
@@ -219,9 +221,7 @@ def publish_endpoint(
     if db.query(db_models.FlowApiEndpoint).filter_by(slug=body.slug).first() is not None:
         raise HTTPException(status_code=409, detail="Slug already in use")
 
-    # Validate the flow has exactly one api_response node (raises 400 otherwise).
-    # The node id is intentionally not persisted: the runner re-scans the flow at
-    # request time, so a stored id could only go stale against an edited flow.
+    # 400 unless one api_response node; its id is not stored, as the runner re-scans the flow per request.
     _resolve_api_node_id(registration.flow_path, current_user.id)
     ep = db_models.FlowApiEndpoint(
         registration_id=body.registration_id,
@@ -231,8 +231,7 @@ def publish_endpoint(
         param_schema_json=_dump_param_schema(body.parameters),
     )
     db.add(ep)
-    # The pre-checks above aren't atomic with the UNIQUE constraints (slug,
-    # registration_id); a concurrent publisher can still win the race to commit.
+    # The pre-checks aren't atomic with the UNIQUE constraints: a concurrent publisher can still win.
     try:
         db.commit()
     except IntegrityError as exc:
@@ -330,10 +329,7 @@ def get_endpoint(
 ):
     ep = _get_owned_endpoint(db, endpoint_id, current_user.id)
     registration = db.get(db_models.FlowRegistration, ep.registration_id)
-    # Advertise the parameters the runner will actually enforce: the flow's own
-    # ${name} params refined by the stored type overrides (api_runner._effective_specs).
-    # Overrides for params no longer in the flow are dropped, matching runtime
-    # behavior. Falls back to the stored specs if the flow file can't be opened.
+    # Advertise the specs the runner enforces; the stored ones when the flow file can't be opened.
     parameters = _parse_param_schema(ep.param_schema_json)
     if registration and registration.flow_path:
         try:
@@ -365,8 +361,7 @@ def update_endpoint(
         ep.enabled = body.enabled
     if body.parameters is not None:
         ep.param_schema_json = _dump_param_schema(body.parameters)
-    # The slug pre-check above isn't atomic with the UNIQUE constraint; surface a
-    # racing committer as 409 rather than a raw 500.
+    # The slug pre-check isn't atomic with the UNIQUE constraint: a racing commit is a 409, not a 500.
     try:
         db.commit()
     except IntegrityError as exc:
@@ -405,6 +400,10 @@ async def test_endpoint(
 
     try:
         return await asyncio.wait_for(anyio.to_thread.run_sync(_run), timeout=_API_RUN_TIMEOUT)
+    except ComputeUnavailable as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except ComputeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     except ApiParamError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except (ApiConfigError, ApiExecutionError) as exc:
@@ -420,9 +419,7 @@ def delete_endpoint(
     db: Session = Depends(get_db),
 ):
     ep = _get_owned_endpoint(db, endpoint_id, current_user.id)
-    # Implicit (per-endpoint) consumers granted only to this endpoint are garbage-
-    # collected with it; shared consumers just lose this one grant. SQLite FK is off,
-    # so delete grants/keys explicitly rather than relying on a cascade.
+    # SQLite FKs are off, so delete explicitly: this endpoint's keys and grants, and its implicit consumers.
     granted = api_consumer_manager.list_consumers_for_endpoint(db, ep.id, include_implicit=True)
     implicit_ids = [c.id for c in granted if c.is_implicit]
     db.query(db_models.FlowApiKey).filter(db_models.FlowApiKey.endpoint_id == ep.id).delete(synchronize_session=False)

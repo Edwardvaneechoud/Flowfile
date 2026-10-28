@@ -27,7 +27,7 @@ flowfile run ui --no-browser
 ```
 
 !!! info "Unified Mode"
-    The web UI runs in unified mode: one process hosting the Core API, the Worker, and the UI. No separate services or Docker involved.
+    The web UI runs in unified mode: one process hosting the Core API and the UI, with the worker embedded in it and its jobs running in a pool of child processes. No separate services or Docker involved.
 
 ## Opening Pipelines in the Editor
 

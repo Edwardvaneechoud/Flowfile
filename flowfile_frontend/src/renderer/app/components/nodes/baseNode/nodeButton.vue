@@ -7,6 +7,16 @@
     <button :class="['node-button', { selected: isSelected }]" @click="onClick">
       <img :src="iconUrl" :alt="props.title" width="40" />
     </button>
+    <span
+      v-if="placementNote"
+      :class="['placement-badge', `placement-badge--${placementNote.kind}`]"
+      :aria-label="placementNote.text"
+    >
+      <span data-testid="placement-badge">{{ placementNote.label }}</span>
+      <span class="tooltip-text placement-tooltip" data-testid="placement-badge-tooltip">
+        {{ placementNote.text }}
+      </span>
+    </span>
   </div>
 </template>
 
@@ -15,6 +25,9 @@ import { defineProps, defineEmits, computed, onMounted, ref, nextTick, watch } f
 import type { Component } from "vue"; // <-- Import as a TYPE, not a value
 import { useNodeIconUrl } from "../../../composables/useCustomNodeIcon";
 import { useNodeStore } from "../../../stores/column-store";
+import { useFlowStore } from "../../../stores/flow-store";
+import { useResultsStore } from "../../../stores/results-store";
+import { nodePlacementNote } from "../../../utils/placement";
 import { NodeTitleInfo } from "./nodeInterfaces";
 import { deriveNodeStatus, nodeStatusTooltip, type NodeStatusOutput } from "./nodeStatus";
 const description = ref<string>("");
@@ -45,6 +58,12 @@ const nodeResult = computed<NodeStatusOutput | undefined>(() =>
 );
 
 const tooltipContent = computed(() => nodeStatusTooltip(nodeResult.value));
+
+const flowStore = useFlowStore();
+const resultsStore = useResultsStore();
+const placementNote = computed(() =>
+  nodePlacementNote(resultsStore.placements[flowStore.flowId], props.nodeId),
+);
 
 const getNodeDescription = async () => {
   description.value = await nodeStore.getNodeDescription(props.nodeId);
@@ -196,6 +215,36 @@ onMounted(() => {
   transform: translate(-50%, -50%); /* Adjust based on its own dimensions */
   z-index: 1000; /* High enough to float above everything else */
   /* Your existing styles for background, padding, etc. */
+}
+
+.placement-badge {
+  position: absolute;
+  bottom: -14px;
+  right: -18px;
+  z-index: 2;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-warning);
+}
+
+.placement-badge--refused {
+  border-color: var(--color-danger);
+}
+
+/* Below the badge, which sits under the node, so the tooltip never covers the node itself. */
+.placement-tooltip {
+  bottom: auto;
+  top: calc(100% + 6px);
+}
+
+.placement-badge:hover .tooltip-text {
+  visibility: visible;
+  opacity: 1;
 }
 
 .node-button {

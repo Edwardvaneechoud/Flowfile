@@ -2,53 +2,36 @@
 
 Runs the REAL worker FastAPI app on a local uvicorn so the whole chain is
 exercised without mocks: core route -> HTTP -> worker /pool -> TaskPool.
-Auth fixtures mirror tests/ai/test_admin_routes.py (dependency overrides).
+Auth fixtures are tests/conftest.py's admin_client and non_admin_client.
 """
 
 from __future__ import annotations
 
-import socket
 import threading
 import time
 from collections.abc import Iterator
 
+import polars as pl
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
-from flowfile_core.auth.jwt import get_current_active_user, get_current_user
-from flowfile_core.auth.models import User as PydanticUser
-from flowfile_core.routes import system_worker
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
+from shared.compute_protocol import local_capabilities
+from tests.conftest import _free_port, closed_url
 
 
-@pytest.fixture
-def admin_client() -> Iterator[TestClient]:
-    user = PydanticUser(username="local_user", id=1, disabled=False, is_admin=True, must_change_password=False)
-    main.app.dependency_overrides[get_current_active_user] = lambda: user
-    main.app.dependency_overrides[get_current_user] = lambda: user
-    try:
-        yield TestClient(main.app)
-    finally:
-        main.app.dependency_overrides.pop(get_current_active_user, None)
-        main.app.dependency_overrides.pop(get_current_user, None)
-
-
-@pytest.fixture
-def non_admin_client() -> Iterator[TestClient]:
-    user = PydanticUser(username="not_admin", id=2, disabled=False, is_admin=False, must_change_password=False)
-    main.app.dependency_overrides[get_current_active_user] = lambda: user
-    main.app.dependency_overrides[get_current_user] = lambda: user
-    try:
-        yield TestClient(main.app)
-    finally:
-        main.app.dependency_overrides.pop(get_current_active_user, None)
-        main.app.dependency_overrides.pop(get_current_user, None)
+def point_the_worker_backend_at(monkeypatch, url: str) -> None:
+    """The proxy forwards to the worker the registry's worker backend runs on; make that ``url`` for the test."""
+    monkeypatch.setattr(registry.backend(registry.WORKER_BACKEND_ID), "url", url)
 
 
 @pytest.fixture
 def live_worker(monkeypatch, tmp_path) -> Iterator[str]:
-    """Serve the real flowfile_worker app on a free local port; point the proxy at it."""
+    """Serve the real flowfile_worker app on a free local port; point the worker backend, and so the proxy, at it."""
     from flowfile_worker import main as worker_main
     from flowfile_worker import pool as worker_pool
 
@@ -56,9 +39,7 @@ def live_worker(monkeypatch, tmp_path) -> Iterator[str]:
     monkeypatch.setattr(worker_pool, "_settings_file", lambda: tmp_path / "worker_pool.yaml")
     monkeypatch.delenv("FLOWFILE_WORKER_POOL_SIZE", raising=False)
 
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
+    port = _free_port()
 
     server = uvicorn.Server(uvicorn.Config(worker_main.app, host="127.0.0.1", port=port, log_level="error"))
     thread = threading.Thread(target=server.run, daemon=True)
@@ -70,7 +51,7 @@ def live_worker(monkeypatch, tmp_path) -> Iterator[str]:
         time.sleep(0.05)
 
     base_url = f"http://127.0.0.1:{port}"
-    monkeypatch.setattr(system_worker, "WORKER_URL", base_url)
+    point_the_worker_backend_at(monkeypatch, base_url)
     try:
         yield base_url
     finally:
@@ -113,14 +94,47 @@ def test_unauthenticated_gets_401() -> None:
 
 
 def test_worker_down_surfaces_typed_503(admin_client: TestClient, monkeypatch) -> None:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        dead_port = probe.getsockname()[1]
-    monkeypatch.setattr(system_worker, "WORKER_URL", f"http://127.0.0.1:{dead_port}")
+    point_the_worker_backend_at(monkeypatch, closed_url())
 
     response = admin_client.get("/system/worker_pool")
     assert response.status_code == 503, response.text
     assert response.json()["detail"]["error_code"] == "WORKER_UNAVAILABLE"
+
+
+@pytest.fixture
+def unchecked_worker() -> Iterator[None]:
+    """The proxy's request is core's first worker contact, so it runs the handshake."""
+    handshake.reset_handshake()
+    yield
+    handshake.reset_handshake()
+
+
+def test_worker_on_other_versions_surfaces_typed_503(admin_client: TestClient, unchecked_worker, monkeypatch) -> None:
+    reported = local_capabilities().model_copy(update={"polars_version": "0.0.1"})
+    monkeypatch.setattr(WorkerBackend, "capabilities", lambda self: reported)
+
+    response = admin_client.get("/system/worker_pool")
+
+    assert response.status_code == 503, response.text
+    assert response.json()["detail"] == {
+        "error_code": "WORKER_UNAVAILABLE",
+        "message": f'Backend "worker" does not match core (polars_version: core {pl.__version__}, backend 0.0.1)',
+    }
+
+
+def test_worker_down_on_first_contact_surfaces_typed_503(
+    admin_client: TestClient, unchecked_worker, monkeypatch
+) -> None:
+    dead_url = closed_url()
+    point_the_worker_backend_at(monkeypatch, dead_url)
+
+    response = admin_client.get("/system/worker_pool")
+
+    assert response.status_code == 503, response.text
+    detail = response.json()["detail"]
+    assert detail["error_code"] == "WORKER_UNAVAILABLE"
+    assert detail["message"].startswith(f"Worker not reachable: Could not reach the worker at {dead_url}: ")
+    assert detail["message"].endswith("Is the compute backend running? Start it, or check the Backends page.")
 
 
 def test_out_of_range_size_returns_422(admin_client: TestClient, live_worker: str) -> None:

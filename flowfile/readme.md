@@ -53,7 +53,7 @@ The web UI functionality combines multiple components:
 2. **Worker Service**: Handles computation and caching of data operations (flowfile_worker)
 3. **Web UI**: A Vue.js frontend that provides the visual interface
 
-When you start the web UI, all these services are launched together in a unified mode, making it simple to get started without configuration.
+When you start the web UI, they run together in one process in unified mode: flows compute on the worker embedded in it, whose jobs run in a pool of child processes, so there is nothing to configure.
 
 ## Using the Web UI with FlowFrame API
 
@@ -95,7 +95,7 @@ For advanced users who need to customize the server behavior:
 - `FLOWFILE_PORT`: Port to bind the server to (default: 63578)
 - `FLOWFILE_MODE`: Set to "electron" to enable browser auto-opening behavior
 - `FLOWFILE_WORKER_URL`: URL for the worker service
-- `FLOWFILE_SINGLE_FILE_MODE`: Set to "1" to run in unified mode with worker functionality
+- `FLOWFILE_SINGLE_FILE_MODE`: Unified mode. `flowfile run ui` and `start_web_ui()` turn it on for their own process; set by hand for `flowfile run core`, core computes on an embedded worker but serves none of the worker's routes
 - `FLOWFILE_MODULE_NAME`: Module name to run (default: "flowfile")
 
 ### Running Individual Components

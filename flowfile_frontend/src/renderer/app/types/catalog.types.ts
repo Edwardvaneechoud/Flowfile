@@ -98,6 +98,9 @@ export interface NamespaceCreate {
 export interface NamespaceUpdate {
   name?: string;
   description?: string;
+  // Catalog-level only; sent only to change them, and core refuses once a table is stored
+  storage_uri?: string | null;
+  storage_connection_name?: string | null;
 }
 
 // Flow Registration

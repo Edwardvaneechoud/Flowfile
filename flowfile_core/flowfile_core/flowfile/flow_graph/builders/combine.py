@@ -5,9 +5,12 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from flowfile_core.configs import logger
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.payloads import FuzzyJoinPayload, op_payload
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
+    _derived_schema,
 )
 from flowfile_core.flowfile.flow_graph._base import GraphMixinBase
 from flowfile_core.flowfile.flow_graph.history import with_history_capture
@@ -36,8 +39,11 @@ class CombineBuildersMixin(GraphMixinBase):
         """
 
         def _func(*flowfile_tables: FlowDataEngine):
+            def unioned(*frames: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+                return pl.concat(frames, how="diagonal_relaxed")
+
             dfs: list[pl.LazyFrame] | list[pl.DataFrame] = [flt.data_frame for flt in flowfile_tables]
-            return FlowDataEngine(pl.concat(dfs, how="diagonal_relaxed"))
+            return FlowDataEngine(unioned(*dfs), schema=_derived_schema(unioned, *flowfile_tables))
 
         self.add_node_step(
             node_id=union_settings.node_id,
@@ -149,23 +155,23 @@ class CombineBuildersMixin(GraphMixinBase):
 
         def _func(main: FlowDataEngine, right: FlowDataEngine) -> FlowDataEngine:
             node = self.get_node(node_id=fuzzy_settings.node_id)
-            if self.execution_location == "local":
-                return main.fuzzy_join(
-                    fuzzy_match_input=deepcopy(fuzzy_settings.join_input),
-                    other=right,
-                    node_logger=self.flow_logger.get_node_logger(fuzzy_settings.node_id),
-                )
-
-            f = main.start_fuzzy_join(
-                fuzzy_match_input=deepcopy(fuzzy_settings.join_input),
-                other=right,
-                file_ref=node.hash,
+            join = FuzzyJoinPayload(
+                left=main.data_frame.lazy(),
+                right=right.data_frame.lazy(),
+                left_schema=main.schema,
+                right_schema=right.schema,
+                settings=fuzzy_settings,
+                node_logger=self.flow_logger.get_node_logger(fuzzy_settings.node_id),
                 flow_id=self.flow_id,
                 node_id=fuzzy_settings.node_id,
+                job_id=f"{node.hash}_fm",
             )
-            logger.info("Started the fuzzy match action")
-            node._fetch_cached_df = f  # Add to the node so it can be cancelled and fetch later if needed
-            return FlowDataEngine(f.get_result())
+            backend = current_context(self).backend
+            ref = node.run_op(backend, OperationKind.fuzzy_join, op_payload(join), job_id=join.job_id).refs["result"]
+            matched = FlowDataEngine(backend.plan_for(ref), schema=ref.schema, number_of_records=ref.row_count)
+            if ref.state == "deferred":
+                backend.release(ref)
+            return matched
 
         def schema_callback():
             fm_input_copy = FuzzyMatchInputManager(

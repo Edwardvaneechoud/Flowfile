@@ -83,12 +83,16 @@ def _svc(db) -> NamespaceService:
 
 def _create_catalog(*, storage_uri=None, storage_connection_name=None) -> int:
     with get_db_context() as db:
-        return _svc(db).create_namespace(
-            f"nscat_{uuid.uuid4().hex[:8]}",
-            owner_id=1,
-            storage_uri=storage_uri,
-            storage_connection_name=storage_connection_name,
-        ).id
+        return (
+            _svc(db)
+            .create_namespace(
+                f"nscat_{uuid.uuid4().hex[:8]}",
+                owner_id=1,
+                storage_uri=storage_uri,
+                storage_connection_name=storage_connection_name,
+            )
+            .id
+        )
 
 
 def _create_schema(parent_id: int) -> int:
@@ -161,9 +165,7 @@ def test_storage_uri_without_connection_rejected():
 def test_connection_without_uri_rejected():
     _ensure_connection()
     with get_db_context() as db, pytest.raises(InvalidNamespaceStorageError):
-        _svc(db).create_namespace(
-            f"bad_{uuid.uuid4().hex[:6]}", owner_id=1, storage_connection_name=_CONNECTION_NAME
-        )
+        _svc(db).create_namespace(f"bad_{uuid.uuid4().hex[:6]}", owner_id=1, storage_connection_name=_CONNECTION_NAME)
 
 
 def test_unknown_connection_rejected():
@@ -206,9 +208,7 @@ def test_repoint_populated_catalog_locked():
     schema_id = _create_schema(cat_id)
     _add_physical_table(schema_id, "s3://flowfile-test/a/t1")
     with get_db_context() as db, pytest.raises(NamespaceStorageLockedError):
-        _svc(db).update_namespace(
-            cat_id, storage_uri="s3://flowfile-test/b", storage_connection_name=_CONNECTION_NAME
-        )
+        _svc(db).update_namespace(cat_id, storage_uri="s3://flowfile-test/b", storage_connection_name=_CONNECTION_NAME)
 
 
 def test_noop_storage_update_on_populated_catalog_allowed():
@@ -446,9 +446,7 @@ def test_update_route_omit_preserves_storage_explicit_null_clears(authed_client)
     assert r2.json()["storage_uri"] == "s3://flowfile-test/route"
 
     # explicit nulls clear it (empty catalog).
-    r3 = authed_client.put(
-        f"/catalog/namespaces/{ns_id}", json={"storage_uri": None, "storage_connection_name": None}
-    )
+    r3 = authed_client.put(f"/catalog/namespaces/{ns_id}", json={"storage_uri": None, "storage_connection_name": None})
     assert r3.status_code == 200, r3.text
     assert r3.json()["storage_uri"] is None
     assert r3.json()["storage_connection_name"] is None
@@ -508,7 +506,7 @@ def test_cloud_physical_read_path_existence_preview_version_history(monkeypatch)
 
     Forces the in-process reader so the test deterministically exercises core's storage_options
     threading against real MinIO, independent of the worker."""
-    monkeypatch.setattr("flowfile_core.catalog.services.previews._should_offload", lambda: False)
+    monkeypatch.setattr("flowfile_core.catalog.services.previews.uses_worker", lambda: False)
     _ensure_connection()
     try:
         get_minio_client().create_bucket(Bucket=_BUCKET)
@@ -543,12 +541,13 @@ def test_cloud_physical_read_path_existence_preview_version_history(monkeypatch)
 
 
 def test_cloud_non_versioned_preview_offloads_to_worker(monkeypatch):
-    """With offload on, a cloud non-versioned preview routes through the worker
-    (trigger_delta_preview) carrying the storage payload, and the catalog's stored
+    """With catalog I/O going to the worker (``uses_worker``), a cloud non-versioned preview routes through the
+    worker (trigger_delta_preview) carrying the storage payload, and the catalog's stored
     row_count stays authoritative for total_rows (a page-bounded read never sees the whole table).
 
     No MinIO/worker needed: the worker call is faked, so this exercises core's routing + total_rows
-    contract deterministically. The real in-process fallback is covered by the offload-off test above.
+    contract deterministically. The read in this process, the one a process on its embedded worker makes, is covered
+    by the read-path test above.
     """
     from flowfile_core.schemas.catalog_schema import CatalogTablePreview
 
@@ -564,11 +563,11 @@ def test_cloud_non_versioned_preview_offloads_to_worker(monkeypatch):
 
     captured = {}
 
-    def _fake_trigger(table_name, n_rows, storage=None):
+    def _fake_trigger(table_name, n_rows, storage=None, *, worker_url):
         captured.update(table_name=table_name, n_rows=n_rows, storage=storage)
         return CatalogTablePreview(columns=["a"], dtypes=["Int64"], rows=[[1], [2]], total_rows=2)
 
-    monkeypatch.setattr("flowfile_core.catalog.services.previews._should_offload", lambda: True)
+    monkeypatch.setattr("flowfile_core.catalog.services.previews.uses_worker", lambda: True)
     monkeypatch.setattr("flowfile_core.catalog.services.previews.trigger_delta_preview", _fake_trigger)
 
     with get_db_context() as db:

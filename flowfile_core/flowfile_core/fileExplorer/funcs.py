@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from flowfile_core.configs import settings
+from shared.path_utils import contained_path
 from shared.storage_config import storage
 
 
@@ -94,7 +95,7 @@ class SecureFileExplorer:
         Args:
             start_path: Initial directory to start in
             sandbox_root: Root directory that user cannot escape from.
-                         If None, no sandbox enforcement.
+                         If None, the filesystem roots bound it (``_local_filesystem_roots``).
             use_relative_paths: If True, FileInfo will contain relative paths;
                                if False (default), contains absolute paths
         """
@@ -105,55 +106,34 @@ class SecureFileExplorer:
         else:
             self.sandbox_root = None
 
-        # Resolve initial path using os.path.realpath (recognized by CodeQL as safe normalization)
-        initial_str = os.path.realpath(os.path.expanduser(str(start_path)))
+        initial = self._contain(os.path.expanduser(str(start_path)))
+        if initial is None:
+            raise PermissionError("Access denied: path is outside the allowed directory")
+        self.current_path = Path(initial)
 
-        # If sandbox is set, validate path using os.path.realpath + startswith
-        # (this is the pattern CodeQL recognizes as a sanitizer for py/path-injection)
-        if self.sandbox_root is not None:
-            sandbox_str = os.path.realpath(str(self.sandbox_root))
-            if not initial_str.startswith(sandbox_str + os.sep) and initial_str != sandbox_str:
-                raise PermissionError("Access denied: path is outside the allowed directory")
-
-        self.current_path = Path(initial_str)
+    def _contain(self, candidate: str) -> str | None:
+        """*candidate* resolved, when it lies in the sandbox, or in a filesystem root when there is none."""
+        roots = [self.sandbox_root] if self.sandbox_root is not None else _local_filesystem_roots()
+        for root in roots:
+            contained = contained_path(root, candidate)
+            if contained is not None:
+                return contained
+        return None
 
     def _is_path_safe(self, path: Path) -> bool:
-        """Check if a path is within the sandbox root.
+        """Check if a path is within the sandbox root, symlinks resolved.
 
-        Uses resolve() to handle symlinks and relative paths securely.
         Returns True if no sandbox is set (no restrictions).
         """
         if self.sandbox_root is None:
-            return True  # No sandbox = no restrictions
-
-        try:
-            resolved_path = path.resolve()
-            resolved_sandbox = self.sandbox_root.resolve()
-            resolved_path.relative_to(resolved_sandbox)
             return True
-        except (ValueError, RuntimeError):
-            return False
+        return contained_path(self.sandbox_root, path) is not None
 
     def _sanitize_path(self, path: str | Path) -> Path | None:
-        """Sanitize and validate a path, ensuring it stays within sandbox.
-
-        Returns None if path would escape sandbox.
-        """
+        """Resolve *path* (relative ones against the current directory), or None when it would escape the sandbox."""
         try:
-            if isinstance(path, str):
-                if path.startswith("/"):
-                    test_path = Path(path).expanduser()
-                else:
-                    test_path = self.current_path / path
-            else:
-                test_path = path
-
-            resolved = test_path.resolve()
-
-            if self._is_path_safe(resolved):
-                return resolved
-            else:
-                return None
+            contained = self._contain(os.path.join(str(self.current_path), path))
+            return Path(contained) if contained is not None else None
         except (ValueError, RuntimeError, OSError):
             return None
 
@@ -238,9 +218,7 @@ class SecureFileExplorer:
                     check_cancelled()
                     current_dir, depth = dirs_to_process.pop(0)
 
-                    # Key the visited set on the REAL path: a symlink pointing at an
-                    # ancestor yields a fresh Path every level, so an unresolved key
-                    # never repeats and the cycle is walked once per depth level.
+                    # Key on the real path: through a symlink to an ancestor an unresolved path never repeats.
                     try:
                         dir_key = Path(os.path.realpath(current_dir))
                     except OSError:
@@ -413,27 +391,19 @@ def _is_contained(base: str, candidate: str) -> bool:
     """True when ``candidate`` resolves to ``base`` or a path under it.
 
     Realpaths both sides *before* the containment test, so a symlink whose target escapes the base is
-    rejected here rather than followed later (M-P2), and uses ``commonpath`` rather than a bare prefix
-    so a sibling dir sharing a name prefix (``/data/userX`` vs ``/data/user2``) cannot pass (M-P1).
+    rejected here rather than followed later (M-P2), and tests against the base plus a separator so a
+    sibling dir sharing a name prefix (``/data/userX`` vs ``/data/user2``) cannot pass (M-P1).
     """
-    base = os.path.realpath(base)
-    candidate = os.path.realpath(candidate)
-    if candidate == base:
-        return True
-    try:
-        return os.path.commonpath([base, candidate]) == base
-    except ValueError:  # different drives / mixed abs+rel
-        return False
+    return contained_path(base, candidate) is not None
 
 
 def _local_filesystem_roots() -> list[str]:
     """Return the filesystem roots a desktop (electron) user may access.
 
     POSIX: the single root ``/``. Windows: every present drive root
-    (``C:\\``, ``D:\\`` …). These are non-user-derived base paths, so using them
-    in the ``normpath + join + startswith`` check keeps the CodeQL-recognized
-    py/path-injection barrier while still permitting any local file in desktop
-    mode.
+    (``C:\\``, ``D:\\`` …). These are non-user-derived bases for ``contained_path``,
+    so the CodeQL-recognized py/path-injection barrier holds while any local file
+    stays reachable in desktop mode.
     """
     if os.name == "nt":
         roots = [f"{letter}:\\" for letter in string.ascii_uppercase if os.path.exists(f"{letter}:\\")]
@@ -466,20 +436,19 @@ def validate_path_under_cwd(user_path: str) -> str:
 
     if settings.is_electron_mode():
         candidate = expanded if os.path.isabs(expanded) else os.path.join(os.getcwd(), expanded)
-        candidate_real = os.path.realpath(candidate)
         for root in _local_filesystem_roots():
-            base_real = os.path.realpath(root)
-            if _is_contained(base_real, candidate_real):
-                return candidate_real
+            contained = contained_path(root, candidate)
+            if contained is not None:
+                return contained
         raise HTTPException(403, "Access denied")
 
     # In Docker/package mode, enforce strict sandboxing to trusted roots.
     for base in (os.getcwd(), str(storage.base_directory), str(storage.user_data_directory)):
         base_real = os.path.realpath(base)
         candidate = expanded if os.path.isabs(expanded) else os.path.join(base_real, expanded)
-        candidate_real = os.path.realpath(candidate)
-        if _is_contained(base_real, candidate_real):
-            return candidate_real
+        contained = contained_path(base_real, candidate)
+        if contained is not None:
+            return contained
 
     raise HTTPException(403, "Access denied")
 
