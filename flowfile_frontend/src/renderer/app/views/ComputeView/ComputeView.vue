@@ -9,7 +9,6 @@
 
     <div class="compute-content">
       <KernelManagerView v-if="activeTab === 'kernels'" />
-      <PerformancePanel v-else-if="activeTab === 'performance'" />
       <ComputeBackendsPanel v-else-if="activeTab === 'backends'" />
       <PrivacyPanel v-else-if="activeTab === 'privacy'" />
       <BackupsPanel v-else-if="activeTab === 'backups'" />
@@ -22,11 +21,10 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import SettingsTabBar from "../../components/settings/SettingsTabBar.vue";
 import KernelManagerView from "../KernelManagerView/KernelManagerView.vue";
-import PerformancePanel from "./PerformancePanel.vue";
 import ComputeBackendsPanel from "./ComputeBackendsPanel.vue";
 import PrivacyPanel from "./PrivacyPanel.vue";
 import BackupsPanel from "./BackupsPanel.vue";
-import { computeTabs, COMPUTE_TAB_GROUP_LABELS, COMPUTE_TAB_KEYS } from "./computeTabs";
+import { computeTabs, COMPUTE_TAB_GROUP_LABELS, resolveComputeTab } from "./computeTabs";
 import type { ComputeTabKey } from "./computeTabs";
 import { useAuthStore } from "../../stores/auth-store";
 
@@ -49,12 +47,8 @@ const visibleTabs = computed(() => {
 
 function getInitialTab(): ComputeTabKey {
   // No localStorage stickiness: kernels is the right default every time, and
-  // Performance is a rarely-visited admin setting.
-  const queryTab = route.query.tab as string;
-  if (COMPUTE_TAB_KEYS.includes(queryTab as ComputeTabKey)) {
-    return queryTab as ComputeTabKey;
-  }
-  return "kernels";
+  // Backends is a rarely-visited admin setting.
+  return resolveComputeTab(route.query.tab) ?? "kernels";
 }
 
 const activeTab = ref<ComputeTabKey>(getInitialTab());
@@ -71,18 +65,15 @@ function handleTabClick(tab: ComputeTabKey) {
 // React to external navigation that changes ?tab= (the sidebar sub-menu), so the
 // active tab follows the URL even when the view is already mounted. Validated
 // against ALL tab keys, not visibleTabs: a non-admin deep link to
-// ?tab=performance renders the panel's locked explainer instead of silently
-// bouncing.
+// ?tab=backends renders the panel's locked explainer instead of silently
+// bouncing. A retired alias is rewritten to the tab it names.
 watch(
   () => route.query.tab,
   (tab) => {
-    if (
-      typeof tab === "string" &&
-      COMPUTE_TAB_KEYS.includes(tab as ComputeTabKey) &&
-      tab !== activeTab.value
-    ) {
-      activeTab.value = tab as ComputeTabKey;
-    }
+    const resolved = resolveComputeTab(tab);
+    if (resolved === null) return;
+    if (resolved !== activeTab.value) activeTab.value = resolved;
+    if (resolved !== tab) router.replace({ query: { ...route.query, tab: resolved } });
   },
 );
 </script>

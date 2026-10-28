@@ -3,15 +3,21 @@
 // dependency-free (pure data) so it can be imported from the sidebar without
 // risking an import cycle.
 
-export const COMPUTE_TAB_KEYS = [
-  "kernels",
-  "performance",
-  "backends",
-  "privacy",
-  "backups",
-] as const;
+export const COMPUTE_TAB_KEYS = ["kernels", "backends", "privacy", "backups"] as const;
 
 export type ComputeTabKey = (typeof COMPUTE_TAB_KEYS)[number];
+
+/** Old ?tab= values that still resolve (the warm pool used to be its own Performance tab). */
+export const COMPUTE_TAB_ALIASES: Record<string, ComputeTabKey> = {
+  performance: "backends",
+};
+
+/** The tab a ?tab= value names, retired aliases included; null when it names none. */
+export function resolveComputeTab(value: unknown): ComputeTabKey | null {
+  if (typeof value !== "string") return null;
+  if ((COMPUTE_TAB_KEYS as ReadonlyArray<string>).includes(value)) return value as ComputeTabKey;
+  return COMPUTE_TAB_ALIASES[value] ?? null;
+}
 
 // "preferences" is app-wide settings parked under Compute until they earn their own route.
 export type ComputeTabGroup = "execution" | "preferences";
@@ -44,14 +50,6 @@ export const computeTabs: ComputeTabDef[] = [
     icon: "fa-brands fa-python",
     sidebarKey: "menu.computeKernels",
     group: "execution",
-  },
-  {
-    key: "performance",
-    label: "Performance",
-    icon: "fa-solid fa-gauge-high",
-    sidebarKey: "menu.computePerformance",
-    group: "execution",
-    requiresAdmin: true,
   },
   {
     key: "backends",

@@ -76,7 +76,6 @@ describe("startup navigation", () => {
       await vi.waitFor(() => expect(mocks.mount).toHaveBeenCalledWith("#app"));
       expect(mocks.use).toHaveBeenCalledWith(mocks.router);
       expect(auth.isAdmin).toBe(isAdmin);
-      expect(visibleAtMount.includes("performance")).toBe(isAdmin);
       expect(visibleAtMount.includes("backends")).toBe(isAdmin);
       expect(visibleAtMount).toContain("kernels");
     },

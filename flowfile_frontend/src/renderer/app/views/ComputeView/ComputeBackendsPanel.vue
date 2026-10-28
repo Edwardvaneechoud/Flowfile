@@ -7,22 +7,46 @@
       <div>
         <h2 class="page-title">Compute backends</h2>
         <p class="page-description">
-          Connect workers, check compatibility, and share results between backends.
+          Data nodes run on the default worker unless a flow or node picks another. Python Script
+          and kernel nodes run in Python kernels instead.
         </p>
       </div>
     </header>
 
     <template v-if="isAdmin">
+      <section
+        class="compute-card default-worker"
+        data-testid="default-worker-card"
+        aria-labelledby="default-worker-title"
+      >
+        <header class="compute-card__header">
+          <span class="compute-card__icon"
+            ><i class="fa-solid fa-house-laptop" aria-hidden="true"></i
+          ></span>
+          <div class="compute-card__intro">
+            <h3 id="default-worker-title" class="compute-card__title">Default worker</h3>
+            <p class="compute-card__description">
+              The built-in worker on this server. Flows set to Auto, and nodes that follow them, run
+              here.
+            </p>
+          </div>
+          <span class="backends-count">Built in</span>
+        </header>
+        <div class="compute-card__body">
+          <WorkerPoolCard />
+        </div>
+      </section>
+
       <section class="compute-card" aria-labelledby="configured-workers-title">
         <header class="compute-card__header">
           <span class="compute-card__icon"
             ><i class="fa-solid fa-server" aria-hidden="true"></i
           ></span>
           <div class="compute-card__intro">
-            <h3 id="configured-workers-title" class="compute-card__title">Configured workers</h3>
+            <h3 id="configured-workers-title" class="compute-card__title">Other workers</h3>
             <p class="compute-card__description">
-              Additional workers for your flows. Built-in <code>local</code> and
-              <code>worker</code> backends are not listed.
+              Workers on other hosts that a flow or node can pick by id. Each keeps its own warm
+              pool, set on that worker.
             </p>
           </div>
           <span v-if="!loading" class="backends-count"
@@ -205,6 +229,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { useAuthStore } from "../../stores/auth-store";
 import { NO_AUTOFILL } from "../../utils/noAutofill";
 import BackendHandshakeStatus from "../../components/settings/BackendHandshakeStatus.vue";
+import WorkerPoolCard from "../../components/settings/WorkerPoolCard.vue";
 import ExchangeStoreCard from "./ExchangeStoreCard.vue";
 import {
   backendInputFrom,
@@ -302,6 +327,13 @@ watch(
 }
 .backends-heading .page-description {
   margin: 0;
+}
+/* The shared card CSS stretches number inputs for forms; the pool's size stepper stays compact. */
+.default-worker :deep(.pool-size-row .el-input-number) {
+  width: 120px;
+}
+.default-worker :deep(.pool-size-row .el-input-number .el-input__inner) {
+  text-align: center;
 }
 .backends-count {
   flex-shrink: 0;
