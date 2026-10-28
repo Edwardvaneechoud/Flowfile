@@ -3913,7 +3913,6 @@ files = [
 
 [package.dependencies]
 polars-runtime-32 = "1.43.2"
-polars-runtime-64 = {version = "1.43.2", optional = true, markers = "extra == \"rt64\""}
 pyarrow = {version = ">=7.0.0", optional = true, markers = "extra == \"pyarrow\""}
 
 [package.extras]
@@ -4081,7 +4080,7 @@ version = "1.43.2"
 description = "Blazingly fast DataFrame library"
 optional = false
 python-versions = ">=3.10"
-groups = ["main"]
+groups = ["runtime64"]
 files = [
     {file = "polars_runtime_64-1.43.2-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:485d3230a8f4b6633758bcb1922c5d9f8f259bb5a2b68ce818f1f0577b3f7a48"},
     {file = "polars_runtime_64-1.43.2-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:8a3ec3900cf4f14a2e52a5ca283820fdf75afee14537b1e38fed40b2858fbdc7"},
@@ -6725,4 +6724,4 @@ yxdb = ["yxdb"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.14"
-content-hash = "06e7774cac6a76780cd66a9ba6ac20ef9e13bcf20db918b3ae40b5b12bc1177f"
+content-hash = "2d3943ffad3085ebdfd9b75dcb631f4d4eff2b9f1b3f00c6a930aa1021ed87bf"

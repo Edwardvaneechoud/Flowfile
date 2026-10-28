@@ -3,7 +3,7 @@ import { defineStore } from "pinia";
 import type { VueFlowStore } from "@vue-flow/core";
 import type { HistoryState, FlowArtifactData, NodeArtifactSummary } from "../types";
 import type { FlowParameter } from "../types/flow.types";
-import { FlowApi } from "../api";
+import { FlowApi } from "../api/flow.api";
 import { useEditorStore } from "./editor-store";
 import { useResultsStore } from "./results-store";
 

@@ -1706,7 +1706,7 @@ class FlowDataEngine:
             .select(select_cols)
         )
 
-        output_schema = [FlowfileColumn.from_input(record_id_settings.output_column_name, "UInt64")]
+        output_schema = [FlowfileColumn.from_input(record_id_settings.output_column_name, str(pl.get_index_type()))]
         output_schema.extend(self.schema)
 
         return FlowDataEngine(df, schema=output_schema)
@@ -1715,7 +1715,7 @@ class FlowDataEngine:
         """Adds a simple sequential record ID column."""
         df = self.data_frame.with_row_index(record_id_settings.output_column_name, record_id_settings.offset)
 
-        output_schema = [FlowfileColumn.from_input(record_id_settings.output_column_name, "UInt64")]
+        output_schema = [FlowfileColumn.from_input(record_id_settings.output_column_name, str(pl.get_index_type()))]
         output_schema.extend(self.schema)
 
         return FlowDataEngine(df, schema=output_schema)

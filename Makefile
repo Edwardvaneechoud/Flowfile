@@ -65,7 +65,7 @@ install_python_deps:
 	@echo "Checking Poetry lock file..."
 	@$(CHECK_POETRY)
 	@echo "Installing Python dependencies with Poetry..."
-	poetry install --with build
+	poetry install --with build,runtime64
 	@echo "Python dependencies installed."
 
 # Build Python services

@@ -26,7 +26,7 @@ ENV CARGO_PROFILE_RELEASE_STRIP=symbols \
 COPY pyproject.toml poetry.lock* ./
 
 # Install dependencies AND strip in the same layer (in builder)
-RUN poetry install --only=main --no-root && \
+RUN poetry install --only=main,runtime64 --no-root && \
     pip install --no-cache-dir psycopg2-binary==2.9.9 pymysql==1.1.0 && \
     rm -rf $POETRY_CACHE_DIR && \
     # Strip debug symbols from compiled libraries

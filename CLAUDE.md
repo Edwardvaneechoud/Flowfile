@@ -93,6 +93,9 @@ poetry install
 # Also install the optional build group (PyInstaller)
 poetry install --with build
 
+# Also install Polars' 64-bit index runtime, as the desktop app and the Docker images run it
+poetry install --with runtime64
+
 # Start core backend (FastAPI, port 63578)
 poetry run flowfile_core
 
@@ -131,7 +134,7 @@ docker compose up -d
 | Command | Description |
 |---------|-------------|
 | `make all` | Full build: deps → PyInstaller services → stage sidecars → sign sidecars → Tauri app → master key |
-| `make install_python_deps` | `poetry install --with build` (auto-refreshes a stale lock first) |
+| `make install_python_deps` | `poetry install --with build,runtime64` (auto-refreshes a stale lock first) |
 | `make build_python_services` | Build Python backend with PyInstaller (`build_backends` entry point) |
 | `make rename_sidecars` | Stage PyInstaller outputs into `flowfile_frontend/src-tauri/binaries/<name>-<triple>` |
 | `make services` | Convenience: `build_python_services` + `rename_sidecars` |
@@ -509,7 +512,7 @@ that's what you're debugging). Both flags default off; production runs stay sile
 - Do not commit `master_key.txt`, `.env`, or credential files (`.gitignore` also blocks `*.key`, `*.pem`)
 - Do not use pandas for data operations; this project uses Polars throughout (pandas is a dev/test-only dependency, never imported in package source)
 - Do not call `.collect()` in flowfile_core — core ships paths/JSON; the worker holds dataset memory in spawned subprocesses
-- Polars is pinned exactly (`==1.43.2` with the `rt64` extra, one cross-platform pin), on the 64-bit index runtime (`polars-runtime-64`, so `pl.len()` and row indexes are `UInt64`): a Polars cluster runs plans only from the same build, and polars-cloud 0.10.0 is that build; the Polars Cloud client itself is not a dependency (a cluster is reached through a worker that speaks `/v1`, outside this repository). Any pin must keep the 1.39 floor, which comes from the version-coupled plugins `polars-grouper>=0.6.0` (graph solver + explode hierarchy nodes) and `polars-simed` 0.4.0, which both require `polars>=1.39` (a plugin/Polars ABI mismatch does not fail at import, only when the plugin expression is called; `tools/tests/test_polars_pin_floor.py` fails if a locked package needs a higher floor than the root pin); the SCD2 writer's `join(maintain_order=)` needs only 1.17. Polars 1.43.0/1.43.1 deadlock `SQLContext.execute` over `scan_delta` frames (hangs every catalog SQL reader/view — fixed in 1.43.2; verify the 5-line repro passes before raising the ceiling), and any bump must be coordinated with the version-coupled `polars-*` plugin packages and `kernel_runtime` (whose own pin still reads `>=1.17.0`: it ships neither plugin)
+- Polars takes a range in the package metadata (`>=1.39.0, !=1.43.0, !=1.43.1, <1.44`, no runtime extra), so `pip install flowfile` sits beside a user's own Polars and whichever index runtime it loads (the 32-bit one unless `polars-runtime-64` is installed, so `pl.len()` and row indexes are `UInt32` there): never write an index dtype as a `UInt32`/`UInt64` literal, in code or in a test's expectation; take it from `pl.get_index_type()` (`str(...)` where a dtype name is wanted), so the suites pass on either runtime. The built artifacts (the desktop bundle and the core and worker images) install the lock's exact build plus the optional `runtime64` group, `polars-runtime-64` pinned to the locked Polars version (bump the two together; `tools/tests/test_polars_runtime_group.py`), so they run the 64-bit runtime and match each other and a Polars cluster; `build_backends` exits before bundling a venv on the 32-bit one. The handshake's exact `polars_version` and `polars_runtime` comparison is what keeps a mixed setup safe: a backend on another build is refused, both values named. The Polars Cloud client is not a dependency (a cluster is reached through a worker that speaks `/v1`, outside this repository). Any pin must keep the 1.39 floor, which comes from the version-coupled plugins `polars-grouper>=0.6.0` (graph solver + explode hierarchy nodes) and `polars-simed` 0.4.0, which both require `polars>=1.39` (a plugin/Polars ABI mismatch does not fail at import, only when the plugin expression is called; `tools/tests/test_polars_pin_floor.py` fails if a locked package needs a higher floor than the root pin); the SCD2 writer's `join(maintain_order=)` needs only 1.17. Polars 1.43.0/1.43.1 deadlock `SQLContext.execute` over `scan_delta` frames (hangs every catalog SQL reader/view — fixed in 1.43.2; verify the 5-line repro passes before raising the ceiling), and any bump must be coordinated with the version-coupled `polars-*` plugin packages and `kernel_runtime` (whose own pin still reads `>=1.17.0`: it ships neither plugin)
 - Tests and test_utils are excluded from Ruff linting (except specific per-file rules)
 - The `kernel`, `docker_integration`, `kafka`, and `cloud_e2e` pytest markers all require Docker
 - Do not "fix" the SHA-256 API-key hash (`flowfile_core/auth/api_key.py`) — it is deliberate for 256-bit tokens; the CodeQL weak-hash alert is a false positive

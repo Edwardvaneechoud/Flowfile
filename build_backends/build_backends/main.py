@@ -478,7 +478,22 @@ def combine_packages():
                 shutil.move(temp_target_exe, target_exe)
 
 
+def require_64bit_polars_runtime() -> None:
+    """Refuse to bundle a venv whose Polars does not load its 64-bit index runtime.
+
+    The desktop app and the Docker images ship that runtime from the ``runtime64`` dependency group; a bundle on the
+    32-bit one is refused by every 64-bit worker at the handshake.
+    """
+    import polars as pl
+
+    if pl.get_index_type() != pl.UInt64:
+        raise SystemExit(
+            "Polars loads its 32-bit index runtime here; run `poetry install --with build,runtime64` before bundling"
+        )
+
+
 def main():
+    require_64bit_polars_runtime()
     for dir_name in ["services_dist"]:
         if os.path.exists(dir_name):
             shutil.rmtree(dir_name)
@@ -490,6 +505,8 @@ def main():
         # below row 1.
         "xlsx2csv",
         "polars",
+        # polars._plr imports its runtime inside a function; the bundle ships the 64-bit one.
+        "_polars_runtime_64",
         "numpy",
         "numpy.core._methods",
         "pyarrow",

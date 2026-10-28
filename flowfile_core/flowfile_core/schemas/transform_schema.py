@@ -1042,7 +1042,7 @@ def get_window_output_type(func: str, input_type: str | None = None) -> str | No
     if func in {"cum_count", "tile"}:
         return "Int64"
     if func in {"rank", "count"}:
-        return "UInt64"
+        return str(pl.get_index_type())
     return input_type
 
 
