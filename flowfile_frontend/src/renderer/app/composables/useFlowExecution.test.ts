@@ -30,6 +30,7 @@ vi.mock("axios", () => ({ default: { post: mocks.post, get: mocks.get } }));
 vi.mock("element-plus", () => ({ ElNotification: mocks.notify, ElMessage: { error: vi.fn() } }));
 vi.mock("@element-plus/icons-vue", () => ({ Promotion: {}, DataLine: {} }));
 vi.mock("../api", () => ({ FlowApi: { getFlowSettings: mocks.getFlowSettings } }));
+vi.mock("../api/flow.api", () => ({ FlowApi: { getFlowSettings: mocks.getFlowSettings } }));
 vi.mock("../services/auth.service", () => ({ default: { getToken: vi.fn() } }));
 vi.mock("../services/flowEventsClient", () => ({
   FlowEventsHttpError: class extends Error {},
