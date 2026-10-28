@@ -30,9 +30,10 @@ from fastapi import HTTPException
 from pydantic import ValidationError, validate_call
 
 from flowfile_core.flowfile.execution.backends.worker import (
+    _DELTA_OPS,
     _JOB_STATES,
     V1_OPS,
-    _delta_destination,
+    _delta_job,
     _v1_error,
     _wire_columns,
     _wire_credential,
@@ -157,37 +158,10 @@ class EmbeddedWorkerBackend(_WorkerReferences):
             RuntimeError: The visualisation session could not answer.
             ValueError: A custom node did not return one of its declared outputs.
         """
-        match op:
-            case OperationKind.delta_write:
-                write = unpack(payload, DeltaWritePayload)
-                kwargs = {"mode": write.mode, "partition_by": write.partition_by, "enable_cdf": write.enable_cdf}
-                return self._delta(write, "write_delta", kwargs)
-            case OperationKind.delta_merge:
-                write = unpack(payload, DeltaMergePayload)
-                kwargs = {
-                    "merge_mode": write.merge_mode,
-                    "merge_keys": write.merge_keys,
-                    "partition_by": write.partition_by,
-                    "enable_cdf": write.enable_cdf,
-                }
-                return self._delta(write, "merge_delta", kwargs)
-            case OperationKind.delta_scd2:
-                write = unpack(payload, DeltaScd2Payload)
-                kwargs = {
-                    "run_timestamp": write.run_timestamp,
-                    "business_keys": write.business_keys,
-                    "compare_columns": write.compare_columns,
-                    "full_snapshot": write.full_snapshot,
-                    "surrogate_key_column": write.surrogate_key_column,
-                    "valid_from_column": write.valid_from_column,
-                    "valid_to_column": write.valid_to_column,
-                    "is_current_column": write.is_current_column,
-                    "partition_by": write.partition_by,
-                    "partition_on_current": write.partition_on_current,
-                }
-                return self._delta(write, "scd2_delta", kwargs)
-            case OperationKind.viz_session:
-                return self._viz_session(unpack(payload, VizSessionPayload))
+        if op in _DELTA_OPS:
+            return self._delta(*_delta_job(op, payload))
+        if op is OperationKind.viz_session:
+            return self._viz_session(unpack(payload, VizSessionPayload))
         spec = V1_OPS.get(op)
         if spec is None:
             raise OperationUnsupported(f"The embedded worker backend does not run the {op.value} operation")
@@ -342,11 +316,10 @@ class EmbeddedWorkerBackend(_WorkerReferences):
     ) -> OpResult:
         """Run a Delta ``operation`` over the payload's plan as its task route would; its report is the metadata.
 
-        The destination is ``_delta_destination``'s: a catalog table by identity, or the payload's path. The job is
-        filed under the cache path the task route gives such a task.
+        *kwargs* are ``_delta_job``'s, the destination among them: a catalog table by identity, or the payload's
+        path. The job is filed under the cache path the task route gives such a task.
         """
         file_ref = str(_service().result_path(write.flow_id, write.job_id))
-        kwargs = {**_delta_destination(write), **kwargs}
         plan = write.plan.serialize()
         reported = self._job(write.job_id, plan, operation, file_ref, write.flow_id, write.node_id, kwargs)
         return OpResult(refs={}, metadata=reported if isinstance(reported, dict) else {})

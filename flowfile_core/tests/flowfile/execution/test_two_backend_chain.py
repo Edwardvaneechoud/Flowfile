@@ -10,17 +10,14 @@ this process in both states.
 """
 
 import uuid
-from collections.abc import Iterator
 
 import polars as pl
 import pytest
 
-from flowfile_core.flowfile.execution import registry
-from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
-from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ForeignRef
 from flowfile_core.flowfile.execution.protocol import ComputeBackend, ResultRef, SubmitHints
 from shared.compute_protocol import file_uri
+from tests.flowfile.execution.conftest import Held
 
 CUSTOMERS = pl.DataFrame(
     {
@@ -33,32 +30,6 @@ CUSTOMERS = pl.DataFrame(
 A_ROWS = CUSTOMERS.filter(pl.col("amount") > 10)
 EXPECTED = A_ROWS.group_by("region").agg(total=pl.col("amount").sum()).sort("region")
 STATES = pytest.mark.parametrize("must_materialise", [False, True], ids=["deferred", "required"])
-
-Held = list[tuple[ComputeBackend, ResultRef]]
-
-
-@pytest.fixture
-def local() -> EmbeddedWorkerBackend:
-    """The worker embedded in this process, under its own id ``local``."""
-    return EmbeddedWorkerBackend()
-
-
-@pytest.fixture
-def worker() -> WorkerBackend:
-    from tests.conftest import is_worker_running
-
-    if not is_worker_running():
-        pytest.skip("flowfile_worker is not running")
-    return WorkerBackend(url=registry.backend(registry.WORKER_BACKEND_ID).url)
-
-
-@pytest.fixture
-def kept() -> Iterator[Held]:
-    """Every result a test made, beside the backend holding it, released when the test ends."""
-    held: Held = []
-    yield held
-    for backend, ref in held:
-        backend.release(ref)
 
 
 def node_a(backend: ComputeBackend, kept: Held, must_materialise: bool) -> ResultRef:
@@ -104,26 +75,16 @@ def assert_nothing_crosses_implicitly(source: ComputeBackend, target: ComputeBac
 
 
 @STATES
-def test_an_embedded_worker_result_crosses_to_the_worker_through_export(
-    local, worker, kept, must_materialise, tmp_path
+@pytest.mark.parametrize("direction", ["local-to-worker", "worker-to-local"])
+def test_a_result_crosses_between_the_embedded_worker_and_the_worker_through_export(
+    local, worker, kept, must_materialise, direction, tmp_path
 ):
-    ref_a = node_a(local, kept, must_materialise)
+    source, target = (local, worker) if direction == "local-to-worker" else (worker, local)
+    ref_a = node_a(source, kept, must_materialise)
 
-    edge = cross(local, worker, ref_a, kept, tmp_path)
-    ref_b = node_b(worker, edge, kept)
+    edge = cross(source, target, ref_a, kept, tmp_path)
+    ref_b = node_b(target, edge, kept)
 
-    assert ref_b.backend_id == worker.id
-    assert_node_b_is_correct(worker, ref_b)
-    assert_nothing_crosses_implicitly(local, worker, ref_a, edge)
-
-
-@STATES
-def test_a_worker_result_crosses_to_the_embedded_worker_through_export(local, worker, kept, must_materialise, tmp_path):
-    ref_a = node_a(worker, kept, must_materialise)
-
-    edge = cross(worker, local, ref_a, kept, tmp_path)
-    ref_b = node_b(local, edge, kept)
-
-    assert ref_b.backend_id == local.id
-    assert_node_b_is_correct(local, ref_b)
-    assert_nothing_crosses_implicitly(worker, local, ref_a, edge)
+    assert ref_b.backend_id == target.id
+    assert_node_b_is_correct(target, ref_b)
+    assert_nothing_crosses_implicitly(source, target, ref_a, edge)

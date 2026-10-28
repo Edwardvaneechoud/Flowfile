@@ -2,13 +2,11 @@
 services send their table I/O to the worker exactly when that backend is not the worker embedded in this process, a
 worker they cannot reach answering ``ComputeUnavailable`` and never a read in this process.
 
-The writer's expected reports are what its in-process Delta write returned before the write moved behind the
-backend, recorded from that code on the same inputs; only ``size_bytes`` is measured here, the way that code
-measured it, since a file's byte size belongs to the Parquet writer of the day.
+Here the writer's operation and payload and what it reads from a report are checked; what the embedded worker's Delta
+operations write and report is ``test_local_backend.py``'s.
 """
 
 import dataclasses
-import datetime
 import shutil
 import types
 import uuid
@@ -42,7 +40,6 @@ from flowfile_core.flowfile.execution.payloads import (
     DeltaMergePayload,
     DeltaScd2Payload,
     DeltaWritePayload,
-    op_payload,
 )
 from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, OpResult
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations
@@ -57,6 +54,7 @@ from flowfile_core.schemas.catalog_schema import CatalogTablePreview
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 from shared.delta_utils import get_delta_size_bytes
 from shared.storage_config import storage
+from tests.conftest import closed_url, protocol_states
 from tests.flowfile.conftest import (
     add_test_catalog_writer,
     add_test_manual_input,
@@ -65,7 +63,6 @@ from tests.flowfile.conftest import (
     create_test_namespace,
     run_test_graph,
 )
-from tests.flowfile.execution.test_results_exists_unreachable import _closed_url
 from tests.test_catalog_cloud_virtual import (
     _BUCKET,
     _create_cloud_schema,
@@ -78,7 +75,6 @@ pytestmark = pytest.mark.core
 
 LOCAL = ExecutionContext(registry.LOCAL_BACKEND_ID, parallelism=1, preview_rows=None)
 WORKER = ExecutionContext(registry.WORKER_BACKEND_ID, parallelism=1, preview_rows=None)
-UTC = datetime.timezone.utc
 RUN_TIMESTAMP = "2024-01-01T00:00:00+00:00"
 SCD2_CONFIG = {
     "business_keys": ["id"],
@@ -260,7 +256,7 @@ def stopped_worker(request, monkeypatch) -> str:
     Refused by the handshake that checks a worker before the first call to it, or by the call itself while an earlier
     verdict on it stands.
     """
-    url = _closed_url()
+    url = closed_url()
     monkeypatch.setattr(registry.backend(registry.WORKER_BACKEND_ID), "url", url)
     if request.param == "refused once the handshake passed":
         monkeypatch.setattr(subprocess_operations, "ensure_handshake", lambda *args, **kwargs: None)
@@ -463,33 +459,6 @@ def test_an_scd2_config_without_the_creation_knob_partitions_on_the_current_flag
     assert write.partition_on_current is True
 
 
-def test_the_embedded_worker_opens_a_cloud_table_with_the_options_the_worker_resolves(monkeypatch):
-    from flowfile_worker.external_sources.s3_source.models import FullCloudStorageConnection as WorkerConnection
-
-    received = []
-    monkeypatch.setattr(
-        "shared.delta_utils.write_delta", lambda *args, **kwargs: received.append(kwargs["storage_options"]) or False
-    )
-    connection = s3_connection()
-    _, write = _catalog_delta_op(
-        "overwrite",
-        writer_settings("overwrite"),
-        plan=pl.LazyFrame({"id": [1]}),
-        path="s3://bucket/catalog/t_1",
-        connection=connection.get_worker_interface(1),
-        scd2_config=None,
-        run_timestamp=RUN_TIMESTAMP,
-        flow_id=4,
-        node_id=2,
-    )
-
-    EmbeddedWorkerBackend().run_op(OperationKind.delta_write, op_payload(write))
-
-    sent = WorkerConnection.model_validate(connection.get_worker_interface(1).model_dump())
-    assert received == [sent.get_storage_options()]
-    assert received[0]["aws_secret_access_key"] == "plain-s3-secret"
-
-
 def test_every_write_gets_its_own_job_id():
     def job_id() -> str:
         _, write = _catalog_delta_op(
@@ -511,33 +480,24 @@ def test_every_write_gets_its_own_job_id():
 # What the writer reads from a report
 
 
-def test_a_worker_scd2_report_becomes_the_table_metadata_and_version():
-    report = {
-        "table_path": "/catalog/t_1",
+FIRST_LOAD = {"rows_inserted": 3, "rows_closed": 0, "rows_total": 3, "rows_current": 3, "created": True}
+CHANGED = {"rows_inserted": 2, "rows_closed": 1, "rows_total": 5, "rows_current": 4, "created": False}
+
+
+@pytest.mark.parametrize(
+    "row_count, metrics, version", [(3, FIRST_LOAD, 0), (5, CHANGED, 1)], ids=["first-load", "versioned"]
+)
+def test_a_worker_scd2_report_becomes_the_table_metadata_and_version(row_count, metrics, version):
+    meta = {
         "schema": SCD2_TABLE_SCHEMA,
-        "row_count": 5,
+        "row_count": row_count,
         "column_count": 7,
         "size_bytes": 4254,
-        "version": 1,
-        "scd2_metrics": {"rows_inserted": 2, "rows_closed": 1, "rows_total": 5, "rows_current": 4, "created": False},
+        "scd2_metrics": metrics,
     }
+    report = {**meta, "table_path": "/catalog/t_1", "version": version}
 
-    assert _catalog_delta_written(report) == CatalogDeltaWrite(
-        {
-            "schema": SCD2_TABLE_SCHEMA,
-            "row_count": 5,
-            "column_count": 7,
-            "size_bytes": 4254,
-            "scd2_metrics": {
-                "rows_inserted": 2,
-                "rows_closed": 1,
-                "rows_total": 5,
-                "rows_current": 4,
-                "created": False,
-            },
-        },
-        1,
-    )
+    assert _catalog_delta_written(report) == CatalogDeltaWrite(meta, version)
 
 
 def test_a_worker_write_report_carries_no_version():
@@ -548,137 +508,12 @@ def test_a_worker_write_report_carries_no_version():
     )
 
 
-@pytest.mark.parametrize("report, version", [({"skipped": True}, None), ({"skipped": True, "version": 3}, 3)])
+@pytest.mark.parametrize(
+    "report, version",
+    [({"skipped": True}, None), ({"skipped": True, "version": 0}, 0), ({"skipped": True, "version": 3}, 3)],
+)
 def test_a_skipped_report_registers_nothing_and_keeps_its_version(report, version):
     assert _catalog_delta_written(report) == CatalogDeltaWrite(None, version)
-
-
-# The writer's write on the embedded worker reads as it did before
-
-
-def run_locally(delta_mode, settings_, plan, path, scd2_config=None, run_timestamp=RUN_TIMESTAMP):
-    operation, write = _catalog_delta_op(
-        delta_mode,
-        settings_,
-        plan=plan,
-        path=path,
-        connection=None,
-        scd2_config=scd2_config,
-        run_timestamp=run_timestamp,
-        flow_id=1,
-        node_id=2,
-    )
-    return _catalog_delta_written(EmbeddedWorkerBackend().run_op(operation, op_payload(write)).metadata)
-
-
-def test_an_scd2_write_in_core_reads_as_before(tmp_path):
-    path = str(tmp_path / "scd2")
-    scd2 = writer_settings("scd2", merge_keys=["id"])
-    changed = pl.LazyFrame({"id": [1, 2, 4], "val": ["A", "b", "d"], "qty": [11, 20, 40]})
-
-    first = run_locally(
-        "scd2",
-        scd2,
-        pl.LazyFrame({"id": [1, 2, 3], "val": ["a", "b", "c"], "qty": [10, 20, 30]}),
-        path,
-        SCD2_CONFIG,
-        "2024-01-01T00:00:00+00:00",
-    )
-    first_size = get_delta_size_bytes(path)
-    second = run_locally("scd2", scd2, changed, path, SCD2_CONFIG, "2024-02-01T00:00:00+00:00")
-    second_size = get_delta_size_bytes(path)
-    unchanged = run_locally("scd2", scd2, changed, path, SCD2_CONFIG, "2024-03-01T00:00:00+00:00")
-
-    assert first == CatalogDeltaWrite(
-        meta={
-            "schema": SCD2_TABLE_SCHEMA,
-            "row_count": 3,
-            "column_count": 7,
-            "size_bytes": first_size,
-            "scd2_metrics": {"rows_inserted": 3, "rows_closed": 0, "rows_total": 3, "rows_current": 3, "created": True},
-        },
-        scd2_version=0,
-    )
-    assert second == CatalogDeltaWrite(
-        meta={
-            "schema": SCD2_TABLE_SCHEMA,
-            "row_count": 5,
-            "column_count": 7,
-            "size_bytes": second_size,
-            "scd2_metrics": {
-                "rows_inserted": 2,
-                "rows_closed": 1,
-                "rows_total": 5,
-                "rows_current": 4,
-                "created": False,
-            },
-        },
-        scd2_version=1,
-    )
-    assert unchanged == CatalogDeltaWrite(meta=None, scd2_version=1)
-    jan, feb = datetime.datetime(2024, 1, 1, tzinfo=UTC), datetime.datetime(2024, 2, 1, tzinfo=UTC)
-    assert pl.read_delta(path).sort("id", "valid_from").rows() == [
-        (1, "a", 10, "086436db5d6237d8f53e55ebf5bafe19", jan, feb, False),
-        (1, "A", 11, "8a33fe6e8900cddb5e995de3f3912ec3", feb, None, True),
-        (2, "b", 20, "a4d2b5f0652fef0de72c82802a95ade3", jan, None, True),
-        (3, "c", 30, "ec4f31d51c39fec0ce47aecc38b5bf5c", jan, None, True),
-        (4, "d", 40, "b45a6c225243cc60905eb98c9803620e", feb, None, True),
-    ]
-
-
-def test_a_plain_write_and_a_merge_in_core_read_as_before(tmp_path):
-    path = str(tmp_path / "plain")
-    empty = pl.LazyFrame({"id": [], "name": []}, schema={"id": pl.Int64, "name": pl.String})
-
-    overwritten = run_locally(
-        "overwrite",
-        writer_settings("overwrite"),
-        pl.LazyFrame({"id": [1, 2, 3], "name": ["ada", "grace", "edsger"]}),
-        path,
-    )
-    overwritten_size = get_delta_size_bytes(path)
-    upserted = run_locally(
-        "upsert",
-        writer_settings("upsert", merge_keys=["id"]),
-        pl.LazyFrame({"id": [3, 4], "name": ["dijkstra", "barbara"]}),
-        path,
-    )
-    upserted_size = get_delta_size_bytes(path)
-    appended_nothing = run_locally("append", writer_settings("append"), empty, path)
-    upserted_nothing = run_locally("upsert", writer_settings("upsert", merge_keys=["id"]), empty, path)
-
-    assert overwritten == CatalogDeltaWrite(
-        meta={"schema": PEOPLE_SCHEMA, "row_count": 3, "column_count": 2, "size_bytes": overwritten_size},
-        scd2_version=None,
-    )
-    assert upserted == CatalogDeltaWrite(
-        meta={"schema": PEOPLE_SCHEMA, "row_count": 4, "column_count": 2, "size_bytes": upserted_size},
-        scd2_version=None,
-    ), "the worker reports a merge by the table after it"
-    assert appended_nothing == CatalogDeltaWrite(meta=None, scd2_version=None)
-    assert upserted_nothing == CatalogDeltaWrite(
-        meta={"schema": PEOPLE_SCHEMA, "row_count": 4, "column_count": 2, "size_bytes": upserted_size},
-        scd2_version=None,
-    )
-    assert pl.read_delta(path).sort("id").rows() == [(1, "ada"), (2, "grace"), (3, "dijkstra"), (4, "barbara")]
-
-
-def test_an_append_in_core_reports_the_appended_rows(tmp_path):
-    path = str(tmp_path / "plain")
-    run_locally("overwrite", writer_settings("overwrite"), pl.LazyFrame({"x": [1, 2]}), path)
-
-    appended = run_locally("append", writer_settings("append"), pl.LazyFrame({"x": [3, 4, 5]}), path)
-
-    assert appended == CatalogDeltaWrite(
-        meta={
-            "schema": [{"name": "x", "dtype": "Int64"}],
-            "row_count": 3,
-            "column_count": 1,
-            "size_bytes": get_delta_size_bytes(path),
-        },
-        scd2_version=None,
-    )
-    assert pl.read_delta(path).height == 5
 
 
 # The catalog writer node, end to end
@@ -816,10 +651,7 @@ def test_the_catalog_writer_versions_an_scd2_table_on_the_flows_backend(executio
 # The catalog writer names its table by identity (FLOWFILE_COMPUTE_PROTOCOL on)
 
 
-@pytest.fixture(params=[False, True], ids=["protocol-off", "protocol-on"])
-def protocol(request, monkeypatch) -> bool:
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", request.param)
-    return request.param
+protocol = protocol_states("protocol-off", "protocol-on")
 
 
 @pytest.fixture

@@ -18,13 +18,11 @@ import json
 import ssl
 import logging
 import re
-import socket
 import threading
 import time
 import traceback
 import uuid
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import polars as pl
@@ -72,9 +70,8 @@ from flowfile_core.flowfile.execution.protocol import (
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import fetch_worker_capabilities
-from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.node_designer import CustomNodeBase
-from flowfile_core.schemas import input_schema, schemas, transform_schema
+from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.input_schema import (
     DatabaseConnection,
     DatabaseSettings,
@@ -86,6 +83,10 @@ from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared import compute_protocol as wire
 from shared.compute_protocol import PROTOCOL_VERSION_HEADER, WorkerLocation, file_uri, local_capabilities
 from shared.storage_config import storage
+from tests.flowfile.execution.conftest import fuzzy_settings, serve
+from tests.flowfile.execution.graph_helpers import input_then_sort, make_graph, ranks
+
+pytestmark = pytest.mark.usefixtures("protocol_on")
 
 PEOPLE = pl.DataFrame(
     {"id": list(range(10)), "name": [f"n{i}" for i in range(10)], "score": [i * 1.5 for i in range(10)]}
@@ -94,12 +95,6 @@ GEOARROW_WKB = pl.Extension("geoarrow.wkb", pl.Binary, "{}")
 BLOB = bytes(range(256)) * 64
 STATES = pytest.mark.parametrize("must_materialise", [True, False], ids=["materialised", "deferred"])
 SOCKET_ONLY = pytest.mark.parametrize("transport", ["socket"], indirect=True)
-
-
-@pytest.fixture(autouse=True)
-def protocol_on(monkeypatch):
-    """The protocol flag is on for every test here and back to what it was when the test ends."""
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
 
 
 @pytest.fixture(autouse=True, params=["socket", "rest"])
@@ -115,14 +110,6 @@ def transport(request, monkeypatch) -> str:
 
         monkeypatch.setattr(worker_module, "connect", refused)
     return request.param
-
-
-@pytest.fixture
-def running_worker():
-    from tests.conftest import is_worker_running
-
-    if not is_worker_running():
-        pytest.skip("flowfile_worker is not running")
 
 
 @pytest.fixture
@@ -166,14 +153,6 @@ def sent(running_worker, transport, monkeypatch):
     monkeypatch.setattr(requests.Session, "send", recording_send)
     monkeypatch.setattr(worker_module, "connect", recording_connect)
     return requests_sent
-
-
-@pytest.fixture
-def closed_port_url() -> str:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-    return f"http://127.0.0.1:{port}"
 
 
 @pytest.fixture
@@ -756,42 +735,12 @@ def test_a_token_that_is_no_header_value_fails_each_call_typed_and_is_never_quot
     assert "row-token" not in caplog.text
 
 
-@pytest.fixture
-def remote_worker():
-    from flowfile_core.schemas.schemas import is_valid_execution_location_in_current_global_settings
-    from tests.conftest import is_worker_running
-
-    if not (is_worker_running() and is_valid_execution_location_in_current_global_settings("remote")):
-        pytest.skip("Remote execution not active")
-
-
-def add_promise(graph: FlowGraph, node_id: int, node_type: str) -> None:
-    graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type=node_type))
-
-
 def test_a_remote_node_previews_the_inline_sample_without_reading_a_worker_file(remote_worker, monkeypatch):
     def no_file_read(*args, **kwargs):
         pytest.fail("core read a worker file for a /v1 result")
 
     monkeypatch.setattr(worker_module, "get_read_top_n", no_file_read)
-    graph = FlowGraph(
-        schemas.FlowSettings(
-            flow_id=9701, name="v1_preview", path=".", execution_location="remote", execution_mode="Development"
-        )
-    )
-    raw = input_schema.RawData.from_pylist([{"name": f"r{i}", "rank": i} for i in range(3, 0, -1)])
-    add_promise(graph, 1, "manual_input")
-    graph.add_manual_input(input_schema.NodeManualInput(flow_id=graph.flow_id, node_id=1, raw_data_format=raw))
-    add_promise(graph, 2, "sort")
-    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
-    graph.add_sort(
-        input_schema.NodeSort(
-            flow_id=graph.flow_id,
-            node_id=2,
-            depending_on_id=1,
-            sort_input=[transform_schema.SortByInput(column="rank", how="asc")],
-        )
-    )
+    graph = input_then_sort(make_graph(9701), ranks(3), "rank")
     try:
         assert graph.run_graph().success
 
@@ -870,45 +819,12 @@ def postgres():
 @pytest.fixture
 def json_api():
     """A JSON API on a free loopback port, answering every GET with the rows of ``PEOPLE``."""
-    body = json.dumps(PEOPLE.to_dicts()).encode()
-
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *args):
-            pass
-
-        def do_GET(self):  # noqa: N802
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(body)
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{server.server_address[1]}"
-    finally:
-        server.shutdown()
-        thread.join(timeout=5)
+    with serve(json.dumps(PEOPLE.to_dicts()).encode(), "application/json") as url:
+        yield url
 
 
 def sampled(backend: WorkerBackend, ref: ResultRef) -> pl.DataFrame:
     return pl.from_arrow(read_stream(backend.sample(ref, 1000)))
-
-
-def fuzzy_settings() -> input_schema.NodeFuzzyMatch:
-    return input_schema.NodeFuzzyMatch(
-        flow_id=1,
-        node_id=2,
-        join_input={
-            "join_mapping": [
-                {"left_col": "name", "right_col": "name", "threshold_score": 75, "fuzzy_type": "levenshtein"}
-            ],
-            "left_select": {"renames": [{"old_name": "name", "new_name": "name", "join_key": True}]},
-            "right_select": {"renames": [{"old_name": "name", "new_name": "name", "join_key": True}]},
-            "how": "inner",
-        },
-    )
 
 
 def custom_node_payload(source: str, class_name: str, placed: CustomNodeBase, output_names: list[str]):

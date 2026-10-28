@@ -4,7 +4,6 @@ import importlib.metadata
 import ssl
 import threading
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -15,32 +14,10 @@ from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
+from test_utils.tls import self_signed_certificate
 
 TEAM_URL = "http://team-worker.test:63579"
 TLS_TEAM_URL = "https://tls-team-worker.test:63579"
-
-
-def self_signed_pem() -> str:
-    """A self-signed P-256 certificate, PEM: the CA of a worker that serves it."""
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.x509.oid import NameOID
-
-    key = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "tls-team-worker.test")])
-    now = datetime.now(timezone.utc)
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(minutes=5))
-        .not_valid_after(now + timedelta(hours=2))
-        .sign(key, hashes.SHA256())
-    )
-    return cert.public_bytes(serialization.Encoding.PEM).decode()
 
 
 class FakeEntryPoint:
@@ -106,17 +83,30 @@ def fresh_registry(monkeypatch, installed):
 
 
 @pytest.fixture
-def configured_row():
-    """A ``compute_backends`` row configuring ``worker:team`` with a token of its own, deleted when the test ends."""
-    with get_db_context() as db:
-        db.add(ConfiguredBackend(id="worker:team", url=TEAM_URL, token=encrypt_secret("row-token", 1)))
-        db.commit()
-    yield "worker:team"
-    with get_db_context() as db:
-        row = db.get(ConfiguredBackend, "worker:team")
-        if row is not None:
-            db.delete(row)
+def configured_backend():
+    """Add a ``compute_backends`` row with a token of its own by id, URL and other columns; every row goes after."""
+    added: list[str] = []
+
+    def add(backend_id: str = "worker:team", url: str = TEAM_URL, **columns) -> str:
+        with get_db_context() as db:
+            db.add(ConfiguredBackend(id=backend_id, url=url, token=encrypt_secret("row-token", 1), **columns))
             db.commit()
+        added.append(backend_id)
+        return backend_id
+
+    yield add
+    with get_db_context() as db:
+        for backend_id in added:
+            row = db.get(ConfiguredBackend, backend_id)
+            if row is not None:
+                db.delete(row)
+        db.commit()
+
+
+@pytest.fixture
+def configured_row(configured_backend) -> str:
+    """A ``compute_backends`` row configuring ``worker:team`` with a token of its own."""
+    return configured_backend()
 
 
 @pytest.fixture
@@ -477,40 +467,20 @@ def test_a_configured_worker_resolves_with_its_url_and_its_own_token(configured_
     assert worker.shares_core_disk is False
 
 
-def test_a_row_marked_as_seeing_cores_files_makes_a_backend_that_shares_its_disk():
-    with get_db_context() as db:
-        db.add(
-            ConfiguredBackend(
-                id="worker:nfs-team", url=TEAM_URL, token=encrypt_secret("row-token", 1), shares_core_disk=True
-            )
-        )
-        db.commit()
-    try:
-        assert registry.backend("worker:nfs-team").shares_core_disk is True
-    finally:
-        registry.forget("worker:nfs-team")
-        with get_db_context() as db:
-            db.delete(db.get(ConfiguredBackend, "worker:nfs-team"))
-            db.commit()
+def test_a_row_marked_as_seeing_cores_files_makes_a_backend_that_shares_its_disk(configured_backend):
+    configured_backend("worker:nfs-team", shares_core_disk=True)
+
+    assert registry.backend("worker:nfs-team").shares_core_disk is True
 
 
-def test_a_configured_worker_with_a_ca_certificate_has_the_transport_trust_it_for_its_url():
-    with get_db_context() as db:
-        db.add(
-            ConfiguredBackend(
-                id="worker:tls-team", url=TLS_TEAM_URL, token=encrypt_secret("row-token", 1), ca_cert=self_signed_pem()
-            )
-        )
-        db.commit()
-    try:
-        worker = registry.backend("worker:tls-team")
+def test_a_configured_worker_with_a_ca_certificate_has_the_transport_trust_it_for_its_url(configured_backend):
+    pem, _ = self_signed_certificate("tls-team-worker.test")
+    configured_backend("worker:tls-team", url=TLS_TEAM_URL, ca_cert=pem)
 
-        assert worker.url == TLS_TEAM_URL
-        assert isinstance(subops.ssl_context_for(TLS_TEAM_URL), ssl.SSLContext)
-    finally:
-        with get_db_context() as db:
-            db.delete(db.get(ConfiguredBackend, "worker:tls-team"))
-            db.commit()
+    worker = registry.backend("worker:tls-team")
+
+    assert worker.url == TLS_TEAM_URL
+    assert isinstance(subops.ssl_context_for(TLS_TEAM_URL), ssl.SSLContext)
 
 
 def test_a_worker_name_no_row_configures_is_unknown():

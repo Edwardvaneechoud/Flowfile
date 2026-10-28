@@ -6,7 +6,6 @@ from uuid import uuid4
 
 import pytest
 
-from flowfile_core.configs import settings
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile import api_runner
 from flowfile_core.flowfile.execution.backends import worker as worker_module
@@ -18,12 +17,12 @@ from flowfile_core.flowfile.execution.errors import (
     worker_failure,
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
-from flowfile_core.flowfile.flow_graph import add_connection
 from flowfile_core.flowfile.flow_graph import execution as graph_execution
 from flowfile_core.flowfile.flow_node.models import RemoteExecutionError
-from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.util.skip_rules import NodeRunStatus
-from flowfile_core.schemas import input_schema, schemas, transform_schema
+from tests.flowfile.execution.graph_helpers import input_then_sort, make_graph
+
+pytestmark = pytest.mark.usefixtures("protocol_off")
 
 
 class _NotAPlan:
@@ -31,20 +30,6 @@ class _NotAPlan:
 
     def serialize(self) -> bytes:
         return b"not a plan"
-
-
-@pytest.fixture(autouse=True)
-def task_routes(monkeypatch):
-    """The protocol flag off: these tests reach the worker through the task routes' fetcher, which the flag replaces."""
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
-
-
-@pytest.fixture
-def running_worker():
-    from tests.conftest import is_worker_running
-
-    if not is_worker_running():
-        pytest.skip("flowfile_worker is not running")
 
 
 def _force_rest(monkeypatch):
@@ -139,41 +124,8 @@ def test_materialize_raises_plan_rejected_without_collecting_in_core(running_wor
     assert core_collects == []
 
 
-def _manual_input_then_sort(flow_id: int):
-    handler = FlowfileHandler()
-    handler.register_flow(
-        schemas.FlowSettings(
-            flow_id=flow_id,
-            name="plan_rejected",
-            path=".",
-            execution_mode="Development",
-            execution_location="remote",
-        )
-    )
-    graph = handler.get_flow(flow_id)
-    graph.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=1, node_type="manual_input"))
-    graph.add_manual_input(
-        input_schema.NodeManualInput(
-            flow_id=flow_id,
-            node_id=1,
-            raw_data_format=input_schema.RawData.from_pylist([{"a": 2}, {"a": 1}]),
-        )
-    )
-    graph.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=2, node_type="sort"))
-    graph.add_sort(
-        input_schema.NodeSort(
-            flow_id=flow_id,
-            node_id=2,
-            depending_on_id=1,
-            sort_input=[transform_schema.SortByInput(column="a", how="asc")],
-        )
-    )
-    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
-    return graph
-
-
 def test_node_fails_with_plan_rejected_and_downstream_is_skipped(running_worker, monkeypatch):
-    graph = _manual_input_then_sort(flow_id=9301)
+    graph = input_then_sort(make_graph(9301), [{"a": 2}, {"a": 1}], "a")
     real_fetcher = worker_module.ExternalDfFetcher
     shipped = []
 

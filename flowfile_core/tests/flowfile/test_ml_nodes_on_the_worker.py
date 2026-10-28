@@ -15,7 +15,7 @@ import pytest
 
 from flowfile_core.configs import settings
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.database.models import CatalogNamespace, FlowRegistration, GlobalArtifact
+from flowfile_core.database.models import GlobalArtifact
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
@@ -23,26 +23,12 @@ from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.output_model import RunInformation
 from shared.compute_protocol import WorkerLocation
 from shared.storage_config import storage
-from tests.flowfile.conftest import (
-    add_test_manual_input,
-    create_test_flow_registration,
-    create_test_graph,
-    create_test_namespace,
-)
+from tests.flowfile.conftest import add_test_manual_input, create_test_graph
 
-pytestmark = pytest.mark.core
+pytestmark = [pytest.mark.core, pytest.mark.usefixtures("remote_worker")]
 
 ROWS = [{"x1": float(i), "x2": float(i % 3), "y": 2.0 * i + 3.0 * (i % 3) + 1.0} for i in range(1, 9)]
 FLOW_ID = 7480
-
-
-@pytest.fixture(autouse=True)
-def remote_worker():
-    from flowfile_core.schemas.schemas import is_valid_execution_location_in_current_global_settings
-    from tests.conftest import is_worker_running
-
-    if not (is_worker_running() and is_valid_execution_location_in_current_global_settings("remote")):
-        pytest.skip("Remote execution not active")
 
 
 def _wire(graph: FlowGraph, node_type: str, node_id: int, upstream_id: int) -> None:
@@ -99,22 +85,6 @@ def flow():
     _apply(graph, 3)
     yield graph
     _release_models(graph)
-
-
-@pytest.fixture
-def registration():
-    """A namespace and a flow registered in it, ``(namespace_id, registration_id)``; their rows go after the test."""
-    namespace_id = create_test_namespace()
-    registration_id = create_test_flow_registration(namespace_id, name=f"ml_nodes_{uuid.uuid4().hex[:8]}")
-    yield namespace_id, registration_id
-    with get_db_context() as db:
-        db.query(GlobalArtifact).filter_by(source_registration_id=registration_id).delete()
-        db.query(FlowRegistration).filter_by(id=registration_id).delete()
-        schema = db.get(CatalogNamespace, namespace_id)
-        catalog_id = schema.parent_id
-        db.delete(schema)
-        db.query(CatalogNamespace).filter_by(id=catalog_id).delete()
-        db.commit()
 
 
 def _failures(run: RunInformation) -> dict[int, str]:

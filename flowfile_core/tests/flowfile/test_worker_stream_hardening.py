@@ -534,14 +534,6 @@ def test_receive_thread_logs_unexpected_error_with_traceback(monkeypatch, caplog
 
 
 @pytest.fixture
-def running_worker():
-    from tests.conftest import is_worker_running
-
-    if not is_worker_running():
-        pytest.skip("flowfile_worker is not running")
-
-
-@pytest.fixture
 def core_only_udf_plan(tmp_path, monkeypatch) -> pl.LazyFrame:
     """A plan whose UDF lives in a module only this (core) process can import, as with separate images."""
     module_name = f"core_only_udf_{tmp_path.name.replace('-', '_')}"

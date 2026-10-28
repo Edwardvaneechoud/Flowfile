@@ -24,7 +24,6 @@ from flowfile_core.catalog.delta_utils import check_source_versions_current
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.services import previews
 from flowfile_core.catalog.services import virtual_tables as virtual_tables_module
-from flowfile_core.configs import settings
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
     FlowRegistration,
@@ -38,6 +37,7 @@ from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.transform_schema import BasicFilter, FilterInput, PivotInput
 from shared.compute_protocol import WorkerLocation
 from shared.delta_models import SourceTableVersion
+from tests.conftest import closed_url
 from tests.flowfile.conftest import (
     CATALOG_SAMPLE_DATA as SAMPLE_DATA,
 )
@@ -62,7 +62,6 @@ from tests.flowfile.conftest import (
 from tests.flowfile.conftest import (
     run_test_graph as _run_graph,
 )
-from tests.flowfile.execution.test_results_exists_unreachable import _closed_url
 
 
 @pytest.fixture()
@@ -1396,11 +1395,6 @@ class TestVersionRestampAndClear:
 
 
 @pytest.fixture()
-def protocol_on(monkeypatch):
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
-
-
-@pytest.fixture()
 def no_snapshot(monkeypatch):
     """Fail the test if a preview asks the worker for a virtual table snapshot or reads a file in core."""
 
@@ -1520,7 +1514,7 @@ class TestVirtualTableProducerCompute:
     ):
         client = TestClient(main.app)
         client.headers = {"Authorization": f"Bearer {client.post('/auth/token').json()['access_token']}"}
-        url = _closed_url()
+        url = closed_url()
         monkeypatch.setattr(registry.backend(registry.WORKER_BACKEND_ID), "url", url)
 
         response = client.post(f"/catalog/virtual-tables/{eager_virtual_table_id}/resolve")

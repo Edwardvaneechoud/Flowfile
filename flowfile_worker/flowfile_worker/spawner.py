@@ -256,6 +256,23 @@ def run_inline(task_id: str, target: Callable, kwargs: dict) -> None:
             status.status = "Unknown Error"
 
 
+def _launch(task_id: str, target: Callable, kwargs: dict) -> None:
+    """Run *target* with *kwargs* as job *task_id*: in this process when the host set ``in_process``, else in a spawned
+    child given the three primitives and monitored by ``handle_task``."""
+    if in_process:
+        run_inline(task_id, target, kwargs)
+        return
+    progress = mp_context.Value("i", 0)
+    error_message = mp_context.Array("c", 1024)
+    q = mp_context.Queue(maxsize=1)
+    p: Process = mp_context.Process(
+        target=target, kwargs={**kwargs, "progress": progress, "error_message": error_message, "queue": q}
+    )
+    p.start()
+    process_manager.add_process(task_id, p)
+    handle_task(task_id=task_id, p=p, progress=progress, error_message=error_message, q=q)
+
+
 def start_process(
     polars_serializable_object: bytes,
     task_id: str,
@@ -290,11 +307,7 @@ def start_process(
     kwargs["flowfile_flow_id"] = flowfile_flow_id
     kwargs["flowfile_node_id"] = flowfile_node_id
 
-    if in_process:
-        run_inline(task_id, getattr(funcs, operation), kwargs)
-        return
-
-    member = pool.task_pool.acquire(operation)
+    member = None if in_process else pool.task_pool.acquire(operation)
     if member is not None:
         try:
             member.submit(operation, kwargs)
@@ -313,18 +326,7 @@ def start_process(
         )
         return
 
-    process_task = getattr(funcs, operation)
-    kwargs["progress"] = mp_context.Value("i", 0)
-    kwargs["error_message"] = mp_context.Array("c", 1024)
-    kwargs["queue"] = mp_context.Queue(maxsize=1)
-
-    p: Process = mp_context.Process(target=process_task, kwargs=kwargs)
-    p.start()
-
-    process_manager.add_process(task_id, p)
-    handle_task(
-        task_id=task_id, p=p, progress=kwargs["progress"], error_message=kwargs["error_message"], q=kwargs["queue"]
-    )
+    _launch(task_id, getattr(funcs, operation), kwargs)
 
 
 def start_generic_process(
@@ -356,23 +358,7 @@ def start_generic_process(
     kwargs["file_path"] = file_ref
     kwargs["flowfile_flow_id"] = flowfile_flow_id
     kwargs["flowfile_node_id"] = flowfile_node_id
-
-    if in_process:
-        run_inline(task_id, funcs.generic_task, kwargs)
-        return
-
-    kwargs["progress"] = mp_context.Value("i", 0)
-    kwargs["error_message"] = mp_context.Array("c", 1024)
-    kwargs["queue"] = mp_context.Queue(maxsize=1)
-
-    process_task = funcs.generic_task
-    p: Process = mp_context.Process(target=process_task, kwargs=kwargs)
-    p.start()
-
-    process_manager.add_process(task_id, p)
-    handle_task(
-        task_id=task_id, p=p, progress=kwargs["progress"], error_message=kwargs["error_message"], q=kwargs["queue"]
-    )
+    _launch(task_id, funcs.generic_task, kwargs)
 
 
 def start_train_model_process(
@@ -404,20 +390,7 @@ def start_train_model_process(
         "flowfile_flow_id": flowfile_flow_id,
         "flowfile_node_id": flowfile_node_id,
     }
-
-    if in_process:
-        run_inline(task_id, funcs.train_model_task, kwargs)
-        return
-
-    progress = mp_context.Value("i", 0)
-    error_message = mp_context.Array("c", 1024)
-    q = mp_context.Queue(maxsize=1)
-    kwargs.update(progress=progress, error_message=error_message, queue=q)
-
-    p: Process = mp_context.Process(target=funcs.train_model_task, kwargs=kwargs)
-    p.start()
-    process_manager.add_process(task_id, p)
-    handle_task(task_id=task_id, p=p, progress=progress, error_message=error_message, q=q)
+    _launch(task_id, funcs.train_model_task, kwargs)
 
 
 def start_apply_model_process(
@@ -442,20 +415,7 @@ def start_apply_model_process(
         "flowfile_flow_id": flowfile_flow_id,
         "flowfile_node_id": flowfile_node_id,
     }
-
-    if in_process:
-        run_inline(task_id, funcs.apply_model_task, kwargs)
-        return
-
-    progress = mp_context.Value("i", 0)
-    error_message = mp_context.Array("c", 1024)
-    q = mp_context.Queue(maxsize=1)
-    kwargs.update(progress=progress, error_message=error_message, queue=q)
-
-    p: Process = mp_context.Process(target=funcs.apply_model_task, kwargs=kwargs)
-    p.start()
-    process_manager.add_process(task_id, p)
-    handle_task(task_id=task_id, p=p, progress=progress, error_message=error_message, q=q)
+    _launch(task_id, funcs.apply_model_task, kwargs)
 
 
 def start_fuzzy_process(
@@ -483,52 +443,18 @@ def start_fuzzy_process(
         - Initializes and starts a new process for fuzzy joining operation
         - Delegates to handle_task for process monitoring
     """
-    if in_process:
-        run_inline(
-            task_id,
-            funcs.fuzzy_join_task,
-            {
-                "left_serializable_object": left_serializable_object,
-                "right_serializable_object": right_serializable_object,
-                "fuzzy_maps": fuzzy_maps,
-                "file_path": file_ref,
-                "flowfile_flow_id": flowfile_flow_id,
-                "flowfile_node_id": flowfile_node_id,
-            },
-        )
-        return
-
-    progress = mp_context.Value("i", 0)
-    error_message = mp_context.Array("c", 1024)
-    q = mp_context.Queue(maxsize=1)
-
-    args: tuple[
-        bytes,
-        bytes,
-        list[models.FuzzyMapping],
-        mp_context.Array,
-        str,
-        mp_context.Value,
-        Queue,
-        int,
-        flowfile_node_id_type,
-    ] = (
-        left_serializable_object,
-        right_serializable_object,
-        fuzzy_maps,
-        error_message,
-        file_ref,
-        progress,
-        q,
-        flowfile_flow_id,
-        flowfile_node_id,
+    _launch(
+        task_id,
+        funcs.fuzzy_join_task,
+        {
+            "left_serializable_object": left_serializable_object,
+            "right_serializable_object": right_serializable_object,
+            "fuzzy_maps": fuzzy_maps,
+            "file_path": file_ref,
+            "flowfile_flow_id": flowfile_flow_id,
+            "flowfile_node_id": flowfile_node_id,
+        },
     )
-
-    p: Process = mp_context.Process(target=funcs.fuzzy_join_task, args=args)
-    p.start()
-
-    process_manager.add_process(task_id, p)
-    handle_task(task_id=task_id, p=p, progress=progress, error_message=error_message, q=q)
 
 
 def start_custom_node_process(
@@ -558,18 +484,4 @@ def start_custom_node_process(
         "flowfile_flow_id": custom_node_input.flowfile_flow_id,
         "flowfile_node_id": custom_node_input.flowfile_node_id,
     }
-
-    if in_process:
-        run_inline(task_id, custom_node_runner.execute_custom_node_task, kwargs)
-        return
-
-    progress = mp_context.Value("i", 0)
-    error_message = mp_context.Array("c", 1024)
-    q = mp_context.Queue(maxsize=1)
-    kwargs.update(progress=progress, error_message=error_message, queue=q)
-
-    p: Process = mp_context.Process(target=custom_node_runner.execute_custom_node_task, kwargs=kwargs)
-    p.start()
-
-    process_manager.add_process(task_id, p)
-    handle_task(task_id=task_id, p=p, progress=progress, error_message=error_message, q=q)
+    _launch(task_id, custom_node_runner.execute_custom_node_task, kwargs)

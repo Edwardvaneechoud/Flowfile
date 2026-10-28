@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { httpError } from "../__fixtures__/promises";
+import { capabilities, verdict } from "./__fixtures__/computeBackends";
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
@@ -16,24 +18,7 @@ import {
   listComputeBackends,
   removeComputeBackend,
   type ComputeBackend,
-  type HandshakeVerdict,
-  type WorkerCapabilities,
 } from "./computeBackends.api";
-
-const capabilities: WorkerCapabilities = {
-  app_version: "0.23.0",
-  polars_version: "1.39.3",
-  python_version: "3.12.8",
-  protocol_version: 1,
-  platform: "darwin-arm64",
-  polars_runtime: "32",
-  plugins: { polars_ds: "0.10.0" },
-  plugin_libs: { polars_ds: "lib/python3.12/site-packages/polars_ds/_polars_ds.abi3.so" },
-  operations: ["database_read"],
-  read_schemes: ["s3"],
-  write_schemes: ["s3"],
-  credential_resolution: "master_key",
-};
 
 beforeEach(() => {
   mocks.get.mockReset();
@@ -97,9 +82,7 @@ describe("addComputeBackend", () => {
   });
 
   it("propagates a rejection raw, so the caller reads the route's detail", async () => {
-    const failure = Object.assign(new Error("Request failed with status code 409"), {
-      response: { status: 409, data: { detail: "Compute backend 'worker:team' already exists" } },
-    });
+    const failure = httpError(409, "Compute backend 'worker:team' already exists");
     mocks.post.mockRejectedValue(failure);
 
     await expect(addComputeBackend({ name: "team", url: "https://t", token: "x" })).rejects.toBe(
@@ -120,22 +103,22 @@ describe("removeComputeBackend", () => {
 
 describe("handshakeComputeBackend", () => {
   it("posts the encoded id's handshake and returns the verdict verbatim", async () => {
-    const verdict: HandshakeVerdict = {
-      id: "worker:team",
-      ok: true,
-      core: capabilities,
-      backend: { ...capabilities, python_version: "3.12.7" },
-      offered: { ...capabilities, python_version: "3.12.7", plugins: {} },
-      differences: ["python_version: core 3.12.8, backend 3.12.7"],
+    const answer = verdict({
+      core: capabilities({
+        plugin_libs: { polars_ds: "lib/python3.12/site-packages/polars_ds/_polars_ds.abi3.so" },
+        operations: ["database_read"],
+      }),
+      backend: capabilities({ python_version: "3.12.7" }),
+      offered: capabilities({ python_version: "3.12.7", plugins: {} }),
+      differences: ["python_version: core 3.12.15, backend 3.12.7"],
       absent: { polars_ds: "not installed" },
-      error: null,
-    };
-    mocks.post.mockResolvedValue({ data: verdict });
+    });
+    mocks.post.mockResolvedValue({ data: answer });
 
     const result = await handshakeComputeBackend("worker:team");
 
     expect(mocks.post).toHaveBeenCalledWith("/compute_backends/worker%3Ateam/handshake");
-    expect(result).toEqual(verdict);
+    expect(result).toEqual(answer);
   });
 
   it("propagates a rejection raw", async () => {

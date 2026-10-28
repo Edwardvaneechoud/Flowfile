@@ -13,7 +13,6 @@ import pytest
 import requests
 from polars.io.plugins import register_io_source
 
-from flowfile_core.configs import settings
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import worker as worker_module
@@ -34,18 +33,13 @@ from flowfile_core.flowfile.flow_graph import add_connection
 from flowfile_core.flowfile.schema_callbacks import pre_calculate_pivot_schema
 from flowfile_core.schemas import input_schema, transform_schema
 from shared.compute_protocol import PROTOCOL_VERSION
+from tests.conftest import spy
 from tests.flowfile.conftest import add_test_manual_input, create_test_graph
 
-pytestmark = pytest.mark.core
+pytestmark = [pytest.mark.core, pytest.mark.usefixtures("protocol_off")]
 
 LARGE = 2_000_000
 EMPTY = "nothing to read here"
-
-
-@pytest.fixture(autouse=True)
-def task_routes(monkeypatch):
-    """The protocol flag off: these tests reach the worker through the task routes' fetcher, which the flag replaces."""
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
 
 
 def large_plan(rows: int = LARGE) -> pl.LazyFrame:
@@ -130,27 +124,6 @@ class UnreachableBackend:
 
     def release(self, ref):
         self.released.append(ref.result_id)
-
-
-def count_collects(monkeypatch) -> list[int]:
-    """One entry per ``LazyFrame.collect`` in this process from here on."""
-    collects: list[int] = []
-    real_collect = pl.LazyFrame.collect
-
-    def counting_collect(self, *args, **kwargs):
-        collects.append(1)
-        return real_collect(self, *args, **kwargs)
-
-    monkeypatch.setattr(pl.LazyFrame, "collect", counting_collect)
-    return collects
-
-
-@pytest.fixture
-def running_worker():
-    from tests.conftest import is_worker_running
-
-    if not is_worker_running():
-        pytest.skip("flowfile_worker is not running")
 
 
 @pytest.fixture(params=["embedded", "worker"])
@@ -385,7 +358,7 @@ def test_distinct_values_on_the_worker_are_one_sampler_task_up_to_the_limit(work
 
 def test_a_running_worker_reads_only_the_bounded_rows_back(running_worker, monkeypatch):
     worker = WorkerBackend(url=WORKER_URL)
-    collects = count_collects(monkeypatch)
+    collects = spy(monkeypatch, pl.LazyFrame, "collect")
 
     assert count_rows(worker, large_plan()) == LARGE
     assert head_rows(worker, large_plan(), 3).column("n").to_pylist() == [0, 1, 2]
@@ -414,7 +387,7 @@ FAILURES = {
 @pytest.mark.parametrize("helper", list(HELPERS))
 def test_a_backend_that_cannot_read_fails_each_helper_with_its_compute_error(helper, monkeypatch):
     unreachable = UnreachableBackend()
-    collects = count_collects(monkeypatch)
+    collects = spy(monkeypatch, pl.LazyFrame, "collect")
 
     with pytest.raises(ComputeUnavailable, match="connection refused"):
         HELPERS[helper](unreachable)
@@ -437,7 +410,7 @@ def test_a_failing_worker_fails_each_helper_typed_and_nothing_collects_in_core(h
     monkeypatch.setattr(worker_module, "ExternalDfFetcher", start)
     monkeypatch.setattr(worker_module, "clear_task_from_worker", lambda task_id, *, worker_url: None)
     recording = Recording(WorkerBackend(url=WORKER_URL))
-    collects = count_collects(monkeypatch)
+    collects = spy(monkeypatch, pl.LazyFrame, "collect")
 
     with pytest.raises(error_type) as raised:
         HELPERS[helper](recording)
@@ -559,7 +532,7 @@ SITES = {
 def test_a_site_whose_backend_cannot_compute_fails_typed_and_never_collects_in_core(
     site, unreachable_context, monkeypatch
 ):
-    collects = count_collects(monkeypatch)
+    collects = spy(monkeypatch, pl.LazyFrame, "collect")
 
     with pytest.raises(ComputeUnavailable):
         SITES[site]()

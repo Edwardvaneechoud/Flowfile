@@ -16,7 +16,9 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
+
+from shared.wire_model import WireModel
 
 
 class HttpMethod(str, Enum):
@@ -58,10 +60,8 @@ class CursorLocation(str, Enum):
     HEADER = "header"  # a response header name
 
 
-class AuthConfig(BaseModel):
+class AuthConfig(WireModel):
     """Authentication settings. Secret material is carried encrypted."""
-
-    model_config = ConfigDict(extra="forbid")
 
     auth_type: AuthType = AuthType.NONE
 
@@ -78,10 +78,8 @@ class AuthConfig(BaseModel):
     basic_password_encrypted: str | None = None
 
 
-class PaginationConfig(BaseModel):
+class PaginationConfig(WireModel):
     """Pagination strategy and its parameters, plus safety caps."""
-
-    model_config = ConfigDict(extra="forbid")
 
     pagination_type: PaginationType = PaginationType.NONE
 
@@ -106,10 +104,8 @@ class PaginationConfig(BaseModel):
     page_delay_seconds: float = 0.0
 
 
-class RestApiReadSettings(BaseModel):
+class RestApiReadSettings(WireModel):
     """Payload for ``POST /store_rest_api_read_result``."""
-
-    model_config = ConfigDict(extra="forbid")
 
     url: str
     method: HttpMethod = HttpMethod.GET

@@ -42,6 +42,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
 )
 from shared import cloud_credential_provider as cp
 from shared.delta_utils import write_delta
+from tests.conftest import protocol_states
 from tests.flowfile.conftest import add_test_catalog_writer, add_test_manual_input, catalog_cleanup, create_test_graph
 from tests.test_catalog_cloud_virtual import _create_cloud_schema, _ensure_connection, requires_minio
 
@@ -177,10 +178,7 @@ def stored_connection():
             delete_cloud_connection(db, name, user_id=1)
 
 
-@pytest.fixture(params=[False, True], ids=["protocol-off", "protocol-on"])
-def protocol(request, monkeypatch) -> bool:
-    monkeypatch.setattr(core_settings.FLOWFILE_COMPUTE_PROTOCOL, "value", request.param)
-    return request.param
+protocol = protocol_states("protocol-off", "protocol-on")
 
 
 @pytest.fixture

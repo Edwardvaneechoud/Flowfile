@@ -15,7 +15,6 @@ import polars as pl
 import pyarrow as pa
 import pytest
 
-from flowfile_core.configs import settings
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
@@ -25,6 +24,8 @@ from flowfile_core.flowfile.execution.protocol import JobHandle, ResultRef, Subm
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from flowfile_worker.results import result_path
+
+pytestmark = pytest.mark.usefixtures("protocol_off")
 
 PEOPLE = pl.DataFrame({"id": list(range(10)), "name": [f"n{i}" for i in range(10)]})
 HINT_COMBINATIONS = [
@@ -56,20 +57,6 @@ def rows(sample: bytes) -> pa.Table:
 
 def new_result_id() -> str:
     return f"t-submit-policy-{uuid.uuid4().hex}"
-
-
-@pytest.fixture(autouse=True)
-def task_routes(monkeypatch):
-    """The protocol flag off: these tests reach the worker through the task routes' fetcher, which the flag replaces."""
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
-
-
-@pytest.fixture
-def running_worker():
-    from tests.conftest import is_worker_running
-
-    if not is_worker_running():
-        pytest.skip("flowfile_worker is not running")
 
 
 @pytest.fixture

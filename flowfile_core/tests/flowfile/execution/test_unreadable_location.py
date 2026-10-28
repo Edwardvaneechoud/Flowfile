@@ -33,7 +33,6 @@ import os
 import threading
 import uuid
 from contextlib import contextmanager
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -41,7 +40,6 @@ import polars as pl
 import pytest
 
 from flowfile_core import flow_file_handler
-from flowfile_core.configs import settings
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.execution import registry
@@ -66,6 +64,17 @@ from flowfile_core.flowfile.user_defined.registry import registry as node_regist
 from flowfile_core.routes.routes import export_node_data
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from shared.compute_protocol import WorkerLocation
+from tests.conftest import protocol_states
+from tests.flowfile.execution.conftest import serve
+from tests.flowfile.execution.graph_helpers import (
+    add_filter_on,
+    add_manual_input,
+    add_promise,
+    add_select_on,
+    code_flow,
+    connect,
+    make_graph,
+)
 from tests.flowfile.test_flowfile_integration import build_complex_elaborate_flow
 
 BACKEND_ID = "unreadable"
@@ -166,16 +175,7 @@ class UnreadableBackend(EmbeddedWorkerBackend):
                 link.unlink(missing_ok=True)
 
 
-@pytest.fixture(params=[False, True], ids=["flag_off", "flag_on"])
-def protocol(request, monkeypatch) -> bool:
-    """The protocol flag in each state, back to what it was when the test ends."""
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", request.param)
-    return request.param
-
-
-@pytest.fixture
-def protocol_on(monkeypatch):
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
+protocol = protocol_states("flag_off", "flag_on")
 
 
 @pytest.fixture
@@ -192,65 +192,6 @@ def unreadable(monkeypatch, tmp_path) -> list[UnreadableBackend]:
     monkeypatch.setenv("FLOWFILE_COMPUTE_BACKEND", BACKEND_ID)
     yield made
     registry.reset()
-
-
-@pytest.fixture
-def remote_worker():
-    from flowfile_core.schemas.schemas import is_valid_execution_location_in_current_global_settings
-    from tests.conftest import is_worker_running
-
-    if not (is_worker_running() and is_valid_execution_location_in_current_global_settings("remote")):
-        pytest.skip("Remote execution not active")
-
-
-def make_graph(flow_id: int, **settings_fields) -> FlowGraph:
-    fields = {"execution_location": "remote", "execution_mode": "Development"}
-    fields.update(settings_fields)
-    return FlowGraph(schemas.FlowSettings(flow_id=flow_id, name=f"unreadable_{flow_id}", path=".", **fields))
-
-
-def add_promise(graph: FlowGraph, node_id: int, node_type: str) -> None:
-    graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type=node_type))
-
-
-def connect(graph: FlowGraph, from_id: int, to_id: int, input_type: str = "main") -> None:
-    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id, to_id, input_type=input_type))
-
-
-def add_manual_input(graph: FlowGraph, node_id: int, rows: list[dict]) -> None:
-    add_promise(graph, node_id, "manual_input")
-    graph.add_manual_input(
-        input_schema.NodeManualInput(
-            flow_id=graph.flow_id, node_id=node_id, raw_data_format=input_schema.RawData.from_pylist(rows)
-        )
-    )
-
-
-def add_select_on(graph: FlowGraph, node_id: int, source_id: int, select: list[tuple[str, str]], keep_missing: bool):
-    add_promise(graph, node_id, "select")
-    graph.add_select(
-        input_schema.NodeSelect(
-            flow_id=graph.flow_id,
-            node_id=node_id,
-            depending_on_id=source_id,
-            select_input=[transform_schema.SelectInput(old_name=old, new_name=new) for old, new in select],
-            keep_missing=keep_missing,
-        )
-    )
-    connect(graph, source_id, node_id)
-
-
-def add_filter_on(graph: FlowGraph, node_id: int, source_id: int, expression: str) -> None:
-    add_promise(graph, node_id, "filter")
-    graph.add_filter(
-        input_schema.NodeFilter(
-            flow_id=graph.flow_id,
-            node_id=node_id,
-            depending_on_id=source_id,
-            filter_input=transform_schema.FilterInput(mode="advanced", advanced_filter=expression),
-        )
-    )
-    connect(graph, source_id, node_id)
 
 
 def stored_results_flow(flow_id: int) -> FlowGraph:
@@ -396,17 +337,7 @@ def stored_inputs_flow(flow_id: int) -> FlowGraph:
         )
     )
     connect(graph, 5, 6)
-    add_promise(graph, 7, "filter")
-    graph.add_filter(
-        input_schema.NodeFilter(
-            flow_id=graph.flow_id,
-            node_id=7,
-            depending_on_id=1,
-            filter_input=transform_schema.FilterInput(mode="advanced", advanced_filter='[region] = "eu"'),
-            split_mode=True,
-        )
-    )
-    connect(graph, 1, 7)
+    add_filter_on(graph, 7, 1, '[region] = "eu"', split_mode=True)
     for node_id in (1, 4, 5):
         graph.get_node(node_id).node_settings.cache_results = True
     return graph
@@ -1194,41 +1125,13 @@ def executed_in_core(*args, **kwargs):
 
 def side_effect_flow(flow_id: int, written: Path) -> FlowGraph:
     """Manual input 1, cached → Polars code 2, which writes its collected input to a new CSV file in ``written``."""
-    graph = make_graph(flow_id, max_parallel_workers=1)
-    add_manual_input(graph, 1, TRANSFORM_ROWS)
-    graph.get_node(1).node_settings.cache_results = True
-    add_promise(graph, 2, "polars_code")
     code = (
         "rows = input_df.collect()\n"
         f'rows.write_csv(f"{written.as_posix()}/{{time.time_ns()}}.csv")\n'
         "output_df = rows.lazy().select('id', 'amount')"
     )
-    graph.add_polars_code(
-        input_schema.NodePolarsCode(
-            flow_id=graph.flow_id,
-            node_id=2,
-            depending_on_ids=[1],
-            polars_code_input=transform_schema.PolarsCodeInput(polars_code=code),
-        )
-    )
-    connect(graph, 1, 2)
-    return graph
-
-
-def prediction_flow(flow_id: int) -> FlowGraph:
-    """Manual input 1 → Polars code 2 with lazy code; neither has run."""
-    graph = make_graph(flow_id, max_parallel_workers=1)
-    add_manual_input(graph, 1, TRANSFORM_ROWS)
-    add_promise(graph, 2, "polars_code")
-    graph.add_polars_code(
-        input_schema.NodePolarsCode(
-            flow_id=graph.flow_id,
-            node_id=2,
-            depending_on_ids=[1],
-            polars_code_input=transform_schema.PolarsCodeInput(polars_code=LAZY_POLARS_CODE),
-        )
-    )
-    connect(graph, 1, 2)
+    graph = code_flow(flow_id, "polars_code", code, TRANSFORM_ROWS, max_parallel_workers=1)
+    graph.get_node(1).node_settings.cache_results = True
     return graph
 
 
@@ -1242,19 +1145,22 @@ def translated_in_core(*args, **kwargs):
 
 def sql_query_flow(flow_id: int, sql_code: str) -> FlowGraph:
     """Manual input 1 → SQL query 2 running ``sql_code`` over it as ``input_1``; neither has run."""
-    graph = make_graph(flow_id, max_parallel_workers=1)
-    add_manual_input(graph, 1, TRANSFORM_ROWS)
-    add_promise(graph, 2, "sql_query")
-    graph.add_sql_query(
-        input_schema.NodeSqlQuery(
-            flow_id=graph.flow_id,
-            node_id=2,
-            depending_on_ids=[1],
-            sql_query_input=transform_schema.SqlQueryInput(sql_code=sql_code),
-        )
-    )
-    connect(graph, 1, 2)
-    return graph
+    return code_flow(flow_id, "sql_query", sql_code, TRANSFORM_ROWS, max_parallel_workers=1)
+
+
+def record_run_ops(monkeypatch, backend_class) -> list[SimpleNamespace]:
+    """Every ``run_op`` call on ``backend_class`` from here on, as its ``kind``, ``payload`` and ``result``."""
+    calls: list[SimpleNamespace] = []
+    run_op = backend_class.run_op
+
+    def recording(self, op, payload):
+        call = SimpleNamespace(kind=op.value, payload=payload.get("payload"), result=None)
+        calls.append(call)
+        call.result = run_op(self, op, payload)
+        return call.result
+
+    monkeypatch.setattr(backend_class, "run_op", recording)
+    return calls
 
 
 def written_lines(written: Path) -> list[int]:
@@ -1262,14 +1168,39 @@ def written_lines(written: Path) -> list[int]:
     return [len(path.read_text().splitlines()) for path in written.glob("*.csv")]
 
 
-def test_polars_code_with_a_side_effect_runs_it_once_on_the_backend(unreadable, protocol_on, tmp_path):
+ON_THE_BACKEND = pytest.mark.parametrize("backend", ["unreadable", "remote_worker"], ids=["backend", "worker"])
+"""A case on the ``UnreadableBackend``, then on the session worker, where core's own run of the code is refused too."""
+
+CORE_RUNS = {
+    "polars_code": (polars_code_parser, "get_executable", executed_in_core),
+    "sql_query": (pl.SQLContext, "execute", translated_in_core),
+}
+"""What core would call to run each kind of user code itself, with the stand-in that fails the test if it does."""
+
+
+def on_backend(request, monkeypatch, backend: str, kind: str) -> list[SimpleNamespace]:
+    """Sets up ``backend`` and answers the ``run_op`` calls it gets; on the worker, core running ``kind`` fails."""
+    request.getfixturevalue(backend)
+    if backend == "unreadable":
+        return record_run_ops(monkeypatch, UnreadableBackend)
+    monkeypatch.setattr(*CORE_RUNS[kind])
+    return record_run_ops(monkeypatch, WorkerBackend)
+
+
+@ON_THE_BACKEND
+def test_polars_code_with_a_side_effect_runs_it_once_on_its_backend(
+    request, backend, protocol_on, monkeypatch, tmp_path
+):
+    calls = on_backend(request, monkeypatch, backend, "polars_code")
     written = tmp_path / "written"
     written.mkdir()
-    graph = side_effect_flow(9389, written)
+    graph = side_effect_flow(9389 if backend == "unreadable" else 9390, written)
     try:
         run_info = graph.run_graph()
 
         assert run_info.success, failures(run_info)
+        if backend == "remote_worker":
+            assert [call.kind for call in calls] == ["polars_code"]
         assert written_lines(written) == [7]
         assert columns(graph.get_node(2).schema) == [("id", "Int64"), ("amount", "Int64")]
         assert len(graph.get_node(2).get_table_example(True).data) == 6
@@ -1277,129 +1208,31 @@ def test_polars_code_with_a_side_effect_runs_it_once_on_the_backend(unreadable, 
         graph.close_flow()
 
 
-def test_polars_code_with_a_side_effect_runs_it_once_on_the_worker(remote_worker, protocol_on, monkeypatch, tmp_path):
-    ops = []
-    run_op = WorkerBackend.run_op
-
-    def recording(self, op, payload):
-        ops.append(op.value)
-        return run_op(self, op, payload)
-
-    monkeypatch.setattr(WorkerBackend, "run_op", recording)
-    monkeypatch.setattr(polars_code_parser, "get_executable", executed_in_core)
-    written = tmp_path / "written"
-    written.mkdir()
-    graph = side_effect_flow(9390, written)
-    try:
-        run_info = graph.run_graph()
-
-        assert run_info.success, failures(run_info)
-        assert ops == ["polars_code"]
-        assert written_lines(written) == [7]
-        assert columns(graph.get_node(2).schema) == [("id", "Int64"), ("amount", "Int64")]
-        assert len(graph.get_node(2).get_table_example(True).data) == 6
-    finally:
-        graph.close_flow()
-
-
-def test_the_designers_prediction_of_a_polars_code_node_is_the_operation_over_an_empty_frame(
-    unreadable, protocol_on, monkeypatch
+@ON_THE_BACKEND
+@pytest.mark.parametrize(
+    "kind, code, flow_id",
+    [("polars_code", LAZY_POLARS_CODE, 9391), ("sql_query", SQL_QUERY, 9396)],
+    ids=["polars_code", "sql_query"],
+)
+def test_the_designers_prediction_of_a_user_code_node_is_the_operation_over_an_empty_frame(
+    request, backend, kind, code, flow_id, protocol_on, monkeypatch
 ):
-    calls = []
-    run_op = UnreadableBackend.run_op
-
-    def recording(self, op, payload):
-        result = run_op(self, op, payload)
-        calls.append((op.value, payload["payload"], result))
-        return result
-
-    monkeypatch.setattr(UnreadableBackend, "run_op", recording)
-    graph = prediction_flow(9391)
+    """On the worker the prediction reads an empty frame in memory, so the worker holds its result as a file of no
+    rows."""
+    calls = on_backend(request, monkeypatch, backend, kind)
+    graph = code_flow(flow_id + (backend == "remote_worker"), kind, code, TRANSFORM_ROWS, max_parallel_workers=1)
     try:
         predicted = graph.get_node(2).get_predicted_schema()
 
         assert columns(predicted) == [("id", "Int64"), ("region", "String"), ("amount", "Int64")]
-        ((kind, payload, result),) = calls
-        assert kind == "polars_code"
-        assert payload.inputs[0].select(pl.len()).collect().item() == 0
-        assert result.refs["result"].row_count == 0
-        assert [graph.get_node(node_id).results.result_ref for node_id in (1, 2)] == [None, None]
-    finally:
-        graph.close_flow()
-
-
-def test_the_designers_prediction_of_a_polars_code_node_runs_on_the_worker(remote_worker, protocol_on, monkeypatch):
-    """The prediction reads an empty frame in memory, so the worker holds the code's result as a file of no rows."""
-    calls = []
-    run_op = WorkerBackend.run_op
-
-    def recording(self, op, payload):
-        result = run_op(self, op, payload)
-        calls.append((op.value, payload["payload"], result))
-        return result
-
-    monkeypatch.setattr(WorkerBackend, "run_op", recording)
-    monkeypatch.setattr(polars_code_parser, "get_executable", executed_in_core)
-    graph = prediction_flow(9392)
-    try:
-        predicted = graph.get_node(2).get_predicted_schema()
-
-        assert columns(predicted) == [("id", "Int64"), ("region", "String"), ("amount", "Int64")]
-        ((kind, payload, result),) = calls
-        assert kind == "polars_code"
-        assert payload.inputs[0].select(pl.len()).collect().item() == 0
-        assert (result.refs["result"].state, result.refs["result"].row_count) == ("materialised", 0)
-    finally:
-        graph.close_flow()
-
-
-def test_the_designers_prediction_of_a_sql_query_node_is_the_operation_over_an_empty_frame(
-    unreadable, protocol_on, monkeypatch
-):
-    calls = []
-    run_op = UnreadableBackend.run_op
-
-    def recording(self, op, payload):
-        result = run_op(self, op, payload)
-        calls.append((op.value, payload["payload"], result))
-        return result
-
-    monkeypatch.setattr(UnreadableBackend, "run_op", recording)
-    graph = sql_query_flow(9396, SQL_QUERY)
-    try:
-        predicted = graph.get_node(2).get_predicted_schema()
-
-        assert columns(predicted) == [("id", "Int64"), ("region", "String"), ("amount", "Int64")]
-        ((kind, payload, result),) = calls
-        assert kind == "sql_query"
-        assert payload.inputs[0].select(pl.len()).collect().item() == 0
-        assert result.refs["result"].row_count == 0
-        assert [graph.get_node(node_id).results.result_ref for node_id in (1, 2)] == [None, None]
-    finally:
-        graph.close_flow()
-
-
-def test_the_designers_prediction_of_a_sql_query_node_runs_on_the_worker(remote_worker, protocol_on, monkeypatch):
-    """The prediction reads an empty frame in memory, so the worker holds the query's result as a file of no rows."""
-    calls = []
-    run_op = WorkerBackend.run_op
-
-    def recording(self, op, payload):
-        result = run_op(self, op, payload)
-        calls.append((op.value, payload["payload"], result))
-        return result
-
-    monkeypatch.setattr(WorkerBackend, "run_op", recording)
-    monkeypatch.setattr(pl.SQLContext, "execute", translated_in_core)
-    graph = sql_query_flow(9397, SQL_QUERY)
-    try:
-        predicted = graph.get_node(2).get_predicted_schema()
-
-        assert columns(predicted) == [("id", "Int64"), ("region", "String"), ("amount", "Int64")]
-        ((kind, payload, result),) = calls
-        assert kind == "sql_query"
-        assert payload.inputs[0].select(pl.len()).collect().item() == 0
-        assert (result.refs["result"].state, result.refs["result"].row_count) == ("materialised", 0)
+        (call,) = calls
+        assert call.kind == kind
+        assert call.payload.inputs[0].select(pl.len()).collect().item() == 0
+        assert call.result.refs["result"].row_count == 0
+        if backend == "unreadable":
+            assert [graph.get_node(node_id).results.result_ref for node_id in (1, 2)] == [None, None]
+        else:
+            assert call.result.refs["result"].state == "materialised"
     finally:
         graph.close_flow()
 
@@ -1738,14 +1571,7 @@ def test_a_fuzzy_match_runs_on_a_worker_over_a_stored_input_core_cannot_read(unr
 
 def test_a_sql_query_runs_on_the_worker(unreadable_worker, protocol_on, monkeypatch):
     """The query is translated over a stored input core cannot open, on the worker that holds it, never in core."""
-    ops = []
-    run_op = WorkerBackend.run_op
-
-    def recording(self, op, payload):
-        ops.append(op.value)
-        return run_op(self, op, payload)
-
-    monkeypatch.setattr(WorkerBackend, "run_op", recording)
+    calls = record_run_ops(monkeypatch, WorkerBackend)
     monkeypatch.setattr(pl.SQLContext, "execute", translated_in_core)
     graph = sql_query_flow(9395, SQL_AGGREGATE)
     graph.get_node(1).node_settings.cache_results = True
@@ -1753,7 +1579,7 @@ def test_a_sql_query_runs_on_the_worker(unreadable_worker, protocol_on, monkeypa
         run_info = graph.run_graph()
 
         assert run_info.success, failures(run_info)
-        assert ops == ["sql_query"]
+        assert [call.kind for call in calls] == ["sql_query"]
         ref = graph.get_node(1).results.result_ref
         assert (ref.backend_id, ref.state) == (UNREADABLE_WORKER_ID, "materialised")
         path = WorkerLocation.model_validate_json(ref.location).path
@@ -1767,28 +1593,10 @@ def test_a_sql_query_runs_on_the_worker(unreadable_worker, protocol_on, monkeypa
 API_ROWS = [{"id": 1, "name": "a", "city": "ams"}, {"id": 2, "name": "b", "city": "rtm"}]
 
 
-class _Api(BaseHTTPRequestHandler):
-    def log_message(self, *_args):
-        pass
-
-    def do_GET(self):  # noqa: N802
-        body = json.dumps(API_ROWS).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(body)
-
-
 @pytest.fixture
 def api_url():
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _Api)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{server.server_address[1]}/items"
-    finally:
-        server.shutdown()
-        thread.join(timeout=5)
+    with serve(json.dumps(API_ROWS).encode(), "application/json") as url:
+        yield f"{url}/items"
 
 
 def test_a_rest_api_reader_aligns_a_read_stored_where_core_cannot_read_it(unreadable, protocol_on, api_url):
@@ -1985,14 +1793,7 @@ def test_the_csv_export_reads_its_rows_through_the_backend(read_sites):
 
 
 def test_rows_of_v1_results_come_over_the_wire(remote_worker, protocol_on, monkeypatch):
-    ops = []
-    run_op = WorkerBackend.run_op
-
-    def recording(self, op, payload):
-        ops.append(op.value)
-        return run_op(self, op, payload)
-
-    monkeypatch.setattr(WorkerBackend, "run_op", recording)
+    calls = record_run_ops(monkeypatch, WorkerBackend)
     graph = read_sites_flow(9346)
     try:
         run_info = graph.run_graph()
@@ -2005,6 +1806,7 @@ def test_rows_of_v1_results_come_over_the_wire(remote_worker, protocol_on, monke
         assert get_instant_func_results(graph.get_node(3), "[name]").result == "n1"
         assert select.get_column_stats("amount").max_value == "40"
         assert export_lines(graph, 2, 10_000)[1:] == [f'"{i}","n{i}","{i * 10}"' for i in range(1, 5)]
-        assert ops == ["random_split", "file_write"], "the export's file is written by the flow's backend"
+        written_by = "the export's file is written by the flow's backend"
+        assert [call.kind for call in calls] == ["random_split", "file_write"], written_by
     finally:
         flow_file_handler.delete_flow(9346)

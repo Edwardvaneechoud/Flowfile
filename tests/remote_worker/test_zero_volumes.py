@@ -31,7 +31,6 @@ import time
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +40,9 @@ import pytest
 import requests
 from botocore.client import Config
 from botocore.exceptions import BotoCoreError, ClientError
+
+from test_utils.services import failed_nodes, flow_document, run_flow
+from test_utils.tls import self_signed_certificate
 
 pytestmark = pytest.mark.docker_integration
 
@@ -95,33 +97,6 @@ def _docker_compose_available() -> bool:
     return True
 
 
-def _certificate() -> tuple[str, str]:
-    """A self-signed P-256 certificate for ``minio-tls`` and its private key, both PEM."""
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.x509.oid import NameOID
-
-    key = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "minio-tls")])
-    now = datetime.now(timezone.utc)
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(minutes=5))
-        .not_valid_after(now + timedelta(hours=2))
-        .add_extension(x509.SubjectAlternativeName([x509.DNSName("minio-tls")]), critical=False)
-        .sign(key, hashes.SHA256())
-    )
-    private_key = key.private_bytes(
-        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
-    )
-    return cert.public_bytes(serialization.Encoding.PEM).decode(), private_key.decode()
-
-
 def _wait_until(ready: Callable[[], bool], what: str, timeout: float = 180) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -169,7 +144,7 @@ def stack() -> Iterator[Stack]:
         if os.environ.get("CI", "").lower() in ("true", "1", "yes"):
             pytest.fail("Docker with compose v2 is required for the zero-volume test in CI")
         pytest.skip("Docker with compose v2 is not available")
-    cert, key = _certificate()
+    cert, key = self_signed_certificate("minio-tls", dns=["minio-tls"])
     _ENV.update(
         FLOWFILE_ADMIN_USER="admin",
         FLOWFILE_ADMIN_PASSWORD=secrets.token_urlsafe(16),
@@ -220,12 +195,10 @@ def _flow(model_name: str) -> dict:
     }
     apply_input = {"source": "upstream", "upstream_node_id": 3, "output_column": "pred"}
     write_settings = {"table_name": "predictions", "namespace_full_name": "lake.gate", "write_mode": "overwrite"}
-    return {
-        "flowfile_version": "0.23.0",
-        "flowfile_id": FLOW_ID,
-        "flowfile_name": "zero volumes",
-        "flowfile_settings": {"execution_mode": "Development", "execution_location": "remote"},
-        "nodes": [
+    return flow_document(
+        FLOW_ID,
+        "zero volumes",
+        [
             {
                 "id": 1,
                 "type": "database_reader",
@@ -255,7 +228,24 @@ def _flow(model_name: str) -> dict:
                 "setting_input": {"catalog_write_settings": write_settings},
             },
         ],
+    )
+
+
+def _create_minio_connection(stack: Stack, name: str) -> None:
+    """An access-key S3 connection to MinIO on the compose network."""
+    connection = {
+        "storage_type": "s3",
+        "auth_method": "access_key",
+        "connection_name": name,
+        "aws_region": "us-east-1",
+        "aws_access_key_id": "minioadmin",
+        "aws_secret_access_key": "minioadmin",
+        "aws_allow_unsafe_html": True,
+        "endpoint_url": "http://minio:9000",
+        "verify_ssl": True,
     }
+    response = stack.http.post(f"{stack.core}/cloud_connections/cloud_connection", json=connection)
+    assert response.status_code == 200, response.text
 
 
 def _set_up_sources(stack: Stack) -> None:
@@ -279,19 +269,7 @@ def _set_up_sources(stack: Stack) -> None:
     }
     response = stack.http.post(f"{stack.core}/db_connection_lib", json=database)
     assert response.status_code == 200, response.text
-    lake = {
-        "storage_type": "s3",
-        "auth_method": "access_key",
-        "connection_name": "lake_minio",
-        "aws_region": "us-east-1",
-        "aws_access_key_id": "minioadmin",
-        "aws_secret_access_key": "minioadmin",
-        "aws_allow_unsafe_html": True,
-        "endpoint_url": "http://minio:9000",
-        "verify_ssl": True,
-    }
-    response = stack.http.post(f"{stack.core}/cloud_connections/cloud_connection", json=lake)
-    assert response.status_code == 200, response.text
+    _create_minio_connection(stack, "lake_minio")
     catalog = {"name": "lake", "storage_uri": f"s3://{LAKE_BUCKET}/lake", "storage_connection_name": "lake_minio"}
     response = stack.http.post(f"{stack.core}/catalog/namespaces", json=catalog)
     assert response.status_code == 201, response.text
@@ -322,16 +300,10 @@ def _import_flow(stack: Stack, flow: dict) -> int:
 
 def _run(stack: Stack, flow_id: int, timeout: float = 300) -> dict:
     """Start a run like the Run button and poll until it ends."""
-    response = stack.http.post(f"{stack.core}/flow/run/", params={"flow_id": flow_id})
-    assert response.status_code == 200, response.text
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        status = stack.http.get(f"{stack.core}/flow/run_status/", params={"flow_id": flow_id})
-        info = status.json()
-        if status.status_code == 200 and info["run_type"] == "full_run" and info["success"] is not None:
-            return info
-        time.sleep(1)
-    pytest.fail(f"flow {flow_id} did not finish within {timeout:.0f}s:\n{_logs()}")
+    try:
+        return run_flow(stack.http, stack.core, flow_id, timeout, interval=1)
+    except TimeoutError as error:
+        pytest.fail(f"{error}:\n{_logs()}")
 
 
 def _cache_files(service: str) -> list[str]:
@@ -347,7 +319,7 @@ def test_a_database_read_a_model_and_a_catalog_write_run_on_a_worker_that_shares
 
     run = _run(stack, flow_id)
 
-    failures = {result["node_id"]: result["error"] for result in run["node_step_result"] if not result["success"]}
+    failures = failed_nodes(run)
     assert run["success"] is True and not failures, f"{failures}\n{_logs()}"
     assert run["nodes_completed"] == 5
     preview = stack.http.get(f"{stack.core}/node/data", params={"flow_id": flow_id, "node_id": 4}).json()
@@ -385,12 +357,10 @@ def _scheduled_flow() -> dict:
     """Manual input 1 → group_by 2, the rows counted by region, saved ``remote`` as the designer saves a flow."""
     columns = [{"name": "region", "data_type": "String"}]
     aggregations = [{"old_name": "region", "agg": "groupby"}, {"old_name": "region", "agg": "count", "new_name": "n"}]
-    return {
-        "flowfile_version": "0.23.0",
-        "flowfile_id": 7406,
-        "flowfile_name": "scheduled",
-        "flowfile_settings": {"execution_mode": "Development", "execution_location": "remote"},
-        "nodes": [
+    return flow_document(
+        7406,
+        "scheduled",
+        [
             {
                 "id": 1,
                 "type": "manual_input",
@@ -405,7 +375,7 @@ def _scheduled_flow() -> dict:
                 "setting_input": {"groupby_input": {"agg_cols": aggregations}},
             },
         ],
-    }
+    )
 
 
 def _worker_requests() -> list[str]:
@@ -463,19 +433,7 @@ def exchange(stack: Stack) -> None:
     """The exchange store's bucket, versioned so it keeps a record of what a run wrote and removed, and its connection."""
     stack.minio.create_bucket(Bucket=EXCHANGE_BUCKET)
     stack.minio.put_bucket_versioning(Bucket=EXCHANGE_BUCKET, VersioningConfiguration={"Status": "Enabled"})
-    connection = {
-        "storage_type": "s3",
-        "auth_method": "access_key",
-        "connection_name": "exchange_minio",
-        "aws_region": "us-east-1",
-        "aws_access_key_id": "minioadmin",
-        "aws_secret_access_key": "minioadmin",
-        "aws_allow_unsafe_html": True,
-        "endpoint_url": "http://minio:9000",
-        "verify_ssl": True,
-    }
-    response = stack.http.post(f"{stack.core}/cloud_connections/cloud_connection", json=connection)
-    assert response.status_code == 200, response.text
+    _create_minio_connection(stack, "exchange_minio")
 
 
 def _mixed_flow(flow_id: int) -> dict:
@@ -489,12 +447,10 @@ def _mixed_flow(flow_id: int) -> dict:
         {"old_name": "region", "agg": "groupby"},
         {"old_name": "amount", "agg": "sum", "new_name": "total"},
     ]
-    return {
-        "flowfile_version": "0.23.0",
-        "flowfile_id": flow_id,
-        "flowfile_name": "one node on the worker",
-        "flowfile_settings": {"execution_mode": "Development", "execution_location": "remote"},
-        "nodes": [
+    return flow_document(
+        flow_id,
+        "one node on the worker",
+        [
             {
                 "id": 1,
                 "type": "manual_input",
@@ -519,7 +475,7 @@ def _mixed_flow(flow_id: int) -> dict:
                 "setting_input": {"groupby_input": {"agg_cols": aggregations}},
             },
         ],
-    }
+    )
 
 
 def _core_with_protocol(stack: Stack, flag: str) -> Stack:
@@ -576,45 +532,36 @@ def _written(stack: Stack, flow_id: int) -> dict[str, int]:
     return rows
 
 
-def test_the_elaborate_flow_runs_on_a_worker_that_shares_no_volume_with_core(stack, exchange, complex_outputs):
-    stack = _core_with_protocol(stack, "1")
-    flow_id = _import_flow(stack, _complex_flow(COMPLEX_FLOW_IDS["worker"]))
-    assert flow_id == COMPLEX_FLOW_IDS["worker"]
-
-    run = _run(stack, flow_id)
-
-    failures = {result["node_id"]: result["error"] for result in run["node_step_result"] if not result["success"]}
-    assert run["success"] is True and not failures, f"{failures}\n{_logs()}"
-    assert run["nodes_completed"] == 30
-    assert _written(stack, flow_id) == COMPLEX_ROWS
-    assert run["boundaries"] == []
-    versions = stack.minio.list_object_versions(Bucket=EXCHANGE_BUCKET, Prefix=f"runs/{flow_id}/")
-    assert "Versions" not in versions and "DeleteMarkers" not in versions, versions
-    core_cache = f"/app/internal_storage/cache/local/{flow_id}/"
-    assert [path for path in _cache_files("flowfile-core") if path.startswith(core_cache)] == []
-
-
-def test_the_elaborate_flow_with_its_nodes_alternating_between_worker_and_local_runs_whole_on_the_worker(
-    stack, exchange, complex_outputs
+@pytest.mark.parametrize("placement", ["worker", "alternating"])
+def test_the_elaborate_flow_runs_whole_on_a_worker_that_shares_no_volume_with_core(
+    stack, exchange, complex_outputs, placement
 ):
+    """Placed on the worker, or alternating between the worker and ``local``, whose nodes then fall back to it."""
     stack = _core_with_protocol(stack, "1")
-    flow_id = _import_flow(stack, _complex_flow(COMPLEX_FLOW_IDS["alternating"], ALTERNATING))
-    assert flow_id == COMPLEX_FLOW_IDS["alternating"]
+    locations = ALTERNATING if placement == "alternating" else None
+    flow_id = _import_flow(stack, _complex_flow(COMPLEX_FLOW_IDS[placement], locations))
+    assert flow_id == COMPLEX_FLOW_IDS[placement]
 
     run = _run(stack, flow_id)
 
-    failures = {result["node_id"]: result["error"] for result in run["node_step_result"] if not result["success"]}
+    failures = failed_nodes(run)
     assert run["success"] is True and not failures, f"{failures}\n{_logs()}"
     assert run["nodes_completed"] == 30
     assert _written(stack, flow_id) == COMPLEX_ROWS
     assert run["boundaries"] == []
-    moved = {
-        result["node_id"]: (result["backend_id"], result["fallback_from"], result["fallback_reason"])
-        for result in run["node_step_result"]
-        if result["fallback_from"] is not None
-    }
-    serving = ("worker", "local", "this core serves; compute runs on its worker")
-    assert moved == {node: serving for node, on in ALTERNATING.items() if on == "local"}
+    if placement == "worker":
+        versions = stack.minio.list_object_versions(Bucket=EXCHANGE_BUCKET, Prefix=f"runs/{flow_id}/")
+        assert "Versions" not in versions and "DeleteMarkers" not in versions, versions
+        core_cache = f"/app/internal_storage/cache/local/{flow_id}/"
+        assert [path for path in _cache_files("flowfile-core") if path.startswith(core_cache)] == []
+    else:
+        moved = {
+            result["node_id"]: (result["backend_id"], result["fallback_from"], result["fallback_reason"])
+            for result in run["node_step_result"]
+            if result["fallback_from"] is not None
+        }
+        serving = ("worker", "local", "this core serves; compute runs on its worker")
+        assert moved == {node: serving for node, on in ALTERNATING.items() if on == "local"}
 
 
 @pytest.mark.parametrize("protocol", ["1", "0"], ids=["flag-on", "flag-off"])
@@ -632,7 +579,7 @@ def test_a_flow_moved_onto_local_with_one_node_on_the_worker_runs_on_the_worker_
 
     run = _run(stack, flow_id)
 
-    failures = {result["node_id"]: result["error"] for result in run["node_step_result"] if not result["success"]}
+    failures = failed_nodes(run)
     assert run["success"] is True and not failures, f"{failures}\n{_logs()}"
     assert run["nodes_completed"] == 3
     filtered = stack.http.get(f"{stack.core}/node/data", params={"flow_id": flow_id, "node_id": 2}).json()

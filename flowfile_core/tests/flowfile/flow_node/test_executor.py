@@ -6,7 +6,6 @@ location, state management, and the decision-making logic of the refactored Flow
 
 import os
 import shutil
-import socket
 import tempfile
 import time
 from contextlib import contextmanager
@@ -17,7 +16,6 @@ import pytest
 
 from polars.exceptions import ColumnNotFoundError
 
-from flowfile_core.configs import settings
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
@@ -45,6 +43,7 @@ from flowfile_core.flowfile.flow_node.executor import (
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from shared.compute_protocol import WorkerLocation
 from shared.storage_config import storage
+from tests.conftest import closed_url, protocol_states
 from typing import Literal
 
 
@@ -75,21 +74,8 @@ ExecutionModeLit = Literal["Development", "Performance"]
 ExecutionLocationLit = Literal["remote", "local"]
 
 
-@pytest.fixture(params=[False, True], ids=["flag_off", "flag_on"])
-def protocol(request, monkeypatch) -> bool:
-    """The protocol flag in each state, back to what it was when the test ends."""
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", request.param)
-    return request.param
+protocol = protocol_states("flag_off", "flag_on")
 
-
-@pytest.fixture
-def remote_worker():
-    """Skips unless remote execution reaches a running worker (see the ``execution_location`` fixture)."""
-    from flowfile_core.schemas.schemas import is_valid_execution_location_in_current_global_settings
-    from tests.conftest import is_worker_running
-
-    if not (is_worker_running() and is_valid_execution_location_in_current_global_settings("remote")):
-        pytest.skip("Remote execution not active")
 
 def create_graph(execution_mode: ExecutionModeLit = 'Development', flow_id: int = 1,
                  execution_location: ExecutionLocationLit = "remote") -> FlowGraph:
@@ -1893,13 +1879,9 @@ class TestMissingWorkerArtifact:
 @pytest.fixture
 def unreachable_worker():
     """``worker:gone``, a worker backend at a port nothing listens on, registered for the test."""
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
+    url = closed_url()
     registry.reset()
-    registry.register_backend(
-        "worker:gone", lambda: WorkerBackend(url=f"http://127.0.0.1:{port}", backend_id="worker:gone")
-    )
+    registry.register_backend("worker:gone", lambda: WorkerBackend(url=url, backend_id="worker:gone"))
     yield "worker:gone"
     registry.reset()
 

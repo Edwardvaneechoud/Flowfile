@@ -6,61 +6,32 @@ prediction during an outage. A cached node asks the worker about the result it h
 so the remote cases run the flow once against the session worker before it goes away.
 """
 
-import socket
-
 import polars as pl
 import pytest
 import requests
 
-from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable, VersionMismatch
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
-from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
+from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node import flow_node as flow_node_module
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
-from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.schemas import input_schema, schemas, transform_schema
+from tests.conftest import closed_url, protocol_states
+from tests.flowfile.execution.graph_helpers import add_manual_input, add_sort_on, make_graph
 
 WORKER_DOWN_MESSAGE = "Could not reach the worker at http://worker.invalid"
 
 
-def _closed_url() -> str:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-    return f"http://127.0.0.1:{port}"
-
-
 @pytest.fixture
-def closed_worker_url(monkeypatch) -> str:
+def closed_worker_url(monkeypatch, closed_port_url) -> str:
     """Point the registry's worker backend at a port nothing listens on."""
-    url = _closed_url()
-    monkeypatch.setattr(registry.backend(registry.WORKER_BACKEND_ID), "url", url)
-    return url
+    monkeypatch.setattr(registry.backend(registry.WORKER_BACKEND_ID), "url", closed_port_url)
+    return closed_port_url
 
 
-@pytest.fixture(params=[False, True], ids=["flag_off", "flag_on"])
-def protocol(request, monkeypatch) -> bool:
-    """The protocol flag in each state, back to what it was when the test ends."""
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", request.param)
-    return request.param
-
-
-@pytest.fixture
-def task_routes(monkeypatch):
-    """The protocol flag off: these tests reach the worker through the task routes' fetcher, which the flag replaces."""
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
-
-
-@pytest.fixture
-def running_worker():
-    from tests.conftest import is_worker_running
-
-    if not is_worker_running():
-        pytest.skip("flowfile_worker is not running")
+protocol = protocol_states("flag_off", "flag_on")
 
 
 @pytest.fixture
@@ -68,7 +39,7 @@ def stop_worker(monkeypatch, running_worker):
     """Call to point the registry's worker backend at a port nothing listens on from then on; returns that URL."""
 
     def stop() -> str:
-        url = _closed_url()
+        url = closed_url()
         monkeypatch.setattr(registry.backend(registry.WORKER_BACKEND_ID), "url", url)
         return url
 
@@ -77,42 +48,9 @@ def stop_worker(monkeypatch, running_worker):
 
 def _cached_input_graph(flow_id: int, execution_location: str, execution_mode: str = "Performance") -> FlowGraph:
     """A graph holding one manual input node (id 1) with ``cache_results`` on."""
-    handler = FlowfileHandler()
-    handler.register_flow(
-        schemas.FlowSettings(
-            flow_id=flow_id,
-            name="cached",
-            path=".",
-            execution_location=execution_location,
-            execution_mode=execution_mode,
-        )
-    )
-    graph = handler.get_flow(flow_id)
-    graph.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=1, node_type="manual_input"))
-    graph.add_manual_input(
-        input_schema.NodeManualInput(
-            flow_id=flow_id,
-            node_id=1,
-            cache_results=True,
-            raw_data_format=input_schema.RawData.from_pylist([{"a": 1}]),
-        )
-    )
+    graph = make_graph(flow_id, execution_location, execution_mode=execution_mode)
+    add_manual_input(graph, 1, [{"a": 1}], cache_results=True)
     return graph
-
-
-def _add_sort(graph: FlowGraph) -> FlowNode:
-    """Wire an uncached sort node (id 2) below node 1."""
-    graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="sort"))
-    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
-    graph.add_sort(
-        input_schema.NodeSort(
-            flow_id=graph.flow_id,
-            node_id=2,
-            depending_on_id=1,
-            sort_input=[transform_schema.SortByInput(column="a", how="asc")],
-        )
-    )
-    return graph.get_node(2)
 
 
 def _watch(monkeypatch, *nodes: FlowNode) -> dict[str, int]:
@@ -196,7 +134,7 @@ def test_cached_node_fails_instead_of_running_in_core(stop_worker, monkeypatch):
     cached = graph.get_node(1)
     assert graph.run_graph().success is True
     assert cached.results.result_ref.state == "materialised"
-    downstream = _add_sort(graph)
+    downstream = add_sort_on(graph, 2, 1, "a")
     closed_worker_url = stop_worker()
     counts = _watch(monkeypatch, cached, downstream)
 
@@ -215,11 +153,11 @@ def test_cached_node_fails_instead_of_running_in_core(stop_worker, monkeypatch):
     assert counts == {"function": 0, "execution": 0, "collect": 0}
 
 
-def test_other_compute_errors_fail_the_node_the_same_way(running_worker, task_routes, monkeypatch):
+def test_other_compute_errors_fail_the_node_the_same_way(running_worker, protocol_off, monkeypatch):
     graph = _cached_input_graph(9106, "remote")
     cached = graph.get_node(1)
     assert graph.run_graph().success is True
-    downstream = _add_sort(graph)
+    downstream = add_sort_on(graph, 2, 1, "a")
     message = "The worker runs other versions than this process"
 
     def mismatched_results_exists(file_ref: str, *, worker_url: str) -> bool:
@@ -276,7 +214,7 @@ def test_local_cached_node_never_asks_the_worker(closed_worker_url, monkeypatch,
     node.release_result()
 
 
-def test_cached_node_recovers_after_the_worker_returns(running_worker, task_routes, monkeypatch):
+def test_cached_node_recovers_after_the_worker_returns(running_worker, protocol_off, monkeypatch):
     graph = _cached_input_graph(9103, "remote")
     node = graph.get_node(1)
     assert graph.run_graph().success is True
@@ -333,7 +271,7 @@ def test_prediction_survives_the_worker_down(stop_worker, monkeypatch):
     graph = _cached_input_graph(9104, "remote")
     cached = graph.get_node(1)
     assert graph.run_graph().success is True
-    downstream = _add_sort(graph)
+    downstream = add_sort_on(graph, 2, 1, "a")
     closed_worker_url = stop_worker()
     warnings = []
     monkeypatch.setattr(flow_node_module.logger, "warning", lambda message, *args, **kwargs: warnings.append(message))

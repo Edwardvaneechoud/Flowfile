@@ -20,8 +20,8 @@ Lifecycle rules:
   not keep warm interpreters around.
 - ``POOLABLE_OPERATIONS`` leaves out ops that run user Python (custom nodes,
   ``polars_code``), since a patched global would outlive the task. ``sql_query``
-  runs none, only Polars' SQL translation. Also left out: fuzzy (positional-arg
-  spawn), train/apply model (allocator footprints) and the ``generic_task``
+  runs none, only Polars' SQL translation. Also left out: fuzzy (started by its
+  own helper, never leased), train/apply model (allocator footprints) and the ``generic_task``
   connectors (state not audited).
 
 Every pool child imports this module (it holds ``member_loop``), so module-level

@@ -1,15 +1,16 @@
 """The embedded worker backend: the worker's ``/v1`` bodies called in this process, with no port and no wire.
 
 Every case runs ``EmbeddedWorkerBackend`` with the worker's jobs in this process (``spawner.in_process``) and leaves
-the worker port as it found it, whether the session's worker listens there or none does; a socket that listens, a
-submit socket dialled or a request through the worker session fails the case. The error mapping is the
-adapter's: a child's failure is a ``TaskFailed`` naming the error, a plan this process cannot load a ``PlanRejected``,
-a result the worker does not hold a ``ResultMissing``, and what a body refuses before anything runs a ``PlanRejected``.
+the worker port as it found it, whether the session's worker listens there or none does; a child started, a pool
+member leased, a socket that listens, a submit socket dialled or a request through the worker session fails the case
+(``in_this_process``, which ``test_local_backend.py`` shares). The error mapping is the adapter's: a child's failure
+is a ``TaskFailed`` naming the error, a plan this process cannot load a ``PlanRejected``, a result the worker does not
+hold a ``ResultMissing``, and what a body refuses before anything runs a ``PlanRejected``.
 The handshake passes with its probes run as in-process jobs, the plan crosses as bytes, each operation the adapter
 builds a body for holds its outputs, an import and an export cross a URI, and after a job a secret core encrypted still
 decrypts through the resolver the worker registers. The adapter declares every kind the worker declares, with ``file``
-among its schemes; the seven kinds the worker serves on its task routes and a custom node with no node file are
-``test_local_backend.py``'s.
+among its schemes. What every backend guarantees is the conformance suite's, which runs this one too; the seven kinds
+the worker serves on its task routes and a custom node with no node file are ``test_local_backend.py``'s.
 """
 
 import hashlib
@@ -18,10 +19,8 @@ import json
 import shutil
 import socket
 import sys
-import threading
 import uuid
 from dataclasses import replace
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import polars as pl
@@ -59,18 +58,19 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handsh
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from flowfile_core.schemas import input_schema
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
-from flowfile_worker import service, spawner
+from flowfile_worker import mp_context, pool, service, spawner
 from shared.cloud_credential_provider import EncryptedCredentialProvider
 from shared.compute_protocol import PROTOCOL_VERSION, WorkerLocation, file_uri, local_capabilities
+from shared.ml.trainers import get_trainer
 from shared.path_utils import DirectoryScanUnsupportedError
 from shared.storage_config import storage
+from tests.flowfile.execution.conftest import fuzzy_settings, serve
 from tests.flowfile.execution.test_worker_backend_v1 import (
     PEOPLE,
     SPLIT_NODE_SOURCE,
     PlacedSplit,
     custom_node_payload,
     file_read_payload,
-    fuzzy_settings,
     ml_apply_payload,
     ml_train_payload,
 )
@@ -95,26 +95,8 @@ def json_api():
 
     Module-scoped, so its socket listens before ``no_port`` refuses a listen for each case.
     """
-    body = json.dumps(PEOPLE.to_dicts()).encode()
-
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *args):
-            pass
-
-        def do_GET(self):  # noqa: N802
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(body)
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{server.server_address[1]}"
-    finally:
-        server.shutdown()
-        thread.join(timeout=5)
+    with serve(json.dumps(PEOPLE.to_dicts()).encode(), "application/json") as url:
+        yield url
 
 
 @pytest.fixture(autouse=True)
@@ -132,8 +114,9 @@ def _worker_port_refused() -> bool:
 
 
 @pytest.fixture(autouse=True)
-def no_port(monkeypatch):
-    """Nothing listens, dials or sends while a case runs, and the worker port is as it was before the case after it."""
+def in_this_process(monkeypatch):
+    """Every job runs here: a child started, a pool member leased, a socket listened, a submit socket dialled or a
+    request through the worker session fails the case, and the worker port is as it was before the case after it."""
 
     def refused(what: str):
         def fail(*args, **kwargs):
@@ -142,6 +125,8 @@ def no_port(monkeypatch):
         return fail
 
     port_refused_before = _worker_port_refused()
+    monkeypatch.setattr(mp_context, "Process", refused("a child was started"))
+    monkeypatch.setattr(pool.task_pool, "acquire", refused("a pool member was leased"))
     monkeypatch.setattr(socket.socket, "listen", refused("a socket listened"))
     monkeypatch.setattr(websockets.sync.client, "connect", refused("a submit socket was dialled"))
     monkeypatch.setattr(worker_module, "connect", refused("a submit socket was dialled"))
@@ -187,17 +172,10 @@ def checked(backend):
 
 
 @pytest.fixture
-def clean_import_aliases():
-    """Undo the SDK import aliases and finder a custom node run in this process may install."""
-    from shared.node_designer.loading import _ForbiddenCoreImportFinder
-
-    modules_before = set(sys.modules)
-    yield
-    sys.meta_path[:] = [finder for finder in sys.meta_path if not isinstance(finder, _ForbiddenCoreImportFinder)]
-    for name in set(sys.modules) - modules_before:
-        root = name.split(".", 1)[0]
-        if root in {"flowfile_core", "flowfile"} and not getattr(sys.modules[name], "__file__", None):
-            del sys.modules[name]
+def blob_source(tmp_path) -> Path:
+    source = tmp_path / "model.bin"
+    source.write_bytes(BLOB)
+    return source
 
 
 def hints(*, must_materialise: bool = False, preview_rows: int | None = None, wide: bool = False) -> SubmitHints:
@@ -235,6 +213,10 @@ def columns(ref: ResultRef) -> list[str]:
     return [column.column_name for column in ref.schema]
 
 
+def dtypes(ref: ResultRef) -> list[tuple[str, str]]:
+    return [(column.column_name, column.data_type) for column in ref.schema]
+
+
 def test_the_embedded_worker_is_a_backend_that_declares_every_kind_the_worker_declares_and_file(backend):
     assert isinstance(backend, ComputeBackend)
     assert (backend.id, backend.protocol_version) == ("local", PROTOCOL_VERSION)
@@ -248,30 +230,31 @@ def test_the_embedded_worker_is_a_backend_that_declares_every_kind_the_worker_de
     )
 
 
-@pytest.mark.parametrize("kind", [kind.value for kind in OperationKind])
-def test_a_declared_kind_refuses_an_empty_payload_before_anything_runs(backend, kind, inline_jobs):
-    with pytest.raises((TypeError, ValueError)):
-        backend.run_op(OperationKind(kind), {})
-    assert inline_jobs == []
-
-
-@STATES
-def test_a_plan_that_fails_on_its_data_is_a_task_failure_naming_the_error(backend, must_materialise):
+@pytest.mark.parametrize(
+    ("plan", "hint_values", "error"),
+    [
+        (pl.LazyFrame({"a": [1]}).select("missing"), {"must_materialise": True}, "ColumnNotFoundError"),
+        (pl.LazyFrame({"a": [1]}).select("missing"), {"must_materialise": False}, "ColumnNotFoundError"),
+        (
+            pl.LazyFrame({"a": ["x"]}).select(pl.col("a").cast(pl.Int64, strict=True)),
+            {"must_materialise": True, "preview_rows": 5},
+            "InvalidOperationError",
+        ),
+    ],
+    ids=["materialised", "deferred", "while-collected"],
+)
+def test_a_plan_that_fails_on_its_data_is_a_task_failure_naming_the_error(backend, plan, hint_values, error):
+    """A plan whose schema fails, and one whose schema resolves but whose rows fail as they are collected."""
     result_id = new_id()
 
     with pytest.raises(TaskFailed) as failed:
-        submit(
-            backend,
-            [],
-            plan=pl.LazyFrame({"a": [1]}).select("missing"),
-            result_id=result_id,
-            must_materialise=must_materialise,
-        )
+        submit(backend, [], plan=plan, result_id=result_id, **hint_values)
 
-    assert str(failed.value).startswith("ColumnNotFoundError")
+    assert str(failed.value).startswith(error)
     job = backend.status(JobHandle(backend.id, result_id))
     assert (job.state, job.progress) == ("failed", -1)
-    assert job.error.startswith("ColumnNotFoundError")
+    assert job.error.startswith(error)
+    assert backend.exists(ResultRef(backend.id, result_id, [], None, "deferred", b"")) is False
 
 
 def test_bytes_that_are_no_plan_are_rejected(backend):
@@ -296,17 +279,44 @@ def test_a_plan_over_a_module_this_process_cannot_import_is_rejected(backend, tm
 
 
 @STATES
-def test_a_released_result_is_missing_to_every_read_and_as_an_input(backend, must_materialise):
+def test_a_released_result_is_missing_as_an_input_and_to_an_export(backend, must_materialise, tmp_path):
+    """What the conformance suite's released result leaves out; releasing it again changes nothing."""
     ref = submit(backend, [], must_materialise=must_materialise).ref
+    target = tmp_path / "released.parquet"
 
     backend.release(ref)
 
-    assert backend.exists(ref) is False
-    for read in (lambda: backend.sample(ref, 1), lambda: backend.count(ref)):
-        with pytest.raises(ResultMissing, match=ref.result_id):
-            read()
     with pytest.raises(ResultMissing, match=ref.result_id):
         submit(backend, [], inputs=[ref])
+    with pytest.raises(ResultMissing, match=ref.result_id):
+        backend.export(ref, file_uri(target), None)
+    assert not target.exists()
+    backend.release(ref)
+
+
+def test_submitting_under_a_held_id_replaces_that_result(backend, kept):
+    result_id = new_id()
+    first = submit(backend, kept, result_id=result_id).ref
+
+    second = submit(backend, kept, plan=pl.LazyFrame({"n": [1, 2, 3]}), result_id=result_id).ref
+
+    assert first.result_id == second.result_id == result_id
+    assert backend.exists(first) and backend.exists(second)
+    assert backend.plan_for(second).collect()["n"].to_list() == [1, 2, 3]
+
+
+def test_a_result_another_backend_minted_is_refused_as_an_input_and_exports_nothing(backend, tmp_path):
+    """Every read, a submit and an export refuse a hand-made foreign reference, so no other backend needs to run."""
+    foreign = ResultRef("worker", "abc", [], None, "deferred", b"abc")
+
+    for read in (backend.plan_for, backend.exists, backend.release, backend.count, lambda ref: backend.sample(ref, 1)):
+        with pytest.raises(ForeignRef):
+            read(foreign)
+    with pytest.raises(ForeignRef):
+        submit(backend, [], inputs=[foreign])
+    with pytest.raises(ForeignRef):
+        backend.export(foreign, file_uri(tmp_path / "foreign.parquet"), None)
+    assert not (tmp_path / "foreign.parquet").exists()
 
 
 def test_a_sample_above_the_cap_is_refused_before_anything_runs(backend, kept, inline_jobs):
@@ -354,8 +364,9 @@ def test_a_directory_scan_is_refused_before_the_call(backend, tmp_path, inline_j
     assert inline_jobs == []
 
 
-def test_status_follows_a_job_and_an_unknown_job_is_a_lookup_error(backend, kept):
-    result = submit(backend, kept, must_materialise=True)
+@STATES
+def test_status_follows_a_job_and_an_unknown_job_is_a_lookup_error(backend, kept, must_materialise):
+    result = submit(backend, kept, must_materialise=must_materialise)
 
     assert backend.status(result.handle).state == "done"
     with pytest.raises(LookupError, match="no-such-job"):
@@ -415,19 +426,6 @@ def test_the_plan_crosses_as_bytes_and_plan_for_decodes_the_location(backend, ke
     assert rows(backend.sample(materialised, 10)).equals(PEOPLE.filter(pl.col("id") > 3))
 
 
-@pytest.mark.parametrize("preview_rows", [None, 1, 4])
-@STATES
-def test_the_inline_sample_is_the_workers(backend, kept, must_materialise, preview_rows):
-    result = submit(backend, kept, must_materialise=must_materialise, preview_rows=preview_rows)
-
-    if preview_rows is None:
-        assert result.sample is None
-    else:
-        assert rows(result.sample).equals(PEOPLE.head(preview_rows))
-    assert result.ref.state == ("materialised" if must_materialise else "deferred")
-    assert result.handle == JobHandle(backend.id, result.ref.result_id)
-
-
 def test_a_file_read_holds_its_rows(backend, kept, tmp_path):
     read = file_read_payload(tmp_path)
 
@@ -463,6 +461,7 @@ def test_a_fuzzy_join_holds_the_matches(backend, kept):
     join = FuzzyJoinPayload(
         left=names, right=names, settings=fuzzy_settings(), flow_id=1, node_id=2, job_id=f"{new_id()}_fm"
     )
+    settings_before = join.settings.join_input.model_dump()
 
     ref = backend.run_op(OperationKind.fuzzy_join, op_payload(join)).refs["result"]
 
@@ -478,6 +477,7 @@ def test_a_fuzzy_join_holds_the_matches(backend, kept):
     ]
     assert backend.count(ref) == 5
     assert backend.status(JobHandle(backend.id, join.job_id)).state == "done"
+    assert join.settings.join_input.model_dump() == settings_before
 
 
 def test_a_random_split_holds_each_split_keyed_and_ordered_as_the_settings_say(backend, kept):
@@ -497,6 +497,9 @@ def test_a_random_split_holds_each_split_keyed_and_ordered_as_the_settings_say(b
     held = {name: rows(backend.sample(ref, 100))["n"].to_list() for name, ref in refs.items()}
     assert sorted(held["train"] + held["test"]) == list(range(50))
     assert [backend.count(ref) for ref in refs.values()] == [40, 10]
+    again = backend.run_op(OperationKind.random_split, op_payload(replace(split, job_id=new_id()))).refs
+    kept.extend(again.values())
+    assert rows(backend.sample(again["train"], 100))["n"].to_list() == held["train"], "the seed fixes the shuffle"
 
 
 def test_a_custom_node_holds_each_declared_output(backend, kept, clean_import_aliases):
@@ -518,14 +521,20 @@ def test_a_custom_node_holds_each_declared_output(backend, kept, clean_import_al
 
 
 def test_a_model_is_trained_held_as_a_blob_and_applied_by_reference(backend, kept, tmp_path):
-    train = ml_train_payload()
+    """A two-feature fit of ``y = 2·x1 + 3·x2 + 1`` scores its own rows, so a column that is no feature rides along."""
+    x1 = [float(i) for i in range(8)]
+    x2 = [float(i % 3) for i in range(8)]
+    y = [2 * a + 3 * b + 1 for a, b in zip(x1, x2, strict=True)]
+    training_rows = pl.LazyFrame({"x1": x1, "x2": x2, "y": y})
+    train = replace(ml_train_payload(), plan=training_rows, feature_columns=["x1", "x2"])
 
     trained = backend.run_op(OperationKind.ml_train, op_payload(train))
 
     model = trained.refs["model"]
     kept.append(model)
     assert list(trained.refs) == ["model"]
-    assert (model.result_id, model.kind, model.state, model.schema, model.row_count) == (
+    assert (model.backend_id, model.result_id, model.kind, model.state, model.schema, model.row_count) == (
+        backend.id,
         f"{train.job_id}_0",
         "blob",
         "materialised",
@@ -545,16 +554,27 @@ def test_a_model_is_trained_held_as_a_blob_and_applied_by_reference(backend, kep
         with pytest.raises(OperationUnsupported):
             read(model)
 
-    apply = ml_apply_payload(model)
-    scored = backend.run_op(OperationKind.ml_apply, op_payload(apply)).refs["result"]
+    apply = replace(ml_apply_payload(model), plan=training_rows)
+    scored_refs = backend.run_op(OperationKind.ml_apply, op_payload(apply)).refs
 
+    scored = scored_refs["result"]
     kept.append(scored)
-    assert (scored.result_id, scored.state, scored.row_count) == (f"{apply.job_id}_0", "materialised", 1)
-    assert columns(scored) == ["x", "pred"]
-    assert rows(backend.sample(scored, 10))["pred"].round(6).to_list() == [21.0]
-    assert backend.count(scored) == 1
+    assert list(scored_refs) == ["result"]
+    assert (scored.result_id, scored.kind, scored.state, scored.row_count) == (
+        f"{apply.job_id}_0",
+        "table",
+        "materialised",
+        8,
+    )
+    assert columns(scored) == ["x1", "x2", "y", "pred"]
+    assert rows(backend.sample(scored, 10))["pred"].round(6).to_list() == y
+    expected = get_trainer("linear_regression").apply(training_rows, json.loads(exported), "pred").collect()
+    assert backend.plan_for(scored).collect().equals(expected)
+    assert backend.count(scored) == 8
     assert backend.exists(model) is True
     backend.release(model)
+    assert backend.exists(model) is False
+    assert not Path(location(model).path).exists()
     with pytest.raises(ResultMissing, match=model.result_id):
         backend.run_op(OperationKind.ml_apply, op_payload(ml_apply_payload(model)))
     foreign = ResultRef("worker", "elsewhere", [], None, "materialised", b"/elsewhere.blob", kind="blob")
@@ -567,19 +587,25 @@ def test_polars_code_holds_a_lazy_result_deferred_and_an_eager_one_as_a_file(bac
     PEOPLE.write_ipc(source)
     scan = pl.scan_ipc(source)
     lazy = PolarsCodePayload(
-        code="output_df = input_df.filter(pl.col('id') > 7)", inputs=(scan,), flow_id=1, node_id=1, job_id=new_id()
+        code="output_df = input_df.filter(pl.col('id') > 7).with_columns(double=pl.col('id') * 2)",
+        inputs=(scan,),
+        flow_id=1,
+        node_id=1,
+        job_id=new_id(),
     )
     eager = PolarsCodePayload(
         code="output_df = input_df.collect().head(2)", inputs=(scan,), flow_id=1, node_id=1, job_id=new_id()
     )
 
-    deferred = backend.run_op(OperationKind.polars_code, op_payload(lazy)).refs["result"]
+    refs = backend.run_op(OperationKind.polars_code, op_payload(lazy)).refs
+    deferred = refs["result"]
     stored = backend.run_op(OperationKind.polars_code, op_payload(eager)).refs["result"]
 
     kept.extend([deferred, stored])
+    assert list(refs) == ["result"]
     assert (deferred.result_id, deferred.state, location(deferred).kind) == (f"{lazy.job_id}_0", "deferred", "plan")
-    assert columns(deferred) == ["id", "name", "score"]
-    assert rows(backend.sample(deferred, 10))["id"].to_list() == [8, 9]
+    assert dtypes(deferred) == [("id", "Int64"), ("name", "String"), ("score", "Float64"), ("double", "Int64")]
+    assert rows(backend.sample(deferred, 10))["double"].to_list() == [16, 18]
     assert backend.count(deferred) == 2
     assert (stored.result_id, stored.state, stored.row_count, location(stored).kind) == (
         f"{eager.job_id}_0",
@@ -590,29 +616,36 @@ def test_polars_code_holds_a_lazy_result_deferred_and_an_eager_one_as_a_file(bac
     assert rows(backend.sample(stored, 10))["id"].to_list() == [0, 1]
 
 
-def test_a_sql_query_holds_its_result_over_the_input_scan(backend, kept, tmp_path):
+def test_a_sql_query_holds_its_result_over_the_input_scan_and_an_unsafe_statement_fails_its_job(
+    backend, kept, tmp_path
+):
     source = tmp_path / "people.arrow"
     PEOPLE.write_ipc(source)
     query = SqlQueryPayload(
-        sql_code="SELECT id, name FROM input_1 WHERE id > 7",
+        sql_code="SELECT id, name, id * 2 AS double FROM input_1 WHERE id > 7",
         inputs=(pl.scan_ipc(source),),
         flow_id=1,
         node_id=1,
         job_id=new_id(),
     )
 
-    ref = backend.run_op(OperationKind.sql_query, op_payload(query)).refs["result"]
+    refs = backend.run_op(OperationKind.sql_query, op_payload(query)).refs
 
+    ref = refs["result"]
     kept.append(ref)
+    assert list(refs) == ["result"]
     assert (ref.result_id, ref.state, location(ref).kind) == (f"{query.job_id}_0", "deferred", "plan")
-    assert columns(ref) == ["id", "name"]
-    assert rows(backend.sample(ref, 10))["id"].to_list() == [8, 9]
+    assert dtypes(ref) == [("id", "Int64"), ("name", "String"), ("double", "Int64")]
+    assert rows(backend.sample(ref, 10))["double"].to_list() == [16, 18]
     assert backend.count(ref) == 2
+    unsafe = SqlQueryPayload(sql_code="DROP TABLE input_1", inputs=(pl.scan_ipc(source),), flow_id=1, node_id=1)
+    with pytest.raises(TaskFailed, match="UnsafeSQLError"):
+        backend.run_op(OperationKind.sql_query, op_payload(unsafe))
 
 
 def test_a_parquet_is_imported_counted_without_a_job_sampled_through_one_and_exported(backend, tmp_path, inline_jobs):
+    """The file is written only after the import, so an import that read it would fail."""
     source = tmp_path / "in.parquet"
-    PEOPLE.write_parquet(source)
     schema = worker_module._flowfile_schema(PEOPLE.schema)
     target = tmp_path / "out.parquet"
 
@@ -621,48 +654,73 @@ def test_a_parquet_is_imported_counted_without_a_job_sampled_through_one_and_exp
     try:
         assert (ref.backend_id, ref.state, ref.row_count, location(ref).kind) == (backend.id, "deferred", 10, "plan")
         assert columns(ref) == ["id", "name", "score"]
+        assert backend.exists(ref)
         assert backend.count(ref) == 10
         assert inline_jobs == []
+        PEOPLE.write_parquet(source)
         assert rows(backend.sample(ref, 2)).equals(PEOPLE.head(2))
         assert len(inline_jobs) == 1
+        assert isinstance(backend.plan_for(ref), pl.LazyFrame)
         assert backend.export(ref, file_uri(target), None) == file_uri(target)
         assert pl.read_parquet(target).equals(PEOPLE)
-        with pytest.raises(ValueError, match="schema"):
-            backend.import_uri(file_uri(source), None, None, None)
+        with pytest.raises(ValueError, match="needs its schema"):
+            backend.import_uri(file_uri(source), None, PEOPLE.height, None)
     finally:
         backend.release(ref)
     assert backend.exists(ref) is False
     assert source.is_file()
 
 
-def test_a_blob_is_imported_as_a_copy_and_exported_as_its_bytes(backend, tmp_path):
-    source = tmp_path / "model.bin"
-    source.write_bytes(BLOB)
-    target = tmp_path / "copy.bin"
+def test_a_blob_is_held_as_a_copy_in_the_cache_directory_and_refused_where_rows_are_read(
+    backend, blob_source, tmp_path
+):
+    """What the conformance suite's blob leaves out: where the copy is held and every refusal."""
+    refused = tmp_path / "refused.bin"
 
-    ref = backend.import_uri(file_uri(source), None, None, None, kind="blob")
+    ref = backend.import_uri(file_uri(blob_source), None, None, None, kind="blob")
 
     copy = Path(location(ref).path)
     try:
-        assert (ref.kind, ref.state, ref.schema, ref.row_count, location(ref).kind) == (
-            "blob",
-            "materialised",
-            [],
-            None,
-            "blob",
-        )
+        assert location(ref).kind == "blob"
         assert copy.is_relative_to(storage.cache_directory)
-        source.unlink()
-        assert backend.export(ref, file_uri(target), None) == file_uri(target)
-        assert target.read_bytes() == BLOB
-        with pytest.raises(ValueError, match="credential"):
-            backend.export(ref, file_uri(target), CredentialRef(connection_id=1, user_id=1))
-        with pytest.raises(ValueError, match="blob"):
-            backend.import_uri(file_uri(target), None, 3, None, kind="blob")
+        assert copy.read_bytes() == BLOB
+        with pytest.raises(OperationUnsupported, match="is a blob"):
+            submit(backend, [], inputs=[ref])
+        for read in (backend.plan_for, backend.count, lambda blob: backend.sample(blob, 1)):
+            with pytest.raises(OperationUnsupported, match="is a blob"):
+                read(ref)
+        with pytest.raises(ValueError, match="takes no credential"):
+            backend.export(ref, file_uri(refused), CredentialRef(connection_id=1, user_id=1))
+        assert not refused.exists()
     finally:
         backend.release(ref)
-    assert backend.exists(ref) is False
     assert not copy.exists()
+    with pytest.raises(ResultMissing):
+        backend.export(ref, file_uri(refused), None)
+    assert not refused.exists()
+
+
+@pytest.mark.parametrize(
+    "given",
+    [{"schema": []}, {"row_count": 0}, {"credential": CredentialRef(connection_id=7, user_id=3)}],
+    ids=["schema", "row_count", "credential"],
+)
+def test_a_blob_import_takes_no_schema_row_count_or_credential(backend, blob_source, given):
+    arguments = {"schema": None, "row_count": None, "credential": None, **given}
+
+    with pytest.raises(ValueError, match="A blob import takes no"):
+        backend.import_uri(file_uri(blob_source), **arguments, kind="blob")
+
+
+def test_a_blob_uri_of_another_scheme_is_refused_by_the_body(backend, blob_source):
+    with pytest.raises(PlanRejected, match="s3"):
+        backend.import_uri("s3://bucket/model.bin", None, None, None, kind="blob")
+    blob = backend.import_uri(file_uri(blob_source), None, None, None, kind="blob")
+    try:
+        with pytest.raises(PlanRejected, match="s3"):
+            backend.export(blob, "s3://bucket/model.bin", None)
+    finally:
+        backend.release(blob)
 
 
 def test_a_secret_core_encrypted_decrypts_through_the_resolver_the_worker_registers(backend, kept):

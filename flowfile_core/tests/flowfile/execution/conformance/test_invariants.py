@@ -39,6 +39,7 @@ from flowfile_core.flowfile.execution.errors import (
 )
 from flowfile_core.flowfile.execution.protocol import (
     ComputeBackend,
+    JobHandle,
     OperationKind,
     ResultRef,
     SubmitHints,
@@ -75,21 +76,6 @@ DOWNSTREAM = [
 
 STATES = pytest.mark.parametrize("must_materialise", [False, True], ids=["deferred", "materialised"])
 
-POLICIES: dict[str, Callable[[SubmitHints], bool]] = {
-    "embedded": lambda given: given.must_materialise
-    or (given.wide and (given.preview_rows is not None or given.fanout > 1)),
-    "worker": lambda given: given.must_materialise
-    or (given.wide and (given.preview_rows is not None or given.fanout > 1)),
-}
-"""Whether each backend in ``conftest.BACKENDS`` stores a submit with these hints, as its class docstring says."""
-
-INLINE: dict[str, Callable[[], bool]] = {
-    "embedded": lambda: True,
-    "worker": lambda: True,
-}
-"""Whether each backend in ``conftest.BACKENDS`` answers ``submit`` with the sample ``preview_rows`` asks for, as its
-class docstring says."""
-
 SHUFFLED = pl.LazyFrame({"id": list(range(1000))}).select(pl.col("id").shuffle())
 """A plan whose rows come in another order each time it runs."""
 
@@ -110,6 +96,11 @@ def hints(
     *, must_materialise: bool = False, wide: bool = False, fanout: int = 1, preview_rows: int | None = None
 ) -> SubmitHints:
     return SubmitHints(must_materialise=must_materialise, wide=wide, fanout=fanout, preview_rows=preview_rows)
+
+
+def stored(given: SubmitHints) -> bool:
+    """Whether a backend in ``conftest.BACKENDS`` stores a submit with these hints: each documents this policy."""
+    return given.must_materialise or (given.wide and (given.preview_rows is not None or given.fanout > 1))
 
 
 def submit_people(
@@ -164,13 +155,15 @@ def test_sample_returns_at_most_n_rows(backend, submitted, must_materialise):
 
 @STATES
 @pytest.mark.parametrize("preview_rows", [None, 1, 4])
-def test_the_inline_sample_holds_at_most_preview_rows(backend_name, submitted, must_materialise, preview_rows):
-    sample = submitted(must_materialise=must_materialise, preview_rows=preview_rows).sample
+def test_the_inline_sample_holds_at_most_preview_rows(backend, submitted, must_materialise, preview_rows):
+    result = submitted(must_materialise=must_materialise, preview_rows=preview_rows)
 
-    if preview_rows is None or not INLINE[backend_name]():
-        assert sample is None
+    assert (result.ref.backend_id, result.handle) == (backend.id, JobHandle(backend.id, result.ref.result_id))
+    assert result.ref.state == ("materialised" if stored(hints(must_materialise=must_materialise)) else "deferred")
+    if preview_rows is None:
+        assert result.sample is None
     else:
-        assert rows(sample) == min(preview_rows, PEOPLE.height)
+        assert pl.read_ipc_stream(result.sample).equals(PEOPLE.head(preview_rows))
 
 
 @STATES
@@ -274,9 +267,7 @@ def test_a_result_crosses_a_boundary_only_through_export_and_import_uri(backend,
     assert (tmp_path / "out.parquet").is_file()
 
 
-def test_a_required_result_is_computed_once_and_read_the_same_twice(backend, backend_name, submitted):
-    if not POLICIES[backend_name](hints(must_materialise=True)):
-        pytest.skip(f"the {backend_name} backend holds every plan deferred with the protocol flag off")
+def test_a_required_result_is_computed_once_and_read_the_same_twice(backend, submitted):
     deferred = submitted(plan=SHUFFLED).ref
     assert ids(backend.sample(deferred, 1000)) != ids(backend.sample(deferred, 1000)), "the plan reads one order"
 
@@ -299,11 +290,11 @@ def test_a_result_that_need_not_be_materialised_stays_deferred(backend, submitte
 
 @pytest.mark.parametrize("fanout", [1, 2])
 @pytest.mark.parametrize("preview_rows", [None, 4])
-def test_a_wide_plan_follows_the_backend_policy(backend_name, submitted, preview_rows, fanout):
+def test_a_wide_plan_follows_the_backend_policy(submitted, preview_rows, fanout):
     ref = submitted(wide=True, preview_rows=preview_rows, fanout=fanout).ref
 
-    stored = POLICIES[backend_name](hints(wide=True, preview_rows=preview_rows, fanout=fanout))
-    assert ref.state == ("materialised" if stored else "deferred")
+    expected = "materialised" if stored(hints(wide=True, preview_rows=preview_rows, fanout=fanout)) else "deferred"
+    assert ref.state == expected
 
 
 def test_capabilities_name_only_operation_kinds(backend):
@@ -335,12 +326,14 @@ def test_a_compute_out_of_reach_is_unavailable_never_missing(backend, unreachabl
 @STATES
 def test_a_released_result_is_missing(backend, submitted, must_materialise):
     ref = submitted(must_materialise=must_materialise).ref
+    assert backend.exists(ref)
 
     backend.release(ref)
 
     assert backend.exists(ref) is False
-    with pytest.raises(ResultMissing):
-        backend.sample(ref, 1)
+    for read in (lambda: backend.sample(ref, 1), lambda: backend.count(ref)):
+        with pytest.raises(ResultMissing, match=ref.result_id):
+            read()
 
 
 def test_a_compute_on_other_versions_runs_nothing(on_other_versions):

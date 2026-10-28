@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { HandshakeVerdict, WorkerCapabilities } from "../api/computeBackends.api";
+import { verdict } from "../api/__fixtures__/computeBackends";
+import type { HandshakeVerdict } from "../api/computeBackends.api";
 import {
   backendInSentence,
   backendName,
@@ -15,33 +16,6 @@ const rows = (backendIds: string[]) => backendIds.map((id) => ({ id, verdict: nu
 
 const keys = (current: string, backendIds: string[]) =>
   executionLocationOptions(current, rows(backendIds)).map((option) => option.key);
-
-const capabilities: WorkerCapabilities = {
-  app_version: "0.23.0",
-  polars_version: "1.43.2",
-  python_version: "3.12.15",
-  protocol_version: 1,
-  platform: "linux-x86_64",
-  polars_runtime: "64",
-  plugins: { polars_ds: "0.10.0", polars_grouper: "0.6.0" },
-  plugin_libs: {},
-  operations: [],
-  read_schemes: ["s3"],
-  write_schemes: ["s3"],
-  credential_resolution: "master_key",
-};
-
-const verdict = (overrides: Partial<HandshakeVerdict>): HandshakeVerdict => ({
-  id: "worker:team",
-  ok: true,
-  core: capabilities,
-  backend: capabilities,
-  offered: capabilities,
-  differences: [],
-  absent: {},
-  error: null,
-  ...overrides,
-});
 
 const VERDICTS: [string, HandshakeVerdict | null, string][] = [
   ["unchecked", null, "Not checked"],

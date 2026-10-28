@@ -8,7 +8,6 @@ there once its runner returns."""
 from __future__ import annotations
 
 import os
-import socket
 import subprocess
 import sys
 import time
@@ -22,6 +21,7 @@ import flowfile_core
 from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from shared.storage_config import storage
+from tests.conftest import closed_url
 
 MAIN_PY = Path(flowfile_core.__file__).resolve().parent / "main.py"
 RUN_ID = "987654"
@@ -163,22 +163,12 @@ def session_worker() -> str:
 def _save_group_by_flow(path: Path, location: str = "remote") -> Path:
     """Manual input -> group_by in Development mode, saved ``location``: ``remote``, as the designer saves a flow by
     default, unless a backend id is given."""
-    from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
-    from flowfile_core.schemas import input_schema, schemas, transform_schema
+    from flowfile_core.flowfile.flow_graph import add_connection
+    from flowfile_core.schemas import input_schema, transform_schema
+    from tests.flowfile.conftest import add_test_manual_input, create_test_graph
 
-    graph = FlowGraph(
-        schemas.FlowSettings(
-            flow_id=99461, name="headless_backend", path=".", execution_location="local", execution_mode="Development"
-        )
-    )
-    graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="manual_input"))
-    graph.add_manual_input(
-        input_schema.NodeManualInput(
-            flow_id=graph.flow_id,
-            node_id=1,
-            raw_data_format=input_schema.RawData.from_pylist([{"a": i % 2} for i in range(4)]),
-        )
-    )
+    graph = create_test_graph(99461, name="headless_backend")
+    add_test_manual_input(graph, [{"a": i % 2} for i in range(4)])
     graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="group_by"))
     graph.add_group_by(
         input_schema.NodeGroupBy(
@@ -194,12 +184,6 @@ def _save_group_by_flow(path: Path, location: str = "remote") -> Path:
     graph.flow_settings.execution_location = location
     graph.save_flow(str(path))
     return path
-
-
-def _closed_port_url() -> str:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return f"http://127.0.0.1:{probe.getsockname()[1]}"
 
 
 def _record_embedded_submits(monkeypatch) -> list[tuple[str, int | str]]:
@@ -323,7 +307,7 @@ def test_a_headless_run_with_no_backend_named_runs_a_saved_remote_flow_in_its_ow
 
     def unreachable_worker() -> WorkerBackend:
         worker_lookups.append(registry.WORKER_BACKEND_ID)
-        return WorkerBackend(url=_closed_port_url())
+        return WorkerBackend(url=closed_url())
 
     registry.register_backend(registry.WORKER_BACKEND_ID, unreachable_worker)
 
@@ -347,7 +331,7 @@ def test_a_headless_run_on_a_saved_backend_id_whose_worker_is_unreachable_fails_
     from flowfile_core.flowfile.execution import registry
 
     monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
-    monkeypatch.setattr(settings, "WORKER_URL", _closed_port_url())
+    monkeypatch.setattr(settings, "WORKER_URL", closed_url())
     flow_path = _save_group_by_flow(tmp_path / "flow.yaml", location=registry.WORKER_BACKEND_ID)
     runs = _record_runs(monkeypatch)
     registry.reset()
@@ -434,7 +418,7 @@ def test_a_headless_run_on_backend_worker_runs_on_the_worker(tmp_path, session_w
     )
     unreachable = subprocess.run(
         command(flow_path, "--backend", "worker"),
-        env={**env, "FLOWFILE_WORKER_URL": _closed_port_url()},
+        env={**env, "FLOWFILE_WORKER_URL": closed_url()},
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -492,6 +476,6 @@ def test_a_scheduled_run_runs_on_the_backend_its_request_names_and_in_its_own_pr
 
     assert _finished_run(flow_path, backend="worker", monkeypatch=monkeypatch) == (True, 2)
 
-    monkeypatch.setenv("FLOWFILE_WORKER_URL", _closed_port_url())
+    monkeypatch.setenv("FLOWFILE_WORKER_URL", closed_url())
     assert _finished_run(flow_path, backend="worker", monkeypatch=monkeypatch)[0] is False
     assert _finished_run(flow_path, backend=None, monkeypatch=monkeypatch) == (True, 2)

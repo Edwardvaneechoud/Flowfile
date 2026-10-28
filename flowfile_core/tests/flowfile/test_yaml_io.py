@@ -905,13 +905,12 @@ class TestFlowfileRoundTrip:
         assert loaded_output.setting_input.output_settings.table_settings.sheet_name == 'Results'
 
 
-@pytest.fixture(params=[False, True], ids=['flag-off', 'flag-on'])
-def protocol_flag(request, monkeypatch) -> bool:
-    """The compute protocol flag, off and then on, with a default backend that is not core's own, so a saved
-    ``remote`` is not turned into ``local``."""
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, 'value', request.param)
+@pytest.fixture
+def protocol_flag(protocol, monkeypatch) -> bool:
+    """The compute protocol flag, off and then on (``protocol``), with a default backend that is not core's own, so a
+    saved ``remote`` is not turned into ``local``."""
     monkeypatch.setenv('FLOWFILE_COMPUTE_BACKEND', 'worker')
-    return request.param
+    return protocol
 
 
 class TestExecutionLocationRoundTrip:

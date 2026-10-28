@@ -9,10 +9,8 @@ routes.
 import hashlib
 import io
 import re
-import socket
 import uuid
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import polars as pl
 import pyarrow as pa
@@ -67,19 +65,15 @@ from flowfile_core.schemas.input_schema import (
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared.compute_protocol import WorkerLocation, file_uri, local_capabilities
 from shared.storage_config import storage
+from tests.flowfile.execution.conftest import fuzzy_settings
+from tests.flowfile.execution.test_handshake import same_worker_by_another_name
+
+pytestmark = pytest.mark.usefixtures("protocol_off")
 
 PEOPLE = pl.DataFrame(
     {"id": list(range(10)), "name": [f"n{i}" for i in range(10)], "score": [i * 1.5 for i in range(10)]}
 )
 FOREIGN_REF = ResultRef("local", "elsewhere", [], 0, "materialised", b"/elsewhere.arrow")
-
-
-@pytest.fixture
-def running_worker():
-    from tests.conftest import is_worker_running
-
-    if not is_worker_running():
-        pytest.skip("flowfile_worker is not running")
 
 
 @pytest.fixture
@@ -191,22 +185,6 @@ def test_the_built_in_worker_shares_cores_disk_only_at_its_unconfigured_address(
         assert registry.backend("worker").shares_core_disk is shares
     finally:
         registry.reset()
-
-
-@pytest.fixture
-def closed_port_url() -> str:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-    return f"http://127.0.0.1:{port}"
-
-
-def same_worker_by_another_name() -> str:
-    """The session worker's URL with its host spelled another way: a call that arrives by this name was sent by a
-    backend made on it, never by the URL the worker settings configure."""
-    parts = urlsplit(WORKER_URL)
-    host = "localhost" if parts.hostname == "127.0.0.1" else "127.0.0.1"
-    return f"{parts.scheme}://{host}:{parts.port}{parts.path}"
 
 
 def test_a_backend_made_on_another_url_sends_every_call_there(running_worker, monkeypatch):
@@ -434,17 +412,11 @@ def test_the_worker_backend_runs_every_operation_kind(kind):
         WorkerBackend(url=WORKER_URL).run_op(kind, {})
 
 
-@pytest.fixture(autouse=True)
-def task_routes(monkeypatch):
-    """The protocol flag off for the test, so its results are minted over the task routes."""
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
-
-
 DEFERRED = SubmitHints(must_materialise=False, wide=False, fanout=1, preview_rows=None)
 
 
 def test_export_of_a_task_route_result_is_a_worker_task_that_sinks_it(
-    backend, kept, task_routes, transport, monkeypatch, tmp_path
+    backend, kept, protocol_off, transport, monkeypatch, tmp_path
 ):
     stored = submit_people(backend, kept).ref
     deferred = backend.submit(PEOPLE.lazy(), [], DEFERRED, new_result_id(), flow_id=-1, node_id=-1).ref
@@ -478,7 +450,7 @@ def test_export_of_a_task_route_result_is_a_worker_task_that_sinks_it(
 
 
 def test_an_export_of_a_task_route_result_writes_nothing_when_the_worker_is_unreachable(
-    task_routes, closed_port_url, tmp_path
+    protocol_off, closed_port_url, tmp_path
 ):
     dead = WorkerBackend(url=closed_port_url)
     deferred = dead.submit(PEOPLE.lazy(), [], DEFERRED, new_result_id(), flow_id=-1, node_id=-1).ref
@@ -493,7 +465,7 @@ def test_an_export_of_a_task_route_result_writes_nothing_when_the_worker_is_unre
     assert not target.exists()
 
 
-def test_import_uri_holds_a_deferred_plan_in_process(backend, task_routes, tmp_path):
+def test_import_uri_holds_a_deferred_plan_in_process(backend, protocol_off, tmp_path):
     path = tmp_path / "in.parquet"
 
     ref = backend.import_uri(file_uri(path), worker_module._flowfile_schema(PEOPLE.schema), PEOPLE.height, None)
@@ -521,7 +493,7 @@ def staged_model(path: Path) -> ResultRef:
     return ResultRef("worker", "train-job_0", [], None, "materialised", str(path).encode(), kind="blob")
 
 
-def test_a_file_blob_over_the_task_routes_is_a_reference_to_its_path(backend, task_routes, monkeypatch, tmp_path):
+def test_a_file_blob_over_the_task_routes_is_a_reference_to_its_path(backend, protocol_off, monkeypatch, tmp_path):
     source = tmp_path / "a b" / "model.json"
     source.parent.mkdir()
     source.write_bytes(b'{"coefficients": [2.0]}')
@@ -553,7 +525,7 @@ def test_a_file_blob_over_the_task_routes_is_a_reference_to_its_path(backend, ta
     assert source.read_bytes() == b'{"coefficients": [2.0]}'
 
 
-def test_a_presigned_url_needs_the_v1_routes(task_routes, monkeypatch, tmp_path):
+def test_a_presigned_url_needs_the_v1_routes(protocol_off, monkeypatch, tmp_path):
     sent = []
     monkeypatch.setattr(requests.Session, "send", lambda self, request, **kwargs: sent.append(request))
     monkeypatch.setattr(worker_module, "ExternalDfFetcher", lambda *args, **kwargs: sent.append(kwargs))
@@ -570,7 +542,7 @@ def test_a_presigned_url_needs_the_v1_routes(task_routes, monkeypatch, tmp_path)
     assert sent == []
 
 
-def test_an_apply_whose_model_file_is_gone_is_missing_before_any_task(task_routes, monkeypatch, tmp_path):
+def test_an_apply_whose_model_file_is_gone_is_missing_before_any_task(protocol_off, monkeypatch, tmp_path):
     """A model whose file is gone, and one held over ``/v1``, which the task routes cannot read."""
     built = []
     monkeypatch.setattr(worker_module, "MLApplyFetcher", lambda *args, **kwargs: built.append(kwargs))
@@ -616,21 +588,6 @@ class PlacedSplit(CustomNodeBase):
     node_name: str = "Worker Backend Split"
     number_of_outputs: int = 2
     output_names: list[str] = ["big", "small"]
-
-
-def fuzzy_settings() -> input_schema.NodeFuzzyMatch:
-    return input_schema.NodeFuzzyMatch(
-        flow_id=1,
-        node_id=2,
-        join_input={
-            "join_mapping": [
-                {"left_col": "name", "right_col": "name", "threshold_score": 75, "fuzzy_type": "levenshtein"}
-            ],
-            "left_select": {"renames": [{"old_name": "name", "new_name": "name", "join_key": True}]},
-            "right_select": {"renames": [{"old_name": "name", "new_name": "name", "join_key": True}]},
-            "how": "inner",
-        },
-    )
 
 
 def test_a_fuzzy_join_matches_on_the_worker_as_it_does_in_core(backend, kept):
@@ -697,7 +654,7 @@ def test_a_custom_node_runs_on_the_worker_from_its_node_source(backend, kept):
     assert backend.plan_for(refs["output-1"]).collect()["id"].to_list() == list(range(7))
 
 
-def test_a_model_trained_on_the_worker_scores_on_the_worker(backend, kept, task_routes, tmp_path):
+def test_a_model_trained_on_the_worker_scores_on_the_worker(backend, kept, protocol_off, tmp_path):
     """The training stages the model in the flow's cache directory as its own task, which releasing it clears."""
     training = pl.LazyFrame({"x": [1.0, 2.0, 3.0, 4.0], "y": [3.0, 5.0, 7.0, 9.0]})
     train = MlTrainPayload(

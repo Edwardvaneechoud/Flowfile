@@ -9,7 +9,6 @@ stored result names a file core cannot open (``UnreadableLocation``). ``minted_e
 backend minted, for ``backend`` to refuse.
 """
 
-import socket
 import uuid
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -24,6 +23,7 @@ from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.protocol import ComputeBackend, ResultRef, SubmitHints
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from shared.compute_protocol import local_capabilities
+from tests.conftest import closed_url
 
 
 def _worker_url() -> str:
@@ -39,10 +39,7 @@ def _session_worker() -> WorkerBackend:
 
 
 def _worker_out_of_reach() -> WorkerBackend:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-    return WorkerBackend(url=f"http://127.0.0.1:{port}")
+    return WorkerBackend(url=closed_url())
 
 
 def _worker_on_other_polars(monkeypatch: pytest.MonkeyPatch) -> WorkerBackend:

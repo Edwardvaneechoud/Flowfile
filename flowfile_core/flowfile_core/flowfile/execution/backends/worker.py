@@ -28,6 +28,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict, dataclass
+from functools import partial
 from pathlib import Path
 from time import monotonic
 from typing import Any, Literal
@@ -315,9 +316,7 @@ class WorkerBackend(_WorkerReferences):
             OperationKind.database_write: self._database_write,
             OperationKind.cloud_write: self._cloud_write,
             OperationKind.file_write: self._file_write,
-            OperationKind.delta_write: self._delta_write,
-            OperationKind.delta_merge: self._delta_merge,
-            OperationKind.delta_scd2: self._delta_scd2,
+            **{kind: partial(self._delta, kind) for kind in _DELTA_OPS},
             OperationKind.viz_session: self._viz_session,
         }
 
@@ -1319,43 +1318,8 @@ class WorkerBackend(_WorkerReferences):
         )
         return OpResult(refs={})
 
-    def _delta_write(self, payload: OpPayload) -> OpResult:
-        write = unpack(payload, DeltaWritePayload)
-        kwargs = {
-            **_delta_destination(write),
-            "mode": write.mode,
-            "partition_by": write.partition_by,
-            "enable_cdf": write.enable_cdf,
-        }
-        return self._delta_task(write, "write_delta", kwargs)
-
-    def _delta_merge(self, payload: OpPayload) -> OpResult:
-        write = unpack(payload, DeltaMergePayload)
-        kwargs = {
-            **_delta_destination(write),
-            "merge_mode": write.merge_mode,
-            "merge_keys": write.merge_keys,
-            "partition_by": write.partition_by,
-            "enable_cdf": write.enable_cdf,
-        }
-        return self._delta_task(write, "merge_delta", kwargs)
-
-    def _delta_scd2(self, payload: OpPayload) -> OpResult:
-        write = unpack(payload, DeltaScd2Payload)
-        kwargs = {
-            **_delta_destination(write),
-            "run_timestamp": write.run_timestamp,
-            "business_keys": write.business_keys,
-            "compare_columns": write.compare_columns,
-            "full_snapshot": write.full_snapshot,
-            "surrogate_key_column": write.surrogate_key_column,
-            "valid_from_column": write.valid_from_column,
-            "valid_to_column": write.valid_to_column,
-            "is_current_column": write.is_current_column,
-            "partition_by": write.partition_by,
-            "partition_on_current": write.partition_on_current,
-        }
-        return self._delta_task(write, "scd2_delta", kwargs)
+    def _delta(self, op: OperationKind, payload: OpPayload) -> OpResult:
+        return self._delta_task(*_delta_job(op, payload))
 
     def _viz_session(self, payload: OpPayload) -> OpResult:
         """Answer one Graphic Walker request in the worker's visualisation session over the payload's plan."""
@@ -1561,6 +1525,46 @@ def _delta_destination(write: DeltaWritePayload | DeltaMergePayload | DeltaScd2P
     if write.table.base_uri is not None:
         storage_payload = {"base_uri": write.table.base_uri, **(storage_payload or {})}
     return {"table_id": write.table.table_id, "table_name": write.table.table_name, "storage_payload": storage_payload}
+
+
+_DELTA_OPS: dict[OperationKind, tuple[type, str, tuple[str, ...]]] = {
+    OperationKind.delta_write: (DeltaWritePayload, "write_delta", ("mode", "partition_by", "enable_cdf")),
+    OperationKind.delta_merge: (
+        DeltaMergePayload,
+        "merge_delta",
+        ("merge_mode", "merge_keys", "partition_by", "enable_cdf"),
+    ),
+    OperationKind.delta_scd2: (
+        DeltaScd2Payload,
+        "scd2_delta",
+        (
+            "run_timestamp",
+            "business_keys",
+            "compare_columns",
+            "full_snapshot",
+            "surrogate_key_column",
+            "valid_from_column",
+            "valid_to_column",
+            "is_current_column",
+            "partition_by",
+            "partition_on_current",
+        ),
+    ),
+}
+"""Each Delta kind's payload, the worker operation that runs it, and the payload fields it takes as keywords."""
+
+
+def _delta_job(
+    op: OperationKind, payload: OpPayload
+) -> tuple[DeltaWritePayload | DeltaMergePayload | DeltaScd2Payload, str, dict[str, Any]]:
+    """The write a Delta ``op`` carries, the worker operation that runs it, and its keyword arguments.
+
+    The keywords are ``_delta_destination``'s and then the fields ``_DELTA_OPS`` names, so both backends send the
+    worker's Delta operations the same arguments.
+    """
+    payload_type, operation, fields = _DELTA_OPS[op]
+    write = unpack(payload, payload_type)
+    return write, operation, {**_delta_destination(write), **{name: getattr(write, name) for name in fields}}
 
 
 def _credential_kwargs(credential: CredentialRef | None) -> dict[str, Any]:

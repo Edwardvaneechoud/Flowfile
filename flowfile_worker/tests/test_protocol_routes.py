@@ -4,19 +4,16 @@ A held result is also exported to a URI as parquet, and a URI imported as a held
 of its bytes and exported as those bytes, to and from a ``file://`` URI and a presigned ``https://`` URL on MinIO.
 """
 
-import asyncio
 import importlib
-import ipaddress
 import json
 import logging
 import os
 import socket
-import ssl
 import sys
 import threading
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from multiprocessing import Queue
 from pathlib import Path
 from types import SimpleNamespace
@@ -49,15 +46,15 @@ from shared.compute_protocol import (
     Capabilities,
     ResultRef,
     SubmitResult,
-    WorkerLocation,
     file_uri,
     schema_to_wire,
 )
-from tests.conftest import INTERNAL_AUTH_HEADERS
+from test_utils import tls
+from tests.conftest import INTERNAL_AUTH_HEADERS, V1_HEADERS, held, ref_location  # noqa: F401 - held is re-exported
 
 pytestmark = pytest.mark.worker
 
-client = TestClient(main.app, headers={**INTERNAL_AUTH_HEADERS, PROTOCOL_VERSION_HEADER: str(PROTOCOL_VERSION)})
+client = TestClient(main.app, headers=V1_HEADERS)
 token_only = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
 
 FLOW_ID = 4242
@@ -147,6 +144,39 @@ def _post(plan: bytes, meta: str):
     return client.post("/v1/submit", files={"plan": ("plan", plan, "application/octet-stream")}, data={"meta": meta})
 
 
+def _ws_submit(plan: bytes, meta: str) -> tuple[list[dict], dict, int]:
+    """Send *meta* and *plan* over ``/v1/ws/submit``; answer the progress frames, the final frame and the close code."""
+    progress = []
+    with client.websocket_connect("/v1/ws/submit") as websocket:
+        websocket.send_text(meta)
+        websocket.send_bytes(plan)
+        while (frame := websocket.receive_json())["type"] == "progress":
+            progress.append(frame)
+        with pytest.raises(WebSocketDisconnect) as closed:
+            websocket.receive_text()
+    return progress, frame, closed.value.code
+
+
+def _submit_via(transport: str, plan: bytes, meta: str) -> tuple[int, object]:
+    """A submit expected to fail, sent over REST or ``/v1/ws/submit``: the status and the detail it answers.
+
+    Over the WebSocket they come in an error frame, after no progress frame when the submit is refused (4xx), and the
+    socket closes with 1000.
+    """
+    if transport == "rest":
+        response = _post(plan, meta)
+        return response.status_code, response.json()["detail"]
+    progress, final, close_code = _ws_submit(plan, meta)
+    assert final["type"] == "error"
+    assert close_code == 1000
+    if final["status_code"] < 500:
+        assert progress == []
+    return final["status_code"], final["detail"]
+
+
+over_rest_and_ws = pytest.mark.parametrize("transport", ["rest", "ws"])
+
+
 class _SleepWhenLoaded:
     """Pickled into a plan's UDF, it sleeps *seconds* when the plan is loaded, as a slow import or library load can."""
 
@@ -166,30 +196,10 @@ def one_member_pool(monkeypatch):
     test_pool.shutdown()
 
 
-@pytest.fixture
-def held():
-    """Result ids a test submits under; each is released and its job entry dropped when the test ends."""
-    ids: list[str] = []
-
-    def new_id() -> str:
-        ids.append(uuid.uuid4().hex)
-        return ids[-1]
-
-    yield new_id
-    for result_id in ids:
-        client.delete(f"/v1/results/{result_id}")
-        with status_dict_lock:
-            status_dict.pop(result_id, None)
-
-
 def _submit(result_id: str, plan: pl.LazyFrame, **hints) -> SubmitResult:
     response = _post(plan.serialize(), _meta(result_id, **hints))
     assert response.status_code == 200, response.text
     return SubmitResult.model_validate_json(response.text)
-
-
-def _location(result: SubmitResult) -> WorkerLocation:
-    return WorkerLocation.model_validate_json(result.ref.location)
 
 
 def test_the_token_is_checked_before_the_version():
@@ -287,7 +297,7 @@ def test_a_materialised_submit_writes_the_file_and_answers_the_plans_columns_and
     assert result.ref.row_count == 4
     assert result.ref.columns == schema_to_wire(plan.collect_schema())
     assert result.ref.columns[3].data_type == "Extension('geoarrow.wkb', Binary, '{}')"
-    location = _location(result)
+    location = ref_location(result.ref)
     assert location.kind == "file"
     assert location.path == str(result_path(FLOW_ID, result_id))
     assert os.path.isfile(location.path)
@@ -310,7 +320,7 @@ def test_a_deferred_submit_keeps_the_plan_and_writes_nothing(held):
     assert result.ref.state == "deferred"
     assert result.ref.row_count is None
     assert result.ref.columns == schema_to_wire(plan.collect_schema())
-    location = _location(result)
+    location = ref_location(result.ref)
     assert location.kind == "plan"
     assert location.path is None
     assert location.plan == plan_bytes
@@ -341,7 +351,7 @@ def test_a_deferred_submit_without_a_preview_runs_in_a_pooled_child(held, one_me
     assert result.ref.columns == schema_to_wire(plan.collect_schema())
     assert result.ref.columns[3].data_type == "Extension('geoarrow.wkb', Binary, '{}')"
     assert result.sample is None
-    assert _location(result).plan == plan_bytes
+    assert ref_location(result.ref).plan == plan_bytes
     assert not result_path(FLOW_ID, result_id).exists()
     assert client.get(f"/v1/jobs/{result_id}").json()["status"] == "Completed"
     described = one_member_pool.describe()
@@ -420,20 +430,22 @@ def test_a_plan_over_a_megabyte_submits_as_a_file_part(held):
 def test_a_plan_reads_a_held_input(held):
     first_id = held()
     first = _submit(first_id, _plan(), must_materialise=True)
-    chained = pl.scan_ipc(_location(first).path).filter(pl.col("id") > 2)
+    chained = pl.scan_ipc(ref_location(first.ref).path).filter(pl.col("id") > 2)
 
     second = _submit(held(), chained, must_materialise=True, inputs=(first_id,))
 
     assert second.ref.row_count == 3
 
 
-def test_an_input_that_is_not_held_is_refused_before_anything_runs(held):
+@over_rest_and_ws
+def test_an_input_that_is_not_held_is_refused_before_anything_runs(held, transport):
     result_id = held()
+    meta = _meta(result_id, must_materialise=True, inputs=("never-submitted",))
 
-    response = _post(_plan().serialize(), _meta(result_id, must_materialise=True, inputs=("never-submitted",)))
+    status, detail = _submit_via(transport, _plan().serialize(), meta)
 
-    assert response.status_code == 404
-    assert "never-submitted" in response.json()["detail"]
+    assert status == 404
+    assert "never-submitted" in detail
     assert result_id not in status_dict
 
 
@@ -510,7 +522,7 @@ def test_a_sample_above_the_cap_is_refused_before_anything_runs(held, monkeypatc
 
 def test_release_removes_the_file_the_record_and_the_job(held):
     result_id = held()
-    path = _location(_submit(result_id, _plan(), must_materialise=True)).path
+    path = ref_location(_submit(result_id, _plan(), must_materialise=True).ref).path
 
     assert client.head(f"/v1/results/{result_id}").status_code == 200
     assert client.delete(f"/v1/results/{result_id}").status_code == 204
@@ -536,7 +548,7 @@ def test_releasing_an_id_that_holds_no_result_drops_its_job_entry(held):
 
 def test_a_result_whose_file_is_gone_is_not_held(held):
     result_id = held()
-    os.remove(_location(_submit(result_id, _plan(), must_materialise=True)).path)
+    os.remove(ref_location(_submit(result_id, _plan(), must_materialise=True).ref).path)
 
     assert client.head(f"/v1/results/{result_id}").status_code == 404
     assert client.get(f"/v1/results/{result_id}/count").status_code == 404
@@ -622,7 +634,7 @@ def test_import_holds_a_deferred_result_over_the_uri_with_the_given_columns_and_
     assert response.status_code == 200, response.text
     ref = ResultRef.model_validate_json(response.text)
     assert (ref.result_id, ref.state, ref.row_count, ref.columns) == (result_id, "deferred", 5, columns)
-    location = WorkerLocation.model_validate_json(ref.location)
+    location = ref_location(ref)
     assert (location.kind, location.path) == ("plan", None)
     assert client.head(f"/v1/results/{result_id}").status_code == 200
     assert client.get(f"/v1/results/{result_id}/count").json() == {"row_count": 5}
@@ -640,7 +652,7 @@ def test_import_holds_a_deferred_result_over_the_uri_with_the_given_columns_and_
 
 def test_import_under_a_held_id_replaces_it(held, tmp_path):
     result_id = held()
-    stored_file = _location(_submit(result_id, _plan(), must_materialise=True)).path
+    stored_file = ref_location(_submit(result_id, _plan(), must_materialise=True).ref).path
     body = {"uri": file_uri(tmp_path / "in.parquet"), "columns": [], "row_count": 0}
 
     response = client.post(f"/v1/results/{result_id}/import", json=body)
@@ -740,7 +752,7 @@ def test_a_blob_import_holds_a_copy_of_the_file(held, monkeypatch, tmp_path):
         [],
         None,
     )
-    location = WorkerLocation.model_validate_json(ref.location)
+    location = ref_location(ref)
     copy = Path(location.path)
     assert (location.kind, copy) == ("blob", result_path(-1, result_id).with_suffix(".blob"))
     assert copy.read_bytes() == BLOB
@@ -784,73 +796,11 @@ def test_a_blob_uri_of_another_scheme_or_with_a_credential_is_422(held, tmp_path
 def minio_over_tls(tmp_path_factory):
     """MinIO behind an HTTPS forwarder with a self-signed certificate: the forwarder's URL and the certificate's path.
 
-    MinIO is had as the cloud end-to-end suite has it, and the tests skip when Docker cannot give one. The forwarder is
-    the one the cloud storage options tests build, so a URL presigned on its endpoint is an ``https://`` one that MinIO
-    accepts: the Host header passes through.
+    The tests skip when Docker cannot give MinIO. A URL presigned on the forwarder's endpoint is an ``https://`` one
+    that MinIO accepts: the Host header passes through.
     """
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.x509.oid import NameOID
-
-    from test_utils.s3 import fixtures as s3
-
-    available = s3.is_docker_available() and (
-        s3.is_container_running(s3.MINIO_CONTAINER_NAME) or s3.start_minio_container()
-    )
-    if not (available and s3.wait_for_minio(max_retries=10)):
-        pytest.skip("MinIO (Docker) is not available")
-    folder = tmp_path_factory.mktemp("tls")
-    key = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
-    now = datetime.now(timezone.utc)
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(minutes=5))
-        .not_valid_after(now + timedelta(hours=1))
-        .add_extension(
-            x509.SubjectAlternativeName([x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]),
-            critical=False,
-        )
-        .sign(key, hashes.SHA256())
-    )
-    (folder / "cert.pem").write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-    (folder / "key.pem").write_bytes(
-        key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
-    )
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.load_cert_chain(folder / "cert.pem", folder / "key.pem")
-    upstream_host, upstream_port = s3.MINIO_ENDPOINT_URL.removeprefix("http://").split(":")
-
-    async def pipe(reader, writer):
-        try:
-            while data := await reader.read(65536):
-                writer.write(data)
-                await writer.drain()
-        except (ConnectionError, OSError):
-            pass
-        finally:
-            writer.close()
-
-    async def forward(client_reader, client_writer):
-        upstream_reader, upstream_writer = await asyncio.open_connection(upstream_host, int(upstream_port))
-        await asyncio.gather(pipe(client_reader, upstream_writer), pipe(upstream_reader, client_writer))
-
-    loop = asyncio.new_event_loop()
-    loop.set_exception_handler(lambda _loop, _context: None)
-    server = loop.run_until_complete(asyncio.start_server(forward, "127.0.0.1", 0, ssl=context))
-    thread = threading.Thread(target=loop.run_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"https://localhost:{server.sockets[0].getsockname()[1]}", folder / "cert.pem"
-    finally:
-        loop.call_soon_threadsafe(server.close)
-        loop.call_soon_threadsafe(loop.stop)
-        thread.join(timeout=5)
+    with tls.minio_over_tls(tmp_path_factory.mktemp("tls")) as endpoint:
+        yield endpoint
 
 
 @pytest.fixture
@@ -939,16 +889,15 @@ def test_a_failed_blob_transfer_is_500_and_names_no_signature(held, presign, tmp
         assert "X-Amz-Signature" not in said
 
 
+@over_rest_and_ws
 @pytest.mark.parametrize("must_materialise", [True, False], ids=["materialised", "deferred-without-a-preview"])
-def test_a_plan_that_fails_on_its_data_is_a_task_failure_and_holds_nothing(held, must_materialise):
+def test_a_plan_that_fails_on_its_data_is_a_task_failure_and_holds_nothing(held, must_materialise, transport):
     result_id = held()
+    plan = pl.LazyFrame({"a": [1]}).select("missing").serialize()
 
-    response = _post(
-        pl.LazyFrame({"a": [1]}).select("missing").serialize(), _meta(result_id, must_materialise=must_materialise)
-    )
+    status, detail = _submit_via(transport, plan, _meta(result_id, must_materialise=must_materialise))
 
-    assert response.status_code == 500
-    detail = response.json()["detail"]
+    assert status == 500
     assert detail["status"] == "Error"
     assert detail["error_kind"] == "task"
     assert detail["error_message"].startswith("ColumnNotFoundError")
@@ -979,13 +928,15 @@ def test_bytes_that_are_not_a_plan_are_an_environment_failure(held, preview_rows
         json.dumps({**json.loads(_meta("abc")), "sink": "parquet"}),
         _meta("../escape"),
         _meta("a/b"),
+        "{}",
     ],
-    ids=["not-json", "missing-fields", "unknown-field", "dot-dot", "slash"],
+    ids=["not-json", "missing-fields", "unknown-field", "dot-dot", "slash", "empty"],
 )
-def test_a_bad_meta_part_is_422(meta):
-    response = _post(_plan().serialize(), meta)
+@over_rest_and_ws
+def test_a_bad_meta_part_is_422(meta, transport):
+    status, _ = _submit_via(transport, _plan().serialize(), meta)
 
-    assert response.status_code == 422
+    assert status == 422
 
 
 @pytest.mark.parametrize(
@@ -1092,19 +1043,6 @@ def test_a_cancel_posted_while_a_submit_is_starting_stops_it_when_it_starts(held
     assert not result_path(FLOW_ID, result_id).exists()
 
 
-def _ws_submit(plan: bytes, meta: str) -> tuple[list[dict], dict, int]:
-    """Send *meta* and *plan* over ``/v1/ws/submit``; answer the progress frames, the final frame and the close code."""
-    progress = []
-    with client.websocket_connect("/v1/ws/submit") as websocket:
-        websocket.send_text(meta)
-        websocket.send_bytes(plan)
-        while (frame := websocket.receive_json())["type"] == "progress":
-            progress.append(frame)
-        with pytest.raises(WebSocketDisconnect) as closed:
-            websocket.receive_text()
-    return progress, frame, closed.value.code
-
-
 @pytest.mark.parametrize("must_materialise", [True, False], ids=["materialised", "deferred"])
 def test_a_websocket_submit_streams_progress_then_the_result_with_its_sample(held, must_materialise):
     result_id = held()
@@ -1124,7 +1062,7 @@ def test_a_websocket_submit_streams_progress_then_the_result_with_its_sample(hel
     assert result.ref.state == ("materialised" if must_materialise else "deferred")
     assert result.ref.row_count == (5 if must_materialise else None)
     assert result.ref.columns == schema_to_wire(plan.collect_schema())
-    location = _location(result)
+    location = ref_location(result.ref)
     if must_materialise:
         assert location.kind == "file"
         assert location.path == str(result_path(FLOW_ID, result_id))
@@ -1166,46 +1104,6 @@ def test_the_websocket_submit_closes_1008_on_a_bad_token_before_the_version_is_c
     assert closed.value.code == 1008
 
 
-def test_a_bad_meta_frame_is_an_error_frame_422():
-    progress, final, close_code = _ws_submit(_plan().serialize(), "{}")
-
-    assert progress == []
-    assert final["type"] == "error"
-    assert final["status_code"] == 422
-    assert close_code == 1000
-
-
-def test_an_input_that_is_not_held_is_an_error_frame_404(held):
-    result_id = held()
-
-    _, final, close_code = _ws_submit(
-        _plan().serialize(), _meta(result_id, must_materialise=True, inputs=("never-submitted",))
-    )
-
-    assert final["type"] == "error"
-    assert final["status_code"] == 404
-    assert "never-submitted" in final["detail"]
-    assert result_id not in status_dict
-    assert close_code == 1000
-
-
-def test_a_plan_that_fails_on_its_data_is_an_error_frame_500_and_holds_nothing(held):
-    result_id = held()
-
-    _, final, close_code = _ws_submit(
-        pl.LazyFrame({"a": [1]}).select("missing").serialize(), _meta(result_id, must_materialise=True)
-    )
-
-    assert final["type"] == "error"
-    assert final["status_code"] == 500
-    assert final["detail"]["status"] == "Error"
-    assert final["detail"]["error_kind"] == "task"
-    assert final["detail"]["error_message"].startswith("ColumnNotFoundError")
-    assert close_code == 1000
-    assert client.head(f"/v1/results/{result_id}").status_code == 404
-    assert not result_path(FLOW_ID, result_id).exists()
-
-
 def test_an_unchanged_progress_is_sent_again_as_a_heartbeat(held, monkeypatch):
     monkeypatch.setattr(streaming, "_HEARTBEAT_INTERVAL", 0)
     # Long enough for several polls even when a warm pool member starts it at once
@@ -1244,7 +1142,7 @@ def test_a_client_that_leaves_does_not_stop_the_submit(held):
 
 def test_a_submit_sweeps_results_and_jobs_whose_submit_ended_too_long_ago(held, monkeypatch):
     kept, failed, later, last = held(), held(), held(), held()
-    kept_path = _location(_submit(kept, _plan(), must_materialise=True)).path
+    kept_path = ref_location(_submit(kept, _plan(), must_materialise=True).ref).path
     assert _post(pl.LazyFrame({"a": [1]}).select("missing").serialize(), _meta(failed)).status_code == 500
 
     _submit(later, _plan(), must_materialise=True)
@@ -1298,7 +1196,7 @@ def test_a_submit_under_an_id_a_job_still_runs_under_replaces_that_job(held, one
     assert response.status_code == 500
     assert response.json()["detail"]["status"] == "Cancelled"
     assert [column.name for column in replacement.ref.columns] == ["y"]
-    assert pl.read_ipc(_location(replacement).path).columns == ["y"]
+    assert pl.read_ipc(ref_location(replacement.ref).path).columns == ["y"]
     assert client.head(f"/v1/results/{result_id}").status_code == 200
     assert client.get(f"/v1/jobs/{result_id}").json()["status"] == "Completed"
 
@@ -1409,9 +1307,8 @@ def test_the_short_routes_answer_while_every_pool_thread_waits_on_a_child(held, 
         return real(*args, **kwargs)
 
     monkeypatch.setattr(service, "start_process", held_back)
-    headers = {**INTERNAL_AUTH_HEADERS, PROTOCOL_VERSION_HEADER: str(PROTOCOL_VERSION)}
     answers: dict[str, int] = {}
-    with TestClient(app, headers=headers) as one_loop:
+    with TestClient(app, headers=V1_HEADERS) as one_loop:
         one_loop.portal.call(_one_pool_thread)
         files = {"plan": ("plan", _plan().serialize(), "application/octet-stream")}
         submit = threading.Thread(

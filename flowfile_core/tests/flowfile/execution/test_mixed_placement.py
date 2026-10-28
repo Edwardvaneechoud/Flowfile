@@ -46,18 +46,16 @@ from shared.compute_protocol import PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER
 from tests import test_run_flow_node
 from tests.flowfile.conftest import create_test_graph
 from tests.flowfile.execution import test_exchange_store, test_placement, test_unreadable_location
-from tests.flowfile.execution.test_exchange_store import _BUCKET, _key, _keys
-from tests.flowfile.execution.test_placement import (
-    AUTO_REMEDY,
-    BACKEND_ID,
-    OWN_REMEDY,
-    DeclaringBackend,
+from tests.flowfile.execution.graph_helpers import (
+    add_filter_on,
     add_manual_input,
     add_promise,
+    add_sort_on,
     connect,
-    everything,
     make_graph,
 )
+from tests.flowfile.execution.test_exchange_store import _BUCKET, _key, _keys
+from tests.flowfile.execution.test_placement import AUTO_REMEDY, BACKEND_ID, OWN_REMEDY, DeclaringBackend, everything
 from tests.flowfile.execution.test_two_backend_chain import A_ROWS, CUSTOMERS, EXPECTED
 from tests.flowfile.test_yaml_io import find_parent_directory
 from tests.test_catalog_cloud_virtual import requires_minio
@@ -80,16 +78,7 @@ def _unset(monkeypatch):
 
 
 @pytest.fixture
-def protocol_on(monkeypatch):
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
-
-
-@pytest.fixture
-def worker() -> WorkerBackend:
-    from tests.conftest import is_worker_running
-
-    if not is_worker_running():
-        pytest.skip("flowfile_worker is not running")
+def worker(running_worker) -> WorkerBackend:
     return registry.backend(WORKER)
 
 
@@ -106,20 +95,7 @@ def chain(graph: FlowGraph, filter_on: str, user_id: int | None = None) -> FlowG
 
     Nodes 1 and 3 keep ``"auto"``; every node is stamped ``user_id``.
     """
-    add_manual_input(graph, 1, CUSTOMERS.to_dicts())
-    graph.get_node(1).setting_input.user_id = user_id
-    add_promise(graph, 2, "filter")
-    graph.add_filter(
-        input_schema.NodeFilter(
-            flow_id=graph.flow_id,
-            node_id=2,
-            depending_on_id=1,
-            user_id=user_id,
-            execution_location=filter_on,
-            filter_input=transform_schema.FilterInput(mode="advanced", advanced_filter="[amount] > 10"),
-        )
-    )
-    connect(graph, 1, 2)
+    filtered(graph, filter_on, user_id)
     add_promise(graph, 3, "group_by")
     graph.add_group_by(
         input_schema.NodeGroupBy(
@@ -144,21 +120,14 @@ def split(graph: FlowGraph, split_on: str, user_id: int = 1) -> FlowGraph:
 
     Node 1 keeps ``"auto"``; both nodes are stamped ``user_id``.
     """
+    return filtered(graph, split_on, user_id, split_mode=True)
+
+
+def filtered(graph: FlowGraph, filter_on: str, user_id: int | None, **filter_fields) -> FlowGraph:
+    """Manual input 1 (``CUSTOMERS``) → filter 2 on ``filter_on``, ``amount > 10``, both stamped ``user_id``."""
     add_manual_input(graph, 1, CUSTOMERS.to_dicts())
     graph.get_node(1).setting_input.user_id = user_id
-    add_promise(graph, 2, "filter")
-    graph.add_filter(
-        input_schema.NodeFilter(
-            flow_id=graph.flow_id,
-            node_id=2,
-            depending_on_id=1,
-            user_id=user_id,
-            split_mode=True,
-            execution_location=split_on,
-            filter_input=transform_schema.FilterInput(mode="advanced", advanced_filter="[amount] > 10"),
-        )
-    )
-    connect(graph, 1, 2)
+    add_filter_on(graph, 2, 1, "[amount] > 10", user_id=user_id, execution_location=filter_on, **filter_fields)
     return graph
 
 
@@ -901,16 +870,7 @@ def test_a_run_flow_child_leaves_its_operation_outputs_held_for_the_parent_that_
         )
     )
     test_run_flow_node.connect(graph, 1, 2, "input-1")
-    add_promise(graph, 3, "sort")
-    graph.add_sort(
-        input_schema.NodeSort(
-            flow_id=graph.flow_id,
-            node_id=3,
-            depending_on_id=2,
-            sort_input=[transform_schema.SortByInput(column="id", how="asc")],
-        )
-    )
-    connect(graph, 2, 3)
+    add_sort_on(graph, 3, 2, "id")
     answered = record_refs(monkeypatch, "submit", "run_op")
     try:
         run_info = graph.run_graph()
@@ -1149,17 +1109,7 @@ def test_an_escalated_csv_read_holds_its_result_under_its_hash_and_is_served_fro
     _late_conflict_csv(path)
     graph = create_test_graph(flow_id=8518, execution_location=filter_on)
     source = read_csv_on_worker(graph, path)
-    add_promise(graph, 2, "filter")
-    graph.add_filter(
-        input_schema.NodeFilter(
-            flow_id=graph.flow_id,
-            node_id=2,
-            depending_on_id=1,
-            user_id=1,
-            filter_input=transform_schema.FilterInput(mode="advanced", advanced_filter="[id] > 10"),
-        )
-    )
-    connect(graph, 1, 2)
+    add_filter_on(graph, 2, 1, "[id] > 10", user_id=1)
     submits: list[tuple[str, int | str, bool]] = []
     for backend in (local, worker):
 

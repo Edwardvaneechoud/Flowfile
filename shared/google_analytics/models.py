@@ -22,13 +22,13 @@ HKDF scheme to recover the plaintext, so secrets are never sent unencrypted.
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
+
+from shared.wire_model import WireModel
 
 
-class GoogleAnalyticsFilter(BaseModel):
+class GoogleAnalyticsFilter(WireModel):
     """Row-level filter applied to the GA4 report."""
-
-    model_config = ConfigDict(extra="forbid")
 
     field: str
     operator: str
@@ -36,19 +36,15 @@ class GoogleAnalyticsFilter(BaseModel):
     case_sensitive: bool = False
 
 
-class GoogleAnalyticsOrderBy(BaseModel):
+class GoogleAnalyticsOrderBy(WireModel):
     """Sort entry applied to the GA4 report."""
-
-    model_config = ConfigDict(extra="forbid")
 
     field: str
     descending: bool = False
 
 
-class GoogleAnalyticsReadSettings(BaseModel):
+class GoogleAnalyticsReadSettings(WireModel):
     """Payload for ``POST /store_google_analytics_read_result``."""
-
-    model_config = ConfigDict(extra="forbid")
 
     auth_method: Literal["oauth", "service_account"] = "oauth"
 

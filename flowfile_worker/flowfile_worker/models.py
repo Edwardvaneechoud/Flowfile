@@ -8,6 +8,7 @@ from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteS
 from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
 from flowfile_worker.log_models import RawLogInput as RawLogInput  # noqa: F401
 from shared.delta_models import DeltaVersionCommit as DeltaVersionCommit  # noqa: F401
+from shared.wire_model import WireModel
 
 
 # Custom type for bytes that serializes to/from base64 string in JSON
@@ -44,17 +45,13 @@ OperationType = Literal[
 ResultType = Literal["polars", "other"]
 
 
-class PoolConfigInput(BaseModel):
+class PoolConfigInput(WireModel):
     """Request body for POST /pool (warm worker pool resize)."""
-
-    model_config = ConfigDict(extra="forbid")
 
     size: int = Field(..., ge=0, le=32, description="Target member capacity; 0 disables the pool.")
 
 
-class PolarsOperation(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class PolarsOperation(WireModel):
     operation: Base64Bytes  # Automatically encodes/decodes base64 for JSON
     flowfile_flow_id: int | None = 1
     flowfile_node_id: int | str | None = -1
@@ -74,9 +71,7 @@ class PolarsScriptSample(PolarsScript):
     sample_size: int | None = 100
 
 
-class PolarsScriptWrite(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class PolarsScriptWrite(WireModel):
     operation: Base64Bytes  # Automatically encodes/decodes base64 for JSON
     data_type: str
     path: str
@@ -135,9 +130,7 @@ class CloudStorageScriptWrite(CloudStorageWriteSettings):
         )
 
 
-class FuzzyJoinInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class FuzzyJoinInput(WireModel):
     task_id: str | None = None
     cache_dir: str | None = None
     left_df_operation: PolarsOperation
@@ -147,14 +140,12 @@ class FuzzyJoinInput(BaseModel):
     flowfile_node_id: int | str | None = -1
 
 
-class CustomNodeExecuteInput(BaseModel):
+class CustomNodeExecuteInput(WireModel):
     """Input for the /execute_custom_node endpoint.
 
     Ships the node's source text (not a path — jobs stay immune to concurrent
     save/delete) plus ``$ffsec$`` ciphertext secrets the child decrypts locally.
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     task_id: str | None = None
     cache_dir: str | None = None
@@ -171,7 +162,7 @@ class CustomNodeExecuteInput(BaseModel):
     flowfile_node_id: int | str | None = -1
 
 
-class TrainModelInput(BaseModel):
+class TrainModelInput(WireModel):
     """Input for the /train_ml_model endpoint.
 
     Core sends a serialised LazyFrame plus the training spec. The worker writes
@@ -179,7 +170,7 @@ class TrainModelInput(BaseModel):
     via the ``Status.results`` field. Core then calls ``ArtifactService.finalize_upload``.
     """
 
-    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+    model_config = ConfigDict(protected_namespaces=())
 
     task_id: str | None = None
     cache_dir: str | None = None
@@ -193,10 +184,10 @@ class TrainModelInput(BaseModel):
     flowfile_node_id: int | str | None = -1
 
 
-class ApplyModelInput(BaseModel):
+class ApplyModelInput(WireModel):
     """Input for the /apply_ml_model endpoint."""
 
-    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+    model_config = ConfigDict(protected_namespaces=())
 
     task_id: str | None = None
     cache_dir: str | None = None
@@ -229,45 +220,39 @@ class ColumnSchema(BaseModel):
     dtype: str
 
 
-class CatalogStorageInterface(BaseModel):
+class CatalogStorageInterface(WireModel):
     """Object-storage backend for a catalog operation.
 
     ``base_uri`` is the catalog root (e.g. ``s3://bucket/catalog``); ``connection`` carries
     owner-encrypted secrets the worker decrypts itself. Absent on a request ⇒ local filesystem.
     """
 
-    model_config = ConfigDict(extra="forbid")
-
     base_uri: str
     connection: FullCloudStorageConnection
 
 
-class DeltaStoragePayload(BaseModel):
+class DeltaStoragePayload(WireModel):
     """The ``storage_payload`` of the Delta task operations (``write_delta``, ``merge_delta``, ``scd2_delta``).
 
     ``connection`` carries owner-encrypted secrets the worker decrypts itself; ``base_uri`` is the catalog root a table
     named by identity is resolved under. Absent on a request ⇒ a table on this worker's disk.
     """
 
-    model_config = ConfigDict(extra="forbid")
-
     base_uri: str | None = None
     connection: FullCloudStorageConnection
 
 
-class DeltaSkipReport(BaseModel):
+class DeltaSkipReport(WireModel):
     """What a Delta task operation answers when it wrote nothing; an SCD2 write adds the table's unchanged version."""
-
-    model_config = ConfigDict(extra="forbid")
 
     skipped: Literal[True]
     version: int | None = None
 
 
-class DeltaWriteReport(BaseModel):
+class DeltaWriteReport(WireModel):
     """What ``write_delta`` and ``merge_delta`` answer: the table written and what core records of it."""
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True)
 
     table_path: str
     column_schema: list[ColumnSchema] = Field(alias="schema")
@@ -276,9 +261,7 @@ class DeltaWriteReport(BaseModel):
     size_bytes: int
 
 
-class Scd2Metrics(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class Scd2Metrics(WireModel):
     rows_inserted: int
     rows_closed: int
     rows_total: int
@@ -293,9 +276,7 @@ class Scd2WriteReport(DeltaWriteReport):
     scd2_metrics: Scd2Metrics
 
 
-class CatalogMaterializeRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class CatalogMaterializeRequest(WireModel):
     source_file_path: str
     table_name: str | None = None
     storage: CatalogStorageInterface | None = None
@@ -309,9 +290,7 @@ class CatalogMaterializeResponse(BaseModel):
     size_bytes: int
 
 
-class CatalogOptimizeRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class CatalogOptimizeRequest(WireModel):
     table_path: str  # Bare table directory name (no path separators)
     z_order_columns: list[str] | None = None
     storage: CatalogStorageInterface | None = None
@@ -322,9 +301,7 @@ class CatalogOptimizeResponse(BaseModel):
     size_bytes: int | None = None
 
 
-class CatalogVacuumRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class CatalogVacuumRequest(WireModel):
     table_path: str  # Bare table directory name (no path separators)
     retention_hours: int = 168
     dry_run: bool = True
@@ -337,17 +314,13 @@ class CatalogVacuumResponse(BaseModel):
     size_bytes: int | None = None
 
 
-class CatalogNewColumn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class CatalogNewColumn(WireModel):
     name: str
     dtype: str  # One of shared.delta_utils.EDIT_COLUMN_DTYPES
 
 
-class CatalogApplyEditsRequest(BaseModel):
+class CatalogApplyEditsRequest(WireModel):
     """Row-level edits from the catalog edit surface, applied as keyed Delta merges."""
-
-    model_config = ConfigDict(extra="forbid")
 
     table_path: str  # Bare table directory name (no path separators)
     key_columns: list[str]
@@ -370,10 +343,8 @@ class CatalogApplyEditsResponse(BaseModel):
     size_bytes: int | None = None
 
 
-class CatalogAddKeyColumnRequest(BaseModel):
+class CatalogAddKeyColumnRequest(WireModel):
     """Rewrite a Delta catalog table with a sequential row-id column appended."""
-
-    model_config = ConfigDict(extra="forbid")
 
     table_path: str  # Bare table directory name (no path separators)
     column_name: str = "record_id"
@@ -389,9 +360,7 @@ class CatalogAddKeyColumnResponse(BaseModel):
     size_bytes: int | None = None
 
 
-class TableMetadataRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class TableMetadataRequest(WireModel):
     table_path: str  # Bare table directory name (no path separators)
     storage: CatalogStorageInterface | None = None
 
@@ -403,9 +372,7 @@ class TableMetadataResponse(BaseModel):
     size_bytes: int
 
 
-class DeltaHistoryRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class DeltaHistoryRequest(WireModel):
     table_path: str  # Bare table directory name (no path separators)
     limit: int | None = None
     storage: CatalogStorageInterface | None = None
@@ -416,9 +383,7 @@ class DeltaHistoryResponse(BaseModel):
     history: list[DeltaVersionCommit]
 
 
-class DeltaVersionPreviewRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class DeltaVersionPreviewRequest(WireModel):
     table_path: str  # Bare table directory name (no path separators)
     version: int
     n_rows: int = 100
@@ -433,9 +398,7 @@ class DeltaVersionPreviewResponse(BaseModel):
     total_rows: int
 
 
-class DeltaPreviewRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class DeltaPreviewRequest(WireModel):
     table_path: str  # Bare table directory name (no path separators)
     n_rows: int = 100
     storage: CatalogStorageInterface | None = None
@@ -448,9 +411,7 @@ class DeltaPreviewResponse(BaseModel):
     total_rows: int
 
 
-class SqlQueryRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class SqlQueryRequest(WireModel):
     query: str
     tables: dict[str, str]  # mapping of logical table name -> directory name
     max_rows: int = 10_000
@@ -469,10 +430,8 @@ class SqlQueryResponse(BaseModel):
     error: str | None = None
 
 
-class ResolveVirtualTableRequest(BaseModel):
+class ResolveVirtualTableRequest(WireModel):
     """Ask the worker to materialise a flow-virtual table from a serialised plan."""
-
-    model_config = ConfigDict(extra="forbid")
 
     table_id: int
     plan_bytes: Base64Bytes
@@ -487,7 +446,7 @@ class ResolveVirtualTableResponse(BaseModel):
     row_count: int
 
 
-class VizWorkerSource(BaseModel):
+class VizWorkerSource(WireModel):
     """Source descriptor for a viz session.
 
     The ``session_key`` is the cache key in ``VizSessionRegistry``; core builds
@@ -496,8 +455,6 @@ class VizWorkerSource(BaseModel):
     successive requests against the same source data skip the load step while
     any Delta write rotates the key and spawns a fresh child.
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     kind: Literal["physical", "sql", "ipc_path", "plan"]
     session_key: str
@@ -510,9 +467,7 @@ class VizWorkerSource(BaseModel):
     plan_bytes: Base64Bytes | None = None  # serialized pl.LazyFrame for kind="plan"
 
 
-class VisualizeQueryRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class VisualizeQueryRequest(WireModel):
     source: VizWorkerSource
     payload: dict
     max_rows: int = 100_000
@@ -527,9 +482,7 @@ class VisualizeQueryResponse(BaseModel):
     error: str | None = None
 
 
-class VisualizeFieldsRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class VisualizeFieldsRequest(WireModel):
     source: VizWorkerSource
 
 
@@ -539,9 +492,7 @@ class VisualizeFieldsResponse(BaseModel):
     error: str | None = None
 
 
-class VisualizeColumnStatsRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class VisualizeColumnStatsRequest(WireModel):
     source: VizWorkerSource
     column: str
     limit: int = 100

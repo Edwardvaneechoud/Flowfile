@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { deferred, httpError } from "../../__fixtures__/promises";
+import { capabilities, verdict } from "../../api/__fixtures__/computeBackends";
 import type {
   ComputeBackend,
   ComputeBackendInput,
   HandshakeVerdict,
-  WorkerCapabilities,
 } from "../../api/computeBackends.api";
 
 const mocks = vi.hoisted(() => ({
@@ -30,35 +31,17 @@ import {
 
 const TEAM_URL = "https://team.example:63579";
 
-const core: WorkerCapabilities = {
-  app_version: "0.23.0",
-  polars_version: "1.39.3",
-  python_version: "3.12.8",
-  protocol_version: 1,
-  platform: "darwin-arm64",
-  polars_runtime: "32",
-  plugins: {},
-  plugin_libs: {},
-  operations: [],
-  read_schemes: ["s3"],
-  write_schemes: ["s3"],
-  credential_resolution: "master_key",
-};
+const teamRow = (
+  shares_core_disk = false,
+  seen: HandshakeVerdict | null = null,
+): ComputeBackend => ({
+  id: "worker:team",
+  url: TEAM_URL,
+  shares_core_disk,
+  verdict: seen,
+});
 
 let rows: ComputeBackend[] = [];
-
-const httpError = (status: number, detail: unknown) =>
-  Object.assign(new Error(`Request failed with status code ${status}`), {
-    response: { status, data: { detail } },
-  });
-
-const deferred = <T>() => {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-};
 
 beforeEach(() => {
   rows = [];
@@ -79,35 +62,24 @@ beforeEach(() => {
   mocks.handshake.mockReset();
 });
 
-const checked: HandshakeVerdict = {
-  id: "worker:team",
-  ok: true,
-  core,
-  backend: core,
-  offered: core,
-  differences: [],
-  absent: {},
-  error: null,
-};
+const checked = verdict();
 
 describe("load", () => {
   it("fills the rows and clears an earlier error", async () => {
-    rows = [{ id: "worker:team", url: TEAM_URL, shares_core_disk: false, verdict: null }];
+    rows = [teamRow()];
     const page = useComputeBackends();
     page.loadError.value = "stale";
 
     await page.load();
 
-    expect(page.backends.value).toEqual([
-      { id: "worker:team", url: TEAM_URL, shares_core_disk: false, verdict: null },
-    ]);
+    expect(page.backends.value).toEqual([teamRow()]);
     expect(page.loadError.value).toBe("");
     expect(page.loading.value).toBe(false);
   });
 
   it("seeds each worker's verdict from the listing, so one a run produced shows without a handshake", async () => {
     rows = [
-      { id: "worker:team", url: TEAM_URL, shares_core_disk: false, verdict: checked },
+      teamRow(false, checked),
       {
         id: "worker:gpu",
         url: "https://gpu.example:63579",
@@ -124,7 +96,7 @@ describe("load", () => {
   });
 
   it("keeps the rows it had when the list is refused, and says why", async () => {
-    rows = [{ id: "worker:team", url: TEAM_URL, shares_core_disk: false, verdict: null }];
+    rows = [teamRow()];
     const page = useComputeBackends();
     await page.load();
     mocks.list.mockRejectedValueOnce(new Error("Network Error"));
@@ -132,9 +104,7 @@ describe("load", () => {
     await page.load();
 
     expect(page.loadError.value).toBe("Couldn't read the configured workers.");
-    expect(page.backends.value).toEqual([
-      { id: "worker:team", url: TEAM_URL, shares_core_disk: false, verdict: null },
-    ]);
+    expect(page.backends.value).toEqual([teamRow()]);
   });
 });
 
@@ -148,12 +118,7 @@ describe("add", () => {
     const row = await pending;
 
     expect(mocks.add).toHaveBeenCalledWith(input);
-    expect(row).toEqual({
-      id: "worker:team",
-      url: TEAM_URL,
-      shares_core_disk: false,
-      verdict: null,
-    });
+    expect(row).toEqual(teamRow());
     expect(page.backends.value.map((b) => b.id)).toEqual(["worker:team"]);
     expect(page.adding.value).toBe(false);
   });
@@ -271,7 +236,7 @@ describe("add", () => {
 
 describe("remove", () => {
   it("deletes by id, and the row and its verdict are gone", async () => {
-    rows = [{ id: "worker:team", url: TEAM_URL, shares_core_disk: false, verdict: null }];
+    rows = [teamRow()];
     mocks.handshake.mockResolvedValueOnce(checked);
     const page = useComputeBackends();
     await page.load();
@@ -300,27 +265,24 @@ describe("remove", () => {
 describe("handshake", () => {
   const verdicts: Record<string, HandshakeVerdict> = {
     match: checked,
-    narrowed: {
-      ...checked,
-      offered: { ...core, plugins: {} },
+    narrowed: verdict({
+      offered: capabilities({ plugins: {} }),
       absent: { polars_ds: "not installed" },
-    },
-    mismatch: {
-      ...checked,
+    }),
+    mismatch: verdict({
       ok: false,
-      backend: { ...core, polars_version: "0.20.31" },
+      backend: capabilities({ polars_version: "0.20.31" }),
       offered: null,
-      differences: ["polars_version: core 1.39.3, backend 0.20.31"],
+      differences: ["polars_version: core 1.43.2, backend 0.20.31"],
       error:
-        'Backend "worker:team" does not match core (polars_version: core 1.39.3, backend 0.20.31)',
-    },
-    unreachable: {
-      ...checked,
+        'Backend "worker:team" does not match core (polars_version: core 1.43.2, backend 0.20.31)',
+    }),
+    unreachable: verdict({
       ok: false,
       backend: null,
       offered: null,
       error: `Could not reach the worker at ${TEAM_URL}: Connection refused`,
-    },
+    }),
   };
 
   it.each(Object.entries(verdicts))(
@@ -382,55 +344,50 @@ describe("the add form", () => {
 });
 
 describe("serverFilesLabel", () => {
-  const row = (shares_core_disk: boolean): ComputeBackend => ({
-    id: "worker:team",
-    url: TEAM_URL,
-    shares_core_disk,
-    verdict: null,
-  });
-  const verdict = (schemes: string[] | null): HandshakeVerdict => ({
-    id: "worker:team",
-    ok: schemes !== null,
-    core,
-    backend: schemes ? { ...core, read_schemes: schemes, write_schemes: schemes } : null,
-    offered: schemes ? { ...core, read_schemes: schemes, write_schemes: schemes } : null,
-    differences: [],
-    absent: {},
-    error: schemes ? null : "unreachable",
-  });
+  const declaring = (schemes: string[] | null): HandshakeVerdict => {
+    const declared = schemes
+      ? capabilities({ read_schemes: schemes, write_schemes: schemes })
+      : null;
+    return verdict({
+      ok: schemes !== null,
+      backend: declared,
+      offered: declared,
+      error: schemes ? null : "unreachable",
+    });
+  };
 
   it("says a marked row sees the server's files whatever the verdict", () => {
-    expect(serverFilesLabel(row(true), null)).toBe("Yes, marked here");
-    expect(serverFilesLabel(row(true), verdict(["s3"]))).toBe("Yes, marked here");
+    expect(serverFilesLabel(teamRow(true), null)).toBe("Yes, marked here");
+    expect(serverFilesLabel(teamRow(true), declaring(["s3"]))).toBe("Yes, marked here");
   });
 
   it("says yes for an unmarked worker that declares file itself", () => {
-    expect(serverFilesLabel(row(false), verdict(["s3", "file"]))).toBe(
+    expect(serverFilesLabel(teamRow(false), declaring(["s3", "file"]))).toBe(
       "Yes, declared by the worker",
     );
   });
 
   it("says no for an unmarked worker that does not declare file", () => {
-    expect(serverFilesLabel(row(false), verdict(["s3"]))).toBe("No");
+    expect(serverFilesLabel(teamRow(false), declaring(["s3"]))).toBe("No");
   });
 
   it("reads a refused worker's own declaration", () => {
     const refused = (schemes: string[]): HandshakeVerdict => ({
-      ...verdict(null),
-      backend: { ...core, read_schemes: schemes, write_schemes: schemes },
-      differences: ["polars_version: core 1.39.3, backend 0.20.31"],
+      ...declaring(null),
+      backend: capabilities({ read_schemes: schemes, write_schemes: schemes }),
+      differences: ["polars_version: core 1.43.2, backend 0.20.31"],
     });
-    expect(serverFilesLabel(row(false), refused(["s3", "file"]))).toBe(
+    expect(serverFilesLabel(teamRow(false), refused(["s3", "file"]))).toBe(
       "Yes, declared by the worker",
     );
-    expect(serverFilesLabel(row(false), refused(["s3"]))).toBe("No");
+    expect(serverFilesLabel(teamRow(false), refused(["s3"]))).toBe("No");
   });
 
   it("says unknown for an unmarked worker the handshake did not reach", () => {
-    expect(serverFilesLabel(row(false), verdict(null))).toBe("Unknown, the handshake failed");
+    expect(serverFilesLabel(teamRow(false), declaring(null))).toBe("Unknown, the handshake failed");
   });
 
   it("says not checked for an unmarked worker with no verdict", () => {
-    expect(serverFilesLabel(row(false), undefined)).toBe("Not checked");
+    expect(serverFilesLabel(teamRow(false), undefined)).toBe("Not checked");
   });
 });

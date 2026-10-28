@@ -3,15 +3,10 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterator
 
 import pytest
-from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from flowfile_core import main
-from flowfile_core.auth.jwt import get_current_active_user, get_current_user
-from flowfile_core.auth.models import User as PydanticUser
 from flowfile_core.configs import exchange_config, settings
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.db_connections import store_cloud_connection
@@ -19,30 +14,6 @@ from flowfile_core.flowfile.execution import exchange
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 
 ENV_VARS = ("FLOWFILE_EXCHANGE_URI", "FLOWFILE_EXCHANGE_CONNECTION", "FLOWFILE_EXCHANGE_MAX_ROWS")
-
-
-def _client(user: PydanticUser) -> Iterator[TestClient]:
-    main.app.dependency_overrides[get_current_active_user] = lambda: user
-    main.app.dependency_overrides[get_current_user] = lambda: user
-    try:
-        yield TestClient(main.app)
-    finally:
-        main.app.dependency_overrides.pop(get_current_active_user, None)
-        main.app.dependency_overrides.pop(get_current_user, None)
-
-
-@pytest.fixture
-def admin_client() -> Iterator[TestClient]:
-    yield from _client(
-        PydanticUser(username="local_user", id=1, disabled=False, is_admin=True, must_change_password=False)
-    )
-
-
-@pytest.fixture
-def non_admin_client() -> Iterator[TestClient]:
-    yield from _client(
-        PydanticUser(username="not_admin", id=2, disabled=False, is_admin=False, must_change_password=False)
-    )
 
 
 @pytest.fixture

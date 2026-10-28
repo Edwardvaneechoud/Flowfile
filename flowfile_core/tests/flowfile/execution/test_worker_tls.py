@@ -11,15 +11,12 @@ submit case dials a stalled socket again rather than read the server stack's sta
 
 import io
 import os
-import socket
 import subprocess
 import sys
 import time
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from ipaddress import IPv4Address
 from pathlib import Path
 
 import polars as pl
@@ -28,7 +25,6 @@ import pytest
 import requests
 
 from flowfile_core.auth.jwt import get_internal_token
-from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution.backends import worker as worker_backend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable
@@ -37,6 +33,8 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handsh
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from shared._version import get_version
 from shared.compute_protocol import PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER
+from test_utils.tls import self_signed_certificate
+from tests.conftest import _free_port, protocol_states
 
 STARTUP_TIMEOUT = 120
 SOCKET_DIALS = 3
@@ -54,51 +52,15 @@ class TlsWorker:
     cert_path: Path
 
 
-def self_signed() -> tuple[str, str]:
-    """A self-signed P-256 certificate for ``127.0.0.1`` and ``localhost`` and its private key, both PEM."""
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.x509.oid import NameOID
-
-    key = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "flowfile-worker-tls")])
-    now = datetime.now(timezone.utc)
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(minutes=5))
-        .not_valid_after(now + timedelta(hours=2))
-        .add_extension(
-            x509.SubjectAlternativeName([x509.IPAddress(IPv4Address("127.0.0.1")), x509.DNSName("localhost")]),
-            critical=False,
-        )
-        .sign(key, hashes.SHA256())
-    )
-    private_key = key.private_bytes(
-        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
-    )
-    return cert.public_bytes(serialization.Encoding.PEM).decode(), private_key.decode()
-
-
-def free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1]
-
-
 @pytest.fixture(scope="module")
 def tls_worker(tmp_path_factory) -> Iterator[TlsWorker]:
     """A worker of this checkout serving TLS on a free port, signing with this process's internal token."""
     folder = tmp_path_factory.mktemp("worker_tls")
-    pem, key = self_signed()
+    pem, key = self_signed_certificate("flowfile-worker-tls", dns=["localhost"], ips=["127.0.0.1"])
     cert_path, key_path, log_path = folder / "worker.crt", folder / "worker.key", folder / "worker.log"
     cert_path.write_text(pem)
     key_path.write_text(key)
-    port = free_port()
+    port = _free_port()
     env = {
         **os.environ,
         "FLOWFILE_WORKER_TLS_CERT": str(cert_path),
@@ -135,10 +97,7 @@ def tls_worker(tmp_path_factory) -> Iterator[TlsWorker]:
             process.wait()
 
 
-@pytest.fixture(params=[False, True], ids=["flag-off", "flag-on"])
-def flag(request, monkeypatch) -> bool:
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", request.param)
-    return request.param
+flag = protocol_states()
 
 
 @pytest.fixture(autouse=True)

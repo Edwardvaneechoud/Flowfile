@@ -24,8 +24,7 @@ from flowfile_core.ai.tools.dry_run import (
 )
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
-from flowfile_core.flowfile.flow_graph import FlowGraph
-from flowfile_core.schemas import input_schema, schemas
+from tests.flowfile.conftest import add_test_manual_input, create_test_graph
 
 # DryRunCache
 
@@ -208,22 +207,8 @@ def test_an_upstream_that_has_not_run_gives_the_null_row_and_asks_no_backend(mon
 
 
 def test_a_local_flow_s_run_upstream_gives_its_first_row_from_the_embedded_worker(tmp_path) -> None:
-    flow = FlowGraph(
-        flow_settings=schemas.FlowSettings(
-            flow_id=7, execution_mode="Performance", execution_location="local", path=str(tmp_path / "flow.yaml")
-        ),
-        name="ai_dry_run_sample",
-    )
-    flow.add_manual_input(
-        input_schema.NodeManualInput(
-            flow_id=7,
-            node_id=1,
-            raw_data_format=input_schema.RawData(
-                columns=[input_schema.MinimalFieldInfo(name="region", data_type="String")],
-                data=[["EU", "US"]],
-            ),
-        )
-    )
+    flow = create_test_graph(7, execution_mode="Performance", path=str(tmp_path / "flow.yaml"))
+    add_test_manual_input(flow, [{"region": "EU"}, {"region": "US"}])
     flow.run_graph()
     node = flow.get_node(1)
     assert node.results.result_ref.backend_id == registry.LOCAL_BACKEND_ID

@@ -9,31 +9,14 @@ from flowfile_core.ai.agents import live_observation
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-from flowfile_core.flowfile.flow_graph import FlowGraph
-from flowfile_core.schemas import input_schema, schemas
+from tests.flowfile.conftest import add_test_manual_input, create_test_graph
 
-
-def _performance_flow(path: str) -> FlowGraph:
-    flow = FlowGraph(
-        flow_settings=schemas.FlowSettings(
-            flow_id=31, execution_mode="Performance", execution_location="local", path=path
-        ),
-        name="live_observation_sample",
-    )
-    flow.add_manual_input(
-        input_schema.NodeManualInput(
-            flow_id=31,
-            node_id=1,
-            raw_data_format=input_schema.RawData(
-                columns=[
-                    input_schema.MinimalFieldInfo(name="order_id", data_type="Integer"),
-                    input_schema.MinimalFieldInfo(name="region", data_type="String"),
-                ],
-                data=[[1, 2, 3, 4], ["EU", "US", "EU", "US"]],
-            ),
-        )
-    )
-    return flow
+ORDERS = [
+    {"order_id": 1, "region": "EU"},
+    {"order_id": 2, "region": "US"},
+    {"order_id": 3, "region": "EU"},
+    {"order_id": 4, "region": "US"},
+]
 
 
 def _never_collected(*args, **kwargs):
@@ -41,7 +24,8 @@ def _never_collected(*args, **kwargs):
 
 
 def test_a_performance_observation_samples_the_node_s_result_on_its_backend(tmp_path, monkeypatch) -> None:
-    flow = _performance_flow(str(tmp_path / "flow.yaml"))
+    flow = create_test_graph(31, execution_mode="Performance", path=str(tmp_path / "flow.yaml"))
+    add_test_manual_input(flow, ORDERS)
     sampled: list[tuple[str, str, int]] = []
     real_sample = EmbeddedWorkerBackend.sample
 
@@ -55,11 +39,7 @@ def test_a_performance_observation_samples_the_node_s_result_on_its_backend(tmp_
     result = asyncio.run(live_observation.observe_after_apply(flow, 1))
 
     assert result.success, result.error_message
-    assert result.sample_rows == [
-        {"order_id": 1, "region": "EU"},
-        {"order_id": 2, "region": "US"},
-        {"order_id": 3, "region": "EU"},
-    ]
+    assert result.sample_rows == ORDERS[:3]
     ref = flow.get_node(1).results.result_ref
     assert sampled == [(registry.LOCAL_BACKEND_ID, ref.result_id, 3)]
 

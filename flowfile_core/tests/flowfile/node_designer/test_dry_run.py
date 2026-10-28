@@ -33,6 +33,8 @@ from flowfile_core.flowfile.user_defined.dry_run import (
     run_dry_run,
 )
 
+pytestmark = pytest.mark.usefixtures("protocol_off")
+
 CODE_OK = (
     "import polars as pl\n"
     "from flowfile import node_designer as nd\n\n\n"
@@ -51,12 +53,6 @@ CODE_WITH_EXAMPLES = (
     "    def process(self, *inputs):\n"
     "        return inputs[0]\n"
 )
-
-
-@pytest.fixture(autouse=True)
-def task_routes(monkeypatch):
-    """The protocol flag off: these tests reach the worker through the task routes' fetcher, which the flag replaces."""
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
 
 
 def _designer_state() -> DesignerState:

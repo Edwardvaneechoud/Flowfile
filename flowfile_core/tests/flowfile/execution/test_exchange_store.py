@@ -22,9 +22,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     delete_cloud_connection,
     store_cloud_connection,
 )
-from flowfile_core.flowfile.execution import exchange, registry
-from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
-from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+from flowfile_core.flowfile.execution import exchange
 from flowfile_core.flowfile.execution.exchange import ExchangeRun, ExchangeStore, exchange_store, remove_prefix
 from flowfile_core.flowfile.execution.protocol import CredentialRef
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
@@ -32,7 +30,6 @@ from test_utils.s3.fixtures import MINIO_ACCESS_KEY, MINIO_ENDPOINT_URL, MINIO_S
 from tests.flowfile.conftest import add_test_manual_input, create_test_graph
 from tests.flowfile.execution.test_two_backend_chain import (
     STATES,
-    Held,
     assert_node_b_is_correct,
     node_a,
     node_b,
@@ -63,44 +60,27 @@ def _unset(monkeypatch):
     monkeypatch.delenv("FLOWFILE_EXCHANGE_CONNECTION", raising=False)
 
 
-@pytest.fixture
-def local() -> EmbeddedWorkerBackend:
-    return EmbeddedWorkerBackend()
-
-
-@pytest.fixture
-def worker() -> WorkerBackend:
-    from tests.conftest import is_worker_running
-
-    if not is_worker_running():
-        pytest.skip("flowfile_worker is not running")
-    return WorkerBackend(url=registry.backend(registry.WORKER_BACKEND_ID).url)
-
-
-@pytest.fixture
-def kept() -> Iterator[Held]:
-    held: Held = []
-    yield held
-    for backend, ref in held:
-        backend.release(ref)
+def _store_minio_connection(name: str, user_id: int, auth_method: str = "access_key") -> int:
+    """Store a MinIO connection named *name* for *user_id* and answer its row id."""
+    connection = FullCloudStorageConnection(
+        connection_name=name,
+        storage_type="s3",
+        auth_method=auth_method,
+        aws_access_key_id=MINIO_ACCESS_KEY if auth_method == "access_key" else None,
+        aws_secret_access_key=SecretStr(MINIO_SECRET_KEY) if auth_method == "access_key" else None,
+        aws_region="us-east-1",
+        endpoint_url=MINIO_ENDPOINT_URL,
+        aws_allow_unsafe_html=True,
+    )
+    with get_db_context() as db:
+        return store_cloud_connection(db, connection, user_id=user_id).id
 
 
 @pytest.fixture
 def connection_name() -> Iterator[str]:
     """A MinIO connection stored for user 1 under a fresh name, deleted after."""
     name = f"exchange store {uuid.uuid4().hex[:6]}"
-    connection = FullCloudStorageConnection(
-        connection_name=name,
-        storage_type="s3",
-        auth_method="access_key",
-        aws_access_key_id=MINIO_ACCESS_KEY,
-        aws_secret_access_key=SecretStr(MINIO_SECRET_KEY),
-        aws_region="us-east-1",
-        endpoint_url=MINIO_ENDPOINT_URL,
-        aws_allow_unsafe_html=True,
-    )
-    with get_db_context() as db:
-        store_cloud_connection(db, connection, user_id=1)
+    _store_minio_connection(name, user_id=1)
     yield name
     with get_db_context() as db:
         delete_cloud_connection(db, name, user_id=1)
@@ -276,22 +256,6 @@ def users() -> Iterator[dict[str, int]]:
             db.query(model).filter(model.user_id.in_(ids.values())).delete(synchronize_session=False)
         db.query(db_models.User).filter(db_models.User.id.in_(ids.values())).delete(synchronize_session=False)
         db.commit()
-
-
-def _store_minio_connection(name: str, user_id: int, auth_method: str = "access_key") -> int:
-    """Store a MinIO connection named *name* for *user_id* and answer its row id."""
-    connection = FullCloudStorageConnection(
-        connection_name=name,
-        storage_type="s3",
-        auth_method=auth_method,
-        aws_access_key_id=MINIO_ACCESS_KEY if auth_method == "access_key" else None,
-        aws_secret_access_key=SecretStr(MINIO_SECRET_KEY) if auth_method == "access_key" else None,
-        aws_region="us-east-1",
-        endpoint_url=MINIO_ENDPOINT_URL,
-        aws_allow_unsafe_html=True,
-    )
-    with get_db_context() as db:
-        return store_cloud_connection(db, connection, user_id=user_id).id
 
 
 def test_a_users_own_connection_of_the_stores_name_does_not_shadow_the_administrators(monkeypatch, multi_user, users):

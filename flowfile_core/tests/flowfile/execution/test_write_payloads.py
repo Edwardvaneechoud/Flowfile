@@ -3,8 +3,8 @@
 The worker side is checked at the fetcher boundary on the task routes and at the request boundary on ``/v1``: the
 fetchers, or the backend's ``/v1`` request, are replaced by recorders, so these tests show what each payload becomes on
 its way to the worker without one running; a file and a database write also run for real over ``/v1`` on the session
-worker. The embedded worker's side writes for real where the target is the local disk, and records what the worker's
-writer receives where it would need object storage.
+worker. The embedded worker's writes are ``test_local_backend.py``'s, which builds them here, and the payload contract
+every kind shares is ``test_payloads.py``'s, which takes ``WRITE_PAYLOADS`` from here.
 """
 
 import base64
@@ -19,7 +19,6 @@ import polars as pl
 import pytest
 from pydantic import SecretStr
 
-from flowfile_core.configs import settings as core_settings
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import worker as worker_module
@@ -37,7 +36,6 @@ from flowfile_core.flowfile.execution.payloads import (
     DeltaScd2Payload,
     DeltaWritePayload,
     FileWritePayload,
-    unpack,
 )
 from flowfile_core.flowfile.flow_node.models import RemoteExecutionError
 from flowfile_core.flowfile.sources.external_sources.sql_source.models import DatabaseExternalWriteSettings
@@ -48,29 +46,15 @@ from flowfile_core.schemas.cloud_storage_schemas import (
     FullCloudStorageConnection,
 )
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
-from shared.delta_utils import Scd2Result
 from shared.storage_config import storage
 from tests.flowfile.conftest import add_test_manual_input, create_test_graph
 
 pytestmark = pytest.mark.core
 
 
-def make(backend_type: type):
-    """An instance of ``backend_type``: the worker backend on the session worker, the embedded worker as it is."""
-    return backend_type(url=WORKER_URL) if backend_type is WorkerBackend else backend_type()
-
-
 USER_ID = 1
 SECRET = "plain-s3-secret"
 ROWS = pl.DataFrame({"id": [1, 2, 3], "name": ["ada", "grace", "edsger"]})
-WRITE_KINDS = {
-    OperationKind.file_write: FileWritePayload,
-    OperationKind.database_write: DatabaseWritePayload,
-    OperationKind.cloud_write: CloudWritePayload,
-    OperationKind.delta_write: DeltaWritePayload,
-    OperationKind.delta_merge: DeltaMergePayload,
-    OperationKind.delta_scd2: DeltaScd2Payload,
-}
 
 
 def s3_connection() -> FullCloudStorageConnection:
@@ -95,13 +79,15 @@ def csv_settings(directory, delimiter: str = ",") -> input_schema.OutputSettings
     )
 
 
-def delta_write(path: str, connection=None, mode: str = "overwrite") -> DeltaWritePayload:
+def delta_write(
+    path: str, connection=None, mode: str = "overwrite", plan: pl.LazyFrame | None = None, enable_cdf: bool = True
+) -> DeltaWritePayload:
     return DeltaWritePayload(
-        plan=ROWS.lazy(),
+        plan=ROWS.lazy() if plan is None else plan,
         path=path,
         mode=mode,
         partition_by=None,
-        enable_cdf=True,
+        enable_cdf=enable_cdf,
         connection=connection,
         flow_id=7,
         node_id=3,
@@ -176,17 +162,6 @@ def built(monkeypatch) -> list[RecordingFetcher]:
     return fetchers
 
 
-@pytest.fixture
-def task_routes(monkeypatch):
-    """The protocol flag off, so the worker backend sends the writes to the worker's task routes."""
-    monkeypatch.setattr(core_settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
-
-
-@pytest.fixture
-def protocol_on(monkeypatch):
-    monkeypatch.setattr(core_settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
-
-
 class V1Recorder:
     """Stands in for the worker backend's ``/v1`` request: keeps each one and answers it as a write is answered."""
 
@@ -214,10 +189,9 @@ def v1_sent(monkeypatch, protocol_on) -> V1Recorder:
     return recorder
 
 
-@pytest.mark.usefixtures("task_routes")
+@pytest.mark.usefixtures("protocol_off")
 def test_the_worker_backend_sends_a_file_write_to_the_output_writer(built, tmp_path):
-    settings = csv_settings(tmp_path, delimiter=";")
-    write = FileWritePayload(plan=ROWS.lazy(), settings=settings, flow_id=7, node_id=3)
+    write = file_write(tmp_path)
 
     result = WorkerBackend(url=WORKER_URL).run_op(OperationKind.file_write, op_payload(write))
 
@@ -225,7 +199,7 @@ def test_the_worker_backend_sends_a_file_write_to_the_output_writer(built, tmp_p
     assert fetcher.kwargs == {
         "lf": write.plan,
         "data_type": "csv",
-        "path": settings.abs_file_path,
+        "path": write.settings.abs_file_path,
         "write_mode": "overwrite",
         "flow_id": 7,
         "node_id": 3,
@@ -268,6 +242,10 @@ def referenced_database_write() -> DatabaseWritePayload:
     )
 
 
+def file_write(directory=".") -> FileWritePayload:
+    return FileWritePayload(plan=ROWS.lazy(), settings=csv_settings(directory, delimiter=";"), flow_id=7, node_id=3)
+
+
 def cloud_write() -> CloudWritePayload:
     return CloudWritePayload(
         plan=ROWS.lazy(),
@@ -278,7 +256,17 @@ def cloud_write() -> CloudWritePayload:
     )
 
 
-@pytest.mark.usefixtures("task_routes")
+WRITE_PAYLOADS = {
+    OperationKind.file_write: file_write,
+    OperationKind.database_write: referenced_database_write,
+    OperationKind.cloud_write: cloud_write,
+    OperationKind.delta_write: lambda: delta_write("/tables/t"),
+    OperationKind.delta_merge: lambda: delta_merge("/tables/t", ROWS.lazy()),
+    OperationKind.delta_scd2: lambda: delta_scd2("/tables/dim"),
+}
+
+
+@pytest.mark.usefixtures("protocol_off")
 def test_the_worker_backend_sends_a_referenced_database_write_with_the_stored_ciphertext(built):
     write = referenced_database_write()
 
@@ -298,7 +286,7 @@ def test_the_worker_backend_sends_a_referenced_database_write_with_the_stored_ci
     assert pl.LazyFrame.deserialize(io.BytesIO(sent.operation)).collect().equals(ROWS)
 
 
-@pytest.mark.usefixtures("task_routes")
+@pytest.mark.usefixtures("protocol_off")
 def test_the_worker_backend_sends_a_cloud_write_with_its_secrets_still_encrypted(built):
     write = cloud_write()
 
@@ -315,8 +303,7 @@ def test_the_worker_backend_sends_a_cloud_write_with_its_secrets_still_encrypted
 
 
 def test_the_worker_backend_posts_a_file_write_to_its_v1_route(v1_sent, built, tmp_path):
-    settings = csv_settings(tmp_path, delimiter=";")
-    write = FileWritePayload(plan=ROWS.lazy(), settings=settings, flow_id=7, node_id=3)
+    write = file_write(tmp_path)
 
     result = WorkerBackend(url=WORKER_URL).run_op(OperationKind.file_write, op_payload(write))
 
@@ -330,7 +317,7 @@ def test_the_worker_backend_posts_a_file_write_to_its_v1_route(v1_sent, built, t
     assert pl.LazyFrame.deserialize(io.BytesIO(base64.b64decode(body.pop("operation")))).collect().equals(ROWS)
     assert body == {
         "data_type": "csv",
-        "path": settings.abs_file_path,
+        "path": write.settings.abs_file_path,
         "write_mode": "overwrite",
         "sheet_name": None,
         "delimiter": ";",
@@ -382,7 +369,7 @@ def test_the_worker_backend_posts_a_cloud_write_with_its_secrets_still_encrypted
 
 @pytest.mark.usefixtures("protocol_on")
 def test_the_session_worker_writes_a_file_over_its_v1_route(tmp_path):
-    write = FileWritePayload(plan=ROWS.lazy(), settings=csv_settings(tmp_path, delimiter=";"), flow_id=7, node_id=3)
+    write = file_write(tmp_path)
     backend = WorkerBackend(url=WORKER_URL)
 
     result = backend.run_op(OperationKind.file_write, op_payload(write))
@@ -498,38 +485,6 @@ def test_cancel_reaches_the_scd2_write_while_it_runs(built, monkeypatch):
     assert fetcher.cancelled
 
 
-def test_an_scd2_payload_round_trips_through_unpack():
-    write = delta_scd2("/tables/dim")
-
-    assert unpack(op_payload(write), DeltaScd2Payload) is write
-
-
-def test_an_scd2_payload_takes_its_fields_by_keyword_only():
-    with pytest.raises(TypeError, match="positional"):
-        DeltaScd2Payload(ROWS.lazy(), "/tables/dim")
-
-
-def test_an_scd2_payload_is_frozen():
-    write = delta_scd2("/tables/dim")
-
-    with pytest.raises(dataclasses.FrozenInstanceError):
-        write.path = "/tables/other"
-
-
-def test_unpack_names_the_scd2_payload_it_expected():
-    with pytest.raises(TypeError, match=r"payload\['payload'\] must be a DeltaScd2Payload, not DeltaWritePayload"):
-        unpack(op_payload(delta_write("/tables/dim")), DeltaScd2Payload)
-
-
-def test_the_embedded_worker_writes_a_file_with_the_payload_settings(tmp_path):
-    write = FileWritePayload(plan=ROWS.lazy(), settings=csv_settings(tmp_path, delimiter=";"), flow_id=7, node_id=3)
-
-    result = EmbeddedWorkerBackend().run_op(OperationKind.file_write, op_payload(write))
-
-    assert result == OpResult(refs={})
-    assert pl.read_csv(tmp_path / "people.csv", separator=";").equals(ROWS)
-
-
 def sqlite_write(database) -> DatabaseWritePayload:
     connection = input_schema.DatabaseConnection(database_type="sqlite", database=f"sqlite:///{database}")
     node_settings = input_schema.NodeDatabaseWriter(
@@ -551,95 +506,6 @@ def sqlite_write(database) -> DatabaseWritePayload:
     )
 
 
-def test_the_embedded_worker_writes_a_database_table(tmp_path):
-    database = tmp_path / "people.db"
-    write = sqlite_write(database)
-
-    result = EmbeddedWorkerBackend().run_op(OperationKind.database_write, op_payload(write))
-
-    assert result == OpResult(refs={})
-
-    with sqlite3.connect(database) as db:
-        assert db.execute("SELECT id, name FROM people ORDER BY id").fetchall() == list(ROWS.iter_rows())
-
-
-def test_the_embedded_worker_hands_the_workers_writer_a_cloud_write_connection_it_decrypts_there(monkeypatch):
-    received = []
-    monkeypatch.setattr(
-        "flowfile_worker.external_sources.s3_source.main.write_df_to_cloud",
-        lambda df, settings, logger: received.append((df, settings)),
-    )
-    write = CloudWritePayload(
-        plan=ROWS.lazy(),
-        settings=CloudStorageWriteSettings(resource_path="s3://bucket/people.parquet", file_format="parquet"),
-        connection=s3_connection().get_worker_interface(USER_ID),
-        flow_id=7,
-        node_id=3,
-    )
-
-    EmbeddedWorkerBackend().run_op(OperationKind.cloud_write, op_payload(write))
-
-    ((df, settings),) = received
-    assert df.collect().equals(ROWS)
-    assert settings.write_settings.resource_path == write.settings.resource_path
-    assert settings.connection.aws_secret_access_key.get_secret_value().startswith("$ffsec$")
-    assert settings.connection.get_storage_options()["aws_secret_access_key"] == SECRET
-    assert settings.connection.aws_access_key_id == "key-id"
-
-
-def test_the_embedded_worker_writes_and_merges_a_local_delta_table(tmp_path):
-    path = str(tmp_path / "people")
-    backend = EmbeddedWorkerBackend()
-
-    backend.run_op(OperationKind.delta_write, op_payload(delta_write(path)))
-    changes = pl.LazyFrame({"id": [3, 4], "name": ["dijkstra", "barbara"]})
-    backend.run_op(OperationKind.delta_merge, op_payload(delta_merge(path, changes)))
-
-    assert pl.read_delta(path).sort("id").rows() == [(1, "ada"), (2, "grace"), (3, "dijkstra"), (4, "barbara")]
-
-
-def test_the_embedded_worker_hands_the_workers_delta_write_the_storage_options_it_decrypts_there(monkeypatch):
-    received = []
-    monkeypatch.setattr("shared.delta_utils.write_delta", lambda *args, **kwargs: received.append(kwargs) or False)
-    connection = s3_connection().get_worker_interface(USER_ID)
-
-    EmbeddedWorkerBackend().run_op(OperationKind.delta_write, op_payload(delta_write("s3://bucket/t", connection)))
-
-    (kwargs,) = received
-    assert kwargs["storage_options"]["aws_secret_access_key"] == SECRET
-
-
-def test_the_embedded_worker_hands_the_workers_scd2_write_the_storage_options_it_decrypts_there(monkeypatch):
-    received = []
-
-    def record(rows, path, **kwargs):
-        received.append((rows, path, kwargs))
-        return Scd2Result(skipped=True, version=2)
-
-    monkeypatch.setattr("shared.delta_utils.scd2_into_delta", record)
-    write = delta_scd2("s3://bucket/dim", s3_connection().get_worker_interface(USER_ID))
-
-    result = EmbeddedWorkerBackend().run_op(OperationKind.delta_scd2, op_payload(write))
-
-    ((rows, path, kwargs),) = received
-    assert rows.equals(ROWS)
-    assert path == "s3://bucket/dim"
-    assert kwargs["storage_options"]["aws_secret_access_key"] == SECRET
-    assert {name: value for name, value in kwargs.items() if name != "storage_options"} == {
-        "business_keys": ["id"],
-        "valid_from_iso": "2024-05-01T00:00:00+00:00",
-        "compare_columns": ["name"],
-        "full_snapshot": True,
-        "surrogate_key_column": "row_key",
-        "valid_from_column": "from_ts",
-        "valid_to_column": "to_ts",
-        "is_current_column": "live",
-        "partition_by": ["name"],
-        "partition_on_current": False,
-    }
-    assert result == OpResult(refs={}, metadata={"skipped": True, "version": 2})
-
-
 def test_an_scd2_payload_carries_no_decrypted_secret():
     write = delta_scd2("s3://bucket/dim", s3_connection().get_worker_interface(USER_ID))
 
@@ -647,32 +513,7 @@ def test_an_scd2_payload_carries_no_decrypted_secret():
 
 
 def test_a_cloud_payload_carries_no_decrypted_secret():
-    write = CloudWritePayload(
-        plan=ROWS.lazy(),
-        settings=CloudStorageWriteSettings(resource_path="s3://bucket/people.parquet"),
-        connection=s3_connection().get_worker_interface(USER_ID),
-        flow_id=7,
-        node_id=3,
-    )
-
-    assert SECRET not in write.connection.model_dump_json()
-
-
-@pytest.mark.parametrize("backend_type", [EmbeddedWorkerBackend, WorkerBackend])
-@pytest.mark.parametrize("kind", list(WRITE_KINDS), ids=lambda kind: kind.value)
-def test_a_write_without_its_payload_key_names_the_key(backend_type, kind, built):
-    with pytest.raises(ValueError, match=r"has no 'payload' key; it carries a \w+Payload"):
-        make(backend_type).run_op(kind, {"input": ROWS.lazy()})
-    assert built == []
-
-
-@pytest.mark.parametrize("backend_type", [EmbeddedWorkerBackend, WorkerBackend])
-def test_a_write_given_another_kind_of_payload_names_the_one_it_expects(backend_type, built, tmp_path):
-    wrong = FileWritePayload(plan=ROWS.lazy(), settings=csv_settings(tmp_path), flow_id=1, node_id=1)
-
-    with pytest.raises(TypeError, match=r"payload\['payload'\] must be a DeltaWritePayload, not FileWritePayload"):
-        make(backend_type).run_op(OperationKind.delta_write, op_payload(wrong))
-    assert built == []
+    assert SECRET not in cloud_write().connection.model_dump_json()
 
 
 @pytest.fixture
@@ -682,7 +523,7 @@ def node():
     return graph.get_node(1)
 
 
-@pytest.mark.usefixtures("task_routes")
+@pytest.mark.usefixtures("protocol_off")
 def test_cancelling_a_node_reaches_the_write_it_is_waiting_on(node, built, tmp_path, monkeypatch):
     backend = registry.backend(worker_module.WORKER_BACKEND_ID)
     write = FileWritePayload(plan=ROWS.lazy(), settings=csv_settings(tmp_path), flow_id=91, node_id=1)

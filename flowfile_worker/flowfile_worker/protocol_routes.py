@@ -183,30 +183,6 @@ async def cancel_job(job_id: str) -> dict[str, str]:
     return {"message": f"Job {job_id} has been cancelled."}
 
 
-@router.post("/ops/database_read", response_model=OpOutputs)
-def database_read(settings: DatabaseReadSettings, job_id: JobId) -> OpOutputs:
-    """Read a database query in a child as job *job_id* and hold the rows as the one output, ``result``."""
-    return service.database_read(settings, job_id)
-
-
-@router.post("/ops/kafka_read", response_model=OpOutputs)
-def kafka_read(settings: KafkaReadSettings, job_id: JobId) -> OpOutputs:
-    """Consume a Kafka topic in a child as job *job_id*, without committing, and hold the rows as ``result``."""
-    return service.kafka_read(settings, job_id)
-
-
-@router.post("/ops/google_analytics_read", response_model=OpOutputs)
-def google_analytics_read(settings: GoogleAnalyticsReadSettings, job_id: JobId) -> OpOutputs:
-    """Fetch a Google Analytics 4 report in a child as job *job_id* and hold its rows as ``result``."""
-    return service.google_analytics_read(settings, job_id)
-
-
-@router.post("/ops/rest_api_read", response_model=OpOutputs)
-def rest_api_read(settings: RestApiReadSettings, job_id: JobId) -> OpOutputs:
-    """Fetch from a REST API in a child as job *job_id* and hold the rows as ``result``."""
-    return service.rest_api_read(settings, job_id)
-
-
 @router.post("/ops/file_read", response_model=OpOutputs)
 def file_read(
     received_table: ReceivedTable, job_id: JobId, flowfile_flow_id: int = 1, flowfile_node_id: int | str = -1
@@ -218,61 +194,35 @@ def file_read(
     return service.file_read(received_table, job_id, flowfile_flow_id, flowfile_node_id)
 
 
-@router.post("/ops/fuzzy_join", response_model=OpOutputs)
-def fuzzy_join(body: models.FuzzyJoinInput, job_id: JobId) -> OpOutputs:
-    """Fuzzy-match two plans in a child as job *job_id* and hold the matched rows as ``result``."""
-    return service.fuzzy_join(body, job_id)
+_OPS: dict[str, type] = {
+    "database_read": DatabaseReadSettings,
+    "kafka_read": KafkaReadSettings,
+    "google_analytics_read": GoogleAnalyticsReadSettings,
+    "rest_api_read": RestApiReadSettings,
+    "fuzzy_join": models.FuzzyJoinInput,
+    "custom_node": models.CustomNodeExecuteInput,
+    "random_split": RandomSplitInput,
+    "ml_train": MlTrainInput,
+    "ml_apply": MlApplyInput,
+    "file_write": models.PolarsScriptWrite,
+    "database_write": models.DatabaseScriptWrite,
+    "cloud_write": models.CloudStorageScriptWrite,
+    "polars_code": PolarsCodeInput,
+    "sql_query": SqlQueryInput,
+}
+"""The ``POST /v1/ops/<kind>`` routes that take one body and the job id, by kind, with the model of their body."""
 
 
-@router.post("/ops/custom_node", response_model=OpOutputs)
-def custom_node(body: models.CustomNodeExecuteInput, job_id: JobId) -> OpOutputs:
-    """Run a custom node's ``process`` in a child as job *job_id* and hold each declared output, keyed by its name."""
-    return service.custom_node(body, job_id)
+def _add_op_route(kind: str, body_model: type) -> None:
+    """Route ``POST /v1/ops/<kind>`` to ``service.<kind>``, its body *body_model*, named and documented as it is."""
+    run = getattr(service, kind)
+
+    def endpoint(body: body_model, job_id: JobId) -> OpOutputs:
+        return run(body, job_id)
+
+    endpoint.__doc__ = run.__doc__
+    router.add_api_route(f"/ops/{kind}", endpoint, methods=["POST"], response_model=OpOutputs, name=kind)
 
 
-@router.post("/ops/random_split", response_model=OpOutputs)
-def random_split(body: RandomSplitInput, job_id: JobId) -> OpOutputs:
-    """Slice shuffled rows into their splits in a child as job *job_id* and hold each split, keyed by its name."""
-    return service.random_split(body, job_id)
-
-
-@router.post("/ops/ml_train", response_model=OpOutputs)
-def ml_train(body: MlTrainInput, job_id: JobId) -> OpOutputs:
-    """Fit a model to the body's rows in a child as job *job_id* and hold it as the blob ``model``."""
-    return service.ml_train(body, job_id)
-
-
-@router.post("/ops/ml_apply", response_model=OpOutputs)
-def ml_apply(body: MlApplyInput, job_id: JobId) -> OpOutputs:
-    """Score the body's rows with a held model in a child as job *job_id* and hold the scored rows as ``result``."""
-    return service.ml_apply(body, job_id)
-
-
-@router.post("/ops/file_write", response_model=OpOutputs)
-def file_write(body: models.PolarsScriptWrite, job_id: JobId) -> OpOutputs:
-    """Write the body's plan to the file it names in a child as job *job_id*; nothing is held, so no outputs."""
-    return service.file_write(body, job_id)
-
-
-@router.post("/ops/database_write", response_model=OpOutputs)
-def database_write(body: models.DatabaseScriptWrite, job_id: JobId) -> OpOutputs:
-    """Write the body's plan to the database table it names in a child as job *job_id*; nothing is held."""
-    return service.database_write(body, job_id)
-
-
-@router.post("/ops/cloud_write", response_model=OpOutputs)
-def cloud_write(body: models.CloudStorageScriptWrite, job_id: JobId) -> OpOutputs:
-    """Write the body's plan to the object-storage path it names in a child as job *job_id*; nothing is held."""
-    return service.cloud_write(body, job_id)
-
-
-@router.post("/ops/polars_code", response_model=OpOutputs)
-def polars_code(body: PolarsCodeInput, job_id: JobId) -> OpOutputs:
-    """Run a Polars Code node's code once over its input plans in a child as job *job_id* and hold its result."""
-    return service.polars_code(body, job_id)
-
-
-@router.post("/ops/sql_query", response_model=OpOutputs)
-def sql_query(body: SqlQueryInput, job_id: JobId) -> OpOutputs:
-    """Translate a SQL Query node's statement once over its input plans in a child as job *job_id*; hold its result."""
-    return service.sql_query(body, job_id)
+for _kind, _body_model in _OPS.items():
+    _add_op_route(_kind, _body_model)

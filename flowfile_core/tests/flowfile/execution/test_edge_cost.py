@@ -22,26 +22,15 @@ from flowfile_core.flowfile.execution.protocol import OperationKind, ResultRef
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
-from flowfile_core.schemas import input_schema, transform_schema
+from flowfile_core.schemas import input_schema
 from tests import test_run_flow_node
 from tests.flowfile.execution import test_exchange_store, test_placement
+from tests.flowfile.execution.graph_helpers import add_filter_on, add_manual_input, add_promise, connect, make_graph
 from tests.flowfile.execution.test_mixed_placement import LOCAL, chain
-from tests.flowfile.execution.test_placement import (
-    AUTO_REMEDY,
-    BACKEND_ID,
-    OWN_REMEDY,
-    DeclaringBackend,
-    add_manual_input,
-    add_promise,
-    connect,
-    everything,
-    make_graph,
-)
+from tests.flowfile.execution.test_placement import AUTO_REMEDY, BACKEND_ID, OWN_REMEDY, DeclaringBackend, everything
 
 # The fixtures these tests share with the placement and exchange-store tests, bound here so pytest finds them.
 declare = test_placement.declare
-protocol_on = test_placement.protocol_on
-protocol_off = test_placement.protocol_off
 connection_name = test_exchange_store.connection_name
 two_port_subflow = test_run_flow_node.two_port_subflow
 
@@ -191,12 +180,11 @@ class CountedSplits(DeclaringBackend):
         return replace(result, refs=counted)
 
 
-def test_a_split_whose_input_changed_after_it_ran_is_not_priced_by_that_run(
-    protocol_on, declare, connection_name, monkeypatch
-):
+def split_100(flow_id: int) -> FlowGraph:
+    """Manual input 1 of 100 ids → random split 2, seeded, 80/20, on ``CountedSplits`` under the declaring id."""
     backend = CountedSplits(BACKEND_ID, everything())
     registry.register_backend(BACKEND_ID, lambda: backend)
-    graph = make_graph(8536)
+    graph = make_graph(flow_id)
     add_manual_input(graph, 1, [{"id": i} for i in range(100)])
     add_promise(graph, 2, "random_split")
     connect(graph, 1, 2)
@@ -213,18 +201,14 @@ def test_a_split_whose_input_changed_after_it_ran_is_not_priced_by_that_run(
             ],
         )
     )
-    add_promise(graph, 3, "filter")
-    graph.add_filter(
-        input_schema.NodeFilter(
-            flow_id=graph.flow_id,
-            node_id=3,
-            depending_on_id=2,
-            user_id=1,
-            execution_location=LOCAL,
-            filter_input=transform_schema.FilterInput(mode="advanced", advanced_filter="[id] >= 0"),
-        )
-    )
-    connect(graph, 2, 3)
+    return graph
+
+
+def test_a_split_whose_input_changed_after_it_ran_is_not_priced_by_that_run(
+    protocol_on, declare, connection_name, monkeypatch
+):
+    graph = split_100(8536)
+    add_filter_on(graph, 3, 2, "[id] >= 0", user_id=1, execution_location=LOCAL)
     assert graph.run_graph().success
     monkeypatch.setenv("FLOWFILE_EXCHANGE_URI", STORE)
     monkeypatch.setenv("FLOWFILE_EXCHANGE_CONNECTION", connection_name)
@@ -243,25 +227,7 @@ def test_a_node_reading_two_outputs_of_one_source_above_the_limit_is_refused_onc
     protocol_on, declare, connection_name, two_port_subflow, monkeypatch
 ):
     """Random split 2 (80/20 of 100 rows) on the declaring backend feeds both slots of run flow 9 on core."""
-    backend = CountedSplits(BACKEND_ID, everything())
-    registry.register_backend(BACKEND_ID, lambda: backend)
-    graph = make_graph(8537)
-    add_manual_input(graph, 1, [{"id": i} for i in range(100)])
-    add_promise(graph, 2, "random_split")
-    connect(graph, 1, 2)
-    graph.add_random_split(
-        input_schema.NodeRandomSplit(
-            flow_id=graph.flow_id,
-            node_id=2,
-            depending_on_id=1,
-            user_id=1,
-            seed=42,
-            splits=[
-                input_schema.RandomSplitGroup(name="train", percentage=80.0),
-                input_schema.RandomSplitGroup(name="test", percentage=20.0),
-            ],
-        )
-    )
+    graph = split_100(8537)
     add_promise(graph, 9, "run_flow")
     graph.add_run_flow(
         input_schema.NodeRunFlow(

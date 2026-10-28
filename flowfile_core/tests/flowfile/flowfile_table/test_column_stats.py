@@ -31,6 +31,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import MAX_STAT_VALUE_LENGTH
 from flowfile_core.schemas.output_model import FileColumn
 from shared.compute_protocol import PROTOCOL_VERSION
+from tests.conftest import spy
 
 
 def lazy_engine(data: dict) -> FlowDataEngine:
@@ -288,22 +289,9 @@ class ScriptedBackend:
         self.released.append(ref.result_id)
 
 
-def count_collects(monkeypatch) -> list[int]:
-    """One entry per ``LazyFrame.collect`` in this process from here on."""
-    collects: list[int] = []
-    real_collect = pl.LazyFrame.collect
-
-    def counting_collect(self, *args, **kwargs):
-        collects.append(1)
-        return real_collect(self, *args, **kwargs)
-
-    monkeypatch.setattr(pl.LazyFrame, "collect", counting_collect)
-    return collects
-
-
 def test_a_failed_full_query_retries_counts_only_on_the_same_backend(monkeypatch):
     backend = ScriptedBackend(TaskFailed("dtype error on the worker"), {"total_rows": 3, "null_count": 1})
-    collects = count_collects(monkeypatch)
+    collects = spy(monkeypatch, pl.LazyFrame, "collect")
 
     stats = compute_column_stats(lazy_engine({"a": [1, None, 3]}), "a", backend)
 
@@ -320,7 +308,7 @@ def test_a_failed_full_query_retries_counts_only_on_the_same_backend(monkeypatch
 def test_a_backend_that_cannot_compute_the_counts_leaves_the_stats_unavailable(monkeypatch):
     refused = ComputeUnavailable("Could not reach the worker: connection refused")
     backend = ScriptedBackend(refused, refused)
-    collects = count_collects(monkeypatch)
+    collects = spy(monkeypatch, pl.LazyFrame, "collect")
 
     with pytest.raises(ColumnStatsUnavailable, match="'scripted' backend.*connection refused") as raised:
         compute_column_stats(lazy_engine({"a": [1, 2, 3]}), "a", backend)

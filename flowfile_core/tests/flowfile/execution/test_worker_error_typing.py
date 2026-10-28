@@ -7,7 +7,6 @@ never its credentials.
 """
 
 import os
-import socket
 from pathlib import Path
 
 import polars as pl
@@ -24,14 +23,6 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 
 TEAM = "worker:team"
-
-
-@pytest.fixture
-def closed_port_url() -> str:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-    return f"http://127.0.0.1:{port}"
 
 
 def test_a_poll_that_loses_its_worker_is_unavailable_naming_the_backend(closed_port_url):
@@ -61,17 +52,6 @@ class TwoOutputs:
         good = pl.LazyFrame({"a": [1, 2]})
         bad = pl.LazyFrame({"a": ["1", "x"]}).select(pl.col("a").cast(pl.Int64))
         return {"good": good, "bad": bad}
-
-
-@pytest.fixture
-def held():
-    """The result ids the worker embedded in this process holds that it did not hold when the test began."""
-    from flowfile_worker.results import results
-
-    registry.reset()
-    before = set(results._records)
-    yield lambda: set(results._records) - before
-    registry.reset()
 
 
 def test_a_custom_node_whose_later_output_fails_holds_none_of_its_outputs(held):

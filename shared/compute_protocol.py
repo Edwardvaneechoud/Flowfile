@@ -20,6 +20,7 @@ import polars as pl
 from pydantic import BaseModel, ConfigDict
 
 from shared._version import get_version
+from shared.wire_model import WireModel
 
 PROTOCOL_VERSION = 1
 """The worker contract: the shape of every core-worker request and answer, and the catalog columns a worker reads.
@@ -127,10 +128,8 @@ def local_capabilities() -> Capabilities:
 _BASE64_BYTES = ConfigDict(ser_json_bytes="base64", val_json_bytes="base64")
 
 
-class WireColumn(BaseModel):
+class WireColumn(WireModel):
     """One column of a result: the ``name`` and ``data_type`` of ``FileColumn``, the dtype spelled ``str(dtype)``."""
-
-    model_config = ConfigDict(extra="forbid")
 
     name: str
     data_type: str
@@ -168,10 +167,8 @@ class ResultRef(BaseModel):
     kind: Literal["table", "blob"] = "table"
 
 
-class SubmitHints(BaseModel):
+class SubmitHints(WireModel):
     """What core knows about a submitted plan, for the worker's materialisation policy."""
-
-    model_config = ConfigDict(extra="forbid")
 
     must_materialise: bool
     wide: bool

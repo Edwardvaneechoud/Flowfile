@@ -40,7 +40,6 @@ from tests.flowfile.execution.test_placement import (
 
 declare = test_placement.declare
 csv_url = test_placement.csv_url
-protocol_on = test_placement.protocol_on
 
 TEAM, DEFAULT = "worker:team", "worker"
 NO_FUZZY = "it needs the fuzzy_join operation"

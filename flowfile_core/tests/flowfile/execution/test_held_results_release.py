@@ -10,8 +10,6 @@ import uuid
 import pytest
 
 from flowfile_core import events
-from flowfile_core.database import models as db_models
-from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
@@ -19,58 +17,20 @@ from flowfile_core.flowfile.execution.errors import TaskFailed
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas, transform_schema
-
-
-@pytest.fixture
-def held():
-    """The result ids the worker embedded in this process holds that it did not hold when the test began."""
-    from flowfile_worker.results import results
-
-    registry.reset()
-    before = set(results._records)
-    yield lambda: set(results._records) - before
-    registry.reset()
-
-
-@pytest.fixture
-def remote_worker():
-    from flowfile_core.schemas.schemas import is_valid_execution_location_in_current_global_settings
-    from tests.conftest import is_worker_running
-
-    if not (is_worker_running() and is_valid_execution_location_in_current_global_settings("remote")):
-        pytest.skip("Remote execution not active")
-
-
-def rows(n: int) -> input_schema.RawData:
-    return input_schema.RawData.from_pylist([{"name": f"r{i}", "rank": i} for i in range(n, 0, -1)])
-
-
-def add_promise(graph: FlowGraph, node_id: int, node_type: str) -> None:
-    graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type=node_type))
-
-
-def input_then_sort(graph: FlowGraph, cache_sort: bool = False) -> FlowGraph:
-    """manual_input(1) -> sort(2)."""
-    add_promise(graph, 1, "manual_input")
-    graph.add_manual_input(input_schema.NodeManualInput(flow_id=graph.flow_id, node_id=1, raw_data_format=rows(3)))
-    add_promise(graph, 2, "sort")
-    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
-    graph.add_sort(
-        input_schema.NodeSort(
-            flow_id=graph.flow_id,
-            node_id=2,
-            depending_on_id=1,
-            cache_results=cache_sort,
-            sort_input=[transform_schema.SortByInput(column="rank", how="asc")],
-        )
-    )
-    return graph
+from tests.flowfile.execution.graph_helpers import (
+    add_manual_input,
+    add_promise,
+    add_sort_on,
+    connect,
+    input_then_sort,
+    make_graph,
+    ranks,
+)
+from tests.test_run_flow_node import head_run_flow_settings, register_flow_file
 
 
 def test_deleting_a_node_releases_its_result(held):
-    graph = input_then_sort(
-        FlowGraph(schemas.FlowSettings(flow_id=9601, name="release_node", path=".", execution_location="local"))
-    )
+    graph = input_then_sort(make_graph(9601, "local", execution_mode="Performance"), ranks(3), "rank")
     assert graph.run_graph().success
     first, second = (graph.get_node(node_id).results.result_ref.result_id for node_id in (1, 2))
     assert held() == {first, second}
@@ -87,7 +47,9 @@ def test_deleting_a_flow_through_the_handler_releases_its_results(held):
     graph = input_then_sort(
         handler.register_flow(
             schemas.FlowSettings(flow_id=9602, name="release_flow", path=".", execution_location="local")
-        )
+        ),
+        ranks(3),
+        "rank",
     )
     assert graph.run_graph().success
     assert len(held()) == 2
@@ -99,61 +61,38 @@ def test_deleting_a_flow_through_the_handler_releases_its_results(held):
 
 def _register_subflow(tmp_path, cache_sort: bool) -> int:
     """Save flow_input ``rows`` -> sort -> flow_output ``result`` as a registered flow; returns its registration id."""
-    child = FlowGraph(schemas.FlowSettings(flow_id=9603, name="child", path=".", execution_location="local"))
+    child = make_graph(9603, "local", execution_mode="Performance")
     add_promise(child, 1, "flow_input")
     child.add_flow_input(
-        input_schema.NodeFlowInput(flow_id=child.flow_id, node_id=1, input_name="rows", raw_data_format=rows(2))
-    )
-    add_promise(child, 2, "sort")
-    add_connection(child, input_schema.NodeConnection.create_from_simple_input(1, 2))
-    child.add_sort(
-        input_schema.NodeSort(
+        input_schema.NodeFlowInput(
             flow_id=child.flow_id,
-            node_id=2,
-            depending_on_id=1,
-            cache_results=cache_sort,
-            sort_input=[transform_schema.SortByInput(column="rank", how="asc")],
+            node_id=1,
+            input_name="rows",
+            raw_data_format=input_schema.RawData.from_pylist(ranks(2)),
         )
     )
+    add_sort_on(child, 2, 1, "rank", cache_results=cache_sort)
     add_promise(child, 3, "flow_output")
     child.add_flow_output(
         input_schema.NodeFlowOutput(flow_id=child.flow_id, node_id=3, output_name="result", depending_on_id=2)
     )
-    add_connection(child, input_schema.NodeConnection.create_from_simple_input(2, 3))
+    connect(child, 2, 3)
     path = tmp_path / f"child_{uuid.uuid4().hex}.yaml"
     child.save_flow(str(path))
-    with get_db_context() as db:
-        registration = db_models.FlowRegistration(
-            flow_uuid=str(uuid.uuid4()), name=path.stem, flow_path=str(path), owner_id=1
-        )
-        db.add(registration)
-        db.commit()
-        db.refresh(registration)
-        return registration.id
+    return register_flow_file(path, path.stem)
 
 
 def _parent_running(registration_id: int, flow_id: int, execution_location: str) -> FlowGraph:
     """manual_input(1) -> run_flow(2) over the registered child."""
-    parent = FlowGraph(
-        schemas.FlowSettings(flow_id=flow_id, name="parent", path=".", execution_location=execution_location)
-    )
-    add_promise(parent, 1, "manual_input")
-    parent.add_manual_input(input_schema.NodeManualInput(flow_id=flow_id, node_id=1, raw_data_format=rows(2)))
+    parent = make_graph(flow_id, execution_location, execution_mode="Performance")
+    add_manual_input(parent, 1, ranks(2))
     add_promise(parent, 2, "run_flow")
     parent.add_run_flow(
-        input_schema.NodeRunFlow(
-            flow_id=flow_id,
-            node_id=2,
-            user_id=1,
-            flow_reference=input_schema.SubflowReference(registration_id=registration_id),
-            input_slots=["rows"],
-            output_slots=["result"],
-            parameter_bindings=[],
-            iteration_mode="first_value",
-            append_run_metadata=False,
+        head_run_flow_settings(
+            flow_id, 2, registration_id, input_slots=["rows"], output_slots=["result"], append_run_metadata=False
         )
     )
-    add_connection(parent, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    connect(parent, 1, 2)
     return parent
 
 
@@ -246,7 +185,7 @@ def _with_csv_output(graph: FlowGraph, directory) -> FlowGraph:
             ),
         )
     )
-    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3))
+    connect(graph, 2, 3)
     return graph
 
 
@@ -267,16 +206,7 @@ def _call_before_node_runs(monkeypatch, node_id: int, call) -> None:
 
 
 def test_closing_a_running_flow_waits_for_the_run_and_then_releases_what_it_minted(held, tmp_path, monkeypatch):
-    graph = _with_csv_output(
-        input_then_sort(
-            FlowGraph(
-                schemas.FlowSettings(
-                    flow_id=9611, name="close_running", path=".", execution_location="local", execution_mode="Development"
-                )
-            )
-        ),
-        tmp_path,
-    )
+    graph = _with_csv_output(input_then_sort(make_graph(9611, "local"), ranks(3), "rank"), tmp_path)
     _call_before_node_runs(monkeypatch, 3, graph.close_flow)
 
     run_info = graph.run_graph()
@@ -300,7 +230,9 @@ def test_deleting_a_running_flow_through_the_handler_leaves_nothing_held_once_th
                 schemas.FlowSettings(
                     flow_id=9612, name="delete_running", path=".", execution_location="local", execution_mode="Development"
                 )
-            )
+            ),
+            ranks(3),
+            "rank",
         ),
         tmp_path,
     )
@@ -323,7 +255,9 @@ def test_a_release_that_fails_does_not_stop_the_close_and_the_flow_still_leaves(
     graph = input_then_sort(
         handler.register_flow(
             schemas.FlowSettings(flow_id=9613, name="release_fails", path=".", execution_location="local")
-        )
+        ),
+        ranks(3),
+        "rank",
     )
     assert graph.run_graph().success
 
@@ -340,17 +274,8 @@ def test_a_release_that_fails_does_not_stop_the_close_and_the_flow_still_leaves(
 
 def _split_then_select(flow_id: int, execution_mode: str) -> FlowGraph:
     """manual_input(1) -> random_split(2), seeded, 80/20 -> select(3) on the split's second output."""
-    graph = FlowGraph(
-        schemas.FlowSettings(
-            flow_id=flow_id, name="split", path=".", execution_location="local", execution_mode=execution_mode
-        )
-    )
-    add_promise(graph, 1, "manual_input")
-    graph.add_manual_input(
-        input_schema.NodeManualInput(
-            flow_id=flow_id, node_id=1, raw_data_format=input_schema.RawData.from_pylist([{"id": i} for i in range(100)])
-        )
-    )
+    graph = make_graph(flow_id, "local", execution_mode=execution_mode)
+    add_manual_input(graph, 1, [{"id": i} for i in range(100)])
     add_promise(graph, 2, "random_split")
     graph.add_random_split(
         input_schema.NodeRandomSplit(
@@ -364,7 +289,7 @@ def _split_then_select(flow_id: int, execution_mode: str) -> FlowGraph:
             seed=42,
         )
     )
-    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    connect(graph, 1, 2)
     add_promise(graph, 3, "select")
     add_connection(
         graph,

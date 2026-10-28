@@ -21,7 +21,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from flowfile_core.auth import api_key as api_key_mod
-from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.database import models as db_models
 from flowfile_core.flowfile import api_consumer_manager, api_runner
 from flowfile_core.flowfile.execution import registry
@@ -110,12 +109,6 @@ def _force_local_api_execution(monkeypatch):
     monkeypatch.setattr(api_runner, "get_global_execution_location", lambda: "local")
 
 
-@pytest.fixture
-def task_routes(monkeypatch):
-    """The protocol flag off: these tests read the response through the task routes' fetcher, which it replaces."""
-    monkeypatch.setattr(FLOWFILE_COMPUTE_PROTOCOL, "value", False)
-
-
 # Runner: execution + serialization + parameter filtering
 
 
@@ -164,7 +157,7 @@ def test_run_flow_as_api_columns(tmp_path):
     assert out["row_count"] == 1
 
 
-def test_serialize_offloads_final_collect_to_worker_when_remote(task_routes, monkeypatch):
+def test_serialize_offloads_final_collect_to_worker_when_remote(protocol_off, monkeypatch):
     """With a worker available, the terminal collect is shipped to it (ExternalDfFetcher),
     not run in core."""
     df = pl.DataFrame({"region": ["US"], "v": [2]})
@@ -212,7 +205,7 @@ def _forbidden_core_collect():
     return _collect, calls
 
 
-def test_serialize_raises_compute_unavailable_when_worker_unreachable(task_routes, monkeypatch):
+def test_serialize_raises_compute_unavailable_when_worker_unreachable(protocol_off, monkeypatch):
     """A worker that can't be reached fails the request typed; core does not collect instead."""
 
     def _unreachable(**_kwargs):
@@ -235,7 +228,7 @@ def _remote_serialize_args(lf, local_collect):
     return data, settings, flow, api_node
 
 
-def test_serialize_surfaces_worker_task_failure_without_in_core_rerun(task_routes):
+def test_serialize_surfaces_worker_task_failure_without_in_core_rerun(protocol_off):
     """A plan that fails on its data on the (real) worker is an API error; core must not re-run it."""
     lf = pl.LazyFrame({"s": ["1", "not-a-number"]}).select(pl.col("s").cast(pl.Int64, strict=True))
     reran = {}
@@ -261,7 +254,7 @@ class _PlanNotLoadedFetcher(BaseFetcher):
         self._record_task_failure(self.description, -1, "environment")
 
 
-def test_serialize_raises_plan_rejected_on_worker_environment_failure(task_routes, monkeypatch):
+def test_serialize_raises_plan_rejected_on_worker_environment_failure(protocol_off, monkeypatch):
     """Error code -1 with kind "environment" is a rejected plan; core does not collect instead."""
     monkeypatch.setattr(api_runner, "ExternalDfFetcher", _PlanNotLoadedFetcher)
     collect, core_collects = _forbidden_core_collect()

@@ -1,9 +1,12 @@
-"""Each read kind takes one payload dataclass, which both backends unpack into what their transport needs.
+"""Each kind takes one payload dataclass, which both backends unpack into what their transport needs.
 
-The worker side runs against stand-in fetchers that write the task's Arrow file, so nothing here needs a worker,
-a database server, a broker or the network.
+Every kind's payload rides under ``"payload"``, frozen and keyword-only with a fresh job id, and both backends refuse a
+malformed one, naming what they expected, before anything starts. The read kinds' worker side runs against stand-in
+fetchers that write the task's Arrow file, so nothing here needs a worker, a database server, a broker or the network.
 """
 
+import dataclasses
+import re
 import sqlite3
 import threading
 import uuid
@@ -34,16 +37,17 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.models import Da
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import BaseSqlSource
 from flowfile_core.schemas import input_schema
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, encrypt_secret
+from flowfile_worker import spawner
 from shared.google_analytics.models import GoogleAnalyticsReadSettings
 from shared.kafka.models import KafkaReadSettings
 from shared.path_utils import CloudPathNotSupportedError, DirectoryScanUnsupportedError
 from shared.rest_api.models import RestApiReadSettings
+from tests.flowfile.execution.test_local_backend import viz_payload
+from tests.flowfile.execution.test_op_payloads import PAYLOADS as OP_PAYLOADS
+from tests.flowfile.execution.test_op_payloads import kind_id
+from tests.flowfile.execution.test_write_payloads import WRITE_PAYLOADS
 
-
-@pytest.fixture(autouse=True)
-def task_routes(monkeypatch):
-    """The protocol flag off: these tests reach the worker through the task routes' fetcher, which the flag replaces."""
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
+pytestmark = pytest.mark.usefixtures("protocol_off")
 
 
 def make(backend_type: type):
@@ -192,17 +196,6 @@ def fetchers(monkeypatch, tmp_path):
         monkeypatch.setattr(worker_module, name, Fetcher)
     monkeypatch.setattr(worker_module, "fetch_kafka_offsets", lambda task_id, *, worker_url: None)
     return SimpleNamespace(cls=Fetcher, made=made)
-
-
-def test_an_op_payload_carries_the_dataclass_under_one_key():
-    read = rest_payload()
-
-    assert op_payload(read) == op_payload(read)
-    assert unpack(op_payload(read), RestApiReadPayload) is read
-
-
-def test_every_payload_gets_its_own_job_id():
-    assert rest_payload().job_id != rest_payload().job_id
 
 
 def test_the_worker_reads_a_database_with_the_password_still_encrypted(fetchers):
@@ -442,28 +435,74 @@ def test_the_embedded_worker_reads_a_file(tmp_path):
         backend.release(ref)
 
 
-BACKEND_KINDS = [(backend, kind) for backend in (WorkerBackend, EmbeddedWorkerBackend) for kind in READ_PAYLOADS]
+# The contract every kind's payload keeps
 
 
+ALL_PAYLOADS = {**READ_PAYLOADS, **WRITE_PAYLOADS, **OP_PAYLOADS, OperationKind.viz_session: viz_payload}
+BACKEND_FLAGS = [(EmbeddedWorkerBackend, None), (WorkerBackend, False), (WorkerBackend, True)]
+
+
+@pytest.fixture
+def started(monkeypatch) -> list[str]:
+    """What either backend started: a worker fetcher built, a ``/v1`` or visualisation request sent, or a job run in
+    this process. Nothing reaches a worker."""
+    calls: list[str] = []
+
+    def recorder(name: str):
+        return lambda *args, **kwargs: calls.append(name)
+
+    for name in dir(worker_module):
+        if re.fullmatch(r"(External|ML)\w+", name) or name.startswith("trigger_visualize_"):
+            monkeypatch.setattr(worker_module, name, recorder(name))
+    monkeypatch.setattr(WorkerBackend, "_v1", recorder("a /v1 request"))
+    monkeypatch.setattr(spawner, "run_inline", recorder("a job in this process"))
+    return calls
+
+
+@pytest.mark.parametrize("kind", list(OperationKind), ids=kind_id)
+def test_each_payload_rides_under_one_key_and_comes_back_from_unpack(kind):
+    payload = ALL_PAYLOADS[kind]()
+
+    assert op_payload(payload) == {PAYLOAD_KEY: payload}
+    assert unpack(op_payload(payload), type(payload)) is payload
+
+
+@pytest.mark.parametrize("kind", list(OperationKind), ids=kind_id)
+def test_a_payload_is_frozen_keyword_only_and_gets_a_fresh_job_id(kind):
+    payload = ALL_PAYLOADS[kind]()
+    fields = {field.name: getattr(payload, field.name) for field in dataclasses.fields(payload)}
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        payload.job_id = "another"
+    with pytest.raises(TypeError, match="positional"):
+        type(payload)(*fields.values())
+    assert ALL_PAYLOADS[kind]().job_id != payload.job_id
+    assert len(payload.job_id) == 32
+    assert type(payload)(**{**fields, "job_id": "stable"}).job_id == "stable"
+
+
+@pytest.mark.parametrize("kind", list(OperationKind), ids=kind_id)
 @pytest.mark.parametrize(
-    ("backend_class", "kind"), BACKEND_KINDS, ids=lambda value: getattr(value, "value", getattr(value, "__name__", ""))
+    ("backend_class", "protocol"), BACKEND_FLAGS, ids=["embedded", "worker-task-routes", "worker-protocol-on"]
 )
-def test_a_malformed_payload_is_refused_naming_the_key(fetchers, backend_class, kind):
+def test_a_malformed_payload_is_refused_naming_what_it_expected(started, monkeypatch, backend_class, protocol, kind):
+    if protocol is not None:
+        monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", protocol)
     backend = make(backend_class)
-    right = READ_PAYLOADS[kind]()
-    wrong_kind = rest_payload() if kind is not OperationKind.rest_api_read else database_payload()
+    right = ALL_PAYLOADS[kind]()
+    expected = type(right).__name__
+    wrong = rest_payload() if kind is not OperationKind.rest_api_read else database_payload()
 
-    with pytest.raises(ValueError, match="'payload'"):
-        backend.run_op(kind, {})
-    with pytest.raises(ValueError, match="'payload'"):
-        backend.run_op(kind, {"settings": right.settings})
-    with pytest.raises(ValueError, match="settings"):
-        backend.run_op(kind, {PAYLOAD_KEY: right, "settings": right.settings})
-    with pytest.raises(TypeError, match=f"payload\\['payload'\\] must be a {type(right).__name__}"):
-        backend.run_op(kind, op_payload(wrong_kind))
+    for keyless in ({}, {"input": ROWS.lazy()}):
+        with pytest.raises(ValueError, match=rf"has no 'payload' key; it carries a {expected}"):
+            backend.run_op(kind, keyless)
+    with pytest.raises(ValueError, match="besides 'payload': input"):
+        backend.run_op(kind, {PAYLOAD_KEY: right, "input": ROWS.lazy()})
+    with pytest.raises(TypeError, match=rf"payload\['payload'\] must be a {expected}, not {type(wrong).__name__}"):
+        backend.run_op(kind, op_payload(wrong))
     with pytest.raises(TypeError, match="'payload'"):
         backend.run_op(kind, [right])
-    assert fetchers.made == []
+    assert started == []
 
 
 def test_unpack_reads_the_password_back_as_stored():

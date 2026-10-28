@@ -1,25 +1,26 @@
 """Every node of a run sees the run's execution context, on whichever thread executes it."""
 
 import threading
-import uuid
 from typing import NamedTuple
 
 import pytest
 
 from flowfile_core.configs import settings
-from flowfile_core.database import models as db_models
-from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.context import ExecutionContext, current_context, use_context
 from flowfile_core.flowfile.execution.protocol import ComputeBackend
-from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
+from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_graph import execution as graph_execution
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.manage import io_flowfile
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.schemas import get_global_execution_location
+from tests.conftest import spy
+from tests.flowfile.execution import graph_helpers
+from tests.flowfile.execution.graph_helpers import add_promise, connect, ranks
+from tests.test_run_flow_node import head_run_flow_settings, register_flow_file
 
 
 class CountingBackend(EmbeddedWorkerBackend):
@@ -89,25 +90,13 @@ def recorder(monkeypatch) -> Recorder:
     return recorder
 
 
-def make_graph(flow_id: int, **settings_fields) -> FlowGraph:
-    fields = {"execution_mode": "Performance", "max_parallel_workers": 4}
-    fields.update(settings_fields)
-    return FlowGraph(schemas.FlowSettings(flow_id=flow_id, name=f"stage_threads_{flow_id}", path=".", **fields))
-
-
-def add_promise(graph: FlowGraph, node_id: int, node_type: str) -> None:
-    graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type=node_type))
-
-
-def rows(n: int) -> input_schema.RawData:
-    return input_schema.RawData.from_pylist([{"name": f"r{i}", "rank": i} for i in range(1, n + 1)])
+def make_graph(flow_id: int, execution_location: str, **settings_fields) -> FlowGraph:
+    """A Performance-mode flow on ``execution_location``."""
+    return graph_helpers.make_graph(flow_id, execution_location, execution_mode="Performance", **settings_fields)
 
 
 def add_manual_input(graph: FlowGraph, node_id: int) -> None:
-    add_promise(graph, node_id, "manual_input")
-    graph.add_manual_input(
-        input_schema.NodeManualInput(flow_id=graph.flow_id, node_id=node_id, raw_data_format=rows(3))
-    )
+    graph_helpers.add_manual_input(graph, node_id, ranks(3))
 
 
 def test_parallel_stage_threads_see_the_run_context(counting, recorder):
@@ -173,42 +162,42 @@ def local_subflow(tmp_path) -> dict:
     child = make_graph(9203, execution_location="local")
     add_promise(child, 1, "flow_input")
     child.add_flow_input(
-        input_schema.NodeFlowInput(flow_id=child.flow_id, node_id=1, input_name="rows", raw_data_format=rows(2))
+        input_schema.NodeFlowInput(
+            flow_id=child.flow_id,
+            node_id=1,
+            input_name="rows",
+            raw_data_format=input_schema.RawData.from_pylist(ranks(2)),
+        )
     )
     add_promise(child, 2, "flow_output")
     child.add_flow_output(
         input_schema.NodeFlowOutput(flow_id=child.flow_id, node_id=2, output_name="result", depending_on_id=1)
     )
-    add_connection(child, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    connect(child, 1, 2)
     path = tmp_path / "local_subflow.yaml"
     child.save_flow(str(path))
-    with get_db_context() as db:
-        registration = db_models.FlowRegistration(
-            flow_uuid=str(uuid.uuid4()), name="local_subflow", flow_path=str(path), owner_id=1
+    return {"path": path, "registration_id": register_flow_file(path, "local_subflow")}
+
+
+def add_run_flow(graph: FlowGraph, local_subflow: dict) -> None:
+    """Run Flow node 2 over ``local_subflow``, its slot ``rows`` in and ``result`` out, with no run metadata."""
+    add_promise(graph, 2, "run_flow")
+    graph.add_run_flow(
+        head_run_flow_settings(
+            graph.flow_id,
+            2,
+            local_subflow["registration_id"],
+            input_slots=["rows"],
+            output_slots=["result"],
+            append_run_metadata=False,
         )
-        db.add(registration)
-        db.commit()
-        db.refresh(registration)
-        return {"path": path, "registration_id": registration.id}
+    )
 
 
 def test_a_subflow_runs_under_the_context_of_the_flow_that_runs_it(counting, recorder, local_subflow):
     parent = make_graph(9204, execution_location="remote", max_parallel_workers=2)
     add_manual_input(parent, 1)
-    add_promise(parent, 2, "run_flow")
-    parent.add_run_flow(
-        input_schema.NodeRunFlow(
-            flow_id=parent.flow_id,
-            node_id=2,
-            user_id=1,
-            flow_reference=input_schema.SubflowReference(registration_id=local_subflow["registration_id"]),
-            input_slots=["rows"],
-            output_slots=["result"],
-            parameter_bindings=[],
-            iteration_mode="first_value",
-            append_run_metadata=False,
-        )
-    )
+    add_run_flow(parent, local_subflow)
 
     run_info = parent.run_graph()
 
@@ -248,20 +237,7 @@ def test_a_subflow_child_takes_its_parent_s_location_with_the_protocol_on(
     monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
     parent = make_graph(9207, execution_location=location)
     add_manual_input(parent, 1)
-    add_promise(parent, 2, "run_flow")
-    parent.add_run_flow(
-        input_schema.NodeRunFlow(
-            flow_id=parent.flow_id,
-            node_id=2,
-            user_id=1,
-            flow_reference=input_schema.SubflowReference(registration_id=local_subflow["registration_id"]),
-            input_slots=["rows"],
-            output_slots=["result"],
-            parameter_bindings=[],
-            iteration_mode="first_value",
-            append_run_metadata=False,
-        )
-    )
+    add_run_flow(parent, local_subflow)
 
     run_info = parent.run_graph()
 
@@ -313,14 +289,7 @@ def test_a_formula_gate_probed_outside_a_run_reads_on_its_graph_s_backend(
     monkeypatch, counting, location, graph_backend, run_backend, flag
 ):
     monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
-    probes: list[str] = []
-    real_head_rows = graph_execution.head_rows
-
-    def recording_head_rows(backend, plan, n):
-        probes.append(backend.id)
-        return real_head_rows(backend, plan, n)
-
-    monkeypatch.setattr(graph_execution, "head_rows", recording_head_rows)
+    head_rows = spy(monkeypatch, graph_execution, "head_rows")
     graph = make_graph(9208, execution_location=location)
     add_manual_input(graph, 1)
     add_promise(graph, 2, "gate")
@@ -332,10 +301,10 @@ def test_a_formula_gate_probed_outside_a_run_reads_on_its_graph_s_backend(
             gate_input=transform_schema.GateInput(condition_source="formula", formula="[rank] > 2"),
         )
     )
-    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    connect(graph, 1, 2)
     gate = graph.get_node(2)
 
     assert graph._formula_gate_is_closed(gate) is False
     with use_context(ExecutionContext(backend_id=run_backend, parallelism=1, preview_rows=None)):
         assert graph._formula_gate_is_closed(gate) is False
-    assert probes == ([graph_backend, run_backend] if flag else [])
+    assert [call.args[0].id for call in head_rows] == ([graph_backend, run_backend] if flag else [])

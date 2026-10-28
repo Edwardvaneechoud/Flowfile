@@ -8,9 +8,6 @@ worker embedded in this process, declares it and charts a node it holds itself w
 embedded worker under other ids, answering a session themselves, so no worker process is needed.
 """
 
-import pytest
-
-from flowfile_core.configs import settings
 from flowfile_core.flowfile.analytics import node_viz
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.protocol import OperationKind, OpResult
@@ -28,8 +25,9 @@ from tests.flowfile.execution.test_placement import (
     without,
 )
 
-# The fixture these tests share with the placement tests, bound here.
+# The fixtures these tests share with the placement tests, bound here.
 declare = test_placement.declare
+flag = test_placement.flag
 
 SECOND = "worker:second"
 LOCAL, WORKER = registry.LOCAL_BACKEND_ID, registry.WORKER_BACKEND_ID
@@ -62,9 +60,7 @@ def explore(graph, location: str = "auto") -> None:
     connect(graph, 1, 2)
 
 
-@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
 def test_a_chart_opens_on_the_second_worker_that_holds_the_explore_data_nodes_result(declare, monkeypatch, flag):
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
     monkeypatch.setenv("FLOWFILE_EXCHANGE_URI", "s3://placement-exchange/runs")
     default, second, worker = chart_on(BACKEND_ID), chart_on(SECOND), chart_on(WORKER)
     graph = make_graph(8650 + flag)
@@ -79,9 +75,7 @@ def test_a_chart_opens_on_the_second_worker_that_holds_the_explore_data_nodes_re
     assert [b.id for b in (default, second, worker) if "run_op viz_session" in b.work] == [charted]
 
 
-@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
-def test_a_chart_on_a_result_the_embedded_worker_holds_opens_there_under_the_flag(declare, monkeypatch, flag):
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+def test_a_chart_on_a_result_the_embedded_worker_holds_opens_there_under_the_flag(declare, flag):
     local, worker = chart_on(LOCAL), chart_on(WORKER)
     graph = make_graph(8652 + flag, LOCAL)
     explore(graph)
@@ -97,11 +91,9 @@ def test_a_chart_on_a_result_the_embedded_worker_holds_opens_there_under_the_fla
     assert [b.id for b in (local, worker) if "run_op viz_session" in b.work] == [charted]
 
 
-@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
 def test_an_explore_data_node_is_refused_on_a_configured_worker_without_the_viz_session_operation(
-    declare, monkeypatch, flag
+    declare, flag
 ):
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
     second = declare(without(everything(), operation="viz_session"), SECOND)
     graph = make_graph(8654 + flag, SECOND)
     explore(graph)

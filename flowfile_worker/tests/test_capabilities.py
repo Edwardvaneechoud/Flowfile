@@ -21,10 +21,10 @@ from polars_grouper import graph_solver
 from flowfile_worker import main
 from shared._version import get_version
 from shared.compute_protocol import PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER, Capabilities
-from tests.conftest import INTERNAL_AUTH_HEADERS
+from tests.conftest import INTERNAL_AUTH_HEADERS, V1_HEADERS
 
 client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
-v1_client = TestClient(main.app, headers={**INTERNAL_AUTH_HEADERS, PROTOCOL_VERSION_HEADER: str(PROTOCOL_VERSION)})
+v1_client = TestClient(main.app, headers=V1_HEADERS)
 
 both_routes = pytest.mark.parametrize(
     ("route_client", "path"), [(client, "/capabilities"), (v1_client, "/v1/capabilities")], ids=["legacy", "v1"]

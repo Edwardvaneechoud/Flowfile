@@ -3,7 +3,6 @@
 import polars as pl
 import pytest
 
-from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.payloads import RandomSplitPayload, op_payload
@@ -13,12 +12,7 @@ from flowfile_core.schemas import input_schema
 
 
 @pytest.fixture
-def backend(monkeypatch) -> WorkerBackend:
-    from tests.conftest import is_worker_running
-
-    if not is_worker_running():
-        pytest.skip("No worker running")
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
+def backend(running_worker, protocol_off) -> WorkerBackend:
     return WorkerBackend(url=registry.worker_url())
 
 

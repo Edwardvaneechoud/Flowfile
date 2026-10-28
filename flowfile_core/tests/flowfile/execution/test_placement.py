@@ -22,7 +22,6 @@ import importlib.metadata
 import threading
 import uuid
 from types import SimpleNamespace
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import polars as pl
@@ -48,15 +47,27 @@ from flowfile_core.flowfile.execution.placement import (
 )
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
-from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
+from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import schema_prefetch_blocked
 from flowfile_core.flowfile.flow_node.requirements import requirements_for
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings, FullCloudStorageConnection
 from shared.compute_protocol import Capabilities
 from tests import test_run_flow_node
+from tests.conftest import protocol_states
 from tests.flowfile.conftest import add_test_catalog_writer, create_test_namespace
+from tests.flowfile.execution.conftest import serve
+from tests.flowfile.execution.graph_helpers import (
+    add_filter_on,
+    add_manual_input,
+    add_promise,
+    code_flow,
+    connect,
+    make_graph,
+)
 from tests.test_catalog_cloud_virtual import _create_cloud_schema, _ensure_connection
+
+flag = protocol_states()
 
 BACKEND_ID = "declaring"
 FLOW_REMEDY = "To run it elsewhere, set the flow's Execution location under Flow Settings."
@@ -140,16 +151,6 @@ class DeclaringBackend(EmbeddedWorkerBackend):
 
 
 @pytest.fixture
-def protocol_on(monkeypatch):
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
-
-
-@pytest.fixture
-def protocol_off(monkeypatch):
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
-
-
-@pytest.fixture
 def declare(monkeypatch):
     """``declare(declared, backend_id)`` registers a ``DeclaringBackend`` under the id and returns it.
 
@@ -167,34 +168,6 @@ def declare(monkeypatch):
     yield register
     registry.reset()
     handshake.reset_handshake()
-
-
-def make_graph(flow_id: int, execution_location: str = "remote") -> FlowGraph:
-    flow_settings = schemas.FlowSettings(
-        flow_id=flow_id,
-        name=f"placement_{flow_id}",
-        path=".",
-        execution_location=execution_location,
-        execution_mode="Development",
-    )
-    return FlowGraph(flow_settings)
-
-
-def add_promise(graph: FlowGraph, node_id: int, node_type: str) -> None:
-    graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type=node_type))
-
-
-def connect(graph: FlowGraph, from_id: int, to_id: int, input_type: str = "main") -> None:
-    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id, to_id, input_type=input_type))
-
-
-def add_manual_input(graph: FlowGraph, node_id: int, rows: list[dict]) -> None:
-    add_promise(graph, node_id, "manual_input")
-    graph.add_manual_input(
-        input_schema.NodeManualInput(
-            flow_id=graph.flow_id, node_id=node_id, raw_data_format=input_schema.RawData.from_pylist(rows)
-        )
-    )
 
 
 def fuzzy_flow(flow_id: int) -> FlowGraph:
@@ -376,44 +349,18 @@ def test_a_fuzzy_match_is_refused_on_a_backend_without_the_fuzzy_join_operation(
     assert_refused_before_any_node(graph, run_info, backend, {3: ["it needs the fuzzy_join operation"]})
 
 
-def test_a_polars_code_node_is_refused_on_a_backend_without_the_polars_code_operation(protocol_on, declare):
-    backend = declare(without(everything(), operation="polars_code"))
-    graph = make_graph(8452)
-    add_manual_input(graph, 1, [{"id": 1, "name": "ada"}])
-    add_promise(graph, 2, "polars_code")
-    graph.add_polars_code(
-        input_schema.NodePolarsCode(
-            flow_id=graph.flow_id,
-            node_id=2,
-            depending_on_ids=[1],
-            polars_code_input=transform_schema.PolarsCodeInput(polars_code="output_df = input_df"),
-        )
-    )
-    connect(graph, 1, 2)
+@pytest.mark.parametrize(
+    "flow_id, node_type, code",
+    [(8452, "polars_code", "output_df = input_df"), (8453, "sql_query", "SELECT * FROM input_1")],
+    ids=["polars_code", "sql_query"],
+)
+def test_a_user_code_node_is_refused_on_a_backend_without_its_operation(protocol_on, declare, flow_id, node_type, code):
+    backend = declare(without(everything(), operation=node_type))
+    graph = code_flow(flow_id, node_type, code, [{"id": 1, "name": "ada"}])
 
     run_info = graph.run_graph()
 
-    assert_refused_before_any_node(graph, run_info, backend, {2: ["it needs the polars_code operation"]})
-
-
-def test_a_sql_query_node_is_refused_on_a_backend_without_the_sql_query_operation(protocol_on, declare):
-    backend = declare(without(everything(), operation="sql_query"))
-    graph = make_graph(8453)
-    add_manual_input(graph, 1, [{"id": 1, "name": "ada"}])
-    add_promise(graph, 2, "sql_query")
-    graph.add_sql_query(
-        input_schema.NodeSqlQuery(
-            flow_id=graph.flow_id,
-            node_id=2,
-            depending_on_ids=[1],
-            sql_query_input=transform_schema.SqlQueryInput(sql_code="SELECT * FROM input_1"),
-        )
-    )
-    connect(graph, 1, 2)
-
-    run_info = graph.run_graph()
-
-    assert_refused_before_any_node(graph, run_info, backend, {2: ["it needs the sql_query operation"]})
+    assert_refused_before_any_node(graph, run_info, backend, {2: [f"it needs the {node_type} operation"]})
 
 
 def test_a_fuzzy_match_is_refused_on_a_backend_without_its_plugin(protocol_on, declare):
@@ -427,14 +374,12 @@ def test_a_fuzzy_match_is_refused_on_a_backend_without_its_plugin(protocol_on, d
     )
 
 
-@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
 def test_each_formula_node_is_refused_on_a_backend_without_the_formula_library_and_a_select_still_runs(
-    declare, monkeypatch, flag
+    declare, flag
 ):
     """Every formula-family node needs the formula library, whatever its formulas compile to, so a backend without it
     refuses each of them and places a select; with the flag off nothing is placed."""
     assert everything().plugins["polars_expr_transformer"] == importlib.metadata.version("polars_expr_transformer")
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
     backend = declare(without(everything(), plugin="polars_expr_transformer"))
     graph = make_graph(8470 + flag)
     add_manual_input(graph, 1, [{"a": 1}, {"a": 2}])
@@ -460,16 +405,7 @@ def test_each_formula_node_is_refused_on_a_backend_without_the_formula_library_a
         )
     )
     connect(graph, 1, 3)
-    add_promise(graph, 4, "filter")
-    graph.add_filter(
-        input_schema.NodeFilter(
-            flow_id=graph.flow_id,
-            node_id=4,
-            depending_on_id=1,
-            filter_input=transform_schema.FilterInput(mode="advanced", advanced_filter="[a] > 1"),
-        )
-    )
-    connect(graph, 1, 4)
+    add_filter_on(graph, 4, 1, "[a] > 1")
     add_promise(graph, 5, "gate")
     graph.add_gate(
         input_schema.NodeGate(
@@ -938,9 +874,7 @@ def test_a_node_polars_own_compute_error_failed_carries_no_compute_error(protoco
         assert result.compute_error is None, result.compute_error
 
 
-@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
-def test_a_fetched_node_a_compute_error_failed_carries_the_error_s_class_on_its_row(declare, monkeypatch, flag):
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+def test_a_fetched_node_a_compute_error_failed_carries_the_error_s_class_on_its_row(declare, flag):
     declare(ComputeUnavailable("Connection refused"))
     graph = fuzzy_flow(8417 if flag else 8416)
 
@@ -998,9 +932,7 @@ def test_a_model_published_to_or_fetched_from_a_filesystem_store_is_refused_off_
     assert backend.asked == 1
 
 
-@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
-def test_a_flow_scoped_model_runs_on_a_backend_off_cores_host(declare, monkeypatch, flag):
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+def test_a_flow_scoped_model_runs_on_a_backend_off_cores_host(declare, flag):
     backend = declare(without(everything(), scheme="file"))
     graph = model_flow(8419 if flag else 8418, "remote")
 
@@ -1041,36 +973,8 @@ def test_an_s3_artifact_store_needs_https_where_a_model_crosses_it(s3_artifact_s
 @pytest.fixture(scope="module")
 def csv_url():
     """A CSV of three rows served on a free loopback port; the fixture is its ``http://`` URL."""
-    body = b"n,label\n1,a\n2,b\n3,c\n"
-
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *args):
-            pass
-
-        def _answer(self) -> bytes:
-            start, _, end = self.headers.get("Range", "bytes=0-").removeprefix("bytes=").partition("-")
-            part = body[int(start) : int(end) + 1 if end else None]
-            self.send_response(206 if "Range" in self.headers else 200)
-            self.send_header("Content-Length", str(len(part)))
-            self.send_header("Content-Range", f"bytes {start}-{int(start) + len(part) - 1}/{len(body)}")
-            self.send_header("Accept-Ranges", "bytes")
-            self.end_headers()
-            return part
-
-        def do_HEAD(self):  # noqa: N802
-            self._answer()
-
-        def do_GET(self):  # noqa: N802
-            self.wfile.write(self._answer())
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{server.server_address[1]}/rows.csv"
-    finally:
-        server.shutdown()
-        thread.join(timeout=5)
+    with serve(b"n,label\n1,a\n2,b\n3,c\n", ranges=True) as url:
+        yield f"{url}/rows.csv"
 
 
 def url_read_flow(flow_id: int, url: str) -> FlowGraph:
@@ -1101,9 +1005,7 @@ def test_a_read_from_a_url_is_refused_on_a_backend_that_does_not_read_its_scheme
     assert_refused_before_any_node(graph, run_info, backend, {1: ["it reads http URLs"]})
 
 
-@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
-def test_a_read_from_a_url_runs_on_a_backend_that_reads_its_scheme(declare, monkeypatch, flag, csv_url):
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+def test_a_read_from_a_url_runs_on_a_backend_that_reads_its_scheme(declare, flag, csv_url):
     backend = declare(everything())
     graph = url_read_flow(8431 if flag else 8430, csv_url)
 
@@ -1255,9 +1157,7 @@ def test_a_read_on_a_parameter_is_placed_by_the_path_it_resolves_to(tmp_path, fl
     assert graph.get_node(1).setting_input.received_file.path == "${dir}/x.csv"
 
 
-@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
-def test_a_read_on_a_parameter_runs_as_it_does_unplaced(declare, monkeypatch, tmp_path, flag):
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+def test_a_read_on_a_parameter_runs_as_it_does_unplaced(declare, tmp_path, flag):
     backend = declare(everything())
     (tmp_path / "x.csv").write_text("n,label\n1,a\n2,b\n", encoding="utf-8")
     graph = parameter_read_flow(8447 if flag else 8446, "${dir}/x.csv", str(tmp_path))

@@ -69,6 +69,7 @@ from shared.compute_protocol import (
     schema_to_wire,
 )
 from shared.kafka.models import KafkaReadSettings
+from shared.wire_model import WireModel
 
 SAMPLE_ROWS_CAP = 10_000
 """The most rows ``sample`` answers; a larger ``n`` is refused, not truncated."""
@@ -109,15 +110,13 @@ visualisation sessions are served by the task routes in ``routes.py``.
 """
 
 
-class SubmitMeta(BaseModel):
+class SubmitMeta(WireModel):
     """The ``meta`` part of a submit: the hints, the held results the plan reads, and the id to keep its result under.
 
     An unknown field is refused rather than dropped, so a field core sends that this worker does not
     know fails the submit. ``result_id`` names the result's file, so it holds no path separator. A
     negative ``preview_rows`` is refused, because ``head(-k)`` keeps all but the last k rows.
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     hints: SubmitHints
     inputs: list[str] = Field(default_factory=list)
@@ -150,8 +149,6 @@ class RandomSplitInput(models.PolarsOperation):
     An unknown field is refused rather than dropped, because core builds this body by hand.
     """
 
-    model_config = ConfigDict(extra="forbid")
-
     splits: list[tuple[str, float]]
 
 
@@ -162,7 +159,7 @@ class MlTrainInput(models.PolarsOperation):
     to is one, as the model is held here.
     """
 
-    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+    model_config = ConfigDict(protected_namespaces=())
 
     model_type: str
     target_column: str
@@ -177,19 +174,17 @@ class MlApplyInput(models.PolarsOperation):
     from is one, as the model is held here.
     """
 
-    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+    model_config = ConfigDict(protected_namespaces=())
 
     model: str
     output_column: str
 
 
-class PolarsCodeInput(BaseModel):
+class PolarsCodeInput(WireModel):
     """The body of a Polars Code run: the node's code, its input plans in connection order, and its flow and node.
 
     An unknown field is refused rather than dropped, because core builds this body by hand.
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     code: str
     inputs: list[models.Base64Bytes]
@@ -197,13 +192,11 @@ class PolarsCodeInput(BaseModel):
     flowfile_node_id: int | str = -1
 
 
-class SqlQueryInput(BaseModel):
+class SqlQueryInput(WireModel):
     """The body of a SQL Query run: the node's statement, its input plans in connection order, and its flow and node.
 
     An unknown field is refused rather than dropped, because core builds this body by hand.
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     sql_code: str
     inputs: list[models.Base64Bytes]
@@ -211,35 +204,29 @@ class SqlQueryInput(BaseModel):
     flowfile_node_id: int | str = -1
 
 
-class CredentialRefBody(BaseModel):
+class CredentialRefBody(WireModel):
     """A stored connection as an export or an import names it: its id and the user it runs for, nothing else.
 
     An unknown field is refused rather than dropped, because core builds this body by hand.
     """
 
-    model_config = ConfigDict(extra="forbid")
-
     connection_id: int
     user_id: int
 
 
-class ExportBody(BaseModel):
+class ExportBody(WireModel):
     """Where ``export`` writes the result, and the stored connection the target needs."""
-
-    model_config = ConfigDict(extra="forbid")
 
     uri: str
     credential: CredentialRefBody | None = None
 
 
-class ImportBody(BaseModel):
+class ImportBody(WireModel):
     """What ``import_uri`` holds: the URI to scan, its connection, and its columns and row count.
 
     The columns and the row count are core's, never read from the URI. With ``kind="blob"`` the URI's bytes are
     fetched instead, and a blob takes no credential, no columns and no row count.
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     uri: str
     credential: CredentialRefBody | None = None

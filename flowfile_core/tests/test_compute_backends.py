@@ -5,15 +5,13 @@ configured worker here is a fake: a small FastAPI app on a local uvicorn that an
 ``GET /v1/capabilities`` only to the token it was started with, so a verdict that passes proves the row's own token was
 sent, not the process's; it answers nothing else, so no probe plan runs there. A row at the session worker's URL is a
 worker every probe runs on. The handshake cases, and the refusal of a token that is no header value, run under both
-states of the protocol flag. Auth fixtures mirror ``test_system_worker.py``.
+states of the protocol flag.
 """
 
-import socket
 import ssl
 import threading
 import time
 from collections.abc import Callable, Iterator
-from datetime import datetime, timedelta, timezone
 
 import polars as pl
 import pytest
@@ -22,9 +20,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
-from flowfile_core.auth.jwt import get_current_active_user, get_current_user, get_internal_token
-from flowfile_core.auth.models import User as PydanticUser
-from flowfile_core.configs import settings
+from flowfile_core.auth.jwt import get_internal_token
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.execution import registry
@@ -35,6 +31,8 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handsh
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared.compute_protocol import EXPRESSION_PLUGINS, local_capabilities
+from test_utils.tls import self_signed_certificate
+from tests.conftest import _free_port, closed_url, protocol_states
 
 ROUTE = "/compute_backends"
 NO_HEADER_VALUES = pytest.mark.parametrize(
@@ -51,40 +49,7 @@ OLDER_ANSWER = {
 """The capabilities of a worker built before it declared its operations, schemes and credential resolution."""
 
 
-def free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1]
-
-
-def client_as(user: PydanticUser) -> Iterator[TestClient]:
-    main.app.dependency_overrides[get_current_active_user] = lambda: user
-    main.app.dependency_overrides[get_current_user] = lambda: user
-    try:
-        yield TestClient(main.app)
-    finally:
-        main.app.dependency_overrides.pop(get_current_active_user, None)
-        main.app.dependency_overrides.pop(get_current_user, None)
-
-
-@pytest.fixture
-def admin_client() -> Iterator[TestClient]:
-    yield from client_as(
-        PydanticUser(username="local_user", id=1, disabled=False, is_admin=True, must_change_password=False)
-    )
-
-
-@pytest.fixture
-def non_admin_client() -> Iterator[TestClient]:
-    yield from client_as(
-        PydanticUser(username="not_admin", id=2, disabled=False, is_admin=False, must_change_password=False)
-    )
-
-
-@pytest.fixture(params=[False, True], ids=["flag-off", "flag-on"])
-def flag(request, monkeypatch) -> bool:
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", request.param)
-    return request.param
+flag = protocol_states()
 
 
 @pytest.fixture(autouse=True)
@@ -119,7 +84,7 @@ def fake_worker() -> Iterator[Callable[..., str]]:
                 raise HTTPException(status_code=401, detail="Invalid or missing internal token")
             return reported.model_dump(mode="json") if answer is None else answer
 
-        port = free_port()
+        port = _free_port()
         server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
         thread = threading.Thread(target=server.run, daemon=True)
         thread.start()
@@ -154,26 +119,8 @@ def add(
 
 
 def self_signed_pem() -> str:
-    """A self-signed P-256 certificate, PEM: the CA of a worker that serves it."""
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.x509.oid import NameOID
-
-    key = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "team-worker.test")])
-    now = datetime.now(timezone.utc)
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(minutes=5))
-        .not_valid_after(now + timedelta(hours=2))
-        .sign(key, hashes.SHA256())
-    )
-    return cert.public_bytes(serialization.Encoding.PEM).decode()
+    """A self-signed certificate, PEM: the CA of a worker that serves it."""
+    return self_signed_certificate("team-worker.test")[0]
 
 
 def handshake(client: TestClient, backend_id: str = "worker:team") -> dict:
@@ -316,7 +263,7 @@ def test_a_row_whose_token_is_no_header_value_fails_the_handshake_naming_the_rul
     """A row filled in by hand skips the add route's check; the backend refuses to send its token instead."""
     with get_db_context() as db:
         db.add(
-            ConfiguredBackend(id="worker:team", url=f"http://127.0.0.1:{free_port()}", token=encrypt_secret(token, 1))
+            ConfiguredBackend(id="worker:team", url=closed_url(), token=encrypt_secret(token, 1))
         )
         db.commit()
 
@@ -348,11 +295,7 @@ def test_a_worker_on_this_process_versions_passes_the_handshake_with_the_rows_to
     assert verdict["absent"][PYTHON_FUNCTIONS].startswith("core's Python functions do not run on this backend")
 
 
-def test_a_row_at_the_session_worker_passes_the_handshake_with_every_probe(admin_client, flag):
-    from tests.conftest import is_worker_running
-
-    if not is_worker_running():
-        pytest.skip("flowfile_worker is not running")
+def test_a_row_at_the_session_worker_passes_the_handshake_with_every_probe(admin_client, flag, running_worker):
     add(admin_client, registry.worker_url(), token=get_internal_token())
 
     verdict = handshake(admin_client)
@@ -418,7 +361,7 @@ def test_a_worker_that_refuses_the_rows_token_fails_the_handshake_naming_401(adm
 
 
 def test_a_worker_out_of_reach_fails_the_handshake_naming_it(admin_client, flag):
-    url = f"http://127.0.0.1:{free_port()}"
+    url = closed_url()
     add(admin_client, url)
 
     verdict = handshake(admin_client)
@@ -509,7 +452,7 @@ def test_an_unauthenticated_caller_gets_401():
     ids=["unreachable", "other-polars"],
 )
 def test_a_non_admin_sees_a_refusal_as_a_reason_naming_no_address(non_admin_client, fake_worker, flag, changes, reason):
-    url = f"http://127.0.0.1:{free_port()}" if changes is None else fake_worker("row-token", **changes)
+    url = closed_url() if changes is None else fake_worker("row-token", **changes)
     with get_db_context() as db:
         db.add(ConfiguredBackend(id="worker:team", url=url, token=encrypt_secret("row-token", 1)))
         db.commit()
@@ -551,7 +494,7 @@ def test_a_row_whose_token_no_longer_decrypts_is_refused_naming_it_and_never_a_5
 
     stored = encrypt_secret("row-token", 1)
     with get_db_context() as db:
-        db.add(ConfiguredBackend(id="worker:team", url=f"http://127.0.0.1:{free_port()}", token=stored))
+        db.add(ConfiguredBackend(id="worker:team", url=closed_url(), token=stored))
         db.commit()
     monkeypatch.setattr(secret_manager, "derive_user_key", lambda user_id: Fernet.generate_key())
 

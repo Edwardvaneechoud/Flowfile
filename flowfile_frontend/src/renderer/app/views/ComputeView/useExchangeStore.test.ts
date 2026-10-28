@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { httpError } from "../../__fixtures__/promises";
 import type { ExchangeStoreInput, ExchangeStoreState } from "../../api/system.api";
 
 const mocks = vi.hoisted(() => ({
@@ -32,11 +33,6 @@ const saved: ExchangeStoreState = {
   source: "saved",
   saved: { uri: "s3://bucket/flowfile", connection: "exchange", maxRows: 1000 },
 };
-
-const httpError = (status: number, detail: unknown) =>
-  Object.assign(new Error(`Request failed with status code ${status}`), {
-    response: { status, data: { detail } },
-  });
 
 beforeEach(() => {
   mocks.get.mockReset().mockResolvedValue(none);

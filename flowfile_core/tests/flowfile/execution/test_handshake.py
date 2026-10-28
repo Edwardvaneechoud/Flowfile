@@ -11,7 +11,6 @@ only.
 """
 
 import json
-import socket
 import threading
 import time
 from urllib.parse import urlsplit
@@ -20,7 +19,6 @@ import polars as pl
 import pytest
 import requests
 
-from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
@@ -30,12 +28,12 @@ from flowfile_core.flowfile.execution.placement import PYTHON_FUNCTIONS, Refusal
 from flowfile_core.flowfile.execution.protocol import SubmitHints
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake, streaming
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations as subops
-from flowfile_core.flowfile.flow_graph import add_connection
 from flowfile_core.flowfile.flow_node.flow_node import schema_prefetch_blocked
-from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.schemas import input_schema, schemas, transform_schema
+from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings
 from shared.compute_protocol import PROTOCOL_VERSION, local_capabilities
+from tests.conftest import protocol_states
+from tests.flowfile.execution.graph_helpers import add_manual_input, add_promise, connect, make_graph
 from tests.flowfile.execution.test_placement import FLOW_REMEDY, FLOW_STORE_REMEDY
 
 HINT = ". Is the compute backend running? Start it, or check the Backends page."
@@ -63,15 +61,7 @@ NO_WORKER_REFUSAL = (
 )
 
 
-@pytest.fixture(params=[False, True], ids=["flag-off", "flag-on"])
-def flag(request, monkeypatch) -> bool:
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", request.param)
-    return request.param
-
-
-@pytest.fixture
-def protocol_on(monkeypatch):
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
+flag = protocol_states()
 
 
 @pytest.fixture(autouse=True)
@@ -137,14 +127,6 @@ def sent(monkeypatch) -> list[str]:
 
 
 @pytest.fixture
-def closed_port_url() -> str:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-    return f"http://127.0.0.1:{port}"
-
-
-@pytest.fixture
 def capabilities_answer(monkeypatch):
     """Make ``GET /capabilities`` and ``GET /v1/capabilities`` answer 200 with the given body."""
 
@@ -205,47 +187,16 @@ def register_team(backend: EmbeddedWorkerBackend) -> EmbeddedWorkerBackend:
     return backend
 
 
-def _graph(flow_id: int, location: str):
-    handler = FlowfileHandler()
-    handler.register_flow(
-        schemas.FlowSettings(
-            flow_id=flow_id, name="handshake", path=".", execution_location=location, execution_mode="Development"
-        )
-    )
-    return handler.get_flow(flow_id)
-
-
-def _add(graph, node_id: int, node_type: str) -> None:
-    graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type=node_type))
-
-
-def _connect(graph, from_id: int, to_id: int) -> None:
-    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id, to_id))
-
-
-def _manual_input(graph, *, cache_results: bool = False) -> None:
-    _add(graph, 1, "manual_input")
-    graph.add_manual_input(
-        input_schema.NodeManualInput(
-            flow_id=graph.flow_id,
-            node_id=1,
-            cache_results=cache_results,
-            raw_data_format=input_schema.RawData.from_pylist([{"a": 1}]),
-        )
-    )
-
-
 def one_node_graph(flow_id: int, location: str = "remote", *, cache_results: bool = False):
-    graph = _graph(flow_id, location)
-    _manual_input(graph, cache_results=cache_results)
+    graph = make_graph(flow_id, location)
+    add_manual_input(graph, 1, [{"a": 1}], cache_results=cache_results)
     return graph
 
 
 def formula_and_select_graph(flow_id: int, location: str = TEAM):
     """A manual input read by a formula node (2) and by a select (3)."""
-    graph = _graph(flow_id, location)
-    _manual_input(graph)
-    _add(graph, 2, "formula")
+    graph = one_node_graph(flow_id, location)
+    add_promise(graph, 2, "formula")
     graph.add_formula(
         input_schema.NodeFormula(
             flow_id=flow_id,
@@ -254,20 +205,20 @@ def formula_and_select_graph(flow_id: int, location: str = TEAM):
             functions=[transform_schema.FunctionInput(transform_schema.FieldInput(name="b"), "[a] + 1")],
         )
     )
-    _connect(graph, 1, 2)
-    _add(graph, 3, "select")
+    connect(graph, 1, 2)
+    add_promise(graph, 3, "select")
     graph.add_select(
         input_schema.NodeSelect(
             flow_id=flow_id, node_id=3, depending_on_id=1, select_input=[transform_schema.SelectInput(old_name="a")]
         )
     )
-    _connect(graph, 1, 3)
+    connect(graph, 1, 3)
     return graph
 
 
 def add_cloud_reader(graph, node_id: int, **read) -> None:
     """A cloud storage reader of user 1 with no connection, built without asking any backend for its schema."""
-    _add(graph, node_id, "cloud_storage_reader")
+    add_promise(graph, node_id, "cloud_storage_reader")
     token = schema_prefetch_blocked.set(True)
     try:
         graph.add_cloud_storage_reader(
@@ -521,7 +472,7 @@ def test_a_formula_is_refused_where_core_s_python_functions_do_not_run_and_a_sel
 def test_a_cloud_change_read_is_refused_where_core_s_python_functions_do_not_run_and_a_plain_read_is_placed():
     backend = register_team(CoreAsTeam(PYTHON_FUNCTIONS))
     verdict = handshake.verdict_for(backend)
-    graph = _graph(9213, TEAM)
+    graph = make_graph(9213, TEAM)
     add_cloud_reader(
         graph,
         1,

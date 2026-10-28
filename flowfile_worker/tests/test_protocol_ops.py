@@ -20,27 +20,20 @@ from fastapi.testclient import TestClient
 from polars.testing import assert_frame_equal
 from pydantic import BaseModel
 
-from flowfile_worker import main, models, status_dict, status_dict_lock
+from flowfile_worker import main, models, status_dict
 from flowfile_worker.create.models import ReceivedTable
 from flowfile_worker.external_sources.s3_source.models import FullCloudStorageConnection, WriteSettings
 from flowfile_worker.protocol_routes import OpOutputs
-from flowfile_worker.results import result_path, results
+from flowfile_worker.results import result_path
 from flowfile_worker.secrets import encrypt_secret
-from shared.compute_protocol import (
-    PROTOCOL_VERSION,
-    PROTOCOL_VERSION_HEADER,
-    ResultRef,
-    WorkerLocation,
-    file_uri,
-    schema_to_wire,
-)
+from shared.compute_protocol import ResultRef, file_uri, schema_to_wire
 from shared.ml.trainers import get_trainer
-from tests.conftest import INTERNAL_AUTH_HEADERS
+from tests.conftest import V1_HEADERS, ref_location
 from tests.utils import is_docker_available
 
 pytestmark = pytest.mark.worker
 
-client = TestClient(main.app, headers={**INTERNAL_AUTH_HEADERS, PROTOCOL_VERSION_HEADER: str(PROTOCOL_VERSION)})
+client = TestClient(main.app, headers=V1_HEADERS)
 
 FLOW_ID = 4243
 OTHER_FLOW_ID = 4244
@@ -82,21 +75,9 @@ class SleepingNode(CustomNodeBase):
 
 
 @pytest.fixture
-def jobs():
+def jobs(held):
     """Job ids a test posts under; each one's outputs are released and its entry dropped when the test ends."""
-    ids: list[str] = []
-
-    def new_id() -> str:
-        ids.append(uuid.uuid4().hex)
-        return ids[-1]
-
-    yield new_id
-    for job_id in ids:
-        for i in range(4):
-            client.delete(f"/v1/results/{job_id}_{i}")
-        results.pop(job_id)
-        with status_dict_lock:
-            status_dict.pop(job_id, None)
+    return held
 
 
 def _post_op(kind: str, job_id: str | None, body: BaseModel | dict, **params):
@@ -115,10 +96,6 @@ def _post_op(kind: str, job_id: str | None, body: BaseModel | dict, **params):
 def _answer(response) -> OpOutputs:
     assert response.status_code == 200, response.text
     return OpOutputs.model_validate_json(response.text)
-
-
-def _location(ref: ResultRef) -> WorkerLocation:
-    return WorkerLocation.model_validate_json(ref.location)
 
 
 def _rows(ref: ResultRef) -> pl.DataFrame:
@@ -205,7 +182,7 @@ def test_a_file_read_holds_its_rows_as_one_materialised_output(jobs, tmp_path):
     assert ref.result_id == f"{job_id}_0"
     assert (ref.state, ref.row_count) == ("materialised", 5)
     assert ref.columns == schema_to_wire(PEOPLE.schema)
-    location = _location(ref)
+    location = ref_location(ref)
     assert location.kind == "file"
     assert location.path == str(result_path(FLOW_ID, ref.result_id))
     assert os.path.isfile(location.path)
@@ -257,7 +234,7 @@ def test_a_custom_node_holds_each_declared_output_in_its_own_file(jobs):
         (f"{job_id}_0", "materialised", 2),
         (f"{job_id}_1", "materialised", 1),
     ]
-    assert _location(high).path != _location(low).path
+    assert ref_location(high).path != ref_location(low).path
     assert _rows(high)["value"].to_list() == [15, 25]
     assert _rows(low)["value"].to_list() == [5]
 
@@ -304,7 +281,7 @@ def test_a_rerun_under_the_job_id_replaces_its_outputs(jobs):
     first = _answer(
         _post_op("random_split", job_id, _split_body(pl.LazyFrame({"n": list(range(10))}), [("all", 100.0)]))
     )
-    first_path = _location(first.outputs["all"]).path
+    first_path = ref_location(first.outputs["all"]).path
 
     again = _answer(
         _post_op(
@@ -316,7 +293,7 @@ def test_a_rerun_under_the_job_id_replaces_its_outputs(jobs):
 
     ref = again.outputs["all"]
     assert (ref.result_id, ref.row_count) == (f"{job_id}_0", 4)
-    assert _location(ref).path == str(result_path(OTHER_FLOW_ID, ref.result_id))
+    assert ref_location(ref).path == str(result_path(OTHER_FLOW_ID, ref.result_id))
     assert not os.path.exists(first_path)
     assert _rows(ref)["n"].to_list() == [0, 1, 2, 3]
 
@@ -431,7 +408,7 @@ def test_a_training_holds_the_model_as_a_blob_and_reports_its_digest(jobs, tmp_p
         [],
         None,
     )
-    location = _location(model)
+    location = ref_location(model)
     path = result_path(FLOW_ID, model.result_id).with_suffix(".blob")
     assert (location.kind, location.path) == ("blob", str(path))
     written = path.read_bytes()
@@ -461,7 +438,7 @@ def test_an_apply_scores_with_a_held_model_and_holds_the_scored_rows(jobs):
     ref = answer.outputs["result"]
     assert (ref.result_id, ref.kind, ref.state, ref.row_count) == (f"{job_id}_0", "table", "materialised", 3)
     assert ref.columns == schema_to_wire(pl.Schema({"x1": pl.Float64, "x2": pl.Float64, "pred": pl.Float64}))
-    fitted = json.loads(Path(_location(model).path).read_bytes())
+    fitted = json.loads(Path(ref_location(model).path).read_bytes())
     assert_frame_equal(_rows(ref), get_trainer("linear_regression").apply(SCORING, fitted, "pred").collect())
     assert client.head(f"/v1/results/{model.result_id}").status_code == 200
 
@@ -510,14 +487,14 @@ def test_a_training_that_fails_names_the_error_and_holds_no_model(jobs):
 def test_a_rerun_of_a_training_replaces_its_model(jobs):
     job_id = jobs()
     first = _answer(_post_op("ml_train", job_id, _train_body())).outputs["model"]
-    first_path = _location(first).path
+    first_path = ref_location(first).path
 
     again = _answer(_post_op("ml_train", job_id, _train_body(flow_id=OTHER_FLOW_ID))).outputs["model"]
 
     assert again.result_id == first.result_id == f"{job_id}_0"
-    assert _location(again).path == str(result_path(OTHER_FLOW_ID, again.result_id).with_suffix(".blob"))
+    assert ref_location(again).path == str(result_path(OTHER_FLOW_ID, again.result_id).with_suffix(".blob"))
     assert not os.path.exists(first_path)
-    assert os.path.isfile(_location(again).path)
+    assert os.path.isfile(ref_location(again).path)
 
 
 def test_an_ml_body_that_names_a_path_is_422(jobs, tmp_path):
@@ -581,7 +558,7 @@ def test_polars_code_holds_an_eager_result_as_a_file(jobs):
 
     ref = answer.outputs["result"]
     assert (ref.result_id, ref.state, ref.row_count) == (f"{job_id}_0", "materialised", 2)
-    assert _location(ref).path == str(result_path(FLOW_ID, ref.result_id))
+    assert ref_location(ref).path == str(result_path(FLOW_ID, ref.result_id))
     assert _rows(ref)["id"].to_list() == [1, 2]
 
 
@@ -596,7 +573,7 @@ def test_polars_code_holds_a_lazy_result_over_rows_in_memory_as_a_file(jobs, tmp
     ref = answer.outputs["result"]
     assert (ref.result_id, ref.state, ref.row_count) == (f"{job_id}_0", "materialised", 5)
     assert ref.columns == schema_to_wire(PEOPLE.schema)
-    location = _location(ref)
+    location = ref_location(ref)
     assert (location.kind, location.plan) == ("file", None)
     assert location.path == str(result_path(FLOW_ID, ref.result_id))
     assert _rows(ref)["id"].to_list() == [1, 2, 3, 4, 5]
@@ -612,7 +589,7 @@ def test_polars_code_holds_a_lazy_result_over_its_input_scan_as_a_plan_that_scan
 
     ref = answer.outputs["result"]
     assert (ref.result_id, ref.state, ref.row_count) == (f"{job_id}_0", "deferred", None)
-    location = _location(ref)
+    location = ref_location(ref)
     assert location.kind == "plan"
     plan = pl.LazyFrame.deserialize(io.BytesIO(location.plan))
     assert plan.collect()["id"].to_list() == [3, 4, 5]
@@ -651,7 +628,7 @@ def test_sql_query_holds_a_result_over_its_input_scans_as_a_plan_that_scans_them
     assert (ref.result_id, ref.state, ref.row_count) == (f"{job_id}_0", "deferred", None)
     context = pl.SQLContext(input_1=shapes, input_2=names)
     assert ref.columns == schema_to_wire(context.execute(query).collect_schema())
-    location = _location(ref)
+    location = ref_location(ref)
     assert location.kind == "plan"
     response = client.get(f"/v1/results/{ref.result_id}/sample", params={"n": 10})
     assert response.status_code == 200, response.text
@@ -669,7 +646,7 @@ def test_sql_query_holds_a_result_over_rows_in_memory_as_a_file(jobs):
 
     ref = answer.outputs["result"]
     assert (ref.result_id, ref.state, ref.row_count) == (f"{job_id}_0", "materialised", 5)
-    location = _location(ref)
+    location = ref_location(ref)
     assert (location.kind, location.plan) == ("file", None)
     assert location.path == str(result_path(FLOW_ID, ref.result_id))
     assert _rows(ref)["id"].to_list() == [1, 2, 3, 4, 5]

@@ -37,6 +37,7 @@ from flowfile_core.routes.routes import flow_file_handler
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.transform_schema import SelectInput
 from shared.compute_protocol import WorkerLocation
+from tests.conftest import protocol_states
 
 # Windows has no 0.0.0.0 loopback alias for connects; the worker binds 127.0.0.1 there.
 WORKER_HOST = os.environ.get(
@@ -459,11 +460,7 @@ def test_sample_route_failed_fetch_returns_422(api_client, local_api_server):
     flow_file_handler.delete_flow(flow_id)
 
 
-@pytest.fixture(params=[False, True], ids=["flag_off", "flag_on"])
-def protocol_flag(request, monkeypatch) -> bool:
-    """The protocol flag in each state, back to what it was when the test ends."""
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", request.param)
-    return request.param
+protocol_flag = protocol_states("flag_off", "flag_on")
 
 
 def test_sample_route_fetches_one_page(api_client, api_server, protocol_flag):

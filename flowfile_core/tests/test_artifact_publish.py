@@ -4,14 +4,9 @@ Core prepares, finalises and looks up the catalog row; the backend copies the by
 the filesystem store and presigned ``https://`` URLs on MinIO behind a self-signed TLS forwarder.
 """
 
-import asyncio
 import hashlib
-import ipaddress
 import os
-import ssl
-import threading
 import uuid
-from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -25,14 +20,14 @@ from flowfile_core.artifacts import (
 from flowfile_core.artifacts.publish import fetch_artifact, publish_result
 from flowfile_core.configs import settings
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.database.models import CatalogNamespace, FlowRegistration, GlobalArtifact
+from flowfile_core.database.models import GlobalArtifact
 from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.errors import ResultMissing
 from flowfile_core.schemas.artifact_schema import PrepareUploadRequest
 from shared.artifact_storage import S3Storage, SharedFilesystemStorage
 from shared.compute_protocol import file_uri
-from tests.flowfile.conftest import create_test_flow_registration, create_test_namespace
+from test_utils import tls
 
 OWNER_ID = 1
 MODEL = bytes(range(256)) * 64
@@ -93,22 +88,6 @@ def backend(request):
             pytest.skip("the worker backend holds a blob over its /v1 routes, with the protocol flag on")
         return WorkerBackend(url=settings.WORKER_URL)
     return EmbeddedWorkerBackend()
-
-
-@pytest.fixture
-def registration():
-    """A namespace and a flow registered in it, ``(namespace_id, registration_id)``; their rows go after the test."""
-    namespace_id = create_test_namespace()
-    registration_id = create_test_flow_registration(namespace_id, name=f"publish_{uuid.uuid4().hex[:8]}")
-    yield namespace_id, registration_id
-    with get_db_context() as db:
-        db.query(GlobalArtifact).filter_by(source_registration_id=registration_id).delete()
-        db.query(FlowRegistration).filter_by(id=registration_id).delete()
-        schema = db.get(CatalogNamespace, namespace_id)
-        catalog_id = schema.parent_id
-        db.delete(schema)
-        db.query(CatalogNamespace).filter_by(id=catalog_id).delete()
-        db.commit()
 
 
 @pytest.fixture
@@ -241,75 +220,9 @@ def test_an_unknown_model_is_not_found_and_nothing_is_held(registration, hold, m
 
 @pytest.fixture(scope="module")
 def minio_over_tls(tmp_path_factory):
-    """MinIO behind an HTTPS forwarder with a self-signed certificate: the forwarder's URL and the certificate's path.
-
-    MinIO is had as the cloud end-to-end suite has it, and the test skips when Docker cannot give one. The forwarder is
-    the one the worker's blob route tests build, so a URL presigned on its endpoint is an ``https://`` one that MinIO
-    accepts: the Host header passes through.
-    """
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.x509.oid import NameOID
-
-    from test_utils.s3 import fixtures as s3
-
-    available = s3.is_docker_available() and (
-        s3.is_container_running(s3.MINIO_CONTAINER_NAME) or s3.start_minio_container()
-    )
-    if not (available and s3.wait_for_minio(max_retries=10)):
-        pytest.skip("MinIO (Docker) is not available")
-    folder = tmp_path_factory.mktemp("tls")
-    key = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
-    now = datetime.now(timezone.utc)
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(minutes=5))
-        .not_valid_after(now + timedelta(hours=1))
-        .add_extension(
-            x509.SubjectAlternativeName([x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]),
-            critical=False,
-        )
-        .sign(key, hashes.SHA256())
-    )
-    (folder / "cert.pem").write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-    (folder / "key.pem").write_bytes(
-        key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
-    )
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.load_cert_chain(folder / "cert.pem", folder / "key.pem")
-    upstream_host, upstream_port = s3.MINIO_ENDPOINT_URL.removeprefix("http://").split(":")
-
-    async def pipe(reader, writer):
-        try:
-            while data := await reader.read(65536):
-                writer.write(data)
-                await writer.drain()
-        except (ConnectionError, OSError):
-            pass
-        finally:
-            writer.close()
-
-    async def forward(client_reader, client_writer):
-        upstream_reader, upstream_writer = await asyncio.open_connection(upstream_host, int(upstream_port))
-        await asyncio.gather(pipe(client_reader, upstream_writer), pipe(upstream_reader, client_writer))
-
-    loop = asyncio.new_event_loop()
-    loop.set_exception_handler(lambda _loop, _context: None)
-    server = loop.run_until_complete(asyncio.start_server(forward, "127.0.0.1", 0, ssl=context))
-    thread = threading.Thread(target=loop.run_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"https://localhost:{server.sockets[0].getsockname()[1]}", folder / "cert.pem"
-    finally:
-        loop.call_soon_threadsafe(server.close)
-        loop.call_soon_threadsafe(loop.stop)
-        thread.join(timeout=5)
+    """MinIO behind an HTTPS forwarder with a self-signed certificate: its URL and the certificate's path."""
+    with tls.minio_over_tls(tmp_path_factory.mktemp("tls")) as endpoint:
+        yield endpoint
 
 
 @pytest.fixture

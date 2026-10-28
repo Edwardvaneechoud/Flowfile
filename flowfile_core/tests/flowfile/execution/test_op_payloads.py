@@ -3,14 +3,13 @@
 The worker side is checked at the fetcher boundary: the worker backend's fetchers are replaced by stand-ins that keep
 what they were built with and write their result where a worker task writes it, so these tests show what each payload
 becomes on its way to the worker without one running (``test_worker_backend.py`` runs the same operations against a
-real worker). The embedded worker's side runs in this process. The builders are checked on a flow whose default
-backend is a recording embedded worker, so a remote flow's operations are seen arriving with their payloads.
+real worker). The payload contract every kind shares is ``test_payloads.py``'s, and the embedded worker running these
+operations is ``test_embedded_backend.py``'s and ``test_local_backend.py``'s. The builders are checked on a flow whose
+default backend is a recording embedded worker, so a remote flow's operations are seen arriving with their payloads.
 """
 
-import dataclasses
 import io
 import os
-import sys
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,7 +19,6 @@ import pytest
 from pydantic import SecretStr
 
 from flowfile_core.auth.models import SecretInput
-from flowfile_core.configs import settings
 from flowfile_core.configs.node_store import add_to_custom_node_store, remove_from_custom_node_store
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.database import models as db_models
@@ -41,7 +39,6 @@ from flowfile_core.flowfile.execution.payloads import (
     PolarsCodePayload,
     SqlQueryPayload,
     RandomSplitPayload,
-    unpack,
 )
 from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, OpResult, ResultRef
 from flowfile_core.flowfile.execution.payloads import FileWritePayload
@@ -55,13 +52,9 @@ from flowfile_core.schemas import input_schema
 from flowfile_core.secret_manager.secret_manager import store_secret
 from shared.storage_config import storage
 from tests.flowfile.conftest import add_test_manual_input, create_test_graph
+from tests.flowfile.execution.conftest import fuzzy_settings
 
-pytestmark = pytest.mark.core
-
-
-def make(backend_type: type):
-    """An instance of ``backend_type``: the worker backend on the session worker, the embedded worker as it is."""
-    return backend_type(url=WORKER_URL) if backend_type is WorkerBackend else backend_type()
+pytestmark = [pytest.mark.core, pytest.mark.usefixtures("protocol_off", "clean_import_aliases")]
 
 
 SECRET = "plain-api-key-for-the-node"
@@ -117,39 +110,6 @@ class Splitter(CustomNodeBase):
         threshold = int(self.settings_schema.main.threshold.value)
         rows = inputs[0]
         return {"big": rows.filter(pl.col("n") > threshold), "small": rows.filter(pl.col("n") <= threshold).collect()}
-
-
-class Doubler(CustomNodeBase):
-    """Doubles ``n``; one output."""
-
-    node_name: str = "Payload Test Doubler"
-
-    def process(self, *inputs: pl.LazyFrame):
-        return inputs[0].with_columns(pl.col("n") * 2)
-
-
-class Silent(CustomNodeBase):
-    """Returns nothing."""
-
-    node_name: str = "Payload Test Silent"
-
-    def process(self, *inputs: pl.LazyFrame):
-        return None
-
-
-def fuzzy_settings() -> input_schema.NodeFuzzyMatch:
-    return input_schema.NodeFuzzyMatch(
-        flow_id=1,
-        node_id=2,
-        join_input={
-            "join_mapping": [
-                {"left_col": "name", "right_col": "name", "threshold_score": 75, "fuzzy_type": "levenshtein"}
-            ],
-            "left_select": {"renames": [{"old_name": "name", "new_name": "name", "join_key": True}]},
-            "right_select": {"renames": [{"old_name": "name", "new_name": "name", "join_key": True}]},
-            "how": "inner",
-        },
-    )
 
 
 def fuzzy_join(**overrides) -> FuzzyJoinPayload:
@@ -236,7 +196,6 @@ PAYLOADS = {
     OperationKind.polars_code: polars_code,
     OperationKind.sql_query: sql_query,
 }
-BACKEND_KINDS = [(backend, kind) for backend in (EmbeddedWorkerBackend, WorkerBackend) for kind in PAYLOADS]
 
 
 def kind_id(value) -> str:
@@ -320,12 +279,6 @@ def tasks(monkeypatch, tmp_path) -> WorkerTasks:
     return WorkerTasks(monkeypatch, tmp_path)
 
 
-@pytest.fixture(autouse=True)
-def task_routes(monkeypatch):
-    """The protocol flag off for the test, so the worker backend runs the operation over its task routes."""
-    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", False)
-
-
 @pytest.fixture
 def model_file(tmp_path) -> Path:
     """A model file a training over the task routes staged."""
@@ -372,134 +325,7 @@ def stored_secret(user_id) -> str:
         db.commit()
 
 
-# The payloads
-
-
-@pytest.mark.parametrize("kind", list(PAYLOADS), ids=kind_id)
-def test_each_payload_comes_back_from_unpack(kind):
-    payload = PAYLOADS[kind]()
-
-    assert unpack(op_payload(payload), type(payload)) is payload
-
-
-@pytest.mark.parametrize("kind", list(PAYLOADS), ids=kind_id)
-def test_a_payload_is_frozen_keyword_only_and_gets_a_fresh_job_id(kind):
-    payload = PAYLOADS[kind]()
-    fields = {field.name: getattr(payload, field.name) for field in dataclasses.fields(payload)}
-
-    with pytest.raises(dataclasses.FrozenInstanceError):
-        payload.job_id = "another"
-    with pytest.raises(TypeError):
-        type(payload)(*fields.values())
-    assert PAYLOADS[kind]().job_id != payload.job_id
-    assert len(payload.job_id) == 32
-    assert PAYLOADS[kind](job_id="stable").job_id == "stable"
-
-
-@pytest.mark.parametrize(("backend_type", "kind"), BACKEND_KINDS, ids=kind_id)
-def test_an_operation_without_its_payload_key_names_the_key(backend_type, kind, tasks):
-    tasks.replace_all()
-    expected = type(PAYLOADS[kind]()).__name__
-    message = rf"has no 'payload' key; it carries a {expected}"
-
-    with pytest.raises(ValueError, match=message):
-        make(backend_type).run_op(kind, {"left": NAMES, "right": NAMES})
-    assert tasks.built == []
-
-
-@pytest.mark.parametrize(("backend_type", "kind"), BACKEND_KINDS, ids=kind_id)
-def test_an_operation_given_another_payload_names_the_one_it_expects(backend_type, kind, tasks, tmp_path):
-    tasks.replace_all()
-    expected = type(PAYLOADS[kind]()).__name__
-    settings = input_schema.OutputSettings(
-        name="rows.parquet", directory=str(tmp_path), file_type="parquet", table_settings={"file_type": "parquet"}
-    )
-    wrong = FileWritePayload(plan=NUMBERS.lazy(), settings=settings, flow_id=1, node_id=1)
-
-    with pytest.raises(TypeError, match=rf"payload\['payload'\] must be a {expected}, not FileWritePayload"):
-        make(backend_type).run_op(kind, op_payload(wrong))
-    assert tasks.built == []
-
-
 # The embedded worker
-
-
-def test_the_embedded_worker_fuzzy_joins_the_two_plans():
-    join = fuzzy_join()
-    settings_before = join.settings.join_input.model_dump()
-    backend = EmbeddedWorkerBackend()
-
-    ref = backend.run_op(OperationKind.fuzzy_join, op_payload(join)).refs["result"]
-
-    try:
-        assert (ref.state, ref.row_count) == ("materialised", 5)
-        matches = backend.plan_for(ref).collect().sort("name", "name_right")
-        assert matches.select("name", "name_right").rows() == MATCHED_PAIRS
-        assert join.settings.join_input.model_dump() == settings_before
-    finally:
-        backend.release(ref)
-
-
-def test_the_embedded_worker_splits_one_shuffle_into_a_stored_ref_per_split():
-    backend = EmbeddedWorkerBackend()
-
-    refs = backend.run_op(OperationKind.random_split, op_payload(random_split(seed=7))).refs
-
-    try:
-        assert list(refs) == ["train", "test"]
-        assert [(ref.state, ref.row_count) for ref in refs.values()] == [("materialised", 80), ("materialised", 20)]
-        train, test = (backend.plan_for(ref).collect()["n"].to_list() for ref in refs.values())
-        assert (len(train), len(test)) == (80, 20)
-        assert sorted(train + test) == list(range(100))
-        again = backend.run_op(OperationKind.random_split, op_payload(random_split(seed=7))).refs
-        assert backend.plan_for(again["train"]).collect()["n"].to_list() == train, "the seed fixes the shuffle"
-    finally:
-        for ref in refs.values():
-            backend.release(ref)
-
-
-def test_the_embedded_worker_runs_a_class_with_no_node_file_from_its_settings_values():
-    backend = EmbeddedWorkerBackend()
-
-    refs = backend.run_op(OperationKind.custom_node, op_payload(custom_node(node_source=None, class_name=None))).refs
-
-    try:
-        assert list(refs) == ["output-0", "output-1"]
-        big, small = refs.values()
-        assert backend.plan_for(big).collect()["n"].to_list() == list(range(90, 100))
-        assert backend.plan_for(small).collect()["n"].to_list() == list(range(90))
-        assert (big.state, big.row_count) == ("materialised", 10)
-        assert (small.state, small.row_count) == ("materialised", 90)
-    finally:
-        for ref in refs.values():
-            backend.release(ref)
-
-
-@pytest.mark.parametrize(
-    ("node_class", "expected"),
-    [(Doubler, ["result"]), (Silent, [])],
-    ids=["one-frame", "nothing"],
-)
-def test_the_embedded_worker_keys_a_custom_node_result_by_what_process_returned(node_class, expected):
-    backend = EmbeddedWorkerBackend()
-    job = custom_node(node_class, settings_values={}, node_source=None, class_name=None)
-
-    refs = backend.run_op(OperationKind.custom_node, op_payload(job)).refs
-
-    try:
-        assert list(refs) == expected
-        if refs:
-            assert backend.plan_for(refs["result"]).collect()["n"].to_list()[:3] == [0, 2, 4]
-    finally:
-        for ref in refs.values():
-            backend.release(ref)
-
-
-def test_the_embedded_worker_refuses_a_dict_without_a_declared_output():
-    job = custom_node(output_names=["big", "small", "medium"], node_source=None, class_name=None)
-
-    with pytest.raises(ValueError, match="did not return declared output 'medium'"):
-        EmbeddedWorkerBackend().run_op(OperationKind.custom_node, op_payload(job))
 
 
 def test_the_embedded_worker_writes_a_parquet_file_that_is_complete_on_return(tmp_path):
@@ -657,7 +483,7 @@ def test_the_worker_backend_refuses_a_selected_secret_it_cannot_find_before_it_s
     assert tasks.built == []
 
 
-def test_the_worker_backend_trains_under_the_job_id_and_reports_the_model_as_metadata(tasks, task_routes):
+def test_the_worker_backend_trains_under_the_job_id_and_reports_the_model_as_metadata(tasks, protocol_off):
     """The model is staged in the flow's cache directory as a task of its own beside the node's, ``<job_id>_0``."""
     report = {"sha256": "ab" * 32, "size_bytes": 14, "model_type": "linear_regression"}
     tasks.replace("MLTrainFetcher", result=report)
@@ -684,7 +510,7 @@ def test_the_worker_backend_trains_under_the_job_id_and_reports_the_model_as_met
     assert result == OpResult(refs={"model": model}, metadata=report)
 
 
-def test_the_worker_backend_scores_under_the_job_id_into_a_stored_result(tasks, task_routes, model_file):
+def test_the_worker_backend_scores_under_the_job_id_into_a_stored_result(tasks, protocol_off, model_file):
     scored = pl.DataFrame({"x": [1.0, 2.0], "pred": [3.0, 5.0]})
     tasks.replace("MLApplyFetcher", rows=scored)
     apply = ml_apply(job_id="apply-hash", model=staged_model(model_file))
@@ -735,7 +561,7 @@ def test_cancelling_a_node_reaches_the_operation_it_is_waiting_on(
     if kind is OperationKind.custom_node:
         stand_in["result"] = custom_node_outputs(tasks, {"big": NUMBERS, "small": NUMBERS})
     if kind in (OperationKind.ml_train, OperationKind.ml_apply):
-        request.getfixturevalue("task_routes")
+        request.getfixturevalue("protocol_off")
     tasks.replace(fetcher, **stand_in)
     backend = registry.backend(registry.WORKER_BACKEND_ID)
     payload = ml_apply(model=staged_model(model_file)) if kind is OperationKind.ml_apply else PAYLOADS[kind]()
@@ -772,20 +598,6 @@ class RecordingBackend(EmbeddedWorkerBackend):
     def run_op(self, op, payload):
         self.operations.append((op, payload.get(PAYLOAD_KEY)))
         return super().run_op(op, payload)
-
-
-@pytest.fixture(autouse=True)
-def clean_import_aliases():
-    """Undo the SDK import aliases and finder a custom node run from its source in this process installs."""
-    from shared.node_designer.loading import _ForbiddenCoreImportFinder
-
-    modules_before = set(sys.modules)
-    yield
-    sys.meta_path[:] = [finder for finder in sys.meta_path if not isinstance(finder, _ForbiddenCoreImportFinder)]
-    for name in set(sys.modules) - modules_before:
-        root = name.split(".", 1)[0]
-        if root in {"flowfile_core", "flowfile"} and not getattr(sys.modules[name], "__file__", None):
-            del sys.modules[name]
 
 
 @pytest.fixture

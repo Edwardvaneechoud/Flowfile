@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { deferred } from "./app/__fixtures__/promises";
 
 const mocks = vi.hoisted(() => ({
   initialize: vi.fn(),
@@ -35,14 +36,6 @@ vi.mock("./app/services/auth.service", () => ({
     isInDesktopMode: () => true,
   },
 }));
-
-const deferred = <T>() => {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-};
 
 beforeEach(() => {
   vi.resetModules();
