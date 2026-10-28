@@ -1232,14 +1232,7 @@ def _delta_preview_payload(dt: DeltaTable, n_rows: int) -> tuple[list[str], list
     columns = pa_table.column_names
     dtypes = [str(field.type) for field in pa_table.schema]
     row_list = [[make_json_safe(row.get(c)) for c in columns] for row in pa_table.to_pylist()]
-    try:
-        total_rows = sum(
-            v for v in dt.get_add_actions(flatten=True).to_pydict().get("num_records", []) if v is not None
-        )
-    except Exception:
-        total_rows = len(row_list)
-    if total_rows == 0:
-        total_rows = len(row_list)
+    total_rows = dataset.count_rows()
     return columns, dtypes, row_list, total_rows
 
 

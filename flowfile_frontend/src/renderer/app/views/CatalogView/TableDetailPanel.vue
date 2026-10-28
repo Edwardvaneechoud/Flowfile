@@ -119,7 +119,7 @@
     <div class="meta-grid">
       <div class="meta-card">
         <span class="meta-label">Rows</span>
-        <span class="meta-value">{{ formatNumber(table.row_count) }}</span>
+        <span class="meta-value">{{ formatNumber(preview?.total_rows ?? table.row_count) }}</span>
       </div>
       <div class="meta-card">
         <span class="meta-label">Columns</span>

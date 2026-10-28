@@ -8,10 +8,10 @@ from pathlib import Path
 import polars as pl
 from deltalake import DeltaTable
 from deltalake.exceptions import DeltaError
+from pyarrow import dataset as ds
 
 from flowfile_core.catalog.delta_utils import (
     is_delta_table,
-    read_delta_preview,
     table_exists,
 )
 from flowfile_core.catalog.exceptions import TableNotFoundError, TableVersionUnavailableError
@@ -162,7 +162,7 @@ class TablePreviewService:
             target = resolve_for_namespace(table.namespace_id)
             if version is not None:
                 return self._get_delta_version_preview(table.file_path, version, limit, target=target)
-            return self._get_delta_preview(table.file_path, limit, total_rows=table.row_count, target=target)
+            return self._get_delta_preview(table.file_path, limit, target=target)
 
         data_path = Path(table.file_path)
         if not table_exists(data_path):
@@ -172,10 +172,12 @@ class TablePreviewService:
             return self._get_delta_version_preview(str(data_path), version, limit)
 
         if is_delta_table(data_path):
-            pa_table = read_delta_preview(str(data_path), n_rows=limit)
+            dt = DeltaTable(str(data_path))
+            dataset = dt.to_pyarrow_dataset()
+            return format_pyarrow_preview(dataset.head(limit), total_rows=dataset.count_rows())
         else:
-            pa_table = read_top_n(str(data_path), n=limit)
-        return format_pyarrow_preview(pa_table, total_rows=table.row_count)
+            dataset = ds.dataset(str(data_path), format="parquet")
+            return format_pyarrow_preview(dataset.head(limit), total_rows=dataset.count_rows())
 
     def _get_delta_version_preview(
         self, table_path: str, version: int, limit: int, target: CatalogStorageTarget | None = None
@@ -195,34 +197,35 @@ class TablePreviewService:
 
         try:
             delta_table = DeltaTable(table_path, version=version, storage_options=storage_options)
-            pa_table = delta_table.to_pyarrow_dataset().head(limit)
+            dataset = delta_table.to_pyarrow_dataset()
+            pa_table = dataset.head(limit)
+            total_rows = dataset.count_rows()
         except (FileNotFoundError, DeltaError) as exc:
             logger.info("Delta version %s unavailable for %s: %s", version, table_path, exc)
             raise TableVersionUnavailableError(version=version) from exc
-        return format_pyarrow_preview(pa_table)
+        return format_pyarrow_preview(pa_table, total_rows=total_rows)
 
     def _get_delta_preview(
         self,
         table_path: str,
         limit: int,
-        total_rows: int | None = None,
         target: CatalogStorageTarget | None = None,
     ) -> CatalogTablePreview:
         """Read a Delta table preview (latest version) via the worker (or locally).
 
-        ``total_rows`` stays authoritative when known (a page-bounded read never sees the whole table).
+        The snapshot total is authoritative; catalog metadata may be stale.
         """
         storage_payload = target.to_worker_payload() if target else None
         storage_options = (target.storage_options or None) if target else None
         if _should_offload():
             try:
-                preview = trigger_delta_preview(_catalog_table_dir_name(table_path), limit, storage=storage_payload)
-                return preview.model_copy(update={"total_rows": total_rows}) if total_rows is not None else preview
+                return trigger_delta_preview(_catalog_table_dir_name(table_path), limit, storage=storage_payload)
             except (RuntimeError, OSError, ValueError, KeyError):
                 logger.warning("Worker delta preview failed, falling back to local", exc_info=True)
 
-        pa_table = pl.scan_delta(table_path, storage_options=storage_options).head(limit).collect().to_arrow()
-        return format_pyarrow_preview(pa_table, total_rows=total_rows)
+        dt = DeltaTable(table_path, storage_options=storage_options)
+        dataset = dt.to_pyarrow_dataset()
+        return format_pyarrow_preview(dataset.head(limit), total_rows=dataset.count_rows())
 
     def get_table_history(self, table_id: int, limit: int | None = None) -> DeltaTableHistory:
         """Return the version history for a Delta catalog table."""
