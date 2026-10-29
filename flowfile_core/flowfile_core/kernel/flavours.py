@@ -107,7 +107,7 @@ def _describes_configured_image(flavour: ImageFlavour, described_version: str) -
     """Whether the known contents describe the image tag this flavour actually launches.
 
     An operator can repoint a flavour with ``FLOWFILE_KERNEL_IMAGE_*``. Only a
-    tag carrying a *different* dotted-numeric version disproves the baseline —
+    tag carrying a *different* release version (PEP 440, prereleases included) disproves the baseline —
     a ``:local`` or digest tag is unparseable and stays trusted, since that is
     the dev-built image from this same checkout. ``described_version`` is the
     manifest's kernel version, or the app version for the notebook image.
@@ -130,7 +130,7 @@ def _describes_configured_image(flavour: ImageFlavour, described_version: str) -
                 "Kernel image %s is version %s but the known contents describe %s; "
                 "treating that flavour's contents as unknown.",
                 tag,
-                ".".join(str(part) for part in tag_version),
+                tag_version,
                 described_version,
             )
         return False
