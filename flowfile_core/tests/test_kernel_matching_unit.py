@@ -165,6 +165,18 @@ class TestImageBaseline:
         assert evaluate_kernel(["flowfile"], make_kernel(flavour=ImageFlavour.NOTEBOOK)).level == "unknown"
         assert evaluate_kernel(["flowfile"], make_kernel(flavour=ImageFlavour.LITE)).level == "none"
 
+    @pytest.mark.parametrize(
+        ("tag", "level"),
+        [("0.24.0-rc.1", "full"), ("0.24.0", "unknown"), ("0.24.0-rc.2", "unknown")],
+    )
+    def test_prerelease_app_version_is_compared_not_trusted(self, monkeypatch, tag, level):
+        from flowfile_core.kernel import flavours
+
+        monkeypatch.setattr(flavours, "get_version", lambda: "0.24.0-rc.1")
+        monkeypatch.setenv("FLOWFILE_KERNEL_IMAGE_NOTEBOOK", f"edwardvaneechoud/flowfile-kernel-notebook:{tag}")
+
+        assert evaluate_kernel(["flowfile"], make_kernel(flavour=ImageFlavour.NOTEBOOK)).level == level
+
     def test_repointed_flavour_becomes_unknown_without_touching_the_others(self, monkeypatch):
         # An operator can pin a flavour to a different release; the shipped
         # manifest then describes some other image, so that flavour alone must

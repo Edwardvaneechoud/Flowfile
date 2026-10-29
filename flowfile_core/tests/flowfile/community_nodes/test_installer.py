@@ -490,6 +490,20 @@ def test_incompatible_version_refused_without_dist_info(isolated_storage, make_r
     assert models.get_app_version() == _version.__version__
 
 
+@pytest.mark.parametrize(
+    ("minimum", "app_version", "compatible"),
+    [
+        ("0.24.0", "0.24.0-rc.1", False),
+        ("0.23.3", "0.24.0-rc.1", True),
+        ("99.0.0", "0.24.0-rc.1", False),
+        ("0.24.0", "0.24.0", True),
+        ("0.24.0", "local", True),
+    ],
+)
+def test_version_gate_handles_prerelease_app_versions(minimum, app_version, compatible):
+    assert models.is_version_compatible(minimum, app_version) is compatible
+
+
 def test_incompatible_update_not_offered(isolated_storage, make_registry):
     _index, node_id, _name, _dir = make_registry()
     _install(node_id)
