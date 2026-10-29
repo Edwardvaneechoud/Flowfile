@@ -60,32 +60,13 @@
 import { computed } from "vue";
 import type { HandshakeVerdict } from "../../api/computeBackends.api";
 import { absentLabel } from "../../utils/executionLocation";
+import { handshakeStatus } from "./handshakeStatus";
 
 const props = defineProps<{ verdict?: HandshakeVerdict | null; compact?: boolean }>();
 
 const accepted = computed(() => props.verdict?.ok && !!props.verdict.backend);
 const unavailable = computed(() => Object.keys(props.verdict?.absent ?? {}));
-const status = computed(() => {
-  const verdict = props.verdict;
-  if (!verdict) {
-    return { tone: "neutral", icon: "fa-regular fa-circle", label: "Not checked" };
-  }
-  if (!accepted.value) {
-    return {
-      tone: "error",
-      icon: "fa-solid fa-circle-xmark",
-      label: verdict.backend ? "Not accepted by this server" : "Handshake failed",
-    };
-  }
-  if (unavailable.value.length || verdict.differences.length) {
-    return {
-      tone: "warning",
-      icon: "fa-solid fa-triangle-exclamation",
-      label: unavailable.value.length ? "Accepted with limitations" : "Accepted with differences",
-    };
-  }
-  return { tone: "success", icon: "fa-solid fa-circle-check", label: "Matches this server" };
-});
+const status = computed(() => handshakeStatus(props.verdict));
 
 const versions = computed(() => ({
   Flowfile: props.verdict?.backend?.app_version,

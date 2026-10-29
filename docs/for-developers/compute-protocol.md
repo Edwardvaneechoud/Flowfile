@@ -199,6 +199,7 @@ A worker on another host therefore needs core's catalog database (the shared Pos
 - The catalog's own object-storage work stays in core, with core's identity: the freshness probe at the start of a run, enabling a change feed, scanning an SCD2 result. A deployment's core therefore needs access to the buckets of its object-storage catalogs.
 - A GCS connection with a custom endpoint is read on the executor by a native scan too. Core's gcsfs read remains only for the protocol off and for the writers.
 - With the protocol off, a plan carries a `$ffsec$` ciphertext in an `EncryptedCredentialProvider` instead, and Azure and GCS secrets travel in its `storage_options`.
+- A write to a backend whose verdict declares `credential_resolution: ambient` carries its connection's transport options only: `WorkerBackend` sends the cloud write's and the Delta operations' connection with every credential field `None` (`_transport_only`). Placement already keeps every connection but `env_vars` and `managed_identity` off such a backend, and those hold no secret, so this only keeps ciphertext the backend could not decrypt off the wire.
 
 ## Where data lives
 
