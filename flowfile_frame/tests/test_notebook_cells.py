@@ -1,5 +1,6 @@
 """Notebook cells: provenance, the cell compiler, name capture, seeding, ff.canvas_node, display and the clean run."""
 
+import json
 import linecache
 from pathlib import Path
 
@@ -486,6 +487,38 @@ def test_seeding_never_predicts_a_pivot_and_writes_nothing_under_storage(monkeyp
             notebook.exit()
     assert predicted == []
     assert _storage_files() - before == set()
+
+
+def test_a_kernel_session_seeds_a_canvas_read_it_cannot_open_without_reading_it(tmp_path, monkeypatch):
+    """Paths kept as written (a kernel session): a canvas ``read`` of a host path is seeded from the schemas core
+    sent and the file is never opened, so the session opens with a deferred frame of those columns. Before the
+    kernel also tried the read, and its failure was re-raised by the read of the seed, failing every open."""
+    from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+    from flowfile_core.notebook.push import seed_snapshot
+
+    csv = tmp_path / "canvas.csv"
+    pl.DataFrame({"a": [1, 2], "b": ["x", "y"]}).write_csv(csv)
+    graph = ff.create_flow_graph()
+    read_id = ff.read_csv(str(csv), flow_graph=graph).node_id
+    hidden = "/nowhere/on/this/machine/canvas.csv"
+    snapshot = json.loads(json.dumps(seed_snapshot(graph)).replace(str(csv), hidden))
+    expected = [{"name": "a", "data_type": "Int64"}, {"name": "b", "data_type": "String"}]
+    assert snapshot["schemas"][str(read_id)] == {"output-0": expected}
+
+    def never(*_args, **_kwargs):
+        raise AssertionError("the kernel opened the host file")
+
+    monkeypatch.setattr(FlowDataEngine, "create_from_path", staticmethod(never))
+    try:
+        with notebook.paths_as_written():
+            bound = seed_session(snapshot["flowfile_data"], [], {}, snapshot["schemas"], user_id=1)
+        frame = next(value for value in bound.values() if isinstance(value, ff.FlowFrame))
+        assert frame.node_id == read_id and frame._deferred and frame.columns == ["a", "b"]
+        node = notebook.current().graph.get_node(read_id)
+        assert node.deferred_until_run and node.results.errors is None
+        assert node.setting_input.received_file.path == hidden
+    finally:
+        notebook.exit()
 
 
 def test_seeding_a_flow_whose_connection_is_unknown_seeds_it_and_a_cell_placing_it_is_refused():
