@@ -264,6 +264,11 @@ def _explore_data(settings: dict) -> None:
     settings.pop("graphic_walker_input", None)
 
 
+def _cached_fields(settings: dict) -> None:
+    """``fields`` is the schema a run or "Fetch sample" cached on the source; a cell never writes it."""
+    settings.pop("fields", None)
+
+
 def script_cells(cells: list[str]) -> list[str]:
     """Script cells as they compare: blank lines at each cell's start and end dropped, then blank cells."""
     trimmed = []
@@ -320,6 +325,9 @@ RULES: dict[str, tuple[Callable[[dict], None], ...]] = {
     "record_id": (_record_id,),
     "polars_code": (_polars_code,),
     "catalog_writer": (_catalog_writer,),
+    "rest_api_reader": (_cached_fields,),
+    "database_reader": (_cached_fields,),
+    "kafka_source": (_cached_fields,),
 }
 
 
