@@ -1331,14 +1331,21 @@ class WorkerBackend(_WorkerReferences):
         return self._delta_task(*_delta_job(op, payload, ambient=self._resolves_ambient()))
 
     def _resolves_ambient(self) -> bool:
-        """Whether this backend's cached verdict reports it reaching storage with its own identity (``ambient``).
+        """Whether this backend reports reaching storage with its own identity (``credential_resolution: ambient``).
 
-        With the protocol flag on a run checks every backend it names before a node starts (``_place_run``), so a
-        write finds the verdict cached; with it off the gate refuses an ``ambient`` backend before anything is sent.
+        The report is its cached verdict's, else its ``capabilities()`` asked now, so a write whose verdict was
+        dropped (a connection error re-arms the handshake mid-run) or never made builds its body from what the
+        backend declares, never from no answer. With the protocol flag off the gate then refuses an ``ambient``
+        backend before anything is sent.
+
+        Raises:
+            ComputeError: The backend had no cached report and its capabilities could not be read.
         """
         verdict = cached_verdict(self)
-        reported = None if verdict is None else verdict.backend
-        return reported is not None and reported.credential_resolution == "ambient"
+        reported = verdict.backend if verdict is not None else None
+        if reported is None:
+            reported = self.capabilities()
+        return reported.credential_resolution == "ambient"
 
     def _viz_session(self, payload: OpPayload) -> OpResult:
         """Answer one Graphic Walker request in the worker's visualisation session over the payload's plan."""

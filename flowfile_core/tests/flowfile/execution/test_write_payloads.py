@@ -463,6 +463,35 @@ def test_a_cloud_write_to_an_ambient_backend_carries_its_connection_without_cred
 
 
 @pytest.mark.usefixtures("protocol_on")
+def test_a_cloud_write_to_an_ambient_backend_whose_verdict_was_dropped_carries_no_credentials(
+    backend_reporting, monkeypatch
+):
+    """A connection error re-arms the handshake mid-run; the write checks the backend again before building its body."""
+    connection = cloud_write().connection.model_copy(
+        update={field: encrypt_secret(f"{field}-value", USER_ID) for field in CREDENTIAL_FIELDS}
+    )
+    write = dataclasses.replace(cloud_write(), connection=connection)
+    ambient = backend_reporting("worker:ambient", "ambient")
+    assert handshake.verdict_for(ambient).ok
+    handshake.reset_handshake(ambient.url)
+    assert handshake.cached_verdict(ambient) is None
+    recorder = V1Recorder()
+    monkeypatch.setattr(
+        WorkerBackend,
+        "_v1",
+        lambda backend, method, path, **kwargs: recorder.request(method, path, backend=backend.id, **kwargs),
+    )
+
+    ambient.run_op(OperationKind.cloud_write, op_payload(write))
+
+    (request,) = recorder.sent
+    assert "$ffsec$" not in json.dumps(request["json"])
+    assert {field: request["json"]["connection"][field] for field in CREDENTIAL_FIELDS} == dict.fromkeys(
+        CREDENTIAL_FIELDS
+    )
+
+
+@pytest.mark.usefixtures("protocol_on")
 def test_the_session_worker_writes_a_file_over_its_v1_route(tmp_path):
     write = file_write(tmp_path)
     backend = WorkerBackend(url=WORKER_URL)

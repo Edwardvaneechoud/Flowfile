@@ -206,9 +206,9 @@ def test_worker_funcs_import_is_lean(tmp_path):
     assert leaked == [], f"heavy modules leaked into worker child import: {leaked}"
 
 
-# A console-script launch leaves __main__.__spec__ as None, which makes spawn pass
-# init_main_from_path and re-execute the launcher (and the whole FastAPI app) in every
-# child. The first child's start stamps a ".__main__" spec to take spawn's free path.
+# A console-script launch leaves __main__.__spec__ as None, and `python -m <module>` gives it the module's
+# name; either makes spawn re-execute the launcher (and the whole FastAPI app) in every child. The first
+# child's start stamps a ".__main__" spec to take spawn's free path.
 FORBIDDEN_IN_SPAWNED_CHILD = (
     "fastapi",
     "uvicorn",
@@ -242,7 +242,7 @@ def report(out_path):
         json.dump(sorted(sys.modules), fh)
 '''
 
-# Run as `python launcher.py`, so __main__.__spec__ is None like a console script until the child's start.
+# Run as `python launcher.py` (no spec, like a console script) and as `python -m launcher` (spec `launcher`).
 _LAUNCHER = '''
 import os
 import sys
@@ -261,7 +261,8 @@ if __name__ == "__main__":
 
 
 @pytest.mark.worker
-def test_spawned_child_does_not_reexecute_launcher(tmp_path):
+@pytest.mark.parametrize("launch", ["file", "module"], ids=["python-file", "python-m"])
+def test_spawned_child_does_not_reexecute_launcher(tmp_path, launch):
     out_path = tmp_path / "child_modules.json"
     (tmp_path / "probe_target.py").write_text(_PROBE_TARGET, encoding="utf-8")
     launcher = tmp_path / "launcher.py"
@@ -277,8 +278,9 @@ def test_spawned_child_does_not_reexecute_launcher(tmp_path):
         [str(tmp_path), str(REPO_ROOT / "flowfile_worker"), str(REPO_ROOT)]
     )
 
+    command = [sys.executable, str(launcher)] if launch == "file" else [sys.executable, "-m", "launcher"]
     result = subprocess.run(
-        [sys.executable, str(launcher)],
+        command,
         capture_output=True,
         text=True,
         env=env,

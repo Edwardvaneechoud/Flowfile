@@ -189,6 +189,8 @@ def select(node_data: NodeData):
 
     A run works on a copy and never flags them itself. A column the settings do not list is kept only
     with ``keep_missing``, so it is listed with that ``keep``, as the join updater does with ``auto_keep_left``.
+    Each one is positioned after every listed column, in input order, where the run puts it, with its input
+    position and type: a missing position sorts as 0 in the drawer and the run, ahead of the listed columns.
     """
     if node_data.main_input:
         setting_input: input_schema.NodeSelect = node_data.setting_input
@@ -196,11 +198,21 @@ def select(node_data: NodeData):
         for select_input in setting_input.select_input:
             select_input.is_available = select_input.old_name in columns
         listed = {select_input.old_name for select_input in setting_input.select_input}
-        for column in node_data.main_input.columns:
+        data_types = {field.name: field.data_type for field in node_data.main_input.table_schema}
+        position = max((s.position for s in setting_input.select_input if s.position is not None), default=0) + 1
+        for index, column in enumerate(node_data.main_input.columns):
             if column not in listed:
                 setting_input.select_input.append(
-                    transform_schema.SelectInput(old_name=column, new_name=column, keep=setting_input.keep_missing)
+                    transform_schema.SelectInput(
+                        old_name=column,
+                        new_name=column,
+                        keep=setting_input.keep_missing,
+                        position=position,
+                        original_position=index,
+                        data_type=data_types.get(column),
+                    )
                 )
+                position += 1
     return node_data
 
 
