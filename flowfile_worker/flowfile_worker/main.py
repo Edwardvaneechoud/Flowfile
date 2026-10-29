@@ -129,6 +129,9 @@ def run(host: str = None, port: int = None):
     if port is None:
         port = SERVICE_PORT
 
+    from connectorx import __version__ as connectorx_version
+
+    logger.info(f"ConnectorX version: {connectorx_version}")
     logger.info(f"Starting worker service on {host}:{port}")
     logger.info(f"Core service configured at {FLOWFILE_CORE_URI}")
 

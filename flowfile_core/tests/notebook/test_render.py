@@ -104,6 +104,34 @@ def test_an_unedited_polars_code_function_pushes_back_unchanged(code):
     assert set(grade(graph, result).values()) == {"EXACT"}
 
 
+@pytest.mark.parametrize("data_type", [*transform_schema.UNPIVOT_DATA_TYPES, None])
+def test_a_data_type_unpivot_rebuilds_exactly(data_type, runner_kind):
+    source = ff.from_dict({"g": ["a", "b"], "n": [1, 2], "x": [1.5, 2.5]})
+    graph = source.flow_graph
+    graph.add_unpivot(
+        input_schema.NodeUnpivot(
+            flow_id=graph.flow_id,
+            node_id=900,
+            depending_on_id=source.node_id,
+            unpivot_input=transform_schema.UnpivotInput(
+                index_columns=["g"], data_type_selector=data_type, data_type_selector_mode="data_type"
+            ),
+        )
+    )
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(source.node_id, 900))
+    rendering = render(graph)
+    provenance = {c.cell_id: [(graph.get_node(n).node_type, n) for n in c.node_ids] for c in rendering.cells}
+    try:
+        cells = [(c.cell_id, c.code) for c in rendering.cells]
+        executor = RUNNERS[runner_kind].executor()
+        result = clean_run(cells, 900, provenance, user_id=NOTEBOOK_OWNER_ID, executor=executor)
+    finally:
+        if notebook.current() is not None:
+            notebook.exit()
+    assert result["ok"], result.get("error")
+    assert set(grade(graph, result).values()) == {"EXACT"}
+
+
 def test_parameters_cell_runs_against_the_frame_api():
     params = next(cell for cell in render(_pipeline()).cells if cell.kind == "parameters")
     flow = FlowGraph()

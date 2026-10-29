@@ -146,16 +146,42 @@ def test_importing_the_worker_sets_no_start_method_until_its_first_child_starts(
     assert seen["after"] == ["spawn", "flowfile_worker.__main__", 0]
 
 
-@pytest.mark.worker
-def test_worker_funcs_import_is_lean(tmp_path):
+def _lean_import_env(tmp_path) -> dict[str, str]:
     env = os.environ.copy()
     env["TEST_MODE"] = "1"
     env["FLOWFILE_SKIP_STARTUP_MIGRATION"] = "1"
     env["FLOWFILE_STORAGE_DIR"] = str(tmp_path / "storage")
     env["FLOWFILE_USER_DATA_DIR"] = str(tmp_path / "user_data")
     env["PYTHONPATH"] = os.pathsep.join([str(REPO_ROOT / "flowfile_worker"), str(REPO_ROOT)])
-    # Mimic a spawn-context child (non-MainProcess): configs.py imports connectorx
-    # only in the parent for version logging, so the child path is what we assert on.
+    return env
+
+
+@pytest.mark.worker
+def test_configs_import_in_the_main_process_loads_no_connectorx(tmp_path):
+    """Core imports the embedded worker's configs in its own main process; only the server's run() reads connectorx."""
+    code = textwrap.dedent(
+        """
+        import json, sys
+        import flowfile_worker.configs  # noqa: F401
+        print(json.dumps("connectorx" in sys.modules))
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        env=_lean_import_env(tmp_path),
+        cwd=str(tmp_path),
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout.strip().splitlines()[-1]) is False
+
+
+@pytest.mark.worker
+def test_worker_funcs_import_is_lean(tmp_path):
+    env = _lean_import_env(tmp_path)
+    # Mimic a spawn-context child (non-MainProcess), the path every task import takes.
     code = textwrap.dedent(
         """
         import json, multiprocessing, sys

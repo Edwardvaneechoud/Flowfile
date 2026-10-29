@@ -3002,6 +3002,10 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
         self._add_code(")")
         self._add_code("")
 
+    def _unpivot_selector(self, data_type: str) -> str:
+        """The frame's selector of the same name (``ff.float_()`` and ``ff.all_()`` carry an underscore)."""
+        return f"{self.flowfile_alias}.{transform_schema.unpivot_selector_name(data_type)}()"
+
     def _handle_pivot_no_index(self, settings: input_schema.NodePivot, var_name: str, input_df: str, agg_func: str):
         pivot_input = settings.pivot_input
         self._add_code(f"{var_name} = ({input_df}")
