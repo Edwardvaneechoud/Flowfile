@@ -16,6 +16,7 @@ import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
+import polars as pl
 import pytest
 
 import flowfile_core
@@ -141,11 +142,14 @@ def counting() -> list[CountingBackend]:
 
 @pytest.fixture
 def in_process_run(monkeypatch):
-    """A runner called in this process installs no telemetry, and the default override it sets is undone after."""
+    """A runner called in this process installs no telemetry, and the default override it sets and the pool size its
+    embedded worker takes are undone after."""
     from flowfile_core import telemetry
     from flowfile_core.flowfile.execution import registry
+    from flowfile_worker import pool
 
     monkeypatch.setattr(telemetry, "install_headless", lambda: None)
+    monkeypatch.setattr(pool.task_pool, "_size", pool.task_pool._size)
     previous = registry.default_override()
     yield
     registry.set_default_override(previous)
@@ -200,6 +204,26 @@ def _record_embedded_submits(monkeypatch) -> list[tuple[str, int | str]]:
 
     monkeypatch.setattr(EmbeddedWorkerBackend, "submit", submit)
     return submitted
+
+
+def _record_job_pids(monkeypatch, pid_file: Path) -> None:
+    """Every plan with a column ``a`` an ``EmbeddedWorkerBackend`` gets from here on, but the handshake's, calls a Python
+    function on it that appends the pid of the process running the plan to ``pid_file``."""
+    path = str(pid_file)
+
+    def record_pid(series):
+        with open(path, "a") as f:
+            f.write(f"{os.getpid()}\n")
+        return series
+
+    real_submit = EmbeddedWorkerBackend.submit
+
+    def submit(self, plan, inputs, hints, result_id, **kwargs):
+        if not result_id.startswith("handshake-") and "a" in plan.collect_schema():
+            plan = plan.with_columns(pl.col("a").map_batches(record_pid, return_dtype=pl.Int64))
+        return real_submit(self, plan, inputs, hints, result_id, **kwargs)
+
+    monkeypatch.setattr(EmbeddedWorkerBackend, "submit", submit)
 
 
 def _record_runs(monkeypatch) -> list:
@@ -325,7 +349,37 @@ def test_a_headless_run_with_no_backend_named_runs_a_saved_remote_flow_in_its_ow
     assert not registry.serving()
     assert isinstance(registry.backend(registry.LOCAL_BACKEND_ID), EmbeddedWorkerBackend)
     assert sorted(submitted) == [(registry.LOCAL_BACKEND_ID, 1), (registry.LOCAL_BACKEND_ID, 2)]
-    assert spawner.in_process
+    assert not spawner.in_process
+
+
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+@pytest.mark.parametrize("runner", [_frozen_runner, _dev_runner], ids=["frozen-verb", "dev-cli"])
+def test_a_headless_run_runs_each_job_in_a_child_and_leaves_none_behind(
+    tmp_path, monkeypatch, in_process_run, runner, flag
+):
+    from flowfile_core.configs import settings
+    from flowfile_core.flowfile.execution import registry
+    from flowfile_worker import mp_context, spawner
+
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    monkeypatch.setattr(spawner, "in_process", False)
+    monkeypatch.delenv("FLOWFILE_COMPUTE_BACKEND", raising=False)
+    flow_path = _save_group_by_flow(tmp_path / "flow.yaml")
+    pid_file = tmp_path / "pids"
+    _record_job_pids(monkeypatch, pid_file)
+    children_before = set(mp_context.active_children())
+    registry.reset()
+    try:
+        assert runner(str(flow_path)) == 0
+    finally:
+        registry.reset()
+
+    ran_in = {int(pid) for pid in pid_file.read_text().split()}
+    assert ran_in
+    assert os.getpid() not in ran_in
+    assert set(mp_context.active_children()) <= children_before
+    assert not spawner.in_process
+    assert not registry.headless()
 
 
 @pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])

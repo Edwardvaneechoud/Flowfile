@@ -22,13 +22,21 @@ def run_flow(
         run_id: Optional pre-created run ID to report results back to
         backend: The compute backend (``local``, ``worker`` or ``worker:<name>``). Without it, a backend id saved
             as the flow's ``execution_location`` is used, else ``FLOWFILE_COMPUTE_BACKEND`` when it is set, else
-            the flow runs in this process. The flow is closed when the run ends, so no result it minted stays held
-            on the backend.
+            the worker embedded in this process, which runs each job in a child (``registry.headless_run``). The
+            flow is closed when the run ends, so no result it minted stays held on the backend.
 
     Returns:
         Exit code (0 for success, 1 for failure)
     """
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    from flowfile_core.flowfile.execution import registry
+
+    with registry.headless_run():
+        return _run_flow(flow_path, param_overrides, run_id, backend)
+
+
+def _run_flow(flow_path: str, param_overrides: list[str] | None, run_id: int | None, backend: str | None) -> int:
+    """``run_flow``'s run, inside ``registry.headless_run``."""
     from flowfile_core.flowfile.execution import registry
 
     backend_id = backend or registry.environment_backend_id() or registry.LOCAL_BACKEND_ID
@@ -82,7 +90,7 @@ def run_flow(
         if override_dict:
             print(f"Parameter overrides: {override_dict}")
 
-    # Run in this process unless --backend, the flow's saved backend id or FLOWFILE_COMPUTE_BACKEND names a backend
+    # Run on the embedded worker unless --backend, the flow's saved backend id or FLOWFILE_COMPUTE_BACKEND names one
     if backend is None and flow.execution_location not in ("local", "remote", "auto"):
         backend_id = flow.execution_location
         registry.set_default_override(backend_id)
