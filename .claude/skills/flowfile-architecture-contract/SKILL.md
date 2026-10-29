@@ -435,13 +435,16 @@ Invariants:
   lookup to `POST /notebook/session/lookup`: a closed `lookup.KINDS`,
   answered as the kernel's owner, metadata only (no plan, credential,
   password or ciphertext).
-- **Core runs what the kernel cannot.** A deferred or gated node without a
-  canvas twin, a secret-bearing node (cloud readers, cloud-backed catalog
-  tables, custom nodes with a `SecretSelector`) and every file a cell names
-  run in core: `notebook/held_run.py`, `POST /notebook/session/node_run`,
-  under `KernelHold` with `commit_sources=False`, for the closed
-  `HELD_NODE_TYPES` plus installed non-output custom nodes; writers and
-  other types say "Push".
+- **Core runs what the kernel cannot.** A gate, a deferred node outside
+  `COMPUTED_HERE_TYPES` (pivot and Polars Code compute in the kernel), every
+  catalog reader (local tables too), a secret-bearing node (cloud readers,
+  custom nodes with a `SecretSelector`) and every local file a cell names (a
+  URL is read in the kernel) get their rows from core: from the canvas twin
+  through `POST /notebook/session/node_result` (`kernel_runner._run_lineage`),
+  else from `notebook/held_run.py` through `POST /notebook/session/node_run`
+  (under `KernelHold`, `commit_sources=False`) for the closed
+  `HELD_NODE_TYPES` plus installed non-output custom nodes; writers and other
+  types say "Push".
 - **The kernel mounts exactly `/shared` and `/catalog_tables`.** A path in a
   cell is a path on the user's machine that only core opens
   (`native._kernel_hidden_path`); a folder test is the `is_directory`
@@ -456,8 +459,10 @@ host folder into it.
 
 Proof: `tests/notebook/test_kernel_database_census.py` (no kernel op opens the
 database; every lookup kind answers without `$ffsec$` or a decrypt),
-`tests/kernel/test_notebook_kernel_env.py` (exactly the two binds),
-`tests/notebook/test_kernel_canvas_rows.py`, and the real-kernel
+`tests/notebook/test_kernel_session.py::test_a_notebook_kernel_refuses_to_open_a_catalog_database`
+(the only non-Docker test that fires `_refuse_database`; the census sim never
+sets `FLOWFILE_KERNEL_ID`), `tests/kernel/test_notebook_kernel_env.py`
+(exactly the two binds), `tests/notebook/test_kernel_canvas_rows.py`, and the real-kernel
 `tests/notebook/test_kernel_notebook_docker.py`, run by
 `test-notebook-kernel.yml` (`FLOWFILE_REQUIRE_NOTEBOOK_KERNEL` makes a skip a
 failure).
@@ -468,8 +473,10 @@ just ran keeps its seeded columns until it runs or the session is reset;
 `FlowFrame.collect()` on a deferred frame in a script still commits sources.
 Each has its own plan, as do a Python Script on the notebook's own kernel
 (`KernelHold` refuses it), a push that keeps the session's variables,
-Postgres catalogs and docker-mode sessions, and session artifacts visible to
-the canvas.
+session artifacts visible to the canvas, Postgres catalogs (the gate,
+`not sharing_enabled()`, already admits an electron app on one, untested),
+and docker- and package-mode sessions: widen `gate.kernel_sessions_allowed`
+only after the lookups check per-user access and `node_run` is admin-gated.
 
 ---
 
