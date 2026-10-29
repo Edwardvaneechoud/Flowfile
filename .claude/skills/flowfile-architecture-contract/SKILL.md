@@ -48,11 +48,21 @@ flowfile_frame — Python API; imports flowfile_core in-process to build FlowGra
 WASM frontend (Pyodide) — runs fully in-browser, no core/worker/kernel at all.
 ```
 
-One SQLite catalog DB (`flowfile_catalog.db`) is the metadata source of truth,
-resolved via `shared/storage_config.get_database_url()`. **Correction to root
-CLAUDE.md:** the worker does **not** open this DB — verified, no
-engine/session in `flowfile_worker/` (only `shared.sql_utils` for *user*
-database connection URIs). Core has the full ORM (`database/models.py`);
+One catalog DB (SQLite `flowfile_catalog.db` by default, PostgreSQL when
+`FLOWFILE_DATABASE_URL` holds a server URL) is the metadata source of truth,
+resolved via `shared/storage_config.get_database_url()`. **The worker reads
+it too:** with `FLOWFILE_COMPUTE_PROTOCOL` on, a plan's cloud scan or sink
+carries a `CredentialRefProvider` (connection id + user id,
+`shared/cloud_credential_provider.py`), and the process that runs the plan
+reads that connection's row and its secrets' ciphertext from the catalog
+(`shared/database.py::cloud_connection_record`, by id, no access check) and
+decrypts them with its own master key (`resolve_credential_ref`; worker side
+`credential_ref_kwargs` in `flowfile_worker/service.py` / `funcs.py`). So a
+worker must use core's catalog DB and master key: a SQLite catalog serves
+only a worker on core's host, a worker on another host needs the shared
+PostgreSQL catalog (`docs/users/deployment/remote-worker.md`). The worker has
+no ORM or session of its own — that one raw read, plus `shared.sql_utils` for
+*user* database connection URIs. Core has the full ORM (`database/models.py`);
 scheduler and the CLI run-completion path use a lightweight declarative
 mirror in `shared/models.py` (§5) — a hand-maintained copy, not core's own
 tables and not SQLAlchemy reflection.
@@ -71,20 +81,29 @@ child process, never the API that's holding open connections for every other
 user.
 
 **Enforcement status — read this before assuming a lint catches violations:**
-it is a **convention, not a mechanically enforced rule**. No lint or test
-forbids `.collect()` in core. Guardrails that do exist: bounded/preview
-collects are corralled inside `FlowDataEngine` itself (`collect(n)` →
-`head(n).collect(engine="streaming")`, `collect_schema()`, `pl.len()` for
-counts); a load-bearing comment in `flow_node.py`'s `_do_execute_remote` warns
-to use `is not None`, never truthiness, on a `FlowDataEngine` because
-`__len__` collects; `NodeTemplate.laziness` metadata plus
+it is **partly mechanical**. `FlowNode._do_execute` submits every node's plan
+through `backend.submit` (§3), and
+`tests/flowfile/execution/test_serving_app_ratchet.py` statically holds at
+zero every `.collect(` over a `plan_for(...)` result in `flowfile_core` and
+`flowfile/web` (the serving app reads a held result's rows only through the
+backend's bounded `sample`). Bounded reads go through
+`flow_data_engine/bounded.py` (`count_rows`, `head_rows`, `single_row`,
+`unique_values`): each submits the plan deferred to the backend it is given and
+reads back only the count or the rows asked for, never computing in core on
+failure. No lint forbids a `.collect()` elsewhere in core, and
+`FlowDataEngine` still has `collect(n)` / `to_arrow()` / `__len__`: a
+load-bearing comment in `FlowNode.get_resulting_data` warns to use
+`is not None`, never truthiness, on a `FlowDataEngine` because `__len__`
+collects; `NodeTemplate.laziness` metadata plus
 `FlowNode.check_upstream_laziness` / `FlowGraph.check_flow_laziness`
 (`GET /editor/laziness_check`) report eager nodes upstream of a catalog
 *virtual table* — but that only gates one optimization path, not a general
-rule. Accepted, deliberate exceptions where core **does** collect a full
-frame: writing a Delta table for the catalog locally, the explore-data/Graphic
-Walker preview path, seeding a brand-new manual-input `datasource` node, and
-`FlowDataEngine.to_arrow()/to_pylist()/to_dict()` for previews.
+rule. The one accepted exception where core holds a full frame: seeding a
+brand-new manual-input/`datasource` node (`builders/io.py::add_datasource`'s
+`input_data.collect()`, for a manual input the rows the user typed). Catalog
+Delta writes (`delta_write`/`delta_merge`/`delta_scd2`) and the Graphic Walker
+explorer (`viz_session`) are operations on the backend; every other read of
+rows is a bounded read or a sample through a backend.
 
 **Violation symptom:** a `.collect()` on a real (non-preview,
 non-accepted-exception) LazyFrame inside `flowfile_core` moves a potentially
@@ -96,16 +115,23 @@ hangs or OOM-kills the API server itself instead of one job's subprocess.
 
 ## 3. The worker offload seam and wire protocol
 
-Config (`configs/settings.py`): `OFFLOAD_TO_WORKER` is a live-mutable
-`MutableBool` read from `FLOWFILE_OFFLOAD_TO_WORKER`, default on. **Gotcha:**
-the check is `os.environ.get("FLOWFILE_OFFLOAD_TO_WORKER", "1") == "1"` —
-only the exact string `"1"` is truthy; `"true"`/`"yes"`/`"on"` all evaluate
-**false**, silently disabling offload, unlike the AI feature flags which
-accept the full `true/1/yes/on` set — don't assume symmetry. `WORKER_URL`
+Config: the default backend is `execution/registry.py::default_backend_id` —
+the override a headless run sets (`set_default_override`), else
+`FLOWFILE_COMPUTE_BACKEND` when non-empty, else the legacy
+`OFFLOAD_TO_WORKER` (`configs/settings.py`, a live-mutable `MutableBool` read
+from `FLOWFILE_OFFLOAD_TO_WORKER`, default on): `worker` while on, `local`
+(the worker embedded in this process) while off. A serving core
+(`mark_serving`) turns `local` into `worker`, so there the flag has no
+effect. Outside `configs/settings.py` the registry is the only module that
+reads it (`test_inline_location_branches.py` counts readers). **Gotcha:** the check is
+`os.environ.get("FLOWFILE_OFFLOAD_TO_WORKER", "1") == "1"` — only the exact
+string `"1"` is truthy; `"true"`/`"yes"`/`"on"` all evaluate **false**, making
+a non-serving process's default backend `local`, unlike the AI feature flags
+which accept the full `true/1/yes/on` set — don't assume symmetry. `WORKER_URL`
 resolves from `FLOWFILE_WORKER_URL` if set, else `WORKER_HOST` env, else
 `127.0.0.1` (Windows) / `0.0.0.0` (else), port `FLOWFILE_WORKER_PORT`
-(default 63579); appends `/worker` when `FLOWFILE_SINGLE_FILE_MODE` co-hosts
-the worker on the core port.
+(default 63579); in single-file mode `flowfile/web/__init__.py::start_server`
+sets it to `/worker` on the core port, where it mounts the worker's routes.
 
 Wire protocol (`flow_data_engine/subprocess_operations/subprocess_operations.py`):
 serialization is **`pl.LazyFrame.serialize()` raw bytes — the query plan, not
@@ -118,25 +144,43 @@ stream**, falling back to REST + polling on any connect/send error. `GET
 /status/{file_ref}` returns job status; a polars-op result is a **base64
 serialized LazyFrame** — the worker hands back a lazy *scan over its own
 cached parquet*, still not materialized data, so core stays clean reading the
-result back too. `results_exists(hash)` (`GET /status/{hash}`) returns
-**False on connection error** (worker down), not an exception — a known weak
-point, see §11.
+result back too. `results_exists(hash)` (`GET /status/{hash}`, protocol off
+only) raises `ComputeUnavailable` when the worker cannot be reached, never a
+cache miss; with the protocol on the cache check is `FlowNode.held_result` +
+`backend.exists` (§6).
 
-Where core calls the seam: `FlowNode._do_execute_remote` builds the lazy
-result, ships it via `ExternalDfFetcher(lf=…, file_ref=self.hash)`, and reads
-back a lazy scan plus a row count from a second fetcher call.
-`_do_execute_local_with_sampling` computes narrow transforms lazily in core
-and only ships a 100-row `ExternalSampler` job to the worker for the preview.
-Source nodes doing network I/O (database, Kafka, Google Analytics, REST API)
-never fetch in core — they use an `External*Fetcher`/`External*Writer`
-(`add_google_analytics_reader` is the canonical template): the worker does
-all fetching. Sinks (`output`, `api_response`, `flow_output`, `run_flow`) stay
-in-core even in remote mode; the output node's own function routes the actual
-write through `ExternalOutputWriter` when not local. Every fetcher-based node
-also keeps an in-core `execution_location == "local"` branch (e.g. the
-database reader builds a local `SqlSource`) for CLI `--run-flow` / package
-mode where no worker process exists — that local branch is not a violation of
-"worker does all fetching," it only fires when there is no worker.
+Where core calls the seam: `FlowNode._do_execute` builds the node's plan
+(`get_resulting_data`) and calls `backend.submit(plan, inputs, hints,
+result_id=self.hash)` on the context's backend, with the hints from
+`flow_node/executor.py::hints_for` (§6); `_take_result` keeps the returned
+`ResultRef` (`results.result_ref`), a `FlowDataEngine` over
+`backend.plan_for(ref)`, and the backend's inline sample (at most
+`preview_rows`) as the preview, else outside Performance mode a sample read
+when first opened. No node is computed in core; `ExternalDfFetcher` /
+`ExternalSampler` remain only for `FLOWFILE_COMPUTE_PROTOCOL=0`. Source nodes
+doing network I/O never fetch in core: each runs its declared operation
+(`database_read`, `kafka_read`, `google_analytics_read`, `rest_api_read`)
+through `FlowNode.run_op` on the context's backend (`builders/connectors.py`),
+the Google Analytics reader pinned to `registry.backend("worker")` since core
+has no reader of its own. Writes are operations too: the output node's
+`file_write` (`builders/io.py::add_output`), the database writer's
+`database_write`, the cloud writer's `cloud_write` (or `delta_write` /
+`delta_merge`), the catalog writer's `delta_*`. Sinks (`IN_CORE_NODE_TYPES` in
+`executor.py`: `output`, `api_response`, `flow_output`, `run_flow`) are still
+submitted, but their hints are never `wide`, ask no preview and materialise
+only for a boundary input, so no backend computes or samples their result
+(the input a sink wrote, a `run_flow` node's child-flow output) during the
+run. No inline `execution_location == "local"` branch remains in the flow
+graph, its builders, the flow node or the data engine
+(`test_inline_location_branches.py` holds that at zero; `api_runner.py`'s
+`_materialize` still collects in process for a flow set to `local`): headless
+runs (`flowfile run flow`, `--run-flow`, scheduled runs) and Flowfile in
+Python compute on the
+worker embedded in their own process (`EmbeddedWorkerBackend`, id `local`),
+which runs the same operation. Since `a0c45bd6` a headless run
+(`registry.headless_run`) runs each job in a child process of the runner (one
+kept warm, `HEADLESS_POOL_SIZE`; time limit `FLOWFILE_WORKER_TASK_TIMEOUT`);
+only Flowfile in Python runs jobs inline (`spawner.in_process`).
 
 ---
 
@@ -231,27 +275,35 @@ stale data. **Symptom of getting this wrong:** the UI's "needs run" badge and
 the actual run/skip behavior disagree — one lags the other by exactly one
 sync call.
 
-`NodeExecutor._decide_execution` is the single source of truth for **both**
-whether to run and how (`executor.py`). Order matters — evaluated top to
-bottom, first match wins:
+`NodeExecutor._decide_execution` is the single source of truth for whether
+to run (`executor.py`); how it runs is the `hints_for` paragraph below. Order
+matters — evaluated top to bottom, first match wins:
 
 | # | Condition | Result | Reason tag |
 |---|---|---|---|
 | 1 | `node_template.node_group == "output"` | RUN | `OUTPUT_NODE` — sinks always run |
-| 2 | `node_type == "run_flow"` | RUN | subflow file can change with no parent-settings change, never "up to date" |
-| 3 | `force_refresh` (reset_cache) | RUN | `FORCED_REFRESH` |
-| 4 | `cache_results=True`, `results_exists(hash)` | **SKIP** | cache hit — checked *before* performance mode so a cached result survives even when upstream had no new data |
-| 4b| `cache_results=True`, not `results_exists` | RUN | `CACHE_MISSING` |
-| 5 | `performance_mode` | RUN | `PERFORMANCE_MODE` |
-| 6 | `not has_run_with_current_setup` | RUN | `NEVER_RAN` |
-| 7 | read node, source file changed on disk | RUN | `SOURCE_FILE_CHANGED` |
-| 8 | else | **SKIP** | results already in memory from a previous run |
+| 2 | `node_type == "run_flow"` | RUN | `OUTPUT_NODE` — subflow file can change with no parent-settings change, never "up to date" |
+| 3 | `gate` with a formula condition (`_gate_routes_on_formula`) | RUN | `OUTPUT_NODE` — the formula's data can change with no hash change |
+| 4 | `force_refresh` (reset_cache) | RUN | `FORCED_REFRESH` |
+| 5 | read node, source file changed on disk (`_source_file_changed`) | RUN | `SOURCE_FILE_CHANGED` — outranks every cache, the hash does not rotate when a file changes |
+| 6 | ran with current setup, `results.artifact_is_missing()` | RUN | `CACHE_MISSING` — skipping would hand downstream a dangling plan |
+| 7 | `cache_results=True`, last run had no error, and the run's backend still `exists` the materialised result `FlowNode.held_result(backend.id)` returns | **SKIP** | cache hit — checked *before* performance mode so a cached result survives even when upstream had no new data |
+| 7b| `cache_results=True`, no held result, or a materialised one not held any more or after an error | RUN | `CACHE_MISSING`; a `ComputeError` from `backend.exists` fails the node, never a cache miss. A deferred held result is no cache and falls through to 8 |
+| 8 | `performance_mode` | RUN | `PERFORMANCE_MODE` |
+| 9 | `not has_run_with_current_setup` | RUN | `NEVER_RAN` |
+| 10 | else | **SKIP** | result already held from a previous run |
 
-Strategy (`_determine_strategy`, once RUN is decided): `run_location ==
-"local"` → `FULL_LOCAL`; else `cache_results` → `REMOTE` (caching needs a
-fully materialized result); else `transform_type == "narrow"` →
-`LOCAL_WITH_SAMPLING` (compute lazily in core, ship only a 100-row sample
-job); else → `REMOTE`.
+How it runs (`hints_for`, once RUN is decided): there is no strategy step.
+Every running node submits its plan through `FlowNode._do_execute` (§3) with
+`SubmitHints`: `must_materialise` (`cache_results` outside
+`IN_CORE_NODE_TYPES`, or a boundary input), `wide` (not
+`is_narrow_transform`, not in `IN_CORE_NODE_TYPES`), `fanout` (distinct
+downstream nodes this run executes) and `preview_rows` (the context's, else
+`DEFAULT_PREVIEW_ROWS` = 100; `None` in Performance mode unless
+`cache_results`, and for `IN_CORE_NODE_TYPES`). The backend stores the result
+when `must_materialise`, or when it is `wide` and has a preview or
+`fanout > 1` (`flowfile_worker/service.py::_materialise`); otherwise it keeps
+the plan deferred.
 
 ---
 
@@ -370,9 +422,8 @@ events** and must call the cleanup explicitly.
 
 | Weak point | What it means in practice |
 |---|---|
-| **`flow_graph` was a god file** (split 2026-10-09) | Now the `flowfile/flow_graph/` package: `graph.py` plus concern mixins and plain helper modules; `__init__.py` is the facade and the bind surface (collaborators tests patch are read through `_root.root()`). The inline `execution_location == "local"` branches remain, concentrated in the connector, io, cloud and catalog-write modules — the roadmap's execution-interface seam is the follow-up. |
+| **`flow_graph` was a god file** (split 2026-10-09) | Now the `flowfile/flow_graph/` package: `graph.py` plus concern mixins and plain helper modules; `__init__.py` is the facade and the bind surface (collaborators tests patch are read through `_root.root()`). |
 | **Skip-list shallowness** | The pre-run skip pass (`util/node_skipper.py`) only expands one transitive level of "leads to" from incorrectly-configured nodes. Correctness for deeper chains relies on `_execute_stages` re-checking dependents of every failed/skipped node at run time — a genuine belt-and-suspenders design, not a hole, but don't assume the skip pre-pass alone is a complete skip set. |
-| **`results_exists` swallows worker downtime** | Returns `False` on an HTTP connection error, same as a genuine cache miss. In Development mode this silently degrades "should skip, cached" decisions into full re-runs whenever the worker is briefly unreachable — no error surfaces, just unexpectedly slower runs. |
 | **HTTP 419 on add-node failure** | `POST /update_settings/` raises the non-standard status code `419` (not `422`/`500`) when the node's `add_<type>` function itself raises — handle it explicitly in frontend/AI tool wrappers. Full dispatch-trap mechanics: `flowfile-node-development` §1.6. |
 | **`FLOWFILE_OFFLOAD_TO_WORKER` truthy parsing** | Only the literal string `"1"` enables offload; `"true"` silently disables it. See §3. |
 
@@ -394,7 +445,8 @@ errors are typed (`execution/errors.py`). Two backends, both the worker:
 - `EmbeddedWorkerBackend` (`execution/backends/embedded.py`), id `local`: the
   worker embedded in this process, reached by calling the bodies of its `/v1`
   routes directly, with no port, token or socket. A scheduled run,
-  `flowfile run flow` and Flowfile in Python compute on it, each job in the
+  `flowfile run flow` and Flowfile in Python compute on it, a headless run's
+  jobs each in a child of the runner (§3), Flowfile in Python's in the
   process itself; so does the pip server, its jobs in the worker's pool.
 - `WorkerBackend` (`execution/backends/worker.py`): the HTTP and WebSocket
   client to a `flowfile_worker` on any host, one method to one `/v1` route,
@@ -413,9 +465,10 @@ set, the mixed policy places each node on the backend its own
 `execution_location` names, and the data of every boundary edge crosses
 through the exchange store (`execution/exchange.py`) by `export` and
 `import_uri`; without one, every node of a run goes to the run's backend. No
-inline `execution_location == "local"` branch remains in core
+inline `execution_location == "local"` branch remains in the flow graph, its
+builders, the flow node or the data engine
 (`tests/flowfile/execution/test_inline_location_branches.py` holds the count
-at zero).
+at zero; `api_runner.py` keeps one, §3).
 
 `FLOWFILE_COMPUTE_PROTOCOL` (default on) still gates the path: with it off,
 core uses the worker's task routes of §3, which answer `Deprecation: true`
@@ -623,15 +676,18 @@ stale — architecture facts like these drift slower than config defaults, but
 line numbers will drift fastest.
 
 ```bash
-# system map / "worker doesn't touch the catalog DB" claim
-grep -rn "create_engine|Session|shared.models" flowfile_worker/flowfile_worker/ | grep -v __pycache__
+# system map / the worker reads core's catalog DB to resolve a plan's CredentialRef
+grep -n "def cloud_connection_record\|get_catalog_engine()" shared/database.py
+grep -n "class CredentialRefProvider\|def resolve_credential_ref\|def credential_ref_kwargs" shared/cloud_credential_provider.py
+grep -rn "credential_ref_kwargs" flowfile_worker/flowfile_worker/ | grep -v __pycache__
 
 # core-never-collects: god-file sizing
 wc -l flowfile_core/flowfile_core/flowfile/flow_graph/*.py flowfile_core/flowfile_core/flowfile/flow_graph/builders/*.py \
       flowfile_core/flowfile_core/flowfile/flow_node/flow_node.py \
       flowfile_core/flowfile_core/flowfile/flow_data_engine/flow_data_engine.py
 
-# worker offload truthy parsing ("1" only)
+# default backend + legacy offload truthy parsing ("1" only)
+grep -n "def default_backend_id" -A12 flowfile_core/flowfile_core/flowfile/execution/registry.py
 grep -n "FLOWFILE_OFFLOAD_TO_WORKER" flowfile_core/flowfile_core/configs/settings.py
 
 # worker wire-protocol endpoints
@@ -645,8 +701,8 @@ grep -n "SECRET_FORMAT_PREFIX\|KEY_DERIVATION_VERSION" \
 # scheduler zero-core-imports invariant
 grep -rn "flowfile_core|flowfile_worker|flowfile_frame" flowfile_scheduler/flowfile_scheduler/ | grep -v __pycache__
 
-# NodeExecutor decision table (still ordered the same way?)
-sed -n '/_decide_execution/,/_determine_strategy/p' flowfile_core/flowfile_core/flowfile/flow_node/executor.py
+# NodeExecutor decision table (still ordered the same way?) + submit hints
+sed -n '/^def hints_for/,/^class StateProvider/p;/def _decide_execution/,/def _gate_routes_on_formula/p' flowfile_core/flowfile_core/flowfile/flow_node/executor.py
 
 # kernel port range + internal token wiring
 grep -n "_BASE_PORT\|_PORT_RANGE" flowfile_core/flowfile_core/kernel/manager.py

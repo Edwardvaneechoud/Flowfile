@@ -35,8 +35,15 @@ Frontend (Tauri/Web) --HTTP--> flowfile_core (:63578) --HTTP--> flowfile_worker 
 
 Flows live in **core's process memory** (`flow_file_handler`), not just the DB —
 a core restart or reload invalidates every open flow_id in the browser. The
-worker never talks to a database; it holds results in spawned child processes
-and an on-disk Arrow cache. Keep this triangle in mind: almost every "it's
+worker is the only compute: it holds results in its own storage (IPC files its
+pooled spawned children write, or a deferred plan) and core keeps a `ResultRef`
+plus a preview sample. The worker does read the catalog DB: a plan names a
+stored connection by `CredentialRef`, resolved where it runs
+(`shared/cloud_credential_provider.py::resolve_credential_ref`) with the same
+master key, so a worker on another host must use core's shared Postgres catalog.
+That is the Core + Worker shape (desktop, Docker); a headless run (`flowfile run
+flow`, `--run-flow`, scheduled runs) and Flowfile in Python embed the worker in
+their own process by default instead (Core(Worker)). Keep this triangle in mind: almost every "it's
 broken" symptom below is really "which of these three lost state, or which two
 disagree."
 
@@ -59,8 +66,8 @@ disagree."
 | An AI agent loops on a tool name, references a nonexistent column, or otherwise does something surprising | Need to see exactly what the model was given (system prompt, tool catalog, message history) — guessing from the output is unreliable | Set `FLOWFILE_AI_LOG_PROMPTS=true`, reproduce the run, then `python -m flowfile_core.ai.prompt_log tail 20` | Also `python -m flowfile_core.ai.prompt_log grep PATTERN [SURFACE]`; see "AI agent misbehavior" below and `flowfile-ai-subsystem` for architecture |
 | A scheduled flow's log is missing from `$FLOWFILE_STORAGE_DIR/logs` | A writer bypassing `shared/run_logs.py::run_log_path`, or a log written by an older version (still under the real home dir) | Every writer routes through `run_log_path`, which honours `FLOWFILE_STORAGE_DIR` and docker mode | Check nothing bypasses `run_log_path` |
 | A run's log is gone after restarting core, even though the run definitely happened recently | Age-based retention removed it, or a new sweep bypasses that retention | Logs expire only by age (`FLOWFILE_RUN_LOG_RETENTION_DAYS`, default 30d). Cross-check the durable record: `sqlite3 ~/.flowfile/database/flowfile_catalog.db 'select id,flow_name,started_at,ended_at,success from flow_runs order by id desc limit 10;'` | Do not add a logs sweep to `cleanup_directories()` — it silently overrides the env var |
-| Worker offload fails with `Connection refused` mentioning `/submit_query/` | The worker process isn't running, or core is pointed at the wrong worker URL | Core startup log line `Worker configured at <WORKER_URL>`; `curl -sf <WORKER_URL>/docs` | Start `poetry run flowfile_worker`; or set the flow's `execution_location` to `local` to bypass the worker entirely |
-| Worker-offloaded node fails with error code `-1` / "unknown error … process got killed by the server" | The worker's **spawned child process** was OOM-killed mid-computation | Check worker stdout around that timestamp for OS-level kill signals; check available memory on the worker host | Core degrades gracefully (keeps its own lazy frame, shows a warning, no example data) — not silent data loss, but you likely need to reduce data volume or fix a memory leak in the transform |
+| Worker offload fails with `Connection refused` mentioning `/submit_query/` (only with `FLOWFILE_COMPUTE_PROTOCOL=0`; with it on, see the `ComputeUnavailable` row) | The worker process isn't running, or core is pointed at the wrong worker URL | Core startup line `Compute backend '<id>'; worker configured at <WORKER_URL>` (`main.py::run`); `curl -sf <WORKER_URL>/docs` | Start `poetry run flowfile_worker` (or fix the `worker:<name>` row on the Backends page). With the flag on there is no bypass: a serving core runs no node on `local` (`execution/placement.py::SERVING_LOCAL`, "this core serves; compute runs on its worker") and a flow saved `local` opens as `auto`, so the run fails with `ComputeUnavailable` until the worker is reachable; only with the flag off does `local` still skip the separate worker, running on the worker embedded in core, its jobs in core's own spawned children (`execution/registry.py::_local_backend`) |
+| Worker-offloaded node fails with error code `-1` / "unknown error … process got killed by the server" | The worker's **spawned child process** was OOM-killed mid-computation | Check worker stdout around that timestamp for OS-level kill signals; check available memory on the worker host | The node fails with `TaskFailed` (`PlanRejected` when the worker killed it at its `FLOWFILE_WORKER_TASK_TIMEOUT` limit; `execution/errors.py::worker_failure`), its downstream nodes are skipped, and core computes nothing in its place — reduce data volume or fix a memory leak in the transform |
 | "My unrelated change broke N tests" right after a routine edit | See "Discriminating-experiment discipline" below **before** trusting this conclusion | — | — |
 
 ---

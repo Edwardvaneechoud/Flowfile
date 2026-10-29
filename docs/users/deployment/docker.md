@@ -85,6 +85,8 @@ services:
       - FLOWFILE_ENABLE_PROJECTS=${FLOWFILE_ENABLE_PROJECTS:-true}
       # Core reaches the worker over its versioned /v1 routes (on by default)
       - FLOWFILE_COMPUTE_PROTOCOL=${FLOWFILE_COMPUTE_PROTOCOL:-1}
+      # The backend flows run on when they name none; empty means the worker below, except for scheduled runs (see below)
+      - FLOWFILE_COMPUTE_BACKEND=${FLOWFILE_COMPUTE_BACKEND:-}
       - WORKER_HOST=flowfile-worker
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data
@@ -110,6 +112,8 @@ services:
       - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:-}
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data
+      # Shares core's data volumes, so it declares local files among the schemes it reads and writes
+      - FLOWFILE_WORKER_LOCAL_FILES=1
     volumes:
       - ./flowfile_data:/app/user_data
       - flowfile-internal-storage:/app/internal_storage

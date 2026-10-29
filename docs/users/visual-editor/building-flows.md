@@ -47,7 +47,7 @@ In **Development** mode every node's data is available for preview after a run. 
 
 The **gear icon** in the top toolbar opens the flow-level settings:
 
-![Flow Settings modal](../../assets/images/guides/building-flows/flow-settings-modal.png)
+![Flow Settings modal: Execution Mode, Execution location Auto (default worker), Show details during execution, Parallel workers, and the Display and Parameters sections](../../assets/images/guides/building-flows/flow-settings-modal.png){ width="480px" }
 
 | Setting | Options |
 |---|---|
@@ -58,7 +58,14 @@ The **gear icon** in the top toolbar opens the flow-level settings:
 | Show edge labels | Display each connection's name on the canvas |
 | Warn about invalid node settings | Flag nodes whose settings no longer match their input, before you run |
 
-**Execution location** picks the worker the flow runs on. **Auto** runs it on the default worker: the worker service that comes with Flowfile, on the same machine by default (in Docker, the worker container). An administrator can add workers on other hosts under **Settings → Execution → Backends**, and every user can pick one here by its id, `worker:<name>`, shown with what its last check said ([Versions and the handshake](../deployment/remote-worker.md#versions-and-the-handshake)). A flow run from the designer runs on a worker, so a step that runs out of memory fails on its own instead of taking Flowfile down. A flow saved with Local or Remote by an earlier version opens as **Auto**.
+**Execution location** picks the worker the flow runs on:
+
+- **Auto (default worker)** is the worker that comes with Flowfile: on the same machine by default, the worker container in Docker.
+- `worker:<name>` is a worker an administrator added on another host under **Settings → Execution → Backends**; any user can pick it. It shows the result of its last check ([Versions and the handshake](../deployment/remote-worker.md#versions-and-the-handshake)).
+
+A flow run from the designer runs on a worker, so a step that runs out of memory fails on its own instead of taking Flowfile down. A flow saved with Local or Remote by an earlier version opens as **Auto**.
+
+![The Execution location picker open in Flow Settings, offering Auto (default worker) and worker:team · Compatible, a worker added on the Backends page with the result of its last check.](../../assets/images/guides/compute/execution-location-picker.png){ width="600px" }
 
 **Parallel workers** sets how many independent steps the worker runs at the same time, so a flow with independent branches finishes in a few *rounds* instead of one step after another. At 1 every step waits its turn.
 
@@ -66,11 +73,19 @@ The **gear icon** in the top toolbar opens the flow-level settings:
 
 ### A node's own backend
 
-A node's **General Settings** tab has a **Compute backend** setting: **Auto (the flow's backend)**, the default, **Default worker**, and the workers added under **Settings → Execution → Backends**, each with its last check beside its id; **Manage backends** next to it opens that page. It never offers Local. A node's own backend is used only where the deployment has an exchange store ([Remote workers](../deployment/remote-worker.md#nodes-on-several-backends)); otherwise every node runs on the flow's **Execution location**. API response has no such setting and runs on the flow's backend.
+A node's **General Settings** tab has a **Compute backend** picker: **Auto (the flow's backend)**, the default, **Default worker**, or one of the workers added on the Backends page, each of those with its last check beside its id. **Manage backends** next to it opens that page. The picker never offers Local. A node's own backend is used only when the deployment has an exchange store ([Nodes on several backends](../deployment/remote-worker.md#nodes-on-several-backends)); otherwise every node runs on the flow's **Execution location**. **API response** has no such setting and runs on the flow's backend.
 
-With an exchange store, a node whose backend cannot run it (a worker that does not read local files or `https` URLs, a cluster without a node's operation or plugin) runs on the default worker instead, and its data crosses to the other nodes through the store. That holds for a node left on **Auto** and for one set to a backend of its own. Before you run, the node shows a small amber badge, **→ default worker**, whose tooltip says which backend does not support it; the **Compute backend** setting in its drawer says why, under the picker. After the run, the run card lists the nodes that ran on the default worker, and the flow log has a warning for each. A node the default worker cannot run either gets a red badge, and the run is refused with both reasons. Without an exchange store nothing moves: the run is refused, and the message says that an exchange store would let such nodes run on the default worker.
+![A Filter data node's General Settings tab with the Compute backend picker open, offering Auto (the flow's backend), Default worker and worker:team · Compatible, with Manage backends beside it.](../../assets/images/guides/compute/node-compute-backend.png){ width="800px" }
 
-After a run, a refused one included, a connection whose two nodes were placed on different backends shows a round badge with two arrows. The badge is for the last run, so a change of backend shows after the next one. When a crossing is refused, because the exchange store could not be used or the input was above the row limit, the reading node's row on the run report says why.
+With an exchange store, a node whose backend cannot run it (a worker that does not read local files or `https` URLs, a cluster without the node's operation or plugin) runs on the default worker instead, its data crossing to the other nodes through the store. This holds for a node on **Auto** and for one set to a backend of its own:
+
+- Before you run, the node shows an amber **→ default worker** badge. Its tooltip names the backend that does not support it, and the **Compute backend** setting in its drawer says why, under the picker.
+- After the run, the run card lists the nodes that ran on the default worker, and the flow log has a warning for each.
+- A node the default worker cannot run either gets a red badge, and the run is refused with both reasons.
+
+Without an exchange store nothing moves: the run is refused, and the message says an exchange store would let such nodes run on the default worker.
+
+After a run, a refused one included, an edge between nodes placed on different backends shows a round badge with two arrows. It reflects the last run, so a change of backend shows after the next one. When a crossing is refused (the exchange store could not be used, or the input was above the row limit), the reading node's row on the run report says why.
 
 ### Settings warnings
 

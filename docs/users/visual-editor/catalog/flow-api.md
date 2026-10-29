@@ -13,7 +13,7 @@ The node has two settings:
 | Setting | Effect |
 |---------|--------|
 | **Orientation** | `records` (list of row objects, default) or `columns` (one array per column) |
-| **Max rows** | Optional cap on the number of rows returned; a flow that runs on a worker returns at most 10,000 |
+| **Max rows** | Optional cap on the number of rows returned; a call returns at most 10,000 |
 
 Save the flow. A saved, registered flow with exactly one API Response node shows up as publishable.
 
@@ -54,7 +54,7 @@ The response carries the data plus a row count:
 }
 ```
 
-A flow that runs on a worker returns at most 10,000 rows per call, whatever **Max rows** says. When that limit leaves rows out, `truncated` is `true` and `row_count` is the number of rows returned, not the size of the result. A flow that runs locally returns every row up to **Max rows**, and `truncated` is always `false`.
+A call returns at most 10,000 rows, whatever **Max rows** says. When that limit leaves rows out, `truncated` is `true` and `row_count` is the number of rows returned, not the size of the result. With `FLOWFILE_COMPUTE_PROTOCOL=0` there is no 10,000-row limit: a call returns every row up to **Max rows**, and `truncated` is always `false`.
 
 With `columns` orientation, `data` is instead an object mapping each column name to an array of values — cheaper to parse when you're loading the result straight into a dataframe.
 
@@ -90,7 +90,7 @@ Failed authentication always returns `401`, whether the key is wrong, expired, d
 
 ## What happens at run time
 
-Each request opens the saved flow file fresh and runs the whole graph synchronously, as the endpoint's owner, in Performance mode (one lazy plan, no per-node materialization). Editing and re-saving the flow changes what the endpoint serves — no re-publish step. Heavy computation is offloaded to the worker when one is available, so the API surface stays responsive.
+Each request opens the saved flow file fresh and runs the whole graph synchronously, as the endpoint's owner, in Performance mode (one lazy plan, no per-node materialization). Editing and re-saving the flow changes what the endpoint serves — no re-publish step. The flow computes on the server's default compute backend, the worker unless `FLOWFILE_COMPUTE_BACKEND` names another, so the API process stays responsive. When that backend cannot be reached the call answers `503`, and when it cannot run the flow, `500`; the flow never runs in core instead.
 
 Two knobs bound the load:
 
@@ -109,5 +109,5 @@ Concurrent requests to the *same* published flow are additionally run one at a t
 | `401` | Invalid, expired, disabled, or ungranted API key |
 | `403` | Valid key, but the endpoint is disabled |
 | `500` | The flow failed. The public response is deliberately generic — node-level details (paths, SQL, column names) go to the server log only. Use **Try it** as the owner to see the full error |
-| `503` | The concurrent-run cap is reached; retry shortly |
+| `503` | The concurrent-run cap is reached, or the compute backend cannot be reached; retry shortly |
 | `504` | The run exceeded the execution timeout |

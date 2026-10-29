@@ -84,7 +84,7 @@ Also: `flowfile/__init__.py` mutes the `PipelineHandler` logger to `WARNING` on 
 
 ## 3. Headless flow execution — three equivalent paths
 
-All three run the same logic: make `local`, the worker embedded in this process, the process's default backend (`registry.set_default_override`) unless `--backend` or a backend id saved in the flow names another, so a run with none named computes in-process, each job in the process itself, with no worker service needed; delete any UI-only `explore_data` nodes (prints `Skipping N explore_data node(s) (UI-only)`), stamp catalog producer lineage, call `flow.run_graph()`, and report per-node results.
+All three run the same logic inside `registry.headless_run()`: make the run's backend the process's default (`registry.set_default_override`): `--backend`, else a backend id saved as the flow's `execution_location` (a saved `local`/`remote`/`auto` names none), else `FLOWFILE_COMPUTE_BACKEND` when set and non-empty (`registry.environment_backend_id`), else `local`, the worker embedded in the runner. On `local` no worker service is needed: each job runs in a child process of the runner (one kept warm, `registry.HEADLESS_POOL_SIZE`, unless `FLOWFILE_WORKER_POOL_SIZE` is set; each under `FLOWFILE_WORKER_TASK_TIMEOUT`, default 3600 s, `flowfile_worker/spawner.py`), and a SIGTERM cancel takes the children down. A named worker that cannot be reached fails its nodes with `ComputeUnavailable`; nothing falls back to computing in the runner. Then delete any UI-only `explore_data` nodes (prints `Skipping N explore_data node(s) (UI-only)`), stamp catalog producer lineage, call `flow.run_graph()`, and report per-node results.
 
 ### A. CLI (dev / pip install)
 
@@ -124,11 +124,11 @@ The scheduler engine (`flowfile_scheduler/flowfile_scheduler/engine.py`) polls t
 
 ```bash
 poetry run flowfile_core                     # :63578 — start FIRST
-poetry run flowfile_worker                   # :63579 — needed for worker-offloaded / remote-execution runs
+poetry run flowfile_worker                   # :63579 — needed for any flow run
 cd flowfile_frontend && npm run dev:web       # :8080, proxies /api -> :63578
 ```
 
-Core must be up before the frontend — Vite proxies `/api` to core (and nginx does the same in Docker: `proxy_pass http://flowfile-core:63578/`). The worker is independent: core starts fine without it, but any worker-offloaded node run fails until the worker is up. The worker only calls back to core to ship logs (`POST /raw_logs`).
+Core must be up before the frontend — Vite proxies `/api` to core (and nginx does the same in Docker: `proxy_pass http://flowfile-core:63578/`). Core starts fine without the worker, but a served core (`main.run` calls `registry.mark_serving()`) computes every flow run on its worker and never in-process (`placement.SERVING_LOCAL`), so until the worker is up every run fails with `ComputeUnavailable` (`Is backend "worker" running? …`, `flowfile/execution/errors.py`) and catalog table previews answer 503. The worker only calls back to core to ship logs (`POST /raw_logs`).
 
 ### Single-process ("unified") mode — the pip-install story
 

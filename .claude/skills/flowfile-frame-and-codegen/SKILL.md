@@ -25,7 +25,7 @@ All facts below verified in-repo as of **2026-07-03 (v0.12.7)**, branch `feature
 
 It is **not a client of any backend HTTP API**. It imports `flowfile_core` directly — `flowfile_frame/flowfile_frame/flow_frame.py` imports `FlowDataEngine`, `FlowGraph`, `add_connection`, `combine_flow_graphs_with_mapping`, `FlowNode`, `input_schema`, `transform_schema` straight from `flowfile_core`. There is no port, no serialization boundary, no auth — it mutates Python objects in the calling process. The graph it builds is the **same kind of DAG** the Designer UI edits and core executes: it can be saved to a `.flowfile`, opened in the Designer (`open_graph_in_editor`, §7), or materialized with `.collect()`.
 
-`utils.create_flow_graph()` seeds every new graph with `track_history=False` and, critically, forces `flow_graph.flow_settings.execution_location = "local"` — the comment in source is explicit: *"so that the run time does not attempt to use the flowfile_worker process."* This one setting is why several connector reads (§8) don't need a running worker, and why `write_*`/`pivot` behave eagerly (§6).
+`utils.create_flow_graph()` seeds every new graph with `track_history=False` and `execution_location = "local"`, the same defaults as a bare `FlowGraph()` (`flow_graph/graph.py::FlowGraph.__init__`). `local` is the backend id of the worker embedded in the script's own process (`execution/backends/embedded.py::EmbeddedWorkerBackend`, nothing of `flowfile_worker` imported before its first job; `execution/registry.py` sets `spawner.in_process` in a process that neither serves nor runs headless, so those jobs run inline). That is why connector reads (§8) need no separately running worker. `write_*`/`pivot` are eager for a different reason: every FlowFrame call reads the new node's `get_resulting_data()` at build time (`native.py::materialise`), which runs a write's `file_write` operation, or a pivot's bounded distinct-values read, on that backend (§5).
 
 ### The `FlowFrame` object
 
@@ -172,8 +172,8 @@ Things that look lazy but are **not** (all verified live in this session):
 
 | Operation | What actually happens | Evidence |
 |---|---|---|
-| `write_csv`/`sink_csv` and friends | `add_output`'s node function calls `df.output(..., execute_remote=False)` **at graph-build time** because `execution_location == "local"` always holds for frame graphs. `sink_csv → write_csv`, `sink_ipc → write_ipc`, etc. are literal aliases. | File exists on disk *before* `.collect()` is ever called. |
-| `pivot` (native path) | Materializes its input during graph building — the node needs the distinct pivot-column values to compute the output schema. | Log line `Reading entire file: ~/.flowfile/cache/1/<uuid>.arrow … Got N unique values from external source`; leaves a cache file under `~/.flowfile/cache/`. |
+| `write_csv`/`sink_csv` and friends | `_create_child_frame` reads the output node at **graph-build time**, so `add_output`'s `_func` (`flow_graph/builders/io.py`) runs the `file_write` operation (`node.run_op(current_context(self).backend, OperationKind.file_write, …)`) on the graph's backend, the embedded worker for frame graphs. Not on a deferred frame or below a gate: `native.py::seeded_at_build` seeds such a writer from its predicted schema and only the run writes. `sink_csv → write_csv`, `sink_ipc → write_ipc`, etc. are literal aliases. | File exists on disk *before* `.collect()` is ever called. |
+| `pivot` (native path) | Reads the distinct pivot-column values during graph building, since they are the output columns: `FlowDataEngine.do_pivot` (and `schema_callbacks.py::pre_calculate_pivot_schema`) call `flow_data_engine/bounded.py::unique_values` for the first 200, ascending, on the context's backend. The read submits the plan deferred, takes those rows and releases the result. | Direct read of `bounded.py`/`do_pivot`: no file is read back by core and no cache file stays behind. |
 | Passthrough methods (`describe`, `profile`, `fetch`, `collect_schema`, …) | Run immediately against `self.data`. | By construction — no node is added for these. |
 | `from_dict(...)` / `FlowFrame(python_data)` | Rows are embedded as `NodeManualInput.raw_data_format` — the **full dataset gets serialized into the saved `.flowfile`**. | Direct read of `flow_frame.py` source. |
 | Serialization fallback (§2, path 3) and the `lazy_methods` non-convertible short-circuit | Execute the real Polars operation at call time to capture a concrete result. | By construction. |
@@ -186,11 +186,11 @@ Readers (`read_csv`, `read_parquet`, `scan_*`) are genuinely lazy scans; `scan_c
 
 ## 6. The generated-code contract with core's sandbox
 
-Polars-code nodes execute inside `flowfile_core/flowfile_core/flowfile/flow_data_engine/polars_code_parser.py`'s `PolarsCodeExecutor`. When writing or reviewing a generated string, it must satisfy:
+Polars-code nodes run in the `shared/polars_code_parser.py::PolarsCodeParser` sandbox (core's `flow_data_engine/polars_code_parser.py` only re-exports it). With `FLOWFILE_COMPUTE_PROTOCOL` on, `add_polars_code`'s `_func` (`flow_graph/builders/code.py`) sends the code as the `polars_code` operation to the graph's backend, where the worker runs it (`flowfile_worker/funcs.py`); core only calls `validate_code` on it at build, and executes it itself only with the flag off. When writing or reviewing a generated string, it must satisfy:
 
-- **`safe_globals`** (`polars_code_parser.py:129`): `__builtins__ = {}`. Available names: `pl`, `cs` (= `pl.selectors`), `col`, `lit`, `expr`, every **bare Polars dtype name** (`Int64`, `String`, `Datetime`, `Struct`, …, no `pl.` prefix needed), a small basic-builtins set (`print, len, range, enumerate, zip, list, dict, set, str, int, float, bool, True, False, None`), plus `time`, `BytesIO`, `base64`, `datetime`.
-- **`_validate_code`** (`polars_code_parser.py:191`): rejects any code containing an `import` statement, blocked calls (`exec`, `eval`, `getattr`, `open`, …), dunder attribute access, and string constants matching a `__word__` pattern.
-- **`_wrap_in_function`** (`polars_code_parser.py:239`): code is wrapped in `_transform(input_df)` (or `_transform(input_df_1, …, input_df_N)` for multi-input nodes). A single-line expression starting with `pl.`/`col(`/`input_df`/`expr(` is returned as-is; any other body must assign the name **`output_df`**.
+- **`safe_globals`** (`polars_code_parser.py:307`): `__builtins__ = {}`. Available names: `pl`, `cs` (= `pl.selectors`) and `expr` (= `pl.expr`), each a namespace of the module's public, non-module attributes rather than the raw module, `col`, `lit`, every **bare Polars dtype name** (`Int64`, `String`, `Datetime`, `Struct`, …, no `pl.` prefix needed), a small basic-builtins set (`print, len, range, enumerate, zip, list, dict, set, str, int, float, bool, True, False, None`), plus `BytesIO`, `ZoneInfo` and narrow `time`, `base64`, `datetime`, `decimal`, `zoneinfo` namespaces.
+- **`_validate_code`** (`polars_code_parser.py:372`): rejects any code containing an `import` statement, blocked calls (`exec`, `eval`, `compile`, `getattr`, `setattr`, `vars`, `open`, …), access to any attribute starting with `_`, assignment to an attribute, and string constants matching a `__word__` pattern.
+- **`_wrap_in_function`** (`polars_code_parser.py:426`): code is wrapped in `_transform(input_df)` (or `_transform(input_df_1, …, input_df_N)` for multi-input nodes). A single-line expression starting with `pl.`/`col(`/`input_df`/`expr(` is returned as-is; any other body must assign the name **`output_df`**.
 - **Input naming convention** (mirrored by frame codegen): 1 input → `input_df`; ≥2 inputs → `input_df_1..N`, in upstream-discovery order. `concat` also dedupes duplicate sources because `add_connection` is idempotent.
 - The `#─────SPLIT─────` marker separating prepended function definitions from the operation is purely a **flowfile_frame-side cosmetic convention for the UI code editor** — comments are stripped before execution, and grep confirms no consumer in core parses that marker.
 
@@ -343,7 +343,7 @@ grep -n "add_expr_methods(Expr)$" flowfile_frame/flowfile_frame/expr.py
 grep -n "^PASSTHROUGH_METHODS" flowfile_frame/flowfile_frame/lazy_methods.py flowfile_frame/flowfile_frame/adding_expr.py
 
 # confirm the sandbox contract hasn't drifted
-grep -n "safe_globals\|_validate_code\|_wrap_in_function" flowfile_core/flowfile_core/flowfile/flow_data_engine/polars_code_parser.py
+grep -n "safe_globals\|_validate_code\|_wrap_in_function" shared/polars_code_parser.py
 
 # confirm no connector branches on the location (test_inline_location_branches.py pins it at zero)
 grep -rn 'execution_location == "local"' flowfile_core/flowfile_core/flowfile/flow_graph   # expect nothing

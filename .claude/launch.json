@@ -153,42 +153,6 @@
       "runtimeExecutable": "C:/Users/edwar/miniconda3/envs/ff/Scripts/flowfile_core.cmd",
       "runtimeArgs": [],
       "port": 63578
-    },
-    {
-      "name": "shots-worker",
-      "runtimeExecutable": "sh",
-      "runtimeArgs": [
-        "-c",
-        "D=\"${TMPDIR:-/tmp}/flowfile-shots\" && mkdir -p \"$D/storage\" \"$D/user\" \"$D/secure\" && { [ -f \"$D/token\" ] || python3 -c 'import secrets; print(secrets.token_urlsafe(32))' > \"$D/token\"; } && FLOWFILE_INTERNAL_TOKEN=\"$(cat \"$D/token\")\" FLOWFILE_DB_PATH=\"$D/ff.db\" FLOWFILE_STORAGE_DIR=\"$D/storage\" FLOWFILE_USER_DATA_DIR=\"$D/user\" FLOWFILE_SECURE_STORAGE_PATH=\"$D/secure\" CORE_PORT=63610 FLOWFILE_TELEMETRY=0 exec poetry run flowfile_worker --port 63611"
-      ],
-      "port": 63611
-    },
-    {
-      "name": "shots-worker-team",
-      "runtimeExecutable": "sh",
-      "runtimeArgs": [
-        "-c",
-        "D=\"${TMPDIR:-/tmp}/flowfile-shots\" && mkdir -p \"$D/team-storage\" \"$D/secure\" && { [ -f \"$D/token\" ] || python3 -c 'import secrets; print(secrets.token_urlsafe(32))' > \"$D/token\"; } && FLOWFILE_INTERNAL_TOKEN=\"$(cat \"$D/token\")\" FLOWFILE_DB_PATH=\"$D/ff.db\" FLOWFILE_STORAGE_DIR=\"$D/team-storage\" FLOWFILE_SECURE_STORAGE_PATH=\"$D/secure\" CORE_PORT=63610 FLOWFILE_TELEMETRY=0 exec poetry run flowfile_worker --port 63612"
-      ],
-      "port": 63612
-    },
-    {
-      "name": "shots-core",
-      "runtimeExecutable": "sh",
-      "runtimeArgs": [
-        "-c",
-        "D=\"${TMPDIR:-/tmp}/flowfile-shots\" && mkdir -p \"$D/storage\" \"$D/user\" \"$D/secure\" && { [ -f \"$D/token\" ] || python3 -c 'import secrets; print(secrets.token_urlsafe(32))' > \"$D/token\"; } && FLOWFILE_INTERNAL_TOKEN=\"$(cat \"$D/token\")\" FLOWFILE_DB_PATH=\"$D/ff.db\" FLOWFILE_STORAGE_DIR=\"$D/storage\" FLOWFILE_USER_DATA_DIR=\"$D/user\" FLOWFILE_SECURE_STORAGE_PATH=\"$D/secure\" FLOWFILE_WORKER_PORT=63611 FLOWFILE_KERNEL_GC=0 FLOWFILE_KERNEL_WARMUP=0 FLOWFILE_TELEMETRY=0 exec poetry run flowfile_core --port 63610"
-      ],
-      "port": 63610
-    },
-    {
-      "name": "shots-web",
-      "runtimeExecutable": "sh",
-      "runtimeArgs": [
-        "-c",
-        "FLOWFILE_CORE_PORT=63610 npm run dev:web --prefix flowfile_frontend -- --port 8090"
-      ],
-      "port": 8090
     }
   ]
 }
