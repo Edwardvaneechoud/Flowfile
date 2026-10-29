@@ -31,7 +31,7 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
-from flowfile_worker import CACHE_DIR, funcs, models, mp_context, pool, status_dict, status_dict_lock
+from flowfile_worker import CACHE_DIR, funcs, models, mp_context, pool, service, status_dict, status_dict_lock
 from flowfile_worker.auth import websocket_authorized
 from flowfile_worker.configs import logger
 from flowfile_worker.pool import PoolMember
@@ -460,10 +460,11 @@ def _job_progress(job_id: str) -> int | None:
 
 
 async def _send_job_progress(websocket: WebSocket, job: asyncio.Future, job_id: str) -> bool:
-    """Send the job's progress until the job is done; ``False`` once a send failed.
+    """Send the job's progress until the job is done; ``False`` once a send failed, which stops the job.
 
     A frame goes out on each change and every ``_HEARTBEAT_INTERVAL`` otherwise, polled with the
-    ``_monitor_progress`` backoff. A failed send stops the frames, not the wait.
+    ``_monitor_progress`` backoff. A failed send means the client left, and core never reads a result after its
+    socket closed, so the job is stopped (``service._stop``, as a cancel does) and the wait ends with it.
     """
     connected = True
     last_progress = None
@@ -479,8 +480,9 @@ async def _send_job_progress(websocket: WebSocket, job: asyncio.Future, job_id: 
             try:
                 await websocket.send_json({"type": "progress", "progress": current})
             except Exception:
-                logger.warning(f"[WS] Client left during /v1 submit {job_id}; the submit continues")
+                logger.warning(f"[WS] Client left during /v1 submit {job_id}; the submit is stopped")
                 connected = False
+                await asyncio.to_thread(service._stop, job_id)
             last_progress = current
             last_sent = monotonic()
         await asyncio.wait({job}, timeout=delay)
@@ -499,8 +501,9 @@ async def ws_submit_v1(websocket: WebSocket):
         - JSON: {"type": "complete", "result": <SubmitResult, bytes base64>}
         - JSON: {"type": "error", "status_code": N, "detail": ...}  (what the REST route answers)
 
-    then closes with 1000. A client that leaves does not stop the submit, and its result is held.
-    Cancel is ``POST /v1/jobs/{id}/cancel``.
+    then closes with 1000. A client that leaves stops the submit: the first progress frame that fails to send
+    cancels the job, and a result that completed before the client left is released (``_release_unread``), since
+    core never reads a result after its socket closed. Cancel is ``POST /v1/jobs/{id}/cancel``.
     """
     if not websocket_authorized(websocket):
         await websocket.close(code=1008)
@@ -518,10 +521,12 @@ async def ws_submit_v1(websocket: WebSocket):
         return
 
     connected = True
+    result_id = None
     try:
         submit_meta = parse_submit_meta(meta)
+        result_id = submit_meta.result_id
         job = asyncio.ensure_future(run_in_threadpool(run_submit, submit_meta, plan))
-        connected = await _send_job_progress(websocket, job, submit_meta.result_id)
+        connected = await _send_job_progress(websocket, job, result_id)
         frame = {"type": "complete", "result": job.result().model_dump(mode="json")}
     except HTTPException as e:
         frame = {"type": "error", "status_code": e.status_code, "detail": e.detail}
@@ -529,9 +534,18 @@ async def ws_submit_v1(websocket: WebSocket):
         logger.error(f"[WS] /v1 submit failed: {e}", exc_info=True)
         frame = {"type": "error", "status_code": 500, "detail": describe_exception(e)}
     if not connected:
+        await _release_unread(result_id, frame)
         return
     try:
         await websocket.send_json(frame)
         await websocket.close()
     except Exception:
-        logger.warning("[WS] Client left before the /v1 submit's final frame; the result stays held")
+        logger.warning(f"[WS] Client left before the /v1 submit's final frame ({result_id})")
+        await _release_unread(result_id, frame)
+
+
+async def _release_unread(result_id: str | None, frame: dict[str, Any]) -> None:
+    """Release the result a submit completed for a client that left; core never reads it once its socket closed."""
+    if result_id is not None and frame.get("type") == "complete":
+        await asyncio.to_thread(service.release, result_id)
+        logger.warning(f"[WS] Released result {result_id}: its /v1 submit completed for a client that left")

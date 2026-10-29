@@ -349,9 +349,13 @@ class WorkerBackend(_WorkerReferences):
         except requests.RequestException as e:
             raise ComputeUnavailable(f"Could not reach the worker at {self.url}: {e}", backend_id=self.id) from e
         if response.status_code == 404:
+            cause = "so it is an older release than core"
+            if not settings.FLOWFILE_COMPUTE_PROTOCOL:
+                cause += (
+                    ", or a backend that serves only the /v1 wire, which needs FLOWFILE_COMPUTE_PROTOCOL on in core"
+                )
             raise VersionMismatch(
-                f"The worker at {self.url} does not report its capabilities (GET {route} answered 404), "
-                "so it is an older release than core"
+                f"The worker at {self.url} does not report its capabilities (GET {route} answered 404), {cause}"
             )
         if not response.ok:
             raise _v1_failure(response.status_code, response.content, response.reason)

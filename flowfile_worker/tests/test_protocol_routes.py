@@ -4,6 +4,7 @@ A held result is also exported to a URI as parquet, and a URI imported as a held
 of its bytes and exported as those bytes, to and from a ``file://`` URI and a presigned ``https://`` URL on MinIO.
 """
 
+import asyncio
 import importlib
 import json
 import logging
@@ -21,8 +22,10 @@ from types import SimpleNamespace
 import polars as pl
 import pytest
 import requests
-from fastapi import WebSocketDisconnect
+from fastapi import HTTPException, WebSocketDisconnect
+from fastapi.concurrency import run_in_threadpool
 from fastapi.testclient import TestClient
+from fastapi.websockets import WebSocket
 from polars.testing import assert_frame_equal
 from starlette.testclient import WebSocketDenialResponse
 
@@ -1173,6 +1176,59 @@ def _wait_for_job(result_id: str, status: str, on: TestClient = client) -> None:
     while (job := on.get(f"/v1/jobs/{result_id}")).status_code != 200 or job.json()["status"] != status:
         assert time.monotonic() < deadline, f"the job never reached {status}"
         time.sleep(0.01)
+
+
+@pytest.mark.asyncio
+async def test_a_client_that_leaves_during_a_socket_submit_stops_it_and_nothing_is_held(held, monkeypatch):
+    """A progress frame that cannot be sent means core's socket closed, after which core never reads the result."""
+    from unittest.mock import AsyncMock
+
+    from flowfile_worker import streaming
+
+    monkeypatch.setattr(streaming, "_HEARTBEAT_INTERVAL", 0.05)
+    result_id = held()
+    websocket = AsyncMock()
+    websocket.send_json.side_effect = RuntimeError("the client left")
+    meta = protocol_routes.parse_submit_meta(_meta(result_id, must_materialise=True))
+    job = asyncio.ensure_future(run_in_threadpool(protocol_routes.run_submit, meta, _slow_plan()))
+
+    connected = await streaming._send_job_progress(websocket, job, result_id)
+
+    assert connected is False
+    with pytest.raises(HTTPException) as cancelled:
+        await job
+    assert cancelled.value.status_code == 500
+    assert cancelled.value.detail["status"] == "Cancelled"
+    with status_dict_lock:
+        assert status_dict[result_id].status == "Cancelled"
+    assert service.exists(result_id) is False
+    assert not result_path(FLOW_ID, result_id).exists()
+
+
+def test_a_client_that_leaves_before_the_final_frame_has_its_result_released(held, monkeypatch):
+    """The submit completed, but the client left before the ``complete`` frame: the result is released, not held."""
+    result_id = held()
+    real_send_json = WebSocket.send_json
+    final_frames = []
+
+    async def send_json_but_the_final_frame(self, data, mode="text"):
+        if data.get("type") == "complete":
+            final_frames.append(data)
+            raise RuntimeError("the client left")
+        return await real_send_json(self, data, mode)
+
+    monkeypatch.setattr(WebSocket, "send_json", send_json_but_the_final_frame)
+    with client.websocket_connect("/v1/ws/submit") as websocket:
+        websocket.send_text(_meta(result_id, must_materialise=True))
+        websocket.send_bytes(_plan().serialize())
+        deadline = time.monotonic() + 30
+        while not final_frames or client.get(f"/v1/jobs/{result_id}").status_code != 404:
+            assert time.monotonic() < deadline, "the result completed for a client that left stayed held"
+            time.sleep(0.02)
+
+    assert SubmitResult.model_validate_json(json.dumps(final_frames[0]["result"])).job_id == result_id
+    assert client.head(f"/v1/results/{result_id}").status_code == 404
+    assert not result_path(FLOW_ID, result_id).exists()
 
 
 def test_a_submit_under_an_id_a_job_still_runs_under_replaces_that_job(held, one_member_pool):

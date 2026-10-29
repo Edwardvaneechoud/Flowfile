@@ -177,9 +177,7 @@ def default_backend_id() -> str:
     """
     backend_id = _default_override
     if backend_id is None:
-        backend_id = os.environ.get(BACKEND_ENV_VAR, "").strip() or (
-            WORKER_BACKEND_ID if settings.OFFLOAD_TO_WORKER else LOCAL_BACKEND_ID
-        )
+        backend_id = environment_backend_id() or (WORKER_BACKEND_ID if settings.OFFLOAD_TO_WORKER else LOCAL_BACKEND_ID)
     if _serving and backend_id == LOCAL_BACKEND_ID:
         return WORKER_BACKEND_ID
     return backend_id
@@ -188,6 +186,15 @@ def default_backend_id() -> str:
 def default_backend() -> ComputeBackend:
     """The instance of the default backend."""
     return backend(default_backend_id())
+
+
+def environment_backend_id() -> str | None:
+    """The backend id ``FLOWFILE_COMPUTE_BACKEND`` names, or ``None`` when it is unset or empty.
+
+    The headless runners read it after ``--backend`` and the flow's saved backend id and before ``local``, so a
+    deployment that sets it for core, as the compose does, sends its scheduled runs to that backend.
+    """
+    return os.environ.get(BACKEND_ENV_VAR, "").strip() or None
 
 
 def fallback_backend_id() -> str:

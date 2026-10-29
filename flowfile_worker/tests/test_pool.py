@@ -245,6 +245,31 @@ class TestCancellation:
         assert after.status == "Completed", after.error_message
         assert warm_pool.stats()["total"] == 1, "the pool must refill on the next acquire"
 
+    def test_a_cancel_posted_while_a_task_is_starting_stops_it_when_it_starts(self, warm_pool, tmp_path):
+        """Before the child is registered the route marks the entry ``Cancelled``, as ``POST /v1/jobs/{id}/cancel``
+        does, and the monitor's first poll stops the child the task then starts."""
+        task_id = "pool-cancel-starting"
+        _register_status(task_id, str(tmp_path / "c.arrow"))
+
+        response = client.post(f"/cancel_task/{task_id}")
+
+        assert response.status_code == 200, response.text
+        assert _get_status(task_id).status == "Cancelled"
+        try:
+            start_process(
+                _sleeping_lazyframe(30).serialize(),
+                task_id,
+                "store",
+                str(tmp_path / "c.arrow"),
+                flowfile_flow_id=1,
+                flowfile_node_id=1,
+            )
+            assert _get_status(task_id).status == "Cancelled"
+        finally:
+            _cleanup_status(task_id)
+        assert warm_pool.stats()["total"] == 0, "the member the cancelled task started in is retired"
+        assert not (tmp_path / "c.arrow").exists()
+
     def test_stale_cancel_of_finished_task_cannot_kill_member(self, warm_pool, tmp_path):
         """The member is unmapped before checkin, so cancelling a done task 404s instead of killing it."""
         lf = pl.LazyFrame({"a": [1, 2, 3]})

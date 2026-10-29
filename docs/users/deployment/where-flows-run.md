@@ -19,14 +19,14 @@ The worker is the only compute. The ways of running Flowfile differ in where tha
 | Desktop app | A worker process the app starts beside core |
 | Docker (`docker compose`) | The `flowfile-worker` container |
 | `flowfile run ui` (Python package) | A worker inside core's process, its jobs in a pool of child processes |
-| A scheduled run, `flowfile run flow` | A worker inside the run's own process |
+| A scheduled run, `flowfile run flow` | A worker inside the run's own process, unless `FLOWFILE_COMPUTE_BACKEND` names one |
 | Flowfile in Python (`import flowfile`) | A worker inside the Python process |
 
 ![Where the worker lives in each way of running Flowfile: in the desktop app and Docker, core and the worker are separate processes, core calls the worker over HTTP and the worker runs a child process per job; with flowfile run ui, core and an embedded worker share one process, core calls it directly and the jobs run in a pool of child processes; in a scheduled run, flowfile run flow and Python, core and the embedded worker share one process and each job runs in that process.](../../assets/images/concepts/which-process-computes.svg)
 
 In the desktop app and Docker, each job runs in a child process of the worker. A job that runs out of memory takes down that child and fails its node; core and the editor keep running, and **Cancel** stops the child.
 
-A scheduled run starts a process of its own, so in Docker it computes inside core's container, with that container's memory and CPU, not the worker container's. To send a headless run to a worker, set the flow's **Execution location** to that worker's id, or pass `--backend <id>` to `flowfile run flow` ([Headless runs](cli.md)). A named worker that cannot be reached fails the run; the run does not compute in its own process instead.
+A scheduled run starts a process of its own, so in Docker it computes inside core's container, with that container's memory and CPU, not the worker container's, unless core's environment sets `FLOWFILE_COMPUTE_BACKEND` (`worker` for the worker container, or a `worker:<name>` id): the run's process inherits it and computes on that worker. To send one flow's headless runs to a worker, set the flow's **Execution location** to that worker's id, or pass `--backend <id>` to `flowfile run flow` ([Headless runs](cli.md)); either wins over the variable. A named worker that cannot be reached fails the run; the run does not compute in its own process instead.
 
 ## What happens when a flow runs
 

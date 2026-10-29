@@ -15,6 +15,7 @@ from flowfile_worker import (
     models,
     mp_context,
     pool,
+    service,
     status_dict,
     status_dict_lock,
 )
@@ -31,7 +32,6 @@ from flowfile_worker.external_sources.sql_source.main import read_sql_source
 from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings
 from flowfile_worker.protocol_routes import worker_capabilities
 from flowfile_worker.spawner import (
-    process_manager,
     start_apply_model_process,
     start_custom_node_process,
     start_fuzzy_process,
@@ -1352,6 +1352,10 @@ def set_pool_state(payload: models.PoolConfigInput) -> dict:
 def cancel_task(task_id: str):
     """Cancel a running task by ID.
 
+    As ``POST /v1/jobs/{id}/cancel`` (``service._stop``): a task still ``Starting`` has no child yet, so its entry is
+    marked ``Cancelled`` and the monitor stops the child as the task starts; a ``Processing`` task's child is stopped
+    now. A task that ended, or one running in this process, is 404.
+
     Args:
         task_id: Unique identifier of the task to cancel
 
@@ -1362,13 +1366,10 @@ def cancel_task(task_id: str):
         HTTPException: If task cannot be cancelled
     """
     logger.info(f"Attempting to cancel task: {task_id}")
-    if not process_manager.cancel_process(task_id):
+    if not service._stop(task_id):
         logger.warning(f"Cannot cancel task: {task_id}")
         raise HTTPException(status_code=404, detail="Task not found or already completed")
-    with status_dict_lock:
-        if task_id in status_dict:
-            status_dict[task_id].status = "Cancelled"
-            logger.info(f"Successfully cancelled task: {task_id}")
+    logger.info(f"Successfully cancelled task: {task_id}")
     return {"message": f"Task {task_id} has been cancelled."}
 
 
