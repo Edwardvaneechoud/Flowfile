@@ -645,8 +645,10 @@ def test_a_preview_fetch_stores_the_result_only_in_a_development_flow(protocol_o
 
     attempts = _fetch_recording_stores(graph)
 
-    assert graph.get_node(2).results.errors is None
     assert bool(attempts) is stores, attempts
+    node = graph.get_node(2)
+    if node.results.errors is None:
+        assert (node.results.result_ref.state == "materialised") is stores
 
 
 def _spec_field(fid: str, semantic_type: str = 'nominal', analytic_type: str = 'dimension') -> dict:

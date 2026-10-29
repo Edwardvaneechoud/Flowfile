@@ -2009,6 +2009,22 @@ class FlowNode:
             for step in self.leads_to_nodes:
                 step.node_settings.streamable = False
 
+    def read_example_data(self) -> None:
+        """Takes the grid's rows now, so a plan that fails on its rows fails here rather than on the first grid read.
+
+        A sample read from a task-route deferred result leaves a file, which then backs the first-row reads that go
+        through ``example_data_path``.
+        """
+        generator = self.results.example_data_generator
+        if generator is None:
+            return
+        generator()
+        ref = self.results.result_ref
+        if ref is not None and self.results.example_data_path is None:
+            backend = registry.backend(ref.backend_id)
+            if isinstance(backend, WorkerBackend):
+                self.results.example_data_path = backend.result_file(ref)
+
     def prepare_before_run(self):
         """Resets results and errors before a new execution."""
 

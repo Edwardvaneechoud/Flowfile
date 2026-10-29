@@ -175,16 +175,36 @@ class NodeExecutor:
             running: The ids of the nodes this run executes, which ``hints_for`` counts the consumers among;
                 ``None`` counts every consumer.
             preview: Fill the 100-row grid even when *performance_mode* sends no ``preview_rows``, by a ``sample``
-                on first read; ``None`` means ``not performance_mode``. A ``cache_results`` node always fills it.
+                taken before the node is reported run, so a failure on the rows fails the node; ``None`` means
+                ``not performance_mode``, the grid then sampled on first read. A ``cache_results`` node always fills
+                it.
+
+        A ``reset_cache`` that released a stored result the node does not store again (a Performance-mode fetch of
+        a node an earlier run stored) drops the results of the nodes below, whose plans scanned its file.
         """
         if node_logger is None:
             raise ValueError("node_logger is required")
 
         state = self.state_provider.get_state(self.node.node_id, self.node.parent_uuid)
 
-        if reset_cache:
-            self._clear_cache(state)
+        released_stored = reset_cache and self._clear_cache(state)
+        try:
+            self._run(state, reset_cache, performance_mode, retry, node_logger, unreachable, running, preview)
+        finally:
+            if released_stored and not self._holds_stored_result():
+                self.node.drop_downstream_results()
 
+    def _run(
+        self,
+        state: NodeExecutionState,
+        reset_cache: bool,
+        performance_mode: bool,
+        retry: bool,
+        node_logger: NodeLogger,
+        unreachable: Exception | None,
+        running: Collection[int | str] | None,
+        preview: bool | None,
+    ) -> None:
         if unreachable is not None:
             self._prepare_for_execution(state)
             self._handle_error(state, unreachable, performance_mode, False, node_logger, running)
@@ -223,6 +243,8 @@ class NodeExecutor:
         try:
             self._raise_on_invalid_expression()
             self.node._do_execute(hints, grid, node_logger)
+            if preview:
+                self.node.read_example_data()
             if self.node.results.resulting_data is not None:
                 state.result_schema = self.node.results.resulting_data.schema
             if self.node.results.errors is None and not self.node.node_stats.is_canceled:
@@ -402,14 +424,23 @@ class NodeExecutor:
             # the seed's per-handle schemas would outlive the run: multi-output refills skip them
             self.node._named_schemas = {}
 
-    def _clear_cache(self, state: NodeExecutionState) -> None:
-        """Clear cached results; when that released operation outputs, the nodes downstream drop theirs too."""
+    def _clear_cache(self, state: NodeExecutionState) -> bool:
+        """Clear cached results; when that released operation outputs, the nodes downstream drop theirs too.
+
+        Answers whether a stored result was released: its file is gone until the node stores again under its hash.
+        """
         minted_outputs = bool(self.node._operation_refs)
+        released_stored = self._holds_stored_result()
         self.node.remove_cache()
         if minted_outputs:
             self.node.drop_downstream_results()
         state.has_run_with_current_setup = False
         state.has_completed_last_run = False
+        return released_stored
+
+    def _holds_stored_result(self) -> bool:
+        ref = self.node.results.result_ref
+        return ref is not None and ref.state == "materialised"
 
     def _sync_state_to_legacy(self, state: NodeExecutionState) -> None:
         """Sync _execution_state to legacy node_stats for backwards compatibility."""
