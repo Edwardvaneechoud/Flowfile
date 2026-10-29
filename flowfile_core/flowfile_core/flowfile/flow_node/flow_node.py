@@ -272,6 +272,8 @@ class FlowNode:
     _params_getter: Callable[[], dict[str, ParamValue]] | None
     # the graph's execution context (the run's during a run), read each time the node's function runs
     _execution_context_getter: Callable[[], ExecutionContext] | None
+    # whether the node's flow's current run was cancelled; a node starting right after a cancel clears its own flag
+    _flow_canceled: Callable[[], bool] | None
     # warning text when prediction would require executing an un-run kernel node
     _schema_prediction_blocked: str | None
     _prediction_requires_data: bool  # stamped at placement: prediction needs a collect
@@ -373,6 +375,7 @@ class FlowNode:
 
         self._params_getter = None
         self._execution_context_getter = None
+        self._flow_canceled = None
         self._schema_prediction_blocked = None
         self._prediction_requires_data = False
         self._executes_on_kernel = False
@@ -1308,13 +1311,25 @@ class FlowNode:
         ``_resolve_input_result_for_handle``) is preserved.
         """
         while not self._execution_lock.acquire(timeout=poll):
-            if self._execution_state.is_canceled:
+            if self._cancel_requested():
                 # Without the lock, writing results.errors races the holder; the executor records the cancel.
                 raise Exception("Node execution canceled")
         try:
             yield
         finally:
             self._execution_lock.release()
+
+    def _cancel_requested(self) -> bool:
+        """Whether this node's run was cancelled, by ``cancel()`` or by its flow.
+
+        ``FlowGraph.cancel`` flags the flow and then every node, but a node that starts executing right after
+        clears its own flag in ``_prepare_for_execution``, so the flow's flag is read too; it is folded back onto
+        the node, so the executor records the cancel instead of a failure.
+        """
+        if not self._execution_state.is_canceled and self._flow_canceled is not None and self._flow_canceled():
+            self._execution_state.is_canceled = True
+            self.node_stats.is_canceled = True
+        return self._execution_state.is_canceled
 
     @contextmanager
     def _in_execution_context(self) -> Generator[None, None, None]:
@@ -1359,7 +1374,7 @@ class FlowNode:
                     # Drop handles from a previous run; multi-output nodes repopulate them below.
                     self._named_outputs = {}
                     try:
-                        if self._execution_state.is_canceled:
+                        if self._cancel_requested():
                             raise Exception("Node execution canceled")
                         if isinstance(self.function, FlowDataEngine):
                             fl: FlowDataEngine = self.function
@@ -1375,7 +1390,7 @@ class FlowNode:
                                 if v is None:
                                     input_data.append(None)
                                     continue
-                                if self._execution_state.is_canceled:
+                                if self._cancel_requested():
                                     raise Exception("Node execution canceled")
                                 if (v.node_id, src_handle) in self._skipped_input_ids_this_run:
                                     # gated-off inputs are dropped: the union outputs only what ran

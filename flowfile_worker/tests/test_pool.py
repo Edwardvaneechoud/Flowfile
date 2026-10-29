@@ -73,7 +73,11 @@ def _run_task(task_id: str, operation: str, payload: bytes, file_path: str, **kw
         _cleanup_status(task_id)
 
 
-def _idle_pid(test_pool: TaskPool) -> int:
+def _idle_pid(test_pool: TaskPool, timeout: float = 10.0) -> int:
+    """The warm member's pid once it is idle; the WS route checks a member in after its final frame went out."""
+    deadline = time.monotonic() + timeout
+    while test_pool.stats()["idle"] != 1 and time.monotonic() < deadline:
+        time.sleep(0.02)
     assert test_pool.stats()["idle"] == 1, f"expected one idle member, stats={test_pool.stats()}"
     return test_pool._idle[0].process.pid
 
