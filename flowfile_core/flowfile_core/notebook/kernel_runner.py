@@ -31,6 +31,7 @@ from flowfile_core.notebook.bridge import CleanRunRequest, CleanRunResult
 from flowfile_core.notebook.gate import DISABLED_DETAIL, kernel_sessions_allowed
 from flowfile_core.notebook.push import known_schemas, seed_snapshot
 from shared.notebook_display import KERNEL_RESULT_MARKER
+from shared.path_utils import contained_path
 
 SNIPPET = "from flowfile_frame import notebook_kernel as _nb\n_nb.handle({request!r}, globals())\n"
 
@@ -493,13 +494,12 @@ def _run_outcome(flow, node, lineage, kernel_id: str, hold, run_info) -> None:
 
 
 def _write_result(flow, node_id: int, data, path: str) -> None:
-    """Write a canvas result as parquet: through the worker when offloading, so core never collects it."""
+    """Write a canvas result as parquet on the flow's compute backend, so core never collects a remote flow's rows."""
     from flowfile_core.kernel.execution import write_parquet_for_kernel
 
-    local = flow.flow_settings.execution_location == "local"
     try:
         write_parquet_for_kernel(
-            data.data_frame, path, flow_id=flow.flow_id, node_id=node_id, local=local, what=f"node {node_id}'s rows"
+            data.data_frame, path, flow_id=flow.flow_id, node_id=node_id, what=f"node {node_id}'s rows", graph=flow
         )
     except RuntimeError as exc:
         raise HTTPException(422, f"Could not hand node {node_id}'s rows to the kernel: {exc}") from exc
@@ -563,7 +563,10 @@ def node_result(kernel_id: str, user, flow_id: int, node_id: int, output_handle:
     if cached is not None and cached[0]() is data and os.path.exists(cached[1]):
         path = cached[1]
     else:
-        path = os.path.join(_results_dir(manager, flow_id), f"{node_id}_{handle}_{uuid4().hex}.parquet")
+        name = f"{node_id}_{handle}_{uuid4().hex}.parquet"
+        path = contained_path(manager.shared_volume_path, os.path.join(_results_dir(manager, flow_id), name))
+        if path is None:
+            raise HTTPException(422, f"Output {handle!r} of node {node_id} does not name a file in the shared folder")
         _write_result(flow, node_id, data, path)
         with _lock:
             superseded = _results.setdefault(flow_id, {}).get((node_id, handle))

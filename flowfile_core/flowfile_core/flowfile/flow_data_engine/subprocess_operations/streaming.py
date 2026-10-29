@@ -22,17 +22,16 @@ from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect
 
 from flowfile_core.auth.jwt import get_internal_token
-from flowfile_core.configs.settings import WORKER_URL
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import (
+    ensure_handshake,
+    reset_handshake,
+)
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import Status
 
 # How often the receive loop wakes up to check for cancellation/inactivity.
 _WS_RECV_POLL_SECONDS = 2.0
 
-# Abort the receive when the worker has sent NOTHING for this long. The worker
-# heartbeats a progress frame at least every ~10s while a task is alive, so
-# prolonged silence means the worker parent is wedged or gone (protocol-level
-# pings don't catch an app-level wedge). 0 disables. Mirrors the REST path's
-# FLOWFILE_WORKER_POLL_TIMEOUT.
+# The worker heartbeats every ~10s during a task, so a longer silence means it is wedged; 0 disables.
 _WS_INACTIVITY_TIMEOUT = float(os.getenv("FLOWFILE_WORKER_WS_TIMEOUT", "300"))
 
 
@@ -74,14 +73,9 @@ def error_code_for_kind(kind: str | None) -> int:
     return -1 if kind == "environment" else 1
 
 
-def _get_ws_url() -> str:
-    """Convert HTTP worker URL to WebSocket URL."""
-    return WORKER_URL.replace("http://", "ws://").replace("https://", "wss://")
-
-
-# ---------------------------------------------------------------------------
-# Message building
-# ---------------------------------------------------------------------------
+def _get_ws_url(worker_url: str) -> str:
+    """The WebSocket base URL of the worker at the HTTP base URL ``worker_url``."""
+    return worker_url.replace("http://", "ws://").replace("https://", "wss://")
 
 
 def _build_metadata(
@@ -101,11 +95,6 @@ def _build_metadata(
     if kwargs:
         metadata["kwargs"] = kwargs
     return metadata
-
-
-# ---------------------------------------------------------------------------
-# Message receiving
-# ---------------------------------------------------------------------------
 
 
 def _handle_complete_message(data: dict, task_id: str) -> Status:
@@ -163,11 +152,7 @@ def _receive_raw_result(
                 ) from None
             continue
         except ConnectionClosed:
-            # cancel() sets the stop event and then closes the socket, which
-            # aborts a blocked recv with ConnectionClosed (never TimeoutError).
-            # Only map to an interrupt when a cancel is actually in flight — a
-            # worker-initiated close with no cancel must keep its original
-            # exception so callers preserve the degrade-gracefully semantics.
+            # cancel() closes the socket under a blocked recv; a close without a cancel keeps its exception.
             if should_abort is not None and should_abort():
                 raise WorkerStreamInterrupted(f"Canceled while waiting for worker result (task {task_id})") from None
             raise
@@ -227,19 +212,34 @@ def streaming_start(
     node_id: int | str,
     lf_bytes: bytes,
     kwargs: dict | None = None,
+    *,
+    worker_url: str,
 ):
-    """Open a WebSocket connection and send the task.
+    """Open a WebSocket connection to the worker at ``worker_url`` and send the task.
 
     Returns the **open** connection.  The caller must eventually call
     :func:`streaming_receive` (which closes the connection) or close it
     manually.
 
-    Raises immediately on connection failure or send error.
+    Raises immediately on connection failure or send error. The worker's versions are
+    checked first (``ensure_handshake``). A failed connect re-arms that check, since the
+    worker that comes back at ``worker_url`` may be another one. A ``wss://`` socket
+    verifies the worker against the CA core trusts for it (``ssl_context_for``).
     """
-    ws_url = _get_ws_url() + "/ws/submit"
+    # imported here: subprocess_operations imports this module
+    from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import ssl_context_for
+
+    ensure_handshake(worker_url)
+    ws_url = _get_ws_url(worker_url) + "/ws/submit"
     metadata = _build_metadata(task_id, operation_type, flow_id, node_id, kwargs)
 
-    ws = connect(ws_url, additional_headers={"X-Flowfile-Internal": get_internal_token()})
+    try:
+        ws = connect(
+            ws_url, additional_headers={"X-Flowfile-Internal": get_internal_token()}, ssl=ssl_context_for(worker_url)
+        )
+    except OSError:
+        reset_handshake(worker_url)
+        raise
     try:
         ws.send(json.dumps(metadata))
         ws.send(lf_bytes)
@@ -288,11 +288,13 @@ def streaming_submit(
     node_id: int | str,
     lf_bytes: bytes,
     kwargs: dict | None = None,
+    *,
+    worker_url: str,
 ) -> tuple[Any, Status]:
-    """Submit a task via WebSocket and block until the result arrives.
+    """Submit a task to the worker at ``worker_url`` via WebSocket and block until the result arrives.
 
     Convenience wrapper around :func:`streaming_start` +
     :func:`streaming_receive`.
     """
-    ws = streaming_start(task_id, operation_type, flow_id, node_id, lf_bytes, kwargs)
+    ws = streaming_start(task_id, operation_type, flow_id, node_id, lf_bytes, kwargs, worker_url=worker_url)
     return streaming_receive(ws, task_id)

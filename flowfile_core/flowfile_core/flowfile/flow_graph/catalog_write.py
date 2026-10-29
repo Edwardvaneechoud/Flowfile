@@ -4,7 +4,7 @@ import datetime
 import io as _io
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import polars as pl
 
@@ -14,64 +14,46 @@ from flowfile_core.catalog.delta_utils import (
     is_delta_table,
 )
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
-from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace
+from flowfile_core.catalog.storage_backend import (
+    _catalog_table_dir_name,
+    _is_cloud_uri,
+    join_catalog_uri,
+    resolve_for_namespace,
+)
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import NodeLogger
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.payloads import (
+    CatalogTableIdentity,
+    DeltaMergePayload,
+    DeltaScd2Payload,
+    DeltaWritePayload,
+    op_payload,
+)
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-    ExternalDfFetcher,
-)
-from flowfile_core.flowfile.flow_graph._root import root
 from flowfile_core.flowfile.flow_graph.catalog_resolution import (
     _authorize_catalog_write,
     _effective_namespace_id,
     _resolve_catalog_sql_tables,
 )
-from flowfile_core.flowfile.flow_node.flow_node import (
-    FlowNode,
-)
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.catalog_schema import TableWriteMetadata
+from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnectionWorkerInterface
 from flowfile_core.schemas.delta_write import MERGE_MODES
 from shared.delta_utils import (
     enable_change_data_feed,
     get_delta_partition_columns,
-    get_delta_size_bytes,
-    merge_into_delta,
-    scd2_into_delta,
     scd2_parse_iso_utc,
 )
-from shared.delta_utils import write_delta as _write_delta
+from shared.storage_config import storage
 
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_graph.graph import FlowGraph
-
-
-def _scd2_primitive_kwargs(scd2_config: dict, run_timestamp: str) -> dict:
-    """Map a resolved SCD2 catalog config onto ``scd2_into_delta``'s keyword names.
-
-    Both branches of a write are built from this one mapping — the local writer forwards it to the
-    primitive verbatim, the worker branch re-spells only ``valid_from_iso`` as ``run_timestamp``
-    (the worker's parameter name for the same instant) and adds the transport fields. So the local
-    and remote branches of the same write cannot disagree about what was compared or how the
-    generated columns are named.
-    """
-    return {
-        "business_keys": scd2_config["business_keys"],
-        "valid_from_iso": run_timestamp,
-        "compare_columns": scd2_config["compare_columns"],
-        "full_snapshot": scd2_config["full_snapshot"],
-        "surrogate_key_column": scd2_config["surrogate_key_column"],
-        "valid_from_column": scd2_config["valid_from_column"],
-        "valid_to_column": scd2_config["valid_to_column"],
-        "is_current_column": scd2_config["is_current_column"],
-        # .get: persisted-shape configs never carry the creation-time knob.
-        "partition_on_current": scd2_config.get("partition_on_current", True),
-    }
 
 
 def _scd2_row_filter(
@@ -146,20 +128,21 @@ def _scd2_writer_output(
     output_mode: str,
     version: int | None,
     run_timestamp: str,
-    storage_options: dict[str, str] | None,
+    credential_kwargs: dict[str, Any],
 ) -> FlowDataEngine:
     """The frame an SCD2 catalog writer emits downstream, read back at the version it settled on.
 
     All three modes yield the input's columns in input order followed by the four generated
     columns, so the node's advertised schema holds whichever mode is selected. Pinning the read to
     *version* is what makes a concurrent writer unable to change what this run passes on. The plan
-    stays lazy — core never materialises it.
+    stays lazy — core never materialises it. *credential_kwargs* are the scan's credentials
+    (``CatalogStorageTarget.scan_kwargs`` for a cloud table, empty for a local one).
     """
-    scan_kwargs = CloudStorageReader.get_secure_scan_kwargs(storage_options, None)
+    scan_kwargs = dict(credential_kwargs)
     if version is not None:
         scan_kwargs["version"] = version
     system_dtypes = _scd2_system_column_dtypes(scd2_config)
-    input_dtypes = dict(df.data_frame.collect_schema())
+    input_dtypes = dict(df.polars_schema())
     output_dtypes = {**input_dtypes, **system_dtypes}
     is_current = scd2_config["is_current_column"]
     table = pl.scan_delta(str(dest_path), **scan_kwargs)
@@ -197,149 +180,104 @@ class CatalogDeltaWrite(NamedTuple):
     scd2_version: int | None = None
 
 
-def _write_catalog_delta_local(
-    df: FlowDataEngine,
-    dest_path: str | Path,
+_TABLE_WRITE_METADATA_KEYS = ("schema", "row_count", "column_count", "size_bytes")
+
+
+def _catalog_delta_op(
     delta_mode: str,
-    merge_keys: list[str] | None,
-    partition_by: list[str] | None = None,
-    storage_options: dict[str, str] | None = None,
-    scd2_kwargs: dict | None = None,
-    enable_cdf: bool = False,
-) -> CatalogDeltaWrite:
-    """Write a Delta table in-process. ``meta`` is ``None`` when the write was skipped.
-
-    *storage_options* (passed verbatim, ``None`` ⇒ local filesystem) routes the write to object
-    storage so standalone CLI/scheduler runs — which have no worker to offload to — can still write
-    cloud catalog tables. An empty dict means ambient credentials, so it must reach the delta calls
-    as-is (the downstream helpers branch on ``is None``, not truthiness).
-
-    *scd2_kwargs* carries the resolved SCD2 configuration (see ``_scd2_primitive_kwargs``) and is
-    required when *delta_mode* is ``"scd2"``. *enable_cdf* turns change tracking on for a table
-    this write creates; an existing one is handled by ``_ensure_catalog_cdc_enabled`` afterwards.
-    """
-    dest = str(dest_path)
-    if delta_mode == "scd2":
-        # The sanctioned local collect: SCD2 classification needs rows and a CLI run has no worker.
-        result = scd2_into_delta(
-            df.data_frame.collect(),
-            dest,
-            partition_by=partition_by,
-            storage_options=storage_options,
-            **(scd2_kwargs or {}),
-        )
-        if result.skipped:
-            return CatalogDeltaWrite(None, result.version)
-        # An SCD2 table's row count is its whole history, so the post-write scan is the only truth.
-        after = pl.scan_delta(dest, **({} if storage_options is None else {"storage_options": storage_options}))
-        after_schema = after.collect_schema()
-        return CatalogDeltaWrite(
-            {
-                "schema": [{"name": n, "dtype": str(d)} for n, d in after_schema.items()],
-                "row_count": result.rows_total,
-                "column_count": len(after_schema),
-                "size_bytes": get_delta_size_bytes(dest_path, storage_options=storage_options),
-                "scd2_metrics": {
-                    "rows_inserted": result.rows_inserted,
-                    "rows_closed": result.rows_closed,
-                    "rows_total": result.rows_total,
-                    "rows_current": result.rows_current,
-                    "created": result.created,
-                },
-            },
-            result.version,
-        )
-    if delta_mode in ("upsert", "update", "delete"):
-        wrote = merge_into_delta(
-            df.data_frame.collect(),
-            dest,
-            merge_mode=delta_mode,
-            merge_keys=merge_keys,
-            partition_by=partition_by,
-            storage_options=storage_options,
-            enable_cdf=enable_cdf,
-        )
-    else:
-        wrote = _write_delta(
-            df.data_frame,
-            dest,
-            mode=delta_mode,
-            partition_by=partition_by,
-            storage_options=storage_options,
-            enable_cdf=enable_cdf,
-        )
-    if not wrote:
-        return CatalogDeltaWrite(None)
-    return CatalogDeltaWrite(
-        {
-            "schema": [{"name": c.column_name, "dtype": c.data_type} for c in df.schema],
-            "row_count": df.count(),
-            "column_count": df.number_of_fields,
-            "size_bytes": get_delta_size_bytes(dest_path, storage_options=storage_options),
-        }
-    )
-
-
-def _write_catalog_delta_remote(
-    flow_id: int,
-    node: FlowNode,
-    df: FlowDataEngine,
-    op_type: str,
-    op_kwargs: dict,
-    table_label: str,
-) -> CatalogDeltaWrite:
-    """Write a Delta table via the worker service. ``meta`` is ``None`` when the write was skipped.
-
-    *table_label* names the table in the error message, quoted as it should appear there.
-    """
-    fetcher = ExternalDfFetcher(
-        flow_id=flow_id,
-        node_id=node.node_id,
-        lf=df.data_frame,
-        wait_on_completion=False,
-        operation_type=op_type,
-        kwargs=op_kwargs,
-    )
-    node._fetch_cached_df = fetcher
-    try:
-        result = fetcher.get_result()
-    except Exception as e:
-        raise RuntimeError(f"Worker failed to write delta table {table_label}: {e}") from e
-    scd2_version = result.get("version") if isinstance(result, dict) else None
-    if isinstance(result, dict) and result.get("skipped"):
-        return CatalogDeltaWrite(None, scd2_version)
-    meta: TableWriteMetadata = {}
-    if isinstance(result, dict):
-        # Exactly these four keys reach the catalog service as **meta_kwargs (explicit keywords only).
-        meta = {k: result.get(k) for k in ("schema", "row_count", "column_count", "size_bytes")}
-        if result.get("scd2_metrics"):
-            meta["scd2_metrics"] = result["scd2_metrics"]
-    return CatalogDeltaWrite(meta, scd2_version)
-
-
-def _delta_op(
-    delta_mode: str,
+    settings: input_schema.CatalogWriteSettings,
     *,
-    output_path: str,
-    merge_keys: list[str],
-    partition_by: list[str] | None,
-    enable_cdf: bool,
-) -> tuple[str, dict]:
-    """The worker operation and kwargs for a non-SCD2 Delta write: ``merge_delta`` or ``write_delta``."""
-    if delta_mode in MERGE_MODES:
-        return "merge_delta", {
-            "output_path": output_path,
-            "merge_mode": delta_mode,
-            "merge_keys": merge_keys,
-            "partition_by": partition_by,
-            "enable_cdf": enable_cdf,
-        }
-    return "write_delta", {
-        "output_path": output_path,
-        "mode": delta_mode,
-        "partition_by": partition_by,
-        "enable_cdf": enable_cdf,
+    plan: pl.LazyFrame,
+    path: str | None,
+    connection: FullCloudStorageConnectionWorkerInterface | None,
+    scd2_config: dict | None,
+    run_timestamp: str,
+    flow_id: int,
+    node_id: int | str,
+    table: CatalogTableIdentity | None = None,
+) -> tuple[OperationKind, DeltaWritePayload | DeltaMergePayload | DeltaScd2Payload]:
+    """The operation a catalog Delta write in *delta_mode* runs, and its payload.
+
+    ``"scd2"`` runs ``delta_scd2`` with the resolved *scd2_config* and the write's one *run_timestamp*, a merge mode
+    ``delta_merge`` and any other mode ``delta_write``. Only the last two carry ``track_changes``, which the settings
+    refuse with ``"scd2"``. *connection* is the catalog's owner-encrypted object-storage connection, ``None`` for a
+    local table. When *table* names the table by identity, *path* is ``None``.
+    """
+    common: dict[str, Any] = {
+        "plan": plan,
+        "path": path,
+        "table": table,
+        "partition_by": settings.partition_by,
+        "connection": connection,
+        "flow_id": flow_id,
+        "node_id": node_id,
     }
+    if delta_mode == "scd2":
+        return OperationKind.delta_scd2, DeltaScd2Payload(
+            business_keys=scd2_config["business_keys"],
+            compare_columns=scd2_config["compare_columns"],
+            full_snapshot=scd2_config["full_snapshot"],
+            surrogate_key_column=scd2_config["surrogate_key_column"],
+            valid_from_column=scd2_config["valid_from_column"],
+            valid_to_column=scd2_config["valid_to_column"],
+            is_current_column=scd2_config["is_current_column"],
+            run_timestamp=run_timestamp,
+            # .get: persisted-shape configs never carry the creation-time knob.
+            partition_on_current=scd2_config.get("partition_on_current", True),
+            **common,
+        )
+    if delta_mode in MERGE_MODES:
+        return OperationKind.delta_merge, DeltaMergePayload(
+            merge_mode=delta_mode, merge_keys=settings.merge_keys, enable_cdf=settings.track_changes, **common
+        )
+    return OperationKind.delta_write, DeltaWritePayload(mode=delta_mode, enable_cdf=settings.track_changes, **common)
+
+
+def _catalog_delta_written(report: dict[str, Any]) -> CatalogDeltaWrite:
+    """What a catalog Delta write produced, from its operation's ``OpResult.metadata``.
+
+    A ``skipped`` report yields no metadata (the table is not registered again) and the version an SCD2 write
+    classified against. Otherwise the metadata keeps the four keys the catalog service takes, plus an SCD2 write's
+    ``scd2_metrics``.
+    """
+    version = report.get("version")
+    if report.get("skipped"):
+        return CatalogDeltaWrite(None, version)
+    meta: TableWriteMetadata = {key: report.get(key) for key in _TABLE_WRITE_METADATA_KEYS}
+    if report.get("scd2_metrics"):
+        meta["scd2_metrics"] = report["scd2_metrics"]
+    return CatalogDeltaWrite(meta, version)
+
+
+def _same_location(left: str, right: str) -> bool:
+    """Whether two spellings of a table's location name the same place.
+
+    Object-storage URIs compare without a trailing slash; local paths compare resolved, so a symlinked or relative
+    spelling of a directory is that directory.
+    """
+    if _is_cloud_uri(left) or _is_cloud_uri(right):
+        return left.rstrip("/") == right.rstrip("/")
+    return Path(left).resolve() == Path(right).resolve()
+
+
+def _catalog_table_identity(table_name: str, existing, dest_path: str, base_uri: str | None) -> CatalogTableIdentity:
+    """The catalog table *table_name* stored at *dest_path*, by identity: its directory under the catalog's root.
+
+    *base_uri* is the object-storage root, ``None`` for the catalog tables directory; *existing* is the table's
+    record, ``None`` for a new table. A *dest_path* that is not that root joined with a directory name raises
+    ``ValueError``, since a write by identity would put the table somewhere other than its record says.
+    """
+    dir_name = _catalog_table_dir_name(dest_path)
+    root = base_uri if base_uri is not None else str(storage.catalog_tables_directory)
+    if not _same_location(join_catalog_uri(root, dir_name), dest_path):
+        raise ValueError(
+            f"Catalog table '{table_name}' is stored at {dest_path}, which is not a table directory under its "
+            f"catalog's storage root {root}; with FLOWFILE_COMPUTE_PROTOCOL on a catalog table is written by its "
+            "identity, which cannot name that location."
+        )
+    return CatalogTableIdentity(
+        table_id=existing.id if existing is not None else None, table_name=dir_name, base_uri=base_uri
+    )
 
 
 _SCD2_DRIFT_FIELDS = (
@@ -766,7 +704,7 @@ def _handle_physical_table_write(
             write_mode=settings.write_mode,
             target=target,
         )
-        # Authorize before any dispatch: neither writer may get a destination the principal cannot write.
+        # Authorize before any dispatch: no backend may get a destination the principal cannot write.
         _authorize_catalog_write(db, node_catalog_writer.user_id, existing=existing, namespace_id=namespace_id)
         # Both SCD2 gates read the catalog record, so they run inside the session and before dispatch.
         scd2_config = _resolve_scd2_config(settings, df, existing) if settings.write_mode == "scd2" else None
@@ -781,60 +719,52 @@ def _handle_physical_table_write(
                 "catalog is not configured for object storage; set the catalog's storage_uri / "
                 "storage_connection_name to write to it."
             )
-        storage_payload = target.to_worker_payload()
+        connection = target.worker_interface
         storage_options = target.storage_options
     else:
-        storage_payload = None
+        connection = None
         storage_options = None
+
+    # Read once per write and refused before anything touches the table.
+    by_identity = bool(FLOWFILE_COMPUTE_PROTOCOL)
+    table = (
+        _catalog_table_identity(settings.table_name, existing, dest_path, target.base if dest_is_cloud else None)
+        if by_identity
+        else None
+    )
 
     if settings.track_changes and existing is not None:
         # Enable before the write so this write's own commit lands above the cursor floor.
         _ensure_catalog_cdc_enabled(settings.table_name, namespace_id, dest_path, storage_options)
 
-    # One instant for the whole write: the surrogate key depends on valid_from, so both branches agree.
+    # One instant per write: the surrogate key depends on valid_from, and the output read selects by it.
     run_timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-    scd2_kwargs = _scd2_primitive_kwargs(scd2_config, run_timestamp) if delta_mode == "scd2" else None
-    if delta_mode == "scd2":
-        op_type = "scd2_delta"
-        # The worker's scd2_delta takes the same fields; only the instant is named run_timestamp there.
-        op_kwargs = {k: v for k, v in scd2_kwargs.items() if k != "valid_from_iso"}
-        op_kwargs["run_timestamp"] = scd2_kwargs["valid_from_iso"]
-        op_kwargs["output_path"] = dest_path
-        op_kwargs["partition_by"] = settings.partition_by
-    else:
-        op_type, op_kwargs = _delta_op(
-            delta_mode,
-            output_path=dest_path,
-            merge_keys=settings.merge_keys,
-            partition_by=settings.partition_by,
-            enable_cdf=settings.track_changes,
-        )
-    if storage_payload is not None:
-        op_kwargs["storage_payload"] = storage_payload
-
-    # Follows execution_location like every writer; a cloud destination only threads storage_options.
-    if graph.flow_settings.execution_location != "local":
-        written = root()._write_catalog_delta_remote(
-            flow_id=graph.flow_id,
-            node=graph.get_node(node_catalog_writer.node_id),
-            df=df,
-            op_type=op_type,
-            op_kwargs=op_kwargs,
-            table_label=f"'{settings.table_name}'",
-        )
-    else:
-        written = _write_catalog_delta_local(
-            df,
-            dest_path,
-            delta_mode,
-            settings.merge_keys,
-            settings.partition_by,
-            storage_options=storage_options,
-            scd2_kwargs=scd2_kwargs,
-            enable_cdf=settings.track_changes,
-        )
+    writer_node = graph.get_node(node_catalog_writer.node_id)
+    operation, write = _catalog_delta_op(
+        delta_mode,
+        settings,
+        plan=df.data_frame,
+        path=None if by_identity else dest_path,
+        table=table,
+        connection=connection,
+        scd2_config=scd2_config,
+        run_timestamp=run_timestamp,
+        flow_id=graph.flow_id,
+        node_id=writer_node.node_id,
+    )
+    report = writer_node.run_op(current_context(graph).backend, operation, op_payload(write), job_id=write.job_id)
+    written = _catalog_delta_written(report.metadata)
     meta_kwargs = written.meta
+    # By identity a new table is where compute answered; an existing one stays where its record resolved.
+    answered = report.metadata.get("table_path") if by_identity else None
+    if answered and existing is None:
+        dest_path = answered
+    elif answered and not _same_location(answered, dest_path):
+        raise ValueError(
+            f"Catalog table '{settings.table_name}' is stored at {dest_path}, but the compute answered {answered}, "
+            "which is another location; the write is not registered and the table keeps its data."
+        )
 
     def _node_output() -> FlowDataEngine:
         """Only an SCD2 write changes what leaves the node; every other mode passes its input on."""
@@ -847,7 +777,7 @@ def _handle_physical_table_write(
             (settings.scd2 or input_schema.Scd2Settings()).output_mode,
             written.scd2_version,
             run_timestamp,
-            storage_options,
+            target.scan_kwargs(None) if dest_is_cloud else {},
         )
 
     if meta_kwargs is None:

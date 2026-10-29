@@ -14,6 +14,7 @@ from flowfile_frame import notebook
 from flowfile_frame.catalog_reference import SchemaReference
 from flowfile_frame.native import is_side_effect_node_type
 from flowfile_frame.notebook_cells import clean_run, exec_cell
+from shared.storage_config import storage
 from test_utils.notebook_demo import DEMO_FILE, REGIONS, SALES, installed_mood_emoji, load_demo, storage_files
 
 WRITTEN_TABLES = {
@@ -49,7 +50,9 @@ def recorded_registrations(monkeypatch):
 
 
 def _state(schema):
-    return sorted(t.name for t in schema.list_tables()), storage_files()
+    """The schema's tables and the files under storage, less the results the compute holds in its cache."""
+    cache = storage.cache_directory
+    return sorted(t.name for t in schema.list_tables()), {f for f in storage_files() if cache not in f.parents}
 
 
 def test_build_sales_analytics_builds_in_notebook_mode_without_writing(demo_catalog, recorded_registrations):

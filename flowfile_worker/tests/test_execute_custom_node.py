@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from flowfile_worker import main, models, mp_context
-from flowfile_worker.custom_node_runner import _json_default, execute_custom_node_task
+from flowfile_worker.custom_node_runner import _json_default, _output_path, execute_custom_node_task
 from flowfile_worker.secrets import encrypt_secret
 from tests.conftest import INTERNAL_AUTH_HEADERS
 
@@ -238,6 +238,17 @@ def test_multi_output(tmp_path):
     assert payload["outputs"]["high"]["row_count"] == 2
     assert payload["outputs"]["low"]["row_count"] == 1
     assert pl.read_ipc(payload["outputs"]["low"]["path"])["value"].to_list() == [5]
+
+
+def test_output_path_keeps_a_secondary_output_beside_the_primary(tmp_path):
+    primary = str(tmp_path / "job_0.arrow")
+    assert _output_path(primary, "main", "main") == primary
+    assert _output_path(primary, "low", "main") == os.path.realpath(tmp_path / "job_0__low.arrow")
+
+
+def test_output_path_refuses_a_name_that_leaves_the_result_folder(tmp_path):
+    with pytest.raises(ValueError, match="outside"):
+        _output_path(str(tmp_path / "job_0.arrow"), "x/../../../escaped", "main")
 
 
 def test_multi_output_missing_declared_name_errors(tmp_path):

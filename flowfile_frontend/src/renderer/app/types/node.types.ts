@@ -93,6 +93,13 @@ export interface NodeResult {
   // Deliberately skipped behind a closed gate: reported as success with a zero
   // runtime, so the run stays green. Failure-driven skips emit no result at all.
   skipped?: boolean;
+  // The class of the compute error that failed the node, "Refusal" when placement refused it.
+  compute_error?: string | null;
+  // The backend placement ran the node on; absent from an older core or with the protocol off.
+  backend_id?: string | null;
+  // The backend its settings name, when placement ran it on the default backend because that one cannot run it.
+  fallback_from?: string | null;
+  fallback_reason?: string | null;
 }
 
 // Node Description Types
@@ -964,6 +971,7 @@ export interface NodeBase {
   node_reference?: string; // Unique reference identifier for code generation (lowercase, no spaces)
   is_user_defined?: boolean;
   output_field_config?: OutputFieldConfig | null;
+  execution_location?: string; // "auto" (the flow's backend) or a backend id; saved with the node
 }
 
 export interface NodeSingleInput extends NodeBase {

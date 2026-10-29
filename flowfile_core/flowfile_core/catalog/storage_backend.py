@@ -10,14 +10,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy.orm import Session
 
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.db_connections import get_cloud_connection_schema
+from flowfile_core.flowfile.execution.protocol import CredentialRef
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.notebook.lookup import metadata_lookup
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnectionWorkerInterface
+from shared.cloud_credential_provider import CredentialRefProvider
 from shared.cloud_storage.uri import CLOUD_URI_SCHEMES as _CLOUD_URI_SCHEMES
 from shared.storage_config import storage
 
@@ -66,7 +70,10 @@ class CatalogStorageTarget:
     """Where a catalog table's bytes live, plus the credentials to reach them.
 
     ``storage_options`` are decrypted for core's own in-process reads; ``worker_interface``
-    keeps the connection owner-encrypted for the core→worker hand-off.
+    keeps the connection owner-encrypted for the core→worker hand-off. With
+    ``FLOWFILE_COMPUTE_PROTOCOL`` on, ``credential_ref`` names the namespace connection for the
+    owner and ``plan_storage_options`` are its options without a secret: what a scan's plan
+    carries (:meth:`scan_kwargs`).
     """
 
     is_cloud: bool
@@ -74,6 +81,8 @@ class CatalogStorageTarget:
     storage_options: dict[str, str] = field(default_factory=dict)
     connection_name: str | None = None
     worker_interface: FullCloudStorageConnectionWorkerInterface | None = None
+    credential_ref: CredentialRef | None = None
+    plan_storage_options: dict[str, str] = field(default_factory=dict)
 
     def to_worker_payload(self) -> dict | None:
         """Serialize a ``CatalogStorageInterface`` for the worker, or ``None`` for local.
@@ -84,6 +93,18 @@ class CatalogStorageTarget:
         if not self.is_cloud or self.worker_interface is None:
             return None
         return {"base_uri": self.base, "connection": self.worker_interface.model_dump()}
+
+    def scan_kwargs(self, user_id: int | None) -> dict[str, Any]:
+        """``storage_options``/``credential_provider`` kwargs for a scan of this target whose plan may be serialized.
+
+        With a ``credential_ref``, a new ``CredentialRefProvider`` on every call, so each plan gets its own (Polars
+        caches resolved credentials by the provider's pickled bytes); the process that runs the plan resolves it.
+        Otherwise the resolved options' credentials travel encrypted for *user_id*.
+        """
+        if self.credential_ref is not None:
+            provider = CredentialRefProvider(self.credential_ref.connection_id, self.credential_ref.user_id)
+            return CloudStorageReader.get_scan_kwargs(self.plan_storage_options, provider)
+        return CloudStorageReader.get_secure_scan_kwargs(self.storage_options, user_id)
 
 
 def _local_target() -> CatalogStorageTarget:
@@ -112,12 +133,21 @@ def _resolve_in_session(db: Session, namespace_id: int) -> CatalogStorageTarget:
             f"Catalog storage connection '{connection_name}' was not found or is not accessible "
             f"for the catalog owner (user {owner_id})."
         )
+    credential_ref = None
+    plan_storage_options: dict[str, str] = {}
+    if FLOWFILE_COMPUTE_PROTOCOL:
+        options, provider = CloudStorageReader.get_read_credentials(conn, owner_id)
+        if isinstance(provider, CredentialRefProvider):
+            credential_ref = CredentialRef(connection_id=provider.connection_id, user_id=provider.user_id)
+            plan_storage_options = options
     return CatalogStorageTarget(
         is_cloud=True,
         base=str(root.storage_uri).rstrip("/"),
         storage_options=CloudStorageReader.get_storage_options(conn),
         connection_name=connection_name,
         worker_interface=conn.get_worker_interface(owner_id),
+        credential_ref=credential_ref,
+        plan_storage_options=plan_storage_options,
     )
 
 

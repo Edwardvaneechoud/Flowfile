@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from flowfile_core.configs import settings
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import custom_node_task_id
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import _worker_session
@@ -113,7 +114,7 @@ def run_and_check(graph: FlowGraph):
 def worker_executed_custom_node(node) -> bool:
     """The custom-node worker task is keyed by the node hash (suffixed to stay distinct
     from the result-store task); a Completed status proves offload."""
-    response = _worker_session.get(f"{WORKER_URL}/status/{custom_node_task_id(node.hash)}", timeout=10)
+    response = _worker_session.get(f"/status/{custom_node_task_id(node.hash)}", worker_url=WORKER_URL, timeout=10)
     if not response.ok:
         return False
     payload = response.json()
@@ -182,15 +183,21 @@ def test_source_edit_changes_node_hash(registered_node, tmp_path):
 
 
 def test_worker_down_gives_clean_node_error(registered_node, monkeypatch):
-    from flowfile_core.flowfile.flow_data_engine.subprocess_operations import subprocess_operations
+    """With the worker out of reach, the first node that needs it fails with the typed message
+    and nothing downstream runs."""
+    from flowfile_core.flowfile.execution import registry
 
     entry = registered_node(WORKER_NODE_SOURCE, "worker_down_node.py")
     graph = create_graph("remote")
     add_manual_input(graph, [{"name": "a"}])
     add_registered_custom_node(graph, entry, node_id=2, settings={"main": {"suffix": "_d"}})
 
-    monkeypatch.setattr(subprocess_operations, "WORKER_URL", "http://127.0.0.1:1")
+    monkeypatch.setattr(registry.backend(registry.WORKER_BACKEND_ID), "url", "http://127.0.0.1:1")
     run_info = graph.run_graph()
     assert not run_info.success
     failed = [r for r in run_info.node_step_result if not r.success]
-    assert any(r.node_id == 2 for r in failed)
+    assert [r.node_id for r in failed] == [1]
+    # with the flag off the task-route fetcher enters the gate with a URL only
+    hint = 'Is backend "worker" running?' if settings.FLOWFILE_COMPUTE_PROTOCOL else "Is the compute backend running?"
+    assert hint in failed[0].error
+    assert not any(r.node_id == 2 and r.success for r in run_info.node_step_result)

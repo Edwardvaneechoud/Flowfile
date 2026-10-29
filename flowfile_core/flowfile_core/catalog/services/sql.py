@@ -22,6 +22,7 @@ from flowfile_core.catalog.text_utils import (
     is_table_reference,
     rewrite_qualified_references,
 )
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_resolve_virtual_table,
 )
@@ -121,9 +122,7 @@ class SqlService:
         for vname in referenced_virtuals:
             vid = virtual_map[vname]
             if vid not in ipc_path_by_id:
-                # The virtual is referenced in the query, so it can't be skipped — a failure
-                # here means the query can't run. Surface a clear reason instead of letting the
-                # worker fail later with a cryptic "relation not found".
+                # The query needs this virtual: fail with a clear reason, not the worker's "relation not found".
                 try:
                     ipc_path = self._materialise_virtual_for_sql(vid, user_id)
                 except Exception as e:
@@ -139,12 +138,13 @@ class SqlService:
                 ipc_path_by_id[vid] = ipc_path
             virtual_refs[vname] = ipc_path_by_id[vid]
 
-        # Lazy module lookup so monkeypatches on ``catalog.service.trigger_sql_query``
-        # — used by tests — flow through.
+        # Looked up on the module so tests' monkeypatches of ``trigger_sql_query`` apply.
         from flowfile_core.catalog import service as _service_module
 
         try:
-            result = _service_module.trigger_sql_query(query, delta_map, max_rows, virtual_refs=virtual_refs or None)
+            result = _service_module.trigger_sql_query(
+                query, delta_map, max_rows, virtual_refs=virtual_refs or None, worker_url=registry.worker_url()
+            )
         except RuntimeError as e:
             return SqlQueryResult(error=friendly_relation_error(str(e), query))
         if result.get("error"):
@@ -156,7 +156,9 @@ class SqlService:
         lazy_frame = self._resolve_virtual_flow_table_via_facade(virtual_id, user_id=user_id, run_location="remote")
         # Post-resolution read: resolution may have re-stamped source_table_versions.
         versions_hash = self._require_virtual_tables().fresh_versions_hash(virtual_id)
-        result = trigger_resolve_virtual_table(virtual_id, lazy_frame.serialize(), versions_hash)
+        result = trigger_resolve_virtual_table(
+            virtual_id, lazy_frame.serialize(), versions_hash, worker_url=registry.worker_url()
+        )
         return result["ipc_path"]
 
     def save_sql_query_as_flow(

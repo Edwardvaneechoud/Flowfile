@@ -61,9 +61,7 @@ from flowfile_core.schemas import input_schema, transform_schema
 from shared.excel_writer import resolve_excel_write_mode
 from shared.path_utils import DirectoryScanUnsupportedError, assert_directory_scan_supported
 
-# repr() of nested Polars dtypes leaves inner names unqualified
-# (repr(pl.List(pl.Int64)) == 'List(Int64)') — qualify every known dtype name
-# so emitted schema literals are valid in a module that only imports pl.
+# repr() leaves nested dtype names bare ('List(Int64)'); qualify them for a module importing only pl.
 _POLARS_DTYPE_NAMES = sorted((name for name in dir(pl.datatypes) if name[:1].isupper()), key=len, reverse=True)
 _DTYPE_NAME_RE = re.compile(r"\b(" + "|".join(_POLARS_DTYPE_NAMES) + r")\b")
 
@@ -72,16 +70,14 @@ def _render_polars_dtype(dtype) -> str:
     return _DTYPE_NAME_RE.sub(r"pl.\1", repr(dtype))
 
 
-# Emitted once at module level when a flow contains formula gates; kept in
-# exact behavioral parity with flow_graph._gate_formula_matches.
+# Emitted once for a flow with formula gates; mirrors flow_graph.execution._gate_formula_matches.
 _GATE_FORMULA_HELPER = '''\
 def _flowfile_gate_formula_matches(df, predicate):
     """True when at least one row satisfies the gate's formula predicate."""
     frame = df.lazy() if isinstance(df, pl.DataFrame) else df
     return frame.filter(predicate).head(1).collect().height > 0'''
 
-# Emitted when a gate formula references an exportable parameter; kept in
-# exact behavioral parity with param_types.render_param_as_expr_literal.
+# Emitted when a gate formula uses an exportable parameter; mirrors render_param_as_expr_literal.
 _EXPR_LITERAL_HELPER = '''\
 def _flowfile_expr_literal(value):
     """Render a parameter value as a flowfile-formula literal (parity with the engine)."""
@@ -247,9 +243,23 @@ def _annotation_roots(entry: ast.FunctionDef) -> set[str]:
     }
 
 
+# Exported code runs outside the sandbox, so each namespace imports the real module it stands for.
+_SANDBOX_NAMESPACE_IMPORTS = {
+    "cs": "import polars.selectors as cs",
+    "expr": "import polars.expr as expr",
+    "datetime": "import datetime",
+    "zoneinfo": "import zoneinfo",
+    "base64": "import base64",
+    "decimal": "import decimal",
+    "time": "import time",
+}
+
+
 def _sandbox_import(name: str, value) -> str:
-    """The import binding ``name`` to ``value`` as ``PolarsCodeParser.safe_globals`` does: a module by its name, a
-    Polars export from ``polars``, anything else from the public module that defines it."""
+    """The import binding ``name`` to ``value`` as ``PolarsCodeParser.safe_globals`` does: a narrow namespace by its
+    real module, a module by its name, a Polars export from ``polars``, anything else from the public module."""
+    if name in _SANDBOX_NAMESPACE_IMPORTS:
+        return _SANDBOX_NAMESPACE_IMPORTS[name]
     if inspect.ismodule(value):
         return f"import {value.__name__}" + ("" if value.__name__ == name else f" as {name}")
     if getattr(pl, name, None) is value:
@@ -446,9 +456,7 @@ def _eval_in_validation_namespace(code: str):
     )
 
 
-# Operation-based variable labels for the few boundary variables that survive
-# chain fusion. A bare label is used when it occurs once; a numeric suffix is
-# appended only when a label is shared by several boundaries (see _plan_boundary_names).
+# Labels for the boundary variables that survive fusion; _plan_boundary_names suffixes shared ones.
 NODE_TYPE_VAR_LABEL: dict[str, str] = {
     "read": "source",
     "list_files": "source",
@@ -554,9 +562,8 @@ def _with_group(code: str, group_var: str) -> str | None:
     return f"{code[:offset]}.add_to_group({group_var}){code[offset:]}"
 
 
-# Generated variable names are uniquified against these so they never shadow a
-# Python builtin or keyword (e.g. a split literally named ``sorted`` or ``type``).
 _RESERVED_NAMES: frozenset[str] = frozenset(keyword.kwlist) | frozenset(dir(builtins))
+"""Names a generated variable is uniquified against, so it never shadows a builtin or keyword."""
 
 
 _FLAT_CTX_SHIM = '''# Minimal flowfile_ctx shim for standalone execution (logging/display only).
@@ -623,8 +630,7 @@ class FlowGraphCodeConverter(
     def __init__(self, flow_graph: FlowGraph):
         self.flow_graph = flow_graph
         self.node_var_mapping: dict[int, str] = {}
-        # (upstream_node_id, output_handle) -> variable name; populated by
-        # multi-output handlers and consulted by _get_input_vars.
+        # (upstream_node_id, output_handle) -> variable name, set by the multi-output handlers.
         self.node_handle_var_mapping: dict[tuple[int, str], str] = {}
         self.imports: set[str] = set()
         self.code_lines: list[str] = []
@@ -632,8 +638,7 @@ class FlowGraphCodeConverter(
         self.last_node_var: str | None = None
         self.unsupported_nodes: list[tuple[int, str, str]] = []
         self.custom_node_classes: dict[str, str] = {}
-        # True once a custom node's source references flowfile_ctx: the flat export
-        # then emits an inline shim; the project export ships flowfile_ctx.py.
+        # A custom node uses flowfile_ctx: the flat export inlines a shim, a project ships flowfile_ctx.py.
         self._needs_flowfile_ctx = False
         # (node, effective_var, start, end) per emitting node; (start, end) slices code_lines.
         self._node_spans: list[tuple[FlowNode, str, int, int]] = []
@@ -644,16 +649,11 @@ class FlowGraphCodeConverter(
         # node_id -> settings the handlers read (a sentinel-substituted copy when the node has refs).
         self._settings_cache: dict[int, object] = {}
         self.warnings: list[str] = []
-        # Gate machinery: per-node conjunction of signed gate atoms
-        # ((gate_id, needs_open) — False for else-handle consumers, rendered
-        # as `not (...)`) driving if-block emission, per-gate condition
-        # expression, and the runtime flag vars of formula gates. Empty when
-        # the flow has no gates, which keeps the fused single-block path.
+        # Gate state: node -> (gate_id, needs_open) atoms, gate -> condition expr, formula gate -> flag var.
         self._gate_conds: dict[int, frozenset[tuple[int, bool]]] = {}
         self._gate_exprs: dict[int, str] = {}
         self._runtime_gate_flags: dict[int, str] = {}
-        # ANY-rule (union) inputs guarded by gates beyond the union's own
-        # condition: union node id -> {producer id -> extra signed atoms}.
+        # Union inputs gated beyond the union's own condition: union id -> {producer id -> extra atoms}.
         self._any_input_edge_conds: dict[int, dict[int, frozenset[tuple[int, bool]]]] = {}
         self._module_helpers: list[str] = []
         self._placeholder_reasons: dict[int, str] = {}
@@ -786,12 +786,7 @@ class FlowGraphCodeConverter(
                 node_cond = self._gate_conds.get(node.node_id, frozenset())
                 input_cond = self._gate_conds.get(main_inputs[0].node_id, frozenset())
                 if self._gate_exprs and node.node_type != "gate" and node_cond != input_cond:
-                    # A gated no-op passthrough must still materialize under
-                    # its condition: eliding it would resolve downstream and
-                    # return references to the ungated upstream variable,
-                    # leaking data past a closed gate in the exported script.
-                    # (Gates themselves stay elided — their passthrough is
-                    # unconditional; only their consumers are guarded.)
+                    # Eliding a gated passthrough would leak the ungated upstream variable past a closed gate.
                     input_var = self._resolve_upstream_var(node, main_inputs[0].node_id, "df")
                     self.node_var_mapping[node.node_id] = var_name
                     self._add_code(f"{var_name} = {input_var}")
@@ -850,11 +845,7 @@ class FlowGraphCodeConverter(
                     continue
                 edge = conds.get(input_node.node_id, frozenset())
                 if input_node.node_type == "gate" and input_node.node_id in self._gate_exprs:
-                    # Polarity mirrors the engine: an edge off the else handle
-                    # of an else_output gate needs the condition FALSE. A stale
-                    # output-1 edge on a single-output gate keeps needs-open —
-                    # matching dead_gate_handles killing both handles when
-                    # such a gate closes.
+                    # A stale output-1 edge of a single-output gate needs it open, as in dead_gate_handles.
                     needs_open = not (
                         node._input_output_handles.get(input_node.node_id, "output-0") == "output-1"
                         and getattr(self._settings_for(input_node), "else_output", False)
@@ -865,10 +856,7 @@ class FlowGraphCodeConverter(
                 continue
             if uses_any_rule(node):
                 combined = frozenset.intersection(*(edge for _, edge in edge_conds))
-                # Per-input gates beyond the node's own condition: the union
-                # runs regardless, but each such input's contribution must be
-                # guarded in the emitted concat (engine parity: a closed-gate
-                # input is dropped, so it never enters the concat list).
+                # The union runs anyway; each input gated beyond the union's condition is guarded in the concat.
                 extras = {
                     producer_id: edge - combined for producer_id, edge in edge_conds if edge - combined
                 }
@@ -882,10 +870,7 @@ class FlowGraphCodeConverter(
         if self._runtime_gate_flags:
             self._module_helpers.append(_GATE_FORMULA_HELPER)
         if self._gate_exprs:
-            # Registered here, not during body rendering: _build_final_code
-            # serializes imports before _render_body runs, so an import added
-            # while emitting gated pre-inits/helpers would be dropped. The
-            # gate machinery emits pl-based literals in every framework.
+            # Here, not in _render_body: _build_final_code writes imports first, so a later one is dropped.
             self.imports.add("import polars as pl")
 
     @staticmethod
@@ -956,9 +941,7 @@ class FlowGraphCodeConverter(
             schema = node.schema
             if not schema:
                 return None
-            # Some schema strings are lossy (a bare "List" without its inner
-            # type) and can't be cast back — fall back to None (drop) so the
-            # emitted module never carries an uninstantiable dtype literal.
+            # A lossy schema string (a bare "List") can't be cast back: None, rather than an unusable literal.
             fields = ", ".join(
                 f"{column.name!r}: {_render_polars_dtype(cast_str_to_polars_type(column.data_type))}"
                 for column in schema
@@ -1015,8 +998,7 @@ class FlowGraphCodeConverter(
         ``render_param_as_expr_literal``), so each ref becomes a
         ``_flowfile_expr_literal(<name>)`` call in the emitted module.
         """
-        # Cosmetic strip: the engine's parser is whitespace-insensitive, so
-        # padding cannot change behavior — embed the trimmed text.
+        # The engine's parser ignores whitespace, so stripping cannot change behavior.
         stripped = formula.strip()
         sentinel_to_name = {
             param_sentinel(p.name): p.name for p in self._codegen_params if param_sentinel(p.name) in stripped
@@ -1942,15 +1924,10 @@ class FlowGraphCodeConverter(
             if not cond or effective_var in seen_vars or effective_var not in return_vars:
                 continue
             seen_vars.add(effective_var)
-            # A gated-off terminal still gets returned: a zero-row frame with
-            # its predicted schema keeps the return well-defined when the
-            # branch didn't run. None when the schema can't be predicted.
+            # A gated-off terminal is still returned: zero rows with its predicted schema, else None.
             schema_expr = self._empty_frame_schema_expr(node)
             body.append(f"{effective_var} = {schema_expr or 'None'}")
-        # Multi-output nodes under a gate bind sibling per-handle vars
-        # (df_N_fail, df_N_test, output-N vars) — same rule: pre-init (to
-        # None, per-handle schemas aren't statically known) only when the
-        # return path references them.
+        # Gated per-handle vars start as None: their schemas aren't known statically.
         for (handle_node_id, _handle), handle_var in sorted(self.node_handle_var_mapping.items(), key=str):
             if (
                 self._gate_conds.get(handle_node_id)
@@ -1972,8 +1949,7 @@ class FlowGraphCodeConverter(
                 continue
             cond = self._gate_conds.get(node.node_id, frozenset())
             if cond != current_cond:
-                # Adjacent exactly-complementary singleton blocks fuse into a
-                # real if/else; an else block never chains a second else.
+                # Adjacent complementary blocks fuse into an if/else; an else never chains a second else.
                 merge_else = not in_else_block and self._conds_are_complementary(current_cond, cond)
                 if merge_else:
                     while body and body[-1] == "":
@@ -2103,10 +2079,7 @@ class FlowGraphCodeConverter(
     def _rename_regex(body: list[str], rename: dict[str, str]) -> list[str]:
         """Legacy fallback: regex substitution over whole lines (used only when the
         body cannot be tokenized)."""
-        # `(?!=)` leaves keyword-argument names (``param=``, no surrounding spaces)
-        # untouched while still renaming assignment targets (``var = ``) and value
-        # references — e.g. a notebook call ``run(df_1=df_1.data)`` keeps its
-        # contract param ``df_1`` but renames the upstream value.
+        # `(?!=)` keeps kwarg names (``param=``) but renames assignment targets (``var = ``) and values.
         patterns = [(re.compile(r"\b" + re.escape(old) + r"\b(?!=)"), new) for old, new in rename.items()]
         out = []
         for line in body:
@@ -2137,8 +2110,7 @@ class FlowGraphCodeConverter(
                 continue
             (srow, scol), (_erow, ecol) = tok.start, tok.end  # NAME tokens never span lines
             line = physical[srow - 1]
-            # Replicate the legacy `(?!=)`: skip ``param=`` (kwarg/contract names) while
-            # still renaming assignment targets (``var = ``) and value references.
+            # As the legacy `(?!=)`: skip ``param=`` kwarg names, still rename ``var = `` targets.
             if ecol < len(line) and line[ecol] == "=":
                 continue
             edits.setdefault(srow - 1, []).append((scol, ecol, new))
@@ -2147,8 +2119,7 @@ class FlowGraphCodeConverter(
             for scol, ecol, new in sorted(line_edits, reverse=True):  # right-to-left keeps cols valid
                 line = line[:scol] + new + line[ecol:]
             physical[idx] = line
-        # Re-group physical lines back into the original body element structure
-        # (some elements carry embedded newlines, e.g. the fuzzy-join emit).
+        # Regroup into body elements, some of which hold embedded newlines (e.g. the fuzzy-join emit).
         out: list[str] = []
         pos = 0
         for element in body:
@@ -2198,9 +2169,7 @@ class FlowGraphCodeConverter(
             lines.append("")
             lines.append("")
 
-        # Only the flat export inlines custom-node classes; the project export
-        # writes them to modules and ships flowfile_ctx.py instead, so this
-        # inline shim never lands in a project's pipeline.py.
+        # Flat export only: a project writes custom nodes to modules and ships flowfile_ctx.py.
         if self.custom_node_classes and self._needs_flowfile_ctx:
             lines.extend(_FLAT_CTX_SHIM.split("\n"))
             lines.append("")
@@ -2975,8 +2944,7 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
             return
 
         how = settings.join_input.how
-        # coalesce=True for right joins (Polars default: drop left key, keep right key)
-        # coalesce=False for outer joins (preserve both join keys for post-processing)
+        # Only a right join coalesces (keeps the right key); outer joins keep both keys for post-processing.
         coalesce = how == "right"
 
         has_post = bool(after_join_drop_cols) or bool(reverse_action)
@@ -3286,9 +3254,7 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
             args.append(f"task_type={s.task_type!r}")
         if s.upstream_train_node_id is not None:
             upstream_var = self.node_var_mapping.get(s.upstream_train_node_id)
-            # Drop upstream silently when unresolvable: evaluate_model's task_type="auto"
-            # falls back to "regression", so the export is degraded but still runs.
-            # (Contrast _handle_apply_model, which marks unsupported — apply needs the model.)
+            # Without upstream, task_type="auto" falls back to "regression": degraded, but the export runs.
             if upstream_var is not None:
                 args.append(f"upstream={upstream_var}")
         self._add_code(f"{var_name} = {input_df}.evaluate_model({', '.join(args)})")

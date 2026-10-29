@@ -65,7 +65,7 @@ install_python_deps:
 	@echo "Checking Poetry lock file..."
 	@$(CHECK_POETRY)
 	@echo "Installing Python dependencies with Poetry..."
-	poetry install --with build
+	poetry install --with build,runtime64
 	@echo "Python dependencies installed."
 
 # Build Python services
@@ -153,7 +153,7 @@ test_built_services:
 		echo "core: $$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:63578/docs)"; \
 		echo "worker: $$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:63579/docs)"; \
 		curl -s -X POST http://127.0.0.1:63578/shutdown >/dev/null || true; \
-		curl -s -X POST http://127.0.0.1:63579/shutdown >/dev/null || true; \
+		kill $$WORKER_PID 2>/dev/null || true; \
 		wait $$CORE_PID $$WORKER_PID 2>/dev/null || true; \
 	'
 

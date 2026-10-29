@@ -16,6 +16,7 @@ import pytest
 from websockets.exceptions import ConnectionClosedOK
 from websockets.frames import Close
 
+from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
     streaming as stream_mod,
 )
@@ -164,7 +165,12 @@ def test_stalled_receive_does_not_fall_back_to_rest(monkeypatch):
 
     with pytest.raises(WorkerStreamStalled):
         subprocess_ops.ExternalDfFetcher(
-            flow_id=1, node_id=1, lf=pl.LazyFrame({"a": [1]}), file_ref="t-stall", wait_on_completion=True
+            flow_id=1,
+            node_id=1,
+            lf=pl.LazyFrame({"a": [1]}),
+            file_ref="t-stall",
+            wait_on_completion=True,
+            worker_url=WORKER_URL,
         )
 
 
@@ -183,7 +189,12 @@ def test_stalled_sampler_does_not_fall_back_to_rest(monkeypatch):
 
     with pytest.raises(WorkerStreamStalled):
         subprocess_ops.ExternalSampler(
-            lf=pl.LazyFrame({"a": [1]}), node_id=1, flow_id=1, file_ref="t-sample-stall", wait_on_completion=True
+            lf=pl.LazyFrame({"a": [1]}),
+            node_id=1,
+            flow_id=1,
+            file_ref="t-sample-stall",
+            wait_on_completion=True,
+            worker_url=WORKER_URL,
         )
 
 
@@ -202,7 +213,12 @@ def test_generic_stream_error_still_falls_back_to_rest(monkeypatch):
 
     with pytest.raises(RuntimeError, match="REST_CALLED"):
         subprocess_ops.ExternalDfFetcher(
-            flow_id=1, node_id=1, lf=pl.LazyFrame({"a": [1]}), file_ref="t-fallback", wait_on_completion=True
+            flow_id=1,
+            node_id=1,
+            lf=pl.LazyFrame({"a": [1]}),
+            file_ref="t-fallback",
+            wait_on_completion=True,
+            worker_url=WORKER_URL,
         )
 
 
@@ -215,7 +231,12 @@ def test_sampler_rest_fallback_without_file_ref_polls_its_own_task(monkeypatch):
     monkeypatch.setattr(subprocess_ops, "streaming_start", _no_ws)
 
     sampler = subprocess_ops.ExternalSampler(
-        lf=pl.LazyFrame({"a": list(range(10))}), node_id=1, flow_id=1, file_ref=None, sample_size=3
+        lf=pl.LazyFrame({"a": list(range(10))}),
+        node_id=1,
+        flow_id=1,
+        file_ref=None,
+        sample_size=3,
+        worker_url=WORKER_URL,
     )
 
     assert not sampler.has_error, sampler.error_description
@@ -237,7 +258,12 @@ def test_receive_thread_marks_stall_as_worker_unresponsive(monkeypatch):
     monkeypatch.setattr(subprocess_ops, "streaming_receive", _stalled_receive)
 
     fetcher = subprocess_ops.ExternalDfFetcher(
-        flow_id=1, node_id=1, lf=pl.LazyFrame({"a": [1]}), file_ref="t-async-stall", wait_on_completion=False
+        flow_id=1,
+        node_id=1,
+        lf=pl.LazyFrame({"a": [1]}),
+        file_ref="t-async-stall",
+        wait_on_completion=False,
+        worker_url=WORKER_URL,
     )
     with pytest.raises(Exception, match="unresponsive"):
         fetcher.get_result()
@@ -289,7 +315,12 @@ def test_cancel_mid_stream_classified_as_interrupted_not_worker_death(monkeypatc
     monkeypatch.setattr(subprocess_ops, "cancel_task", lambda *a, **k: None)
 
     fetcher = subprocess_ops.ExternalDfFetcher(
-        flow_id=1, node_id=1, lf=pl.LazyFrame({"a": [1]}), file_ref="t-cancel-race", wait_on_completion=False
+        flow_id=1,
+        node_id=1,
+        lf=pl.LazyFrame({"a": [1]}),
+        file_ref="t-cancel-race",
+        wait_on_completion=False,
+        worker_url=WORKER_URL,
     )
     time.sleep(0.05)
     fetcher.cancel()
@@ -324,7 +355,12 @@ def test_receive_thread_marks_task_error_as_a_real_failure(monkeypatch):
     monkeypatch.setattr(subprocess_ops, "streaming_receive", _failed_receive)
 
     fetcher = subprocess_ops.ExternalDfFetcher(
-        flow_id=1, node_id=1, lf=pl.LazyFrame({"a": [1]}), file_ref="t-async-task-error", wait_on_completion=False
+        flow_id=1,
+        node_id=1,
+        lf=pl.LazyFrame({"a": [1]}),
+        file_ref="t-async-task-error",
+        wait_on_completion=False,
+        worker_url=WORKER_URL,
     )
     with pytest.raises(Exception, match="a -> b -> a"):
         fetcher.get_result()
@@ -347,7 +383,12 @@ def test_blocking_task_error_is_recorded_without_rest_resubmit(monkeypatch):
 
     with pytest.raises(RemoteExecutionError, match="a -> b -> a"):
         subprocess_ops.ExternalDfFetcher(
-            flow_id=1, node_id=1, lf=pl.LazyFrame({"a": [1]}), file_ref="t-block-task-error", wait_on_completion=True
+            flow_id=1,
+            node_id=1,
+            lf=pl.LazyFrame({"a": [1]}),
+            file_ref="t-block-task-error",
+            wait_on_completion=True,
+            worker_url=WORKER_URL,
         )
 
 
@@ -367,7 +408,12 @@ def test_blocking_sampler_task_error_raises_without_rest_resubmit(monkeypatch):
 
     with pytest.raises(RemoteExecutionError, match="conversion from") as exc_info:
         subprocess_ops.ExternalSampler(
-            lf=pl.LazyFrame({"a": [1]}), node_id=1, flow_id=1, file_ref="t-sample-task-error", wait_on_completion=True
+            lf=pl.LazyFrame({"a": [1]}),
+            node_id=1,
+            flow_id=1,
+            file_ref="t-sample-task-error",
+            wait_on_completion=True,
+            worker_url=WORKER_URL,
         )
     assert exc_info.value.original_class == "InvalidOperationError"
 
@@ -402,7 +448,12 @@ def test_receive_thread_degrades_on_an_environment_failure(monkeypatch):
     monkeypatch.setattr(subprocess_ops, "streaming_receive", _failed_receive)
 
     fetcher = subprocess_ops.ExternalDfFetcher(
-        flow_id=1, node_id=1, lf=pl.LazyFrame({"a": [1]}), file_ref="t-async-env-error", wait_on_completion=False
+        flow_id=1,
+        node_id=1,
+        lf=pl.LazyFrame({"a": [1]}),
+        file_ref="t-async-env-error",
+        wait_on_completion=False,
+        worker_url=WORKER_URL,
     )
     with pytest.raises(Exception, match="udfs"):
         fetcher.get_result()
@@ -424,7 +475,12 @@ def test_blocking_environment_failure_raises_without_rest_resubmit(monkeypatch):
 
     with pytest.raises(RemoteExecutionError, match="time limit"):
         subprocess_ops.ExternalDfFetcher(
-            flow_id=1, node_id=1, lf=pl.LazyFrame({"a": [1]}), file_ref="t-block-env-error", wait_on_completion=True
+            flow_id=1,
+            node_id=1,
+            lf=pl.LazyFrame({"a": [1]}),
+            file_ref="t-block-env-error",
+            wait_on_completion=True,
+            worker_url=WORKER_URL,
         )
 
 
@@ -438,12 +494,15 @@ def _run_receive_thread_failing_with(monkeypatch, caplog, error: Exception, file
         raise error
 
     monkeypatch.setattr(subprocess_ops, "streaming_receive", _failed_receive)
-    # The core logger doesn't propagate, so route it to caplog's root handler for the test.
-    monkeypatch.setattr(subprocess_ops.logger, "propagate", True)
     caplog.clear()
     with caplog.at_level(logging.DEBUG, logger=subprocess_ops.logger.name):
         fetcher = subprocess_ops.ExternalDfFetcher(
-            flow_id=1, node_id=1, lf=pl.LazyFrame({"a": [1]}), file_ref=file_ref, wait_on_completion=False
+            flow_id=1,
+            node_id=1,
+            lf=pl.LazyFrame({"a": [1]}),
+            file_ref=file_ref,
+            wait_on_completion=False,
+            worker_url=WORKER_URL,
         )
         with pytest.raises(RemoteExecutionError):
             fetcher.get_result()
@@ -475,14 +534,6 @@ def test_receive_thread_logs_unexpected_error_with_traceback(monkeypatch, caplog
 
 
 @pytest.fixture
-def running_worker():
-    from tests.conftest import is_worker_running
-
-    if not is_worker_running():
-        pytest.skip("flowfile_worker is not running")
-
-
-@pytest.fixture
 def core_only_udf_plan(tmp_path, monkeypatch) -> pl.LazyFrame:
     """A plan whose UDF lives in a module only this (core) process can import, as with separate images."""
     module_name = f"core_only_udf_{tmp_path.name.replace('-', '_')}"
@@ -510,6 +561,7 @@ def test_real_worker_that_cannot_load_the_plan_degrades(running_worker, core_onl
         lf=core_only_udf_plan,
         file_ref=f"t-real-env-{transport}-{time.monotonic_ns()}",
         wait_on_completion=False,
+        worker_url=WORKER_URL,
     )
     with pytest.raises(RemoteExecutionError, match="core_only_udf"):
         fetcher.get_result()
@@ -527,6 +579,7 @@ def test_real_worker_data_failure_fails_the_node(running_worker, transport, monk
         lf=pl.LazyFrame({"a": ["abc"]}).with_columns(pl.col("a").cast(pl.Int64)),
         file_ref=f"t-real-data-{transport}-{time.monotonic_ns()}",
         wait_on_completion=False,
+        worker_url=WORKER_URL,
     )
     with pytest.raises(RemoteExecutionError, match="InvalidOperationError"):
         fetcher.get_result()

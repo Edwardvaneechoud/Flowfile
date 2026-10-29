@@ -17,6 +17,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     get_local_database_connection,
     store_database_connection,
 )
+from flowfile_core.flowfile.execution.context import use_context
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_graph import FlowGraph, RunInformation, add_connection
@@ -256,7 +257,8 @@ def test_execute_manual_node_externally(flow_logger: FlowLogger, raw_data):
     graph = create_graph()
     graph = add_manual_input(graph, data=raw_data)
     node = graph.get_node(1)
-    node.execute_remote(node_logger=flow_logger.get_node_logger(1))
+    with use_context(graph.execution_context):
+        node.execute_node(node_logger=flow_logger.get_node_logger(1))
     assert node.get_resulting_data().collect().to_dicts() == node.setting_input.raw_data_format.to_pylist(), 'Data should be the same'
 
 
@@ -357,7 +359,8 @@ def test_opening_parquet_file(flow_logger: FlowLogger):
     node_read = input_schema.NodeRead(flow_id=1, node_id=1, cache_data=False, received_file=received_table)
     graph.add_read(node_read)
     self = graph.get_node(1)
-    self.execute_remote(node_logger=flow_logger.get_node_logger(1))
+    with use_context(graph.execution_context):
+        self.execute_node(node_logger=flow_logger.get_node_logger(1))
 
 
 @pytest.mark.parametrize("file_type,ext", [("ipc", "arrow"), ("ndjson", "ndjson"), ("avro", "avro"), ("ipc_stream", "arrows")])
@@ -558,7 +561,7 @@ def test_json_read_node_is_not_infer_escalation_eligible():
 # when work is offloaded to the worker. In local mode both paths run in-process.
 def test_running_performance_mode():
     graph = create_graph(execution_location='remote')  # Ensure remote execution
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+    from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL, OFFLOAD_TO_WORKER
     add_node_promise_on_type(graph, 'read', 1, 1)
     from flowfile_core.configs.flow_logger import main_logger
     received_table = input_schema.ReceivedTable(
@@ -579,7 +582,9 @@ def test_running_performance_mode():
     graph.flow_settings.execution_mode = 'Development'
     slow = graph.run_graph()
 
-    assert slow.node_step_result[1].run_time_ms > fast.node_step_result[1].run_time_ms, 'Performance mode should be faster'
+    # With the protocol on both modes answer node 2 from one warm pooled child, so their order is noise.
+    if not FLOWFILE_COMPUTE_PROTOCOL:
+        assert slow.node_step_result[1].run_time_ms > fast.node_step_result[1].run_time_ms, 'Performance mode should be faster'
     # Units check: run_time_ms must match the second-based timestamps on the same
     # result, so a regression to storing seconds fails regardless of how fast the run is.
     result = slow.node_step_result[1]
@@ -590,9 +595,9 @@ def test_running_performance_mode():
 def test_remote_run_skips_count_roundtrip(monkeypatch):
     """A remote node gets its row count from the store ride-along, not a second
     ``calculate_number_of_records`` worker round-trip."""
-    from flowfile_core.flowfile.flow_node import flow_node as flow_node_module
+    from flowfile_core.flowfile.execution.backends import worker as worker_module
 
-    real_fetcher = flow_node_module.ExternalDfFetcher
+    real_fetcher = worker_module.ExternalDfFetcher
     constructed_ops = []
 
     class RecordingFetcher(real_fetcher):
@@ -600,11 +605,11 @@ def test_remote_run_skips_count_roundtrip(monkeypatch):
             constructed_ops.append(kwargs.get('operation_type', 'store'))
             super().__init__(*args, **kwargs)
 
-    monkeypatch.setattr(flow_node_module, 'ExternalDfFetcher', RecordingFetcher)
+    monkeypatch.setattr(worker_module, 'ExternalDfFetcher', RecordingFetcher)
 
     graph = create_graph(execution_location='remote')
     add_manual_input(graph, data=[{'g': 'a', 'v': 1}, {'g': 'a', 'v': 2}, {'g': 'b', 'v': 3}])
-    add_node_promise_on_type(graph, 'group_by', 2)  # wide transform -> REMOTE strategy
+    add_node_promise_on_type(graph, 'group_by', 2)  # wide transform: the worker stores it
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
     group_by_input = transform_schema.GroupByInput(
         [transform_schema.AggColl('g', 'groupby'),
@@ -1709,12 +1714,12 @@ def test_add_database_writer_sqlite(sqlite_db, execution_location):
 
 def test_database_writer_sqlite_local_runs_without_worker(sqlite_db, monkeypatch):
     """Local execution must write in-process and never offload to the worker (scheduled/CLI path)."""
-    import flowfile_core.flowfile.flow_graph as flow_graph_module
+    from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 
     def _no_worker(*args, **kwargs):
         raise AssertionError("local database write must not call the worker")
 
-    monkeypatch.setattr(flow_graph_module, "ExternalDatabaseWriter", _no_worker)
+    monkeypatch.setattr(WorkerBackend, "run_op", _no_worker)
 
     graph = create_graph(execution_location="local")
     add_manual_input(graph, data=[{'name': 'eduward'}, {'name': 'edward'}, {'name': 'courtney'}])
@@ -1799,12 +1804,12 @@ def test_add_database_writer_duckdb(duckdb_db, execution_location):
 
 def test_database_writer_duckdb_local_runs_without_worker(duckdb_db, monkeypatch):
     """Local execution must write in-process and never offload to the worker (scheduled/CLI path)."""
-    import flowfile_core.flowfile.flow_graph as flow_graph_module
+    from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 
     def _no_worker(*args, **kwargs):
         raise AssertionError("local database write must not call the worker")
 
-    monkeypatch.setattr(flow_graph_module, "ExternalDatabaseWriter", _no_worker)
+    monkeypatch.setattr(WorkerBackend, "run_op", _no_worker)
 
     graph = create_graph(execution_location="local")
     add_manual_input(graph, data=[{'name': 'eduward'}, {'name': 'edward'}, {'name': 'courtney'}])
@@ -1984,7 +1989,8 @@ def test_cloud_reader(flow_logger):
     assert graph.get_node(1) is not None, 'Node should be added to the graph'
     node = graph.get_node(1)
     try:
-        node.execute_remote(node_logger=flow_logger.get_node_logger(1))
+        with use_context(graph.execution_context):
+            node.execute_node(node_logger=flow_logger.get_node_logger(1))
     except Exception as e:
         flow_logger.error(f"Error executing cloud storage read node: {str(e)}")
         raise ValueError(f"Error executing cloud storage read node: {str(e)}")
@@ -2423,7 +2429,8 @@ def test_no_data_available_performance_with_cache():
     assert len(after_change_after_run_table_example.data) == 0, 'Since running in performance mode there is no data expected'
     assert not after_change_after_run_table_example.has_example_data, \
         'Since performance mode does not trigger explicit run of the example data, it should not have example data'
-    assert not after_change_after_run_table_example.has_run_with_current_setup, "There should be no run with current setup"
+    assert after_change_after_run_table_example.has_run_with_current_setup, \
+        "A Performance run marks the node as run with its current setup, in both execution locations"
 
     graph.trigger_fetch_node(3)
     after_change_and_fetch_table_example = node.get_table_example(True)
@@ -3204,10 +3211,7 @@ def test_random_split_returns_named_outputs():
 
 
 def test_random_split_remote_offloads_to_worker():
-    """remote dispatch must hit random_split_external (worker), not random_split (in-core).
-
-    Both paths must produce identical partition counts for the same seed.
-    """
+    """A remote flow splits on the worker backend, a local one in core; both give the same counts for a seed."""
     rows = [{"id": i} for i in range(500)]
     seed = 7
 

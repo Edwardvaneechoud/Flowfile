@@ -2,8 +2,7 @@
 
 ``flowfile`` star-imports this module and adds those two, which start or open the web UI; a
 notebook cell's ``ff`` (``notebook_cells.new_namespace``) is built from ``__all__`` here, so
-building one never imports ``flowfile``, whose import sets ``FLOWFILE_WORKER_PORT`` and
-``FLOWFILE_SINGLE_FILE_MODE`` in the process environment.
+building one never imports ``flowfile``.
 """
 
 from polars.datatypes import (

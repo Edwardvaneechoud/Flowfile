@@ -13,14 +13,15 @@ from pydantic import (
     model_serializer,
 )
 
-from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+from flowfile_core.configs import settings
+from flowfile_core.flowfile.execution.registry import LOCAL_BACKEND_ID, default_backend_id
 from flowfile_core.flowfile.node_designer.state import ArtifactDecl
 from flowfile_core.flowfile.param_types import FlowParameter  # noqa: F401 - re-exported; historical home
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.schemas import input_schema
 
 ExecutionModeLiteral = Literal["Development", "Performance"]
-ExecutionLocationsLiteral = Literal["local", "remote"]
+ExecutionLocationsLiteral = str
 
 # Type literals for classifying nodes.
 NodeTypeLiteral = Literal["input", "output", "process"]
@@ -85,15 +86,31 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
 
 
 def get_global_execution_location() -> ExecutionLocationsLiteral:
+    """The execution location a flow gets by default with ``FLOWFILE_COMPUTE_PROTOCOL`` off.
+
+    ``"local"`` when ``registry.default_backend_id()`` is ``local``, else ``"remote"``.
     """
-    Calculates the default execution location based on the global settings
-    Returns
-    -------
-    ExecutionLocationsLiteral where the current
+    return "local" if default_backend_id() == LOCAL_BACKEND_ID else "remote"
+
+
+def default_execution_location() -> ExecutionLocationsLiteral:
+    """The execution location a flow gets when none is given.
+
+    ``"auto"`` with ``FLOWFILE_COMPUTE_PROTOCOL`` on, so the flow runs on whatever the default backend is when its
+    context is made; ``get_global_execution_location()`` with it off.
     """
-    if OFFLOAD_TO_WORKER:
-        return "remote"
-    return "local"
+    return "auto" if settings.FLOWFILE_COMPUTE_PROTOCOL else get_global_execution_location()
+
+
+def loaded_execution_location(saved: ExecutionLocationsLiteral) -> ExecutionLocationsLiteral:
+    """The execution location a flow file saved with ``saved`` opens with.
+
+    With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a saved ``"local"`` or ``"remote"`` opens as ``"auto"``. Anything else,
+    and any value with the flag off, opens as saved.
+    """
+    if settings.FLOWFILE_COMPUTE_PROTOCOL and saved in ("local", "remote"):
+        return "auto"
+    return saved
 
 
 def _get_custom_node_store():
@@ -113,10 +130,7 @@ def get_settings_class_for_node_type(node_type: str, setting_data: dict | None =
     referencing a custom node that is missing from the store still resolve to
     ``UserDefinedNode`` instead of failing as an unknown type.
     """
-    # A user-defined node whose key collides with a built-in type must still
-    # resolve to UserDefinedNode. Built-in schemas drop ``is_user_defined`` on
-    # serialization, so a truthy marker means a genuine custom node — it wins
-    # over the built-in type->schema mapping.
+    # Built-in schemas never serialize ``is_user_defined``, so the marker wins over a colliding key.
     if isinstance(setting_data, dict) and setting_data.get("is_user_defined"):
         return input_schema.UserDefinedNode
     model_class = NODE_TYPE_TO_SETTINGS_CLASS.get(node_type)
@@ -155,7 +169,8 @@ class FlowGraphConfig(BaseModel):
         name (str): The name of the flow.
         path (str): The file path associated with the flow.
         execution_mode (ExecutionModeLiteral): The mode of execution ('Development' or 'Performance').
-        execution_location (ExecutionLocationsLiteral): The location for execution ('local', 'remote').
+        execution_location (ExecutionLocationsLiteral): The backend the flow runs on: 'auto' (the default
+            backend) or a backend id ('local', 'worker', 'worker:<name>'). 'remote' is the legacy alias of 'auto'.
         max_parallel_workers (int): Maximum number of threads used for parallel node execution within a
             stage. Set to 1 to disable parallelism. Defaults to 4.
         parameters (list[FlowParameter]): Flow-level parameters referenceable via ${name} syntax.
@@ -171,7 +186,7 @@ class FlowGraphConfig(BaseModel):
         description="Catalog registration ID when running a registered flow.",
     )
     execution_mode: ExecutionModeLiteral = "Performance"
-    execution_location: ExecutionLocationsLiteral = Field(default_factory=get_global_execution_location)
+    execution_location: ExecutionLocationsLiteral = Field(default_factory=default_execution_location)
     max_parallel_workers: int = Field(default=4, ge=1, description="Max threads for parallel node execution.")
     parameters: list[FlowParameter] = Field(default_factory=list, description="Flow-level parameters.")
 
@@ -186,15 +201,13 @@ class FlowGraphConfig(BaseModel):
     def validate_and_set_execution_location(cls, v: ExecutionLocationsLiteral | None) -> ExecutionLocationsLiteral:
         """
         Validates and sets the execution location.
-        1.  **If `None` is provided**: It defaults to the location determined by global settings.
-        2.  **If a value is provided**: It checks if the value is compatible with the global
+        1.  **If `None`, `""` or `"auto"` is provided**: It is `default_execution_location()`.
+        2.  **If another value is provided**: It checks if the value is compatible with the global
             settings. If not (e.g., requesting 'remote' when only 'local' is possible),
-            it corrects the value to a compatible one.
+            it corrects the value to a compatible one. A backend id passes unchanged.
         """
-        if v is None:
-            return get_global_execution_location()
-        if v == "auto":
-            return get_global_execution_location()
+        if v is None or v == "" or v == "auto":
+            return default_execution_location()
 
         return get_prio_execution_location(v, get_global_execution_location())
 
@@ -263,7 +276,8 @@ class RawLogInput(BaseModel):
 class FlowfileSettings(BaseModel):
     """Settings for flowfile serialization (YAML/JSON).
 
-    Excludes runtime state fields like is_running, is_canceled, modified_on.
+    Excludes runtime state fields like is_running, is_canceled, modified_on. ``execution_location`` is saved as the
+    flow has it; ``loaded_execution_location`` decides what it opens as.
     """
 
     description: str | None = None
@@ -321,9 +335,7 @@ class FlowfileNode(BaseModel):
     right_input_id: int | None = None
     input_ids: list[int] | None = Field(default_factory=list)
     outputs: list[int] | None = Field(default_factory=list)
-    # Parallel to ``outputs``: the source-side output handle for each connection
-    # (e.g. ["output-0", "output-1"]). Older flowfiles omit this — loaders treat
-    # missing entries as "output-0".
+    # Source handle per entry of ``outputs``; older flowfiles omit it and loaders read "output-0".
     output_handles: list[str] | None = None
     # Keyed edges for dynamic-input nodes; None for every other node type.
     input_connections: list[FlowfileInputConnection] | None = None
@@ -356,8 +368,7 @@ class FlowfileNode(BaseModel):
         if hasattr(value, "to_yaml_dict"):
             return value.to_yaml_dict()
         if isinstance(value, input_schema.UserDefinedNode):
-            # Persist the marker so flows reopen gracefully even when the node
-            # type is no longer installed (settings-class resolution).
+            # The marker lets the flow reopen once the node type is no longer installed.
             data = value.model_dump(exclude=self._setting_input_exclude)
             data["is_user_defined"] = True
             return data
@@ -714,20 +725,13 @@ class NodeTemplate(BaseModel):
     publishes: list[ArtifactDecl] | None = None
     laziness: LazinessLiteral = "eager"
     output_names: list[str] | None = None
-    # Display-only names for the canvas input handles, index i <-> "input-{i}".
-    # Purely cosmetic: unlike output_names these are never dict keys and nothing
-    # reads them at execution time. Distinct from NodeInput.input_names, which is
-    # the per-instance dynamic-handle list (run_flow) with a reserved index 0.
+    # Display-only names for the input handles ("input-{i}"); nothing reads them at execution time.
     input_labels: list[str] | None = None
-    # When set, the arity check accepts min_inputs..input connections instead of
-    # exactly `input` — for nodes with optional inputs (gate's control input).
+    # Accepts min_inputs..input connections instead of exactly ``input`` (gate's optional control).
     min_inputs: int | None = None
-    # Purely cosmetic (like input_labels): input handle indices the canvas
-    # renders as bottom-center "parameter" pips instead of left data handles
-    # (gate's control input). Never read at execution time.
+    # Display-only: input indices the canvas draws as bottom "parameter" pips (gate's control input).
     control_input_indices: list[int] | None = None
-    # Per-instance input handles (run_flow): connections are keyed by target
-    # handle instead of collapsing onto input-0. See flow_node/input_handles.py.
+    # Connections keyed by target handle instead of all onto input-0 (run_flow); see input_handles.py.
     dynamic_inputs: bool = False
     tags: list[NodeTag] = Field(default_factory=list)
 
@@ -853,8 +857,7 @@ class NodeInput(NodeTemplate):
     pos_y: float
     group_id: int | None = None
     output_names: list[str] | None = None
-    # Dynamic-input nodes: label per input handle, index i <-> "input-{i}"
-    # (index 0 is the reserved parameter handle). None for static nodes.
+    # Dynamic-input nodes: a label per input handle, index 0 the reserved parameter handle.
     input_names: list[str] | None = None
     node_reference: str | None = None
     # Set by core on the way out (canvas cache seed); ignored on the way in.
@@ -896,11 +899,6 @@ class VueFlowInput(BaseModel):
     node_inputs: list[NodeInput]
     groups: list[FlowfileGroup] = Field(default_factory=list)
     comments: list[FlowfileComment] = Field(default_factory=list)
-
-
-# ============================================================================
-# Node-group editor request bodies (organizational only; no execution impact)
-# ============================================================================
 
 
 class CreateGroupRequest(BaseModel):

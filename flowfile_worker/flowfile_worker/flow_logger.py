@@ -1,4 +1,5 @@
 import logging
+import sys
 
 from flowfile_worker.configs import FLOWFILE_CORE_URI
 from flowfile_worker.internal_token import resolve_internal_token
@@ -7,6 +8,15 @@ from flowfile_worker.log_models import RawLogInput
 LOGGING_URL = FLOWFILE_CORE_URI + "/raw_logs"
 # Core's header for worker/kernel callbacks; core→worker calls use X-Flowfile-Internal instead.
 CORE_INTERNAL_TOKEN_HEADER = "X-Internal-Token"
+
+
+def _runs_jobs_in_process() -> bool:
+    """Whether this process runs the worker's jobs itself (``spawner.in_process``): a library host, no core beside it.
+
+    Read through ``sys.modules`` so a child, where the mode is never set, does not import the spawner for it.
+    """
+    spawner = sys.modules.get("flowfile_worker.spawner")
+    return spawner is not None and spawner.in_process
 
 
 class FlowfileLogHandler(logging.Handler):
@@ -28,8 +38,13 @@ class FlowfileLogHandler(logging.Handler):
                 log_type=record.levelname.upper(),
                 extra={},
             )
-            # Without a token core rejects the post; the stream handler still has the record.
-            if self.flowfile_flow_id != -1 and self.flowfile_node_id != -1 and (token := resolve_internal_token()):
+            # Without a token, or in a library host, nothing is posted; the stream handler still has the record.
+            if (
+                self.flowfile_flow_id != -1
+                and self.flowfile_node_id != -1
+                and not _runs_jobs_in_process()
+                and (token := resolve_internal_token())
+            ):
                 import requests
 
                 response = requests.post(

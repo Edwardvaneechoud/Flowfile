@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from flowfile_frame.catalog_reference import SchemaReference
     from flowfile_frame.run_flow import FlowOutput
 
+from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import (
@@ -539,8 +540,7 @@ class FlowFrame:
             instance._deferred = deferred
             return instance
         elif flow_graph is not None and not isinstance(data, pl.LazyFrame):
-            # create_from_any_type creates a new source node which always emits
-            # output-0; no need to forward output_handle.
+            # create_from_any_type adds a source node, which always emits output-0.
             instance = cls.create_from_any_type(
                 data=data,
                 schema=schema,
@@ -619,8 +619,8 @@ class FlowFrame:
         if self._deferred or self._below_a_gate():
             return "fitted when the flow runs" + ("" if current() is not None else "; read_model() runs it")
         try:
-            summary = _trained_model_summary(self.flow_graph.flow_id, self.node_id)
-        except (OSError, ValueError, KeyError, TypeError) as exc:
+            summary = _trained_model_summary(self.flow_graph, self.node_id)
+        except (OSError, ValueError, LookupError, TypeError, ComputeError) as exc:
             return f"unreadable ({type(exc).__name__})"
         return "not fitted yet" if summary is None else summary.replace("\n", "\n  ")
 
@@ -669,8 +669,7 @@ class FlowFrame:
         """
         deferred = self._deferred if deferred is None else deferred
         self._add_connection(self.node_id, new_node_id, output_handle=getattr(self, "output_handle", "output-0"))
-        # If a precomputed result was provided (e.g. serialization fallback),
-        # inject it into the node AFTER the connection is added (which resets the node).
+        # Inject a precomputed result only after the connection, since adding one resets the node.
         if precomputed_result is not None:
             from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 
@@ -1798,10 +1797,10 @@ class FlowFrame:
         """
         Fit an ML model (regression or classification) and optionally publish it to the catalog.
 
-        The model is fitted where the flow runs: in the core process for a local
-        flow (a new graph is local), or on the worker for a remote one. Catalog
-        publishing requires the flow to be registered (so the artifact has a
-        ``source_registration_id``); see
+        The model is fitted and held where the flow runs: in the core process
+        for a local flow (a new graph is local), or on the worker for a remote
+        one. Catalog publishing requires the flow to be registered (so the
+        artifact has a ``source_registration_id``); see
         :class:`flowfile_core.flowfile.flow_graph.FlowGraph.add_train_model`.
 
         Parameters
@@ -1832,9 +1831,9 @@ class FlowFrame:
         Returns
         -------
         FlowFrame
-            A new FlowFrame whose data is the input pass-through. Read the
-            fitted model with :meth:`read_model`; with ``publish_to_catalog``
-            it is also recorded in the catalog.
+            A new FlowFrame whose data is the input pass-through. Its node
+            holds the model for :meth:`apply_model` and :meth:`read_model`, and
+            publishes it to the catalog when *publish_to_catalog* is set.
         """
         from flowfile_frame.catalog_reference import _resolve_namespace_id
 
@@ -1909,7 +1908,7 @@ class FlowFrame:
             self._materialised_lazyframe()
             if self._routed_away(self.flow_graph.latest_run_info):
                 raise NativeNodeError(f"Train Model node {self.node_id} did not run (a gate routed it away)")
-        model = _read_trained_model(self.flow_graph.flow_id, self.node_id)
+        model = _read_trained_model(self.flow_graph, self.node_id)
         if model is None:
             raise NativeNodeError(f"Train Model node {self.node_id} has not fitted a model yet")
         return model
@@ -1974,8 +1973,8 @@ class FlowFrame:
         Two model sources are supported:
 
         - Pass an *upstream* :class:`FlowFrame` whose backing node is a
-          ``train_model`` — the trained model is read from the flow's local
-          cache, no catalog round-trip required. This is the natural way to
+          ``train_model`` — the model that node holds is used by reference,
+          no catalog round-trip required. This is the natural way to
           chain Train Model → Apply Model in the same flow.
         - Or pass *model_name* (and optionally *version* / *schema*) to
           look the model up from the catalog.
@@ -1984,7 +1983,7 @@ class FlowFrame:
         ----------
         upstream:
             FlowFrame returned by :meth:`train_model`. When provided, the apply
-            node reads from that train node's flow-scoped output.
+            node scores with the model that train node holds.
         model_name:
             Catalog name of the trained model. Used only when *upstream* is None.
         output_column:
@@ -2959,8 +2958,7 @@ class FlowFrame:
         try:
             yield self
         finally:
-            # Group only nodes that are new in this block AND not already grouped
-            # (so an inner `with df.group(...)` keeps its own membership).
+            # Skip nodes already grouped, so an inner `with df.group(...)` keeps its own membership.
             new_node_ids = [
                 node_id
                 for node_id, node in self.flow_graph._node_db.items()
@@ -3060,7 +3058,9 @@ class FlowFrame:
         """Collect lazy data into memory.
 
         On a deferred frame this runs the frame's lineage first (see :meth:`_materialised_lazyframe`), and
-        so does a frame below a gate, because only a run decides which gate exit is live.
+        so does a frame below a gate, because only a run decides which gate exit is live. The rows are then the
+        node's result read through its backend's ``plan_for`` and collected in this process, every one of them;
+        a frame never reads its rows through the backend's ``sample``, which a worker caps.
         """
         if self._deferred or self._below_a_gate():
             return self._materialised_lazyframe().collect(*args, **kwargs)
@@ -3089,6 +3089,10 @@ class FlowFrame:
         exit) the zero-row typed frame is returned. A frame below a gate takes the same path,
         because its build-time plan passes through both exits. In notebook mode nothing runs: the
         mode's ``row_resolver`` (a notebook kernel's canvas fallback) answers, else it raises.
+
+        After a run the node's output is a plan over ``plan_for`` of the result its backend holds (the
+        worker embedded in this process for a ``local`` flow): the result's own plan, or a scan of the
+        file it stored.
         """
         if not (self._deferred or self._below_a_gate()):
             return self.data
@@ -3815,11 +3819,7 @@ class FlowFrame:
 
         new_node_id = generate_node_id()
 
-        # Build a stable, deduplicated view of upstream sources. The graph wires
-        # each (source_node, input_slot) pair at most once (add_connection is
-        # idempotent), so when the same FlowFrame appears in `all_frames` more
-        # than once we must reuse the same input variable rather than fan out
-        # to phantom input_df_N slots that will not be bound at execute-time.
+        # The graph wires each source once, so a repeated frame must reuse its input variable.
         unique_node_ids: list[int] = []
         position_by_node_id: dict[int, int] = {}
         handle_by_node_id: dict[int, str] = {}
@@ -3835,8 +3835,7 @@ class FlowFrame:
                 )
         has_duplicate_sources = len(unique_node_ids) < len(all_frames)
 
-        # NodeUnion can't express "include this input twice"; fall back to the
-        # polars-code path (which can, positionally) when duplicates are present.
+        # NodeUnion cannot read an input twice; the polars-code path can, positionally.
         use_native = how == "diagonal_relaxed" and parallel and not rechunk and not has_duplicate_sources
         if use_native:
             union_input = transform_schema.UnionInput(
@@ -3864,9 +3863,7 @@ class FlowFrame:
                 seen_sources.add(f.node_id)
                 f._add_connection(f.node_id, new_node_id, "main", output_handle=f.output_handle)
         else:
-            # Match execute_polars_code's binding convention: a single unique
-            # source binds as `input_df` (singular); two or more bind as
-            # `input_df_1`, `input_df_2`, ... in upstream-discovery order.
+            # execute_polars_code binds one source as `input_df`, several as `input_df_1`, `input_df_2`, ...
             if len(unique_node_ids) == 1:
                 input_vars = ["input_df"] * len(all_frames)
             else:
@@ -4064,8 +4061,7 @@ class FlowFrame:
                 formula_entries = [(e.column_name, e._ff_repr) for e in actual_exprs_to_process]
                 if len(formula_entries) == 1:
                     return self._with_flowfile_formula(formula_entries[0][1], formula_entries[0][0], description)
-                # A Formula node evaluates sequentially; only independent expressions mean the
-                # same thing there as they do in a single parallel Polars with_columns call.
+                # A Formula node evaluates in sequence, so only independent expressions keep their meaning.
                 resolved_entries = [(name, resolve_expression_parameters(f, params)) for name, f in formula_entries]
                 if entries_are_independent(resolved_entries):
                     return self._with_flowfile_formulas(
@@ -4120,12 +4116,7 @@ class FlowFrame:
             if output_column_datatypes is not None and len(output_column_datatypes) != len(flowfile_formulas):
                 raise ValueError("Length of output_column_datatypes must match the number of formulas")
 
-            # When the user did not request explicit output datatypes, try to
-            # upgrade flowfile formulas to native polars/flowframe expressions
-            # for a more efficient node type. Falls back transparently when
-            # the upstream translator can't handle a given formula.
-            # Only independent formulas may take the translated route: it re-enters
-            # with_columns, whose expression path assumes parallel semantics.
+            # Try native expressions for independent formulas only: with_columns assumes parallel semantics.
             independent = entries_are_independent(list(zip(output_column_names, flowfile_formulas, strict=False)))
             if output_column_datatypes is None and independent:
                 translated = _try_translate_flowfile_formulas(flowfile_formulas, output_column_names)

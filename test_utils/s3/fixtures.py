@@ -233,6 +233,12 @@ def start_minio_container() -> bool:
         return False
 
 
+def minio_available() -> bool:
+    """Whether MinIO answers, its container started first when Docker can start it."""
+    available = is_docker_available() and (is_container_running(MINIO_CONTAINER_NAME) or start_minio_container())
+    return bool(available and wait_for_minio(max_retries=10))
+
+
 @contextmanager
 def managed_minio() -> Generator[dict[str, any], None, None]:
     """Context manager for MinIO container with full connection info"""

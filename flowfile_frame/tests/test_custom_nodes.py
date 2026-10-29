@@ -615,6 +615,7 @@ flow_path, node_file, node_id = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
 before = open_flow(flow_path)
 installed = ff.custom_nodes.install(node_file)
 after = open_flow(flow_path)
+after.execution_location = "local"
 run = after.run_graph()
 print(json.dumps({
     "error_before": before.get_node(node_id).results.errors,

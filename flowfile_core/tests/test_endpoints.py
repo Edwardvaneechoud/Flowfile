@@ -3454,37 +3454,50 @@ def test_get_node_column_stats():
     assert body["is_unique"] is True
 
 
-def test_get_node_column_stats_offload_decision():
-    """Whenever offloading is on the stats collect goes to the worker, whatever
-    the flow's execution location — core must not run pipeline compute.
-    In-process only when no worker exists (offloading disabled)."""
+def test_get_node_column_stats_offload_decision(monkeypatch):
+    """With the protocol flag off the stats aggregate runs on the default compute
+    backend whatever the flow's execution location: on the worker whenever
+    offloading is on, in core only when no worker exists (offloading disabled).
+    With it on the aggregate runs on the flow's own backend, so a local flow's
+    in core and a remote flow's on the default backend."""
     from unittest.mock import patch
 
+    import polars as pl
+
+    from flowfile_core.configs import settings
+    from flowfile_core.flowfile.execution import registry
+    from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+    from flowfile_core.flowfile.flow_node import flow_node as flow_node_module
     from flowfile_core.flowfile.flow_node.flow_node import FlowNode
-    from flowfile_core.routes import routes as routes_module
     from flowfile_core.schemas.output_model import FileColumn
 
+    monkeypatch.delenv(registry.BACKEND_ENV_VAR, raising=False)
     flow_id = create_flow_with_manual_input_and_select()
     flow = flow_file_handler.get_flow(flow_id)
     flow.flow_settings.execution_mode = "Development"
     dummy = FileColumn(name="name", data_type="String")
     params = {"flow_id": flow_id, "node_id": 2, "column_name": "name"}
-    offload_was_on = bool(routes_module.OFFLOAD_TO_WORKER)
+    offload_was_on = bool(settings.OFFLOAD_TO_WORKER)
     try:
-        routes_module.OFFLOAD_TO_WORKER.set(True)
-        with patch.object(FlowNode, "get_column_stats", return_value=dummy) as mock_stats:
+        settings.OFFLOAD_TO_WORKER.set(True)
+        with (
+            patch.object(FlowNode, "get_cached_result", return_value=FlowDataEngine(pl.LazyFrame({"name": ["a"]}))),
+            patch.object(flow_node_module, "compute_column_stats", return_value=dummy) as mock_stats,
+        ):
             for location in ("local", "remote"):
                 flow.flow_settings.execution_location = location
                 assert client.get("/node/column_stats", params=params).status_code == 200
-                assert mock_stats.call_args.kwargs["offload_to_worker"] is True
+                aggregates_in_core = settings.FLOWFILE_COMPUTE_PROTOCOL and location == "local"
+                expected = registry.LOCAL_BACKEND_ID if aggregates_in_core else registry.WORKER_BACKEND_ID
+                assert mock_stats.call_args.kwargs["backend"].id == expected
 
-            routes_module.OFFLOAD_TO_WORKER.set(False)
+            settings.OFFLOAD_TO_WORKER.set(False)
             assert client.get("/node/column_stats", params=params).status_code == 200
-            assert mock_stats.call_args.kwargs["offload_to_worker"] is False, (
+            assert mock_stats.call_args.kwargs["backend"].id == registry.LOCAL_BACKEND_ID, (
                 "no worker exists when offloading is disabled"
             )
     finally:
-        routes_module.OFFLOAD_TO_WORKER.set(offload_was_on)
+        settings.OFFLOAD_TO_WORKER.set(offload_was_on)
 
 
 def test_get_node_column_stats_blocked_in_performance_mode():
@@ -3545,9 +3558,11 @@ def _run_export_flow(node_id: int = 2) -> FlowId:
     return flow_id
 
 
-def test_export_node_data_csv():
+def test_export_node_data_csv(execution_location):
     flow_id = create_flow_with_manual_input_and_select()
-    flow_file_handler.get_flow(flow_id).flow_settings.execution_mode = "Development"
+    flow_settings = flow_file_handler.get_flow(flow_id).flow_settings
+    flow_settings.execution_mode = "Development"
+    flow_settings.execution_location = execution_location
     assert _export_node_data(flow_id).status_code == 409, "Nothing to export before the node has run"
 
     client.post("/node/trigger_fetch_data", params={"flow_id": flow_id, "node_id": 2})
@@ -3654,11 +3669,13 @@ def test_directory_contents_blocked_outside_sandbox(monkeypatch):
     assert "Access denied" in response.json()["detail"], "Should return access denied message"
 
 
-def test_directory_contents_allowed_inside_sandbox(monkeypatch):
+def test_directory_contents_allowed_inside_sandbox(monkeypatch, tmp_path):
     """Test that directory_contents allows access inside sandbox in non-Electron mode."""
     from flowfile_core.routes import routes
 
     monkeypatch.setattr(routes, "is_electron_mode", lambda: False)
+    # Pinned: the cached root is whatever mode the first reader ran in (``/data/user`` after a docker-mode test).
+    monkeypatch.setattr(storage, "_user_data_dir", tmp_path)
     response = client.get(
         "/files/directory_contents/", params={"directory": str(storage.user_data_directory), "include_hidden": False}
     )
@@ -3672,6 +3689,22 @@ def test_directory_contents_invalid_directory():
         "/files/directory_contents/", params={"directory": "/nonexistent_dir_12345", "include_hidden": False}
     )
     assert response.status_code == 404, "Non-existent directory should return 404"
+
+
+def test_explorer_without_a_sandbox_is_bounded_by_the_filesystem_roots(monkeypatch, tmp_path):
+    """No sandbox means the desktop's whole machine, the filesystem roots, never an unchecked path."""
+    from flowfile_core.fileExplorer import funcs
+
+    root = tmp_path / "root"
+    (root / "inside").mkdir(parents=True)
+    (tmp_path / "outside").mkdir()
+    monkeypatch.setattr(funcs, "_local_filesystem_roots", lambda: [str(root)])
+
+    explorer = funcs.SecureFileExplorer(root / "inside")
+    assert explorer.current_path == Path(os.path.realpath(root / "inside"))
+    assert explorer.get_absolute_path(str(tmp_path / "outside")) is None
+    with pytest.raises(PermissionError):
+        funcs.SecureFileExplorer(tmp_path / "outside")
 
 
 def test_get_local_files_path_traversal_blocked():
@@ -3790,7 +3823,7 @@ def test_get_excel_sheet_names_path_traversal_with_dots():
     assert response.status_code == 403, "Path traversal with .. should be blocked"
 
 
-def test_validate_path_under_cwd_electron_allows_any_local_path(monkeypatch):
+def test_validate_path_under_cwd_electron_allows_any_local_path(monkeypatch, tmp_path):
     """In electron (desktop) mode, validate_path_under_cwd permits any local
     absolute path and returns it normalized.
 
@@ -3802,6 +3835,7 @@ def test_validate_path_under_cwd_electron_allows_any_local_path(monkeypatch):
     from flowfile_core.fileExplorer.funcs import validate_path_under_cwd
 
     monkeypatch.setattr(settings, "is_electron_mode", lambda: True)
+    monkeypatch.setattr(storage, "_user_data_dir", tmp_path)
 
     abs_path = str(storage.user_data_directory / "some_local_flow.yaml")
     result = validate_path_under_cwd(abs_path)

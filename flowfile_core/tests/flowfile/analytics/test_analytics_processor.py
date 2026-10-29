@@ -606,21 +606,21 @@ def _fetch_recording_stores(graph, **fetch_kwargs) -> list:
     independent of whether a worker happens to be running: what changed is
     whether the store is *reached*, and that is what must stay pinned.
     """
-    from flowfile_core.flowfile.flow_node import flow_node as flow_node_module
+    from flowfile_core.flowfile.execution.backends import worker as worker_module
 
     attempts = []
-    real = flow_node_module.ExternalDfFetcher
+    real = worker_module.ExternalDfFetcher
 
     def spy(*args, **kwargs):
         attempts.append(kwargs.get("file_ref"))
         return real(*args, **kwargs)
 
-    with patch.object(flow_node_module, "ExternalDfFetcher", side_effect=spy):
+    with patch.object(worker_module, "ExternalDfFetcher", side_effect=spy):
         graph.trigger_fetch_node(2, **fetch_kwargs)
     return attempts
 
 
-def test_fetch_in_performance_mode_stores_nothing():
+def test_fetch_in_performance_mode_stores_nothing(protocol_off):
     """The Explore drawer's fetch must not materialise the node.
 
     The default (preview) fetch stores the whole result so the 100-row example
@@ -636,7 +636,7 @@ def test_fetch_in_performance_mode_stores_nothing():
     assert has_result_to_visualize(graph.get_node(2)), 'the plan must still be built, so the drawer opens'
 
 
-def test_default_fetch_still_stores_for_the_preview_grid():
+def test_default_fetch_still_stores_for_the_preview_grid(protocol_off):
     """Regression guard: the data-preview contract is unchanged."""
     graph = _explore_flow_for_fetch()
 

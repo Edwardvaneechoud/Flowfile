@@ -16,6 +16,7 @@ Covers:
 
 import json
 import os
+import shutil
 from datetime import datetime, timezone
 
 import polars as pl
@@ -43,6 +44,7 @@ from flowfile_core.database.models import (
 )
 from flowfile_core.schemas.catalog_schema import DeltaTableHistory, DeltaVersionCommit
 from shared.delta_utils import format_delta_timestamp
+from shared.storage_config import storage
 
 # Helpers
 
@@ -136,7 +138,12 @@ class TestFormatDeltaTimestamp:
 class TestParseDeltaHistory:
     def test_parses_history_list(self):
         raw = [
-            {"version": 0, "timestamp": "2024-01-01T00:00:00", "operation": "WRITE", "operationParameters": {"mode": "Overwrite"}},
+            {
+                "version": 0,
+                "timestamp": "2024-01-01T00:00:00",
+                "operation": "WRITE",
+                "operationParameters": {"mode": "Overwrite"},
+            },
             {"version": 1, "timestamp": 1700000000000, "operation": "WRITE", "operationParameters": None},
         ]
         result = _parse_delta_history(raw)
@@ -261,7 +268,11 @@ class TestRegisterTableFromData:
                 owner_id=1,
                 namespace_id=schema_id,
                 storage_format="delta",
-                schema=[{"name": "a", "dtype": "Int64"}, {"name": "b", "dtype": "Float64"}, {"name": "c", "dtype": "String"}],
+                schema=[
+                    {"name": "a", "dtype": "Int64"},
+                    {"name": "b", "dtype": "Float64"},
+                    {"name": "c", "dtype": "String"},
+                ],
                 row_count=50,
                 column_count=None,
                 size_bytes=2000,
@@ -281,10 +292,17 @@ class TestRegisterTableFromParquetAlias:
 
         def fake_register_from_data(self_, **kwargs):
             calls.append(kwargs)
-            return type("FakeOut", (), {
-                "name": kwargs["name"], "row_count": 0, "column_count": 0,
-                "size_bytes": 0, "schema_columns": [],
-            })()
+            return type(
+                "FakeOut",
+                (),
+                {
+                    "name": kwargs["name"],
+                    "row_count": 0,
+                    "column_count": 0,
+                    "size_bytes": 0,
+                    "schema_columns": [],
+                },
+            )()
 
         monkeypatch.setattr(CatalogService, "register_table_from_data", fake_register_from_data)
 
@@ -301,6 +319,129 @@ class TestRegisterTableFromParquetAlias:
         assert len(calls) == 1
         assert calls[0]["storage_format"] == "parquet"
         assert calls[0]["table_path"] == "/tmp/compat.parquet"
+
+
+# The kernel's from-data and refresh routes
+
+
+class TestKernelTableRoutes:
+    """``/tables/from-data`` and ``/tables/{id}/refresh`` take only a directory under the catalog tables directory."""
+
+    @staticmethod
+    def _metadata() -> dict:
+        return {
+            "storage_format": "delta",
+            "schema_columns": [{"name": "a", "dtype": "Int64"}],
+            "row_count": 1,
+            "column_count": 1,
+            "size_bytes": 10,
+        }
+
+    def _register(self, client, schema_id: int, table_path: str):
+        body = {"name": "kernel_t", "table_path": table_path, "namespace_id": schema_id, **self._metadata()}
+        return client.post("/catalog/tables/from-data", json=body)
+
+    def test_from_data_refuses_a_path_outside_the_catalog(self, client, tmp_path):
+        _, schema_id = _make_namespace()
+        assert self._register(client, schema_id, str(tmp_path / "elsewhere")).status_code == 403
+
+    def test_from_data_refuses_the_catalog_directory_itself(self, client):
+        _, schema_id = _make_namespace()
+        assert self._register(client, schema_id, str(storage.catalog_tables_directory)).status_code == 403
+
+    def test_from_data_registers_a_directory_under_the_catalog(self, client):
+        _, schema_id = _make_namespace()
+        path = storage.catalog_tables_directory / "kernel_t_route"
+        resp = self._register(client, schema_id, str(path))
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["file_path"] == os.path.realpath(path)
+
+    @staticmethod
+    def _object_storage_schema() -> int:
+        """A schema under a catalog whose storage root is ``s3://bucket/catalog``; its connection is never resolved."""
+        with get_db_context() as db:
+            cat = CatalogNamespace(
+                name="DeltaCloudCat",
+                level=0,
+                owner_id=1,
+                storage_uri="s3://bucket/catalog",
+                storage_connection_name="unresolved",
+            )
+            db.add(cat)
+            db.commit()
+            schema = CatalogNamespace(name="DeltaCloudSch", level=1, parent_id=cat.id, owner_id=1)
+            db.add(schema)
+            db.commit()
+            return schema.id
+
+    def test_from_data_registers_a_table_directory_under_the_namespace_storage_root(self, client):
+        resp = self._register(client, self._object_storage_schema(), "s3://bucket/catalog/kernel_t/")
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["file_path"] == "s3://bucket/catalog/kernel_t"
+
+    @pytest.mark.parametrize(
+        "table_path",
+        [
+            "s3://other/catalog/kernel_t",
+            "s3://bucket/catalog/nested/kernel_t",
+            "s3://bucket/catalog/../kernel_t",
+            "s3://bucket/catalog/..",
+            "s3://bucket/catalog",
+            "s3://bucket/catalogue/kernel_t",
+            "s3://bucket/catalog/./kernel_t",
+            "s3://bucket/catalog//kernel_t",
+            "s3://bucket/catalog/kernel_t?versionId=1",
+        ],
+    )
+    def test_from_data_refuses_an_object_storage_path_off_the_namespace_root(self, client, table_path):
+        assert self._register(client, self._object_storage_schema(), table_path).status_code == 403
+
+    def test_from_data_refuses_an_object_storage_path_in_a_local_namespace(self, client):
+        _, schema_id = _make_namespace()
+        assert self._register(client, schema_id, "s3://bucket/catalog/kernel_t").status_code == 403
+
+    def test_refresh_refuses_a_path_outside_the_catalog(self, client, tmp_path):
+        _, schema_id = _make_namespace()
+        path = storage.catalog_tables_directory / "kernel_t_refresh"
+        table_id = self._register(client, schema_id, str(path)).json()["id"]
+        resp = client.post(
+            f"/catalog/tables/{table_id}/refresh", json={"table_path": str(tmp_path / "x"), **self._metadata()}
+        )
+        assert resp.status_code == 403
+        with get_db_context() as db:
+            assert db.get(CatalogTable, table_id).file_path == os.path.realpath(path)
+
+    def test_refresh_under_another_spelling_keeps_the_table_data(self, client, tmp_path, monkeypatch):
+        """A refresh naming the table's own directory by another spelling must not delete it as an old location."""
+        monkeypatch.setattr(CatalogService, "_fire_table_trigger_schedules", lambda *a, **kw: 0)
+        _, schema_id = _make_namespace()
+        table_dir = storage.catalog_tables_directory / "kernel_t_alias"
+        (table_dir / "_delta_log").mkdir(parents=True)
+        alias = tmp_path / "alias"
+        try:
+            alias.symlink_to(storage.catalog_tables_directory, target_is_directory=True)
+        except OSError:
+            pytest.skip("symlinks unavailable")
+        try:
+            with get_db_context() as db:
+                table = CatalogTable(
+                    name="kernel_t_alias",
+                    namespace_id=schema_id,
+                    owner_id=1,
+                    file_path=str(alias / "kernel_t_alias"),
+                    storage_format="delta",
+                )
+                db.add(table)
+                db.commit()
+                table_id = table.id
+            resp = client.post(
+                f"/catalog/tables/{table_id}/refresh",
+                json={"table_path": str(alias / "kernel_t_alias"), **self._metadata()},
+            )
+            assert resp.status_code == 200, resp.text
+            assert (table_dir / "_delta_log").is_dir()
+        finally:
+            shutil.rmtree(table_dir, ignore_errors=True)
 
 
 # overwrite_table_data (with pre-computed delta metadata)
@@ -785,6 +926,7 @@ class TestGetTableHistory:
             # Disable worker offload so it reads locally
             import flowfile_core.configs.settings
             from flowfile_core.configs.utils import MutableBool
+
             orig = getattr(flowfile_core.configs.settings, "OFFLOAD_TO_WORKER", False)
             flowfile_core.configs.settings.OFFLOAD_TO_WORKER = MutableBool(False)
 
@@ -805,6 +947,53 @@ class TestGetTableHistory:
             svc = CatalogService(repo)
             with pytest.raises(TableNotFoundError):
                 svc.get_table_history(999999)
+
+    def test_worker_on_other_versions_is_refused_and_the_history_not_read_in_core(self, monkeypatch):
+        """A worker that fails core's handshake is refused with the mismatch; core does not read the history itself."""
+        import shutil
+        import uuid
+
+        import flowfile_core.configs.settings
+        from flowfile_core.configs.utils import MutableBool
+        from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+        from flowfile_core.flowfile.execution.errors import VersionMismatch
+        from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
+        from shared.compute_protocol import local_capabilities
+        from shared.storage_config import storage
+
+        _, schema_id = _make_namespace()
+        delta_dir = storage.catalog_tables_directory / f"hist_delta_mismatch_{uuid.uuid4().hex[:8]}"
+        pl.DataFrame({"x": [1, 2, 3]}).write_delta(str(delta_dir), mode="error")
+        monkeypatch.setattr(DeltaTable, "history", lambda *args, **kwargs: pytest.fail("core read the history"))
+        fetches = []
+        reported = local_capabilities().model_copy(update={"polars_version": "0.0.1"})
+
+        def fetch(self):
+            fetches.append(1)
+            return reported
+
+        monkeypatch.setattr(flowfile_core.configs.settings, "OFFLOAD_TO_WORKER", MutableBool(True))
+        monkeypatch.setattr(WorkerBackend, "capabilities", fetch)
+        handshake.reset_handshake()
+        with get_db_context() as db:
+            table = CatalogTable(
+                name="delta_hist_mismatch",
+                namespace_id=schema_id,
+                owner_id=1,
+                file_path=str(delta_dir),
+                storage_format="delta",
+            )
+            db.add(table)
+            db.commit()
+            db.refresh(table)
+            try:
+                with pytest.raises(VersionMismatch, match="polars_version"):
+                    CatalogService(SQLAlchemyCatalogRepository(db)).get_table_history(table.id)
+            finally:
+                handshake.reset_handshake()
+                shutil.rmtree(delta_dir, ignore_errors=True)
+
+        assert fetches == [1]
 
 
 # get_table_preview (delta + version)
@@ -985,7 +1174,9 @@ class TestTriggerDeltaVersionPreviewMapping:
         monkeypatch.setattr(subops._worker_session, "post", lambda *a, **kw: _FakeResponse())
 
         with pytest.raises(TableVersionUnavailableError):
-            subops.trigger_delta_version_preview("some_table", version=99, n_rows=100)
+            subops.trigger_delta_version_preview(
+                "some_table", version=99, n_rows=100, worker_url="http://worker.invalid"
+            )
 
 
 # table_exists in _table_to_out (delta-aware)
@@ -1493,7 +1684,7 @@ class TestOptimizeVacuumService:
     def test_optimize_local(self, tmp_path, monkeypatch):
         import flowfile_core.catalog.services.tables as tables_mod
 
-        monkeypatch.setattr(tables_mod, "_should_offload", lambda: False)
+        monkeypatch.setattr(tables_mod, "uses_worker", lambda: False)
         _, schema_id = _make_namespace()
         with get_db_context() as db:
             svc = CatalogService(SQLAlchemyCatalogRepository(db))
@@ -1505,7 +1696,7 @@ class TestOptimizeVacuumService:
     def test_vacuum_local_dry_run(self, tmp_path, monkeypatch):
         import flowfile_core.catalog.services.tables as tables_mod
 
-        monkeypatch.setattr(tables_mod, "_should_offload", lambda: False)
+        monkeypatch.setattr(tables_mod, "uses_worker", lambda: False)
         _, schema_id = _make_namespace()
         with get_db_context() as db:
             svc = CatalogService(SQLAlchemyCatalogRepository(db))
@@ -1558,7 +1749,7 @@ class TestOptimizeVacuumService:
         """Maintenance must not bump updated_at: table-trigger schedules fire on it."""
         import flowfile_core.catalog.services.tables as tables_mod
 
-        monkeypatch.setattr(tables_mod, "_should_offload", lambda: False)
+        monkeypatch.setattr(tables_mod, "uses_worker", lambda: False)
         _, schema_id = _make_namespace()
         past = datetime(2020, 1, 1, 12, 0, 0)
         with get_db_context() as db:

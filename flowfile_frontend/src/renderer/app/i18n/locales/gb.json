@@ -371,7 +371,7 @@
     "settingsGroupExtensions": "Extensions",
     "settingsGroupWorkspace": "Workspace",
     "computeKernels": "Python Kernels",
-    "computePerformance": "Performance",
+    "computeBackends": "Backends",
     "computeGroupExecution": "Execution",
     "computeGroupPreferences": "Preferences",
     "computePrivacy": "Privacy",

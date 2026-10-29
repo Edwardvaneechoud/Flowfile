@@ -41,7 +41,8 @@ def _polars_specs(dep) -> list[str]:
 def test_polars_floor_covers_locked_dependants(project):
     project_dir = ROOT / project
     pyproject = tomllib.loads((project_dir / "pyproject.toml").read_text(encoding="utf-8"))
-    pinned_floor = _floor(pyproject["tool"]["poetry"]["dependencies"]["polars"])
+    (pin,) = _polars_specs(pyproject["tool"]["poetry"]["dependencies"]["polars"])
+    pinned_floor = _floor(pin)
     assert pinned_floor is not None, f"{project} polars pin has no lower bound"
 
     lock = tomllib.loads((project_dir / "poetry.lock").read_text(encoding="utf-8"))

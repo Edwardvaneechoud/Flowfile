@@ -1,32 +1,33 @@
 """Synchronous in-process execution of a published flow for the HTTP data API.
 
-Loads a registered flow fresh per request, validates and injects typed query
-parameters, runs the graph in performance mode (offloading the single terminal
-collect to the worker when one is available, falling back to in-core otherwise), and
-serializes the data flowing into the flow's single ``api_response`` node.
+Loads a registered flow fresh per request, injects its validated query parameters, runs it in performance mode and
+serializes the data flowing into its single ``api_response`` node. A remote run's final collect runs on the worker,
+and a worker that cannot run it fails the request with a typed compute error. With ``FLOWFILE_COMPUTE_PROTOCOL``
+on, a remote response is a sample of the node's result, bounded by the worker's sample cap. The flow is closed
+when the call ends, releasing every result it minted.
 
-A freshly opened flow keeps the ``flow_id`` stored in its file, and that id keys
-*process-wide* scratch state: the singleton ``FlowLogger``, the kernel I/O dirs
-``shared_volume/{flow_id}/{node_id}`` and the on-disk cache. Concurrent runs of
-the *same* published flow would therefore corrupt each other, so runs are
-serialized per ``flow_id`` (see :func:`_flow_run_lock`); distinct flows still run
-concurrently.
+A freshly opened flow keeps the ``flow_id`` in its file, and that id keys process-wide scratch state
+(``FlowLogger``, kernel I/O dirs, the cache). Runs are therefore serialized per ``flow_id`` (:func:`_flow_run_lock`).
 
-Untrusted query values reach the flow only as ``${param}`` substitutions, which
-are interpolated into node settings (including a ``polars_code`` node's source,
-later ``exec()``'d with ``pl`` exposed). String-typed parameters are therefore
-validated here (see :func:`_reject_unsafe_string`) so a key holder cannot break
-out of a string literal and inject Polars. Editor/designer flows never pass
-through this seam and keep full expressivity.
+Untrusted query values reach the flow only as ``${param}`` substitutions into node settings, a ``polars_code``
+node's ``exec()``'d source included. String parameters are therefore validated (:func:`_reject_unsafe_string`) so
+a key holder cannot break out of a string literal and inject Polars. Editor flows never pass through this seam,
+so they keep full expressivity.
 """
 
 from __future__ import annotations
 
+import io
 import threading
 from pathlib import Path
 from typing import Any
 
-from flowfile_core.configs import logger
+import polars as pl
+import requests
+
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable, worker_failure
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import ExternalDfFetcher
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.flowfile.param_types import coerce_param_value, stringify_param_value
@@ -46,6 +47,12 @@ class ApiConfigError(Exception):
 class ApiExecutionError(Exception):
     """The flow ran but failed or produced no data (-> HTTP 500)."""
 
+
+# The most rows a worker answers for one sample; a published response is never larger.
+_SAMPLE_ROWS_CAP = 10_000
+
+# Compute error subclasses by name, as a report row names them (the base's name clashes with Polars').
+_COMPUTE_ERRORS = {error.__name__: error for error in ComputeError.__subclasses__()}
 
 _run_locks_guard = threading.Lock()
 _run_locks: dict[int, threading.Lock] = {}
@@ -70,13 +77,12 @@ def _flow_run_lock(flow_id: int) -> threading.Lock:
         return lock
 
 
-# Characters and tokens that let a raw query value break out of a Polars string
-# literal or splice in new code once it is regex-substituted into node settings
-# and, for a ``polars_code`` node, ``exec()``'d. Quotes/parentheses are what an
-# attacker needs to escape ``'${param}'`` and reach ``pl.read_csv``/DB calls or
-# rewrite a filter predicate; backslash enables escapes, ``;``/newlines splice new
-# statements, and ``${`` would introduce a fresh substitution token.
 _UNSAFE_STRING_CHARS = frozenset("'\"()\\;\r\n")
+"""Characters that let a query value escape a string literal once substituted into settings or exec'd code.
+
+Quotes and parentheses escape ``'${param}'``, a backslash starts an escape, and ``;`` or a newline splices a
+statement; ``_reject_unsafe_string`` refuses ``${`` separately.
+"""
 
 
 def _reject_unsafe_string(spec: ApiParamSpec, value: str) -> str:
@@ -133,21 +139,45 @@ def _first_error(run_info: RunInformation | None) -> str | None:
     return None
 
 
-def _materialize(data: Any, max_rows: int | None, flow: Any, api_node: Any):
-    """Collect the api_response input, on the worker when one is available.
+def _first_compute_error(run_info: RunInformation | None) -> ComputeError | None:
+    """The typed compute error of the run's first failed node, rebuilt from its run report row, else None.
 
-    The flow runs in performance mode, so the whole pipeline is a single lazy plan and
-    this is the one collect that actually executes it. When ``execution_location`` is
-    remote we ship that collect to the worker (it materializes Arrow IPC; the core only
-    reads it back), so the core process does no heavy compute. The row cap is pushed in
-    first so the worker materializes only what's returned. Degrades to an in-core collect
-    when no worker is reachable, or the worker reports an environment failure (error code
-    -1: child killed, plan not loadable, result not writable), so a request still succeeds
-    rather than 500-ing. A plan that fails on its data raises :class:`ApiExecutionError`
-    without re-running it in core.
+    The row's text already carries ``ComputeUnavailable``'s hint, which the class does not add twice.
+    """
+    if run_info is None:
+        return None
+    for node_result in run_info.node_step_result:
+        if node_result.success is False and node_result.error:
+            error_class = _COMPUTE_ERRORS.get(node_result.compute_error)
+            if error_class is None:
+                return None
+            return error_class(f"node {node_result.node_id}: {node_result.error}")
+    return None
+
+
+def _materialize(data: Any, max_rows: int | None, flow: Any, api_node: Any):
+    """Collect the api_response input: in core for a local run, on the worker for a remote one.
+
+    The flow runs in performance mode, so this is the one collect that executes the whole plan. On the remote
+    path the row cap is pushed in first and nothing is collected in core. With ``FLOWFILE_COMPUTE_PROTOCOL`` on,
+    a remote response is ``sample(ref, n)`` of the node's reference on the backend that holds it, ``n`` being
+    *max_rows* clamped to the worker's sample cap (the cap when unset).
+
+    Raises:
+        ComputeUnavailable: The worker could not be reached to submit the plan.
+        ComputeError: The worker could not run the plan (error code -1, typed by
+            :func:`~flowfile_core.flowfile.execution.errors.worker_failure`); with the flag
+            on, any typed failure of the sample.
+        ApiExecutionError: The plan could not be submitted (not serialisable, or refused),
+            or it failed on its data on the worker.
     """
     if flow.flow_settings.execution_location == "local":
         return data.collect(n_records=max_rows)
+
+    if FLOWFILE_COMPUTE_PROTOCOL:
+        ref = api_node.results.result_ref
+        n = _SAMPLE_ROWS_CAP if max_rows is None else min(max_rows, _SAMPLE_ROWS_CAP)
+        return pl.read_ipc_stream(io.BytesIO(registry.backend(ref.backend_id).sample(ref, n)))
 
     lf = data.data_frame
     if max_rows is not None:
@@ -159,30 +189,55 @@ def _materialize(data: Any, max_rows: int | None, flow: Any, api_node: Any):
             flow_id=flow.flow_id,
             node_id=api_node.node_id,
             wait_on_completion=False,
+            worker_url=registry.worker_url(),
         )
-    except Exception as exc:  # noqa: BLE001 - worker unreachable; degrade to in-core
-        logger.warning("API worker offload unavailable (%s); collecting response in core", exc)
-        return data.collect(n_records=max_rows)
+    except ComputeError:
+        # The handshake or the transport already typed it (unreachable, version mismatch).
+        raise
+    except requests.RequestException as exc:
+        raise ComputeUnavailable(str(exc)) from exc
+    except Exception as exc:
+        raise ApiExecutionError(str(exc) or "could not submit the plan to the worker") from exc
 
     try:
         result = fetcher.get_result()
     except Exception as exc:
-        # -1: the worker child died or its environment failed, not the plan on its data.
         if fetcher.error_code == -1:
-            logger.warning("API worker collect failed in the worker environment; collecting response in core")
-            return data.collect(n_records=max_rows)
+            raise worker_failure(fetcher.error_kind, fetcher.error_description) from exc
         raise ApiExecutionError(fetcher.error_description or str(exc) or "flow execution failed on worker") from exc
     return result.collect()
 
 
+def _truncated(df: pl.DataFrame, max_rows: int | None, flow: Any, api_node: Any) -> bool:
+    """Whether the worker's sample cap, not the node's *max_rows*, left rows out of a response.
+
+    Only a remote read with ``FLOWFILE_COMPUTE_PROTOCOL`` on is capped. The total is the reference's row count,
+    else a ``count`` on the backend that holds it.
+    """
+    if flow.flow_settings.execution_location == "local" or not FLOWFILE_COMPUTE_PROTOCOL:
+        return False
+    if df.height < _SAMPLE_ROWS_CAP or (max_rows is not None and max_rows <= _SAMPLE_ROWS_CAP):
+        return False
+    ref = api_node.results.result_ref
+    total = ref.row_count if ref.row_count is not None else registry.backend(ref.backend_id).count(ref)
+    return total > df.height
+
+
 def _serialize(data: Any, settings: Any, flow: Any, api_node: Any) -> dict[str, Any]:
+    """The response body: the rows, how many there are, the orientation, and whether the sample cap cut them."""
     orientation = getattr(settings, "orientation", "records")
     max_rows = getattr(settings, "max_rows", None)
     df = _materialize(data, max_rows, flow, api_node)
+    truncated = _truncated(df, max_rows, flow, api_node)
     if orientation == "columns":
-        return {"data": df.to_dict(as_series=False), "row_count": df.height, "orientation": "columns"}
+        return {
+            "data": df.to_dict(as_series=False),
+            "row_count": df.height,
+            "orientation": "columns",
+            "truncated": truncated,
+        }
     records = df.to_dicts()
-    return {"data": records, "row_count": len(records), "orientation": "records"}
+    return {"data": records, "row_count": len(records), "orientation": "records", "truncated": truncated}
 
 
 def _effective_specs(flow, overrides: list[ApiParamSpec]) -> list[ApiParamSpec]:
@@ -228,51 +283,52 @@ def run_flow_as_api(
         ApiParamError: A parameter is missing or fails type validation.
         ApiConfigError: The flow does not have exactly one api_response node.
         ApiExecutionError: The flow failed or produced no data.
+        ComputeError: The worker could not be reached (``ComputeUnavailable``) or could
+            not run the final collect. With ``FLOWFILE_COMPUTE_PROTOCOL`` on, also the typed
+            error of the run's first failed node, rebuilt from its run report row. Nothing
+            is collected in core instead.
     """
     flow = open_flow(Path(flow_path), user_id=owner_id)
-    # Machine traffic, not a user pressing Run.
-    flow._system_run = True
+    try:
+        # Machine traffic, not a user pressing Run.
+        flow._system_run = True
 
-    api_nodes = [n for n in flow.nodes if n.node_type == "api_response"]
-    if len(api_nodes) == 0:
-        raise ApiConfigError("flow has no API response node")
-    if len(api_nodes) > 1:
-        raise ApiConfigError("flow has more than one API response node")
-    api_node = api_nodes[0]
+        api_nodes = [n for n in flow.nodes if n.node_type == "api_response"]
+        if len(api_nodes) == 0:
+            raise ApiConfigError("flow has no API response node")
+        if len(api_nodes) > 1:
+            raise ApiConfigError("flow has more than one API response node")
+        api_node = api_nodes[0]
 
-    resolved = resolve_params(_effective_specs(flow, param_specs), query)
-    for param in flow.flow_settings.parameters:
-        if param.name in resolved:
-            param.default_value = resolved[param.name]
+        resolved = resolve_params(_effective_specs(flow, param_specs), query)
+        for param in flow.flow_settings.parameters:
+            if param.name in resolved:
+                param.default_value = resolved[param.name]
 
-    # Run in performance mode (one lazy plan; no per-node materialization or example
-    # data) and let compute go to the worker when one is available, so the core process
-    # does no heavy collect (the final collect is offloaded in _materialize). Tests pin
-    # execution_location="local" to stay hermetic.
-    flow.flow_settings.execution_location = execution_location or get_global_execution_location()
-    flow.flow_settings.execution_mode = "Performance"
+        # Performance mode: one lazy plan, whose final collect _materialize sends to the worker when remote.
+        flow.flow_settings.execution_location = execution_location or get_global_execution_location()
+        flow.flow_settings.execution_mode = "Performance"
 
-    # Serialize concurrent runs of the same published flow: the freshly opened flow
-    # keeps its saved flow_id, which keys process-wide scratch state (FlowLogger,
-    # kernel I/O dirs, cache dir) that overlapping runs would corrupt. Held through
-    # serialization too, since collecting the result reads the flow_id-keyed cache.
-    with _flow_run_lock(flow.flow_id):
-        run_info = flow.run_graph()
-        if run_info is None or not run_info.success:
-            raise ApiExecutionError(_first_error(run_info) or "flow execution failed")
+        # One run per flow_id at a time (module docstring); held while serializing, which reads the flow_id cache.
+        with _flow_run_lock(flow.flow_id):
+            run_info = flow.run_graph()
+            if run_info is None or not run_info.success:
+                compute_error = _first_compute_error(run_info) if FLOWFILE_COMPUTE_PROTOCOL else None
+                if compute_error is not None:
+                    raise compute_error
+                raise ApiExecutionError(_first_error(run_info) or "flow execution failed")
 
-        deliberately_skipped = {nr.node_id for nr in run_info.node_step_result if nr.skipped}
-        if api_node.node_id in deliberately_skipped:
-            # The response node sits behind a closed gate for these parameter
-            # values. Pulling it anyway would lazily execute the gated-off
-            # branch and serve its data as if the gate were open — refuse
-            # explicitly instead.
-            raise ApiExecutionError(
-                "API response node was gated off for these parameter values (a gate "
-                "condition upstream evaluated false)"
-            )
+            deliberately_skipped = {nr.node_id for nr in run_info.node_step_result if nr.skipped}
+            if api_node.node_id in deliberately_skipped:
+                # Gated off: pulling it would run the closed branch and serve it as if the gate were open.
+                raise ApiExecutionError(
+                    "API response node was gated off for these parameter values (a gate "
+                    "condition upstream evaluated false)"
+                )
 
-        data = api_node.get_resulting_data()
-        if data is None:
-            raise ApiExecutionError("API response node produced no data")
-        return _serialize(data, api_node.setting_input, flow, api_node)
+            data = api_node.get_resulting_data()
+            if data is None:
+                raise ApiExecutionError("API response node produced no data")
+            return _serialize(data, api_node.setting_input, flow, api_node)
+    finally:
+        flow.close_flow()

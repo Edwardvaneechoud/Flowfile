@@ -20,6 +20,7 @@ from flowfile_core.flowfile.converters.alteryx.scope import BUCKETS
 from flowfile_core.flowfile.converters.alteryx.yxmd_parser import parse_yxmd
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
+from flowfile_core.flowfile.flow_node.models import RemoteExecutionError
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.schemas import schemas
 
@@ -6736,6 +6737,22 @@ def test_a_self_describing_file_format_has_no_header_row_to_miss(extension: str)
     assert row.messages == []
 
 
+def assert_reading_the_code_summary_fails(node) -> None:
+    """The Summarize's body reads `Code` as text while it is Int64, so reading its rows fails.
+
+    Where the run already read them, as a backend that computes a node's preview while the flow runs
+    does, the node failed there and every read of it raises that run's error. Core's own process
+    reads nothing until asked, so there the failure waits for the collect. Either way it is the same
+    failure, and the message is matched so that a different one stays red.
+    """
+    if node.results.errors is not None:
+        with pytest.raises((pl.exceptions.SchemaError, RemoteExecutionError), match="expected .*String.*, got .*i64"):
+            node.get_resulting_data()
+    else:
+        with pytest.raises(pl.exceptions.SchemaError, match="expected .*String.*, got .*i64"):
+            node.get_resulting_data().data_frame.collect()
+
+
 @pytest.mark.parametrize(
     ("case_id", "fields", "plugin", "config", "cache", "fragment", "collects"),
     [
@@ -6809,12 +6826,11 @@ def test_a_cached_alteryx_record_info_is_not_a_flowfile_type(
 
     flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
     flow.run_graph()
-    frame = flow.get_node(row.flowfile_node_ids[0]).get_resulting_data().data_frame
+    node = flow.get_node(row.flowfile_node_ids[0])
     if collects is None:
-        with pytest.raises(pl.exceptions.SchemaError, match="expected .*String.*, got .*i64"):
-            frame.collect()
+        assert_reading_the_code_summary_fails(node)
     else:
-        assert frame.collect().rows() == collects
+        assert node.get_resulting_data().data_frame.collect().rows() == collects
 
 
 def summarize_behind_file_input_typed(path: str, alteryx_type: str) -> bytes:
@@ -6935,13 +6951,25 @@ def test_a_numeric_looking_string_column_is_typed_int64_and_the_body_raises_at_c
     ]
     flow = open_flow(write_flow(summarize_exotic, tmp_path / "flow.yaml"))
     flow.run_graph()
-    with pytest.raises(pl.exceptions.SchemaError, match="expected .*String.*, got .*i64"):
-        flow.get_node(row.flowfile_node_ids[0]).get_resulting_data().data_frame.collect()
+    assert_reading_the_code_summary_fails(flow.get_node(row.flowfile_node_ids[0]))
+
+
+def open_without_the_numeric_code_summarize(result: ConversionResult, target: Path):
+    """The exotic flow opened without tool 7, whose body reads `Code` as text while Flowfile types it Int64.
+
+    That body raises when its rows are read, which the test above pins. A backend that computes a node's preview
+    while the flow runs, as the worker does, reads them then; core's own process reads nothing until asked. Left in,
+    the node would decide whether these runs pass by where they run.
+    """
+    flow = open_flow(write_flow(result, target))
+    for node_id in report_row(result, 7).flowfile_node_ids:
+        flow.delete_node(node_id)
+    return flow
 
 
 def test_the_exotic_summarize_flow_runs_on_blanks_nulls_and_a_tie(tmp_path: Path, summarize_exotic: ConversionResult):
     """Six rows: one null name, one all-spaces name that is *not* blank, and a tie on the modal spend."""
-    flow = open_flow(write_flow(summarize_exotic, tmp_path / "flow.yaml"))
+    flow = open_without_the_numeric_code_summarize(summarize_exotic, tmp_path / "flow.yaml")
     run_info = flow.run_graph()
     assert run_info.success, [step.error for step in run_info.node_step_result if not step.success]
     frames = {
@@ -6977,7 +7005,7 @@ def test_the_empty_string_half_of_blank_is_executed_not_just_printed(
     assert "(pl.col('Name').is_not_null() & (pl.col('Name') != \"\")).sum()" in code
     assert "(pl.col('Name').is_null() | (pl.col('Name') == \"\")).sum()" in code
 
-    flow = open_flow(write_flow(summarize_exotic, tmp_path / "flow.yaml"))
+    flow = open_without_the_numeric_code_summarize(summarize_exotic, tmp_path / "flow.yaml")
     run_info = flow.run_graph()
     assert run_info.success, [step.error for step in run_info.node_step_result if not step.success]
     counts = flow.get_node(row.flowfile_node_ids[0]).get_resulting_data().data_frame.collect()

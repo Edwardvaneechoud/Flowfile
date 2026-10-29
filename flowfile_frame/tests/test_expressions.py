@@ -569,7 +569,7 @@ class TestAdvancedExpressions:
 
     def test_with_columns_with_custom_defined_function(self, sample_df):
         def first_element(x):
-            return str(x)[-1]
+            return x.cast(pl.String).str.slice(-1)
         res = sample_df.with_columns(col("value_1").map_batches(first_element, return_dtype=pl.String))
         res.get_node_settings().setting_input
 
@@ -976,3 +976,40 @@ class TestLambdaSerialization:
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+def test_membership_with_a_non_finite_value_has_no_formula_form_and_matches_polars():
+    import flowfile_frame as ff
+
+    data = {"a": [1.0, float("nan"), float("inf"), 2.0]}
+    values = [1.0, float("nan"), float("inf")]
+    expr = col("a").is_in(values)
+    assert expr._ff_repr is None
+    assert col("a").is_in([1.0, 2.0])._ff_repr == "[a] in (1.0, 2.0)"
+    out = ff.from_dict(data).filter(expr)
+    assert_frame_equal(out.collect(), pl.LazyFrame(data).filter(pl.col("a").is_in(values)).collect())
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda m: m.lit(float("nan")),
+        lambda m: m.lit(float("-inf")),
+        lambda m: m.when(m.col("a") > 0).then(float("inf")).otherwise(float("-inf")),
+        lambda m: m.when(m.col("a") > 0).then(float("nan")),
+    ],
+    ids=["lit-nan", "lit-inf", "when-otherwise", "when-without-otherwise"],
+)
+def test_a_non_finite_literal_is_written_as_code_that_runs(build):
+    import flowfile_frame as ff
+
+    data = {"a": [1.0, -1.0]}
+    expr = build(ff)
+    assert 'float("' in repr(expr)
+    out = ff.from_dict(data).with_columns(expr.alias("b"))
+    assert out.flow_graph.get_node(out.node_id).node_type == "polars_code"
+    assert_frame_equal(out.collect(), pl.LazyFrame(data).with_columns(build(pl).alias("b")).collect())
+
+
+def test_a_filter_constraint_writes_a_non_finite_value_as_code():
+    assert repr(col("a").filter(a=float("inf"))) == """pl.col('a').filter(a=float("inf"))"""

@@ -81,7 +81,10 @@ def custom_node_task_id(node_hash: str) -> str:
 
 
 class TrainModelInput(BaseModel):
-    """Outgoing payload for ``POST /train_ml_model`` on the worker."""
+    """Outgoing payload for ``POST /train_ml_model`` on the worker.
+
+    Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+    """
 
     model_config = ConfigDict(protected_namespaces=())
 
@@ -98,7 +101,10 @@ class TrainModelInput(BaseModel):
 
 
 class ApplyModelInput(BaseModel):
-    """Outgoing payload for ``POST /apply_ml_model`` on the worker."""
+    """Outgoing payload for ``POST /apply_ml_model`` on the worker.
+
+    Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
+    """
 
     model_config = ConfigDict(protected_namespaces=())
 

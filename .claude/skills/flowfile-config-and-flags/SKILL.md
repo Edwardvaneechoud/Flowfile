@@ -80,7 +80,7 @@ Every variable read anywhere in package source, grouped as in the codebase. "Rea
 |---|---|---|---|
 | `FLOWFILE_WORKER_PORT` | settings.py:105,125 | `63579` (`DEFAULT_WORKER_PORT`, settings.py:16); CLI `--worker-port` wins | Port core dials the worker on. |
 | `WORKER_HOST` | settings.py:102,127 | `0.0.0.0` (non-Windows) / `127.0.0.1` (Windows) | Host core dials the worker on. Compose sets `flowfile-worker` (compose:35); Tauri sets `127.0.0.1` (env.rs:72). |
-| `FLOWFILE_WORKER_URL` | settings.py:133 (Starlette Config: env or CWD `.env`) | `get_default_worker_url(WORKER_PORT)` — `http://{WORKER_HOST}:{port}` + `/worker` suffix iff `SINGLE_FILE_MODE` | Full worker URL override; consumed as `WORKER_URL` throughout `flow_data_engine/subprocess_operations/subprocess_operations.py`. |
+| `FLOWFILE_WORKER_URL` | settings.py:133 (Starlette Config: env or CWD `.env`) | `get_default_worker_url(WORKER_PORT)` — `http://{WORKER_HOST}:{port}`; in single-file mode `start_server` points it at its `/worker` mount | Full worker URL override; consumed as `WORKER_URL` throughout `flow_data_engine/subprocess_operations/subprocess_operations.py`. |
 | `CORE_HOST` / `CORE_PORT` | `flowfile_worker/flowfile_worker/configs.py:16-17` | `0.0.0.0`/`127.0.0.1`(Win), `63578` | Where the worker (and its spawned children) call core back. Compose sets `CORE_HOST=flowfile-core` (compose:70); Tauri sets both (env.rs:68-69). |
 | `FLOWFILE_HOST` / `FLOWFILE_PORT` | `flowfile/flowfile/api.py:22-23` | `127.0.0.1` / `63578` | Where the `flowfile` CLI/api client probes and spawns core. |
 | `FLOWFILE_MODULE_NAME` | `flowfile/flowfile/api.py:25` | `flowfile` | Module the CLI launches as server. |
@@ -93,8 +93,8 @@ Non-env port facts: Tauri scans a free `(core, worker)` port pair starting at 63
 
 | Var | Read at | Default | Truthy parse | Effect |
 |---|---|---|---|---|
-| `FLOWFILE_SINGLE_FILE_MODE` | settings.py:19; `flowfile/web/__init__.py:72-73` | `"0"` | **exact `"1"` only** | Worker routes co-hosted on core under `/worker`; worker URL gets a `/worker` suffix. |
-| `FLOWFILE_OFFLOAD_TO_WORKER` | settings.py:22 | `"1"` | **exact `"1"` only** | Heavy compute routed to the worker; off = in-core execution (violates the "core never collects" contract if you rely on it for large data — see `flowfile-architecture-contract`). |
+| `FLOWFILE_SINGLE_FILE_MODE` | settings.py:19; `flowfile/web/__init__.py::start_server`; `flowfile_core/flowfile/execution/registry.py` | `"0"` | **exact `"1"` only** | The pip server's mode, which `start_server` turns on itself: the registry's `worker` is the worker embedded in this process, its jobs in the pool, and the worker's routes stay mounted under `/worker` for the callers that post to a worker URL. Set by hand on a plain core it gives the embedded `worker` but no mount, so `registry.worker_url()` names the standalone worker's default URL. |
+| `FLOWFILE_OFFLOAD_TO_WORKER` | settings.py:22 | `"1"` | **exact `"1"` only** | With `FLOWFILE_COMPUTE_BACKEND` unset, the default backend: `worker` while on, `local` (the worker embedded in this process) when off; never `local` in a process that serves (`registry.default_backend_id`). |
 | `FEATURE_FLAG_AI` | settings.py:25-27 | on | `true`/`1`/`yes`/`on` (case/space-insensitive) | Master gate for the entire `/ai/*` router (503 when off). |
 | `FLOWFILE_LSP_ENABLED` | settings.py:32-34 | on | `true`/`1`/`yes`/`on` | Notebook Jedi/LSP bridge; off ⇒ `/lsp/*` degrades to empty 200 (never 503) so editors silently fall back to client-side completion. |
 | `FLOWFILE_AI_LOG_PROMPTS` | settings.py:37-39 | off | `true`/`1`/`yes`/`on` | Appends a JSONL line per LLM call to `<base>/ai_prompts/YYYY-MM-DD.jsonl`. |
@@ -261,8 +261,8 @@ These are **container-internal contract vars** — an operator normally never se
 **`FLOWFILE_LSP_ENABLED` live flip:** identical pattern in `flowfile_core/flowfile_core/lsp/admin_routes.py` — `POST`/`GET /system/feature_flags/lsp` (admin_routes.py:49,60). Difference: `/lsp/*` never 503s when off — it degrades to empty-200 so the editor falls back to client-side completion. Caveat in the module docstring: open editor sessions cache `/lsp/capabilities` per session, so a live flip only reaches them on reload.
 
 **Other live-mutable state (not admin-endpoint-backed):**
-- `OFFLOAD_TO_WORKER.set(False)` is forced by `python -m flowfile_core.main --run-flow` (per `flowfile_core/CLAUDE.md`), and `flowfile/web/__init__.py:157` sets `OFFLOAD_TO_WORKER.value = True` in unified (pip) mode.
-- **`import flowfile` mutates `os.environ` unconditionally**: `flowfile/flowfile/__init__.py:17-18` sets `FLOWFILE_WORKER_PORT=63578` and `FLOWFILE_SINGLE_FILE_MODE=1` at import time, before any of your code runs. This is how the pip-installed unified mode co-hosts the worker on the core port. Consequence: any process that does `import flowfile` (even just to reach `flowfile_frame`) silently flips core into single-file mode if `flowfile_core.configs.settings` is imported afterward. Import order matters.
+- The headless runners (`python -m flowfile_core.main --run-flow`, `flowfile run flow`) make `local`, the worker embedded in their process, that process's default through `registry.set_default_override` (per `flowfile_core/CLAUDE.md`), and `flowfile/web/__init__.py::start_server` sets `OFFLOAD_TO_WORKER.value = True` and `SINGLE_FILE_MODE.value = True` in unified (pip) mode.
+- **`import flowfile` sets nothing about the worker**: neither `FLOWFILE_WORKER_PORT` nor single-file mode. `start_server` (`flowfile run ui`, `ff.start_web_ui()`) turns single-file mode on for its own process, so importing `flowfile` beside a normally configured core and worker changes neither.
 
 **Multi-process caveat:** in a multi-worker deployment (e.g. `gunicorn -w N`), a flip via HTTP hits **one** worker process only (inferred from the per-process nature of `MutableBool`; `.env.example` documents the identical caveat for AI rate limits — §3.6, per-process in-memory deques).
 
@@ -326,7 +326,7 @@ When you add a new environment-variable-driven behavior:
 
 - **Desktop (Tauri)**: nothing — `env.rs` supplies everything (mode, ports, storage, supervisor PID).
 - **Local dev** (`poetry run flowfile_core` + `poetry run flowfile_worker`): nothing required; defaults to electron mode, `~/.flowfile`, ports 63578/63579. Optional: `FLOWFILE_SCHEDULER_ENABLED=1` (note: the `=on` spelling silently does nothing, §5).
-- **pip unified** (`flowfile run ui`): nothing; `import flowfile`'s side effect sets single-file mode; serves the UI at `:63578/ui` (host/port hard-checked to `127.0.0.1:63578`, `flowfile/web/__init__.py:154-157`).
+- **pip unified** (`flowfile run ui`): nothing; `start_server` sets single-file mode itself; serves the UI at `:63578/ui` (host/port hard-checked to `127.0.0.1:63578`, `flowfile/web/__init__.py:154-157`).
 - **Docker**: required `JWT_SECRET_KEY`, `FLOWFILE_INTERNAL_TOKEN`, `FLOWFILE_MASTER_KEY` (or the Docker secret file); recommended `FLOWFILE_ADMIN_USER`/`_PASSWORD`; compose wires `WORKER_HOST`, `CORE_HOST`, storage dirs, scheduler, projects, and kernel-image overrides for you — check compose defaults against §6 before assuming `.env.example` alone tells the whole story.
 
 **Classification rule (maintainer, 2026-07-03):** split every var into *installation-specific* (paths, hosts, ports — defaulted per machine or wired by `env.rs`/compose) vs *deployment config* (secrets, tokens, mode, admin bootstrap, feature gates). Everything in the second group is required-or-relevant **for hosting**: a server deployment must consciously set them even though local/desktop runs never touch them. `.env.example` is the hosting operator's checklist — which is why the undocumented-var drift in §6 is a hosting hazard, not a docs nit.

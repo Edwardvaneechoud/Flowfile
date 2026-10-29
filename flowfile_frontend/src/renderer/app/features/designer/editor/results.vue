@@ -29,6 +29,54 @@
         ×
       </button>
     </div>
+    <div
+      v-if="placementNotice && !placementNoticeDismissed"
+      class="perf-mode-notice placement-notice"
+      role="status"
+      data-testid="placement-notice"
+    >
+      <el-icon class="perf-mode-notice__icon placement-notice__icon"><Switch /></el-icon>
+      <div class="perf-mode-notice__text">
+        <span>{{ placementNotice.title }}.</span>
+        <button
+          type="button"
+          class="perf-mode-notice__link placement-notice__toggle"
+          :aria-expanded="placementNoticeOpen"
+          @click="placementNoticeOpen = !placementNoticeOpen"
+        >
+          {{ placementNoticeOpen ? "Hide details" : "Show details" }}
+        </button>
+        <ul v-if="placementNoticeOpen" class="placement-notice__list">
+          <li v-for="line in placementNotice.lines" :key="line.nodeId">
+            <button
+              type="button"
+              class="placement-notice__node"
+              @click="navigateToNode(`node-${line.nodeId}`)"
+            >
+              {{ line.label }}
+            </button>
+            {{ line.reason }}
+          </li>
+        </ul>
+      </div>
+      <button
+        class="perf-mode-notice__dismiss"
+        aria-label="Dismiss notice"
+        @click="placementNoticeDismissed = true"
+      >
+        ×
+      </button>
+    </div>
+    <div v-if="computeBanner" class="compute-error-banner" role="alert">
+      <strong class="compute-error-banner__title">{{ computeBanner.title }}</strong>
+      <p
+        v-for="message in computeBanner.messages"
+        :key="message"
+        class="compute-error-banner__message"
+      >
+        {{ message }}
+      </p>
+    </div>
     <br />
     <div>
       <el-timeline>
@@ -92,11 +140,13 @@
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
 import { format } from "date-fns";
-import { InfoFilled } from "@element-plus/icons-vue";
+import { InfoFilled, Switch } from "@element-plus/icons-vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useAiStore } from "../../../stores/ai-store";
 import { useEditorStore } from "../../../stores/editor-store";
 import { useDrawerStore } from "../../../stores/drawer-store";
+import { computeErrorBanner } from "../../../utils/computeErrorBanner";
+import { fallbackNotice } from "../../../utils/placement";
 
 interface RunNode {
   node_id: number;
@@ -115,6 +165,16 @@ const runInformation = computed(() => nodeStore.currentRunResult);
 const selectedNode = ref<Element | null>(null);
 
 const openFlowSettings = () => editorStore.requestOpenFlowSettings();
+
+const computeBanner = computed(() =>
+  runInformation.value?.is_running
+    ? null
+    : computeErrorBanner(runInformation.value?.node_step_result),
+);
+
+const placementNotice = computed(() =>
+  runInformation.value?.is_running ? null : fallbackNotice(runInformation.value?.node_step_result),
+);
 
 // Flow status. The backend leaves `success` null while the flow is running
 // and sets `is_running`, so we never render a running flow as "Failed". A
@@ -170,11 +230,18 @@ const showPerfNotice = computed(
     runInformation.value?.execution_mode === "Performance",
 );
 
-// Reset the dismissal whenever a new run starts so the notice can reappear.
+// The fallback notice starts folded to its summary line; the canvas badges carry each node's reason too.
+const placementNoticeOpen = ref(false);
+const placementNoticeDismissed = ref(false);
+
+// Reset the dismissals whenever a new run starts so the notices can reappear.
 watch(
   () => runInformation.value?.is_running,
   (isRunning) => {
-    if (isRunning) perfNoticeDismissed.value = false;
+    if (!isRunning) return;
+    perfNoticeDismissed.value = false;
+    placementNoticeDismissed.value = false;
+    placementNoticeOpen.value = false;
   },
 );
 
@@ -269,6 +336,51 @@ const navigateToNode = (nodeId: string) => {
   content: "·";
   margin: 0 6px;
   color: var(--color-text-tertiary);
+}
+.perf-mode-notice.placement-notice {
+  border-color: var(--color-warning);
+  background-color: var(--el-color-warning-light-9, rgba(245, 158, 11, 0.1));
+}
+.perf-mode-notice__icon.placement-notice__icon {
+  color: var(--color-warning);
+}
+.perf-mode-notice__link.placement-notice__toggle {
+  margin-left: 4px;
+}
+.placement-notice__list {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.placement-notice__list li {
+  margin-top: 2px;
+  word-break: break-word;
+}
+.placement-notice__node {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+.placement-notice__node:hover {
+  text-decoration: underline;
+}
+.compute-error-banner {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-danger);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--color-text-primary);
+}
+.compute-error-banner__message {
+  margin: 4px 0 0;
+  word-break: break-word;
 }
 .perf-mode-notice {
   display: flex;

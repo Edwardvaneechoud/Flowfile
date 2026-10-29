@@ -4,6 +4,10 @@ from typing import Any
 import pytest
 from pl_fuzzy_frame_match.models import FuzzyMapping
 
+from flowfile_core.configs import settings
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
+from flowfile_core.flowfile.execution.payloads import PAYLOAD_KEY
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, RunInformation, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
@@ -24,8 +28,7 @@ def find_parent_directory(target_dir_name,):
     raise FileNotFoundError(f"Directory '{target_dir_name}' not found")
 
 
-@pytest.fixture
-def complex_elaborate_flow(tmp_path) -> FlowGraph:
+def build_complex_elaborate_flow(output_directory: Path) -> FlowGraph:
     """
     Creates a super complex elaborate flow using all available node types.
 
@@ -424,7 +427,7 @@ output_df = input_df.with_columns([
         node_id=71,
         output_settings=input_schema.OutputSettings(
             name='customer_sales_analysis.csv',
-            directory=str(tmp_path),
+            directory=str(output_directory),
             file_type='csv',
             write_mode='overwrite',
             table_settings=input_schema.OutputCsvTable(
@@ -442,7 +445,7 @@ output_df = input_df.with_columns([
         node_id=72,
         output_settings=input_schema.OutputSettings(
             name='fuzzy_matched_customers.parquet',
-            directory=str(tmp_path),
+            directory=str(output_directory),
             file_type='parquet',
             write_mode='overwrite',
             table_settings=input_schema.OutputParquetTable()
@@ -456,7 +459,7 @@ output_df = input_df.with_columns([
         node_id=73,
         output_settings=input_schema.OutputSettings(
             name='network_components.csv',
-            directory=str(tmp_path),
+            directory=str(output_directory),
             file_type='csv',
             write_mode='overwrite',
             table_settings=input_schema.OutputCsvTable(
@@ -474,7 +477,7 @@ output_df = input_df.with_columns([
         node_id=74,
         output_settings=input_schema.OutputSettings(
             name='combined_aggregations.csv',
-            directory=str(tmp_path),
+            directory=str(output_directory),
             file_type='csv',
             write_mode='overwrite',
             table_settings=input_schema.OutputCsvTable(
@@ -485,6 +488,11 @@ output_df = input_df.with_columns([
     ))
 
     return graph
+
+
+@pytest.fixture
+def complex_elaborate_flow(tmp_path) -> FlowGraph:
+    return build_complex_elaborate_flow(tmp_path)
 
 
 @pytest.fixture
@@ -571,6 +579,89 @@ def test_execution_complex_flow_performance(complex_elaborate_flow: FlowGraph, e
     complex_elaborate_flow.flow_settings.execution_location = execution_location
     results = complex_elaborate_flow.run_graph()
     handle_run_info(results)
+
+
+class RecordingBackend(EmbeddedWorkerBackend):
+    """The worker embedded in this process, registered as a new backend ``walkthrough``.
+
+    ``calls`` records each protocol call core makes on it, as ``(method, node id or detail)``; the handshake's probe
+    jobs are submitted as node ``-1``. Its jobs run in this process (the suite's autouse fixture), so a flow on it
+    runs one node at a time, as a ``local`` flow does.
+    """
+
+    id = "walkthrough"
+
+    def __init__(self):
+        super().__init__()
+        self.calls: list[tuple] = []
+
+    def capabilities(self):
+        self.calls.append(("capabilities",))
+        return super().capabilities()
+
+    def submit(self, plan, inputs, hints, result_id, *, flow_id, node_id):
+        self.calls.append(("submit", node_id, hints))
+        return super().submit(plan, inputs, hints, result_id, flow_id=flow_id, node_id=node_id)
+
+    def run_op(self, op, payload):
+        self.calls.append(("run_op", payload[PAYLOAD_KEY].node_id, op.value))
+        return super().run_op(op, payload)
+
+    def sample(self, ref, n):
+        self.calls.append(("sample", ref.result_id, n))
+        return super().sample(ref, n)
+
+    def count(self, ref):
+        self.calls.append(("count", ref.result_id))
+        return super().count(ref)
+
+    def release(self, ref):
+        self.calls.append(("release", ref.result_id))
+        return super().release(ref)
+
+
+@pytest.fixture
+def recording_backend():
+    """A fresh registry with ``RecordingBackend`` registered under its id, reset after; each backend it makes is
+    new, so each is checked again."""
+    registry.reset()
+    backend = RecordingBackend()
+    registry.register_backend(RecordingBackend.id, lambda: backend)
+    yield backend
+    registry.reset()
+
+
+@pytest.mark.parametrize(
+    "backend_id", [registry.LOCAL_BACKEND_ID, registry.WORKER_BACKEND_ID, RecordingBackend.id]
+)
+def test_execution_complex_flow_on_each_compute_backend(
+    complex_elaborate_flow: FlowGraph, recording_backend, backend_id, monkeypatch
+):
+    """With the compute protocol on, the complex flow runs whole on the backend its execution location names: the
+    worker embedded in this process, the session worker, or a backend registered under a new id."""
+    from tests.conftest import is_worker_running
+
+    if backend_id == registry.WORKER_BACKEND_ID and not is_worker_running():
+        pytest.skip("flowfile_worker is not running")
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", True)
+    graph = complex_elaborate_flow
+    graph.flow_settings.execution_mode = "Development"
+    graph.flow_settings.execution_location = backend_id
+    if backend_id == RecordingBackend.id:
+        graph.flow_settings.max_parallel_workers = 1
+    try:
+        results = graph.run_graph()
+
+        handle_run_info(results)
+        held = {node.node_id: node.results.result_ref for node in graph.nodes if node.results.result_ref is not None}
+        assert held and {ref.backend_id for ref in held.values()} == {backend_id}
+        assert results.boundaries == []
+        if backend_id == RecordingBackend.id:
+            assert recording_backend.calls[0] == ("capabilities",)
+            submitted = {call[1] for call in recording_backend.calls if call[0] == "submit"}
+            assert submitted == {-1} | {node.node_id for node in graph.nodes}
+    finally:
+        graph.close_flow()
 
 
 def test_save_complex_flow_yaml(complex_elaborate_flow: FlowGraph, execution_location):

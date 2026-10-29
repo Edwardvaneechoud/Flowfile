@@ -37,8 +37,8 @@ code inside an already-running environment.
 | Node | 20+ (CI runs **20** for build/publish workflows, **22** for the `test.yaml` web job; no `engines` field, no `.nvmrc` anywhere in the repo) | `.github/workflows/*.yml` `node-version:` lines | Nothing enforces a floor locally — an old Node silently fails deep inside Vite 6/Vitest 3 (frontend) or Vite 8/Vitest 4 (WASM) with an unhelpful syntax error. If `npm install`/`npm run dev` throws a cryptic parse error, check `node --version` first. |
 | Rust (rustc + cargo) | stable toolchain; `rust-version = "1.78"` floor | `flowfile_frontend/src-tauri/Cargo.toml:9`; CI uses `dtolnay/rust-toolchain@stable` | `rustc` is required even to **stage** sidecars (not just to build the app) — `tools/rename_sidecar.py` shells out to `rustc -vV` to detect the target triple and raises `RuntimeError` if it's missing. Install via https://rustup.rs. |
 | Tauri | v2 (`tauri = "2"` in `Cargo.toml`, `@tauri-apps/cli ^2.0.0`) | `flowfile_frontend/src-tauri/Cargo.toml`, `flowfile_frontend/package.json` | N/A — just don't mix v1 tutorials/docs in. |
-| Polars | root `>=1.39.0, !=1.43.0, !=1.43.1, <1.44`; `kernel_runtime` shares the ceiling and exclusions with a `>=1.17.0` floor (it ships neither 1.39-requiring plugin) | `pyproject.toml`, `kernel_runtime/pyproject.toml` | Bump the ceiling together (1.43.0/.1 deadlock `SQLContext.execute` over `scan_delta`); kernel containers report their own resolved version from `poetry.lock`. |
-| PyInstaller | `^6.11.0`, in the **optional `build` dependency group** | `pyproject.toml` | Plain `poetry install` (no `--with build`) will not have `pyinstaller` — `make build_python_services` needs `poetry install --with build` first (the Makefile does this for you). |
+| Polars | root `>=1.39.0, !=1.43.0, !=1.43.1, <1.44`, no runtime extra, so `pip install flowfile` keeps the user's Polars and its index runtime (32-bit unless the 64-bit one is installed); the built artifacts (desktop bundle, core and worker images) install the lock's exact build plus the optional **`runtime64` group** (`polars-runtime-64` at the locked Polars version), so they run the 64-bit runtime; `kernel_runtime` keeps the range `>=1.17.0,!=1.43.0,!=1.43.1,<1.44` (it ships neither 1.39-requiring plugin) | `pyproject.toml`, `kernel_runtime/pyproject.toml` | Any new pin keeps the 1.39 floor (`tools/tests/test_polars_pin_floor.py`) and skips 1.43.0/.1 (they deadlock `SQLContext.execute` over `scan_delta`); a Polars bump moves the `runtime64` pin with it (`tools/tests/test_polars_runtime_group.py`); code and tests take an index dtype from `pl.get_index_type()`, never a `UInt32`/`UInt64` literal; the handshake refuses a backend whose `polars_version` or `polars_runtime` differs; kernel containers report their own resolved version from `poetry.lock`. |
+| PyInstaller | `^6.11.0`, in the **optional `build` dependency group** | `pyproject.toml` | Plain `poetry install` (no `--with build`) will not have `pyinstaller` — `make build_python_services` needs `poetry install --with build,runtime64` first (the Makefile does this for you; `build_backends` exits before bundling when Polars loads its 32-bit runtime). |
 | numpy | exactly `1.26.4` in both the `dev` group and `kernel_runtime` | `pyproject.toml`, `kernel_runtime/pyproject.toml` | — |
 
 **Verify your machine matches:**
@@ -63,6 +63,7 @@ Notes:
 - `FLOWFILE_MODE` defaults to `electron` when unset. The embedded scheduler only starts if `FLOWFILE_SCHEDULER_ENABLED` is truthy.
 - Local data lands under `~/.flowfile` (internal storage) and your home dir (user data); override with `FLOWFILE_STORAGE_DIR` / `FLOWFILE_USER_DATA_DIR`.
 - `poetry install --with build` is **only** needed when you're going to run PyInstaller (§4) — skip it for plain backend dev, it just costs install time.
+- Plain `poetry install` gives Polars' 32-bit index runtime, as `pip install flowfile` does. Add `--with runtime64` when a local core or worker must pair with the desktop app or a Docker image, which run the 64-bit one: the handshake refuses `polars_runtime: core 32, backend 64`.
 
 ### (b) Frontend web dev (no Tauri/Rust needed)
 
@@ -88,7 +89,7 @@ make all
 ```
 `make all` is exactly `install_python_deps build_python_services rename_sidecars sign_sidecars build_tauri_app generate_key`, run in that fixed order:
 
-1. `poetry install --with build` (self-heals a stale lock first — see §5 gotcha 1)
+1. `poetry install --with build,runtime64` (self-heals a stale lock first — see §5 gotcha 1)
 2. `poetry run build_backends` → PyInstaller onedir builds of core + worker into `services_dist/` (§4)
 3. `poetry run python tools/rename_sidecar.py` → stages `services_dist/` into `flowfile_frontend/src-tauri/binaries/<name>-<host-triple>` (§4b)
 4. `sign_sidecars` → no-op unless macOS **and** `APPLE_SIGNING_IDENTITY` is set (§5)
@@ -136,7 +137,7 @@ Other things worth knowing before you run this:
 - The compose network is a **fixed name** (`flowfile-network`) so kernel containers spun up dynamically via the Docker API can join it.
 - Defaults are insecure on purpose for local dev (`admin`/`changeme`, dev JWT/internal tokens) — override in `.env` for anything shared.
 - There is no `secrets:` block in compose. `FLOWFILE_MASTER_KEY` unset ⇒ the UI shows a first-run setup screen that prompts for one; env var always wins over a manually-added Docker secret file.
-- Core and worker images are `python:3.12-slim`; the Dockerfile installs `psycopg2-binary`/`pymysql` explicitly at image-build time even though those are **dev-group-only** in `pyproject.toml` — a plain `poetry install --only main` locally will NOT have Postgres/MySQL drivers.
+- Core and worker images are `python:3.12-slim`; the Dockerfile installs `psycopg2-binary`/`pymysql` explicitly at image-build time even though those are **dev-group-only** in `pyproject.toml` — a plain `poetry install --only main` locally will NOT have Postgres/MySQL drivers. They install `--only=main,runtime64`, so both images run Polars' 64-bit index runtime.
 
 ### (e) WASM dev (fully standalone — no backend)
 
@@ -157,7 +158,7 @@ npm run dev                       # http://localhost:5174
 pip install flowfile
 flowfile run ui              # serves bundled web UI + core + worker on ONE port
 ```
-Importing the `flowfile` package sets **`FLOWFILE_WORKER_PORT=63578`** and **`FLOWFILE_SINGLE_FILE_MODE=1`** as a side effect at import time (`flowfile/flowfile/__init__.py`) — do not `import flowfile` in the same process as a normally-configured core/worker pair, it will silently rewire the worker port out from under you. Other CLI verbs: `flowfile run {ui|core|worker|flow <path>}` (`run flow` forces local, non-offloaded execution and strips UI-only nodes), `flowfile project {init|open|save}`, `flowfile seed-demo` / `remove-demo`.
+`import flowfile` sets nothing about the worker; `flowfile run ui` puts its own process in single-file mode, where flows compute on the worker embedded in it, its jobs in the worker's pool. Other CLI verbs: `flowfile run {ui|core|worker|flow <path>}` (`run flow` computes on the worker embedded in its own process unless `--backend` or the flow's saved backend id names one, and strips UI-only nodes), `flowfile project {init|open|save}`, `flowfile seed-demo` / `remove-demo`.
 
 ---
 
@@ -168,7 +169,7 @@ Importing the `flowfile` package sets **`FLOWFILE_WORKER_PORT=63578`** and **`FL
 | `all` (default) | `install_python_deps build_python_services rename_sidecars sign_sidecars build_tauri_app generate_key`, in that order |
 | `update_lock` | `poetry lock` (resolves to latest allowed versions) |
 | `force_lock` | `poetry lock --no-update` (refresh lock file without bumping deps — **Poetry 1.x-only flag**) |
-| `install_python_deps` | Self-heals a stale lock (`poetry check \|\| poetry lock --no-update`), then **always** `poetry install --with build` (includes PyInstaller even if you don't need it) |
+| `install_python_deps` | Self-heals a stale lock (`poetry check \|\| poetry lock --no-update`), then **always** `poetry install --with build,runtime64` (includes PyInstaller and Polars' 64-bit runtime even if you don't need them) |
 | `build_python_services` | Depends on `install_python_deps`; runs `poetry run build_backends` (PyInstaller, §4) |
 | `rename_sidecars` | `poetry run python tools/rename_sidecar.py` — needs `rustc` on `PATH` |
 | `services` | Convenience = `build_python_services rename_sidecars` |

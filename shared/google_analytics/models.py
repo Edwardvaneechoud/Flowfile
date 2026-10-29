@@ -22,10 +22,12 @@ HKDF scheme to recover the plaintext, so secrets are never sent unencrypted.
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from shared.wire_model import WireModel
 
 
-class GoogleAnalyticsFilter(BaseModel):
+class GoogleAnalyticsFilter(WireModel):
     """Row-level filter applied to the GA4 report."""
 
     field: str
@@ -34,14 +36,14 @@ class GoogleAnalyticsFilter(BaseModel):
     case_sensitive: bool = False
 
 
-class GoogleAnalyticsOrderBy(BaseModel):
+class GoogleAnalyticsOrderBy(WireModel):
     """Sort entry applied to the GA4 report."""
 
     field: str
     descending: bool = False
 
 
-class GoogleAnalyticsReadSettings(BaseModel):
+class GoogleAnalyticsReadSettings(WireModel):
     """Payload for ``POST /store_google_analytics_read_result``."""
 
     auth_method: Literal["oauth", "service_account"] = "oauth"
@@ -49,12 +51,10 @@ class GoogleAnalyticsReadSettings(BaseModel):
     # OAuth credential material (``auth_method == "oauth"``).
     refresh_token_encrypted: str | None = None
     oauth_client_id: str | None = None
-    # Master-key encrypted (Fernet). The worker's ``decrypt_secret`` falls
-    # back to master-key decryption for tokens without the ``$ffsec$`` prefix.
+    # Master-key Fernet, which the worker's ``decrypt_secret`` reads when a token lacks ``$ffsec$``.
     oauth_client_secret_encrypted: str | None = None
 
-    # Service-account credential material (``auth_method == "service_account"``):
-    # the per-user-encrypted service-account JSON key.
+    # The per-user-encrypted service-account JSON key (``auth_method == "service_account"``).
     service_account_key_encrypted: str | None = None
 
     property_id: str
@@ -64,8 +64,7 @@ class GoogleAnalyticsReadSettings(BaseModel):
     dimensions: list[str]
     # Maximum number of rows to fetch in total (``None`` = fetch everything).
     limit: int | None = None
-    # Row-level filters, routed into ``dimension_filter`` / ``metric_filter``
-    # by inspecting which of ``dimensions`` / ``metrics`` the ``field`` appears in.
+    # Each filter goes to ``dimension_filter`` or ``metric_filter`` by which list holds its ``field``.
     filters: list[GoogleAnalyticsFilter] = Field(default_factory=list)
     # Sort entries; each ``field`` must be one of the selected metrics or dimensions.
     order_bys: list[GoogleAnalyticsOrderBy] = Field(default_factory=list)

@@ -1,23 +1,19 @@
 """Machine-learning nodes: train, apply and evaluate a model."""
 
-import os
-from collections.abc import Iterator
-from contextlib import contextmanager
-from pathlib import Path
 from typing import TYPE_CHECKING
-
-import polars as pl
 
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
-from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.errors import ResultMissing
+from flowfile_core.flowfile.execution.payloads import MlApplyPayload, MlTrainPayload, op_payload
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_graph._base import GraphMixinBase
-from flowfile_core.flowfile.flow_graph._root import root
 from flowfile_core.flowfile.flow_graph.catalog_resolution import _authorize_catalog_write, _effective_namespace_id
 from flowfile_core.flowfile.flow_graph.history import with_history_capture
 from flowfile_core.flowfile.flow_node.flow_node import (
@@ -27,68 +23,9 @@ from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.history_schema import (
     HistoryActionType,
 )
-from shared.storage_config import storage
 
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_graph.graph import FlowGraph
-
-
-def ml_flow_model_path(flow_id: int, train_node_id: int | str) -> Path:
-    """Path on the shared cache where a Train Model node writes its model JSON.
-
-    Stable across runs (keyed off the train node's id), so an Apply Model node
-    elsewhere in the flow can read the model without a catalog round-trip.
-    """
-    return storage.cache_directory / str(flow_id) / "ml_models" / f"{train_node_id}.json"
-
-
-@contextmanager
-def _panics_as_errors() -> Iterator[None]:
-    """Re-raise a Rust panic (pyo3 ``PanicException``, a ``BaseException``) as a ``RuntimeError``.
-
-    The worker's ML tasks catch ``BaseException``; in this process the node executor catches only
-    ``Exception``, so an uncaught panic would abort the whole run instead of failing the node.
-    """
-    try:
-        yield
-    except Exception:
-        raise
-    except BaseException as e:
-        if type(e).__name__ != "PanicException":
-            raise
-        raise RuntimeError(f"PanicException: {e}") from e
-
-
-def _train_in_process(data: FlowDataEngine, staging_path: Path, settings: input_schema.TrainModelSettings) -> dict:
-    """Fit the model in this process and write its bytes to *staging_path*, as the worker's ``train_model_task`` does.
-
-    A local flow computes every node in the process that runs it, and a graph built with ``flowfile_frame`` is
-    local, so a script that never started a worker can still train. Returns the report the worker would:
-    ``sha256``, ``size_bytes`` and ``model_type``.
-    """
-    from shared.ml.trainers import fit_to_path
-
-    with _panics_as_errors():
-        return fit_to_path(
-            data.data_frame.lazy(),
-            staging_path,
-            settings.model_type,
-            settings.target_column,
-            settings.feature_columns,
-            settings.params,
-        )
-
-
-def _apply_in_process(data: FlowDataEngine, model_path: str, output_column: str) -> pl.LazyFrame:
-    """Score *data* in this process with the model JSON at *model_path*, as the worker's ``apply_model_task`` does.
-
-    A linear or logistic model returns a lazy plan; a KNN model collects the input once here to query neighbours.
-    """
-    from shared.ml.trainers import get_trainer, load_model
-
-    model = load_model(model_path)
-    with _panics_as_errors():
-        return get_trainer(model["model_type"]).apply(data.data_frame.lazy(), model, output_column)
 
 
 class MlBuildersMixin(GraphMixinBase):
@@ -96,10 +33,13 @@ class MlBuildersMixin(GraphMixinBase):
     def add_train_model(self, train_settings: input_schema.NodeTrainModel) -> "FlowGraph":
         """Adds a Train Model node.
 
-        Fits a model where the flow runs (in this process for a local flow,
-        on the worker otherwise), optionally stores the serialised artifact
-        in the global catalog (via :class:`ArtifactService`), and passes the
-        input data through unchanged so downstream nodes can keep transforming.
+        Fits a model with the ``ml_train`` operation on the flow's backend
+        and passes the input data through unchanged. The backend holds the
+        fitted model as a blob, kept as ``results.model_ref`` for an Apply
+        Model node to score with by reference; a refit under another id
+        releases the model it replaces. With ``publish_to_catalog`` the model
+        is published with ``publish_result``; the flow must be registered and
+        the namespace writable, both checked before the fit.
 
         Args:
             train_settings: Settings (model name, target/features, model_type, params).
@@ -110,10 +50,7 @@ class MlBuildersMixin(GraphMixinBase):
 
         def _func(data: FlowDataEngine) -> FlowDataEngine:
             # Function-local: importing flowfile_core.artifacts at module top runs migrations (~3.5s).
-            import shutil
-
-            from flowfile_core.artifacts import get_storage_backend
-            from flowfile_core.artifacts.service import ArtifactService
+            from flowfile_core.artifacts.publish import publish_result
             from flowfile_core.auth.utils import get_local_user_id
             from flowfile_core.flowfile.catalog_helpers import (
                 auto_register_flow,
@@ -137,14 +74,8 @@ class MlBuildersMixin(GraphMixinBase):
             except Exception as e:
                 raise ValueError(f"Train Model: invalid params for model_type={settings.model_type!r}: {e}") from e
 
-            # Flow-scoped model path keyed by node id; also the publish staging path, so we fit once.
-            flow_path = ml_flow_model_path(self.flow_id, train_settings.node_id)
-            flow_path.parent.mkdir(parents=True, exist_ok=True)
-
-            prepared = None
+            prepare_request = None
             owner_id = train_settings.user_id or get_local_user_id() or 1
-            staging_path = flow_path
-            storage_backend = get_storage_backend()
 
             if settings.publish_to_catalog:
                 # Auto-register an unregistered on-disk flow (as open/save do) so artifacts get a stable lineage.
@@ -185,82 +116,46 @@ class MlBuildersMixin(GraphMixinBase):
                     python_type=f"flowfile.ml.{settings.model_type}",
                     python_module="flowfile.ml",
                 )
-                with get_db_context() as db:
-                    prepared = ArtifactService(db, storage_backend).prepare_upload(prepare_request, owner_id=owner_id)
-                if prepared.method != "file":
-                    # v1 supports the shared-filesystem backend only; S3 needs a presigned-URL path on the worker.
-                    with get_db_context() as db:
-                        ArtifactService(db, storage_backend).delete_artifact(prepared.artifact_id)
-                    raise ValueError(
-                        "Train Model currently requires the filesystem artifact backend "
-                        "(FLOWFILE_ARTIFACT_STORAGE=filesystem). S3 support is not implemented."
-                    )
-                # Train into the staging path and copy to flow_path after success so finalize_upload still works.
-                staging_path = Path(prepared.path)
 
             node = self.get_node(node_id=train_settings.node_id)
-            flow_path_written = False
-            try:
-                if self.execution_location == "local":
-                    result = _train_in_process(data, staging_path, settings)
-                    if self.flow_settings.is_canceled:
-                        raise RuntimeError("Train Model: the run was cancelled before the model was stored.")
-                else:
-                    fetcher = root().MLTrainFetcher(
-                        lf=data.data_frame,
-                        staging_path=str(staging_path),
-                        model_type=settings.model_type,
-                        target_column=settings.target_column,
-                        feature_columns=settings.feature_columns,
-                        params=settings.params,
-                        flow_id=self.flow_id,
-                        node_id=train_settings.node_id,
-                        file_ref=node.hash,
-                        wait_on_completion=False,
-                    )
-                    node._fetch_cached_df = fetcher
-                    result = fetcher.get_result()
-                if not isinstance(result, dict) or "sha256" not in result or "size_bytes" not in result:
-                    raise RuntimeError(f"Train Model did not get the expected sha256/size_bytes report: {result!r}")
-
-                if prepared is not None:
-                    # Atomically replace flow_path (.tmp + os.replace) before finalize_upload moves the staging file.
-                    flow_tmp = flow_path.with_suffix(flow_path.suffix + ".tmp")
-                    shutil.copyfile(staging_path, flow_tmp)
-                    os.replace(flow_tmp, flow_path)
-                    flow_path_written = True
-                    with get_db_context() as db:
-                        ArtifactService(db, storage_backend).finalize_upload(
-                            artifact_id=prepared.artifact_id,
-                            storage_key=prepared.storage_key,
-                            sha256=result["sha256"],
-                            size_bytes=result["size_bytes"],
-                        )
-            except Exception:
-                if prepared is not None:
-                    # Roll back the pending row on failure so no ghost artifact is shown.
-                    with get_db_context() as db:
-                        try:
-                            ArtifactService(db, storage_backend).delete_artifact(prepared.artifact_id)
-                        except Exception:
-                            logger.exception("Failed to roll back pending artifact %s", prepared.artifact_id)
-                    # Roll back the flow_path copy too, or the next Apply Model would use the deleted artifact.
-                    if flow_path_written:
-                        try:
-                            flow_path.unlink(missing_ok=True)
-                        except Exception:
-                            logger.exception("Failed to roll back flow_path copy %s", flow_path)
-                raise
-
-            if prepared is not None:
-                self.flow_logger.info(
-                    f"Train Model: stored '{settings.model_name}' v{prepared.version} "
-                    f"(artifact_id={prepared.artifact_id}, size={result['size_bytes']}B); "
-                    f"flow copy at {flow_path}"
+            train = MlTrainPayload(
+                plan=data.data_frame.lazy(),
+                model_type=settings.model_type,
+                target_column=settings.target_column,
+                feature_columns=settings.feature_columns,
+                params=settings.params,
+                flow_id=self.flow_id,
+                node_id=train_settings.node_id,
+                job_id=node.hash,
+            )
+            backend = current_context(self).backend
+            trained = node.run_op(backend, OperationKind.ml_train, op_payload(train), job_id=train.job_id)
+            result = trained.metadata
+            model = trained.refs.get("model")
+            if model is None or "sha256" not in result or "size_bytes" not in result:
+                raise RuntimeError(
+                    f"The {backend.id!r} backend did not return the model with its sha256/size_bytes payload, got "
+                    f"the outputs {sorted(trained.refs)} and {result!r}"
                 )
-                artifact_name = f"{settings.model_name} v{prepared.version}"
+            # run_op released this node's previous fit; a model carried onto it is its source node's to release.
+            node.results.model_ref = model
+
+            if prepare_request is not None:
+                published = publish_result(
+                    backend,
+                    model,
+                    prepare_request,
+                    owner_id=owner_id,
+                    sha256=result["sha256"],
+                    size_bytes=result["size_bytes"],
+                )
+                self.flow_logger.info(
+                    f"Train Model: stored '{settings.model_name}' v{published.version} "
+                    f"(artifact_id={published.artifact_id}, size={result['size_bytes']}B)"
+                )
+                artifact_name = f"{settings.model_name} v{published.version}"
             else:
-                self.flow_logger.info(f"Train Model: wrote {result['size_bytes']}B to flow path {flow_path}")
+                self.flow_logger.info(f"Train Model: fitted a {result['size_bytes']}B model, held with the node")
                 artifact_name = f"{settings.model_type} (flow only)"
 
             # Surface the model in the Artifacts tab; re-runs replace the prior entry.
@@ -299,10 +194,12 @@ class MlBuildersMixin(GraphMixinBase):
     def add_apply_model(self, apply_settings: input_schema.NodeApplyModel) -> "FlowGraph":
         """Adds an Apply Model node.
 
-        Reads the model from the upstream Train Model node or the catalog and
-        scores the input data where the flow runs (lazily in this process for
-        a local flow, on the worker otherwise), returning a LazyFrame with one
-        extra prediction column.
+        Scores the input data with the ``ml_apply`` operation on the flow's
+        backend, adding one prediction column. The model is sent by reference:
+        the upstream Train Model node's, or a catalog artifact fetched onto the
+        backend with ``fetch_artifact`` and released after the call. An
+        upstream model that is no longer held fails the node, asking for that
+        Train Model node to run again.
 
         Args:
             apply_settings: Settings (model_name, optional version, output_column).
@@ -312,16 +209,14 @@ class MlBuildersMixin(GraphMixinBase):
         """
 
         def _func(data: FlowDataEngine) -> FlowDataEngine:
-            from flowfile_core.artifacts import get_storage_backend
-            from flowfile_core.artifacts.service import ArtifactService
+            from flowfile_core.artifacts.publish import fetch_artifact
 
             settings = apply_settings.apply_input
             if not settings.output_column:
                 raise ValueError("Apply Model requires an 'output_column'.")
 
-            model_path: str
-            origin_label: str
-
+            backend = current_context(self).backend
+            fetched = None
             if settings.source == "upstream":
                 if settings.upstream_node_id is None:
                     raise ValueError(
@@ -333,60 +228,54 @@ class MlBuildersMixin(GraphMixinBase):
                     raise ValueError(
                         f"Apply Model: upstream node {settings.upstream_node_id} is not a Train Model node."
                     )
-                flow_path = ml_flow_model_path(self.flow_id, settings.upstream_node_id)
-                if not flow_path.exists():
+                model = upstream.results.model_ref
+                if model is None:
                     raise ValueError(
                         f"Apply Model: upstream Train Model (node {settings.upstream_node_id}) "
                         "has not produced a model yet. Make sure it runs before this node "
                         "(e.g. with a Wait For barrier)."
                     )
-                model_path = str(flow_path)
                 origin_label = f"upstream node {settings.upstream_node_id}"
             else:
                 if not settings.model_name:
                     raise ValueError("Apply Model: 'model_name' is required when source='catalog'.")
-                storage_backend = get_storage_backend()
                 with get_db_context() as db:
                     effective_namespace_id = _effective_namespace_id(
                         CatalogService(SQLAlchemyCatalogRepository(db)), settings
                     )
-                    artifact = ArtifactService(db, storage_backend).get_artifact_by_name(
-                        name=settings.model_name,
-                        namespace_id=effective_namespace_id,
-                        version=settings.model_version,
-                    )
-                if artifact.download_source is None or artifact.download_source.method != "file":
-                    raise ValueError(
-                        "Apply Model currently requires the filesystem artifact backend "
-                        "(FLOWFILE_ARTIFACT_STORAGE=filesystem). S3 support is not implemented."
-                    )
-                model_path = artifact.download_source.path
-                if not os.path.exists(model_path):
-                    raise ValueError(
-                        f"Apply Model: data for catalog model '{settings.model_name}' "
-                        f"v{artifact.version} (namespace {artifact.namespace_id}) is missing "
-                        f"at {model_path}. If running in Docker, ensure the shared artifacts "
-                        "volume is mounted into both core and the worker."
-                    )
-                origin_label = f"catalog '{settings.model_name}' v{artifact.version}"
-
-            if self.execution_location == "local":
-                result_lf = _apply_in_process(data, model_path, settings.output_column)
-            else:
-                node = self.get_node(node_id=apply_settings.node_id)
-                fetcher = root().MLApplyFetcher(
-                    lf=data.data_frame,
-                    model_path=model_path,
-                    output_column=settings.output_column,
-                    flow_id=self.flow_id,
-                    node_id=apply_settings.node_id,
-                    file_ref=node.hash,
-                    wait_on_completion=False,
+                model = fetched = fetch_artifact(
+                    backend, settings.model_name, settings.model_version, effective_namespace_id
                 )
-                node._fetch_cached_df = fetcher
-                result_lf = fetcher.get_result()
+                version = "latest" if settings.model_version is None else f"v{settings.model_version}"
+                origin_label = f"catalog '{settings.model_name}' ({version})"
+
+            node = self.get_node(node_id=apply_settings.node_id)
+            apply = MlApplyPayload(
+                plan=data.data_frame.lazy(),
+                model=model,
+                output_column=settings.output_column,
+                flow_id=self.flow_id,
+                node_id=apply_settings.node_id,
+                job_id=node.hash,
+            )
+            try:
+                applied = node.run_op(backend, OperationKind.ml_apply, op_payload(apply), job_id=apply.job_id)
+                ref = applied.refs["result"]
+            except ResultMissing as e:
+                if fetched is not None:
+                    raise
+                raise ValueError(
+                    f"Apply Model: the model upstream Train Model (node {settings.upstream_node_id}) fitted is no "
+                    f"longer held. Run the Train Model node {settings.upstream_node_id} again."
+                ) from e
+            finally:
+                if fetched is not None:
+                    backend.release(fetched)
             self.flow_logger.info(f"Apply Model: scored using {origin_label} -> column '{settings.output_column}'")
-            return FlowDataEngine(result_lf)
+            scored = FlowDataEngine(backend.plan_for(ref), schema=ref.schema, number_of_records=ref.row_count)
+            if ref.state == "deferred":
+                backend.release(ref)
+            return scored
 
         def schema_callback():
             input_node: FlowNode = self.get_node(apply_settings.node_id).node_inputs.main_inputs[0]

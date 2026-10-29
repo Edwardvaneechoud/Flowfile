@@ -13,6 +13,8 @@ from flowfile_core.database.models import (
     FlowRegistration,
     FlowSchedule,
 )
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
 from flowfile_core.flowfile.flow_graph import FlowGraph, RunInformation, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas
@@ -181,29 +183,30 @@ def create_test_graph(
     flow_id: int = 1,
     source_registration_id: int | None = None,
     execution_location: str = "local",
+    **settings_fields,
 ) -> FlowGraph:
-    """Create a FlowGraph with optional source_registration_id."""
+    """Create a FlowGraph with optional source_registration_id; ``settings_fields`` set any other flow setting."""
     handler = FlowfileHandler()
+    fields = {"name": "test_flow", "path": ".", "execution_mode": "Development", **settings_fields}
     settings = schemas.FlowSettings(
         flow_id=flow_id,
-        name="test_flow",
-        path=".",
-        execution_mode="Development",
         execution_location=execution_location,
         source_registration_id=source_registration_id,
+        **fields,
     )
     handler.register_flow(settings)
     return handler.get_flow(flow_id)
 
 
-def add_test_manual_input(graph: FlowGraph, data: list[dict], node_id: int = 1):
-    """Add a manual input node with the given data."""
+def add_test_manual_input(graph: FlowGraph, data: list[dict], node_id: int = 1, **node_fields):
+    """Add a manual input node with the given data; ``node_fields`` set more of its settings."""
     promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type="manual_input")
     graph.add_node_promise(promise)
     manual = input_schema.NodeManualInput(
         flow_id=graph.flow_id,
         node_id=node_id,
         raw_data_format=input_schema.RawData.from_pylist(data),
+        **node_fields,
     )
     graph.add_manual_input(manual)
 
@@ -323,3 +326,17 @@ def keep_single_file_env(monkeypatch):
             monkeypatch.setenv(key, os.environ[key])
         else:
             monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture(params=[registry.LOCAL_BACKEND_ID, registry.WORKER_BACKEND_ID])
+def context_backend(request):
+    """Runs the test in an execution context on core's own backend, then on the worker's (skipped without one).
+
+    Engine code that reads ``current_context()`` uses the context's backend, which the fixture yields.
+    """
+    from tests.conftest import is_worker_running
+
+    if request.param == registry.WORKER_BACKEND_ID and not is_worker_running():
+        pytest.skip("flowfile_worker is not running")
+    with use_context(ExecutionContext(request.param, parallelism=1, preview_rows=None)) as context:
+        yield context.backend

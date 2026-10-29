@@ -1,13 +1,17 @@
+import io
 from collections.abc import Sequence
 from functools import lru_cache
 
 import polars as pl
 
+from flowfile_core.configs import settings
 from flowfile_core.flowfile._extensions.real_time_interface import (
     ExpressionIssue,
     check_expression_chain,
     get_realtime_expr_results,
 )
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.flow_data_engine.bounded import head_rows
 from flowfile_core.flowfile.flow_data_engine.formula_entries import (
     FormulaEntry,
     FormulaEntryError,
@@ -63,8 +67,12 @@ def _first_preview_row(node_input: FlowNode, source_handle: str) -> pl.DataFrame
     Cached example data when the node has run (routed by handle for
     multi-output sources — memoized, so no re-execution), else the predicted
     schema-only frame. Never triggers a real execution of an un-run node.
+    With ``FLOWFILE_COMPUTE_PROTOCOL`` on, a node that has run answers through
+    ``_held_first_row``, from the backend that holds its result.
     """
     has_current_result = node_input.node_stats.has_run_with_current_setup and node_input.is_setup
+    if has_current_result and settings.FLOWFILE_COMPUTE_PROTOCOL:
+        return _held_first_row(node_input, source_handle)
     if has_current_result and source_handle == DEFAULT_OUTPUT_HANDLE and node_input.results.example_data_path:
         return get_first_row(node_input.results.example_data_path)
     if has_current_result and source_handle != DEFAULT_OUTPUT_HANDLE:
@@ -74,6 +82,25 @@ def _first_preview_row(node_input: FlowNode, source_handle: str) -> pl.DataFrame
             lazy_frame = frame.lazy() if isinstance(frame, pl.DataFrame) else frame
             return lazy_frame.head(1).collect()
     return node_input.get_predicted_resulting_data(source_handle).data_frame.collect()
+
+
+def _held_first_row(node_input: FlowNode, source_handle: str) -> pl.DataFrame:
+    """First row of a run input's result, read through the backend that holds its reference.
+
+    The default output's row is the cached sample's, else ``sample(ref, 1)``. A secondary output has no reference of
+    its own, so ``bounded.head_rows`` reads it on the same backend. Without a reference: the predicted schema-only
+    frame.
+    """
+    ref = node_input.results.result_ref
+    if ref is None:
+        return node_input.get_predicted_resulting_data(source_handle).data_frame.collect()
+    backend = registry.backend(ref.backend_id)
+    if source_handle == DEFAULT_OUTPUT_HANDLE:
+        cached = node_input.results.example_data_generator
+        if cached is not None:
+            return pl.from_arrow(cached().slice(0, 1))
+        return pl.read_ipc_stream(io.BytesIO(backend.sample(ref, 1)))
+    return pl.from_arrow(head_rows(backend, node_input.get_output(source_handle).data_frame, 1))
 
 
 def _resolve_preview_frame(node_step: FlowNode) -> tuple[pl.DataFrame | None, InstantFuncResult | None]:

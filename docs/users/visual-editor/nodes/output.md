@@ -218,7 +218,7 @@ Marks its input as the body of an HTTP endpoint. When a flow is published as an 
 | Setting | Description |
 |---|---|
 | **Orientation** | `records` (a list of row objects, default) or `columns` (column-oriented). |
-| **Max rows** | Optional cap on the number of rows returned. |
+| **Max rows** | Optional cap on the number of rows returned. A flow that runs on a worker returns at most 10,000 rows, and the response's `truncated` says when that limit left rows out. |
 
 [Serve Flows as APIs](../catalog/flow-api.md) covers publishing, keys and parameters.
 

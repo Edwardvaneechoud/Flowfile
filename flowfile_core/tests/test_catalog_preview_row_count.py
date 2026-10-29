@@ -12,27 +12,23 @@ from flowfile_core.catalog.services.previews import TablePreviewService
 
 
 @pytest.mark.parametrize("size, stored_count", [(0, 10), (20, 5000), (100, 10), (250, 10)])
-@pytest.mark.parametrize("worker_fails", [False, True])
-def test_latest_delta_preview_counts_snapshot(tmp_path, monkeypatch, size, stored_count, worker_fails):
+@pytest.mark.parametrize("cloud_path", [False, True])
+def test_latest_delta_preview_counts_snapshot(tmp_path, monkeypatch, size, stored_count, cloud_path):
     path = tmp_path / "table"
     write_deltalake(path, pa.table({"a": pa.array(range(size), type=pa.int64())}))
     file_path = str(path)
 
-    if worker_fails:
+    if cloud_path:
         file_path = "s3://bucket/table"
         target = Mock(storage_options={})
         monkeypatch.setattr(previews, "resolve_for_namespace", lambda _: target)
-        monkeypatch.setattr(previews, "_should_offload", lambda: True)
-
-        def unavailable_worker(*args, **kwargs):
-            raise RuntimeError("worker unavailable")
+        monkeypatch.setattr(previews, "uses_worker", lambda: False)
 
         def local_delta(table_path, storage_options=None):
             assert table_path == file_path
             assert storage_options is None
             return DeltaTable(str(path))
 
-        monkeypatch.setattr(previews, "trigger_delta_preview", unavailable_worker)
         monkeypatch.setattr(previews, "DeltaTable", local_delta)
 
     table = SimpleNamespace(file_path=file_path, row_count=stored_count, namespace_id=1, table_type="physical")
@@ -44,8 +40,8 @@ def test_latest_delta_preview_counts_snapshot(tmp_path, monkeypatch, size, store
     assert result.total_rows == size
 
 
-@pytest.mark.parametrize("worker_fails", [False, True])
-def test_unreadable_later_fragment_propagates_error(tmp_path, monkeypatch, worker_fails):
+@pytest.mark.parametrize("cloud_path", [False, True])
+def test_unreadable_later_fragment_propagates_error(tmp_path, monkeypatch, cloud_path):
     path = tmp_path / "table"
     for i in range(40):
         write_deltalake(path, pa.table({"a": [i]}), mode="append")
@@ -53,7 +49,7 @@ def test_unreadable_later_fragment_propagates_error(tmp_path, monkeypatch, worke
     dataset = dt.to_pyarrow_dataset()
     victim = path / list(dataset.get_fragments())[-1].path
     hidden = victim.with_suffix(".unavailable")
-    file_path = "s3://bucket/table" if worker_fails else str(path)
+    file_path = "s3://bucket/table" if cloud_path else str(path)
     opened = []
 
     def open_snapshot(table_path, storage_options=None):
@@ -63,10 +59,9 @@ def test_unreadable_later_fragment_propagates_error(tmp_path, monkeypatch, worke
         return dt
 
     monkeypatch.setattr(previews, "DeltaTable", open_snapshot)
-    if worker_fails:
+    if cloud_path:
         monkeypatch.setattr(previews, "resolve_for_namespace", lambda _: Mock(storage_options={}))
-        monkeypatch.setattr(previews, "_should_offload", lambda: True)
-        monkeypatch.setattr(previews, "trigger_delta_preview", Mock(side_effect=RuntimeError("worker unavailable")))
+        monkeypatch.setattr(previews, "uses_worker", lambda: False)
 
     repo = Mock()
     repo.get_table.return_value = SimpleNamespace(

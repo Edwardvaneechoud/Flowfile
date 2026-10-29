@@ -7,6 +7,7 @@ the logic for creating, reading, updating, and deleting these resources.
 """
 
 import asyncio
+import dataclasses
 import inspect
 import json
 import logging
@@ -18,10 +19,10 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
+# External dependencies
+import polars as pl
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, JSONResponse, Response
-
-# External dependencies
 from polars.exceptions import ColumnNotFoundError
 from polars_expr_transformer.function_overview import get_all_expressions, get_expression_overview
 from pydantic import BaseModel, Field, ValidationError
@@ -42,7 +43,7 @@ from flowfile_core.catalog.exceptions import (
 )
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import check_if_has_default_setting, nodes_list
-from flowfile_core.configs.settings import OFFLOAD_TO_WORKER, is_electron_mode
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL, is_electron_mode
 from flowfile_core.database.connection import get_db, get_db_context
 
 # File handling
@@ -87,18 +88,22 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     store_database_connection,
     update_database_connection,
 )
+from flowfile_core.flowfile.execution import registry as compute_registry
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.payloads import FileWritePayload, RestApiReadPayload, op_payload
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.extensions import (
     get_formula_chain_check,
     get_formula_chain_instant_result,
     get_instant_func_results,
 )
+from flowfile_core.flowfile.flow_data_engine.bounded import head_rows
 from flowfile_core.flowfile.flow_data_engine.column_stats import ColumnStatsUnavailable
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-    ExternalOutputWriter,
     ExternalRestApiFetcher,
 )
-from flowfile_core.flowfile.flow_data_engine.utils import local_write_output
 from flowfile_core.flowfile.flow_graph import GraphTransaction, add_connection, delete_connection, insert_node_on_edge
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.settings_validation import FlowSettingsValidation, validate_flow_settings
@@ -137,11 +142,8 @@ from shared.storage_config import storage
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
-# A flow's name is a free-form display label. Only the derived on-disk filename
-# must be filesystem-safe, so we slugify the name to this alphabet (the same
-# allowlist enforced by resolve_managed_flow_path) by replacing every run of
-# disallowed characters with a single underscore.
 _MANAGED_FLOW_STEM_DISALLOWED_RE = re.compile(r"[^A-Za-z0-9_-]+")
+"""Characters a managed flow filename may not hold (``resolve_managed_flow_path``'s allowlist), slugged to ``_``."""
 
 
 def get_flow_or_404(flow_id: int | None, current_user, detail: str = "could not find the flow"):
@@ -241,8 +243,6 @@ async def get_directory_contents(
         A list of `FileInfo` objects representing the directory's contents.
     """
 
-    # In Electron mode, allow browsing the entire filesystem (no sandbox).
-    # In other modes, sandbox to the user data directory.
     sandbox_root = None if is_electron_mode() else storage.user_data_directory
     try:
         directory_explorer = SecureFileExplorer(directory, sandbox_root)
@@ -430,19 +430,14 @@ def _resolve_run_identity(flow) -> tuple[int | None, str, str | None]:
 
 def _open_run_record(flow, user_id: int | None, node_ids: set[int] | None) -> tuple:
     """The pre-work of a tracked run: registration, the snapshot and the run record (phase 1)."""
-    # Resolve source_registration_id before execution so kernel nodes
-    # (e.g. publish_global) can reference the catalog registration.
+    # Before execution, so kernel nodes (e.g. publish_global) can reference the registration.
     resolve_source_registration_id(flow)
-    # First run promotes an unregistered (ephemeral scratch) flow into the catalog so it
-    # gains a source_registration_id. This intentionally re-registers any unregistered flow;
-    # making a deliberate catalog deletion durable would need a tombstone (separate follow-up).
+    # A first run registers any unregistered flow, also one whose registration was deleted.
     if user_id is not None and getattr(flow.flow_settings, "source_registration_id", None) is None:
         reg_path = flow.flow_settings.path or flow.flow_settings.save_location
         if reg_path:
             try:
-                # Only materialise a file that doesn't exist yet (ephemeral flows).
-                # An opened file must never be rewritten as a side effect of running —
-                # that would silently commit unsaved canvas edits to disk.
+                # Never rewrite an opened file: a run must not commit unsaved canvas edits to disk.
                 if not os.path.exists(reg_path):
                     flow.save_flow(flow_path=reg_path)
                 auto_register_flow(reg_path, flow.flow_settings.name, user_id)
@@ -825,8 +820,7 @@ def update_db_connection(
     db_connection = get_database_connection(db, input_connection.connection_name, current_user.id)
     if db_connection is None:
         raise HTTPException(404, "Database connection not found")
-    # Only gate a CHANGED type: legacy rows may hold pre-registry values (e.g. redshift)
-    # and must stay updatable (password rotation) as long as the type is untouched.
+    # Only a changed type is checked, so legacy rows (e.g. redshift) stay updatable.
     if input_connection.database_type.lower() != (db_connection.database_type or "").lower():
         _require_known_database_type(input_connection.database_type)
     if authorize_connection_mutation(db, current_user, "database_connection", db_connection):
@@ -1453,8 +1447,7 @@ def create_flow(
         raise HTTPException(404, "Namespace not found")
     _require_flow_save_permitted(flow_path, namespace_id, current_user)
     if namespace_id is not None and flow_path is not None:
-        # Pre-validate before add_flow writes any YAML so a rejected create
-        # leaves no orphaned file or session behind.
+        # Before add_flow writes YAML, so a rejected create leaves no file or session behind.
         reg_name = name or Path(flow_path).stem
         existing_by_name = find_registration_by_name(reg_name, namespace_id)
         if existing_by_name is not None and existing_by_name.flow_path != flow_path:
@@ -1557,20 +1550,15 @@ def rename_flow(body: RenameFlowInput, current_user=Depends(get_current_active_u
                 pass
     # Only after catalog success, so a 403/409 leaves the session name untouched.
     flow.flow_settings.name = name
-    # __name__ is what gets serialised as ``flowfile_name``; without this the next
-    # same-path save would write the stale name back over the rename.
+    # __name__ is serialised as flowfile_name; a stale one would undo the rename on the next save.
     flow.__name__ = name
     if reg_id is None:
         _persist_rename_of_unregistered_flow(flow)
     response = _with_display_name(flow_file_handler.get_flow_info_with_runtime(body.flow_id))
     if renamed_registration:
-        # Prefer the write we just made: a by-path lookup misses when the
-        # registration's flow_path has drifted from the session's path.
+        # A by-path lookup misses when the registration's flow_path drifted from the session's.
         response.display_name = name
     return response
-
-
-# ==================== History/Undo-Redo Endpoints ====================
 
 
 def _history_step(flow_id: int, current_user, step: Callable[[Any], UndoRedoResult]) -> UndoRedoResult:
@@ -1666,9 +1654,6 @@ def clear_history(flow_id: int, current_user=Depends(get_current_active_user)):
     return {"message": "History cleared successfully"}
 
 
-# ==================== End History Endpoints ====================
-
-
 def _format_validation_error(error: ValidationError) -> str:
     """Turn a Pydantic ValidationError into a short, user-facing message."""
     messages = []
@@ -1694,9 +1679,7 @@ def _validate_catalog_writer_target(node: input_schema.NodeCatalogWriter, curren
         (current.table_name, current.namespace_id, current.namespace_full_name)
         == (settings.table_name, settings.namespace_id, settings.namespace_full_name)
     ):
-        # Unchanged target (the drawer re-POSTs on close): preserve the original
-        # author's id so a viewer merely inspecting the node can't re-stamp the
-        # run-time executing principal and break the owner's later runs.
+        # Keep the author's id: it is the run's executing principal, which a viewer must not re-stamp.
         prior_user_id = getattr(existing_settings, "user_id", None)
         if prior_user_id is not None:
             node.user_id = prior_user_id
@@ -1894,7 +1877,8 @@ def fetch_rest_api_sample(
     caches them on the node's ``fields`` (so downstream schema prediction needs
     no network), and returns the inferred columns. This powers the node's
     "Fetch sample" button. Defined as a sync endpoint so the blocking worker
-    round-trip runs in FastAPI's threadpool rather than the event loop.
+    round-trip runs in FastAPI's threadpool rather than the event loop. With
+    ``FLOWFILE_COMPUTE_PROTOCOL`` on, the rows come from ``_rest_api_sample_rows``.
     """
     input_data["user_id"] = current_user.id
     try:
@@ -1906,17 +1890,21 @@ def fetch_rest_api_sample(
 
     flow = get_flow_or_404(node.flow_id, current_user)
 
-    # Resolve the credential to an encrypted token (stored secret by name, or an
-    # inline plaintext); the worker decrypts it. Never persist inline plaintext.
+    # The worker decrypts the token; clearing the secret keeps inline plaintext from being persisted.
     auth = node.rest_api_settings.auth
     secret_encrypted = resolve_auth_secret_encrypted(auth, node.user_id)
     auth.secret = None
 
     sample_size = max(1, sample_size)
-    worker_settings = build_rest_api_worker_settings(node, secret_encrypted, sample_size=sample_size)
     try:
-        fetcher = ExternalRestApiFetcher(worker_settings, wait_on_completion=True)
-        sample_df = fetcher.get_result().head(sample_size).collect()
+        if FLOWFILE_COMPUTE_PROTOCOL:
+            sample_df = _rest_api_sample_rows(node, secret_encrypted, sample_size)
+        else:
+            worker_settings = build_rest_api_worker_settings(node, secret_encrypted, sample_size=sample_size)
+            fetcher = ExternalRestApiFetcher(
+                worker_settings, wait_on_completion=True, worker_url=compute_registry.worker_url()
+            )
+            sample_df = fetcher.get_result().head(sample_size).collect()
     except Exception as e:
         raise HTTPException(422, f"Failed to fetch sample from REST API: {e}") from e
 
@@ -1926,6 +1914,24 @@ def fetch_rest_api_sample(
     if live is not None and isinstance(live.setting_input, input_schema.NodeRestApiReader):
         live.setting_input.fields = fields
     return RestApiSampleResponse(fields=fields)
+
+
+def _rest_api_sample_rows(
+    node: input_schema.NodeRestApiReader, secret_encrypted: str | None, sample_size: int
+) -> pl.DataFrame:
+    """The first page of *node*'s request (at most *sample_size* records), read on the worker backend and released."""
+    settings = node.rest_api_settings
+    one_page = settings.pagination.model_copy(update={"max_pages": 1, "max_records": sample_size})
+    capped = node.model_copy(update={"rest_api_settings": settings.model_copy(update={"pagination": one_page})})
+    read = RestApiReadPayload(
+        flow_id=node.flow_id, node_id=node.node_id, settings=capped, encrypted_secret=secret_encrypted
+    )
+    backend = compute_registry.backend(compute_registry.WORKER_BACKEND_ID)
+    ref = backend.run_op(OperationKind.rest_api_read, op_payload(read)).refs["result"]
+    try:
+        return pl.read_ipc_stream(backend.sample(ref, sample_size))
+    finally:
+        backend.release(ref)
 
 
 @router.get("/files/available_flow_files", tags=["editor"], response_model=list[FileInfo])
@@ -1949,10 +1955,7 @@ def get_node_list() -> list[schemas.NodeTemplate]:
     """Retrieves the list of all available node types and their templates."""
     from flowfile_core.flowfile.community_nodes.receipts import community_icon_overrides_by_node_key
 
-    # Installed community icons live namespaced on disk (<id>__icon.png) while the
-    # template keeps the node's original icon name; point the palette/canvas image at
-    # the on-disk file so it loads (mirrors _node_info_from_entry for the catalog list).
-    # model_copy, not in-place: the same NodeTemplate object is shared with node_dict.
+    # Community icons are namespaced on disk; copy, since node_dict shares these templates.
     overrides = community_icon_overrides_by_node_key()
     if not overrides:
         return nodes_list
@@ -1999,8 +2002,7 @@ def preview_dynamic_rename(request: DynamicRenamePreviewRequest) -> DynamicRenam
     except ValueError as exc:
         return DynamicRenamePreviewResponse(rename_map={}, error=str(exc))
     except Exception as exc:  # noqa: BLE001 - formula parse errors bubble up as various types
-        # Log the full traceback so real bugs don't get silently reported as
-        # "Formula error" to the user.
+        # Log the traceback so a real bug is not reported only as a "Formula error".
         logger.exception("Unexpected error while resolving dynamic rename preview")
         return DynamicRenamePreviewResponse(rename_map={}, error=f"Formula error: {exc}")
     return DynamicRenamePreviewResponse(rename_map=rename_map)
@@ -2201,6 +2203,9 @@ def get_node_column_stats(
     Runs a single bounded aggregate (counts, uniques, min/max) over the result
     the last run left behind — it never re-executes the node — and returns the
     column's updated ``FileColumn``, the same shape ``table_schema`` ships.
+    The aggregate runs on the backend ``FlowNode.get_column_stats`` picks; core
+    reads back only the one-row result, and a failure there is a 409, never an
+    in-process collect.
     Query parameters (not path segments): column names contain ``/`` and ``.``.
     """
     flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
@@ -2209,13 +2214,8 @@ def get_node_column_stats(
         raise HTTPException(404, "Could not find the node")
     if flow.flow_settings.execution_mode == "Performance":
         raise HTTPException(409, "Column statistics are not computed in Performance mode.")
-    # Core must not run pipeline compute: whenever offloading is on, the stats
-    # aggregate runs in the worker and core reads back only the 1-row result
-    # (a failed offload raises → 409, never an in-process collect). In-process
-    # is reserved for worker-less deployments (single-file mode).
-    offload = bool(OFFLOAD_TO_WORKER)
     try:
-        return node.get_column_stats(column_name, output_handle=output_handle, offload_to_worker=offload)
+        return node.get_column_stats(column_name, output_handle=output_handle)
     except ColumnStatsUnavailable as e:
         raise HTTPException(409, str(e)) from None
     except ColumnNotFoundError:
@@ -2236,30 +2236,45 @@ def export_node_data(
 ):
     """Downloads up to 10,000 rows of a node's cached result as CSV/TSV without re-executing it.
 
-    TSV is also capped at 100,000 cells. Larger exports belong in a write node.
+    TSV is also capped at 100,000 cells. Larger exports belong in a write node. The file is written by a
+    ``file_write`` on the flow's backend. With ``FLOWFILE_COMPUTE_PROTOCOL`` on, the rows come from
+    ``bounded.head_rows`` on the backend that holds the node's result, so core opens no file a backend stored.
     """
-    _, node = _get_analysis_node(flow_id, node_id, current_user)
+    flow, node = _get_analysis_node(flow_id, node_id, current_user)
     try:
         engine = node.get_cached_result(output_handle)
     except ColumnStatsUnavailable as e:
         raise HTTPException(409, str(e)) from None
     data = engine.data_frame
-    try:
-        schema = data.collect_schema()
-    except Exception:
-        raise HTTPException(409, "The cached result is no longer available. Run the flow again.") from None
+    if FLOWFILE_COMPUTE_PROTOCOL:
+        schema = pl.Schema(
+            [(column.column_name, cast_str_to_polars_type(column.data_type)) for column in engine.schema]
+        )
+    else:
+        try:
+            schema = data.collect_schema()
+        except Exception:
+            raise HTTPException(409, "The cached result is no longer available. Run the flow again.") from None
     if any(dtype.is_nested() for dtype in schema.dtypes()):
         raise HTTPException(422, "CSV cannot hold list or struct columns.")
     n = min(limit, 100_000 // max(len(schema), 1)) if file_format == "tsv" else limit
-    sep = "\t" if file_format == "tsv" else ","
-    path = storage.temp_directory / f"export_{uuid4().hex}.{file_format}"
+    output_settings = input_schema.OutputSettings(
+        name=f"export_{uuid4().hex}.{file_format}",
+        directory=str(storage.temp_directory),
+        file_type="csv",
+        write_mode="create",
+        table_settings=input_schema.OutputCsvTable(delimiter="\t" if file_format == "tsv" else ","),
+    )
+    path = Path(output_settings.abs_file_path)
     try:
-        # head before lazy(): an in-memory DataFrame is sliced so only n rows get serialized.
-        lf = data.head(n).lazy()
-        writer = ExternalOutputWriter if OFFLOAD_TO_WORKER else local_write_output
-        writer(
-            lf, data_type="csv", path=str(path), write_mode="create", delimiter=sep, flow_id=flow_id, node_id=node_id
-        )
+        backend = current_context(flow).backend
+        if FLOWFILE_COMPUTE_PROTOCOL:
+            rows = pl.from_arrow(head_rows(node.result_backend(output_handle) or backend, data, n)).lazy()
+        else:
+            # head before lazy(): an in-memory DataFrame is sliced so only n rows get serialized.
+            rows = data.head(n).lazy()
+        write = FileWritePayload(plan=rows, settings=output_settings, flow_id=flow_id, node_id=node_id)
+        backend.run_op(OperationKind.file_write, op_payload(write))
     except Exception as e:
         path.unlink(missing_ok=True)
         logger.error(f"Failed to export data for node {node_id}: {e}")
@@ -2343,8 +2358,7 @@ def _save_flow_impl(
 
     is_new_path = bool(normalized_current) and flow_path != normalized_current
 
-    # Refuse before any YAML write so a rejected save leaves no orphan file and
-    # never overwrites another user's registered flow file.
+    # Before any YAML write: a refused save leaves no orphan and overwrites no other user's flow.
     _require_flow_save_permitted(flow_path, namespace_id, current_user)
 
     if is_new_path:
@@ -2447,29 +2461,21 @@ def save_flow_to_catalog(
     each other. Returns the (possibly new) flow id so the frontend can switch to it.
     """
     display_name = flow_name.strip()
-    # Strip a managed extension the user may have typed so the display name and
-    # the on-disk filename stay in sync (``.yaml`` is appended below).
+    # Drop a typed extension so the display name and filename agree (``.yaml`` is added below).
     display_name = re.sub(r"\.(ya?ml|json)$", "", display_name, flags=re.IGNORECASE).strip()
     if not display_name:
         raise HTTPException(422, "flow_name must not be empty")
-    # The name is a free-form DISPLAY label (spaces, mixed case and punctuation
-    # are all fine) — it is stored as the registration name and used for the
-    # collision check below. Only the derived on-disk filename must be safe, so
-    # slugify a separate stem and prefix it with the flow id; path separators and
-    # ``..`` cannot survive the slug, and resolve_managed_flow_path re-validates
-    # the result against the same allowlist as a defense-in-depth backstop.
+    # Only the filename is slugged; the free-form display name is what gets registered.
     safe_stem = _MANAGED_FLOW_STEM_DISALLOWED_RE.sub("_", display_name).strip("_-") or "flow"
 
     flow = get_flow_or_404(flow_id, current_user, detail="Flow not found")
 
-    # Refuse before any side effect (ghost cleanup, YAML write) when the caller
-    # may neither write the target namespace nor manage a flow already at the path.
+    # Refuse before any side effect (ghost cleanup, YAML write).
     _require_flow_save_permitted(flow_path=None, namespace_id=namespace_id, current_user=current_user)
 
     source_registration_id = getattr(flow.flow_settings, "source_registration_id", None)
 
-    # Pre-save name-collision check: reject BEFORE writing any YAML so a failed save doesn't leave orphaned files
-    # on disk.
+    # Reject a name collision before any YAML write, so a failed save leaves no orphaned file.
     existing_by_name = find_registration_by_name(display_name, namespace_id)
     if existing_by_name is not None and existing_by_name.id != source_registration_id:
         name_conflict = HTTPException(
@@ -2481,14 +2487,10 @@ def save_flow_to_catalog(
         )
         if os.path.exists(existing_by_name.flow_path):
             raise name_conflict
-        # Ghost registration: its backing file was deleted (e.g. by an older
-        # Save-As). Reclaim the name by removing the dead row instead of blocking
-        # the user with a 409 they can't act on. Best-effort — fall back to the
-        # conflict if it can't be cleanly removed (e.g. it still has artifacts).
+        # A ghost registration (its file is gone): reclaim the name, else fall back to the 409.
         try:
             with get_db_context() as db:
-                # Resolver-injected so delete_flow's manage gate applies: only the
-                # ghost's owner (or admin/manage-grantee) may reclaim the name.
+                # The resolver lets only the ghost's owner, an admin or a manage-grantee reclaim it.
                 CatalogService(
                     SQLAlchemyCatalogRepository(db),
                     access=AccessResolver(db, current_user),
@@ -2507,8 +2509,6 @@ def save_flow_to_catalog(
     normalized_current = validate_path_under_cwd(current_path) if current_path else None
     is_new_path = bool(normalized_current) and flow_path != normalized_current
 
-    # Overwrite guard: if the resolved target file is already registered to a
-    # different flow, or exists on disk without any registration, refuse.
     existing_reg = find_registration_by_path(flow_path)
     if existing_reg is not None and existing_reg.id != source_registration_id:
         raise HTTPException(
@@ -2523,10 +2523,7 @@ def save_flow_to_catalog(
 
     user_id = current_user.id if current_user else None
 
-    # Always register under the user-typed ``display_name`` rather than the
-    # filename (``{flow_id}_{safe_stem}``) so the catalog picker shows exactly
-    # what the user typed — and so the name-collision check above compares apples
-    # to apples.
+    # Register the typed name, not the filename: the picker shows it and the collision check compares it.
     def _register(fp: str, _n: str, uid: int | None) -> None:
         register_flow_in_namespace(fp, display_name, uid, namespace_id, requesting_user=current_user)
 
@@ -2591,8 +2588,7 @@ def overwrite_flow_in_catalog(
     if target is None:
         raise HTTPException(404, "Target catalog registration not found")
 
-    # Overwrite is destructive — gate strictly on ownership even though
-    # ``update_flow`` itself does not.
+    # Overwrite is destructive: require ownership, which update_flow itself does not check.
     if user_id is None or user_id != target.owner_id:
         raise HTTPException(
             status_code=403,
@@ -2605,8 +2601,6 @@ def overwrite_flow_in_catalog(
     current_path = flow.flow_settings.path or flow.flow_settings.save_location
     normalized_current = validate_path_under_cwd(current_path) if current_path else None
 
-    # Same-path case: current flow already lives at the target path, so just
-    # re-save in place and keep the registration pointer fresh.
     if normalized_current == target_path:
         resolve_source_registration_id(flow)
         flow.save_flow(flow_path=target_path)
@@ -2621,10 +2615,7 @@ def overwrite_flow_in_catalog(
         on_resolve_registration=resolve_source_registration_id,
     )
 
-    # If the source flow lived inside the managed dir on a different file,
-    # unlink the abandoned file so we don't leak orphaned YAML.  We only clean
-    # up files under the managed root; user-owned paths elsewhere are left
-    # alone since we don't want to silently delete files the user manages.
+    # Unlink the abandoned managed file; a file the user keeps outside the managed root stays.
     if normalized_current and normalized_current != target_path and normalized_current.startswith(managed_root):
         try:
             os.unlink(normalized_current)
@@ -2688,9 +2679,13 @@ def update_flow_settings(flow_settings: schemas.FlowSettings, current_user=Depen
     tracking stay server-owned: renames, saves and runs have their own routes, and the
     settings form posts back whatever copy it last fetched. Flow settings are outside
     the undo scope, so this records no step; it runs as a transaction to serialize with
-    graph edits and refresh the dirty flag.
+    graph edits and refresh the dirty flag. In a process that serves, the execution location
+    is normalised as a loaded file's is (``schemas.loaded_execution_location``), so with
+    ``FLOWFILE_COMPUTE_PROTOCOL`` on a posted ``local`` or ``remote`` is stored as ``auto``.
     """
     flow = get_flow_or_404(flow_settings.flow_id, current_user)
+    if compute_registry.serving():
+        flow_settings.execution_location = schemas.loaded_execution_location(flow_settings.execution_location)
     with flow.transaction("Update flow settings"):
         live = flow.flow_settings
         server_owned = {field: getattr(live, field) for field in _SERVER_OWNED_FLOW_SETTINGS}
@@ -2726,6 +2721,23 @@ def get_flow_settings_validation(flow_id: int, current_user=Depends(get_current_
     """Conservative static check: node settings that reference missing input columns."""
     flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
     return validate_flow_settings(flow)
+
+
+@router.get("/flow/placement", tags=["editor"], response_model=output_model.PlacementPreview)
+def get_flow_placement(flow_id: int, current_user=Depends(get_current_active_user)) -> output_model.PlacementPreview:
+    """Where a run would place each node now: the backend it would run on, the nodes moved to the default backend
+    because theirs cannot run them, and the nodes no backend can run. Runs nothing and changes nothing."""
+    flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
+    placement = flow.preview_placement()
+    if placement is None:
+        return output_model.PlacementPreview(available=False)
+    return output_model.PlacementPreview(
+        available=True,
+        assignment=placement.assignment,
+        fallbacks=[output_model.PlacementFallback(**dataclasses.asdict(f)) for f in placement.fallbacks],
+        refusals=[output_model.PlacementRefusal(**dataclasses.asdict(r)) for r in placement.refusals],
+        boundaries=placement.boundaries,
+    )
 
 
 @router.get("/flow/node_upstream_ids", tags=["editor"])

@@ -480,14 +480,13 @@ class KNNClassifierTrainer:
                 f"Model was trained on {features!r}."
             )
 
-        # Train rows carry their label so the neighbour-label lookup is a
-        # single join instead of a Python indexing loop.
+        # Train rows carry their label, so the neighbour-label lookup is one join, not a Python loop.
         train_lf = pl.LazyFrame(
             {**{f: train_X[f] for f in features}, "__label": train_y},
             schema={**{f: pl.Float64 for f in features}, "__label": pl.Int64},
         ).with_columns(
             pl.lit(True).alias("__is_train"),
-            pl.lit(None, dtype=pl.UInt32).alias("__test_pos"),
+            pl.lit(None, dtype=pl.get_index_type()).alias("__test_pos"),
         )
 
         # One evaluation of the input: a second one could order its rows differently from the neighbour query.
@@ -499,12 +498,7 @@ class KNNClassifierTrainer:
             pl.col("__test_pos"),
         )
 
-        # The kd-tree query needs the whole feature matrix as one contiguous
-        # array, which a lazy plugin expression is not guaranteed under the
-        # streaming engine (polars >=1.40 hands it morsel-sized chunks:
-        # "chunked array is not contiguous"). Materialize the compact
-        # feature-only frame — train rows plus feature/bookkeeping columns,
-        # never the user's full-width data — and run the query eagerly.
+        # The kd-tree needs one contiguous array, which streaming chunks break; collect the feature-only frame.
         combined = (
             pl.concat([train_lf, test_features], how="vertical")
             .collect()
@@ -527,8 +521,7 @@ class KNNClassifierTrainer:
             pl.col("__label").alias("__nb_label"),
         )
 
-        # Explode neighbour indices, join labels, group-by test row, majority-vote.
-        # Empty neighbour lists explode to a single null row -> count=0 -> class 0.
+        # An empty neighbour list explodes to one null row, so its count is 0 and it votes class 0.
         voted = (
             knn_lf.filter(~pl.col("__is_train"))
             .select("__test_pos", "__nb_idx")

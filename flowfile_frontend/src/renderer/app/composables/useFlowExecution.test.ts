@@ -30,6 +30,7 @@ vi.mock("axios", () => ({ default: { post: mocks.post, get: mocks.get } }));
 vi.mock("element-plus", () => ({ ElNotification: mocks.notify, ElMessage: { error: vi.fn() } }));
 vi.mock("@element-plus/icons-vue", () => ({ Promotion: {}, DataLine: {} }));
 vi.mock("../api", () => ({ FlowApi: { getFlowSettings: mocks.getFlowSettings } }));
+vi.mock("../api/flow.api", () => ({ FlowApi: { getFlowSettings: mocks.getFlowSettings } }));
 vi.mock("../services/auth.service", () => ({ default: { getToken: vi.fn() } }));
 vi.mock("../services/flowEventsClient", () => ({
   FlowEventsHttpError: class extends Error {},
@@ -487,6 +488,31 @@ describe("useFlowExecution.runFlow", () => {
     expect(mocks.post).not.toHaveBeenCalled();
     expect(mocks.notify).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Node not run", type: "error" }),
+    );
+  });
+
+  it("names the flow's execution location in the start notification", async () => {
+    vi.stubGlobal("document", {
+      createElement: () => ({
+        textContent: "",
+        get innerHTML() {
+          return this.textContent;
+        },
+      }),
+    });
+    mocks.getFlowSettings.mockResolvedValueOnce({
+      name: "flow",
+      execution_mode: "Development",
+      execution_location: "worker:team",
+    });
+
+    await useFlowExecution(1).runFlow();
+
+    expect(mocks.notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Flow Started",
+        message: expect.stringContaining("<strong>Location:</strong> worker:team"),
+      }),
     );
   });
 

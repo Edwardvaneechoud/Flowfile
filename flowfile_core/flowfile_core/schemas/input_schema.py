@@ -427,8 +427,7 @@ class OutputSettings(BaseModel):
             result["fields"] = self.fields
         # Only include table_settings if it has non-default values beyond file_type
         ts_dict = self.table_settings.model_dump(exclude={"file_type"})
-        # Drop compression when it equals the format default so YAML stays minimal
-        # and the "omit table_settings when all-default" invariant still holds.
+        # Drop a default compression so an all-default table_settings is still omitted.
         compression_field = type(self.table_settings).model_fields.get("compression")
         if (
             "compression" in ts_dict
@@ -511,6 +510,7 @@ class NodeBase(BaseModel):
     flow_id: int
     node_id: int
     cache_results: bool | None = False
+    execution_location: str = "auto"  # "auto" (the flow's backend) or a backend id; saved with the node
     pos_x: float | None = 0
     pos_y: float | None = 0
     group_id: int | None = None  # Visual group membership (organizational only; no execution impact)
@@ -597,6 +597,7 @@ class NodeSelect(NodeSingleInput):
         """Converts the select node settings to a dictionary for YAML serialization."""
         result: NodeSelectYaml = {
             "cache_results": bool(self.cache_results),
+            "execution_location": self.execution_location,
             "keep_missing": self.keep_missing,
             "select_input": [s.to_yaml_dict() for s in self.select_input],
             "sorted_by": self.sorted_by,
@@ -622,9 +623,7 @@ class NodeFilter(NodeSingleInput):
     """Settings for a node that filters rows based on a condition."""
 
     filter_input: transform_schema.FilterInput
-    # When True the node emits two outputs: "pass" (output-0, matching rows)
-    # and "fail" (output-1, non-matching rows). Default preserves
-    # single-output behaviour for existing flows.
+    # True emits "pass" (output-0, matching rows) and "fail" (output-1, the rest).
     split_mode: bool = False
 
     @property
@@ -708,8 +707,7 @@ class NodeSample(NodeSingleInput):
 
     @model_validator(mode="after")
     def _validate_sample(self) -> "NodeSample":
-        # sample_size is deliberately unvalidated: the pre-existing UI allowed 0
-        # and saved flows carrying it must keep loading.
+        # sample_size stays unvalidated: the old UI allowed 0 and flows saved with it must load.
         if self.sample_method == "random_fraction" and not 0 < self.fraction <= 100:
             raise ValueError("fraction must be greater than 0 and at most 100")
         return self
@@ -813,6 +811,7 @@ class NodeJoin(NodeMultiInput):
         """Converts the join node settings to a dictionary for YAML serialization."""
         result: NodeJoinYaml = {
             "cache_results": self.cache_results,
+            "execution_location": self.execution_location,
             "auto_generate_selection": self.auto_generate_selection,
             "verify_integrity": self.verify_integrity,
             "join_input": self.join_input.to_yaml_dict(),
@@ -855,6 +854,7 @@ class NodeCrossJoin(NodeMultiInput):
         """Converts the cross join node settings to a dictionary for YAML serialization."""
         result: NodeCrossJoinYaml = {
             "cache_results": self.cache_results,
+            "execution_location": self.execution_location,
             "auto_generate_selection": self.auto_generate_selection,
             "verify_integrity": self.verify_integrity,
             "cross_join_input": self.cross_join_input.to_yaml_dict(),
@@ -903,6 +903,7 @@ class NodeFuzzyMatch(NodeJoin):
         """Converts the fuzzy match node settings to a dictionary for YAML serialization."""
         result: NodeFuzzyMatchYaml = {
             "cache_results": self.cache_results,
+            "execution_location": self.execution_location,
             "auto_generate_selection": self.auto_generate_selection,
             "verify_integrity": self.verify_integrity,
             "join_input": self.join_input.to_yaml_dict(),
@@ -953,8 +954,7 @@ class RawData(BaseModel):
 
     @staticmethod
     def _infer_data_type(column_values: list) -> str:
-        # standardize_col_dtype leaves int/float columns mixed on purpose, so promote
-        # them to Float64 — typing by the first value would truncate floats on cast.
+        # Mixed int/float columns become Float64: typing by the first value would truncate floats.
         types = {type(v) for v in column_values if v is not None}
         if not types:
             return str(pl.String())
@@ -1352,12 +1352,8 @@ class GoogleAnalyticsSettings(BaseModel):
     dimensions: list[str] = Field(default_factory=list)
     # ``None`` means "fetch everything the report returns".
     limit: int | None = None
-    # Row-level filters. See ``GoogleAnalyticsFilter`` for the operator list.
-    # Multiple filters across the same category (dimension vs metric) are AND-combined.
+    # Filters in the same category (dimension or metric) are AND-combined.
     filters: list[GoogleAnalyticsFilter] = Field(default_factory=list)
-    # Sort entries applied in list order. Each ``field`` must be one of the
-    # selected metrics or dimensions; the worker raises a clear ``ValueError``
-    # otherwise.
     order_bys: list[GoogleAnalyticsOrderBy] = Field(default_factory=list)
 
 
@@ -1701,6 +1697,7 @@ class NodeOutput(NodeSingleInput):
         """Converts the output node settings to a dictionary for YAML serialization."""
         result: NodeOutputYaml = {
             "cache_results": self.cache_results,
+            "execution_location": self.execution_location,
             "output_settings": self.output_settings.to_yaml_dict(),
         }
         if self.output_field_config:
@@ -1902,8 +1899,7 @@ class Scd2Settings(BaseModel):
         cols = self.system_columns
         if any((not c) or c != c.strip() for c in cols):
             raise ValueError("SCD2 column names must be non-empty and free of surrounding whitespace")
-        # Server-side mirror of the writer form's CATALOG_NAME_PATTERN: these four names are
-        # generated, not data, and they are spliced into the Delta merge's SQL identifiers.
+        # Mirrors the form's CATALOG_NAME_PATTERN: these names are spliced into the merge's SQL.
         illegal = [c for c in cols if not _SCD2_COLUMN_NAME_RE.match(c)]
         if illegal:
             raise ValueError(
@@ -1937,8 +1933,7 @@ class CatalogWriteSettings(BaseModel):
     partition_by: list[str] = Field(default_factory=list)
     # A dangling block on a non-scd2 physical mode is tolerated: the UI keeps it while toggling modes.
     scd2: Scd2Settings | None = None
-    # Enable-only: True turns the Delta change data feed on (at creation, or on the existing
-    # table); False never turns it off.
+    # Enable-only: True turns the Delta change data feed on; False never turns it off.
     track_changes: bool = False
 
     @model_validator(mode="after")
@@ -2004,8 +1999,7 @@ class NodeCatalogReader(ChangeFeedReadSettings, NodeBase):
     catalog_table_name: str | None = None
     catalog_namespace_id: int | None = None
     delta_version: int | None = None
-    # SCD2 history view. Only honoured when the resolved table carries an ``scd2_config`` record;
-    # ``None`` means no filter (every version) and is ignored for non-SCD2 tables.
+    # SCD2 history view, ignored for non-SCD2 tables; ``None`` means every version.
     scd2_view: Literal["active", "all", "active_at"] | None = None
     scd2_as_of: str | None = None  # ISO-8601 instant, required when scd2_view == "active_at"
     sql_query: str | None = None
@@ -2509,9 +2503,6 @@ class NodeGate(NodeSingleInput):
     """
 
     gate_input: transform_schema.GateInput = Field(default_factory=transform_schema.GateInput)
-    # When True the node emits two outputs: "then" (output-0, live when the
-    # condition holds) and "else" (output-1, live when it does not). Default
-    # preserves single-output behaviour for existing flows.
     else_output: bool = False
 
     @property

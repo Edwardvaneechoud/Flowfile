@@ -10,8 +10,10 @@ Covers:
 - the Delta change data feed: enablement, the floor, the scan plugin, and the vacuum caveats
 """
 
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 import polars as pl
 import pytest
@@ -23,11 +25,14 @@ from shared.delta_utils import (
     get_change_data_feed_floor,
     get_delta_head_version,
     get_delta_partition_columns,
+    get_delta_size_bytes,
+    get_remote_delta_size_bytes,
     is_change_data_feed_enabled,
     merge_into_delta,
     optimize_delta,
     scan_delta_changes,
     vacuum_delta,
+    validate_catalog_path,
     write_delta,
 )
 
@@ -387,3 +392,41 @@ class TestChangeFeedVacuumCaveats:
         vacuum_delta(p, retention_hours=0, dry_run=False)
         with pytest.raises(Exception):
             scan_delta_changes(str(p), head, head).collect()
+
+
+class TestValidateCatalogPath:
+    def test_resolves_a_bare_name_under_the_directory(self, tmp_path):
+        assert validate_catalog_path("orders_1a2b", tmp_path) == Path(os.path.realpath(tmp_path)) / "orders_1a2b"
+
+    @pytest.mark.parametrize("name", ["", "a/b", "a\\b", "..", "x..y", "nul\x00"])
+    def test_refuses_anything_but_a_bare_name(self, tmp_path, name):
+        with pytest.raises(ValueError):
+            validate_catalog_path(name, tmp_path)
+
+    def test_refuses_a_table_directory_linked_outside(self, tmp_path):
+        catalog = tmp_path / "catalog"
+        catalog.mkdir()
+        (tmp_path / "outside").mkdir()
+        try:
+            (catalog / "linked").symlink_to(tmp_path / "outside", target_is_directory=True)
+        except OSError:
+            pytest.skip("symlinks unavailable")
+        with pytest.raises(ValueError, match="does not resolve under"):
+            validate_catalog_path("linked", catalog)
+
+
+class TestDeltaSizeBytes:
+    def test_a_local_table_falls_back_to_its_parquet_files(self, tmp_path):
+        (tmp_path / "part-0.parquet").write_bytes(b"x" * 7)
+        assert get_delta_size_bytes(tmp_path) == 7
+
+    def test_an_unreadable_remote_table_is_zero_without_a_local_scan(self, tmp_path):
+        (tmp_path / "part-0.parquet").write_bytes(b"x" * 7)
+        assert get_remote_delta_size_bytes(str(tmp_path), {}) == 0
+        assert get_delta_size_bytes(tmp_path, storage_options={}) == 0
+
+    def test_a_written_table_sums_its_log(self, tmp_path):
+        write_delta(pl.DataFrame({"a": [1, 2, 3]}), str(tmp_path / "t"), mode="overwrite")
+        size = get_delta_size_bytes(tmp_path / "t")
+        assert size > 0
+        assert get_remote_delta_size_bytes(str(tmp_path / "t"), None) == size

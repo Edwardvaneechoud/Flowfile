@@ -1,0 +1,134 @@
+# Core and a worker that share no volume; tests/remote_worker/test_zero_volumes.py supplies the secrets and certificate.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      - POSTGRES_USER=flowfile
+      - POSTGRES_PASSWORD=flowfile
+      - POSTGRES_DB=flowfile
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowfile -d flowfile"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    networks:
+      - remote-worker
+
+  minio:
+    image: ${TEST_MINIO_IMAGE:-ghcr.io/edwardvaneechoud/flowfile-test-minio:RELEASE.2025-09-07T16-13-09Z}
+    command: ["server", "/data"]
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    ports:
+      - "127.0.0.1::9000"
+    networks:
+      - remote-worker
+
+  # HTTPS in front of MinIO for the S3 artifact store, whose presigned URLs are https
+  minio-tls:
+    image: python:3.12-slim
+    environment:
+      - MINIO_TLS_CERT=${MINIO_TLS_CERT:?}
+      - MINIO_TLS_KEY=${MINIO_TLS_KEY:?}
+    command:
+      - python
+      - -c
+      - |
+        import asyncio, os, ssl
+        for name in ("cert", "key"):
+            with open(f"/tmp/tls.{name}", "w") as f:
+                f.write(os.environ[f"MINIO_TLS_{name.upper()}"])
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain("/tmp/tls.cert", "/tmp/tls.key")
+        async def pipe(reader, writer):
+            try:
+                while data := await reader.read(65536):
+                    writer.write(data)
+                    await writer.drain()
+            except OSError:
+                pass
+            finally:
+                writer.close()
+        async def forward(client_reader, client_writer):
+            upstream_reader, upstream_writer = await asyncio.open_connection("minio", 9000)
+            await asyncio.gather(pipe(client_reader, upstream_writer), pipe(upstream_reader, client_writer))
+        async def main():
+            server = await asyncio.start_server(forward, "0.0.0.0", 9443, ssl=context)
+            await server.serve_forever()
+        asyncio.run(main())
+    depends_on:
+      - minio
+    networks:
+      - remote-worker
+
+  flowfile-core:
+    build:
+      context: .
+      dockerfile: flowfile_core/Dockerfile
+    command:
+      - sh
+      - -c
+      - printf '%s\n' "$$MINIO_TLS_CERT" > /tmp/minio-ca.pem && exec python -m flowfile_core.main
+    ports:
+      - "127.0.0.1::63578"
+    environment:
+      - FLOWFILE_MODE=docker
+      - FLOWFILE_COMPUTE_PROTOCOL=${FLOWFILE_COMPUTE_PROTOCOL:-1}
+      - FLOWFILE_ADMIN_USER=${FLOWFILE_ADMIN_USER:?}
+      - FLOWFILE_ADMIN_PASSWORD=${FLOWFILE_ADMIN_PASSWORD:?}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?}
+      - FLOWFILE_INTERNAL_TOKEN=${FLOWFILE_INTERNAL_TOKEN:?}
+      - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:?}
+      - FLOWFILE_DATABASE_URL=postgresql://flowfile:flowfile@postgres:5432/flowfile
+      - WORKER_HOST=flowfile-worker
+      - FLOWFILE_STORAGE_DIR=/app/internal_storage
+      - FLOWFILE_USER_DATA_DIR=/app/user_data
+      - FLOWFILE_ARTIFACT_STORAGE=s3
+      - FLOWFILE_S3_BUCKET=flowfile-artifacts
+      - FLOWFILE_S3_ENDPOINT_URL=https://minio-tls:9443
+      - FLOWFILE_EXCHANGE_URI=s3://flowfile-exchange/runs
+      - FLOWFILE_EXCHANGE_CONNECTION=exchange_minio
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - AWS_CA_BUNDLE=/tmp/minio-ca.pem
+      - MINIO_TLS_CERT=${MINIO_TLS_CERT:?}
+      - FLOWFILE_TELEMETRY=0
+      - FLOWFILE_KERNEL_WARMUP=0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-tls:
+        condition: service_started
+      flowfile-worker:
+        condition: service_started
+    networks:
+      - remote-worker
+
+  flowfile-worker:
+    build:
+      context: .
+      dockerfile: flowfile_worker/Dockerfile
+    command:
+      - sh
+      - -c
+      - printf '%s\n' "$$MINIO_TLS_CERT" > /tmp/minio-ca.pem && exec python -m flowfile_worker --host 0.0.0.0
+    environment:
+      - FLOWFILE_MODE=docker
+      - CORE_HOST=flowfile-core
+      - FLOWFILE_INTERNAL_TOKEN=${FLOWFILE_INTERNAL_TOKEN:?}
+      - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:?}
+      - FLOWFILE_DATABASE_URL=postgresql://flowfile:flowfile@postgres:5432/flowfile
+      - FLOWFILE_STORAGE_DIR=/app/internal_storage
+      - FLOWFILE_USER_DATA_DIR=/app/user_data
+      - REQUESTS_CA_BUNDLE=/tmp/minio-ca.pem
+      - MINIO_TLS_CERT=${MINIO_TLS_CERT:?}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - remote-worker
+
+networks:
+  remote-worker:
+    driver: bridge

@@ -4,20 +4,29 @@ Extracted from FlowGraph.add_python_script to keep the closure small and
 each piece independently testable.
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import re
 import uuid
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 import polars as pl
 
-from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.execution.errors import ComputeError
+from flowfile_core.flowfile.execution.payloads import FileWritePayload, op_payload
+from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import ExternalDfFetcher
 from flowfile_core.kernel.manager import KernelManager
 from flowfile_core.kernel.models import ExecuteRequest, ExecuteResult
 from flowfile_core.kernel.urls import core_base_url
+from flowfile_core.schemas.input_schema import OutputParquetTable, OutputSettings
+
+if TYPE_CHECKING:
+    from flowfile_core.flowfile.flow_graph.graph import FlowGraph
 
 logger = logging.getLogger(__name__)
 
@@ -50,48 +59,31 @@ def clear_stale_parquets(dir_path: str) -> None:
             os.remove(os.path.join(dir_path, stale))
 
 
-def _write_parquet_locally(lf: pl.LazyFrame | pl.DataFrame, output_path: str) -> None:
-    """Collect a LazyFrame and write it to a parquet file locally.
-
-    This mirrors the worker's write_parquet function for use when
-    OFFLOAD_TO_WORKER is False (e.g. CLI execution via ``flowfile run flow``).
-    """
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    if isinstance(lf, pl.DataFrame):
-        df = lf
-    else:
-        try:
-            df = lf.collect(engine="streaming")
-        except Exception:
-            df = lf.collect()
-    df.write_parquet(output_path)
-    # "rb+" — os.fsync needs a writable fd on Windows (EBADF on read-only handles)
-    with open(output_path, "rb+") as f:
-        os.fsync(f.fileno())
-
-
 def write_parquet_for_kernel(
-    lf: pl.LazyFrame | pl.DataFrame, path: str, *, flow_id: int, node_id: int, local: bool, what: str
+    lf: pl.LazyFrame | pl.DataFrame,
+    path: str,
+    *,
+    flow_id: int,
+    node_id: int,
+    what: str,
+    graph: FlowGraph | None = None,
 ) -> None:
     """Write *lf* as parquet at *path* for a kernel to read.
 
-    In-process when *local* (a graph whose ``execution_location`` is ``"local"``) or worker offload is off,
-    else through the worker so core never collects it; a worker failure raises ``RuntimeError`` naming *what*.
+    The write is the ``file_write`` operation on ``current_context(graph)``'s backend (the running flow's, else
+    *graph*'s, else the default), so core never collects the rows. The file is complete when this returns. A
+    ``ComputeError`` becomes a ``RuntimeError`` naming *what*.
     """
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    if local or not OFFLOAD_TO_WORKER:
-        _write_parquet_locally(lf, path)
-        return
-    fetcher = ExternalDfFetcher(
-        flow_id=flow_id,
-        node_id=node_id,
-        lf=lf,
-        wait_on_completion=True,
-        operation_type="write_parquet",
-        kwargs={"output_path": path},
-    )
-    if fetcher.has_error:
-        raise RuntimeError(f"Failed to write parquet for {what}: {fetcher.error_description}")
+    directory, name = os.path.split(path)
+    settings = OutputSettings(
+        name=name, directory=directory, file_type="parquet", write_mode="overwrite", table_settings=OutputParquetTable()
+    ).model_copy(update={"abs_file_path": path})
+    write = FileWritePayload(plan=lf.lazy(), settings=settings, flow_id=flow_id, node_id=node_id)
+    try:
+        current_context(graph).backend.run_op(OperationKind.file_write, op_payload(write))
+    except ComputeError as e:
+        raise RuntimeError(f"Failed to write parquet for {what}: {e}") from e
 
 
 def write_inputs_to_parquet(
@@ -102,7 +94,7 @@ def write_inputs_to_parquet(
     node_id: int,
     input_names: list[str] | None = None,
     *,
-    local: bool = False,
+    graph: FlowGraph | None = None,
 ) -> dict[str, list[str]]:
     """Serialize input tables to parquet on the shared volume.
 
@@ -115,8 +107,8 @@ def write_inputs_to_parquet(
     When *input_names* is ``None``, falls back to the original behaviour
     where every input is grouped under ``"main"``.
 
-    With *local* set (a graph whose ``execution_location`` is ``"local"``) the
-    files are written in-process even when worker offload is on.
+    Each file is written by :func:`write_parquet_for_kernel` on the current
+    execution context's backend, resolved through *graph* when no run set one.
 
     Returns the ``input_paths`` dict expected by :class:`ExecuteRequest`.
     """
@@ -125,7 +117,7 @@ def write_inputs_to_parquet(
         for idx, ft in enumerate(flowfile_tables):
             local_path = os.path.join(input_dir, f"main_{idx}.parquet")
             write_parquet_for_kernel(
-                ft.data_frame, local_path, flow_id=flow_id, node_id=node_id, local=local, what=f"input {idx}"
+                ft.data_frame, local_path, flow_id=flow_id, node_id=node_id, what=f"input {idx}", graph=graph
             )
             main_paths.append(manager.to_kernel_path(local_path))
         return {"main": main_paths}
@@ -136,7 +128,7 @@ def write_inputs_to_parquet(
         _assert_safe_name(name)
         local_path = os.path.join(input_dir, f"{name}_{idx}.parquet")
         write_parquet_for_kernel(
-            ft.data_frame, local_path, flow_id=flow_id, node_id=node_id, local=local, what=f"input {idx} ({name})"
+            ft.data_frame, local_path, flow_id=flow_id, node_id=node_id, what=f"input {idx} ({name})", graph=graph
         )
         kernel_path = manager.to_kernel_path(local_path)
         result.setdefault(name, []).append(kernel_path)
@@ -188,10 +180,7 @@ def build_execute_request(
     available_artifacts: dict[str, int] | None = None,
 ) -> ExecuteRequest:
     """Assemble the kernel ExecuteRequest with log callback URL and auth token."""
-    # Keyed on the network, not the volume: the kernel can only resolve core by
-    # service name when it was actually joined to core's network. The two used
-    # to disagree, so a Docker setup with one but not the other sent the log
-    # callback somewhere the API callbacks did not go.
+    # Keyed on the network: the kernel resolves core by service name only once joined to core's network.
     log_callback_url = f"{core_base_url(bool(manager._docker_network))}/raw_logs"
 
     internal_token: str | None = None
@@ -212,8 +201,7 @@ def build_execute_request(
         log_callback_url=log_callback_url,
         internal_token=internal_token,
         available_artifacts=available_artifacts,
-        # Minted here, not in execute_sync: the node stores it as its cancel
-        # address before the call, so a cancel can only hit this one cell.
+        # Minted here so the node holds it as its cancel address before the call; a cancel hits only this cell.
         exec_token=uuid.uuid4().hex,
     )
 

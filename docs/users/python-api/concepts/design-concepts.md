@@ -37,6 +37,8 @@ df = (
 result = df.collect()              # everything runs here, optimized as one plan
 ```
 
+The exception is a `polars_code` node (see [Which operations become which node](#which-operations-become-which-node)) over rows held in memory, such as a frame made from a dict: its code runs when the node is added, and the result is kept for the steps after it. A function in that code that fails on those rows fails the call that adds the node, not `.collect()`.
+
 ### Every operation becomes a graph node
 
 Each FlowFrame knows its graph and its own position in it:

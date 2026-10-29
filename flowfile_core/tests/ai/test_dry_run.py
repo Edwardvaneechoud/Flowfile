@@ -7,6 +7,9 @@ construction are pure-Python and tested directly.
 
 from __future__ import annotations
 
+import io
+from types import SimpleNamespace
+
 import polars as pl
 import pytest
 
@@ -16,9 +19,12 @@ from flowfile_core.ai.tools.dry_run import (
     _build_null_row_from_schema,
     _hash_code,
     _hash_sample,
+    _resolve_sample_row,
     dry_run_code,
 )
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from tests.flowfile.conftest import add_test_manual_input, create_test_graph
 
 # DryRunCache
 
@@ -147,6 +153,69 @@ def test_dry_run_uses_null_row_fallback_when_upstream_unrun(
     assert out[0].column_name == "out"
     assert captured["code"] == "main"
     assert cache.get(_hash_code("main"), _hash_sample(captured["sample"])) is not None
+
+
+class _SamplingBackend:
+    """Answers ``sample`` from a frame of its own and records each call."""
+
+    def __init__(self, frame: pl.DataFrame):
+        self.frame = frame
+        self.sampled: list[tuple[str, int]] = []
+
+    def sample(self, ref, n):
+        self.sampled.append((ref.result_id, n))
+        buffer = io.BytesIO()
+        self.frame.head(n).write_ipc_stream(buffer)
+        return buffer.getvalue()
+
+
+def _upstream(*, ran: bool) -> SimpleNamespace:
+    return SimpleNamespace(
+        results=SimpleNamespace(result_ref=SimpleNamespace(backend_id="sampling", result_id="upstream-hash")),
+        node_stats=SimpleNamespace(has_run_with_current_setup=ran),
+    )
+
+
+class _FlowOf:
+    flow_id = 7
+
+    def __init__(self, node):
+        self.node = node
+
+    def get_node(self, node_id):
+        return self.node
+
+
+def test_an_upstream_that_ran_gives_the_first_row_its_backend_samples(monkeypatch: pytest.MonkeyPatch) -> None:
+    backend = _SamplingBackend(pl.DataFrame({"a": [5, 6]}))
+    monkeypatch.setattr(registry, "backend", lambda backend_id: backend)
+
+    sample = _resolve_sample_row(_FlowOf(_upstream(ran=True)), 1, {1: [FlowfileColumn.from_input("a", "Integer")]})
+
+    assert backend.sampled == [("upstream-hash", 1)]
+    assert sample.to_dicts() == [{"a": 5}]
+
+
+def test_an_upstream_that_has_not_run_gives_the_null_row_and_asks_no_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    backend = _SamplingBackend(pl.DataFrame({"a": [5, 6]}))
+    monkeypatch.setattr(registry, "backend", lambda backend_id: backend)
+
+    sample = _resolve_sample_row(_FlowOf(_upstream(ran=False)), 1, {1: [FlowfileColumn.from_input("a", "Integer")]})
+
+    assert backend.sampled == []
+    assert sample.collect().to_dicts() == [{"a": None}]
+
+
+def test_a_local_flow_s_run_upstream_gives_its_first_row_from_the_embedded_worker(tmp_path) -> None:
+    flow = create_test_graph(7, execution_mode="Performance", path=str(tmp_path / "flow.yaml"))
+    add_test_manual_input(flow, [{"region": "EU"}, {"region": "US"}])
+    flow.run_graph()
+    node = flow.get_node(1)
+    assert node.results.result_ref.backend_id == registry.LOCAL_BACKEND_ID
+
+    sample = _resolve_sample_row(flow, 1, {})
+
+    assert sample.to_dicts() == [{"region": "EU"}]
 
 
 def test_dry_run_raises_when_no_sample_available(monkeypatch: pytest.MonkeyPatch) -> None:

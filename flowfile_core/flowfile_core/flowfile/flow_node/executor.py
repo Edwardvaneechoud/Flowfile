@@ -7,25 +7,79 @@ Enables stateless execution by accepting external state providers.
 
 from __future__ import annotations
 
+from collections.abc import Collection
+from dataclasses import replace
 from typing import TYPE_CHECKING, Protocol
 
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
-    results_exists,
+from flowfile_core.configs import settings
+from flowfile_core.flowfile.execution.context import (
+    DEFAULT_PREVIEW_ROWS,
+    ExecutionContext,
+    current_context,
+    use_context,
 )
+from flowfile_core.flowfile.execution.errors import ComputeError
+from flowfile_core.flowfile.execution.protocol import SubmitHints
 from flowfile_core.flowfile.flow_node.models import (
     ExecutionDecision,
-    ExecutionStrategy,
     InvalidationReason,
     InvalidExpressionError,
 )
 from flowfile_core.flowfile.flow_node.state import NodeExecutionState, SourceFileInfo
 from flowfile_core.flowfile.parameter_resolver import node_parameters_resolved
-from flowfile_core.schemas import schemas
 from shared.path_utils import is_url
 
 if TYPE_CHECKING:
     from flowfile_core.configs.flow_logger import NodeLogger
     from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+
+IN_CORE_NODE_TYPES = frozenset({"output", "api_response", "flow_output", "run_flow"})
+"""Node types whose result is computed when their function returns: a sink's is the input it wrote, a ``run_flow``
+node's the child flow's output. They are never wide, ask no preview, and are materialised only for a boundary input,
+so otherwise no backend computes or samples their rows during the run."""
+
+
+def is_narrow_transform(node: FlowNode) -> bool:
+    """Whether ``node`` maps rows without reshaping data across them, by its template's ``transform_type``.
+
+    A custom node declares its own in its manifest. A node without a template default (manual input, the readers)
+    is not narrow.
+    """
+    return node.node_default is not None and node.node_default.transform_type == "narrow"
+
+
+def hints_for(
+    node: FlowNode,
+    context: ExecutionContext,
+    performance_mode: bool,
+    running: Collection[int | str] | None = None,
+) -> SubmitHints:
+    """The hints ``node`` submits its plan with, which the backend's materialisation policy reads.
+
+    - ``must_materialise``: a ``cache_results`` node outside ``IN_CORE_NODE_TYPES``, or any node reading an input
+      that crossed from another backend (``_boundary_inputs``), so no result refers to the exchange prefix once the
+      run removes it.
+    - ``wide``: neither ``is_narrow_transform`` nor in ``IN_CORE_NODE_TYPES``.
+    - ``fanout``: the number of distinct downstream nodes among *running*, the ids of the nodes this run executes,
+      or of every downstream node when *running* is ``None``. The worker stores a wide result read by more than one,
+      which would otherwise be computed again inside each consumer's plan.
+    - ``preview_rows``: the context's, else ``DEFAULT_PREVIEW_ROWS``. ``None`` for ``IN_CORE_NODE_TYPES`` and in
+      *performance_mode*, except for a ``cache_results`` node.
+    """
+    in_core = node.node_type in IN_CORE_NODE_TYPES
+    caches = node.node_settings.cache_results
+    preview_rows = None
+    if not in_core and (caches or not performance_mode):
+        preview_rows = context.preview_rows if context.preview_rows is not None else DEFAULT_PREVIEW_ROWS
+    consumers = {consumer.node_id for consumer in node.leads_to_nodes}
+    if running is not None:
+        consumers = {consumer for consumer in consumers if consumer in running}
+    return SubmitHints(
+        must_materialise=(caches and not in_core) or bool(node._boundary_inputs),
+        wide=not in_core and not is_narrow_transform(node),
+        fanout=len(consumers),
+        preview_rows=preview_rows,
+    )
 
 
 class StateProvider(Protocol):
@@ -70,7 +124,6 @@ class NodeExecutor:
 
     Separated from FlowNode to allow:
     - Stateless execution (state from external source)
-    - Different execution strategies
     - Easier testing
     - Clear separation of concerns
 
@@ -90,26 +143,36 @@ class NodeExecutor:
 
     def execute(
         self,
-        run_location: schemas.ExecutionLocationsLiteral,
         reset_cache: bool = False,
         performance_mode: bool = False,
         retry: bool = True,
         node_logger: NodeLogger = None,
-        optimize_for_downstream: bool = True,
+        unreachable: Exception | None = None,
+        running: Collection[int | str] | None = None,
     ) -> None:
         """
         Main execution entry point.
 
-        Called by FlowNode.execute_node(). Uses _decide_execution() as the
-        single source of truth for whether and how the node should run.
+        Called by FlowNode.execute_node(). ``_decide_execution()`` is the single
+        source of truth for whether the node runs. When it runs, the node submits
+        its plan with ``hints_for`` to the current context's backend, whose policy
+        decides how.
+
+        A ``ComputeError`` while deciding (asking a backend about a cached result)
+        fails the node through the normal error path, its previous results cleared.
+        The node is not run, on the worker or in core. A failed node keeps its
+        exception, and every read of it (``get_resulting_data``) raises it until the
+        next run clears it.
 
         Args:
-            run_location: Where to execute ('local' or 'remote')
             reset_cache: Force cache invalidation
             performance_mode: Skip example data generation for speed
             retry: Allow retry on recoverable errors
             node_logger: Logger for this node's execution
-            optimize_for_downstream: Cache wide transforms for downstream nodes
+            unreachable: The error the handshake of the node's placed backend raised. The node fails with it and
+                nothing is decided or sent.
+            running: The ids of the nodes this run executes, which ``hints_for`` counts the consumers among;
+                ``None`` counts every consumer.
         """
         if node_logger is None:
             raise ValueError("node_logger is required")
@@ -119,23 +182,30 @@ class NodeExecutor:
         if reset_cache:
             self._clear_cache(state)
 
-        decision = self._decide_execution(state, run_location, performance_mode, reset_cache)
-        decision = self._override_for_downstream(decision, run_location, optimize_for_downstream)
+        if unreachable is not None:
+            self._prepare_for_execution(state)
+            self._handle_error(state, unreachable, performance_mode, False, node_logger, running)
+            return
+
+        try:
+            decision = self._decide_execution(state, performance_mode, reset_cache)
+        except ComputeError as e:
+            self._prepare_for_execution(state)
+            self._handle_error(state, e, performance_mode, retry, node_logger, running)
+            return
         if not decision.should_run:
             return
 
+        context = current_context()
+        hints = hints_for(self.node, context, performance_mode, running)
         reason_str = decision.reason.name if decision.reason else "UNKNOWN"
-        strategy_str = decision.strategy.name
-        node_logger.info(f"Starting to run {self.node.__name__} ({reason_str} -> {strategy_str})")
+        node_logger.info(f"Starting to run {self.node.__name__} ({reason_str} -> {context.backend_id}, {hints})")
 
-        # Override performance_mode when cache_results is enabled
-        # This ensures example data is generated even in Performance mode
-        effective_performance_mode = performance_mode
-        if self.node.node_settings.cache_results:
-            effective_performance_mode = False
+        # A cache_results node keeps its example data even in Performance mode.
+        effective_performance_mode = performance_mode and not self.node.node_settings.cache_results
 
         if decision.reason == InvalidationReason.SOURCE_FILE_CHANGED:
-            # The worker keys results by node hash, which a source change does not rotate.
+            # A backend keys results by node hash, which a source change does not rotate.
             self._clear_cache(state)
 
         self._prepare_for_execution(state)
@@ -148,43 +218,28 @@ class NodeExecutor:
 
         try:
             self._raise_on_invalid_expression()
-            self._execute_with_strategy(state, decision.strategy, effective_performance_mode, node_logger)
+            self.node._do_execute(hints, effective_performance_mode, node_logger)
+            if self.node.results.resulting_data is not None:
+                state.result_schema = self.node.results.resulting_data.schema
+            if self.node.results.errors is None and not self.node.node_stats.is_canceled:
+                state.mark_successful()
             if pending_source_info is not None:
                 state.source_file_info = pending_source_info
             self._sync_state_to_legacy(state)
             self.state_provider.save_state(self.node.node_id, self.node.parent_uuid, state)
         except Exception as e:
             if state.is_canceled:
-                # Cancelled mid-run (e.g. a cancel_check-aborted DB read): record a clean
-                # cancellation instead of a failure, and skip the error/retry path.
+                # Cancelled mid-run: record a clean cancellation, not a failure, and skip the retry path.
                 node_logger.info("Node execution cancelled")
                 state.reset_results_only()
                 self._sync_state_to_legacy(state)
                 return
-            self._handle_error(state, e, run_location, effective_performance_mode, retry, node_logger)
-
-    def _override_for_downstream(
-        self,
-        decision: ExecutionDecision,
-        run_location: schemas.ExecutionLocationsLiteral,
-        optimize_for_downstream: bool,
-    ) -> ExecutionDecision:
-        """Promote a sampled wide transform to a full remote run so downstream nodes can reuse it."""
-        if (
-            decision.should_run
-            and decision.strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
-            and self.node.node_default
-            and self.node.node_default.transform_type == "wide"
-            and optimize_for_downstream
-            and run_location != "local"
-        ):
-            return ExecutionDecision(True, ExecutionStrategy.REMOTE, decision.reason)
-        return decision
+            self._handle_error(state, e, effective_performance_mode, retry, node_logger, running)
 
     def _raise_on_invalid_expression(self) -> None:
         """Fail a formula/advanced-filter node whose expression cannot run against its input.
 
-        The check is data-free (a zero-row collect). Running it here, before the strategy builds
+        The check is data-free (a zero-row collect). Running it here, before the node builds
         the lazy plan, makes a leaf node's bad expression surface at all and attributes it to this
         node instead of whichever downstream sink would otherwise be the first to collect it.
 
@@ -205,155 +260,68 @@ class NodeExecutor:
     def _decide_execution(
         self,
         state: NodeExecutionState,
-        run_location: schemas.ExecutionLocationsLiteral,
         performance_mode: bool,
         force_refresh: bool,
     ) -> ExecutionDecision:
         """
-        Single source of truth for execution decisions.
+        Single source of truth for whether a node runs.
 
-        Determines both WHETHER to run and HOW to run in one place.
+        A ``cache_results`` node skips while the run's backend still ``exists`` the stored
+        result the node holds under its current hash (``FlowNode.held_result``). A node
+        holding none has no cache. A deferred plan is no cache either, so such a node
+        follows the ordinary rules below. A cached node whose last run failed reruns
+        anyway: that clears the error, and ``FlowNode._do_execute`` reads the stored
+        result back.
+
+        Only a node that has run with its current setup is asked whether its result
+        vanished, so a node reset by a move to another backend never asks the one it left.
+
+        Raises:
+            ComputeError: Asking the backend whether the stored result exists failed.
+                ``execute`` records it as a node failure, never as a missing cache.
         """
         if self.node.node_template.node_group == "output":
-            strategy = self._determine_strategy(run_location)
-            return ExecutionDecision(True, strategy, InvalidationReason.OUTPUT_NODE)
+            return ExecutionDecision(True, InvalidationReason.OUTPUT_NODE)
 
         if self.node.node_type == "run_flow":
-            # The referenced flow file can change without any parent-settings
-            # change, so a subflow node is never considered up to date.
-            strategy = self._determine_strategy(run_location)
-            return ExecutionDecision(True, strategy, InvalidationReason.OUTPUT_NODE)
+            # The referenced flow file can change without any settings change, so it always reruns.
+            return ExecutionDecision(True, InvalidationReason.OUTPUT_NODE)
 
         if self.node.node_type == "gate" and self._gate_routes_on_formula():
-            # The formula's source data can change without any hash changing,
-            # so the gate must re-evaluate its routing decision every run.
-            strategy = self._determine_strategy(run_location)
-            return ExecutionDecision(True, strategy, InvalidationReason.OUTPUT_NODE)
+            # The formula's data can change without any hash changing, so the gate re-decides every run.
+            return ExecutionDecision(True, InvalidationReason.OUTPUT_NODE)
 
         if force_refresh:
-            strategy = self._determine_strategy(run_location)
-            return ExecutionDecision(True, strategy, InvalidationReason.FORCED_REFRESH)
+            return ExecutionDecision(True, InvalidationReason.FORCED_REFRESH)
 
-        # Changed source data outranks every cache: the node hash does not rotate when a file
-        # on disk changes, so a cache hit here would serve data the user just replaced.
+        # Changed source data outranks every cache: the node hash does not rotate when a file changes.
         if self._source_file_changed(state):
-            strategy = self._determine_strategy(run_location)
-            return ExecutionDecision(True, strategy, InvalidationReason.SOURCE_FILE_CHANGED)
+            return ExecutionDecision(True, InvalidationReason.SOURCE_FILE_CHANGED)
 
-        # A vanished worker artifact outranks the in-memory "already ran" flag: the held
-        # result is a scan of that file, so skipping here hands downstream a dangling plan.
-        if self.node.results.artifact_is_missing():
-            strategy = self._determine_strategy(run_location)
-            return ExecutionDecision(True, strategy, InvalidationReason.CACHE_MISSING)
+        # A vanished result outranks the "already ran" skip: skipping would hand downstream a dangling plan.
+        if state.has_run_with_current_setup and self.node.results.artifact_is_missing():
+            return ExecutionDecision(True, InvalidationReason.CACHE_MISSING)
 
-        # Cache-enabled nodes: check if cache file is still present
-        # This must come before performance_mode so cached results are preserved
-        # even when upstream nodes produce no new data.
+        # Before performance_mode, so a cached result is kept even when upstream produces no new data.
         if self.node.node_settings.cache_results:
-            if results_exists(self.node.hash):
-                return ExecutionDecision(False, ExecutionStrategy.SKIP, None)
-            strategy = self._determine_strategy(run_location)
-            return ExecutionDecision(True, strategy, InvalidationReason.CACHE_MISSING)
+            backend = current_context().backend
+            held = self.node.held_result(backend.id)
+            if held is None or held.state == "materialised":
+                if state.error is None and held is not None and backend.exists(held):
+                    return ExecutionDecision(False, None)
+                return ExecutionDecision(True, InvalidationReason.CACHE_MISSING)
 
         if performance_mode:
-            strategy = self._determine_strategy(run_location)
-            return ExecutionDecision(True, strategy, InvalidationReason.PERFORMANCE_MODE)
+            return ExecutionDecision(True, InvalidationReason.PERFORMANCE_MODE)
 
         if not state.has_run_with_current_setup:
-            strategy = self._determine_strategy(run_location)
-            return ExecutionDecision(True, strategy, InvalidationReason.NEVER_RAN)
+            return ExecutionDecision(True, InvalidationReason.NEVER_RAN)
 
-        # Already ran with current settings → skip
-        # Results are available in memory from previous execution
-        return ExecutionDecision(False, ExecutionStrategy.SKIP, None)
+        return ExecutionDecision(False, None)
 
     def _gate_routes_on_formula(self) -> bool:
         gate_input = getattr(self.node.setting_input, "gate_input", None)
         return gate_input is not None and getattr(gate_input, "condition_source", "parameter") == "formula"
-
-    def _determine_strategy(
-        self,
-        run_location: schemas.ExecutionLocationsLiteral,
-    ) -> ExecutionStrategy:
-        """Determine the execution strategy based on location and node settings.
-
-        Decision logic:
-        - local → FULL_LOCAL
-        - remote + cache_results → REMOTE (caching needs full materialization)
-        - remote + narrow transform → LOCAL_WITH_SAMPLING (fast local compute + external sampler)
-        - remote → REMOTE
-
-        Narrow transforms (e.g., select, sample, union) only operate on columns
-        without reshaping data, so they're cheap to compute locally. An external
-        sampler provides preview data for the UI.
-
-        When cache_results is enabled, the node must run fully remote so the
-        result can be materialized and stored in the cache.
-        """
-        if run_location == "local":
-            return ExecutionStrategy.FULL_LOCAL
-
-        if self.node.node_settings.cache_results:
-            return ExecutionStrategy.REMOTE
-
-        if self.node.node_default is not None and self.node.node_default.transform_type == "narrow":
-            return ExecutionStrategy.LOCAL_WITH_SAMPLING
-
-        return ExecutionStrategy.REMOTE
-
-    def _execute_with_strategy(
-        self,
-        state: NodeExecutionState,
-        strategy: ExecutionStrategy,
-        performance_mode: bool,
-        node_logger: NodeLogger,
-    ) -> None:
-        """Execute using the determined strategy."""
-        match strategy:
-            case ExecutionStrategy.SKIP:
-                return
-            case ExecutionStrategy.FULL_LOCAL:
-                self._do_full_local(state, performance_mode)
-            case ExecutionStrategy.LOCAL_WITH_SAMPLING:
-                self._do_local_with_sampling(state, performance_mode, node_logger.flow_id)
-            case ExecutionStrategy.REMOTE:
-                self._do_remote(state, performance_mode, node_logger)
-
-    def _do_full_local(self, state: NodeExecutionState, performance_mode: bool) -> None:
-        """
-        100% in-process execution.
-
-        Used for WASM environments or when no external worker is available.
-        """
-        self.node._do_execute_full_local(performance_mode)
-        if not performance_mode:
-            state.mark_successful()
-            if self.node.results.resulting_data is not None:
-                state.result_schema = self.node.results.resulting_data.schema
-
-    def _do_local_with_sampling(self, state: NodeExecutionState, performance_mode: bool, flow_id: int) -> None:
-        """
-        In-process execution with external sampler for preview data.
-
-        The main computation runs locally, but sample data is generated
-        via an external process for the UI preview.
-        """
-        self.node._do_execute_local_with_sampling(performance_mode, flow_id)
-        if self.node.results.resulting_data is not None:
-            state.result_schema = self.node.results.resulting_data.schema
-        if self.node.results.errors is None and not self.node.node_stats.is_canceled:
-            state.mark_successful()
-
-    def _do_remote(self, state: NodeExecutionState, performance_mode: bool, node_logger: NodeLogger) -> None:
-        """
-        Full remote worker execution.
-
-        Computation is offloaded to an external worker process.
-        """
-        self.node._do_execute_remote(performance_mode, node_logger)
-        if self.node.results.resulting_data is not None:
-            state.result_schema = self.node.results.resulting_data.schema
-            state.mark_successful()
 
     def _source_file_changed(self, state: NodeExecutionState) -> bool:
         """
@@ -419,6 +387,7 @@ class NodeExecutor:
         state.is_canceled = False  # clear any stale cancel flag from a prior run
         self.node.node_stats.is_canceled = False
         self.node.results.errors = None
+        self.node._last_run_error = None
         self.node.results.resulting_data = None
         self.node.results.example_data = None
 
@@ -430,8 +399,11 @@ class NodeExecutor:
             self.node._named_schemas = {}
 
     def _clear_cache(self, state: NodeExecutionState) -> None:
-        """Clear cached results."""
+        """Clear cached results; when that released operation outputs, the nodes downstream drop theirs too."""
+        minted_outputs = bool(self.node._operation_refs)
         self.node.remove_cache()
+        if minted_outputs:
+            self.node.drop_downstream_results()
         state.has_run_with_current_setup = False
         state.has_completed_last_run = False
 
@@ -446,49 +418,64 @@ class NodeExecutor:
         self,
         state: NodeExecutionState,
         error: Exception,
-        run_location: schemas.ExecutionLocationsLiteral,
         performance_mode: bool,
         retry: bool,
         node_logger: NodeLogger,
+        running: Collection[int | str] | None = None,
     ) -> None:
-        """Handle execution errors with retry logic."""
+        """Handle execution errors with retry logic.
+
+        With ``retry`` set, a Polars missing-file error reruns the node's inputs, then the node once. With
+        ``settings.FLOWFILE_COMPUTE_PROTOCOL`` off the message alone is enough, the results being core's own files.
+        With it on, an input must also hold a result that is gone (``NodeResults.artifact_is_missing``). Otherwise
+        the error is the node's own and the inputs' results are kept. An input reruns on the backend that holds its
+        result for its current setup (``FlowNode.held_result``), else where the node runs.
+        """
         error_str = str(error)
         state.mark_failed(error_str)
         self._sync_state_to_legacy(state)
         self.node.results.errors = error_str
         # Class name only, never the message; a worker wrapper carries the original class.
         self.node._last_exception_class = getattr(error, "original_class", None) or type(error).__name__
+        self.node._last_run_error = error
 
         # Retry on missing file errors (upstream cache was cleared)
-        if "No such file or directory (os error" in error_str and retry:
+        if (
+            "(os error 2)" in error_str
+            and retry
+            and (
+                not settings.FLOWFILE_COMPUTE_PROTOCOL
+                or any(
+                    node_input.results.artifact_is_missing() for node_input in self.node.node_inputs.get_all_inputs()
+                )
+            )
+        ):
             node_logger.warning("Input file missing, retrying upstream nodes...")
             for node_input in self.node.node_inputs.get_all_inputs():
+                context = current_context()
+                ref = node_input.results.result_ref
+                held = node_input.held_result(ref.backend_id) if ref is not None else None
+                if settings.FLOWFILE_COMPUTE_PROTOCOL and held is not None and held.backend_id != context.backend_id:
+                    context = replace(context, backend_id=held.backend_id)
                 # The run loop substitutes only into the node it is about to run.
                 try:
-                    with node_parameters_resolved(node_input):
+                    with use_context(context), node_parameters_resolved(node_input):
                         node_input.execute_node(
-                            run_location=run_location,
                             performance_mode=performance_mode,
                             retry=True,
                             reset_cache=True,
                             node_logger=node_logger,
+                            running=running,
                         )
                 except ValueError as e:
                     node_logger.error(f"Could not retry upstream node {node_input.node_id}: {e}")
             # Retry this node once (no further retries)
             self.execute(
-                run_location=run_location,
                 performance_mode=performance_mode,
                 retry=False,
                 node_logger=node_logger,
+                running=running,
             )
             return
 
-        if "Connection refused" in error_str and "/submit_query/" in error_str:
-            node_logger.warning(
-                "Could not connect to remote worker. "
-                "Ensure the worker process is running, or change settings to local execution."
-            )
-            node_logger.error("Remote worker connection refused")
-        else:
-            node_logger.error(f"Error running node: {error}")
+        node_logger.error(f"Error running node: {error}")

@@ -1,6 +1,6 @@
 """Tests for the /system/db_backups admin endpoints.
 
-Auth fixtures mirror tests/test_system_worker.py (dependency overrides).
+Auth fixtures are tests/conftest.py's admin_client and non_admin_client.
 ``FLOWFILE_DB_PATH`` points the route at a throwaway tmp_path database — it
 beats ``TESTING=True`` in ``get_database_url``, which ``get_database_path``
 resolves per call.
@@ -9,40 +9,12 @@ resolves per call.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-from flowfile_core import main
-from flowfile_core.auth.jwt import get_current_active_user, get_current_user
-from flowfile_core.auth.models import User as PydanticUser
 from tests.test_migration import create_legacy_db
-
-
-@pytest.fixture
-def admin_client() -> Iterator[TestClient]:
-    user = PydanticUser(username="local_user", id=1, disabled=False, is_admin=True, must_change_password=False)
-    main.app.dependency_overrides[get_current_active_user] = lambda: user
-    main.app.dependency_overrides[get_current_user] = lambda: user
-    try:
-        yield TestClient(main.app)
-    finally:
-        main.app.dependency_overrides.pop(get_current_active_user, None)
-        main.app.dependency_overrides.pop(get_current_user, None)
-
-
-@pytest.fixture
-def non_admin_client() -> Iterator[TestClient]:
-    user = PydanticUser(username="not_admin", id=2, disabled=False, is_admin=False, must_change_password=False)
-    main.app.dependency_overrides[get_current_active_user] = lambda: user
-    main.app.dependency_overrides[get_current_user] = lambda: user
-    try:
-        yield TestClient(main.app)
-    finally:
-        main.app.dependency_overrides.pop(get_current_active_user, None)
-        main.app.dependency_overrides.pop(get_current_user, None)
 
 
 @pytest.fixture

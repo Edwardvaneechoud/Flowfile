@@ -24,6 +24,7 @@ def spawn_flow_subprocess(
     extra_env: dict[str, str] | None = None,
     *,
     suppress_telemetry: bool = False,
+    backend: str | None = None,
 ) -> int | None:
     """Fire-and-forget a ``flowfile run flow`` subprocess.
 
@@ -35,6 +36,8 @@ def spawn_flow_subprocess(
     ``extra_env`` is merged over the inherited environment for this child only;
     the parent's ``os.environ`` is never mutated. ``suppress_telemetry`` adds
     the telemetry kill switch to that merge, for runs the app itself started.
+    ``backend`` is passed as ``--backend``; without it the child picks the
+    backend from the flow.
 
     Returns the child PID on success, or ``None`` on failure.
     """
@@ -44,6 +47,8 @@ def spawn_flow_subprocess(
         cmd = [sys.executable, "--run-flow", flow_path, "--run-id", str(run_id)]
     else:
         cmd = [sys.executable, "-m", "flowfile", "run", "flow", flow_path, "--run-id", str(run_id)]
+    if backend:
+        cmd += ["--backend", backend]
     logger.info("Spawning: %s", " ".join(cmd))
     overrides = dict(extra_env or {})
     if suppress_telemetry:

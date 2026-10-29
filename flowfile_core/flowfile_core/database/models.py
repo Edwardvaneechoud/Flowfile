@@ -121,27 +121,41 @@ class Kernel(Base):
     name = Column(String, nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     packages = Column(Text, default="[]")  # JSON-serialized list of package names
-    # JSON-serialized list of {name, version} for packages actually installed in
-    # the derived image. Populated after bake; empty for legacy kernels until they
-    # are next edited.
+    # JSON list of {name, version} baked into the derived image; empty on legacy kernels until edited.
     resolved_packages = Column(Text, default="[]")
     cpu_cores = Column(Float, default=2.0)
     memory_gb = Column(Float, default=4.0)
     gpu = Column(Boolean, default=False)
     image_flavour = Column(String, nullable=False, default="base")
     custom_image = Column(String, nullable=True)
-    # Auto-created FlowRegistration that artifacts published from this kernel's
-    # interactive cells are attributed to. Lives and dies with the kernel; see
-    # ``KernelManager._provision_scratch_flow`` in
-    # ``flowfile_core/kernel/manager.py``. ``ON DELETE SET NULL`` so a
-    # manually-removed registration leaves the kernel record intact (the
-    # manager will lazily re-create on the next publish).
+    # Scratch registration that cell-published artifacts are attributed to; SET NULL keeps the kernel row.
     scratch_flow_registration_id = Column(
         Integer,
         ForeignKey("flow_registrations.id", ondelete="SET NULL"),
         nullable=True,
     )
     created_at = Column(DateTime, default=func.now(), nullable=False)
+
+
+class ConfiguredBackend(Base):
+    """One configured worker: a compute backend core reaches by id, at its own URL, with its own token.
+
+    - ``id``: the backend id a flow saves, ``worker:<name>``.
+    - ``url``: the worker's base URL, without a trailing slash.
+    - ``token``: the bearer token as ``encrypt_secret`` ciphertext, never the token itself.
+    - ``ca_cert``: the PEM of the CA core trusts for a non-public worker certificate, else ``None``.
+    - ``shares_core_disk``: the worker sees core's files, so core offers it ``file`` whatever it declares.
+
+    The built-in ``local`` and ``worker`` are never rows. The registry reads a row on the first lookup of its id.
+    """
+
+    __tablename__ = "compute_backends"
+
+    id = Column(String, primary_key=True)
+    url = Column(String, nullable=False)
+    token = Column(Text, nullable=False)
+    ca_cert = Column(Text, nullable=True)
+    shares_core_disk = Column(Boolean, nullable=False, default=False, server_default=sa.false())
 
 
 # ==================== Catalog Models ====================
@@ -162,8 +176,7 @@ class CatalogNamespace(Base):
     level = Column(Integer, nullable=False, default=0)  # 0=catalog, 1=schema
     description = Column(Text, nullable=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    # Visible to every user as a tree container in multi-user mode (set on the seeded
-    # system namespaces); contents stay per-user filtered. See auth/sharing.py.
+    # Seeded system namespaces show to every user as tree containers; contents stay per-user filtered.
     is_public = Column(Boolean, nullable=False, default=False, server_default="0")
     # Per-catalog object storage (level-0 only; schemas/tables inherit). NULL ⇒ local filesystem.
     storage_uri = Column(String, nullable=True)
@@ -180,16 +193,14 @@ class FlowRegistration(Base):
     __tablename__ = "flow_registrations"
 
     id = Column(Integer, primary_key=True, index=True)
-    # Stable identity that survives delete+recreate. Run history is keyed against this so
-    # SQLite reusing a deleted FlowRegistration.id can never pull another flow's runs in.
+    # Survives delete+recreate, so SQLite reusing a deleted id never pulls another flow's runs in.
     flow_uuid = Column(String(36), nullable=False, unique=True, default=lambda: str(uuid.uuid4()))
     name = Column(String, nullable=False, index=True)
     description = Column(Text, nullable=True)
     flow_path = Column(String, nullable=False)
     namespace_id = Column(Integer, ForeignKey("catalog_namespaces.id"), nullable=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    # True when the flow contains exactly one ``api_response`` node, i.e. it can be
-    # published as an HTTP data API. Recomputed from the flow graph on save.
+    # True when the flow has exactly one api_response node (publishable as a data API); set on save.
     is_api_compatible = Column(Boolean, default=False, nullable=False, server_default="0")
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
@@ -209,11 +220,9 @@ class WorkspaceProject(Base):
     folder_path = Column(String, nullable=False)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     is_active = Column(Boolean, default=False, nullable=False)
-    # Git HEAD we last projected/imported at; differs from the live HEAD only when git
-    # changed the working tree from outside the app (pull / restore / fresh clone).
+    # HEAD last projected/imported; differs from the live HEAD only after git changed the tree outside.
     last_synced_head_sha = Column(String(40), nullable=True)
-    # Mirrors project.yaml's track_data_artifacts (the manifest is the source of truth): when
-    # False, catalog tables + global artifacts are excluded from the git-tracked project.
+    # Mirrors project.yaml (the source of truth); False leaves catalog tables and global artifacts out.
     track_data_artifacts = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
@@ -237,9 +246,7 @@ class FlowRun(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=True)
-    # Copied from FlowRegistration.flow_uuid at run-record creation. Survives the
-    # registration being deleted (registration_id is nulled) so historical runs stay
-    # attributable to the original flow without leaking under a new registration.
+    # Copied from the registration; survives its deletion so old runs stay with the original flow.
     flow_uuid = Column(String(36), nullable=True, index=True)
     flow_name = Column(String, nullable=False)
     flow_path = Column(String, nullable=True)
@@ -257,8 +264,7 @@ class FlowRun(Base):
     flow_snapshot = Column(Text, nullable=True)
     # JSON-serialised node step results
     node_results_json = Column(Text, nullable=True)
-    # Stamped when the run has been evaluated for notifications (NULL = pending evaluation).
-    # Not "a notification was sent" — a run with no matching rule is stamped too.
+    # Set once the run is evaluated for notifications, whether or not one was sent; NULL means pending.
     notification_processed_at = Column(DateTime, nullable=True)
 
 
@@ -364,11 +370,9 @@ class FlowApiKey(Base):
     __tablename__ = "flow_api_keys"
 
     id = Column(Integer, primary_key=True, index=True)
-    # The consumer this key authenticates as. Nullable only so migration 018 can
-    # add-then-backfill; every row carries a consumer_id once 018 has run.
+    # Nullable only for migration 018's add-then-backfill; every row has one once it has run.
     consumer_id = Column(Integer, ForeignKey("api_consumers.id", ondelete="CASCADE"), nullable=True, index=True)
-    # Retained for display / back-compat. A per-flow key sets it to its single endpoint;
-    # not used for authorization (the grant check is the sole gate). Nullable now.
+    # Display and back-compat only (a per-flow key's endpoint); the grant check alone authorizes.
     endpoint_id = Column(Integer, ForeignKey("flow_api_endpoints.id"), nullable=True, index=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     name = Column(String, nullable=False)
@@ -574,8 +578,7 @@ class CatalogTable(Base):  # Pydantic schemas: schemas/catalog_schema.py; interf
     description = Column(Text, nullable=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
-    # Storage: path to the materialized table (Delta directory or legacy Parquet file).
-    # Nullable for optimized virtual tables that have no physical storage.
+    # Delta directory or legacy Parquet file; NULL for optimized virtual tables with no storage.
     file_path = Column(String, nullable=True)
     storage_format = Column(String, nullable=False, default="delta")  # "delta" or "parquet"
 
@@ -588,15 +591,12 @@ class CatalogTable(Base):  # Pydantic schemas: schemas/catalog_schema.py; interf
     # Delta partitioning: JSON array of partition column names (NULL = unpartitioned)
     partition_columns = Column(Text, nullable=True)
 
-    # SCD2 shape (JSON ``Scd2TableConfig``) when the table is maintained by an SCD2 write;
-    # NULL for every other table. Single source of truth for readers — a non-SCD2 write clears it.
+    # JSON Scd2TableConfig of an SCD2-maintained table, the readers' source of truth; other writes clear it.
     scd2_config = Column(Text, nullable=True)
 
     prediction_table_id = Column(Integer, nullable=True)
 
-    # Delta change data feed. ``cdc_enabled`` mirrors the table property; ``cdc_enabled_version``
-    # is the commit version it was enabled at — the floor every cursor is clamped to, because
-    # reads below it are inconsistent.
+    # Delta change data feed; the enabling commit is every cursor's floor (reads below it are inconsistent).
     cdc_enabled = Column(Boolean, nullable=False, default=False, server_default="0")
     cdc_enabled_version = Column(Integer, nullable=True)
 
@@ -607,8 +607,7 @@ class CatalogTable(Base):  # Pydantic schemas: schemas/catalog_schema.py; interf
     # Virtual Table fields (NULL for physical tables)
     table_type = Column(String, nullable=False, default="physical", server_default="physical")
     producer_registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=True)
-    # Cached plan for optimized virtual tables; only local, secret-free plans (a serialized cloud
-    # scan would embed its build-time credentials, so cloud sources are excluded).
+    # Cached plan of an optimized virtual table; never a cloud scan, which would embed its credentials.
     serialized_lazy_frame = Column(LargeBinary, nullable=True)
     is_optimized = Column(Boolean, nullable=True, default=False)
     sql_query = Column(Text, nullable=True)  # SQL definition for query-based virtual tables
@@ -675,8 +674,7 @@ class CatalogVisualization(Base):
     __tablename__ = "catalog_visualizations"
 
     id = Column(Integer, primary_key=True, index=True)
-    # Stable identity for the git-backed project projection (the machine-local ``id`` doesn't
-    # round-trip). Mirrors ``FlowRegistration.flow_uuid``.
+    # Stable identity for the git project projection, since the machine-local id doesn't round-trip.
     viz_uuid = Column(String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
@@ -688,9 +686,7 @@ class CatalogVisualization(Base):
     catalog_table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=True, index=True)
     sql_query = Column(Text, nullable=True)
 
-    # Base64 PNG data URL captured client-side via GraphicWalker's
-    # exportChart('data-url'). Used as a static thumbnail in catalog grids
-    # so we don't have to re-mount the chart per card.
+    # Client-captured base64 PNG, a static grid thumbnail so cards don't re-mount the chart.
     thumbnail_data_url = Column(Text, nullable=True)
 
     namespace_id = Column(Integer, ForeignKey("catalog_namespaces.id"), nullable=True, index=True)
@@ -713,8 +709,7 @@ class CatalogDashboard(Base):
     __tablename__ = "catalog_dashboards"
 
     id = Column(Integer, primary_key=True, index=True)
-    # Stable identity for the git-backed project projection; also what a tile's portable
-    # ``viz_uuid`` reference resolves against. Mirrors ``FlowRegistration.flow_uuid``.
+    # Stable identity for the git project projection, since the machine-local id doesn't round-trip.
     dashboard_uuid = Column(String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
@@ -894,10 +889,7 @@ class AiProviderCredential(Base):
     )
     api_base = Column(String, nullable=True)
     default_model = Column(String, nullable=True)
-    # JSON-encoded list[str] of models the user has curated for this credential
-    # . Decoded at the schema layer in flowfile_core.ai.credentials. Null
-    # or an empty list both mean "no curated list — fall through to the
-    # resolution order".
+    # JSON list[str] of curated models; NULL or empty means none, so the resolution order applies.
     models = Column(Text, nullable=True)
     last_tested_at = Column(DateTime, nullable=True)
     last_test_status = Column(String, nullable=True)  # "ok" | "error"
@@ -962,9 +954,7 @@ class ResourceGrant(Base):
     __tablename__ = "resource_grants"
 
     id = Column(Integer, primary_key=True, index=True)
-    # One of the auth/sharing.py RESOURCE_REGISTRY keys: "secret",
-    # "database_connection", "cloud_connection", "ga_connection",
-    # "kafka_connection", "catalog_namespace", "catalog_table", "flow".
+    # A RESOURCE_REGISTRY key from auth/sharing.py ("secret", "catalog_table", "flow", ...).
     resource_type = Column(String, nullable=False, index=True)
     resource_id = Column(Integer, nullable=False)
     group_id = Column(Integer, ForeignKey("user_groups.id"), nullable=False, index=True)

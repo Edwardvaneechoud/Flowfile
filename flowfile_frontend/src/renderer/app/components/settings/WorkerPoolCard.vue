@@ -13,7 +13,7 @@
           </div>
           <div class="pool-stat__body">
             <div class="pool-stat__value">{{ serviceStatusText }}</div>
-            <div class="pool-stat__label">Worker service</div>
+            <div class="pool-stat__label">Status</div>
           </div>
         </div>
       </el-tooltip>
@@ -72,7 +72,7 @@
         v-if="state && poolEnabled"
         placement="top"
         :show-after="400"
-        content="Node jobs handled by warm processes since the worker service started."
+        content="Node jobs handled by warm processes since the default worker started."
       >
         <div class="pool-stat">
           <div class="pool-stat__icon"><i class="fa-solid fa-clipboard-check"></i></div>
@@ -90,8 +90,8 @@
         <div>
           <h3 class="pool-card-title">Warm worker pool</h3>
           <p class="pool-card-description">
-            Keeps worker processes warm between data nodes, saving startup time. When all of them
-            are busy, extra nodes start fresh processes.
+            Keeps the default worker's processes warm between data nodes, saving startup time. When
+            all of them are busy, extra nodes start fresh processes.
             <br />
             Turn off when you need a clean process on every step to minimize build up memory usage.
           </p>
@@ -119,7 +119,7 @@
         />
         <span class="pool-size-suffix">processes</span>
         <el-tooltip
-          content="Applies immediately to the whole Flowfile instance and persists across restarts."
+          content="Applies immediately to the default worker and persists across restarts."
           placement="top"
           :show-after="400"
         >
@@ -243,7 +243,7 @@ const load = async () => {
     hydrate(next);
     syncSizeInput(next);
   } catch {
-    loadError.value = "Can't reach the worker service. Reconnecting automatically.";
+    loadError.value = "Can't reach the default worker. Reconnecting automatically.";
   } finally {
     loading.value = false;
   }
@@ -285,7 +285,7 @@ const onToggle = (enabled: boolean | string | number) => {
   void apply(enabled ? desiredSize.value : 0);
 };
 
-const serviceTooltip = "Runs all regular data nodes. Checked every 2 seconds.";
+const serviceTooltip = "Whether core can reach the default worker. Checked every 2 seconds.";
 
 const serviceDown = computed(() => loadError.value !== "" || pollMisses.value >= 3);
 const serviceStatusText = computed(() =>

@@ -929,6 +929,22 @@ class TestDefaultNamespace:
             assert parent is not None
             assert parent.name == "General"
 
+    def test_seeded_namespaces_cannot_be_deleted(self):
+        """The General catalog and its default schema are refused; a user catalog's own "default" is not."""
+        init_db()
+        default_id = client.get("/catalog/default-namespace-id").json()
+        with get_db_context() as db:
+            general_id = db.get(CatalogNamespace, default_id).parent_id
+        for ns_id in (default_id, general_id):
+            resp = client.delete(f"/catalog/namespaces/{ns_id}")
+            assert resp.status_code == 422, resp.text
+            assert "relies on it" in resp.json()["detail"]
+        assert client.get("/catalog/default-namespace-id").json() == default_id
+
+        cat = client.post("/catalog/namespaces", json={"name": "Mine"}).json()
+        own = client.post("/catalog/namespaces", json={"name": "default", "parent_id": cat["id"]}).json()
+        assert client.delete(f"/catalog/namespaces/{own['id']}").status_code == 204
+
     def test_default_namespace_idempotent(self):
         """Calling init_db twice should not duplicate the default namespace."""
         init_db()
@@ -2328,7 +2344,7 @@ class TestCrossNamespaceResolution:
 
             captured: dict = {}
 
-            def fake_trigger(query, tables, max_rows, virtual_refs=None):
+            def fake_trigger(query, tables, max_rows, virtual_refs=None, *, worker_url):
                 captured["query"] = query
                 return {
                     "columns": [],
@@ -2505,7 +2521,7 @@ class TestCrossNamespaceResolution:
 
             captured: dict = {}
 
-            def fake_trigger(query, tables, max_rows, virtual_refs=None):
+            def fake_trigger(query, tables, max_rows, virtual_refs=None, *, worker_url):
                 captured["query"] = query
                 captured["tables"] = tables
                 return {
@@ -2703,7 +2719,7 @@ class TestCrossNamespaceResolution:
         with get_db_context() as db:
             self._seed_demo_market_delta(db)  # a queryable table so we reach the worker call
 
-            def fake_trigger(query, tables, max_rows, virtual_refs=None):
+            def fake_trigger(query, tables, max_rows, virtual_refs=None, *, worker_url):
                 return {
                     "columns": [],
                     "dtypes": [],
@@ -2814,6 +2830,19 @@ class TestFriendlyRelationError:
 
     def test_unrelated_error_passthrough(self):
         assert self._f("some parse error", "SELECT 1") == "some parse error"
+
+    def test_whitespace_around_dots_is_dropped(self):
+        out = self._f("relation 'cat' was not found", "SELECT * FROM cat  .\t'main' .  tbl")
+        assert "Table 'cat.main.tbl' was not found" in out
+
+    def test_long_whitespace_run_stays_fast(self):
+        import time
+
+        query = "SELECT * FROM cat." + " " * 50_000 + "x"
+        start = time.perf_counter()
+        out = self._f("relation 'cat' was not found", query)
+        assert time.perf_counter() - start < 1
+        assert "Table 'cat.x' was not found" in out
 
 
 class TestCronSchedules:

@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
+from shared.wire_model import WireModel
+
 if TYPE_CHECKING:
     pass
 
@@ -21,7 +23,7 @@ _BLOCKED_EXTRA_CONFIG_EXACT = frozenset(
 )
 
 
-class KafkaReadSettings(BaseModel):
+class KafkaReadSettings(WireModel):
     """Settings sent from core to worker to consume from a Kafka topic.
 
     Secrets (``sasl_password``, ``ssl_key_pem``) are stored as **encrypted**

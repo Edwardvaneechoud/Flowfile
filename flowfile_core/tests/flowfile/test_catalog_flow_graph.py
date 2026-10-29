@@ -28,12 +28,9 @@ from flowfile_core.database.models import (
     CatalogTableReadLink,
     FlowSchedule,
 )
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import (
     _register_catalog_table,
     _resolve_virtual_table,
-    _scd2_primitive_kwargs,
-    _write_catalog_delta_local,
     add_connection,
 )
 from flowfile_core.schemas import input_schema, transform_schema
@@ -68,18 +65,6 @@ def clean_state():
     _cleanup()
     yield
     _cleanup()
-
-
-# A resolved SCD2 catalog config, the shape _resolve_scd2_config produces.
-_SCD2_CFG = {
-    "business_keys": ["id"],
-    "surrogate_key_column": "sk",
-    "valid_from_column": "valid_from",
-    "valid_to_column": "valid_to",
-    "is_current_column": "is_current",
-    "compare_columns": ["val"],
-    "full_snapshot": False,
-}
 
 
 # Catalog writer tests
@@ -166,7 +151,7 @@ class TestCatalogWriter:
         Exercises flowfile.__main__.run_flow (the non-frozen subprocess path);
         flowfile_core.run_flow_cli.run_flow_cli is an identical mirror for frozen builds.
         """
-        from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+        from flowfile_core.flowfile.execution import registry
 
         ns_id = _create_namespace()
 
@@ -175,9 +160,7 @@ class TestCatalogWriter:
         # run loads from disk before executing.
         graph = _create_graph(execution_location="local")
         _add_manual_input(graph, SAMPLE_DATA, node_id=1)
-        graph.add_node_promise(
-            input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="catalog_writer")
-        )
+        graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="catalog_writer"))
         graph.add_catalog_writer(
             input_schema.NodeCatalogWriter(
                 flow_id=graph.flow_id,
@@ -200,14 +183,14 @@ class TestCatalogWriter:
             resolved_path = str(flow_path.resolve())
             reg_id = _create_flow_registration(ns_id, name="producer_flow", path=resolved_path)
 
-            prev_offload = OFFLOAD_TO_WORKER.value
+            prev_override = registry.default_override()
             prev_env = {k: os.environ.get(k) for k in ("FLOWFILE_SINGLE_FILE_MODE", "FLOWFILE_WORKER_PORT")}
             try:
                 from flowfile.__main__ import run_flow
 
                 exit_code = run_flow(resolved_path, run_id=None)
             finally:
-                OFFLOAD_TO_WORKER.set(prev_offload)
+                registry.set_default_override(prev_override)
                 for key, value in prev_env.items():
                     if value is None:
                         os.environ.pop(key, None)
@@ -886,9 +869,7 @@ class TestSyncCatalogReadLinks:
         table_id = table_out.id
 
         graph = _create_graph()
-        graph.add_node_promise(
-            input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
-        )
+        graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader"))
         reader = input_schema.NodeCatalogReader(
             flow_id=graph.flow_id,
             node_id=1,
@@ -917,15 +898,11 @@ class TestSyncCatalogReadLinks:
 
         with get_db_context() as db:
             svc = CatalogService(SQLAlchemyCatalogRepository(db))
-            table_out = svc.register_table(
-                name="demo_named_table", file_path=tmp.name, owner_id=1, namespace_id=ns_id
-            )
+            table_out = svc.register_table(name="demo_named_table", file_path=tmp.name, owner_id=1, namespace_id=ns_id)
         table_id = table_out.id
 
         graph = _create_graph()
-        graph.add_node_promise(
-            input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader")
-        )
+        graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="catalog_reader"))
         graph.add_catalog_reader(
             input_schema.NodeCatalogReader(
                 flow_id=graph.flow_id,
@@ -1279,113 +1256,6 @@ class TestResolveVirtualTable:
         mock_svc_instance.resolve_virtual_flow_table.assert_called_once_with(
             99, user_id=None, run_location=None, node_logger=None
         )
-
-
-class TestWriteCatalogDeltaLocal:
-    """Test _write_catalog_delta_local helper."""
-
-    def test_write_delta_creates_table_and_returns_metadata(self, tmp_path):
-        """Writing a new Delta table should return metadata with schema, row_count, etc."""
-        df = FlowDataEngine(pl.LazyFrame({"name": ["Alice", "Bob"], "age": [30, 25]}))
-        dest_path = tmp_path / "test_table"
-
-        result, scd2_version = _write_catalog_delta_local(df, dest_path, delta_mode="overwrite", merge_keys=None)
-
-        assert result is not None
-        assert scd2_version is None  # only an scd2 write names a version
-        assert result["row_count"] == 2
-        assert result["column_count"] == 2
-        assert isinstance(result["schema"], list)
-        assert len(result["schema"]) == 2
-        assert result["size_bytes"] > 0
-
-    def test_write_delta_append_mode(self, tmp_path):
-        """Appending to an existing Delta table should return updated metadata."""
-        dest_path = tmp_path / "append_table"
-        df1 = FlowDataEngine(pl.LazyFrame({"x": [1, 2]}))
-        _write_catalog_delta_local(df1, dest_path, delta_mode="overwrite", merge_keys=None)
-
-        df2 = FlowDataEngine(pl.LazyFrame({"x": [3, 4]}))
-        result, _ = _write_catalog_delta_local(df2, dest_path, delta_mode="append", merge_keys=None)
-
-        assert result is not None
-        assert result["row_count"] == 2  # metadata reflects the appended batch
-
-    def test_scd2_initial_load_reports_post_write_shape(self, tmp_path):
-        """The scd2 branch reports the table's own shape, not the input frame's."""
-        df = FlowDataEngine(pl.LazyFrame({"id": [1, 2], "val": ["a", "b"]}))
-        dest_path = tmp_path / "scd2_local"
-
-        result, scd2_version = _write_catalog_delta_local(
-            df,
-            dest_path,
-            delta_mode="scd2",
-            merge_keys=["id"],
-            scd2_kwargs=_scd2_primitive_kwargs(_SCD2_CFG, "2024-01-01T00:00:00+00:00"),
-        )
-
-        assert result is not None
-        assert scd2_version == 0
-        assert result["row_count"] == 2
-        # 2 data columns + the 4 generated ones.
-        assert result["column_count"] == 6
-        assert {c["name"] for c in result["schema"]} == {"id", "val", "sk", "valid_from", "valid_to", "is_current"}
-        assert result["size_bytes"] > 0
-        assert result["scd2_metrics"]["rows_inserted"] == 2
-        assert result["scd2_metrics"]["created"] is True
-
-    def test_scd2_change_closes_and_inserts(self, tmp_path):
-        dest_path = tmp_path / "scd2_local_change"
-        _write_catalog_delta_local(
-            FlowDataEngine(pl.LazyFrame({"id": [1, 2], "val": ["a", "b"]})),
-            dest_path,
-            delta_mode="scd2",
-            merge_keys=["id"],
-            scd2_kwargs=_scd2_primitive_kwargs(_SCD2_CFG, "2024-01-01T00:00:00+00:00"),
-        )
-
-        result, scd2_version = _write_catalog_delta_local(
-            FlowDataEngine(pl.LazyFrame({"id": [1, 2], "val": ["A", "b"]})),
-            dest_path,
-            delta_mode="scd2",
-            merge_keys=["id"],
-            scd2_kwargs=_scd2_primitive_kwargs(_SCD2_CFG, "2024-02-01T00:00:00+00:00"),
-        )
-
-        assert result is not None
-        assert scd2_version == 1
-        assert result["row_count"] == 3
-        assert result["scd2_metrics"] == {
-            "rows_inserted": 1,
-            "rows_closed": 1,
-            "rows_total": 3,
-            "rows_current": 2,
-            "created": False,
-        }
-
-    def test_scd2_unchanged_returns_none(self, tmp_path):
-        """The skip protocol: an unchanged batch returns no metadata, so nothing is re-registered."""
-        dest_path = tmp_path / "scd2_local_skip"
-        frame = pl.LazyFrame({"id": [1], "val": ["a"]})
-        _write_catalog_delta_local(
-            FlowDataEngine(frame),
-            dest_path,
-            delta_mode="scd2",
-            merge_keys=["id"],
-            scd2_kwargs=_scd2_primitive_kwargs(_SCD2_CFG, "2024-01-01T00:00:00+00:00"),
-        )
-
-        result, scd2_version = _write_catalog_delta_local(
-            FlowDataEngine(frame),
-            dest_path,
-            delta_mode="scd2",
-            merge_keys=["id"],
-            scd2_kwargs=_scd2_primitive_kwargs(_SCD2_CFG, "2024-02-01T00:00:00+00:00"),
-        )
-
-        assert result is None
-        # The skip still names the version the writer node reads its output back at.
-        assert scd2_version == 0
 
 
 class TestRegisterCatalogTable:
@@ -1816,9 +1686,7 @@ class TestScd2WriterOutput:
         _add_manual_input(first, SCD2_V1, node_id=1)
         _add_scd2_writer(first, 2, 1, "out_mixed", ns_id)
         _run_graph(first)
-        unchanged_sk_before = (
-            _node_output(first).filter(pl.col("id") == 2)["sk"].item()
-        )
+        unchanged_sk_before = _node_output(first).filter(pl.col("id") == 2)["sk"].item()
 
         # Fed in an order that is neither sorted nor the table's, so "input order" is falsifiable.
         scrambled = [SCD2_V2[2], SCD2_V2[0], SCD2_V2[1]]
@@ -2033,9 +1901,7 @@ class TestScd2WriterOutput:
         assert out["id"].to_list() == [1, 2, 3]
         assert out["sk"].null_count() == 0
         current_sks = set(
-            pl.read_delta(_table_row(ns_id, "out_narrow_key").file_path)
-            .filter(pl.col("is_current"))["sk"]
-            .to_list()
+            pl.read_delta(_table_row(ns_id, "out_narrow_key").file_path).filter(pl.col("is_current"))["sk"].to_list()
         )
         assert set(out["sk"].to_list()) == current_sks
 
@@ -2136,9 +2002,7 @@ class TestScd2WriterDownstream:
 
         graph = _create_graph(flow_id=1, execution_location=execution_location)
         _add_manual_input(graph, SCD2_V1, node_id=1)
-        _add_catalog_writer(
-            graph, node_id=2, depending_on_id=1, table_name="downstream_plain", namespace_id=ns_id
-        )
+        _add_catalog_writer(graph, node_id=2, depending_on_id=1, table_name="downstream_plain", namespace_id=ns_id)
         _add_code_node(graph, 3, 2, "output_df = input_df")
         _run_graph(graph)
 
@@ -2197,8 +2061,9 @@ class TestScd2WriterPreview:
 class TestScd2SettingsValidation:
     """Server-side name allowlist: these four names are generated, and they reach Delta merge SQL."""
 
-    @pytest.mark.parametrize("field", ["surrogate_key_column", "valid_from_column", "valid_to_column",
-                                       "is_current_column"])
+    @pytest.mark.parametrize(
+        "field", ["surrogate_key_column", "valid_from_column", "valid_to_column", "is_current_column"]
+    )
     @pytest.mark.parametrize("bad", ['valid"x', "a b", "a;b", "col)"])
     def test_illegal_characters_are_rejected(self, field, bad):
         with pytest.raises(ValueError, match="may only contain letters"):
@@ -2407,22 +2272,12 @@ class TestCatalogReaderFreshness:
             graph = _create_graph(execution_location="remote")
             node = self._add_reader(graph, table_id, cache_results=True)
 
-            looked_up: list[str] = []
+            graph.run_graph()
+            first_result_id = node.results.result_ref.result_id
+            write_delta(pl.DataFrame({"name": ["Zed"], "age": [99], "city": ["X"]}), delta_path, mode="overwrite")
+            graph.run_graph()
 
-            def fake_results_exists(node_hash: str) -> bool:
-                looked_up.append(node_hash)
-                return True
-
-            with patch(
-                "flowfile_core.flowfile.flow_node.executor.results_exists",
-                side_effect=fake_results_exists,
-            ):
-                graph.run_graph()
-                write_delta(pl.DataFrame({"name": ["Zed"], "age": [99], "city": ["X"]}), delta_path, mode="overwrite")
-                graph.run_graph()
-
-            assert len(looked_up) >= 2
-            assert looked_up[0] != looked_up[-1]
+            assert node.results.result_ref.result_id != first_result_id
 
     def test_pinned_delta_version_never_invalidated(self):
         from shared.delta_utils import write_delta

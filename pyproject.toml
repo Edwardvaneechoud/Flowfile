@@ -133,6 +133,13 @@ optional = true
 [tool.poetry.group.build.dependencies]
 pyinstaller = "^6.11.0"
 
+# The desktop bundle and the Docker images run Polars on its 64-bit index runtime; not in the package metadata.
+[tool.poetry.group.runtime64]
+optional = true
+
+[tool.poetry.group.runtime64.dependencies]
+polars-runtime-64 = "==1.43.2"  # moves with the locked polars version (tools/tests/test_polars_runtime_group.py)
+
 [tool.poetry.group.dev.dependencies]
 mkdocs = "^1.6.1"
 mkdocs-material = "^9.5.46"

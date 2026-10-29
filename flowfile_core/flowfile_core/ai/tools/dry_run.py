@@ -21,12 +21,13 @@ iterating.
 HTTP+execute on a 1-row sample. Acceptable for an agent step that's
 already on a multi-second budget. The cache amortises repeats.
 
-**Sample-row sourcing.** Schema-driven: prefer
-``upstream.data_frame.head(1)`` when the upstream has been
-materialised; fall back to a 1-row null Polars LazyFrame built from
-the upstream's resolved ``predicted_schema`` (which the upstream-tier
-handler always populates for tiers 0–2; tier-3 upstreams cause the
-executor to short-circuit before reaching this module).
+**Sample-row sourcing.** Schema-driven: prefer the upstream's first
+row (``sample(ref, 1)`` on the backend holding it) when the upstream
+has run with its current setup; fall back to a 1-row null Polars
+LazyFrame built from the upstream's resolved ``predicted_schema``
+(which the upstream-tier handler always populates for tiers 0–2;
+tier-3 upstreams cause the executor to short-circuit before reaching
+this module).
 """
 
 from __future__ import annotations
@@ -132,18 +133,24 @@ def _resolve_sample_row(
     upstream_id: int,
     upstream_schemas: dict[int, list[FlowfileColumn]],
 ) -> Any | None:
-    """Return a 1-row sample for the upstream — real ``head(1)`` if materialised,
-    otherwise a null-row LazyFrame built from the resolved schema.
+    """Return a 1-row sample for the upstream — its first row (``sample(ref, 1)``
+    on the backend holding it) if it ran with its current setup, otherwise a
+    null-row LazyFrame built from the resolved schema.
 
     Returns ``None`` if neither path is available (which should not happen if
     the executor honours the upstream-tier handler before calling here)."""
     upstream_node = flow.get_node(upstream_id) if hasattr(flow, "get_node") else None
-    if upstream_node is not None:
-        data_frame = getattr(upstream_node, "data_frame", None)
-        has_run = getattr(upstream_node, "has_run", False)
-        if has_run and data_frame is not None:
+    if upstream_node is not None and upstream_node.node_stats.has_run_with_current_setup:
+        ref = upstream_node.results.result_ref
+        if ref is not None:
+            import io
+
+            import polars as pl
+
+            from flowfile_core.flowfile.execution import registry
+
             try:
-                return data_frame.head(1)
+                return pl.read_ipc_stream(io.BytesIO(registry.backend(ref.backend_id).sample(ref, 1)))
             except Exception:
                 pass
     schema = upstream_schemas.get(upstream_id)
@@ -166,8 +173,7 @@ def _run_kernel_for_dry_run(
     monkey-patch this function directly to avoid Docker. Raises if the kernel
     call fails — the caller (executor) catches and surfaces as a refusal.
     """
-    # Local imports — keep the kernel client off the module's import path.
-    # The kernel client pulls in httpx + the Docker manager.
+    # Local import, keeping the engine off this module's import path.
     from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 
     sample_engine = sample if isinstance(sample, FlowDataEngine) else FlowDataEngine(sample)

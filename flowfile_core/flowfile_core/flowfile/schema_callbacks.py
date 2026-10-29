@@ -6,8 +6,9 @@ from pl_fuzzy_frame_match.pre_process import rename_fuzzy_right_mapping
 from polars import datatypes
 
 from flowfile_core.configs.flow_logger import main_logger
+from flowfile_core.flowfile.execution.context import current_context
+from flowfile_core.flowfile.flow_data_engine.bounded import unique_values
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, PlType
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import fetch_unique_values
 from flowfile_core.schemas import input_schema, transform_schema
 
 if TYPE_CHECKING:
@@ -171,9 +172,7 @@ def calculate_join_schema(
       a `_right` suffix via `auto_rename`.
     """
     if j_input.input.how in ("semi", "anti"):
-        # Semi/anti joins pass the full left input through unchanged and drop the
-        # right side (mirrors FlowDataEngine.join), so the output schema is exactly
-        # the left schema.
+        # Semi/anti joins keep the left input whole and drop the right, as FlowDataEngine.join does.
         return [
             FlowfileColumn.from_input(col.column_name, col.data_type, example_values=col.example_values)
             for col in left_schema
@@ -262,6 +261,12 @@ def pre_calculate_pivot_schema(
     output_fields: list[input_schema.MinimalFieldInfo] = None,
     input_lf: pl.LazyFrame = None,
 ) -> list[FlowfileColumn]:
+    """The predicted columns of a pivot: its index columns, then one column per pivot value and aggregation.
+
+    With ``output_fields`` those are the pivot columns. Otherwise the pivot values are the first 200 distinct values
+    of the pivot column, ascending, as text, read on the current context's backend (``bounded.unique_values``) as
+    ``FlowDataEngine.do_pivot`` reads them.
+    """
     index_columns_schema = [
         get_schema_of_column(node_input_schema, index_col) for index_col in pivot_input.index_columns
     ]
@@ -274,12 +279,15 @@ def pre_calculate_pivot_schema(
 
     else:
         max_unique_vals = 200
-        unique_vals = fetch_unique_values(
-            input_lf.select(pivot_input.pivot_column)
-            .unique()
-            .sort(pivot_input.pivot_column)
-            .limit(max_unique_vals)
+        unique_vals = (
+            unique_values(
+                current_context().backend,
+                input_lf.select(pivot_input.pivot_column),
+                max_unique_vals,
+                column=pivot_input.pivot_column,
+            )
             .cast(pl.String)
+            .to_list()
         )
         if len(unique_vals) >= max_unique_vals:
             main_logger.warning(

@@ -238,7 +238,9 @@ def formula_entry(position: int, fn: transform_schema.FunctionInput) -> FormulaE
     return FormulaEntry(position, fn.field.name, fn.function, cast_target)
 
 
-def apply_formula_entries(lf: pl.LazyFrame, entries: Sequence[FormulaEntry]) -> pl.LazyFrame:
+def apply_formula_entries(
+    lf: pl.LazyFrame, entries: Sequence[FormulaEntry], schema: pl.Schema | None = None
+) -> pl.LazyFrame:
     """Applies entries SEQUENTIALLY, one `with_columns` step per entry.
 
     Entry N sees the base columns plus every column entries 1..N-1 produced — exactly
@@ -255,6 +257,8 @@ def apply_formula_entries(lf: pl.LazyFrame, entries: Sequence[FormulaEntry]) -> 
         lf: The frame the first entry runs against.
         entries: The entries to apply, in evaluation order. Entries with a blank expression
             must already be filtered out by the caller.
+        schema: *lf*'s schema when the caller knows it. Steps are then checked over an empty frame
+            of it, so *lf* itself is never resolved (its plan may scan a file only its backend can read).
 
     Returns:
         The chained frame; *lf* unchanged when *entries* is empty.
@@ -262,16 +266,19 @@ def apply_formula_entries(lf: pl.LazyFrame, entries: Sequence[FormulaEntry]) -> 
     Raises:
         FormulaEntryError: Naming the failing entry's position and output column.
     """
+    checked = lf if schema is None else pl.LazyFrame(schema=schema)
     for entry in entries:
         if not entry.output_name.strip():
             raise FormulaEntryError(entry.position, "", "output column name is empty", "config")
         expr = build_expression(entry)
         if entry.output_data_type is not None:
             expr = expr.cast(entry.output_data_type)
-        before = lf
-        lf = lf.with_columns(expr.alias(entry.output_name))
+        step = expr.alias(entry.output_name)
+        before = checked
+        lf = lf.with_columns(step)
+        checked = lf if schema is None else checked.with_columns(step)
         try:
-            lf.collect_schema()
+            checked.collect_schema()
         except pl.exceptions.PolarsError as e:
             schema_before = before.collect_schema()
             raise classify_polars_error(entry, e, schema_before.names(), dict(schema_before)) from e

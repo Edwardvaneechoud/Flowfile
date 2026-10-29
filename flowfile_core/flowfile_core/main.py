@@ -9,6 +9,12 @@ import sys
 import threading
 from contextlib import asynccontextmanager
 
+# Frozen builds re-enter this file for multiprocessing helpers (the resource tracker): divert them first.
+if __name__ == "__main__":
+    import multiprocessing
+
+    multiprocessing.freeze_support()
+
 # Headless run child: dispatch before the router imports and the storage sweep below.
 if __name__ == "__main__" and "--run-flow" in sys.argv:
     from flowfile_core.run_flow_cli import main as _run_flow_main
@@ -16,8 +22,11 @@ if __name__ == "__main__" and "--run-flow" in sys.argv:
     sys.exit(_run_flow_main(sys.argv))
 
 import uvicorn
-from fastapi import BackgroundTasks, FastAPI
+from fastapi import BackgroundTasks, FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from flowfile_core import change_feed
 from flowfile_core import telemetry as core_telemetry
@@ -28,11 +37,9 @@ from flowfile_core.configs.access_log import install_access_log_redaction
 from flowfile_core.configs.settings import (
     SERVER_HOST,
     SERVER_PORT,
-    WORKER_HOST,
-    WORKER_PORT,
-    WORKER_URL,
 )
 from flowfile_core.events import publish
+from flowfile_core.flowfile.execution import registry as compute_registry
 from flowfile_core.kernel import router as kernel_router
 from flowfile_core.lsp.admin_routes import router as lsp_admin_router
 from flowfile_core.lsp.routes import router as lsp_router
@@ -45,6 +52,7 @@ from flowfile_core.routes.cloud_connections import router as cloud_connections_r
 from flowfile_core.routes.cloud_delta import router as cloud_delta_router
 from flowfile_core.routes.community_github import router as community_github_router
 from flowfile_core.routes.community_nodes import router as community_nodes_router
+from flowfile_core.routes.compute_backends import router as compute_backends_router
 from flowfile_core.routes.converters import router as converters_router
 from flowfile_core.routes.custom_node_mounts import router as custom_node_mounts_router
 from flowfile_core.routes.file_manager import router as file_manager_router
@@ -63,6 +71,7 @@ from flowfile_core.routes.secrets import router as secrets_router
 from flowfile_core.routes.shares import router as shares_router
 from flowfile_core.routes.storage_browser import router as storage_browser_router
 from flowfile_core.routes.system_backups import router as system_backups_router
+from flowfile_core.routes.system_exchange import router as system_exchange_router
 from flowfile_core.routes.system_worker import router as system_worker_router
 from flowfile_core.routes.telemetry import router as telemetry_router
 from flowfile_core.routes.user_defined_components import router as user_defined_components_router
@@ -94,8 +103,7 @@ async def shutdown_handler(app: FastAPI):
 
     print("Starting core application...")
 
-    # Mint the kernel<->core token before anything can spawn a CLI child: an
-    # unstamped env makes the child mint its own and 401 on kernel callbacks.
+    # Mint the internal token before any CLI child spawns, else it mints its own and 401s on callbacks.
     try:
         from flowfile_core.auth.jwt import get_internal_token
 
@@ -103,8 +111,7 @@ async def shutdown_handler(app: FastAPI):
     except ValueError as exc:
         logging.getLogger(__name__).warning("Internal service token unavailable: %s", exc)
 
-    # Runs whose process died with the last app instance would otherwise stay "active"
-    # forever and block every relaunch. Best-effort; must never fail startup.
+    # Runs whose process died would stay "active" and block every relaunch; must never fail startup.
     try:
         reaped = reap_orphaned_runs()
         if reaped:
@@ -128,8 +135,7 @@ async def shutdown_handler(app: FastAPI):
         set_scheduler(scheduler)
         print("Flow scheduler started")
 
-    # Warm the kernel manager off the request path: its first construction makes
-    # slow Docker daemon calls that would otherwise land on the first /kernels/.
+    # Off the request path: the kernel manager's first construction makes slow Docker daemon calls.
     if os.environ.get("FLOWFILE_KERNEL_WARMUP", "1").lower() in ("true", "1", "yes"):
         threading.Thread(target=_warm_kernel_manager, name="kernel-manager-warmup", daemon=True).start()
 
@@ -192,11 +198,15 @@ app = FastAPI(
     lifespan=shutdown_handler,
 )
 
-# The Tauri 2 desktop shell loads the renderer from a custom protocol — the
-# exact origin differs per OS (`tauri://localhost` on macOS/iOS, `http://tauri.localhost`
-# on Linux, `https://tauri.localhost` on Windows/Android). A regex covers all
-# of them without us having to enumerate. The explicit list below stays for
-# the web/Docker/dev flows that hit the backend over plain HTTP.
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_without_input(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """FastAPI's 422 without each error's ``input``, which repeats the request body (a token, a secret's value)."""
+    errors = [{key: value for key, value in error.items() if key != "input"} for error in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
+
+# Web, Docker and dev origins; the regex below matches the Tauri shell's per-OS origins.
 origins = [
     "http://localhost",
     "http://localhost:5173",
@@ -255,12 +265,13 @@ app.include_router(notebook_router, prefix="/notebook", tags=["notebook"])
 install_notebook_runner()
 app.include_router(telemetry_router)
 app.include_router(ai_router, prefix="/ai", tags=["ai"])
-# Feature-flag admin endpoints. Mounted on /system (NOT /ai or /lsp) so admins can flip
-# a gate from the UI without first satisfying the gate they're trying to flip.
+# On /system, not /ai or /lsp, so an admin can flip a feature gate without passing it first.
 app.include_router(ai_admin_router, prefix="/system", tags=["system"])
 app.include_router(lsp_admin_router, prefix="/system", tags=["system"])
 app.include_router(system_worker_router, prefix="/system", tags=["system"])
 app.include_router(system_backups_router, prefix="/system", tags=["system"])
+app.include_router(system_exchange_router, prefix="/system", tags=["system"])
+app.include_router(compute_backends_router, tags=["compute_backends"])
 
 core_telemetry.install(app)
 
@@ -315,7 +326,9 @@ def run(host: str = None, port: int = None):
     """Runs the FastAPI application using Uvicorn.
 
     This function configures and starts the Uvicorn server, setting up
-    signal handlers to ensure a graceful shutdown.
+    signal handlers to ensure a graceful shutdown. It first marks the process
+    as serving (``registry.mark_serving``), so its compute is never the worker
+    embedded in it.
 
     Args:
         host: The host to bind the server to. Defaults to `SERVER_HOST` from settings.
@@ -323,12 +336,16 @@ def run(host: str = None, port: int = None):
     """
     global server_instance
 
+    compute_registry.mark_serving()
     if host is None:
         host = SERVER_HOST
     if port is None:
         port = SERVER_PORT
     print(f"Starting server on {host}:{port}")
-    print(f"Worker configured at {WORKER_URL} (host: {WORKER_HOST}, port: {WORKER_PORT})")
+    print(
+        f"Compute backend {compute_registry.default_backend_id()!r}; "
+        f"worker configured at {compute_registry.worker_url()}"
+    )
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)

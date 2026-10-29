@@ -1,10 +1,11 @@
 """Warm process pool for worker task execution.
 
-Opt-in via ``FLOWFILE_WORKER_POOL_SIZE`` (int, default ``0`` = off): keeps up to N
-spawned children alive between tasks so each task skips the interpreter boot and
-import chain (~0.2s on macOS, ~0.4-0.7s on Windows). The wire protocol, the funcs
-task signatures, and the spawn-per-task path are untouched - when the pool is off,
-saturated, or the operation is not poolable, callers fall back to today's spawn.
+On by default with ``default_pool_size()`` members; ``FLOWFILE_WORKER_POOL_SIZE``
+(int, ``0`` = off) overrides it. It keeps up to N spawned children alive between
+tasks so each task skips the interpreter boot and import chain (~0.2s on macOS,
+~0.4-0.7s on Windows). The wire protocol, the funcs task signatures, and the
+spawn-per-task path are untouched - when the pool is off, saturated, or the
+operation is not poolable, callers fall back to today's spawn.
 
 Lifecycle rules:
 
@@ -17,6 +18,11 @@ Lifecycle rules:
 - Members are disposed outside the pool lock; only bookkeeping happens inside.
 - An idle-TTL reaper drains the pool to zero when unused, so an idle desktop does
   not keep warm interpreters around.
+- ``POOLABLE_OPERATIONS`` leaves out ops that run user Python (custom nodes,
+  ``polars_code``), since a patched global would outlive the task. ``sql_query``
+  runs none, only Polars' SQL translation. Also left out: fuzzy (started by its
+  own helper, never leased), train/apply model (allocator footprints) and the ``generic_task``
+  connectors (state not audited).
 
 Every pool child imports this module (it holds ``member_loop``), so module-level
 imports must stay light: no models/pydantic, no funcs, no polars.
@@ -25,7 +31,6 @@ imports must stay light: no models/pydantic, no funcs, no polars.
 
 import os
 import queue as _queue
-import sys
 import threading
 from dataclasses import dataclass, field
 from multiprocessing import Process
@@ -38,14 +43,14 @@ from flowfile_worker import mp_context
 from flowfile_worker.configs import logger
 from shared.storage_config import storage
 
-# Ops dispatched via spawner.start_process / streaming that are safe to reuse a
-# child for. Deliberately excluded: custom nodes (exec user code - never pool),
-# fuzzy (positional-arg spawn + heavy pl_fuzzy_frame_match import), train/apply
-# model (huge allocator footprints), generic_task connectors (state not audited).
+# Ops safe to reuse a child for; the module docstring says what is left out.
 POOLABLE_OPERATIONS = frozenset(
     {
         "store",
         "store_sample",
+        "submit_result",
+        "export_result",
+        "split_result",
         "calculate_schema",
         "calculate_number_of_records",
         "write_output",
@@ -55,6 +60,7 @@ POOLABLE_OPERATIONS = frozenset(
         "write_delta",
         "merge_delta",
         "scd2_delta",
+        "sql_query",
     }
 )
 
@@ -327,11 +333,7 @@ class TaskPool:
             target=member_loop,
             args=(task_q, result_q, progress, error_message),
             name="flowfile-pool-member",
-            # Daemonic: multiprocessing's atexit TERMINATES daemons but JOINS
-            # non-daemons, and an idle member blocks in task_q.get() forever -
-            # a process that never ran the lifespan shutdown (pytest, embedding)
-            # would hang at interpreter exit. Poolable funcs spawn no children,
-            # so the daemon no-children restriction cannot bite.
+            # atexit joins non-daemons, and an idle member blocks in task_q.get() forever.
             daemon=True,
         )
         process.start()
@@ -351,8 +353,7 @@ class TaskPool:
         process = member.process
         if process.is_alive():
             try:
-                # Non-blocking: a wedged member that never consumed its task leaves the
-                # maxsize=1 queue full, and a blocking put would hang this thread.
+                # A wedged member leaves the maxsize=1 queue full, so a blocking put would hang.
                 member.task_q.put_nowait(None)
                 process.join(timeout=_DISPOSE_JOIN_TIMEOUT)
             except _queue.Full:
@@ -415,12 +416,12 @@ def _int_env(name: str, default: int) -> int:
 
 
 def default_pool_size() -> int:
-    """Platform default when neither the env var nor a saved UI setting exists.
+    """The size when neither the env var nor a saved UI setting exists: four members on every platform.
 
-    Windows pays 0.4-0.7s (desktop) to 11s+ (CI runners) per spawn, so the pool
-    is on by default there; elsewhere spawn is cheap enough to stay opt-in.
+    Every spawn pays the interpreter boot and import chain, ~0.2s on macOS and 0.4-0.7s (desktop) to 11s+
+    (CI runners) on Windows, and a previewed or stored node spawns one per submit.
     """
-    return 4 if sys.platform == "win32" else 0
+    return 4
 
 
 def _settings_file() -> Path:

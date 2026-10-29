@@ -78,6 +78,54 @@
 
           <div class="setting-group">
             <div class="setting-header">
+              <span class="setting-title">Compute backend</span>
+              <span class="setting-description">
+                Where this node runs. Auto runs it on the flow's backend; another backend is used
+                when an exchange store is configured, its data crossing through the store. When the
+                backend it is set to cannot run it, it runs on the default backend instead.
+              </span>
+            </div>
+            <div class="execution-location-row">
+              <el-select
+                v-model="localSettings.execution_location"
+                fit-input-width
+                aria-label="Compute backend"
+                data-testid="node-execution-location"
+                class="execution-location-select"
+                size="small"
+                @change="handleSettingChange"
+              >
+                <el-option
+                  v-for="option in locationOptions"
+                  :key="option.key"
+                  :value="option.key"
+                  :label="option.label"
+                />
+              </el-select>
+              <router-link
+                :to="{ name: 'compute', query: { tab: 'backends' } }"
+                class="manage-backends-link"
+              >
+                Manage backends
+              </router-link>
+            </div>
+            <p
+              v-if="placementNote"
+              :class="['placement-note', `placement-note--${placementNote.kind}`]"
+              data-testid="node-placement-note"
+            >
+              {{ placementNote.detail }}
+            </p>
+            <BackendHandshakeStatus
+              v-if="selectedBackend?.verdict"
+              :key="selectedBackend.id"
+              :verdict="selectedBackend.verdict"
+              compact
+            />
+          </div>
+
+          <div class="setting-group">
+            <div class="setting-header">
               <span class="setting-title">Node Reference</span>
               <div class="setting-description-wrapper">
                 <span class="setting-description">
@@ -282,12 +330,17 @@
 
 <script lang="ts" setup generic="T extends NodeBase">
 /* eslint-disable no-undef */
-import { computed, ref, watch, reactive } from "vue";
+import { computed, onMounted, ref, watch, reactive } from "vue";
 import type { NodeBase, OutputFieldConfig } from "./nodeInput";
 import { useNodeStore } from "../../../stores/node-store";
 import { useFlowStore } from "../../../stores/flow-store";
+import { useResultsStore } from "../../../stores/results-store";
+import { nodePlacementNote } from "../../../utils/placement";
 import { InfoFilled, DCaret, Delete } from "@element-plus/icons-vue";
 import AiInlineActions from "../../../features/ai/AiInlineActions.vue";
+import { listComputeBackends } from "../../../api/computeBackends.api";
+import { nodeExecutionLocationOptions, type BackendRow } from "../../../utils/executionLocation";
+import BackendHandshakeStatus from "../../settings/BackendHandshakeStatus.vue";
 
 const nodeStore = useNodeStore();
 const flowStore = useFlowStore();
@@ -361,10 +414,41 @@ watch(activeTab, (newTab, oldTab) => {
   }
 });
 
-const localSettings = ref<Pick<NodeBase, "cache_results" | "description" | "node_reference">>({
+const localSettings = ref<
+  Pick<NodeBase, "cache_results" | "description" | "node_reference" | "execution_location">
+>({
   cache_results: props.modelValue?.cache_results ?? false,
   description: props.modelValue?.description ?? "",
   node_reference: props.modelValue?.node_reference ?? "",
+  execution_location: props.modelValue?.execution_location ?? "auto",
+});
+
+// A listing that fails leaves auto, worker and the node's own value.
+const backendRows = ref<BackendRow[]>([]);
+onMounted(async () => {
+  try {
+    backendRows.value = await listComputeBackends();
+  } catch {
+    backendRows.value = [];
+  }
+});
+const locationOptions = computed(() =>
+  nodeExecutionLocationOptions(localSettings.value.execution_location ?? "auto", backendRows.value),
+);
+const selectedBackend = computed(() =>
+  backendRows.value.find((backend) => backend.id === localSettings.value.execution_location),
+);
+
+// Core's preview reads the saved setting, so the note waits while another backend is picked but not saved.
+const resultsStore = useResultsStore();
+const placementNote = computed(() => {
+  const saved = props.modelValue?.execution_location ?? "auto";
+  if ((localSettings.value.execution_location ?? "auto") !== saved) return null;
+  return nodePlacementNote(
+    resultsStore.placements[flowStore.flowId],
+    props.modelValue.node_id,
+    saved !== "auto",
+  );
 });
 
 const outputFieldConfig = reactive<OutputFieldConfig>(
@@ -384,6 +468,7 @@ watch(
         cache_results: newValue.cache_results,
         description: newValue.description ?? "",
         node_reference: newValue.node_reference ?? "",
+        execution_location: newValue.execution_location ?? "auto",
       };
 
       if (newValue.output_field_config) {
@@ -400,6 +485,7 @@ const handleSettingChange = () => {
     cache_results: localSettings.value.cache_results,
     description: localSettings.value.description,
     node_reference: localSettings.value.node_reference,
+    execution_location: localSettings.value.execution_location,
     output_field_config: outputFieldConfig.enabled ? outputFieldConfig : null,
   });
 };
@@ -697,6 +783,43 @@ const loadFieldsFromSchema = async () => {
 
 .setting-description {
   flex-grow: 1;
+}
+
+.execution-location-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.execution-location-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.manage-backends-link {
+  font-size: 0.8rem;
+  color: var(--el-color-primary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.manage-backends-link:hover {
+  text-decoration: underline;
+}
+
+.placement-note {
+  margin: 0.5rem 0 0;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  white-space: pre-line;
+  border-left: 3px solid var(--el-color-warning);
+  color: var(--el-text-color-regular);
+}
+
+.placement-note--refused {
+  border-left-color: var(--el-color-danger);
 }
 
 .validation-error {

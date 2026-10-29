@@ -171,15 +171,13 @@ def test_env_var_parsing(monkeypatch: pytest.MonkeyPatch, env_value: str, expect
     module after setting the env var to observe the resolution rule used in
     production startup."""
     monkeypatch.setenv("FEATURE_FLAG_AI", env_value)
+    before = dict(vars(core_settings))
     importlib.reload(core_settings)
     try:
         assert bool(core_settings.FEATURE_FLAG_AI) is expected
     finally:
-        # Restore the test fixture's "on" baseline so subsequent tests see
-        # the autouse contract. Any module that did `from ... import
-        # FEATURE_FLAG_AI` is now holding a stale reference, but the AI
-        # tests use ``settings.FEATURE_FLAG_AI`` (live attribute lookup),
-        # so the autouse teardown re-flips on the new instance.
+        # The reload rebound every setting object; put back the ones the process holds, flag on as the fixture expects.
+        vars(core_settings).update(before)
         core_settings.FEATURE_FLAG_AI.set(True)
 
 

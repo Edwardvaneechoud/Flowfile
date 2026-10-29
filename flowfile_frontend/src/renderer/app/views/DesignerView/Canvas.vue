@@ -1392,6 +1392,13 @@ onMounted(() => {
     },
   );
 
+  // Every edit, a flow load and a Flow Settings change bump the version: re-read where each node runs.
+  watch(
+    () => editorStore.graphVersion,
+    () => flowStore.fetchPlacement(),
+    { immediate: true },
+  );
+
   // The node sent to the flow's Data window changed, or was sent again: tell the window.
   watch(
     () => drawerStore.popoutPreview[flowStore.flowId]?.token,

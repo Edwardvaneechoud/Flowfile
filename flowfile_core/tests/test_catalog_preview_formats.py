@@ -22,10 +22,10 @@ def catalog():
                 service.delete_table(table.id)
 
 
-@pytest.mark.parametrize("worker_failure", [False, True])
+@pytest.mark.parametrize("worker_selected", [False, True])
 @pytest.mark.parametrize("version,row_count", [(0, 7), (1, 11)])
 def test_historical_preview_counts_selected_snapshot(
-    catalog, tmp_path, monkeypatch, worker_failure, version, row_count
+    catalog, tmp_path, monkeypatch, worker_selected, version, row_count
 ):
     path = tmp_path / "history"
     for snapshot, count in enumerate([7, 11, 3]):
@@ -39,8 +39,8 @@ def test_historical_preview_counts_selected_snapshot(
         row_count=999,
         size_bytes=0,
     )
-    monkeypatch.setattr(previews, "_should_offload", lambda: worker_failure)
-    worker = Mock(side_effect=RuntimeError("worker unavailable"))
+    monkeypatch.setattr(previews, "uses_worker", lambda: worker_selected)
+    worker = Mock(side_effect=AssertionError("External local paths must not be sent to the worker"))
     monkeypatch.setattr(previews, "trigger_delta_version_preview", worker)
 
     preview = catalog.get_table_preview(table.id, limit=2, version=version)
@@ -48,10 +48,7 @@ def test_historical_preview_counts_selected_snapshot(
     assert preview.columns == ["snapshot"]
     assert preview.rows == [[version], [version]]
     assert preview.total_rows == row_count
-    if worker_failure:
-        worker.assert_called_once_with("history", version, 2, storage=None)
-    else:
-        worker.assert_not_called()
+    worker.assert_not_called()
 
 
 @pytest.mark.parametrize("row_count", [0, 7])
@@ -59,7 +56,7 @@ def test_historical_preview_counts_selected_snapshot(
 def test_registered_parquet_preview_reads_current_file(catalog, tmp_path, monkeypatch, row_count, limit):
     path = tmp_path / "legacy.parquet"
     pl.DataFrame({"value": [1, 2, 3]}).write_parquet(path)
-    monkeypatch.setattr(tables, "_should_offload", lambda: False)
+    monkeypatch.setattr(tables, "uses_worker", lambda: False)
     table = catalog.register_table_from_parquet(name="preview_format_parquet", parquet_path=str(path), owner_id=1)
     assert catalog.repo.get_table(table.id).storage_format == "parquet"
     assert table.row_count == 3

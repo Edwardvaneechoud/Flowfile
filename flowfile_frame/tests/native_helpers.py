@@ -7,11 +7,12 @@ from typing import Any
 
 import yaml
 
+from flowfile_core.configs import settings
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 
-ROUND_TRIP_KEYS = ("nodes", "flowfile_settings", "groups", "comments")
+ROUND_TRIP_KEYS = ("nodes", "groups", "comments")
 
 
 def core_node(placed: Any) -> FlowNode:
@@ -31,6 +32,11 @@ def handle_into(target: Any, source_id: int) -> str:
 def round_trip(frame: Any, file_name: str) -> tuple[FlowGraph, dict]:
     """Save ``frame``'s graph, open it, save it again, and assert both YAML documents agree.
 
+    A frame graph is saved ``local``. An opened file's ``local`` loads as ``auto`` with ``FLOWFILE_COMPUTE_PROTOCOL``
+    on, so the reopened graph and the second document say ``auto`` with the flag on and ``local`` with it off; every
+    other setting is equal. The reopened graph is then set ``local``, so a test that runs it runs in this process, as
+    a headless run with no backend named does.
+
     Returns the reopened graph and the first saved document.
     """
     with tempfile.TemporaryDirectory() as first_dir, tempfile.TemporaryDirectory() as second_dir:
@@ -43,6 +49,14 @@ def round_trip(frame: Any, file_name: str) -> tuple[FlowGraph, dict]:
             first_doc = yaml.safe_load(f)
         with open(second, encoding="utf-8") as f:
             second_doc = yaml.safe_load(f)
+    reopened_on = "auto" if settings.FLOWFILE_COMPUTE_PROTOCOL else "local"
+    first_settings = dict(first_doc["flowfile_settings"])
+    second_settings = dict(second_doc["flowfile_settings"])
+    assert first_settings.pop("execution_location") == "local"
+    assert reopened.execution_location == reopened_on
+    assert second_settings.pop("execution_location") == reopened_on
+    assert first_settings == second_settings, "flowfile_settings"
     for key in ROUND_TRIP_KEYS:
         assert first_doc[key] == second_doc[key], key
+    reopened.execution_location = "local"
     return reopened, first_doc
