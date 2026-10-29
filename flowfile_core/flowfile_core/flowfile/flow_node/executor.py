@@ -149,6 +149,7 @@ class NodeExecutor:
         node_logger: NodeLogger = None,
         unreachable: Exception | None = None,
         running: Collection[int | str] | None = None,
+        preview: bool | None = None,
     ) -> None:
         """
         Main execution entry point.
@@ -173,6 +174,8 @@ class NodeExecutor:
                 nothing is decided or sent.
             running: The ids of the nodes this run executes, which ``hints_for`` counts the consumers among;
                 ``None`` counts every consumer.
+            preview: Fill the 100-row grid even when *performance_mode* sends no ``preview_rows``, by a ``sample``
+                on first read; ``None`` means ``not performance_mode``. A ``cache_results`` node always fills it.
         """
         if node_logger is None:
             raise ValueError("node_logger is required")
@@ -203,6 +206,7 @@ class NodeExecutor:
 
         # A cache_results node keeps its example data even in Performance mode.
         effective_performance_mode = performance_mode and not self.node.node_settings.cache_results
+        grid = (preview if preview is not None else not performance_mode) or not effective_performance_mode
 
         if decision.reason == InvalidationReason.SOURCE_FILE_CHANGED:
             # A backend keys results by node hash, which a source change does not rotate.
@@ -218,7 +222,7 @@ class NodeExecutor:
 
         try:
             self._raise_on_invalid_expression()
-            self.node._do_execute(hints, effective_performance_mode, node_logger)
+            self.node._do_execute(hints, grid, node_logger)
             if self.node.results.resulting_data is not None:
                 state.result_schema = self.node.results.resulting_data.schema
             if self.node.results.errors is None and not self.node.node_stats.is_canceled:
@@ -234,7 +238,7 @@ class NodeExecutor:
                 state.reset_results_only()
                 self._sync_state_to_legacy(state)
                 return
-            self._handle_error(state, e, effective_performance_mode, retry, node_logger, running)
+            self._handle_error(state, e, effective_performance_mode, retry, node_logger, running, preview)
 
     def _raise_on_invalid_expression(self) -> None:
         """Fail a formula/advanced-filter node whose expression cannot run against its input.
@@ -422,14 +426,15 @@ class NodeExecutor:
         retry: bool,
         node_logger: NodeLogger,
         running: Collection[int | str] | None = None,
+        preview: bool | None = None,
     ) -> None:
         """Handle execution errors with retry logic.
 
-        With ``retry`` set, a Polars missing-file error reruns the node's inputs, then the node once. With
-        ``settings.FLOWFILE_COMPUTE_PROTOCOL`` off the message alone is enough, the results being core's own files.
-        With it on, an input must also hold a result that is gone (``NodeResults.artifact_is_missing``). Otherwise
-        the error is the node's own and the inputs' results are kept. An input reruns on the backend that holds its
-        result for its current setup (``FlowNode.held_result``), else where the node runs.
+        With ``retry`` set, a Polars missing-file error reruns the node's inputs, then the node once with *preview*.
+        With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` off the message alone is enough, the results being core's own
+        files. With it on, an input must also hold a result that is gone (``NodeResults.artifact_is_missing``).
+        Otherwise the error is the node's own and the inputs' results are kept. An input reruns on the backend that
+        holds its result for its current setup (``FlowNode.held_result``), else where the node runs.
         """
         error_str = str(error)
         state.mark_failed(error_str)
@@ -475,6 +480,7 @@ class NodeExecutor:
                 retry=False,
                 node_logger=node_logger,
                 running=running,
+                preview=preview,
             )
             return
 

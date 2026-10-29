@@ -502,11 +502,12 @@ class ExecutionMixin(GraphMixinBase):
             try:
                 with use_context(context), node_parameters_resolved(flow_node):
                     flow_node.execute_node(
-                        performance_mode=performance_mode,
+                        performance_mode=performance_mode or self.flow_settings.execution_mode == "Performance",
                         node_logger=node_logger,
                         reset_cache=reset_cache,
                         unreachable=unreachable,
                         running=frozenset(node.node_id for node in stage.nodes),
+                        preview=not performance_mode,
                     )
             finally:
                 _release_boundary_inputs(flow_node, edges_into)

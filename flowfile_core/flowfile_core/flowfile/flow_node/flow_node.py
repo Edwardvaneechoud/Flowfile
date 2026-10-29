@@ -1815,11 +1815,11 @@ class FlowNode:
         escalated_file.set_absolute_filepath()
         return FlowDataEngine.create_from_path(escalated_file)
 
-    def _do_execute(self, hints: SubmitHints, performance_mode: bool, node_logger: NodeLogger) -> None:
+    def _do_execute(self, hints: SubmitHints, preview: bool, node_logger: NodeLogger) -> None:
         """Builds this node's plan and submits it to the run's backend, which holds the result by its policy.
 
         The held result becomes ``results.resulting_data`` through ``plan_for``. The preview is the backend's
-        inline sample, else (outside Performance mode) a sample read when first opened.
+        inline sample, else (with *preview*) a sample read when first opened.
 
         - A ``cache_results`` node whose stored result the backend still holds reads it back instead.
         - A node holding no result under its hash on this backend first releases what it holds, so a rerun under
@@ -1839,14 +1839,14 @@ class FlowNode:
         if held is None:
             self.release_result()
         if self.node_settings.cache_results and held is not None and held.state == "materialised":
-            if self._read_stored_result(backend, held, performance_mode, node_logger):
+            if self._read_stored_result(backend, held, preview, node_logger):
                 return
 
         engine = self.get_resulting_data()
         if engine is None:
             raise RemoteExecutionError("get_resulting_data returned None")
         result = self._submit(backend, engine, hints, node_logger)
-        self._take_result(backend, result, engine, hints.preview_rows, performance_mode)
+        self._take_result(backend, result, engine, hints.preview_rows, preview)
         if self._boundary_inputs:
             try:
                 self._store_other_outputs(backend, hints, node_logger)
@@ -1884,7 +1884,7 @@ class FlowNode:
             )
 
     def _read_stored_result(
-        self, backend: ComputeBackend, ref: ResultRef, performance_mode: bool, node_logger: NodeLogger
+        self, backend: ComputeBackend, ref: ResultRef, preview: bool, node_logger: NodeLogger
     ) -> bool:
         """Takes the stored result ``ref`` as this run's result; False when it cannot be read back.
 
@@ -1895,7 +1895,7 @@ class FlowNode:
             return False
         handle = self.results.job_handle or JobHandle(backend.id, ref.result_id)
         try:
-            self._take_result(backend, SubmitResult(ref=ref, sample=None, handle=handle), None, None, performance_mode)
+            self._take_result(backend, SubmitResult(ref=ref, sample=None, handle=handle), None, None, preview)
         except Exception:
             node_logger.warning("Failed to read the cache, rerunning the code")
             return False
@@ -1980,7 +1980,7 @@ class FlowNode:
         result: SubmitResult,
         engine: FlowDataEngine | None,
         preview_rows: int | None,
-        performance_mode: bool,
+        preview: bool,
     ) -> None:
         """Holds ``result`` and makes it this node's resulting data and preview.
 
@@ -2003,7 +2003,7 @@ class FlowNode:
         if result.sample is not None:
             table = _arrow_table(result.sample)
             self.results.example_data_generator = lambda: table
-        elif not performance_mode:
+        elif preview:
             self.results.example_data_generator = _sample_on_read(backend, ref, preview_rows or DEFAULT_PREVIEW_ROWS)
         if ref.state == "deferred" and not self.node_settings.streamable:
             for step in self.leads_to_nodes:
@@ -2062,6 +2062,7 @@ class FlowNode:
         node_logger: NodeLogger | None = None,
         unreachable: Exception | None = None,
         running: Collection[int | str] | None = None,
+        preview: bool | None = None,
     ) -> None:
         """Execute the node based on its current state and settings.
 
@@ -2080,6 +2081,7 @@ class FlowNode:
                 and nothing runs.
             running: The ids of the nodes the run executes, among which the hints count this node's consumers
                 (``executor.hints_for``); ``None`` counts every consumer.
+            preview: Fill the 100-row grid; ``None`` means ``not performance_mode``.
         """
         if node_logger is None:
             raise ValueError("node_logger is required")
@@ -2094,6 +2096,7 @@ class FlowNode:
             node_logger=node_logger,
             unreachable=unreachable,
             running=running,
+            preview=preview,
         )
 
     def needs_reset(self) -> bool:

@@ -43,7 +43,7 @@ from flowfile_core.flowfile.flow_node.executor import (
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from shared.compute_protocol import WorkerLocation
 from shared.storage_config import storage
-from tests.conftest import closed_url, protocol_states
+from tests.conftest import Call, closed_url, protocol_states, spy
 from typing import Literal
 
 
@@ -546,6 +546,141 @@ class TestHintsByNodeType:
         assert hints_for(remote.get_node(2), remote.execution_context, False) == hints_for(
             local.get_node(2), local.execution_context, False
         )
+
+
+def create_graph_with_csv_read(tmp_path: Path, flow_id: int, execution_mode: ExecutionModeLit,
+                               execution_location: ExecutionLocationLit = "local", rows: int = 250) -> FlowGraph:
+    """A csv read (node 1) of ``rows`` rows ``{"id": i, "val": f"v{i}"}``: wide, as a read has no narrow default."""
+    path = tmp_path / "rows.csv"
+    path.write_text("id,val\n" + "".join(f"{i},v{i}\n" for i in range(rows)))
+    graph = create_graph(execution_mode=execution_mode, flow_id=flow_id, execution_location=execution_location)
+    add_node_promise(graph, "read", node_id=1)
+    graph.add_read(
+        input_schema.NodeRead(
+            flow_id=flow_id,
+            node_id=1,
+            received_file=input_schema.ReceivedTable(name="rows.csv", path=str(path), file_type="csv"),
+        )
+    )
+    return graph
+
+
+def _submitted_preview_rows(submits: list[Call], result_id: str) -> list[int | None]:
+    """The ``preview_rows`` of each recorded ``submit`` under ``result_id``."""
+    return [call.args[2].preview_rows for call in submits if call.args[3] == result_id]
+
+
+def _samples_of(samples: list[Call], ref: ResultRef) -> list[tuple[ResultRef, int]]:
+    return [(call.args[0], call.args[1]) for call in samples if call.args[0].result_id == ref.result_id]
+
+
+class TestPreviewFetchByExecutionMode:
+    """A preview fetch fills the grid in either flow mode; only a Development flow stores a wide result for it."""
+
+    def test_a_performance_flow_keeps_the_read_deferred_and_samples_the_grid_on_read(
+        self, tmp_path, monkeypatch, execution_location, protocol
+    ):
+        graph = create_graph_with_csv_read(tmp_path, 60, "Performance", execution_location)
+        backend = registry.backend(graph.execution_context.backend_id)
+        submits = spy(monkeypatch, backend, "submit")
+
+        graph.trigger_fetch_node(1)
+
+        read_node = graph.get_node(1)
+        ref = read_node.results.result_ref
+        assert ref.state == "deferred"
+        assert _submitted_preview_rows(submits, read_node.hash) == [None]
+        samples = spy(monkeypatch, backend, "sample")
+        example = read_node.get_table_example(include_data=True)
+        assert len(example.data) == 100
+        assert example.data[0] == {"id": 0, "val": "v0"}
+        assert _samples_of(samples, ref) == [(ref, 100)]
+        read_node.get_table_example(include_data=True)
+        assert len(_samples_of(samples, ref)) == 1, "the sampled grid is kept"
+
+    def test_a_development_flow_stores_the_read_and_takes_its_sample_inline(
+        self, tmp_path, monkeypatch, execution_location, protocol
+    ):
+        graph = create_graph_with_csv_read(tmp_path, 61, "Development", execution_location)
+        backend = registry.backend(graph.execution_context.backend_id)
+        submits = spy(monkeypatch, backend, "submit")
+
+        graph.trigger_fetch_node(1)
+
+        read_node = graph.get_node(1)
+        ref = read_node.results.result_ref
+        assert ref.state == "materialised"
+        assert _submitted_preview_rows(submits, read_node.hash) == [100]
+        samples = spy(monkeypatch, backend, "sample")
+        assert len(read_node.get_table_example(include_data=True).data) == 100
+        assert _samples_of(samples, ref) == [], "the common case costs no second round trip"
+
+    def test_a_cached_read_in_a_performance_flow_is_stored_with_its_sample_inline(
+        self, tmp_path, monkeypatch, execution_location, protocol
+    ):
+        graph = create_graph_with_csv_read(tmp_path, 62, "Performance", execution_location)
+        read_node = graph.get_node(1)
+        read_node.node_settings.cache_results = True
+        backend = registry.backend(graph.execution_context.backend_id)
+        submits = spy(monkeypatch, backend, "submit")
+
+        graph.trigger_fetch_node(1)
+
+        ref = read_node.results.result_ref
+        assert ref.state == "materialised"
+        assert _submitted_preview_rows(submits, read_node.hash) == [100]
+        samples = spy(monkeypatch, backend, "sample")
+        assert len(read_node.get_table_example(include_data=True).data) == 100
+        assert _samples_of(samples, ref) == []
+
+    @pytest.mark.parametrize("execution_mode", ["Development", "Performance"])
+    def test_an_explore_data_fetch_installs_no_grid(self, tmp_path, execution_mode, protocol):
+        graph = create_graph_with_csv_read(tmp_path, 63, execution_mode)
+
+        graph.trigger_fetch_node(1, performance_mode=True, reset_cache=False)
+
+        read_node = graph.get_node(1)
+        assert read_node.results.result_ref.state == "deferred"
+        assert read_node.results.example_data_generator is None
+
+
+class TestExecuteFillsTheGridByPreview:
+    """``NodeExecutor.execute``'s ``preview`` decides the grid; ``performance_mode`` alone decides the hints."""
+
+    @staticmethod
+    def _execute(graph: FlowGraph, monkeypatch, performance_mode: bool, preview: bool | None):
+        node = graph.get_node(1)
+        submits = spy(monkeypatch, registry.backend(graph.execution_context.backend_id), "submit")
+        with use_context(graph.execution_context):
+            node.executor.execute(
+                reset_cache=True,
+                performance_mode=performance_mode,
+                node_logger=graph.flow_logger.get_node_logger(1),
+                preview=preview,
+            )
+        assert node.results.errors is None
+        return node, _submitted_preview_rows(submits, node.hash)
+
+    @pytest.mark.parametrize("performance_mode", [False, True], ids=["development", "performance"])
+    def test_no_preview_means_not_performance_mode(self, tmp_path, monkeypatch, performance_mode):
+        graph = create_graph_with_csv_read(tmp_path, 64, "Development")
+
+        node, preview_rows = self._execute(graph, monkeypatch, performance_mode, preview=None)
+
+        assert preview_rows == [None if performance_mode else 100]
+        assert (node.results.example_data_generator is None) is performance_mode
+
+    def test_a_preview_in_performance_mode_sends_no_preview_rows_and_samples_on_read(self, tmp_path, monkeypatch):
+        graph = create_graph_with_csv_read(tmp_path, 65, "Development")
+
+        node, preview_rows = self._execute(graph, monkeypatch, performance_mode=True, preview=True)
+
+        assert preview_rows == [None]
+        ref = node.results.result_ref
+        assert ref.state == "deferred"
+        samples = spy(monkeypatch, registry.backend(ref.backend_id), "sample")
+        assert len(node.results.example_data_generator().to_pylist()) == 100
+        assert _samples_of(samples, ref) == [(ref, 100)]
 
 
 class TestDecideExecutionByNodeType:
