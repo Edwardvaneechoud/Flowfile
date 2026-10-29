@@ -303,7 +303,10 @@ async function onNodeDragStop({ node, nodes: dragged }: { node: GraphNode; nodes
   }
   try {
     if (!plan) {
-      if (layout) await FlowApi.updateLayout(flowId, layout, slot);
+      if (layout) {
+        await FlowApi.updateLayout(flowId, layout, slot);
+        if (flowId === flowStore.flowId) await flowStore.fetchSettingsValidation(flowId);
+      }
       return;
     }
     const type = (node.data as { nodeTemplate?: NodeTemplate } | undefined)?.nodeTemplate?.item;

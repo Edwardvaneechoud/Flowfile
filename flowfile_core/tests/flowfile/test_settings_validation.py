@@ -636,7 +636,7 @@ def test_endpoint_response_shape():
 
         graph.flow_settings.validate_settings = False
         response = client.get("/flow/settings_validation", params={"flow_id": flow_id})
-        assert response.json() == {"enabled": False, "nodes": []}
+        assert response.json() == {"enabled": False, "nodes": [], "cached_node_ids": []}
     finally:
         flow_file_handler.delete_flow(flow_id)
 

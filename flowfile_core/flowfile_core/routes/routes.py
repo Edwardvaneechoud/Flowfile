@@ -2720,7 +2720,9 @@ def get_flow_artifacts(flow_id: int, current_user=Depends(get_current_active_use
 def get_flow_settings_validation(flow_id: int, current_user=Depends(get_current_active_user)) -> FlowSettingsValidation:
     """Conservative static check: node settings that reference missing input columns."""
     flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
-    return validate_flow_settings(flow)
+    return validate_flow_settings(flow).model_copy(
+        update={"cached_node_ids": [node.node_id for node in flow.nodes if node.is_cached]}
+    )
 
 
 @router.get("/flow/placement", tags=["editor"], response_model=output_model.PlacementPreview)

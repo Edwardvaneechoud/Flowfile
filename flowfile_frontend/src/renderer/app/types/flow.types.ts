@@ -64,6 +64,7 @@ export interface NodeSettingsValidation {
 export interface FlowSettingsValidation {
   enabled: boolean;
   nodes: NodeSettingsValidation[];
+  cached_node_ids?: number[];
 }
 
 // Where a run would place each node now (GET /flow/placement); `available` is false with the protocol off.

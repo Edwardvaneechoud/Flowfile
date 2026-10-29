@@ -435,6 +435,90 @@ def _held_ref_state(graph: FlowGraph, node_id: int) -> str | None:
     return None if ref is None else ref.state
 
 
+def test_is_cached_uses_held_materialised_result_without_backend_query():
+    graph = create_graph()
+    add_manual_input(graph, [{"a": 1}], node_id=1)
+    node = graph.get_node(1)
+    node.node_settings.cache_results = True
+    node.results.result_ref = ResultRef(
+        backend_id="worker",
+        result_id=node.hash,
+        schema=[],
+        row_count=1,
+        state="materialised",
+        location=b"",
+    )
+
+    with patch.object(registry, "backend") as lookup:
+        assert node.is_cached is True
+        node.results.reset()
+        assert node.is_cached is True  # Upstream deliberately retains the held reference across reset.
+        node.node_settings.cache_results = False
+        assert node.is_cached is False
+        node.node_settings.cache_results = True
+        node.invalidate_cache()
+        assert node.is_cached is False
+        lookup.assert_not_called()
+        node.release_result()
+        assert node.results.result_ref is None
+        assert node.is_cached is False
+
+
+def test_is_cached_rejects_deferred_or_stale_results():
+    graph = create_graph()
+    add_manual_input(graph, [{"a": 1}], node_id=1)
+    node = graph.get_node(1)
+    node.node_settings.cache_results = True
+    assert node.is_cached is False
+    ref = ResultRef(
+        backend_id="worker",
+        result_id=node.hash,
+        schema=[],
+        row_count=1,
+        state="deferred",
+        location=b"",
+    )
+    node.results.result_ref = ref
+    assert node.is_cached is False
+
+    node.results.result_ref = ResultRef(
+        backend_id="worker",
+        result_id="stale-hash",
+        schema=[],
+        row_count=1,
+        state="materialised",
+        location=b"",
+    )
+    assert node.is_cached is False
+
+
+@pytest.mark.parametrize("validation_enabled", [True, False])
+def test_settings_validation_reports_cached_nodes_without_running_them(validation_enabled):
+    from flowfile_core.routes import routes
+
+    graph = create_graph()
+    graph.flow_settings.validate_settings = validation_enabled
+    add_manual_input(graph, [{"a": 1}], node_id=1)
+    node = graph.get_node(1)
+    node.node_settings.cache_results = True
+    node.results.result_ref = ResultRef(
+        backend_id="worker",
+        result_id=node.hash,
+        schema=[],
+        row_count=1,
+        state="materialised",
+        location=b"",
+    )
+
+    with patch.object(routes, "get_flow_or_404", return_value=graph), patch.object(registry, "backend") as lookup:
+        result = routes.get_flow_settings_validation(graph.flow_id, current_user=None)
+        lookup.assert_not_called()
+
+    assert result.enabled is validation_enabled
+    assert result.cached_node_ids == [1]
+    assert graph.get_node(1).results.result_ref.result_id == node.hash
+
+
 def create_graph_with_output(tmp_path: Path, flow_id: int,
                              execution_location: ExecutionLocationLit = "remote") -> FlowGraph:
     """manual_input(1) -> csv output(2)."""

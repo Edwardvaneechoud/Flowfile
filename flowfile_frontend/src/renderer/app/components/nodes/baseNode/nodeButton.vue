@@ -1,12 +1,25 @@
 <template>
   <div class="component-wrapper">
     <div class="status-indicator" :class="nodeResult?.statusIndicator">
-      <span class="tooltip-text">{{ tooltipContent }}</span>
+      <span :id="`node-tooltip-${props.nodeId}`" class="tooltip-text">{{ tooltipContent }}</span>
     </div>
 
-    <button :class="['node-button', { selected: isSelected }]" @click="onClick">
+    <button
+      :class="['node-button', { selected: isSelected, 'cached-node': showCachedIndicator }]"
+      :title="showCachedIndicator ? cacheExplanation : undefined"
+      :aria-describedby="showCachedIndicator ? `node-tooltip-${props.nodeId}` : undefined"
+      @click="onClick"
+    >
       <img :src="iconUrl" :alt="props.title" width="40" />
     </button>
+    <span
+      v-if="showCachedIndicator"
+      class="cache-indicator material-icons"
+      role="img"
+      aria-label="Cached result"
+      :title="cacheExplanation"
+      >cached</span
+    >
     <span
       v-if="placementNote"
       :class="['placement-badge', `placement-badge--${placementNote.kind}`]"
@@ -57,7 +70,18 @@ const nodeResult = computed<NodeStatusOutput | undefined>(() =>
   ),
 );
 
-const tooltipContent = computed(() => nodeStatusTooltip(nodeResult.value));
+const cacheExplanation =
+  "Cached: settings and upstream configuration match the stored result. Cache validity is checked when the flow runs.";
+const showCachedIndicator = computed(
+  () =>
+    flowStore.isNodeCached(props.nodeId) &&
+    !["running", "failure", "warning", "skipped"].includes(nodeResult.value?.statusIndicator ?? ""),
+);
+const tooltipContent = computed(
+  () =>
+    nodeStatusTooltip(nodeResult.value) +
+    (showCachedIndicator.value ? `\n${cacheExplanation}` : ""),
+);
 
 const flowStore = useFlowStore();
 const resultsStore = useResultsStore();
@@ -96,6 +120,63 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.node-button.cached-node {
+  --cache-ice: #d4f1fb;
+  --cache-edge: #4b93af;
+  --cache-shine: #ffffff80;
+  position: relative;
+  background: linear-gradient(145deg, var(--cache-ice), var(--color-background-primary));
+}
+
+[data-theme="dark"] .node-button.cached-node {
+  --cache-ice: #254b64;
+  --cache-edge: #8ac9e4;
+  --cache-shine: #bdefff50;
+}
+
+/* A static frosted shell; the tool stays opaque and its hit area is unchanged. */
+.node-button.cached-node::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border: 1px solid var(--cache-edge);
+  border-radius: 11px;
+  pointer-events: none;
+  background:
+    linear-gradient(135deg, transparent 30%, var(--cache-shine) 31% 34%, transparent 35%),
+    linear-gradient(35deg, transparent 73%, var(--cache-shine) 74% 77%, transparent 78%),
+    radial-gradient(ellipse at top left, var(--cache-shine), transparent 55%);
+  box-shadow:
+    inset 2px 2px 0 var(--cache-shine),
+    inset -2px -2px 0 var(--cache-edge);
+}
+
+@media (forced-colors: active) {
+  .node-button.cached-node {
+    background: Canvas;
+    outline: 1px solid CanvasText;
+  }
+  .node-button.cached-node::after {
+    display: none;
+  }
+}
+
+.cache-indicator {
+  position: absolute;
+  right: -4px;
+  top: -4px;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  line-height: 1;
+  border: 1px solid var(--color-text-secondary);
+  color: var(--color-text-primary);
+  background: var(--color-background-primary);
+  border-radius: 3px;
+}
+
 .status-indicator {
   position: relative;
   display: flex;

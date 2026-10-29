@@ -66,6 +66,7 @@ class NodeSettingsValidation(BaseModel):
 class FlowSettingsValidation(BaseModel):
     enabled: bool
     nodes: list[NodeSettingsValidation]
+    cached_node_ids: list[int] = []
 
 
 @dataclass(frozen=True)
