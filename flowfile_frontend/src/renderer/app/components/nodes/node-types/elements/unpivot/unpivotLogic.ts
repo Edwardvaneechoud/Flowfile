@@ -5,6 +5,7 @@
  * No Vue or DOM imports so it runs under vitest's `node` environment.
  */
 import type { DataTypeSelector, UnpivotInput } from "../../../baseNode/nodeInput";
+import { pluralize } from "../../../baseNode/selectComponents/columnPicker";
 import type { RoleRow, RoleSpec } from "../../../baseNode/selectComponents/columnRoles";
 
 export const UNPIVOT_ROLES: readonly RoleSpec[] = [
@@ -37,11 +38,6 @@ export const writeUnpivotRows = (input: UnpivotInput, rows: readonly RoleRow[]):
   input.value_columns = rows.filter((row) => row.role === "value").map((row) => row.name);
 };
 
-/**
- * Human labels for what is still missing before the node does anything useful.
- * By type never lacks anything: a missing selector means every other column.
- */
-export const missingUnpivotParts = (input: UnpivotInput): string[] => {
-  if (input.data_type_selector_mode === "data_type") return [];
-  return input.value_columns.length > 0 ? [] : ["value columns"];
-};
+/** The chosen columns, counted; none chosen means every column outside the index, as the backend reads it. */
+export const valueColumnsLabel = (valueColumns: readonly string[]): string =>
+  valueColumns.length > 0 ? pluralize(valueColumns.length, "column") : "every other column";

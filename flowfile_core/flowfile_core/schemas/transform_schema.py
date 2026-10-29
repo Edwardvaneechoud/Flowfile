@@ -1,9 +1,10 @@
+import builtins
 import re
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import asdict
 from enum import Enum
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal, NamedTuple, get_args
 
 import polars as pl
 from pl_fuzzy_frame_match.models import FuzzyMapping
@@ -1126,6 +1127,15 @@ class TextToRowsInput(BaseModel):
     split_by_column: str | None = None
 
 
+UnpivotDataType = Literal["float", "all", "date", "numeric", "string"]
+UNPIVOT_DATA_TYPES: tuple[str, ...] = get_args(UnpivotDataType)
+
+
+def unpivot_selector_name(data_type: str) -> str:
+    """The ``flowfile`` selector of an unpivot data type: Polars' name, with a trailing ``_`` where a builtin has it."""
+    return f"{data_type}_" if hasattr(builtins, data_type) else data_type
+
+
 class UnpivotInput(BaseModel):
     """Defines settings for an unpivot (wide-to-long) operation."""
 
@@ -1133,8 +1143,21 @@ class UnpivotInput(BaseModel):
 
     index_columns: list[str] = Field(default_factory=list)
     value_columns: list[str] = Field(default_factory=list)
-    data_type_selector: Literal["float", "all", "date", "numeric", "string"] | None = None
+    data_type_selector: UnpivotDataType | None = None
     data_type_selector_mode: Literal["data_type", "column"] = "column"
+
+    @model_validator(mode="after")
+    def keep_the_active_mode(self):
+        """Hold only what the active mode reads, so two settings that unpivot alike are equal.
+
+        A data-type unpivot names its type (``all`` when none is set) and no columns; a column unpivot no type.
+        """
+        if self.data_type_selector_mode == "data_type":
+            self.data_type_selector = self.data_type_selector or "all"
+            self.value_columns = []
+        else:
+            self.data_type_selector = None
+        return self
 
     @property
     def data_type_selector_expr(self) -> Callable | None:

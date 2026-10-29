@@ -194,10 +194,46 @@ def test_unpivot_with_a_list_places_the_native_node():
     assert_frame_equal(out.collect(), expected, check_row_order=False, check_dtypes=False)
 
 
+def test_unpivot_without_on_unpivots_every_column_outside_the_index():
+    frame = _frame()
+    known = _ids(frame)
+    out = frame.unpivot(index="g")
+    assert _new_nodes(known, out) == ["unpivot"]
+    expected = pl.DataFrame(DATA).unpivot(index="g")
+    assert_frame_equal(out.collect(), expected, check_row_order=False, check_dtypes=False)
+
+
+@pytest.mark.parametrize(
+    ("selector", "polars_selector", "data_type"),
+    [
+        (ff.numeric(), pl.selectors.numeric(), "numeric"),
+        (ff.float_(), pl.selectors.float(), "float"),
+        (ff.string(), pl.selectors.string(), "string"),
+        (ff.date(), pl.selectors.date(), "date"),
+        (ff.all_(), pl.selectors.all(), "all"),
+    ],
+)
+def test_unpivot_with_a_data_type_selector_places_the_native_node(selector, polars_selector, data_type):
+    frame = _frame()
+    known = _ids(frame)
+    out = frame.unpivot(selector, index="y")
+    assert _new_nodes(known, out) == ["unpivot"]
+    unpivot = core_node(out).setting_input.unpivot_input
+    assert (unpivot.data_type_selector_mode, unpivot.data_type_selector) == ("data_type", data_type)
+    expected = pl.DataFrame(DATA).unpivot(polars_selector, index="y")
+    assert_frame_equal(out.collect(), expected, check_row_order=False, check_dtypes=False)
+
+
 def test_unpivot_with_a_selector_or_renamed_columns_keeps_polars_code():
     frame = _frame()
     assert core_node(frame.unpivot([ff.selectors.numeric()], index="g")).node_type == "polars_code"
     assert core_node(frame.unpivot(["x"], index="g", value_name="v")).node_type == "polars_code"
+
+
+def test_a_data_type_selector_kept_as_polars_code_names_the_selector():
+    node = core_node(_frame().unpivot(ff.numeric(), index="g", variable_name="k"))
+    assert node.node_type == "polars_code"
+    assert node.setting_input.description == "Unpivot data with index: g and value cols: pl.selectors.numeric()"
 
 
 def test_std_and_var_aggregate_on_the_group_by_node():

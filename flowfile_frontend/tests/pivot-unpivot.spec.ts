@@ -233,7 +233,10 @@ test.describe("Pivot and Unpivot drawers", () => {
 
     await expect(roleRows(page)).toHaveCount(1);
     await expect(areaRows(page, "value")).toHaveCount(0);
-    await expect(page.locator(".picker-flag")).toHaveText("Missing: value columns");
+    await expect(page.locator(".picker-settings-count")).toHaveText(
+      "1 index key · every other column to unpivot",
+    );
+    await expect(page.locator(".picker-flag")).toHaveCount(0);
 
     await columnRows(page)
       .filter({ hasText: "first_quarter" })
