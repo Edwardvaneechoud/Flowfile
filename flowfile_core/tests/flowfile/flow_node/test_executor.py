@@ -21,7 +21,7 @@ from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable
-from flowfile_core.flowfile.execution.protocol import ResultRef, SubmitHints
+from flowfile_core.flowfile.execution.protocol import ResultRef, SubmitHints, worker_stores
 from flowfile_core.flowfile.flow_data_engine.column_stats import ColumnStatsUnavailable
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
@@ -221,6 +221,19 @@ def create_graph_with_sort_and_select(flow_id: int = 3,
     )
     graph.add_select(node_select)
     return graph
+
+
+def add_sort(graph: FlowGraph, node_id: int, depending_on_id: int, column: str = "name") -> None:
+    add_node_promise(graph, "sort", node_id=node_id)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(depending_on_id, node_id))
+    graph.add_sort(
+        input_schema.NodeSort(
+            flow_id=graph.flow_id,
+            node_id=node_id,
+            depending_on_id=depending_on_id,
+            sort_input=[transform_schema.SortByInput(column=column, how="asc")],
+        )
+    )
 
 
 class TestInvalidationReason:
@@ -475,11 +488,9 @@ class TestHintsByNodeType:
         assert is_narrow_transform(select_node)
 
     def test_a_narrow_transform_with_one_consumer(self):
-        """A select (narrow, read by one node) is neither wide nor materialised."""
+        """A select (narrow, read by one sort, which its preview stores) is neither wide nor materialised."""
         graph = create_graph_with_sort_and_select()
-        add_node_promise(graph, "sample", node_id=4)
-        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(3, 4))
-        graph.add_sample(input_schema.NodeSample(flow_id=graph.flow_id, node_id=4, depending_on_id=3))
+        add_sort(graph, node_id=4, depending_on_id=3, column="Name")
 
         hints = hints_for(graph.get_node(3), graph.execution_context, performance_mode=False)
 
@@ -496,11 +507,11 @@ class TestHintsByNodeType:
         )
 
     def test_a_node_with_two_consumers(self):
-        """fanout counts the distinct nodes that read the result."""
+        """fanout counts the plans that execute the result: two stored sorts are two, a narrow select nothing
+        reads is none."""
         graph = create_graph_with_sort_and_select()
-        add_node_promise(graph, "sample", node_id=4)
-        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 4))
-        graph.add_sample(input_schema.NodeSample(flow_id=graph.flow_id, node_id=4, depending_on_id=2))
+        add_sort(graph, node_id=4, depending_on_id=2)
+        add_sort(graph, node_id=5, depending_on_id=2, column="age")
 
         hints = hints_for(graph.get_node(2), graph.execution_context, performance_mode=False)
 
@@ -627,8 +638,8 @@ class TestPreviewFetchByExecutionMode:
         assert node.get_table_example(include_data=True).data == []
 
     def test_a_fetch_that_releases_a_stored_file_drops_the_nodes_below(self, tmp_path, execution_location, protocol):
-        """A run stores a read two nodes read; its Performance fetch leaves it deferred, so the sort's plan over the
-        stored file is dropped rather than left dangling, and the sort's own fetch rebuilds it."""
+        """A run stores a read two written nodes read; its Performance fetch leaves it deferred, so the sort's plan
+        over the stored file is dropped rather than left dangling, and the sort's own fetch rebuilds it."""
         graph = create_graph_with_csv_read(tmp_path, 67, "Performance", execution_location)
         add_node_promise(graph, "sort", node_id=2)
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
@@ -644,6 +655,8 @@ class TestPreviewFetchByExecutionMode:
                 flow_id=67, node_id=3, depending_on_id=1, select_input=[transform_schema.SelectInput(old_name="id")]
             )
         )
+        add_csv_output(graph, 4, depending_on_id=2, directory=tmp_path)
+        add_csv_output(graph, 5, depending_on_id=3, directory=tmp_path)
         assert graph.run_graph().success
         assert _held_ref_state(graph, 1) == "materialised"
         sort_node = graph.get_node(2)
@@ -2330,16 +2343,16 @@ class TestDeferredUntilRun:
 
 
 def create_graph_with_sort_read_twice(execution_location: ExecutionLocationLit = "local") -> FlowGraph:
-    """manual_input(1) -> sort(2) -> select(3), and sort(2) -> sample(4): the sort has two consumers."""
-    graph = create_graph_with_sort_and_select(flow_id=44, execution_location=execution_location)
-    add_node_promise(graph, "sample", node_id=4)
-    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 4))
-    graph.add_sample(input_schema.NodeSample(flow_id=graph.flow_id, node_id=4, depending_on_id=2))
+    """manual_input(1) -> sort(2) -> sort(3), and sort(2) -> sort(4): two consumers, each stored for its preview."""
+    graph = create_graph_with_sort(flow_id=44, execution_location=execution_location)
+    add_sort(graph, node_id=3, depending_on_id=2, column="age")
+    add_sort(graph, node_id=4, depending_on_id=2)
     return graph
 
 
 class TestFanoutCountsTheConsumersThatRun:
-    """``fanout`` counts a node's consumers among the nodes the run executes, every consumer without a run."""
+    """``fanout`` counts the plans among the nodes the run executes that execute a node's result, every consumer's
+    without a run."""
 
     def test_only_the_consumers_among_the_running_nodes_count(self):
         graph = create_graph_with_sort_read_twice()
@@ -2377,6 +2390,159 @@ class TestFanoutCountsTheConsumersThatRun:
         graph.trigger_fetch_node(2)
         assert recorded[2] == 0
 
+
+def add_group_by(graph: FlowGraph, node_id: int, depending_on_id: int) -> None:
+    add_node_promise(graph, "group_by", node_id=node_id)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(depending_on_id, node_id))
+    graph.add_group_by(
+        input_schema.NodeGroupBy(
+            flow_id=graph.flow_id,
+            node_id=node_id,
+            depending_on_id=depending_on_id,
+            groupby_input=transform_schema.GroupByInput(
+                agg_cols=[transform_schema.AggColl("val", "groupby"), transform_schema.AggColl("id", "sum", "id_sum")]
+            ),
+        )
+    )
+
+
+def add_csv_output(graph: FlowGraph, node_id: int, depending_on_id: int, directory: Path) -> None:
+    add_node_promise(graph, "output", node_id=node_id)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(depending_on_id, node_id))
+    graph.add_output(
+        input_schema.NodeOutput(
+            flow_id=graph.flow_id,
+            node_id=node_id,
+            output_settings=input_schema.OutputSettings(
+                name=f"out_{node_id}.csv",
+                directory=str(directory),
+                file_type="csv",
+                write_mode="overwrite",
+                table_settings=input_schema.OutputCsvTable(),
+            ),
+        )
+    )
+
+
+def read_into_four_group_bys(tmp_path: Path, mode: ExecutionModeLit, flow_id: int = 45) -> FlowGraph:
+    """read(1) -> group_by(2..5), nothing below them."""
+    graph = create_graph_with_csv_read(tmp_path, flow_id, mode)
+    for node_id in range(2, 6):
+        add_group_by(graph, node_id, depending_on_id=1)
+    return graph
+
+
+def read_select_group_by_output(tmp_path: Path, mode: ExecutionModeLit) -> FlowGraph:
+    """read(1) -> select(2) -> group_by(3) -> output(4)."""
+    graph = create_graph_with_csv_read(tmp_path, 46, mode)
+    add_node_promise(graph, "select", node_id=2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    graph.add_select(
+        input_schema.NodeSelect(
+            flow_id=46, node_id=2, depending_on_id=1, select_input=[transform_schema.SelectInput("id"),
+                                                                     transform_schema.SelectInput("val")]
+        )
+    )
+    add_group_by(graph, 3, depending_on_id=2)
+    add_csv_output(graph, 4, depending_on_id=3, directory=tmp_path)
+    return graph
+
+
+def read_two_group_bys_two_outputs(tmp_path: Path, mode: ExecutionModeLit) -> FlowGraph:
+    """read(1) -> group_by(2) -> output(4), and read(1) -> group_by(3) -> output(5)."""
+    graph = create_graph_with_csv_read(tmp_path, 47, mode)
+    add_group_by(graph, 2, depending_on_id=1)
+    add_group_by(graph, 3, depending_on_id=1)
+    add_csv_output(graph, 4, depending_on_id=2, directory=tmp_path)
+    add_csv_output(graph, 5, depending_on_id=3, directory=tmp_path)
+    return graph
+
+
+def read_self_join_two_outputs(tmp_path: Path, mode: ExecutionModeLit) -> FlowGraph:
+    """read(1) feeding both sides of join(2), and join(2) -> output(3), output(4)."""
+    graph = create_graph_with_csv_read(tmp_path, 48, mode)
+    add_node_promise(graph, "join", node_id=2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2, "main"))
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2, "right"))
+    graph.add_join(
+        input_schema.NodeJoin(
+            flow_id=48,
+            node_id=2,
+            depending_on_ids=[1, 1],
+            join_input=transform_schema.JoinInput(
+                join_mapping=[transform_schema.JoinMap("id", "id")],
+                left_select=[transform_schema.SelectInput("id"), transform_schema.SelectInput("val")],
+                right_select=[transform_schema.SelectInput("id"), transform_schema.SelectInput("val", keep=False)],
+                how="inner",
+            ),
+        )
+    )
+    add_csv_output(graph, 3, depending_on_id=2, directory=tmp_path)
+    add_csv_output(graph, 4, depending_on_id=2, directory=tmp_path)
+    return graph
+
+
+def _fanout(graph: FlowGraph, node_id: int) -> int:
+    performance_mode = graph.flow_settings.execution_mode == "Performance"
+    return hints_for(graph.get_node(node_id), graph.execution_context, performance_mode).fanout
+
+
+class TestFanoutCountsThePlansThatExecuteTheResult:
+    """A collecting consumer (a sink, an operation, a stored result) executes a node's plan once; a deferred one
+    executes it in every plan that executes the consumer, so it passes its own fan-out on."""
+
+    def test_a_performance_read_into_group_bys_with_no_sink_has_no_fanout(self, tmp_path):
+        graph = read_into_four_group_bys(tmp_path, "Performance")
+        hints = hints_for(graph.get_node(1), graph.execution_context, performance_mode=True)
+
+        assert hints == SubmitHints(must_materialise=False, wide=True, fanout=0, preview_rows=None)
+        assert not worker_stores(hints)
+
+    def test_a_performance_chain_into_one_output_has_fanout_one(self, tmp_path):
+        graph = read_select_group_by_output(tmp_path, "Performance")
+
+        assert [_fanout(graph, node_id) for node_id in (1, 2, 3)] == [1, 1, 1]
+
+    def test_a_performance_read_into_two_sinks_has_fanout_two(self, tmp_path):
+        graph = read_two_group_bys_two_outputs(tmp_path, "Performance")
+        hints = hints_for(graph.get_node(1), graph.execution_context, performance_mode=True)
+
+        assert hints.fanout == 2
+        assert worker_stores(hints)
+
+    def test_a_stored_join_counts_as_one_plan_of_its_input(self, tmp_path):
+        graph = read_self_join_two_outputs(tmp_path, "Performance")
+
+        assert _fanout(graph, 2) == 2
+        assert _fanout(graph, 1) == 1
+
+    @pytest.mark.parametrize(
+        ("build", "expected"),
+        [
+            (read_into_four_group_bys, {1: 4}),
+            (read_select_group_by_output, {1: 1, 2: 1}),
+            (read_two_group_bys_two_outputs, {1: 2}),
+            (read_self_join_two_outputs, {1: 1, 2: 2}),
+        ],
+    )
+    def test_development_mode_counts_every_wide_consumer_its_preview_stores(self, tmp_path, build, expected):
+        graph = build(tmp_path, "Development")
+
+        assert {node_id: _fanout(graph, node_id) for node_id in expected} == expected
+
+    def test_a_performance_run_with_no_sink_leaves_the_read_deferred(self, tmp_path, monkeypatch, protocol):
+        graph = read_into_four_group_bys(tmp_path, "Performance", flow_id=49)
+        backend = registry.backend(graph.execution_context.backend_id)
+        submits = spy(monkeypatch, backend, "submit")
+
+        assert graph.execution_context.backend_id == "local"
+        assert graph.run_graph().success
+
+        read_node = graph.get_node(1)
+        read_hints = [call.args[2] for call in submits if call.args[3] == read_node.hash]
+        assert [hints.fanout for hints in read_hints] == [0]
+        assert read_node.results.result_ref.state == "deferred"
+        assert all(_held_ref_state(graph, node_id) == "deferred" for node_id in range(2, 6))
 
 if __name__ == "__main__":
     pytest.main([__file__])

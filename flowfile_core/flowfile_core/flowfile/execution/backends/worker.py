@@ -87,6 +87,7 @@ from flowfile_core.flowfile.execution.protocol import (
     Schema,
     SubmitHints,
     SubmitResult,
+    worker_stores,
 )
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import convert_stats_to_column_info
@@ -267,9 +268,9 @@ class WorkerBackend(_WorkerReferences):
     - ``shares_core_disk``: the worker sees core's files, so ``capabilities`` adds ``file`` to its schemes.
 
     Materialisation policy: ``submit`` stores a plan when ``hints.must_materialise`` is set, or when it is ``wide``
-    and either a preview is asked for (``preview_rows`` not ``None``) or more than one consumer reads it (``fanout``),
-    so the preview and the consumers share one computation. Every other plan stays deferred: with no preview
-    (Performance mode) nothing reads a wide plan with one consumer before the writer does.
+    and either a preview is asked for (``preview_rows`` not ``None``) or more than one plan executes it (``fanout``),
+    so the preview and the consumers share one computation (``worker_stores``). Every other plan stays deferred: with
+    no preview (Performance mode) nothing reads a wide plan with one consumer before the writer does.
 
     The handshake gates every worker call but ``capabilities``, which the check itself reads, so any other call can
     raise ``VersionMismatch`` or ``ComputeUnavailable``. Making a backend registers it with that gate for ``url``
@@ -427,7 +428,7 @@ class WorkerBackend(_WorkerReferences):
                 )
                 answer = wire.SubmitResult.model_validate_json(response.content)
             return self._from_wire(answer)
-        if hints.must_materialise or (hints.wide and (hints.preview_rows is not None or hints.fanout > 1)):
+        if worker_stores(hints):
             ref = self._store(plan, result_id, flow_id, node_id)
             sample = None if hints.preview_rows is None else self.sample(ref, hints.preview_rows)
         else:
