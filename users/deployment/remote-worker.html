@@ -1,0 +1,2198 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A visual ETL tool combining drag-and-drop workflow building with Polars dataframes">
+      
+      
+      
+        <link rel="canonical" href="https://edwardvaneechoud.github.io/Flowfile/users/deployment/remote-worker.html">
+      
+      
+        <link rel="prev" href="where-flows-run.html">
+      
+      
+        <link rel="next" href="sharing.html">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Remote Workers - Flowfile</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CSource+Code+Pro:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Source Code Pro"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+      <link rel="stylesheet" href="../../stylesheets/formula-reference.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#remote-workers" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../index.html" title="Flowfile" class="md-header__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../../assets/images/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Flowfile
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Remote Workers
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../what-is-flowfile.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Get Started
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../visual-editor/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Visual Editor
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../connect/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Connect Your Data
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../visual-editor/catalog/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Catalog & Automation
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../python-api/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Python API
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../ai/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  AI Assistant
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Deploy & Operate
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../for-developers/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  For Developers
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../roadmap.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Roadmap
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../community.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Community
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../index.html" title="Flowfile" class="md-nav__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../../assets/images/logo.png" alt="logo">
+
+    </a>
+    Flowfile
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    
+  
+  
+  
+    <a href="../../what-is-flowfile.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Get Started
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../visual-editor/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visual Editor
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../connect/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect Your Data
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../visual-editor/catalog/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog & Automation
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../python-api/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../ai/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI Assistant
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy & Operate
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Deploy & Operate
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="desktop.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop App
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="python.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python Package
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="docker.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="where-flows-run.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Where Flows Run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Remote Workers
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="remote-worker.html" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Remote Workers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setup-at-a-glance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setup at a glance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-workers-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The worker's environment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cores-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core's environment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-shared-catalog-and-the-master-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The shared catalog and the master key
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#storage-a-remote-worker-can-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Storage a remote worker can use
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#versions-and-the-handshake" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Versions and the handshake
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#add-the-worker-to-core" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Add the worker to core
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TLS
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#nodes-on-several-backends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Nodes on several backends
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-polars-cluster-as-a-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A Polars cluster as a backend
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="sharing.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Users, Groups & Sharing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="cli.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Headless Runs & CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../telemetry.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Privacy & Telemetry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="backups.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database Backups
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../for-developers/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Developers
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../roadmap.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../community.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setup-at-a-glance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setup at a glance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-workers-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The worker's environment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cores-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core's environment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-shared-catalog-and-the-master-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The shared catalog and the master key
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#storage-a-remote-worker-can-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Storage a remote worker can use
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#versions-and-the-handshake" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Versions and the handshake
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#add-the-worker-to-core" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Add the worker to core
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TLS
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#nodes-on-several-backends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Nodes on several backends
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-polars-cluster-as-a-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A Polars cluster as a backend
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="remote-workers">Remote workers</h1>
+<p>This page covers running <code>flowfile_worker</code> on a host other than core's: what each side needs in its environment, how to add the worker, and what does not run there. It assumes the <a href="docker.html">Docker deployment</a>. <a href="where-flows-run.html">Where flows run</a> explains the model with diagrams; the design behind it is the <a href="../../for-developers/compute-protocol.html">compute protocol</a>.</p>
+<h2 id="how-it-works">How it works</h2>
+<ul>
+<li>Core sends each node's plan to the worker and takes back a bounded sample of the rows, the schema and the row count. It never opens a file the worker wrote.</li>
+<li>Results stay in the worker's own storage, except a result that crosses to another backend through an <a href="#nodes-on-several-backends">exchange store</a>.</li>
+<li>The worker reads sources and writes destinations itself. A plan carries no credentials: the worker resolves a stored connection from the catalog database with the master key.</li>
+</ul>
+<p>This needs <code>FLOWFILE_COMPUTE_PROTOCOL</code> on, which is core's default. Results are released as described in <a href="where-flows-run.html#when-results-are-released">When results are released</a>; the worker's age sweep (<code>CACHE_EXPIRATION_TIME</code>, 24 hours) is only the backstop for a core that stopped without closing its flows.</p>
+<div class="admonition warning">
+<p class="admonition-title">A remote worker is inside your trust boundary</p>
+<p>It holds the master key, reads the whole catalog database and signs with the internal token, so whoever controls its host controls every stored connection and secret. Run it where you would run core: on the same network, under the same administrators, with the same patching and backups. A <a href="#a-polars-cluster-as-a-backend">Polars cluster</a> added as a backend holds none of these.</p>
+</div>
+<h2 id="setup-at-a-glance">Setup at a glance</h2>
+<ol>
+<li>Run core on a PostgreSQL catalog; the worker uses the same one (<a href="#the-shared-catalog-and-the-master-key">why</a>).</li>
+<li>Start the worker with core's <code>FLOWFILE_DATABASE_URL</code>, <code>FLOWFILE_MASTER_KEY</code> and <code>FLOWFILE_INTERNAL_TOKEN</code> (<a href="#the-workers-environment">The worker's environment</a>).</li>
+<li>Check the network: the worker reaches every database, broker and storage endpoint your connections name, and core reaches the worker's port.</li>
+<li>Add the worker to core (<a href="#add-the-worker-to-core">Add the worker to core</a>); for a worker added on the Backends page, click <strong>Handshake</strong> on its row.</li>
+<li>Keep the flows it runs on object storage or URLs: a remote worker does not read core's local files (<a href="#storage-a-remote-worker-can-use">Storage</a>).</li>
+<li>Pick the worker's id under a flow's <strong>Execution location</strong>. A worker set as the default worker runs the flows on <strong>Auto (default worker)</strong>.</li>
+</ol>
+<h2 id="the-workers-environment">The worker's environment</h2>
+<p>The <code>flowfile-worker</code> image starts <code>python -m flowfile_worker --host 0.0.0.0</code> on port <code>63579</code>; <code>--host</code> and <code>--port</code> change both.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FLOWFILE_MODE</code></td>
+<td><code>docker</code> (the image sets it). Only in this mode does the worker read the master key from its environment or the <code>flowfile_master_key</code> Docker secret.</td>
+</tr>
+<tr>
+<td><code>FLOWFILE_INTERNAL_TOKEN</code></td>
+<td>Core's value. Every route requires it except the API docs (<code>/docs</code>, which the image's health check calls, <code>/redoc</code> and <code>/openapi.json</code>). <code>POST /shutdown</code> takes it too, or no token from a loopback address when the desktop app runs the worker.</td>
+</tr>
+<tr>
+<td><code>FLOWFILE_MASTER_KEY</code></td>
+<td>Core's value.</td>
+</tr>
+<tr>
+<td><code>FLOWFILE_DATABASE_URL</code></td>
+<td>Core's PostgreSQL catalog, for example <code>postgresql://flowfile:&lt;password&gt;@&lt;catalog host&gt;:5432/flowfile</code>.</td>
+</tr>
+<tr>
+<td><code>CORE_HOST</code>, <code>CORE_PORT</code></td>
+<td>Where the worker posts node log lines (<code>/raw_logs</code>, signed with its token). <code>CORE_PORT</code> defaults to <code>63578</code>.</td>
+</tr>
+<tr>
+<td><code>FLOWFILE_STORAGE_DIR</code></td>
+<td>The worker's own storage for results. Defaults to <code>/app/internal_storage</code> in Docker mode.</td>
+</tr>
+<tr>
+<td><code>FLOWFILE_WORKER_LOCAL_FILES</code></td>
+<td>Leave unset. <code>1</code> declares local files among what the worker reads and writes, which is true only for a worker that sees core's files.</td>
+</tr>
+<tr>
+<td><code>FLOWFILE_WORKER_TLS_CERT</code>, <code>FLOWFILE_WORKER_TLS_KEY</code></td>
+<td>Optional: paths of a PEM certificate and its private key in the container. Set both and the worker serves <code>https</code> and <code>wss</code> itself; see <a href="#tls">TLS</a>.</td>
+</tr>
+</tbody>
+</table>
+<p>The worker reaches the catalog database and every database, Kafka broker, REST endpoint and storage endpoint the flows use, by the names their connections use. For an Azure service principal or a GCS service account it also reaches the provider's token endpoint, since it exchanges the stored secret for a bearer token itself. Core reaches the worker's port.</p>
+<div class="admonition tip">
+<p class="admonition-title">A connection's endpoint must reach the service from both hosts</p>
+<p>A connection names one endpoint for every process that opens it. An endpoint at the worker host's own LAN address, for example, times out from the worker's container when that host's firewall drops traffic from Docker's bridge network (ufw's default), while core on another host reaches it. For a storage service in a container on the worker's host: give it a network alias on the worker's Docker network, add the same name to core's <code>extra_hosts</code> with the worker host's address, and use that name in the connection. Until then a read through the connection retries for about a minute before its node fails.</p>
+</div>
+<h2 id="cores-environment">Core's environment</h2>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FLOWFILE_DATABASE_URL</code>, <code>FLOWFILE_MASTER_KEY</code>, <code>FLOWFILE_INTERNAL_TOKEN</code></td>
+<td>The worker's values.</td>
+</tr>
+<tr>
+<td><code>FLOWFILE_WORKER_URL</code></td>
+<td>The default worker's URL, for example <code>http://&lt;worker host&gt;:63579</code>. Unset, core uses <code>http://&lt;WORKER_HOST&gt;:&lt;FLOWFILE_WORKER_PORT&gt;</code>, the port defaulting to <code>63579</code>.</td>
+</tr>
+<tr>
+<td><code>FLOWFILE_COMPUTE_BACKEND</code></td>
+<td>Optional: a <code>worker:&lt;name&gt;</code> id that becomes the default backend, for <strong>Auto (default worker)</strong> flows and for every scheduled and <code>flowfile run flow</code> run started with it in its environment.</td>
+</tr>
+<tr>
+<td><code>FLOWFILE_COMPUTE_PROTOCOL</code></td>
+<td>Leave unset. Switched off, core opens the worker's result files itself, which a worker on another host does not share.</td>
+</tr>
+<tr>
+<td><code>FLOWFILE_EXCHANGE_URI</code></td>
+<td>Optional: an <code>s3://</code> root where results cross between backends, for example <code>s3://flowfile-exchange/runs</code>. Set, each node runs on its own <strong>Compute backend</strong>; see <a href="#nodes-on-several-backends">Nodes on several backends</a>. Overrides the <strong>Exchange store</strong> saved on the Backends page, which applies with no restart.</td>
+</tr>
+<tr>
+<td><code>FLOWFILE_EXCHANGE_CONNECTION</code></td>
+<td>With the URI: the name of a stored S3 connection an administrator owns, for example <code>exchange</code>. Core and every worker open the store with it whoever runs the flow, so no user needs a connection of that name.</td>
+</tr>
+<tr>
+<td><code>FLOWFILE_EXCHANGE_MAX_ROWS</code></td>
+<td>Optional: the most rows an input may cross between backends with, for example <code>50000000</code>. Best effort; see <a href="#nodes-on-several-backends">Row limit</a>. Unset, there is no limit.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="the-shared-catalog-and-the-master-key">The shared catalog and the master key</h2>
+<ul>
+<li><strong>One catalog.</strong> Core and the worker use one PostgreSQL catalog database. A SQLite catalog is a file on core's host, so it serves only a worker on that host. On a catalog of its own, a worker's cloud read fails with <em>A worker resolves a plan's cloud connection against the catalog core writes, so it must use core's catalog database.</em></li>
+<li><strong>One master key.</strong> The worker decrypts a stored connection's secrets when the node runs. With another key, a cloud read fails with <em>Core and the worker must share the same master key.</em></li>
+<li><strong>The host's own identity.</strong> <code>aws-cli</code>, <code>iam_role</code>, <code>env_vars</code> and <code>managed_identity</code> connections store no credentials and authenticate as the host that runs the node. On a remote worker that is the worker host's AWS profile or role, environment or managed identity, not core's.</li>
+</ul>
+<h2 id="storage-a-remote-worker-can-use">Storage a remote worker can use</h2>
+<table>
+<thead>
+<tr>
+<th>Storage</th>
+<th>Reads</th>
+<th>Writes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Object storage (<code>s3</code>, <code>az</code>, <code>gs</code>)</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>http</code> and <code>https</code> URLs</td>
+<td>Yes</td>
+<td>Only the artifact store's presigned <code>https</code> URLs</td>
+</tr>
+<tr>
+<td>Local files</td>
+<td>No</td>
+<td>No</td>
+</tr>
+</tbody>
+</table>
+<p>Core checks every node of a run against this before the run starts. A node the worker cannot run stops the run before any node starts; its row on the run report reads <code>cannot run on backend "&lt;id&gt;": &lt;reason&gt;</code>, followed by the setting that moves it: its <strong>Compute backend</strong> under <strong>General Settings</strong>, the flow's <strong>Execution location</strong> under <strong>Flow Settings</strong>, or either. With an <a href="#nodes-on-several-backends">exchange store</a>, the node runs on the default worker instead.</p>
+<p>Core offers local files on its own to the default worker on core's host at an unconfigured address (neither <code>FLOWFILE_WORKER_URL</code> nor <code>WORKER_HOST</code> set) and to a worker marked <strong>Sees this server's files</strong>; a worker started with <code>FLOWFILE_WORKER_LOCAL_FILES=1</code> declares them itself.</p>
+<ul>
+<li><strong>Catalog tables</strong> must be on object storage. A catalog gets its storage when it is created: <strong>Object storage (optional)</strong> and <strong>Storage connection</strong> in the <strong>Create Catalog</strong> dialog, or, left empty, <code>FLOWFILE_CATALOG_STORAGE_URI</code> and <code>FLOWFILE_CATALOG_STORAGE_CONNECTION</code> from core's environment when set. A <strong>Read from Catalog</strong> or <strong>Write to Catalog</strong> node on a local-disk catalog, the seeded <strong>General</strong> catalog included, is refused with <code>namespace "&lt;name&gt;" is on local disk, not object storage</code>. Core also reads and commits catalog tables itself (the freshness check at the start of a run, enabling a change feed, reading an SCD2 write's result), so core needs access to those buckets through the catalog's storage connection; credentials only the worker holds do not give it that.</li>
+<li><strong>Files.</strong> A <strong>Read data</strong> or <strong>Write data</strong> node on a local path is refused (<code>it reads local files</code>), and so is a file uploaded through the File Manager, which is a local path on core's host.</li>
+<li><strong>Models.</strong> A <strong>Train Model</strong> node with <strong>Save to catalog</strong> on, and an <strong>Apply Model</strong> node whose <strong>Model source</strong> is <strong>From catalog</strong>, move the model through the artifact store. That needs the S3 artifact store on core (<code>FLOWFILE_ARTIFACT_STORAGE=s3</code>, <code>FLOWFILE_S3_BUCKET</code>, and <code>FLOWFILE_S3_ENDPOINT_URL</code> for an S3-compatible store) on an <code>https</code> endpoint the worker reaches by the same name, because core presigns the URLs the worker uploads to and downloads from. The worker needs no store credentials; a private certificate authority goes in the worker's <code>REQUESTS_CA_BUNDLE</code>. With the filesystem store, the default, both nodes are refused. A model trained and applied in one flow without the catalog stays on the worker and needs neither.</li>
+</ul>
+<h2 id="versions-and-the-handshake">Versions and the handshake</h2>
+<p>Core checks each worker on first use after it starts, and again after a call cannot reach it: it compares versions and runs a few small plans there, one per expression plugin (<code>polars_grouper</code>, <code>polars_ds</code>) and one with a Python function. <strong>Handshake</strong> on the worker's row on the Backends page runs the same check; run it after adding a worker and after upgrading either side.</p>
+<table>
+<thead>
+<tr>
+<th>Compared</th>
+<th>When it differs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Worker contract (protocol version), Polars version, Polars runtime index width</td>
+<td>The worker is refused whole and runs nothing: <code>Backend "&lt;id&gt;" does not match core (&lt;field&gt;: core &lt;value&gt;, backend &lt;value&gt;; …)</code></td>
+</tr>
+<tr>
+<td>Each plugin: missing, another version, or fails to load from the path core's plans carry</td>
+<td>Only the nodes that use that plugin are refused there</td>
+</tr>
+<tr>
+<td>Python version, to the patch release, when core's Python functions fail there</td>
+<td>Only the formula nodes (<strong>Formula</strong>, <strong>Multi-field formula</strong>, and <strong>Filter data</strong>, <strong>Gate</strong> and <strong>Rename columns</strong> with a formula) and a cloud storage read of a table's changes are refused there</td>
+</tr>
+<tr>
+<td>App version, platform, plugin library paths</td>
+<td>Nothing; shown only</td>
+</tr>
+</tbody>
+</table>
+<p>A backend that resolves credentials with its own identity (a Polars cluster) is also refused whole while <code>FLOWFILE_COMPUTE_PROTOCOL</code> is off, since core's plans then carry encrypted credentials; the message names the flag.</p>
+<p>The last result shows beside the worker's id in every user's <strong>Execution location</strong> and <strong>Compute backend</strong> pickers and on its row; <a href="where-flows-run.html#the-settings">Where flows run</a> lists the labels. Opening the row shows <strong>Handshake details</strong>: each difference and each piece the worker is accepted without.</p>
+<p><img alt="A configured worker's row opened on the Backends page: worker:team at http://localhost:63612, Sees this server's files No, a Matches this server badge, a collapsed Handshake details section, and the Handshake and Remove buttons." src="../../assets/images/guides/compute/worker-handshake.png" /></p>
+<details class="info">
+<summary>Polars builds, releases and plugin paths</summary>
+<p>The <code>flowfile</code> package takes a Polars <em>range</em>, so <code>pip install flowfile</code> runs beside the Polars you have and the index runtime it loads, the 32-bit one unless <code>polars-runtime-64</code> is installed. The desktop app and the core and worker images pin their release's exact Polars build with the 64-bit runtime, so the images of one release match each other and a cluster. A <code>pip install flowfile</code> core is refused by those workers until it installs the same Polars build and <code>polars-runtime-64</code> at that version (<code>pip install polars-runtime-64==&lt;that version&gt;</code>); a cluster is refused until core runs the build the cluster runs.</p>
+<p>Two releases that speak one worker contract work together: the app version is not compared, and a worker refuses a request field it does not know rather than ignoring it. Upgrade the workers when a release changes the protocol version or Polars.</p>
+<p>A desktop app, or a Windows core, with a worker in a Linux container keeps plugins at other library paths, so the nodes that use a plugin, the formula nodes among them, are refused there.</p>
+</details>
+<h2 id="add-the-worker-to-core">Add the worker to core</h2>
+<p><strong>As the default worker:</strong> point core at it with <code>FLOWFILE_WORKER_URL</code>, or <code>WORKER_HOST</code> and <code>FLOWFILE_WORKER_PORT</code>. Flows on <strong>Auto (default worker)</strong> run there.</p>
+<p><strong>On the Backends page</strong> (administrators only):</p>
+<ol>
+<li>Open <strong>Settings → Execution → Backends</strong>, and in the <strong>Other workers</strong> card open <strong>Add a worker</strong>.</li>
+<li>Enter a <strong>Name</strong> (the worker's id becomes <code>worker:&lt;name&gt;</code>), its <strong>Worker URL</strong> (<code>http://</code> or <code>https://</code>) and its <strong>Bearer token</strong>: core's <code>FLOWFILE_INTERNAL_TOKEN</code>, which the worker was started with.</li>
+<li>For an <code>https://</code> worker whose certificate is not public, add the <strong>CA certificate (PEM)</strong> under <strong>Private TLS certificate</strong> (<a href="#tls">TLS</a>).</li>
+<li>Tick <strong>Sees this server's files</strong> only for a worker that sees core's files at the same paths, the kernel shared folder included: on core's host, or with those folders mounted at the same paths. Flows then read and write local paths there, and kernel nodes may run there. A worker started with <code>FLOWFILE_WORKER_LOCAL_FILES=1</code> needs no tick.</li>
+<li>Click <strong>Add worker</strong>, then <strong>Handshake</strong> on its row.</li>
+</ol>
+<p><img alt="The Add a worker form in the Other workers card: Name with the worker: prefix, Worker URL, Bearer token, the Sees this server's files checkbox with About shared file access, a collapsed Private TLS certificate section marked Optional, and the Cancel and Add worker buttons." src="../../assets/images/guides/compute/add-worker.png" /></p>
+<p>The id then appears under <strong>Execution location</strong> in <a href="../visual-editor/building-flows.html#flow-settings">Flow settings</a> for every user, and a flow set to it runs there. Setting core's <code>FLOWFILE_COMPUTE_BACKEND</code> to the id makes it the default backend instead. While the URL is plain <code>http://</code> to a host other than <code>localhost</code>, <code>127.0.0.1</code> or <code>[::1]</code>, the page warns that the token and every plan cross the network in clear.</p>
+<p>A worker cannot be edited: to change its URL, token, CA certificate or <strong>Sees this server's files</strong>, <strong>Remove</strong> it and add it again, ticking the box again if it was ticked. Its row says whether core offers it local files: marked on the row, declared by the worker, or no. A row changed directly in the catalog database is not seen by a running core that has already used that worker, until core restarts.</p>
+<div class="admonition warning">
+<p class="admonition-title">The token is code execution on the worker</p>
+<p>A plan can carry Python code that the worker runs when it loads the plan, and an operation runs node code there, so whoever holds the token and reaches the worker's port can run code on the worker, with its access to the catalog database, the master key and every stored connection. Keep the worker's port off untrusted networks, and beyond a trusted network serve it over <a href="#tls">TLS</a>. The single-host <code>docker-compose.yml</code> stays plain HTTP inside its own Docker network.</p>
+<p>The worker accepts one token, and core signs some calls to every worker with its own internal token (the Delta operations, the visualisation sessions, the catalog services and the custom-node dry run), which is why the worker is started with core's. The version check signs with the worker's <strong>Bearer token</strong>.</p>
+</div>
+<h2 id="tls">TLS</h2>
+<p>The worker serves <code>https</code> and <code>wss</code> itself, so a self-signed certificate needs no proxy:</p>
+<ol>
+<li>Set <code>FLOWFILE_WORKER_TLS_CERT</code> and <code>FLOWFILE_WORKER_TLS_KEY</code> in <a href="#the-workers-environment">the worker's environment</a>.</li>
+<li>Add the worker with an <code>https://</code> URL whose host the certificate names.</li>
+<li>If no public certificate authority signed the certificate, paste the signing authority's certificate, or the self-signed certificate itself, as the <strong>CA certificate (PEM)</strong> under <strong>Private TLS certificate</strong>. Core then trusts that certificate for that URL on every call it makes to the worker.</li>
+</ol>
+<p>A worker whose certificate core cannot verify is unreachable: its <strong>Handshake</strong> says core could not reach it, naming <code>CERTIFICATE_VERIFY_FAILED</code>. A proxy in front of the worker that terminates TLS still works, with the proxy's certificate. The default worker (<code>FLOWFILE_WORKER_URL</code>) has no CA setting, so add a worker with a private certificate on the Backends page.</p>
+<p>The image's health check calls <code>http://localhost:63579/docs</code>, which a worker serving TLS does not answer; override it, for example with <code>curl -fk https://localhost:63579/docs</code>.</p>
+<h2 id="nodes-on-several-backends">Nodes on several backends</h2>
+<p>With an exchange store, each node runs on the backend its own <strong>Compute backend</strong> names (<a href="../visual-editor/building-flows.html#a-nodes-own-backend">A node's own backend</a>), and a node left on <strong>Auto</strong> runs on the flow's. Set the store under <strong>Exchange store</strong> on the Backends page, or with <code>FLOWFILE_EXCHANGE_URI</code> and <code>FLOWFILE_EXCHANGE_CONNECTION</code> in <a href="#cores-environment">core's environment</a>, which override the page. Without one, every node runs on the flow's backend, a node's own <strong>Compute backend</strong> is not read, and no result crosses between backends.</p>
+<p><img alt="The Exchange store card on the Backends page, not configured: A node's own Compute backend is ignored until an exchange store is configured. Fields for the S3 prefix, a stored S3 Connection and an optional Row limit, and a Save exchange store button." src="../../assets/images/guides/compute/exchange-store.png" /></p>
+<p><strong>Fallback.</strong> A node whose backend cannot run it, whether that backend is the flow's or its own, runs on the default backend instead: the default worker in the designer and in Docker, the worker embedded in the runner's own process for a scheduled or <code>flowfile run flow</code> run. Its edges then cross through the store like any other. Its log line reads <code>backend "&lt;id&gt;" cannot run it: &lt;reason&gt;; it runs on the default backend "&lt;default&gt;" instead</code>, its row on the run report names both backends, and the designer marks the node before the run. A node set to <code>local</code> in a core that serves runs on the default worker the same way.</p>
+<p>These still refuse the run before any node starts:</p>
+<ul>
+<li>the default backend cannot run the node either; the reason then names both backends;</li>
+<li>a backend is refused whole: its handshake found another Polars version or contract, or its id is no longer configured;</li>
+<li>the node type always runs on one backend, as the Google Analytics reader does.</li>
+</ul>
+<p>A store core cannot use (a URI without a connection, a scheme other than <code>s3</code>, or a connection name no administrator owns) refuses each node that would read an input across backends, before any node starts. A backend that cannot be reached still fails its nodes when they run; they do not move.</p>
+<p><strong>Crossing.</strong> Where an edge joins two nodes on different backends, the upstream result is exported to <code>&lt;uri&gt;/&lt;flow id&gt;/&lt;run id&gt;/</code>. The node that reads it imports it on its own backend and stores its own result there, so nothing refers to the exported file after the run. Core removes the run's prefix when the run ends, whether the run succeeded or failed.</p>
+<p><strong>Row limit.</strong> <code>FLOWFILE_EXCHANGE_MAX_ROWS</code> is checked before the run against the row counts core already has: from an earlier run of the open flow while nothing up to the upstream node has changed, or a <strong>Manual input</strong>'s own rows. An edge whose size core cannot know before the run, as on a flow's first run after it is opened, crosses at any size. Above the limit the reading node is refused with <code>the input from node &lt;n&gt; would cross from backend "&lt;id&gt;" with &lt;rows&gt; rows of &lt;columns&gt; columns, above FLOWFILE_EXCHANGE_MAX_ROWS=&lt;limit&gt;</code>. In <strong>Development</strong> mode it can also refuse a node whose input has not changed since the last run, when nothing would cross.</p>
+<div class="admonition tip">
+<p class="admonition-title">Give the bucket a lifecycle rule</p>
+<p>A core that stops in the middle of a run leaves that run's prefix in the bucket, and so does a removal that fails, which is a warning in the flow log. Expire objects under the URI's prefix after longer than the longest run takes, a day for example.</p>
+</div>
+<p>Core and every worker open the store at its connection's endpoint, so that endpoint must lead to the store from each of them; see <a href="#the-workers-environment">The worker's environment</a>.</p>
+<h2 id="a-polars-cluster-as-a-backend">A Polars cluster as a backend</h2>
+<p>A Polars Cloud cluster is added like any worker: a <code>worker:&lt;name&gt;</code> row on the Backends page whose URL is a connector that speaks the worker's <code>/v1</code> wire in front of the cluster. The connector is not part of this repository; <a href="../../for-developers/compute-protocol.html#backends">the compute protocol</a> says what a backend must serve. Core holds nothing specific to the cluster and learns what it can do from the handshake:</p>
+<ul>
+<li><strong>Operations.</strong> The cluster runs plain Polars plans and declares which operations, if any, its connector runs beside them (a cloud write, say). Every node whose operation it does not declare stays on a worker: database, Kafka, REST and Google Analytics reads, Polars Code and SQL Query nodes, custom nodes, random splits, fuzzy joins, model training and scoring, the file, database, Delta and catalog writes, Explore Data. Placement says so per node before the run.</li>
+<li><strong>Credentials.</strong> The cluster resolves storage with its own identity (<code>credential_resolution: ambient</code>). A stored connection that holds a secret of its own (an access key, a SAS token, a service principal, a service account key) is refused on it before the run, naming the connection; <code>env_vars</code> and <code>managed_identity</code> connections work and read with the cluster's identity. It receives no credential of core's, encrypted or not, and needs neither the master key nor the catalog database.</li>
+<li><strong>Versions.</strong> It must run the Polars build and index runtime core runs, or the handshake refuses it whole (<a href="#versions-and-the-handshake">above</a>).</li>
+<li><strong>Crossing.</strong> Mixing it with a worker in one run needs the <a href="#nodes-on-several-backends">exchange store</a>, which the cluster's identity must be able to read and write.</li>
+<li><strong>Scheduled runs</strong> reach it as they reach any backend: through the flow's <strong>Execution location</strong>, <code>--backend</code>, or <code>FLOWFILE_COMPUTE_BACKEND</code>.</li>
+</ul>
+<h2 id="limitations">Limitations</h2>
+<ul>
+<li><strong>Kernel nodes.</strong> A <strong>Python Script</strong> node, or a custom node that runs on a kernel, is refused on a remote worker: <code>it runs on a notebook kernel, which reads its inputs from core's disk</code>. Such a flow runs on a worker on core's host, or on a worker marked <strong>Sees this server's files</strong>, which is trusted to write the kernel shared folder at core's path; mark a worker only when that holds, or its kernel nodes fail when they run.</li>
+<li><strong>Plugin layout.</strong> On a worker whose plugins sit at other library paths than core's, the nodes that use a plugin are refused (<a href="#versions-and-the-handshake">Versions and the handshake</a>); every other node still runs there.</li>
+<li><strong>Headless and scheduled runs</strong> compute in their own process (inside core's container for a scheduled run) unless a worker is named, so a remote worker runs a scheduled flow only when the flow or <code>FLOWFILE_COMPUTE_BACKEND</code> names it; see <a href="where-flows-run.html#which-process-computes">Which process computes</a>. A <strong>Google Analytics</strong> read always runs on the default worker. A named worker that cannot be reached fails the run.</li>
+<li><strong>Node logs.</strong> A node's log lines reach core's flow log only when the worker reaches <code>CORE_HOST</code> on <code>CORE_PORT</code> with core's token; otherwise they stay in the worker's own output.</li>
+<li><strong>One worker per backend id.</strong> A <code>worker:&lt;name&gt;</code> row is one worker at one URL, and a worker holds state: a run's results, a fitted model, an Explore Data session. No load balancer may front a worker, and several workers behind one name are not supported; add each worker as its own row.</li>
+<li><strong>No retry on another worker.</strong> A worker that cannot be reached, or that stops mid-run, fails its nodes with <code>ComputeUnavailable</code>; the run is not restarted elsewhere. Run the flow again once the worker is back.</li>
+<li><strong>Explore Data stays where its data is.</strong> An <strong>Explore Data</strong> node's session runs on the backend that holds its input's result. A backend without visualisation sessions (a Polars cluster) is refused the node before the run, or, with an exchange store, the node moves to the default worker.</li>
+</ul>
+<p>Hosting a worker on Kubernetes or behind an ingress, and running and scaling several workers, are outside this page.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="where-flows-run.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Where Flows Run">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Where Flows Run
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="sharing.html" class="md-footer__link md-footer__link--next" aria-label="Next: Users, Groups &amp; Sharing">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Users, Groups & Sharing
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Flowfile is MIT-licensed. Alteryx is a trademark of Alteryx, Inc.; KNIME is a trademark of KNIME AG. Flowfile is not affiliated with or endorsed by either.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.indexes", "navigation.prune", "navigation.tracking", "navigation.top", "navigation.footer", "toc.follow", "search.suggest", "search.highlight", "search.share", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../javascripts/formula-reference.js"></script>
+      
+    
+  </body>
+</html>

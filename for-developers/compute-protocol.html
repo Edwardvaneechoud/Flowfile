@@ -1,0 +1,2897 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A visual ETL tool combining drag-and-drop workflow building with Polars dataframes">
+      
+      
+      
+        <link rel="canonical" href="https://edwardvaneechoud.github.io/Flowfile/for-developers/compute-protocol.html">
+      
+      
+        <link rel="prev" href="compute-walkthrough.html">
+      
+      
+        <link rel="next" href="python-api-reference.html">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Compute Protocol - Flowfile</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CSource+Code+Pro:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Source Code Pro"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+      <link rel="stylesheet" href="../stylesheets/formula-reference.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#compute-protocol" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../index.html" title="Flowfile" class="md-header__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../assets/images/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Flowfile
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Compute Protocol
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../what-is-flowfile.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Get Started
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../users/visual-editor/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Visual Editor
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../users/connect/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Connect Your Data
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../users/visual-editor/catalog/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Catalog & Automation
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../users/python-api/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Python API
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../ai/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  AI Assistant
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../users/deployment/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Deploy & Operate
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  For Developers
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../roadmap.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Roadmap
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../community.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Community
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../index.html" title="Flowfile" class="md-nav__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../assets/images/logo.png" alt="logo">
+
+    </a>
+    Flowfile
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    
+  
+  
+  
+    <a href="../what-is-flowfile.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Get Started
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../users/visual-editor/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visual Editor
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../users/connect/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect Your Data
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../users/visual-editor/catalog/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog & Automation
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../users/python-api/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../ai/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI Assistant
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../users/deployment/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy & Operate
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Developers
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    For Developers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="design-philosophy.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Philosophy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="architecture.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="flowfile-core.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="compute-walkthrough.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How Compute Works
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compute Protocol
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="compute-protocol.html" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compute Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-idea" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The idea
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#invariants" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Invariants
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-interface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The interface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Results
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Results">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#who-materialises" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who materialises
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Operations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#payloads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Payloads
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Credentials
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-data-lives" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where data lives
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#placement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Placement
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Placement">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mixed-placement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mixed placement
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-handshake" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The handshake
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The handshake">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-worker-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The worker contract
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bounded-reads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bounded reads
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#backends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backends
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Backends">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configuration-and-trust" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration and trust
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-registry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The registry
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-execution-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The execution context
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#headless-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Headless runs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-it-is-tested" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where it is tested
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="python-api-reference.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Internal API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="catalog-architecture.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="kernel-architecture.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kernel Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ai-architecture.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI Integration Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="visualizations.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualizations & Graphic Walker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../users/visual-editor/creating-custom-nodes.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Custom Nodes in Code
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../roadmap.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../community.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-idea" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The idea
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#invariants" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Invariants
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-interface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The interface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Results
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Results">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#who-materialises" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who materialises
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Operations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#payloads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Payloads
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Credentials
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-data-lives" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where data lives
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#placement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Placement
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Placement">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mixed-placement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mixed placement
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-handshake" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The handshake
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The handshake">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-worker-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The worker contract
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bounded-reads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bounded reads
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#backends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backends
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Backends">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configuration-and-trust" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration and trust
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-registry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The registry
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-execution-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The execution context
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#headless-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Headless runs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-it-is-tested" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where it is tested
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="compute-protocol">Compute protocol</h1>
+<p>The compute protocol is the contract between <code>flowfile_core</code> and the compute that runs a flow's nodes. This page is the design reference for contributors who change that path or build a backend: the interface a backend implements and the invariants core relies on. <a href="compute-walkthrough.html">How compute works</a> tours the same code with diagrams and is the better first read. <a href="../users/deployment/where-flows-run.html">Where flows run</a> and <a href="../users/deployment/remote-worker.html">Remote workers</a> cover the user and operator side.</p>
+<h2 id="the-idea">The idea</h2>
+<p>Core never holds a dataset. For each node it builds a Polars lazy plan and hands it to a backend, which runs the plan and keeps the result. Core gets back a reference to that result and at most a preview's worth of rows. Nothing else crosses, so core and its compute need no shared disk, host or process.</p>
+<pre class="mermaid"><code>flowchart TB
+  subgraph core["flowfile_core"]
+    R[routes] --&gt; X[DAG executor]
+    X --&gt; E[FlowDataEngine: one node's plan]
+    E --&gt; P[ComputeBackend]
+    P --&gt; L[EmbeddedWorkerBackend]
+    P --&gt; W[WorkerBackend]
+  end
+  L --&gt;|direct call| L2[flowfile_worker in this process]
+  W --&gt;|HTTP + WebSocket| W2[flowfile_worker, any host]</code></pre>
+<p>Three rules carry the design, and each one opens a deployment shape:</p>
+<table>
+<thead>
+<tr>
+<th>Rule</th>
+<th>Lives in</th>
+<th>Makes possible</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A result is a reference only the backend that minted it can read</td>
+<td><code>ResultRef</code>, <code>plan_for</code>, <code>sample</code></td>
+<td>compute on any host, with no shared disk</td>
+</tr>
+<tr>
+<td>One place decides where work runs</td>
+<td><code>execution/registry.py</code>, <code>ExecutionContext</code></td>
+<td>a choice of compute per run and per node</td>
+</tr>
+<tr>
+<td>Every node states what it needs, every backend what it offers</td>
+<td><code>flow_node/requirements.py</code>, <code>Capabilities</code>, <code>place()</code></td>
+<td>a node refused before the run when its backend cannot run it</td>
+</tr>
+</tbody>
+</table>
+<p>The protocol is on by default. <code>FLOWFILE_COMPUTE_PROTOCOL=0</code> sends core back to the worker's task routes, and every task route core does not call with the protocol on answers with <code>Deprecation: true</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>core</strong></td>
+<td>the <code>flowfile_core</code> process: routes, the DAG executor (<code>FlowGraph</code>, <code>NodeExecutor</code>), schema prediction</td>
+</tr>
+<tr>
+<td><strong>backend</strong></td>
+<td>an adapter object inside core that implements <code>ComputeBackend</code></td>
+</tr>
+<tr>
+<td><strong>compute</strong></td>
+<td>what a backend talks to: a <code>flowfile_worker</code> process, or the worker embedded in core's own process</td>
+</tr>
+<tr>
+<td><strong>plan</strong></td>
+<td>a Polars <code>LazyFrame</code>: a tree of operations over scans, with no data in it</td>
+</tr>
+<tr>
+<td><strong>result reference</strong></td>
+<td>a <code>ResultRef</code>, the only handle core holds to a result</td>
+</tr>
+<tr>
+<td><strong>operation</strong></td>
+<td>work that is not a plain Polars plan and needs Flowfile code on the compute</td>
+</tr>
+</tbody>
+</table>
+<h2 id="invariants">Invariants</h2>
+<p>Every backend and every caller in core keeps these. The conformance suite (<code>flowfile_core/tests/flowfile/execution/conformance/</code>) checks them; invariant 4 is checked by <code>flowfile_core/tests/flowfile/test_cloud_plan_secrets.py</code> and <code>flowfile_worker/tests/test_plan_credentials.py</code>.</p>
+<ol>
+<li><strong>Core receives at most <code>preview_rows</code> rows of any result.</strong> Only <code>sample</code> and the inline sample on <code>submit</code> return rows. Core never collects a backend's plan.</li>
+<li><strong>Only the minting backend reads a result.</strong> <code>plan_for(ref)</code> on another backend raises <code>ForeignRef</code>.</li>
+<li><strong>Core learns a schema from the reference, never from the file.</strong> Downstream schemas are predicted over an empty frame of it.</li>
+<li><strong>Plans carry no credentials.</strong> A plan names a connection by <code>CredentialRef</code>, and the process that runs it resolves it.</li>
+<li><strong>Anything beyond a plain plan is a declared operation.</strong> <code>capabilities()</code> lists what a backend runs, and placement checks it before the run.</li>
+<li><strong>Data crosses backends only through <code>export</code> and <code>import_uri</code>.</strong> Consecutive nodes may run on different backends.</li>
+<li><strong>A version mismatch is refused at the handshake.</strong> There is no silent fallback, and an unreachable compute is never reported as a missing result.</li>
+<li><strong>The backend decides what to materialise</strong>, except where core marks it required for correctness.</li>
+</ol>
+<p>Invariant 1 binds a core that serves: the desktop sidecar, the Docker image, the pip server. A process with no worker beside it (a scheduled run, Flowfile in Python) holds its own results, so a frame's <code>collect()</code> there reads every row through <code>plan_for</code>. <code>test_serving_app_ratchet.py</code> keeps the serving app from doing the same.</p>
+<h2 id="the-interface">The interface</h2>
+<p><code>ComputeBackend</code> is a <code>runtime_checkable</code> <code>Protocol</code> in <code>flowfile_core/flowfile_core/flowfile/execution/protocol.py</code>. <code>Capabilities</code> and <code>PROTOCOL_VERSION</code> live in <code>shared/compute_protocol.py</code>, which core and the worker both import.</p>
+<div class="highlight"><pre><span></span><code><span class="n">PROTOCOL_VERSION</span> <span class="o">=</span> <span class="mi">1</span>                         <span class="c1"># the worker contract: everything core and a worker exchange</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ComputeBackend</span><span class="p">(</span><span class="n">Protocol</span><span class="p">):</span>
+    <span class="nb">id</span><span class="p">:</span> <span class="nb">str</span>                                  <span class="c1"># "local", "worker", "worker:team"</span>
+    <span class="n">protocol_version</span><span class="p">:</span> <span class="nb">int</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">capabilities</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Capabilities</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">submit</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">plan</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">,</span> <span class="n">inputs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">ResultRef</span><span class="p">],</span> <span class="n">hints</span><span class="p">:</span> <span class="n">SubmitHints</span><span class="p">,</span> <span class="n">result_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">flow_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">node_id</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">SubmitResult</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">run_op</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">op</span><span class="p">:</span> <span class="n">OperationKind</span><span class="p">,</span> <span class="n">payload</span><span class="p">:</span> <span class="n">OpPayload</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">OpResult</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">sample</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ref</span><span class="p">:</span> <span class="n">ResultRef</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span> <span class="o">...</span>          <span class="c1"># Arrow IPC stream, at most n rows</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">count</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ref</span><span class="p">:</span> <span class="n">ResultRef</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">exists</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ref</span><span class="p">:</span> <span class="n">ResultRef</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">release</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ref</span><span class="p">:</span> <span class="n">ResultRef</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">plan_for</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ref</span><span class="p">:</span> <span class="n">ResultRef</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">:</span> <span class="o">...</span>        <span class="c1"># a leaf valid on this backend only</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">export</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ref</span><span class="p">:</span> <span class="n">ResultRef</span><span class="p">,</span> <span class="n">uri</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">credential</span><span class="p">:</span> <span class="n">CredentialRef</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">import_uri</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">uri</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">schema</span><span class="p">:</span> <span class="n">Schema</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">row_count</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">credential</span><span class="p">:</span> <span class="n">CredentialRef</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">kind</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"table"</span><span class="p">,</span> <span class="s2">"blob"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"table"</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ResultRef</span><span class="p">:</span> <span class="o">...</span>   <span class="c1"># a blob import has no schema</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">status</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">handle</span><span class="p">:</span> <span class="n">JobHandle</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">JobStatus</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">cancel</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">handle</span><span class="p">:</span> <span class="n">JobHandle</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+</code></pre></div>
+<p>The plan crosses as the <code>LazyFrame</code> itself; a backend that sends it to another process serialises it. <code>result_id</code> is the producing node's hash, and <code>flow_id</code> and <code>node_id</code> file the job and its logs on the compute.</p>
+<details class="info">
+<summary>The value types: <code>ResultRef</code>, <code>SubmitHints</code>, <code>SubmitResult</code>, <code>OpResult</code>, <code>Capabilities</code></summary>
+<div class="highlight"><pre><span></span><code><span class="n">Schema</span> <span class="o">=</span> <span class="nb">list</span><span class="p">[</span><span class="n">FlowfileColumn</span><span class="p">]</span>
+
+<span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ResultRef</span><span class="p">:</span>
+    <span class="n">backend_id</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">result_id</span><span class="p">:</span> <span class="nb">str</span>                           <span class="c1"># the node hash, plus a suffix for derived results</span>
+    <span class="n">schema</span><span class="p">:</span> <span class="n">Schema</span>
+    <span class="n">row_count</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span>                    <span class="c1"># None when unknown without computing the result</span>
+    <span class="n">state</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"materialised"</span><span class="p">,</span> <span class="s2">"deferred"</span><span class="p">]</span>
+    <span class="n">location</span><span class="p">:</span> <span class="nb">bytes</span>                          <span class="c1"># opaque to core</span>
+    <span class="n">kind</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"table"</span><span class="p">,</span> <span class="s2">"blob"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"table"</span> <span class="c1"># a blob is a fitted model or another non-tabular result</span>
+
+<span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">SubmitHints</span><span class="p">:</span>
+    <span class="n">must_materialise</span><span class="p">:</span> <span class="nb">bool</span>                   <span class="c1"># cache_results</span>
+    <span class="n">wide</span><span class="p">:</span> <span class="nb">bool</span>                               <span class="c1"># not a narrow transform: join, group_by, sort, pivot, …</span>
+    <span class="n">fanout</span><span class="p">:</span> <span class="nb">int</span>                              <span class="c1"># plans this run executes the result in</span>
+    <span class="n">preview_rows</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span>                 <span class="c1"># 100 in Development mode; None in Performance mode unless the node caches</span>
+
+<span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">SubmitResult</span><span class="p">:</span>
+    <span class="n">ref</span><span class="p">:</span> <span class="n">ResultRef</span>
+    <span class="n">sample</span><span class="p">:</span> <span class="nb">bytes</span> <span class="o">|</span> <span class="kc">None</span>                     <span class="c1"># inline when preview_rows was set</span>
+    <span class="n">handle</span><span class="p">:</span> <span class="n">JobHandle</span>
+
+<span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">OpResult</span><span class="p">:</span>
+    <span class="n">refs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">ResultRef</span><span class="p">]</span>               <span class="c1"># the results by name; empty for an operation that only writes</span>
+    <span class="n">metadata</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>  <span class="c1"># a model's digest, a Delta write's version and counts, Kafka offsets</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Capabilities</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">app_version</span><span class="p">:</span> <span class="nb">str</span>                         <span class="c1"># reported, not compared</span>
+    <span class="n">polars_version</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">python_version</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">protocol_version</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">platform</span><span class="p">:</span> <span class="nb">str</span>                            <span class="c1"># sys.platform plus platform.machine()</span>
+    <span class="n">polars_runtime</span><span class="p">:</span> <span class="nb">str</span>                      <span class="c1"># "32" or "64": the index width of the loaded Polars runtime</span>
+    <span class="n">plugins</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span>                  <span class="c1"># polars_grouper, polars_simed, polars_ds, deltalake, pl_fuzzy_frame_match, polars_expr_transformer</span>
+    <span class="n">plugin_libs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span>              <span class="c1"># prefix-relative library path per expression plugin, as Polars serialises it</span>
+    <span class="n">operations</span><span class="p">:</span> <span class="nb">frozenset</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">()</span>  <span class="c1"># the OperationKind values it runs</span>
+    <span class="n">read_schemes</span><span class="p">:</span> <span class="nb">frozenset</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">()</span>  <span class="c1"># "file", "s3", "az", "gs", "http", "https"</span>
+    <span class="n">write_schemes</span><span class="p">:</span> <span class="nb">frozenset</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">()</span>
+    <span class="n">credential_resolution</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"master_key"</span><span class="p">,</span> <span class="s2">"vended"</span><span class="p">,</span> <span class="s2">"ambient"</span><span class="p">]</span>
+    <span class="n">submit_socket</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>               <span class="c1"># takes a submit over WS /v1/ws/submit; False: core posts each one</span>
+</code></pre></div>
+</details>
+<p>Every error is a <code>ComputeError</code> (<code>flowfile/execution/errors.py</code>): <code>ComputeUnavailable</code>, <code>VersionMismatch</code>, <code>ResultMissing</code>, <code>PlanRejected</code>, <code>OperationUnsupported</code>, <code>ForeignRef</code> or <code>TaskFailed</code>. <code>WorkerBackend</code> maps the task routes' integer <code>error_code</code> onto them. An unreachable compute stays an error all the way out: the published API answers <code>ComputeUnavailable</code> with 503 (any other compute error with 500), so do the catalog routes, and core never reads the data itself instead. The run report's <code>NodeResult.compute_error</code> names the failure: <code>"Refusal"</code> for a node placement refused, else the <code>ComputeError</code> subclass that failed it.</p>
+<h2 id="results">Results</h2>
+<p>A reference is in one of two states:</p>
+<ul>
+<li><strong>Materialised</strong>: the backend wrote the result to storage it owns. <code>plan_for</code> answers a scan of it, <code>scan_ipc(path)</code> on a worker.</li>
+<li><strong>Deferred</strong>: the backend kept the plan and runs it when something needs rows. <code>plan_for</code> answers the plan itself, and <code>row_count</code> stays <code>None</code> until counted, unless the backend already knows it.</li>
+</ul>
+<p>The leaf from <code>plan_for</code> may name a path core cannot open. Core only composes the next node's plan on it and sends that back to the same backend.</p>
+<p>The <code>result_id</code> is the node hash, which folds in the input hashes, the settings, the graph's <code>parent_uuid</code> and the cache epoch. The reference is therefore the cache: <code>exists</code> says whether the backend still holds it, <code>release</code> lets it go, and no reference survives a graph reload.</p>
+<p>A node owns every reference it minted (its result, the outputs it stored beside it, its operation's outputs), and <code>FlowNode.release_result</code> releases them together: on a rerun under another hash or backend, on removal, when its graph closes, and when it fails after storing part of its outputs. A published API call and a headless run close their flow when they end. A release whose backend cannot be reached is logged and dropped. The worker's age sweep (<code>CACHE_EXPIRATION_TIME</code>, 24 hours) is the backstop for a core that died, not how results are meant to go.</p>
+<h3 id="who-materialises">Who materialises</h3>
+<p>Core marks only what correctness needs. <code>must_materialise</code> is set when a node has <strong>Cache Results</strong> on or reads an input that crossed from another backend. Reads whose source can change between calls (a database, Kafka, REST, Google Analytics) and random splits are operations, so the backend holds what each produced once and two consumers never see different answers. <code>wide</code>, <code>fanout</code> and <code>preview_rows</code> are hints.</p>
+<p>The worker materialises when <code>must_materialise or (wide and (preview_rows is not None or fanout &gt; 1))</code>: a wide result that several plans execute is written once instead of computed again inside each of them, since a plan inlines the plans of the deferred results it reads. A narrow result stays deferred whatever its fan-out, so projections and filters keep pushing through it. The embedded worker runs the same <code>service._materialise</code>, so this is the one policy wherever the worker runs; core spells it once as <code>protocol.worker_stores</code>.</p>
+<p><code>fanout</code> is the number of distinct plans the run executes the result in, not the number of consumers (<code>flow_node/executor.py::hints_for</code>). Core walks the consumers among the nodes the run executes (a single-node fetch executes none): a consumer that collects counts once, and a deferred one passes on its own fan-out, since every plan that executes it executes this result too. A consumer collects when it runs its inputs itself (a writer, <code>api_response</code>, <code>flow_output</code>, <code>run_flow</code>, and every node that hands its inputs to an operation or a kernel: the database, cloud and catalog writers, the fuzzy join, the random split, the ML nodes, Polars Code, SQL Query, Python Script and custom nodes) or when its own hints make the worker store it. A result that no sink, operation or stored result reads has fan-out 0, so a Performance run with no writer stores nothing. In Development mode every wide node is stored for its preview, so it counts once; a narrow one passes its count on. A consumer that reads the result on two inputs (a self-join) is one plan and counts once. Node types are classified by hand (<code>IN_CORE_NODE_TYPES</code>, <code>OPERATION_NODE_TYPES</code>); <code>test_executor.py::test_every_node_type_with_inputs_is_classified_for_fanout</code> fails for a new node type with inputs that is in neither list nor its list of composing types, and <code>test_core_and_the_worker_store_the_same_plans</code> pins <code>worker_stores</code> to the worker's <code>_materialise</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Flow</th>
+<th>Hints</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>read → filter → one consumer</td>
+<td>narrow, fanout 1</td>
+<td>deferred; the preview is a streaming <code>head(100)</code> job</td>
+</tr>
+<tr>
+<td>join → group by</td>
+<td>wide, fanout 1</td>
+<td>materialised in Development mode (the preview); deferred in Performance mode, computed once at the sink</td>
+</tr>
+<tr>
+<td>group by → two writers</td>
+<td>wide, fanout 2</td>
+<td>materialised in both modes; each writer scans the file</td>
+</tr>
+<tr>
+<td>read → four group bys, no writer</td>
+<td>wide, fanout 0 in Performance mode</td>
+<td>deferred in Performance mode, so nothing runs; in Development mode each group by is stored for its preview (fanout 4), so the read is stored</td>
+</tr>
+<tr>
+<td>read → join → two writers</td>
+<td>join: wide, fanout 2; read: fanout 1</td>
+<td>the join is stored, so the read runs once inside the join's plan</td>
+</tr>
+<tr>
+<td>database read → two nodes</td>
+<td>an operation</td>
+<td>materialised by the read</td>
+</tr>
+<tr>
+<td>any node with <strong>Cache Results</strong></td>
+<td>required</td>
+<td>materialised</td>
+</tr>
+<tr>
+<td>any node in Performance mode</td>
+<td><code>preview_rows=None</code></td>
+<td>no sample job; a wide node stays deferred unless required or executed by several plans</td>
+</tr>
+</tbody>
+</table>
+<h2 id="operations">Operations</h2>
+<p><code>submit</code> runs a plain Polars plan. Work that needs Flowfile code on the compute, reads a source that can change between calls, or writes is an <code>OperationKind</code>, a closed enum run through <code>run_op</code>. A backend declares which kinds it runs, and one <code>run_op</code> may run several jobs: a random split is one shuffle with a deferred reference per split over it.</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>database_read</code>, <code>kafka_read</code>, <code>google_analytics_read</code>, <code>rest_api_read</code>, <code>file_read</code></td>
+<td>one reference; <code>kafka_read</code> adds its offsets as <code>metadata</code></td>
+</tr>
+<tr>
+<td><code>fuzzy_join</code>, <code>ml_apply</code></td>
+<td>one reference</td>
+</tr>
+<tr>
+<td><code>polars_code</code>, <code>sql_query</code></td>
+<td>one reference, its schema from running the code on the backend</td>
+</tr>
+<tr>
+<td><code>random_split</code></td>
+<td>one reference per split</td>
+</tr>
+<tr>
+<td><code>custom_node</code></td>
+<td>one reference per named output</td>
+</tr>
+<tr>
+<td><code>ml_train</code></td>
+<td>the model as a <code>blob</code> reference, its digest in <code>metadata</code></td>
+</tr>
+<tr>
+<td><code>file_write</code>, <code>database_write</code>, <code>cloud_write</code></td>
+<td>nothing</td>
+</tr>
+<tr>
+<td><code>delta_write</code>, <code>delta_merge</code>, <code>delta_scd2</code></td>
+<td>the Delta version and counts as <code>metadata</code></td>
+</tr>
+<tr>
+<td><code>viz_session</code></td>
+<td>the visualisation session's answer as <code>metadata</code></td>
+</tr>
+</tbody>
+</table>
+<p>With the protocol on, every kind except the three Delta kinds and <code>viz_session</code> goes to <code>POST /v1/ops/{kind}</code>. Those four stay on the worker's task routes (<code>/submit_query/</code>, <code>/catalog/visualize_*</code>).</p>
+<p><strong>User code runs on the backend, never in core.</strong> A Polars Code node's code is the <code>polars_code</code> payload, and a SQL Query node's statement is the <code>sql_query</code> payload, its inputs registered as <code>input_1</code>, <code>input_2</code>, … in a <code>pl.SQLContext</code>. The backend that holds the inputs runs it once and answers a reference carrying the resulting schema, so eager code and side effects behave as they would in a script on that host. The designer predicts the schema with the same operation over empty frames. A result over sources is held deferred; one over rows in memory is written and held as a file, so no rows travel to core. With the protocol off, core runs both itself to build a plan.</p>
+<p><strong>A fitted model is a <code>blob</code> result</strong>, addressed, checked and released like any reference and never sampled, counted or planned over. Publishing it to the catalog is <code>export</code> to the artifact store's upload target; using a catalog model is <code>import_uri</code> of its download source. Core writes the catalog row and never carries the bytes. <code>flowfile_core/artifacts/publish.py</code> holds the two moves: <code>publish_result</code> has the backend <code>export</code> the held model to the store's upload target, then writes the version; <code>fetch_artifact</code> answers the blob the backend's <code>import_uri(kind="blob")</code> holds from the store's download source. The URI is a <code>file://</code> path or a presigned URL, never a credential. <code>plan_for</code>, <code>sample</code> and <code>count</code> refuse a blob with <code>OperationUnsupported</code>.</p>
+<h3 id="payloads">Payloads</h3>
+<p>Every kind takes one frozen, keyword-only dataclass from <code>flowfile/execution/payloads.py</code>, on <code>OperationPayload</code> (<code>flow_id</code>, <code>node_id</code>, <code>job_id</code>), wrapped by <code>op_payload(x)</code> under the one key <code>PAYLOAD_KEY</code>; a backend's <code>unpack</code> names the class it expected. Both backends read the same payload, so a call site is <code>FlowNode.run_op(current_context(graph).backend, kind, op_payload(x), job_id=x.job_id)</code> with no location branch. A write carries its input as a <code>pl.LazyFrame</code>, the settings model, the resolved connection and credentials only as <code>$ffsec$</code> ciphertext; a read carries the settings, the connection and the credential as stored; a transform or model carries its frames and settings (<code>MlApplyPayload.model</code> is the blob's <code>ResultRef</code>). In-process hooks a payload carries (a cancel check, a logger, the Kafka consumer) are core's, and no backend reads them. The Delta writes answer <code>table_path</code>, <code>schema</code>, <code>row_count</code>, <code>column_count</code> and <code>size_bytes</code> as <code>metadata</code>, an SCD2 write adding <code>version</code> and <code>scd2_metrics</code>, a write that changed nothing <code>{"skipped": True}</code>. Job ids come from the node hash, so a rerun's job replaces the last; a schema prediction runs as <code>&lt;job id&gt;-schema</code>.</p>
+<p>With the protocol on a catalog table is named by identity, not a path: the Delta payload's <code>table</code> is a <code>CatalogTableIdentity</code> (table id, directory name, the storage root's <code>base_uri</code>), the compute answers where it wrote as <code>table_path</code>, and the writer refuses an existing table whose answer is not the location its record resolves to before anything is registered or deleted.</p>
+<h2 id="credentials">Credentials</h2>
+<p>A plan carries <code>CredentialRef(connection_id, user_id)</code> inside a <code>CredentialRefProvider</code>, plus a per-plan nonce that keeps Polars' credential cache to one plan, and no secret. The process that runs the plan resolves it: the worker reads the connection row from the shared catalog, decrypts it with its master key, and exchanges an Azure service-principal secret or a GCS service-account key for a bearer token on the spot. Neither backend attaches anything.</p>
+<p>A worker on another host therefore needs core's catalog database (the shared PostgreSQL behind <code>FLOWFILE_DATABASE_URL</code>) and the same master key; <a href="../users/deployment/remote-worker.html#the-shared-catalog-and-the-master-key">Remote workers</a> has the setup. What follows from resolving where the plan runs:</p>
+<ul>
+<li><code>aws-cli</code>, <code>iam_role</code>, <code>env_vars</code> and <code>managed_identity</code> connections authenticate as the executor's host, for reads and writes alike. An <code>aws-cli</code> read with no saved connection uses the executor's default credential chain.</li>
+<li>A read naming a credential-holding connection that the catalog does not store for the user it runs as is refused, never resolved in core: <code>Cloud connection "&lt;name&gt;" is not stored for user &lt;id&gt;: …</code>.</li>
+<li>Schemas follow the rows: core learns a reader's schema from the backend that runs the read, and resolves no connection for a read it sends elsewhere.</li>
+<li>The catalog's own object-storage work stays in core, with core's identity: the freshness probe at the start of a run, enabling a change feed, scanning an SCD2 result. A deployment's core therefore needs access to the buckets of its object-storage catalogs.</li>
+<li>A GCS connection with a custom endpoint is read on the executor by a native scan too. Core's gcsfs read remains only for the protocol off and for the writers.</li>
+<li>With the protocol off, a plan carries a <code>$ffsec$</code> ciphertext in an <code>EncryptedCredentialProvider</code> instead, and Azure and GCS secrets travel in its <code>storage_options</code>.</li>
+<li>A write to a backend whose verdict declares <code>credential_resolution: ambient</code> carries its connection's transport options only: <code>WorkerBackend</code> sends the cloud write's and the Delta operations' connection with every credential field <code>None</code> (<code>_transport_only</code>). Placement already keeps every connection but <code>env_vars</code> and <code>managed_identity</code> off such a backend, and those hold no secret, so this only keeps ciphertext the backend could not decrypt off the wire.</li>
+</ul>
+<h2 id="where-data-lives">Where data lives</h2>
+<p>Intermediate results are private to the backend that computed them, object storage holds catalog data, and nothing is staged unless a deployment configures it.</p>
+<ul>
+<li><strong>Catalog tables</strong> are addressed by identity. The storage target (<code>catalog/storage_backend.py</code>) resolves the identity to a path or URI for whoever executes. A table stored outside its catalog's root (registered from its own path, left behind by a moved catalog directory, or under a namespace whose storage URI changed) is refused by the catalog writer on every backend, and its data is left untouched.</li>
+<li><strong>The catalog services</strong> (metadata, previews, history, optimize, vacuum) go to the worker unless the current context's backend is <code>local</code> (<code>catalog/compute.py::uses_worker</code>); a worker that cannot be reached is <code>ComputeUnavailable</code>, never a read in core.</li>
+<li><strong>The <code>file</code> scheme</strong> is offered only to a worker that sees core's disk: the embedded worker; the built-in <code>worker</code> at its unconfigured address (neither <code>FLOWFILE_WORKER_URL</code> nor <code>WORKER_HOST</code> set); a configured row marked <code>shares_core_disk</code>; a worker started with <code>FLOWFILE_WORKER_LOCAL_FILES=1</code>. Core adds <code>file</code> for the first three itself, because what a worker sees of core's disk is core's knowledge. A local path or a local-disk namespace on any other backend is refused before the run: <code>namespace "sales" is on local disk, not object storage</code>.</li>
+<li><strong>Kernel nodes</strong> (Python Script, custom nodes that run on a kernel) read their inputs from the kernel shared volume on core's host, so they run only on a worker that writes there. Under the mixed policy, only the kernel node's own backend must qualify.</li>
+<li><strong>Artifacts</strong> move between a backend and the artifact store through a <code>file://</code> URI on a co-located backend and a presigned <code>https://</code> URL anywhere else, and placement checks the scheme against the backend's <code>read_schemes</code> or <code>write_schemes</code>. An unpublished model stays on the backend that fitted it until a later fit replaces it.</li>
+<li><strong>The exchange store</strong> is the one place results are staged, and only when a deployment configures it; see <a href="#mixed-placement">mixed placement</a>.</li>
+</ul>
+<h2 id="placement">Placement</h2>
+<p>Each node derives its requirements from its template and settings alone (<code>flow_node/requirements.py</code>). <code>place()</code> in <code>flowfile/execution/placement.py</code> compares them with what each backend's handshake verdict offers, without calling any backend:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">place</span><span class="p">(</span><span class="n">flow</span><span class="p">:</span> <span class="n">FlowGraph</span><span class="p">,</span> <span class="n">backends</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Capabilities</span><span class="p">],</span> <span class="n">policy</span><span class="p">:</span> <span class="n">PlacementPolicy</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">nodes</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">FlowNode</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Placement</span>
+
+<span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Placement</span><span class="p">:</span>
+    <span class="n">assignment</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span>               <span class="c1"># node id -&gt; backend id</span>
+    <span class="n">boundaries</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span>        <span class="c1"># edges whose data must cross through export / import_uri</span>
+    <span class="n">refusals</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Refusal</span><span class="p">]</span>                  <span class="c1"># node, backend, reason in words</span>
+    <span class="n">unreachable</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="ne">Exception</span><span class="p">]</span>        <span class="c1"># backend id -&gt; the error its handshake raised; its nodes fail with it when they run</span>
+    <span class="n">fallbacks</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Fallback</span><span class="p">]</span>                <span class="c1"># nodes moved to the fallback backend under the mixed policy</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>A node needs</th>
+<th>When</th>
+<th>Refused on a backend that</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>a storage scheme</td>
+<td>it reads or writes <code>file</code>, <code>s3</code>, <code>az</code>, <code>gs</code>, <code>http</code> or <code>https</code></td>
+<td>does not list it in <code>read_schemes</code> or <code>write_schemes</code></td>
+</tr>
+<tr>
+<td>a plugin</td>
+<td>its expressions use one; every formula node needs <code>polars_ds</code> and <code>polars_expr_transformer</code></td>
+<td>lacks it, has another version, or cannot load it</td>
+</tr>
+<tr>
+<td>Python functions in its plan</td>
+<td>it is a formula node (formula, multi-field formula, advanced filter, formula gate, formula rename) or a cloud or catalog change read</td>
+<td>failed the handshake's Python probe</td>
+</tr>
+<tr>
+<td>an operation kind</td>
+<td>it runs one; Explore Data needs <code>viz_session</code></td>
+<td>does not declare it</td>
+</tr>
+<tr>
+<td>the kernel shared volume</td>
+<td>it runs on a notebook kernel</td>
+<td>does not write <code>file</code></td>
+</tr>
+<tr>
+<td>a stored connection</td>
+<td>it names one whose method holds a credential (anything but <code>env_vars</code> and <code>managed_identity</code>)</td>
+<td>resolves storage with its own identity (<code>credential_resolution="ambient"</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><code>requirements_for</code> does no I/O: a catalog node's scheme and connection, and a model node's artifact scheme, come from the target its caller resolves. <code>place</code> reads each node's settings with the flow's parameters resolved, through a copy, so <code>${dir}/x.csv</code> is placed by what <code>dir</code> resolves to, and a node whose needs cannot be read from its resolved settings is refused before the run starts.</p>
+<p>Every node saves <code>execution_location: "auto" | &lt;backend id&gt;</code> in the flow file, and the flow's own value is the default for its nodes. Ids are <code>local</code> (the worker embedded in this process), <code>worker</code> (the built-in default) and <code>worker:&lt;name&gt;</code> for each configured one. A saved id is permanent, which is why the vocabulary is ids and not role names; <code>remote</code> stays an alias of <code>"auto"</code> for flow files that carry it.</p>
+<p>The designer offers <code>"auto"</code> and the configured ids, never <code>local</code>: desktop and Docker always compute on a worker, so an out-of-memory node takes down a child rather than core, and cancel is real. A flow saved with <code>local</code> loads as <code>"auto"</code> wherever the protocol is on, in the designer and <code>flowfile_frame</code> alike. A core that serves refuses a run that reaches <code>local</code> before any node starts: <code>cannot run on backend "local": this core serves; compute runs on its worker</code>.</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><code>SingleBackendPolicy</code></th>
+<th><code>MixedPlacementPolicy</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Chosen</strong></td>
+<td>by default</td>
+<td>when an exchange store is configured (<code>FLOWFILE_EXCHANGE_URI</code>)</td>
+</tr>
+<tr>
+<td><strong>Assigns</strong></td>
+<td>every node to the flow's backend</td>
+<td>each node to its own <code>execution_location</code>, the flow's for <code>"auto"</code></td>
+</tr>
+<tr>
+<td><strong>A node its backend cannot run</strong></td>
+<td>refuses the run before any node starts</td>
+<td>moves to the fallback backend if that one can run it, else is refused with both reasons</td>
+</tr>
+</tbody>
+</table>
+<p>Both policies keep pinned node types where their builders pin them; the Google Analytics reader always runs on the worker. A refused node's row on the run report reads <code>cannot run on backend "&lt;id&gt;": &lt;reason&gt;</code>. Placement stays in core because only the DAG executor knows the graph (<a href="flowfile-core.html#execution-strategy-how-nodes-decide-where-to-run">Execution Strategy</a>); a control plane may fill the backends table, but core places.</p>
+<p>A Run Flow node is placed with the flow it runs: the child is built for the call and every node its run would run is placed on the Run Flow node's backend, nested flows in turn up to <code>subflow.MAX_SUBFLOW_DEPTH</code>. An Apply Model node is placed with the Train Model node whose model it scores, and a formula gate with the input it probes. A backend whose verdict refuses it whole refuses every node assigned to it; one whose check raised any other <code>ComputeError</code> keeps its nodes, unchecked, and each fails with that error when it runs, never running elsewhere; an unknown id refuses its nodes. A refusal ends the run before a node starts: one failed <code>NodeResult</code> per refused node, nothing prepared, executed or committed. A single-node fetch places the node and the nodes it reads from the same way.</p>
+<h3 id="mixed-placement">Mixed placement</h3>
+<ul>
+<li><strong>Fallback.</strong> <code>registry.fallback_backend_id()</code> is the default backend in a core that serves and the embedded <code>local</code> in a process that does not. Each move is a <code>Fallback(node_id, backend_id, fallback_id, reason)</code> on <code>Placement.fallbacks</code>, and a run-report row with <code>backend_id</code>, <code>fallback_from</code> and <code>fallback_reason</code>. A Train Model that falls back takes its Apply Model along. Nodes on a backend refused whole, on an unknown id or on an unreachable backend never move. The policy checks again until no node moves.</li>
+<li><strong>Crossing.</strong> Each boundary crosses through the exchange store (<code>execution/exchange.py</code>) by <code>export</code> and <code>import_uri</code>, into <code>&lt;uri&gt;/&lt;flow id&gt;/&lt;run id&gt;/&lt;from&gt;-&lt;handle&gt;-&lt;to&gt;.parquet</code>. The importing node is submitted with <code>must_materialise</code>, so nothing refers to the prefix afterwards, and <code>run_graph</code> removes the prefix when the run ends, however it ends. A core that stops mid-run leaves its prefix behind, so the bucket needs a lifecycle rule as a backstop.</li>
+<li><strong>Identity.</strong> The store's connection belongs to the deployment: an administrator's cloud connection named by <code>FLOWFILE_EXCHANGE_CONNECTION</code>, resolved once per run. No user configures it, and no user's connection of the same name shadows it.</li>
+<li><strong>Size limit.</strong> <code>FLOWFILE_EXCHANGE_MAX_ROWS</code> refuses an importing node before the run when core already knows the edge holds more rows. It is priced only from counts core holds (an upstream result's <code>row_count</code>, a manual input's frame); nothing is counted to price it, so an edge of unknown size crosses at any size.</li>
+<li><strong>Configuration.</strong> The environment wins over what the Backends page saved through <code>GET</code>/<code>POST /system/exchange_store</code> (<code>configs/exchange_config.py</code>); a malformed <code>FLOWFILE_EXCHANGE_MAX_ROWS</code> refuses each crossing, never a 500.</li>
+<li><strong>Visibility.</strong> <code>GET /flow/placement</code> answers the placement without running, for the designer's badges, and the run report carries <code>RunInformation.boundaries</code> for the canvas's edges.</li>
+<li><strong>Virtual tables.</strong> A catalog reader over a virtual table runs the producer flow on the reader's own backend.</li>
+</ul>
+<h2 id="the-handshake">The handshake</h2>
+<p><code>verify</code> (<code>flow_data_engine/subprocess_operations/handshake.py</code>) checks every backend the same way, through its own interface. It compares <code>capabilities()</code> with core's, then runs probe plans as ordinary jobs (<code>submit</code> with a one-row preview, <code>sample</code>, <code>release</code>): one per expression plugin (<code>polars_grouper</code>, <code>polars_ds</code>) and one carrying a trivial Python function. The resulting <code>Verdict</code> is cached per backend. Placement reads it (<code>verdict_for</code>), and so does the gate in front of every worker call (<code>ensure_handshake</code>). A backend is checked on its first use in each core process, and again after a call could not reach it or a verdict refused it. <strong>Handshake</strong> on <strong>Settings → Execution → Backends</strong> (<code>POST /compute_backends/{id}/handshake</code>) runs the same check on demand.</p>
+<p>Only what no probe can cover refuses a backend whole:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Compared</th>
+<th>A difference</th>
+<th>Because</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>polars_version</code>, <code>polars_runtime</code></td>
+<td>exactly</td>
+<td>refuses the backend</td>
+<td>plan bytes are not stable across Polars versions, and the index width makes <code>pl.len()</code> and row indexes <code>UInt32</code> on one side and <code>UInt64</code> on the other</td>
+</tr>
+<tr>
+<td><code>protocol_version</code></td>
+<td>exactly</td>
+<td>refuses the backend</td>
+<td>it is the <a href="#the-worker-contract">worker contract</a></td>
+</tr>
+<tr>
+<td><code>python_version</code></td>
+<td>to the patch</td>
+<td>refuses the nodes whose plans may carry a Python function, if the probe fails</td>
+<td>Polars refuses to run a Python function serialised under another Python</td>
+</tr>
+<tr>
+<td><code>plugins</code></td>
+<td>version, plus a load probe for expression plugins</td>
+<td>refuses only the nodes that use that plugin</td>
+<td>a plugin expression serialises its library path relative to the sender's <code>sys.prefix</code>, and its ABI is coupled to the Polars version</td>
+</tr>
+<tr>
+<td><code>app_version</code>, <code>platform</code>, <code>plugin_libs</code></td>
+<td>no</td>
+<td>nothing; reported only</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>A refusal is a <code>VersionMismatch</code>, raised before the backend is sent any work and naming each field with both values: <code>Backend "&lt;id&gt;" does not match core (&lt;field&gt;: core &lt;a&gt;, backend &lt;b&gt;; …)</code>. While <code>FLOWFILE_COMPUTE_PROTOCOL</code> is off, a backend declaring <code>credential_resolution: ambient</code> is refused whole too, with a message naming the flag: with the flag off core's plans carry their credentials encrypted and placement's ambient rule does not run, so a backend that resolves no credential of core's must not be sent any plan. Both Docker images build from one exact Python tag, so a core and worker image of one release match. They also install the lock's exact Polars build with its 64-bit index runtime, as the desktop bundle does, while the <code>flowfile</code> package itself takes a Polars range: a <code>pip install flowfile</code> core matches those workers, or a Polars cluster, only on the same Polars build and runtime, which the handshake compares exactly. Plugin paths differ between a PyInstaller desktop, a Windows core and a Linux container even on one Polars version, so a desktop core keeps plugin nodes, formulas included, off a remote Linux worker until plugins are resolved by name.</p>
+<h3 id="the-worker-contract">The worker contract</h3>
+<p><code>PROTOCOL_VERSION</code> (<code>shared/compute_protocol.py</code>) versions everything core and a worker exchange: every request and answer per route, socket and operation kind, and the catalog columns a worker reads.</p>
+<ul>
+<li><code>shared/tests/test_worker_contract.py</code> fingerprints it against <code>worker_contract.json</code> and fails on a changed or removed entry until the number is bumped and the pin rewritten with <code>python shared/tests/test_worker_contract.py</code>. A new operation kind needs no bump, since a worker that does not declare it is refused only that kind's nodes.</li>
+<li>Every request model a worker route validates refuses unknown fields with 422 (<code>extra="forbid"</code>; <code>FuzzyMapping</code>, a third-party dataclass, is the one exception). A field the worker does not know fails the request instead of being dropped.</li>
+<li>Every <code>/v1/*</code> request carries <code>X-Protocol-Version</code>, and a worker answers a different one with 426.</li>
+<li>A capabilities answer this release cannot read is a <code>VersionMismatch</code> when it carries an <code>app_version</code> (a worker of another release). Without one, the URL is not a Flowfile worker.</li>
+</ul>
+<p>Core and a worker of different app releases work together while they speak one contract. Workers upgrade when the number changes, and when Polars does.</p>
+<p>The worker serves its capabilities at <code>GET /capabilities</code> and <code>GET /v1/capabilities</code>. <code>POST /shutdown</code> takes the internal token like every other route; without it, the worker answers only a loopback peer while the desktop shell supervises it (<code>FLOWFILE_SUPERVISOR_PID</code>).</p>
+<h2 id="bounded-reads">Bounded reads</h2>
+<p>A backend provides rows; core renders them. <code>sample</code> answers an Arrow IPC stream, and with <code>preview_rows</code> set, <code>submit</code> returns it inline on every backend. The common case costs no second round trip, and a plan that cannot run fails its node in Development mode on every backend alike. Reopening a flow, another row count or an on-demand probe calls <code>sample(ref, n)</code>, and core caches the bytes per node hash. A read of a node whose last run failed raises that run's error (<code>FlowNode.get_resulting_data</code>).</p>
+<p>A worker caps <code>sample</code> at 10 000 rows and refuses a larger request rather than truncating it. Above 1 000 rows of a materialised result, it reads in a child, not in its serving process. Every read core makes of a result is one of these:</p>
+<table>
+<thead>
+<tr>
+<th>Read</th>
+<th>How core makes it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>a node's preview</td>
+<td>the inline sample on <code>submit</code></td>
+</tr>
+<tr>
+<td>the first row for the formula editor</td>
+<td><code>sample(ref, 1)</code></td>
+</tr>
+<tr>
+<td>pivot unique values</td>
+<td><code>submit(plan.select(col).unique().head(200))</code>, then <code>sample</code></td>
+</tr>
+<tr>
+<td>column stats, null profile, dynamic-rename first row</td>
+<td>an aggregate plan, then <code>sample</code></td>
+</tr>
+<tr>
+<td>the formula-gate probe</td>
+<td><code>sample(plan.filter(pred), 1)</code></td>
+</tr>
+<tr>
+<td>CSV export</td>
+<td><code>bounded.head_rows</code> of at most 10 000 rows on the backend that holds the result, written by that backend's <code>file_write</code></td>
+</tr>
+<tr>
+<td>the published API runner</td>
+<td><code>sample(ref, max_rows)</code>, with <code>max_rows</code> clamped to the worker's cap</td>
+</tr>
+<tr>
+<td>the custom-node dry run's outputs, the AI agent's samples</td>
+<td><code>sample</code> through the backend</td>
+</tr>
+<tr>
+<td>whether a result is still held</td>
+<td><code>exists(ref)</code></td>
+</tr>
+<tr>
+<td>a kernel node's input parquet</td>
+<td>a parquet <code>file_write</code> on the run's backend (<code>kernel/execution.py::write_parquet_for_kernel</code>, the path pinned on its settings), which needs <code>file</code> among the backend's write schemes</td>
+</tr>
+<tr>
+<td>a catalog virtual-table preview</td>
+<td><code>sample</code> on the producer run's output reference</td>
+</tr>
+</tbody>
+</table>
+<h2 id="backends">Backends</h2>
+<p>The worker is the only compute. Flowfile runs it in two shapes (<a href="../users/deployment/where-flows-run.html#which-process-computes">Which process computes</a> has the table per way of running):</p>
+<ul>
+<li><strong>Core + Worker.</strong> The desktop app and Docker run core and a worker as separate processes. Core serves and reaches its worker through <code>WorkerBackend</code>.</li>
+<li><strong>Core(Worker).</strong> A scheduled run, <code>flowfile run flow</code> and Flowfile in Python embed the worker and call it through <code>EmbeddedWorkerBackend</code>. Nothing of the worker is imported or started until the first submit, and <code>import flowfile</code> sets neither the worker's port nor single-file mode. The pip server (<code>flowfile run ui</code>) serves too, on the worker embedded in it.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><code>WorkerBackend</code></th>
+<th><code>EmbeddedWorkerBackend</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>File</strong></td>
+<td><code>backends/worker.py</code></td>
+<td><code>backends/embedded.py</code></td>
+</tr>
+<tr>
+<td><strong>Ids</strong></td>
+<td><code>worker</code>, <code>worker:&lt;name&gt;</code></td>
+<td><code>local</code>, and the pip server's <code>worker</code></td>
+</tr>
+<tr>
+<td><strong>Reaches the worker</strong></td>
+<td>over HTTP and WebSocket, one <code>/v1</code> route per method</td>
+<td>by a direct call to the <code>/v1</code> route bodies in <code>flowfile_worker/service.py</code>, with no token, header, socket or port</td>
+</tr>
+<tr>
+<td><strong>Jobs run in</strong></td>
+<td>a pooled child under <code>FLOWFILE_WORKER_TASK_TIMEOUT</code>, cancellable</td>
+<td>this process in Flowfile in Python; a child under the same limit in a headless run (a pool of one, <code>registry.headless_run</code>) and in the pip server (the worker's pool)</td>
+</tr>
+</tbody>
+</table>
+<p><code>EmbeddedWorkerBackend</code> passes the plan as serialised bytes, so the worker loads it exactly as one sent over the wire, and maps the <code>HTTPException</code> a body raises to the typed errors. Running a job in the process itself gives up cancel, the time limit and the isolation of a child that runs out of memory, in exchange for the rows landing where they are wanted, which is why only Flowfile in Python does: its <code>collect()</code> reads the rows in its own process. A headless runner's children cost a spawn each, about 0.2 s on macOS and 0.4 s or more on Windows, except for the jobs its one warm member takes, and they move no memory: in Docker a scheduled run's jobs still compute in core's container, and only a worker backend moves them out. A SIGTERM, the run's cancel, terminates the children and ends the runner; the children post no log to core (<code>flow_logger.HEADLESS_RUN_ENV_VAR</code>), so their lines reach the runner's stderr only. An <code>HTTPException</code> a body raises maps to the typed errors: 404 <code>ResultMissing</code>, 422 <code>PlanRejected</code>, 500 through <code>errors.worker_failure</code>, any other code <code>TaskFailed</code>.</p>
+<p><code>WorkerBackend</code>'s wire maps each method to one route; <code>submit</code> uses <code>WS /v1/ws/submit</code> and falls back to <code>POST /v1/submit</code>. <a href="compute-walkthrough.html#one-worker-two-adapters">How compute works</a> has the full mapping. The worker publishes it as <code>openapi.json</code>; it is private to this backend and versioned by the handshake.</p>
+<p><code>WorkerBackend(url, *, backend_id, token, ca_cert, shares_core_disk)</code> sends its token as <code>X-Flowfile-Internal</code> on every <code>/v1</code> request and the submit socket; a token that is no HTTP header value fails the call naming <code>TOKEN_RULE</code>, never the token. <code>submit</code> falls back to <code>POST /v1/submit</code> when the worker declares no socket or the upgrade fails, but a 426 is <code>VersionMismatch</code> with no fallback; once the plan is sent nothing is resent, silence past <code>FLOWFILE_WORKER_WS_TIMEOUT</code> is <code>TaskFailed</code>, a closed socket <code>ComputeUnavailable</code>; the worker, for its part, stops a submit whose client left and releases a result it completed for one, since core never reads it. <code>capabilities</code> is the one call outside the handshake gate. With the protocol off the same class uses the task routes and reads the worker's files over the shared disk.</p>
+<p>A worker's serving process does nothing but bounded reads of the results it holds. A deferred submit's columns, a sample above 1 000 rows, a count that runs a plan, an export and an import all run in a pooled child under the time limit, so a hanging source or a crashing plugin cannot take down the worker or what it holds. This holds for every worker that serves, the pip server's embedded one included.</p>
+<h3 id="configuration-and-trust">Configuration and trust</h3>
+<ul>
+<li>Backends register through the <code>flowfile.compute_backends</code> entry-point group. Configured workers live in the <code>compute_backends</code> table in core's catalog database: id, URL, bearer token (stored through the secret manager) and an optional <code>ca_cert</code>. An administrator fills it on <strong>Settings → Execution → Backends</strong>, or a control plane through <code>/compute_backends</code>. Core does not host, register, lease or scale workers; that is the control plane's job.</li>
+<li>A running core reads a row the first time it uses that id and keeps the backend it built, so a row edited directly in the database takes effect on restart; removing one on the settings page drops it at once. <code>GET /compute_backends</code> shows every user the ids and their last verdicts, and only administrators the URLs.</li>
+<li>A configured backend's own token signs its <code>/v1</code> requests, its submit socket and its <code>capabilities()</code>, handshake probes included. The task routes core still calls (the Delta operations, the visualisation session, the catalog services, the custom-node dry run) sign with core's <code>FLOWFILE_INTERNAL_TOKEN</code>, so a configured worker is started with core's token.</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">A worker token grants code execution</p>
+<p>Plans carry user code and operations run it, so whoever holds a worker's token can run code on that worker. The worker serves TLS itself when <code>FLOWFILE_WORKER_TLS_CERT</code> and <code>FLOWFILE_WORKER_TLS_KEY</code> name a certificate and key, and a row's <code>ca_cert</code> names the CA core trusts for that URL on every call. Plans are not signed; TLS carries their integrity. The Backends page warns while a worker's URL is plain <code>http</code> to a host other than loopback. <a href="../users/deployment/remote-worker.html#tls">TLS</a> has the setup.</p>
+</div>
+<h3 id="the-registry">The registry</h3>
+<p><code>flowfile/execution/registry.py</code> is the one module outside <code>configs/settings.py</code> that reads <code>OFFLOAD_TO_WORKER</code> or <code>WORKER_URL</code>; everything else asks it, and <code>test_inline_location_branches.py</code> keeps it so. <code>backend(id)</code> builds a backend once per process and caches it; an unknown id is a <code>LookupError</code>, and <code>forget(id)</code> drops an instance so its row is read again. <code>default_backend_id()</code> is the process-wide override when set (<code>set_default_override</code>, which the headless runners use), else <code>FLOWFILE_COMPUTE_BACKEND</code>, else the legacy <code>FLOWFILE_OFFLOAD_TO_WORKER</code> flag, and never <code>local</code> in a process that <code>mark_serving()</code> marked (<code>main.run</code>); <code>fallback_backend_id()</code> is the default backend there and <code>local</code> elsewhere. <code>child_env()</code> is what a child process needs to compute on its own embedded worker.</p>
+<h3 id="the-execution-context">The execution context</h3>
+<p>Core reaches a backend through an <code>ExecutionContext(backend_id, parallelism, preview_rows)</code> owned by the <code>FlowGraph</code>, derived from the flow's settings on each access (<code>ExecutionContext.for_flow</code>: <code>"auto"</code> or <code>"remote"</code> the default backend, any other id that backend; parallelism 1 on <code>local</code>; preview rows 100 in Development mode, <code>None</code> in Performance mode). <code>run_graph</code> captures it once and runs under <code>use_context</code>, each stage thread under a copy, so a <code>run_flow</code> child keeps its parent's. A call made with no run active (a preview re-read, the formula editor's first row, a catalog preview, a dry run) resolves <code>current_context(graph)</code> from the graph it was given, or uses the default backend when there is none, which is never <code>local</code> in a process that serves.</p>
+<h2 id="headless-runs">Headless runs</h2>
+<p><code>flowfile run flow</code> (<code>--run-flow</code> in a packaged build), and the scheduler, which spawns it, compute on the worker embedded in the runner's own process unless a backend is named. To a headless run, <code>"auto"</code> and <code>"remote"</code> mean its own process, so a scheduled run in Docker computes in core's container, with that container's memory and CPU. A backend is named by <code>--backend &lt;id&gt;</code>, else by a specific backend id saved in the flow, else by <code>FLOWFILE_COMPUTE_BACKEND</code> in the runner's environment, which a scheduled run inherits from core, so a deployment that sets the variable sends every scheduled run to that backend; the runner makes it the process's default (<code>registry.set_default_override</code>) and the run goes there through the same <code>ExecutionContext</code> the designer uses; if it cannot be reached, the nodes fail with <code>ComputeUnavailable</code> and nothing computes locally instead. The Google Analytics reader always runs on the default worker. The scheduler stays free of core imports and only spawns <code>flowfile run flow</code>, which reads the flow's setting from its YAML. <a href="../users/deployment/cli.html">Headless runs</a> covers the CLI.</p>
+<h2 id="where-it-is-tested">Where it is tested</h2>
+<p>Paths are under <code>flowfile_core/tests/flowfile/execution/</code> unless given in full.</p>
+<table>
+<thead>
+<tr>
+<th>What</th>
+<th>Test</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>the invariants, over both backends</td>
+<td><code>conformance/</code></td>
+</tr>
+<tr>
+<td>placement and its refusals before any node starts</td>
+<td><code>test_placement.py</code></td>
+</tr>
+<tr>
+<td>one run's nodes on several backends; the exchange store, its errors and its cleanup</td>
+<td><code>test_mixed_placement.py</code>, <code>test_exchange_store.py</code></td>
+</tr>
+<tr>
+<td>an input above <code>FLOWFILE_EXCHANGE_MAX_ROWS</code> refused before the run</td>
+<td><code>test_edge_cost.py</code></td>
+</tr>
+<tr>
+<td>a result crossing between the embedded worker and a worker, both ways</td>
+<td><code>test_two_backend_chain.py</code></td>
+</tr>
+<tr>
+<td>the handshake, refusing whole or narrowing what a backend offers</td>
+<td><code>test_handshake.py</code></td>
+</tr>
+<tr>
+<td>the worker contract pin and unknown-field refusal</td>
+<td><code>shared/tests/test_worker_contract.py</code></td>
+</tr>
+<tr>
+<td>a worker over TLS with a self-signed certificate</td>
+<td><code>test_worker_tls.py</code></td>
+</tr>
+<tr>
+<td>no inline <code>execution_location</code> branch, no worker-setting read outside the registry</td>
+<td><code>test_inline_location_branches.py</code></td>
+</tr>
+<tr>
+<td>no collect over a <code>plan_for</code> leaf in core or the pip server's app</td>
+<td><code>test_serving_app_ratchet.py</code></td>
+</tr>
+<tr>
+<td>the embedded worker's typed errors and in-process jobs, with no port</td>
+<td><code>test_embedded_backend.py</code>, <code>test_local_backend.py</code></td>
+</tr>
+<tr>
+<td>flows over results core cannot read, a Polars Code node among them</td>
+<td><code>test_unreadable_location.py</code></td>
+</tr>
+<tr>
+<td>Explore Data and catalog virtual tables on their reader's backend</td>
+<td><code>test_explore_data_placement.py</code>, <code>test_catalog_reader_placement.py</code></td>
+</tr>
+<tr>
+<td>headless runs on the embedded worker, and an unreachable saved worker</td>
+<td><code>flowfile_core/tests/test_run_flow_cli.py</code></td>
+</tr>
+<tr>
+<td><code>import flowfile</code> starts nothing; <code>collect()</code> answers every row; a read after a failed run</td>
+<td><code>flowfile_frame/tests/test_lazy_start.py</code>, <code>test_deferred_frames.py</code>, <code>test_read_after_failed_run.py</code></td>
+</tr>
+<tr>
+<td>the pip server on its embedded worker's pool, with no worker port</td>
+<td><code>flowfile/tests/test_single_file_embedded.py</code></td>
+</tr>
+<tr>
+<td>core and a worker on separate storage directories</td>
+<td><code>tests/remote_worker/test_two_storage_dirs.py</code></td>
+</tr>
+<tr>
+<td>core and a worker in containers that share no volume</td>
+<td><code>tests/remote_worker/test_zero_volumes.py</code>, run by <code>test-remote-worker.yml</code></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Future direction</p>
+<p>Designed, not built:</p>
+<ul>
+<li><strong>A Polars cluster</strong>, reached through a connector outside this repository that speaks the worker's wire. Core adds it as a <code>worker:&lt;name&gt;</code> row, and its handshake declares no operations, <code>s3</code> and <code>ambient</code> credentials, so placement keeps every node that is not a plain plan on a worker. Core holds nothing specific to Polars Cloud.</li>
+<li><strong>Team workers</strong>, with short-lived credentials from a deployment's control plane and its own node registry, leases and failover. A worker that dies mid-run loses its references, and the run restarts elsewhere with a cold cache.</li>
+<li><strong>Staged local inputs</strong>: a local file uploaded once, keyed by content hash, to a worker that declares <code>file</code> for staging only.</li>
+<li><strong>A generic <code>HttpBackend</code></strong> for any other compute that speaks the worker's wire.</li>
+</ul>
+</div>
+<p>Out of scope for now: a worker fleet registry and fleet page (control-plane work), durable intermediate results across a compute restart, kernels as a backend, fusing a chain into one job on a cluster, Arrow Flight, pull transport, and a load balancer in front of workers, which stays forbidden because a worker holds state.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="compute-walkthrough.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: How Compute Works">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                How Compute Works
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="python-api-reference.html" class="md-footer__link md-footer__link--next" aria-label="Next: Internal API Reference">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Internal API Reference
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Flowfile is MIT-licensed. Alteryx is a trademark of Alteryx, Inc.; KNIME is a trademark of KNIME AG. Flowfile is not affiliated with or endorsed by either.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.indexes", "navigation.prune", "navigation.tracking", "navigation.top", "navigation.footer", "toc.follow", "search.suggest", "search.highlight", "search.share", "content.code.copy", "content.tabs.link"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../javascripts/formula-reference.js"></script>
+      
+    
+  </body>
+</html>

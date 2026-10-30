@@ -1,0 +1,158 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 904" role="img" aria-label="How FlowGraph._place_run places a run before any node starts. run_graph or trigger_fetch_node asks whether an exchange store is configured: without one, SingleBackendPolicy puts every node on the run's backend, Google Analytics pinned to the worker; with one, MixedPlacementPolicy follows each node's own execution_location, auto meaning the run's backend. handshake.verdict_for then reads each backend named. A backend refused whole, or an unknown id, refuses every node there; an unreachable backend keeps its nodes assigned unchecked, and each fails with ComputeUnavailable when it runs; for one that is ok, place() compares requirements_for(node) with the offered capabilities and what is absent. A node that fits is assigned. One that does not is refused under the single policy; under the mixed policy it falls back to the default backend when that backend fits, else it is refused with both reasons. Assignments and fallbacks give the boundaries, the edges between backends, each a BoundaryEdge priced against FLOWFILE_EXCHANGE_MAX_ROWS. Any refusal stops the run and no node starts.">
+  <defs>
+    <marker id="ah" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto"><path d="M1,1 L8,4.5 L1,8 Z" fill="#9aa8b6"/></marker>
+    <marker id="ahn" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto"><path d="M1,1 L8,4.5 L1,8 Z" fill="#233588"/></marker>
+  </defs>
+  <style>
+    .box   { fill:#ffffff; stroke:#1D76D6; stroke-width:1.5; }
+    .head  { fill:#eef5fd; stroke:#1D76D6; stroke-width:1.7; }
+    .boxg  { fill:#ffffff; stroke:#9aa0a6; stroke-width:1.4; }
+    .halt  { fill:#ffffff; stroke:#233588; stroke-width:2.3; }
+    .note  { fill:#ffffff; stroke:#b9c2d0; stroke-width:1.4; stroke-dasharray:5 4; }
+    .dia   { fill:#ffffff; stroke:#1D76D6; stroke-width:1.5; }
+    .chip  { fill:#eef0f2; }
+    .t     { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:13px; fill:#233588; }
+    .tm    { font-family:'Roboto Mono',Menlo,Consolas,monospace; font-weight:600; font-size:12px; fill:#233588; }
+    .s     { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#6b7280; }
+    .ss    { font-family:Roboto,Arial,sans-serif; font-size:10px; fill:#8a93a3; }
+    .m     { font-family:'Roboto Mono',Menlo,Consolas,monospace; font-size:10.5px; }
+    .q     { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:12px; fill:#233588; }
+    .tag   { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:9px; letter-spacing:0.8px; fill:#5b6470; }
+    .albl  { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#8a93a3; }
+    .arw   { fill:none; stroke:#9aa8b6; stroke-width:1.7; stroke-linejoin:round; }
+    .arwn  { fill:none; stroke:#7e88c4; stroke-width:1.8; stroke-linejoin:round; }
+    @media (prefers-color-scheme: dark) { .albl { fill:#aeb6c0; } }
+    [data-md-color-scheme="slate"] .albl { fill:#aeb6c0; }
+  </style>
+
+  <!-- ============ EDGES (behind the boxes) ============ -->
+  <!-- start -> store? -->
+  <path class="arw" d="M500,60 V72" marker-end="url(#ah)"/>
+  <!-- store? -> policies -->
+  <path class="arw" d="M390,118 H240 V192" marker-end="url(#ah)"/>
+  <text class="albl" x="316" y="110" text-anchor="middle">no</text>
+  <path class="arw" d="M610,118 H760 V192" marker-end="url(#ah)"/>
+  <text class="albl" x="684" y="110" text-anchor="middle">yes</text>
+  <!-- policies -> verdict_for -->
+  <path class="arw" d="M240,272 V330 H296" marker-end="url(#ah)"/>
+  <path class="arw" d="M760,272 V330 H704" marker-end="url(#ah)"/>
+  <!-- verdict_for -> verdict? -->
+  <path class="arw" d="M500,354 V380" marker-end="url(#ah)"/>
+  <!-- verdict? exits -->
+  <path class="arw" d="M420,424 H170 V490" marker-end="url(#ah)"/>
+  <text class="albl" x="300" y="416" text-anchor="middle">unreachable</text>
+  <path class="arwn" d="M580,424 H830 V492" marker-end="url(#ahn)"/>
+  <text class="albl" x="700" y="416" text-anchor="middle">refused whole, unknown id</text>
+  <path class="arw" d="M500,464 V490" marker-end="url(#ah)"/>
+  <text class="albl" x="508" y="482">ok</text>
+  <!-- place -> fits? -->
+  <path class="arw" d="M500,556 V584" marker-end="url(#ah)"/>
+  <!-- fits? exits -->
+  <path class="arw" d="M424,626 H246" marker-end="url(#ah)"/>
+  <text class="albl" x="336" y="618" text-anchor="middle">yes</text>
+  <path class="arwn" d="M576,626 H692" marker-end="url(#ahn)"/>
+  <text class="albl" x="630" y="618" text-anchor="middle">no, single policy</text>
+  <path class="arw" d="M500,664 V696" marker-end="url(#ah)"/>
+  <text class="albl" x="508" y="684">no, mixed policy</text>
+  <!-- fallback fits? exits -->
+  <path class="arw" d="M414,738 H376" marker-end="url(#ah)"/>
+  <text class="albl" x="394" y="730" text-anchor="middle">yes</text>
+  <path class="arwn" d="M586,738 H692" marker-end="url(#ahn)"/>
+  <text class="albl" x="636" y="730" text-anchor="middle">no</text>
+  <!-- outcomes -> boundaries / halt -->
+  <path class="arw" d="M100,648 V816" marker-end="url(#ah)"/>
+  <path class="arw" d="M250,762 V816" marker-end="url(#ah)"/>
+  <path class="arwn" d="M830,780 V816" marker-end="url(#ahn)"/>
+
+  <!-- ============ START + STORE ============ -->
+  <rect class="head" x="360" y="24" width="280" height="36" rx="18"/>
+  <text class="tm" x="500" y="47" text-anchor="middle">run_graph / trigger_fetch_node</text>
+  <polygon class="dia" points="500,76 610,118 500,160 390,118"/>
+  <text class="q" x="500" y="114" text-anchor="middle">exchange store</text>
+  <text class="q" x="500" y="130" text-anchor="middle">configured?</text>
+
+  <!-- ============ POLICIES ============ -->
+  <g>
+    <rect class="box" x="60" y="196" width="360" height="76" rx="11"/>
+    <text class="tm" x="78" y="220">SingleBackendPolicy</text>
+    <text class="s" x="78" y="239">every node on the run&#8217;s backend</text>
+    <text class="ss" x="78" y="257">(Google Analytics pinned to worker)</text>
+  </g>
+  <g>
+    <rect class="box" x="580" y="196" width="360" height="76" rx="11"/>
+    <text class="tm" x="598" y="220">MixedPlacementPolicy</text>
+    <text class="s" x="598" y="239">each node&#8217;s own <tspan class="m" fill="#5b6470">execution_location</tspan>,</text>
+    <text class="ss" x="598" y="257"><tspan class="m" font-size="9.5px">auto</tspan> = the run&#8217;s backend</text>
+  </g>
+
+  <!-- ============ VERDICTS ============ -->
+  <g>
+    <rect class="box" x="300" y="306" width="400" height="48" rx="11"/>
+    <text class="s" x="500" y="335" text-anchor="middle"><tspan class="m" fill="#233588">handshake.verdict_for</tspan> each backend named</text>
+  </g>
+  <polygon class="dia" points="500,384 580,424 500,464 420,424"/>
+  <text class="q" x="500" y="428" text-anchor="middle">verdict?</text>
+
+  <!-- unreachable : assigned, fails at run time -->
+  <g>
+    <rect class="boxg" x="40" y="494" width="262" height="70" rx="11"/>
+    <text class="t" x="56" y="516">Assigned unchecked</text>
+    <text class="s" x="56" y="534">each node fails with <tspan class="m" fill="#5b6470">ComputeUnavailable</tspan></text>
+    <text class="s" x="56" y="550">when it runs</text>
+  </g>
+
+  <!-- place() -->
+  <g>
+    <rect class="box" x="340" y="494" width="300" height="62" rx="11"/>
+    <text class="tm" x="356" y="516">place()</text>
+    <text class="s" x="356" y="533"><tspan class="m" fill="#5b6470">requirements_for(node)</tspan> vs</text>
+    <text class="s" x="356" y="548">offered capabilities + absent</text>
+  </g>
+
+  <!-- ============ FIT ============ -->
+  <polygon class="dia" points="500,588 576,626 500,664 424,626"/>
+  <text class="q" x="500" y="630" text-anchor="middle">node fits?</text>
+  <polygon class="dia" points="500,700 586,738 500,776 414,738"/>
+  <text class="q" x="500" y="734" text-anchor="middle">fallback</text>
+  <text class="q" x="500" y="750" text-anchor="middle">backend fits?</text>
+
+  <g>
+    <rect class="box" x="40" y="604" width="202" height="44" rx="11"/>
+    <text class="t" x="141" y="631" text-anchor="middle">Assignment</text>
+  </g>
+  <g>
+    <rect class="box" x="130" y="714" width="242" height="48" rx="11"/>
+    <text class="t" x="146" y="734">Fallback</text>
+    <text class="s" x="146" y="751">assigned to the default backend</text>
+  </g>
+
+  <!-- ============ REFUSALS ============ -->
+  <rect class="note" x="680" y="476" width="300" height="304" rx="12"/>
+  <rect class="chip" x="692" y="484" width="74" height="18" rx="9"/>
+  <text class="tag" x="729" y="497" text-anchor="middle">REFUSALS</text>
+  <g>
+    <rect class="boxg" x="696" y="510" width="268" height="44" rx="10"/>
+    <text class="t" x="712" y="537">Refusal for every node there</text>
+  </g>
+  <g>
+    <rect class="boxg" x="696" y="604" width="268" height="44" rx="10"/>
+    <text class="t" x="712" y="631">Refusal</text>
+  </g>
+  <g>
+    <rect class="boxg" x="696" y="716" width="268" height="44" rx="10"/>
+    <text class="t" x="712" y="743">Refusal with both reasons</text>
+  </g>
+
+  <!-- ============ OUTCOMES ============ -->
+  <g>
+    <rect class="box" x="40" y="820" width="452" height="68" rx="11"/>
+    <text class="t" x="56" y="842">Boundaries: edges between backends</text>
+    <text class="s" x="56" y="860">each a <tspan class="m" fill="#5b6470">BoundaryEdge</tspan>, priced against</text>
+    <text class="s" x="56" y="876"><tspan class="m" fill="#5b6470">FLOWFILE_EXCHANGE_MAX_ROWS</tspan></text>
+  </g>
+  <g>
+    <rect class="halt" x="580" y="820" width="400" height="68" rx="11"/>
+    <text class="t" x="596" y="848">Any refusal: the run stops</text>
+    <text class="s" x="596" y="867">no node starts</text>
+  </g>
+</svg>
