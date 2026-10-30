@@ -50,7 +50,7 @@ from flowfile_core.schemas.catalog_schema import (
     DeltaTableHistory,
 )
 from flowfile_core.utils.arrow_reader import read_top_n
-from shared.delta_utils import validate_catalog_path
+from shared.delta_utils import read_delta_preview, validate_catalog_path
 from shared.storage_config import storage
 
 if TYPE_CHECKING:
@@ -214,8 +214,9 @@ class TablePreviewService:
         if not table.file_path:
             return CatalogTablePreview(columns=[], dtypes=[], rows=[], total_rows=0)
 
-        if _is_cloud_uri(table.file_path):
-            target = resolve_for_namespace(table.namespace_id)
+        is_cloud = _is_cloud_uri(table.file_path)
+        if is_cloud or (uses_worker() and _is_managed_table_path(table.file_path)):
+            target = resolve_for_namespace(table.namespace_id) if is_cloud else None
             if version is not None:
                 return self._get_delta_version_preview(table.file_path, version, limit, target=target)
             return self._get_delta_preview(table.file_path, limit, target=target)
@@ -228,9 +229,7 @@ class TablePreviewService:
             return self._get_delta_version_preview(str(data_path), version, limit)
 
         if is_delta_table(data_path):
-            dt = DeltaTable(str(data_path))
-            dataset = dt.to_pyarrow_dataset()
-            return format_pyarrow_preview(dataset.head(limit), total_rows=dataset.count_rows())
+            return self._get_delta_preview(str(data_path), limit)
         else:
             dataset = ds.dataset(str(data_path), format="parquet")
             return format_pyarrow_preview(dataset.head(limit), total_rows=dataset.count_rows())
@@ -261,9 +260,7 @@ class TablePreviewService:
 
         try:
             delta_table = DeltaTable(table_path, version=version, storage_options=storage_options)
-            dataset = delta_table.to_pyarrow_dataset()
-            pa_table = dataset.head(limit)
-            total_rows = dataset.count_rows()
+            pa_table, total_rows = read_delta_preview(delta_table, limit, storage_options)
         except (FileNotFoundError, DeltaError) as exc:
             logger.info("Delta version %s unavailable for %s: %s", version, table_path, exc)
             raise TableVersionUnavailableError(version=version) from exc
@@ -282,7 +279,7 @@ class TablePreviewService:
         """
         storage_payload = target.to_worker_payload() if target else None
         storage_options = (target.storage_options or None) if target else None
-        if uses_worker():
+        if uses_worker() and (target is not None or _is_managed_table_path(table_path)):
             worker_url = registry.worker_url()
             try:
                 return trigger_delta_preview(
@@ -295,8 +292,8 @@ class TablePreviewService:
                 raise ComputeUnavailable(f"Could not reach the worker at {worker_url}: {exc}") from exc
 
         dt = DeltaTable(table_path, storage_options=storage_options)
-        dataset = dt.to_pyarrow_dataset()
-        return format_pyarrow_preview(dataset.head(limit), total_rows=dataset.count_rows())
+        pa_table, total_rows = read_delta_preview(dt, limit, storage_options)
+        return format_pyarrow_preview(pa_table, total_rows=total_rows)
 
     def get_table_history(self, table_id: int, limit: int | None = None) -> DeltaTableHistory:
         """Return the version history for a Delta catalog table.

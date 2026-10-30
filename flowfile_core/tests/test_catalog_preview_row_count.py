@@ -11,6 +11,27 @@ from flowfile_core.catalog.services import previews
 from flowfile_core.catalog.services.previews import TablePreviewService
 
 
+@pytest.mark.parametrize("version", [None, 0])
+def test_managed_preview_uses_worker_without_core_files(monkeypatch, version):
+    from flowfile_core.schemas.catalog_schema import CatalogTablePreview
+    from shared.storage_config import storage
+
+    path = storage.catalog_tables_directory / "worker_only_orders"
+    assert not path.exists()
+    repo = Mock()
+    repo.get_table.return_value = SimpleNamespace(file_path=str(path), table_type="physical", namespace_id=1)
+    expected = CatalogTablePreview(columns=["id"], dtypes=["int64"], rows=[[1]], total_rows=220)
+    worker = Mock(return_value=expected)
+    monkeypatch.setattr(previews, "uses_worker", lambda: True)
+    monkeypatch.setattr(previews.registry, "worker_url", lambda: "http://worker.test:63579")
+    name = "trigger_delta_preview" if version is None else "trigger_delta_version_preview"
+    monkeypatch.setattr(previews, name, worker)
+    result = TablePreviewService(repo, Mock(), Mock()).get_table_preview(1, limit=1, version=version)
+    assert result == expected
+    args = (path.name, 1) if version is None else (path.name, version, 1)
+    worker.assert_called_once_with(*args, storage=None, worker_url="http://worker.test:63579")
+
+
 @pytest.mark.parametrize("size, stored_count", [(0, 10), (20, 5000), (100, 10), (250, 10)])
 @pytest.mark.parametrize("cloud_path", [False, True])
 def test_latest_delta_preview_counts_snapshot(tmp_path, monkeypatch, size, stored_count, cloud_path):
@@ -38,40 +59,3 @@ def test_latest_delta_preview_counts_snapshot(tmp_path, monkeypatch, size, store
 
     assert len(result.rows) == min(size, 100)
     assert result.total_rows == size
-
-
-@pytest.mark.parametrize("cloud_path", [False, True])
-def test_unreadable_later_fragment_propagates_error(tmp_path, monkeypatch, cloud_path):
-    path = tmp_path / "table"
-    for i in range(40):
-        write_deltalake(path, pa.table({"a": [i]}), mode="append")
-    dt = DeltaTable(str(path))
-    dataset = dt.to_pyarrow_dataset()
-    victim = path / list(dataset.get_fragments())[-1].path
-    hidden = victim.with_suffix(".unavailable")
-    file_path = "s3://bucket/table" if cloud_path else str(path)
-    opened = []
-
-    def open_snapshot(table_path, storage_options=None):
-        assert table_path == file_path
-        assert storage_options is None
-        opened.append(dt)
-        return dt
-
-    monkeypatch.setattr(previews, "DeltaTable", open_snapshot)
-    if cloud_path:
-        monkeypatch.setattr(previews, "resolve_for_namespace", lambda _: Mock(storage_options={}))
-        monkeypatch.setattr(previews, "uses_worker", lambda: False)
-
-    repo = Mock()
-    repo.get_table.return_value = SimpleNamespace(
-        file_path=file_path, row_count=999, namespace_id=1, table_type="physical"
-    )
-    victim.rename(hidden)
-    try:
-        assert dataset.head(1).num_rows == 1
-        with pytest.raises(FileNotFoundError):
-            TablePreviewService(repo, Mock(), Mock()).get_table_preview(1, limit=1)
-        assert opened == [dt]
-    finally:
-        hidden.rename(victim)

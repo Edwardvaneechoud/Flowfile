@@ -567,11 +567,19 @@ export const useCatalogStore = defineStore("catalog", {
       }
     },
 
-    selectTable(tableId: number | null) {
+    cancelTablePreview() {
       tablePreviewRequestToken++;
       this.loadingTablePreview = false;
+    },
+
+    cancelTableHistory() {
       tableHistoryRequestToken++;
       this.loadingTableHistory = false;
+    },
+
+    selectTable(tableId: number | null) {
+      this.cancelTablePreview();
+      this.cancelTableHistory();
       this.selectedTableId = tableId;
       this.selectedFlowId = null;
       this.selectedRunId = null;
@@ -606,10 +614,8 @@ export const useCatalogStore = defineStore("catalog", {
     },
 
     clearTableSelection() {
-      tablePreviewRequestToken++;
-      this.loadingTablePreview = false;
-      tableHistoryRequestToken++;
-      this.loadingTableHistory = false;
+      this.cancelTablePreview();
+      this.cancelTableHistory();
       this.selectedTableId = null;
       this.selectedTable = null;
       this.tablePreview = null;
@@ -638,8 +644,7 @@ export const useCatalogStore = defineStore("catalog", {
     },
 
     async loadTableHistory(tableId: number) {
-      // Maintenance can finish after navigation: it refreshes that table's cache,
-      // but must not supersede the selected table's pending history request.
+      // Maintenance refreshes that table's cache without superseding the selected table's request.
       const token = this.selectedTableId === tableId ? ++tableHistoryRequestToken : null;
       const cacheToken = Symbol();
       tableHistoryCacheRequests[tableId] = cacheToken;
@@ -680,8 +685,7 @@ export const useCatalogStore = defineStore("catalog", {
     /** Refresh state after the edit surface wrote to a table (data, schema and version moved). */
     async handleTableEdited(table: CatalogTable) {
       if (this.selectedTableId === table.id) {
-        tablePreviewRequestToken++;
-        this.loadingTablePreview = false;
+        this.cancelTablePreview();
         this.selectedTable = table;
         this.selectedVersion = null;
         if (!table.is_remote_storage) {
@@ -731,8 +735,7 @@ export const useCatalogStore = defineStore("catalog", {
     },
 
     selectVersion(version: number | null) {
-      tablePreviewRequestToken++;
-      this.loadingTablePreview = false;
+      this.cancelTablePreview();
       // Viewing the current version is the same as viewing "latest". The plain latest
       // read stays valid after old versions are vacuumed, whereas a version-pinned read
       // can reference files that vacuum removed — so route current → latest (null).
