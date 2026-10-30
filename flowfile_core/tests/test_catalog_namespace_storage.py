@@ -540,10 +540,11 @@ def test_cloud_physical_read_path_existence_preview_version_history(monkeypatch)
         assert len(hist.history) >= 2
 
 
-def test_cloud_non_versioned_preview_offloads_to_worker(monkeypatch):
-    """With catalog I/O going to the worker (``uses_worker``), a cloud non-versioned preview routes through the
-    worker (trigger_delta_preview) carrying the storage payload, and the catalog's stored
-    row_count stays authoritative for total_rows (a page-bounded read never sees the whole table).
+@pytest.mark.parametrize("stored_count", [1, 4242])
+def test_cloud_non_versioned_preview_offloads_to_worker(monkeypatch, stored_count):
+    """With catalog I/O going to the worker, a cloud non-versioned preview routes through the worker
+    (trigger_delta_preview) carrying the storage payload. The worker's snapshot
+    total takes precedence over stale catalog metadata in either direction.
 
     No MinIO/worker needed: the worker call is faked, so this exercises core's routing + total_rows
     contract deterministically. The read in this process, the one a process on its embedded worker makes, is covered
@@ -558,14 +559,14 @@ def test_cloud_non_versioned_preview_offloads_to_worker(monkeypatch):
     table_id = _add_physical_table(cat_id, dest)
     with get_db_context() as db:
         t = db.get(db_models.CatalogTable, table_id)
-        t.row_count = 4242
+        t.row_count = stored_count
         db.commit()
 
     captured = {}
 
     def _fake_trigger(table_name, n_rows, storage=None, *, worker_url):
         captured.update(table_name=table_name, n_rows=n_rows, storage=storage)
-        return CatalogTablePreview(columns=["a"], dtypes=["Int64"], rows=[[1], [2]], total_rows=2)
+        return CatalogTablePreview(columns=["a"], dtypes=["Int64"], rows=[[1], [2]], total_rows=250)
 
     monkeypatch.setattr("flowfile_core.catalog.services.previews.uses_worker", lambda: True)
     monkeypatch.setattr("flowfile_core.catalog.services.previews.trigger_delta_preview", _fake_trigger)
@@ -577,7 +578,7 @@ def test_cloud_non_versioned_preview_offloads_to_worker(monkeypatch):
     assert captured["n_rows"] == 10
     assert captured["storage"] is not None and captured["storage"]["base_uri"] == prefix
     assert preview.rows == [[1], [2]]  # rows come from the worker
-    assert preview.total_rows == 4242  # catalog row_count, not the worker's page-bounded count
+    assert preview.total_rows == 250  # the snapshot total, not cached metadata or the page length
 
 
 def test_cloud_table_file_exists_false_when_connection_missing():
