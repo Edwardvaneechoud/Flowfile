@@ -31,6 +31,7 @@ from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavail
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import ExternalDfFetcher
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.flowfile.param_types import coerce_param_value, stringify_param_value
+from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.flow_api_schema import ApiParamSpec
 from flowfile_core.schemas.output_model import RunInformation
 from flowfile_core.schemas.schemas import get_global_execution_location
@@ -299,6 +300,9 @@ def run_flow_as_api(
         if len(api_nodes) > 1:
             raise ApiConfigError("flow has more than one API response node")
         api_node = api_nodes[0]
+        if not api_node.is_setup:
+            # Every setting has a default, so a never-configured node means the defaults.
+            flow.add_api_response(input_schema.NodeApiResponse(flow_id=flow.flow_id, node_id=api_node.node_id))
 
         resolved = resolve_params(_effective_specs(flow, param_specs), query)
         for param in flow.flow_settings.parameters:
