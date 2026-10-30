@@ -47,29 +47,6 @@ from tests.conftest import Call, closed_url, protocol_states, spy
 from typing import Literal
 
 
-def _find_parent_directory(target_dir_name: str) -> Path:
-    current_path = Path(__file__)
-    while current_path != current_path.parent:
-        if current_path.name == target_dir_name:
-            return current_path
-        current_path = current_path.parent
-    raise FileNotFoundError(f"Directory '{target_dir_name}' not found")
-
-
-def find_parent_directory(target_dir_name, start_path=None):
-    """Navigate up directories until finding the target directory"""
-    current_path = Path(start_path) if start_path else Path.cwd()
-
-    while current_path != current_path.parent:
-        if current_path.name == target_dir_name:
-            return current_path
-        if current_path.name == target_dir_name:
-            return current_path
-        current_path = current_path.parent
-
-    raise FileNotFoundError(f"Directory '{target_dir_name}' not found")
-
-
 ExecutionModeLit = Literal["Development", "Performance"]
 ExecutionLocationLit = Literal["remote", "local"]
 
@@ -141,8 +118,8 @@ def create_graph_with_read_and_select(flow_id: int = 10,
     """
     graph = create_graph(execution_mode=execution_mode, flow_id=flow_id, execution_location=execution_location)
     file_path = str(
-        _find_parent_directory('Flowfile')
-        / 'flowfile_core' / 'tests' / 'support_files' / 'data' / 'fake_data.parquet'
+        Path(__file__).resolve().parents[2]
+        / 'support_files' / 'data' / 'fake_data.parquet'
     )
     add_node_promise(graph, 'read', node_id=1)
     read_node = input_schema.NodeRead(
@@ -1623,8 +1600,7 @@ class TestPreviewAfterUpstreamChange:
         graph = create_graph(execution_mode="Development", execution_location=execution_location, flow_id=1)
 
         received_table = input_schema.ReceivedTable(file_type='parquet', name='table.parquet',
-                                                    path=str(Path(find_parent_directory(
-                                                        'Flowfile')) / 'flowfile_core/tests/support_files/data/large_table.parquet'))
+                                                    path=str(Path(__file__).resolve().parents[2] / 'support_files/data/large_table.parquet'))
         add_node_promise(graph, 'read', node_id=1)
         node_read = input_schema.NodeRead(flow_id=1, node_id=1, received_file=received_table)
         graph.add_read(node_read)
