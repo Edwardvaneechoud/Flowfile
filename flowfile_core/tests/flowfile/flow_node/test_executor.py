@@ -36,11 +36,15 @@ from flowfile_core.flowfile.flow_node.state import (
 )
 from flowfile_core.flowfile.flow_node.executor import (
     IN_CORE_NODE_TYPES,
+    OPERATION_NODE_TYPES,
     NodeExecutor,
     hints_for,
     is_narrow_transform,
 )
+from flowfile_core.configs.node_store.nodes import get_all_standard_nodes
 from flowfile_core.schemas import input_schema, schemas, transform_schema
+from flowfile_worker.service import _materialise
+from shared import compute_protocol
 from shared.compute_protocol import WorkerLocation
 from shared.storage_config import storage
 from tests.conftest import Call, closed_url, protocol_states, spy
@@ -2543,6 +2547,93 @@ class TestFanoutCountsThePlansThatExecuteTheResult:
         assert [hints.fanout for hints in read_hints] == [0]
         assert read_node.results.result_ref.state == "deferred"
         assert all(_held_ref_state(graph, node_id) == "deferred" for node_id in range(2, 6))
+
+    def test_an_operation_consumer_whose_result_is_stored_counts_once(self, tmp_path):
+        graph = create_graph_with_csv_read(tmp_path, 50, "Performance")
+        add_polars_code(graph, 2, 1, "output_df = input_df")
+        graph.get_node(2).node_settings.cache_results = True
+        consumer = hints_for(graph.get_node(2), graph.execution_context, performance_mode=True)
+
+        assert worker_stores(consumer)
+        assert _fanout(graph, 1) == 1
+
+
+COMPOSING_NODE_TYPES = frozenset(
+    {
+        "cross_join",
+        "data_cleansing",
+        "dynamic_rename",
+        "evaluate_model",
+        "explode_hierarchy",
+        "explore_data",
+        "filter",
+        "formula",
+        "gate",
+        "graph_solver",
+        "group_by",
+        "join",
+        "multi_field_formula",
+        "pivot",
+        "record_count",
+        "record_id",
+        "sample",
+        "select",
+        "sort",
+        "text_to_rows",
+        "union",
+        "unique",
+        "unpivot",
+        "wait_for",
+        "window_functions",
+    }
+)
+"""Node types with inputs whose function composes its plan on its inputs' plans, so a deferred one inlines them."""
+
+
+def test_every_node_type_with_inputs_is_classified_for_fanout():
+    """A new node type must be placed: one that runs its inputs itself but is missing from ``OPERATION_NODE_TYPES``
+    would pass its consumers' fan-out on, and a wide input several plans read would be computed by each."""
+    _, templates, _ = get_all_standard_nodes()
+    with_inputs = {item for item, template in templates.items() if template.input > 0}
+    classified = [IN_CORE_NODE_TYPES, OPERATION_NODE_TYPES, COMPOSING_NODE_TYPES]
+    placements = {item: [group for group in classified if item in group] for item in with_inputs}
+
+    assert [item for item, groups in placements.items() if len(groups) != 1] == []
+    assert set().union(*classified) - with_inputs == set()
+
+
+@pytest.mark.parametrize("must_materialise", [False, True])
+@pytest.mark.parametrize("wide", [False, True])
+@pytest.mark.parametrize("fanout", [0, 1, 2, 3])
+@pytest.mark.parametrize("preview_rows", [None, 0, 100])
+def test_core_and_the_worker_store_the_same_plans(must_materialise, wide, fanout, preview_rows):
+    fields = dict(must_materialise=must_materialise, wide=wide, fanout=fanout, preview_rows=preview_rows)
+
+    assert worker_stores(SubmitHints(**fields)) == _materialise(compute_protocol.SubmitHints(**fields))
+
+
+def test_a_long_chain_stays_within_the_recursion_limit():
+    """``hints_for`` walks a chain deeper than the interpreter's recursion limit without recursing."""
+    from types import SimpleNamespace
+    import sys
+
+    def chain_node(node_id, consumer, node_type="select"):
+        return SimpleNamespace(
+            node_id=node_id,
+            node_type=node_type,
+            leads_to_nodes=[consumer] if consumer else [],
+            node_settings=SimpleNamespace(cache_results=False),
+            _boundary_inputs=[],
+            node_default=SimpleNamespace(transform_type="narrow"),
+            setting_input=None,
+        )
+
+    node = chain_node(0, None, node_type="output")
+    for node_id in range(1, sys.getrecursionlimit() * 2):
+        node = chain_node(node_id, node)
+
+    assert hints_for(node, SimpleNamespace(preview_rows=None), performance_mode=True).fanout == 1
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

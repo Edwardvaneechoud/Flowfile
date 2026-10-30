@@ -72,9 +72,11 @@ class SubmitHints:
 
 
 def worker_stores(hints: SubmitHints) -> bool:
-    """Whether the worker's policy (``flowfile_worker.service._materialise``) stores a plan submitted with ``hints``.
+    """Whether the worker's policy stores a plan submitted with ``hints``.
 
-    Both worker backends apply it, and ``hints_for`` reads it to tell which consumers store their result.
+    Core's copy of ``flowfile_worker.service._materialise``, which the worker cannot import from core; a test pins
+    the two to the same answer. ``WorkerBackend``'s task-route submit applies it, and ``hints_for`` reads it to tell
+    which consumers store their result.
     """
     return hints.must_materialise or (hints.wide and (hints.preview_rows is not None or hints.fanout > 1))
 

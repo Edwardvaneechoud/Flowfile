@@ -94,28 +94,39 @@ def hints_for(
       deferred one passes on its own fan-out, since every plan that executes it inlines this node's plan. A consumer
       collects when it runs its inputs itself (``IN_CORE_NODE_TYPES``, ``OPERATION_NODE_TYPES``, a custom node) or
       its own hints make the worker store it (``worker_stores``). A node no sink, operation or stored result reads
-      has fan-out 0, as in a Performance run of a read into group-bys with no writer, which stays deferred.
+      has fan-out 0, as in a Performance run of a read into group-bys with no writer, which stays deferred. A
+      consumer reading the node on two inputs (a self-join) is one plan and counts once. The consumers are walked
+      depth first with an explicit stack, so a long chain never reaches the recursion limit.
     - ``preview_rows``: the context's, else ``DEFAULT_PREVIEW_ROWS``. ``None`` for ``IN_CORE_NODE_TYPES`` and in
       *performance_mode*, except for a ``cache_results`` node.
     """
     known: dict[int | str, SubmitHints] = {}
-
-    def hints(current: FlowNode) -> SubmitHints:
+    pending = [node]
+    while pending:
+        current = pending[-1]
         if current.node_id in known:
-            return known[current.node_id]
+            pending.pop()
+            continue
+        consumers = [
+            consumer
+            for consumer_id, consumer in {c.node_id: c for c in current.leads_to_nodes}.items()
+            if running is None or consumer_id in running
+        ]
+        unknown = [consumer for consumer in consumers if consumer.node_id not in known]
+        if unknown:
+            pending.extend(unknown)
+            continue
+        pending.pop()
         in_core = current.node_type in IN_CORE_NODE_TYPES
         caches = current.node_settings.cache_results
         preview_rows = None
         if not in_core and (caches or not performance_mode):
             preview_rows = context.preview_rows if context.preview_rows is not None else DEFAULT_PREVIEW_ROWS
-        consumers = {
-            consumer.node_id: consumer
-            for consumer in current.leads_to_nodes
-            if running is None or consumer.node_id in running
-        }
         fanout = sum(
-            1 if _runs_its_inputs(consumer) or worker_stores(hints(consumer)) else hints(consumer).fanout
-            for consumer in consumers.values()
+            1
+            if _runs_its_inputs(consumer) or worker_stores(known[consumer.node_id])
+            else known[consumer.node_id].fanout
+            for consumer in consumers
         )
         known[current.node_id] = SubmitHints(
             must_materialise=(caches and not in_core) or bool(current._boundary_inputs),
@@ -123,9 +134,7 @@ def hints_for(
             fanout=fanout,
             preview_rows=preview_rows,
         )
-        return known[current.node_id]
-
-    return hints(node)
+    return known[node.node_id]
 
 
 class StateProvider(Protocol):
