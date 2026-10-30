@@ -101,9 +101,9 @@ Each `FlowNode` in the graph encapsulates its dependencies, transformation logic
 !!! info "Canonical explanation"
     This is the reference description of Development vs Performance mode. The [Core Developer Guide](flowfile-core.md#execution-strategy-how-nodes-decide-where-to-run) and [Design Philosophy](design-philosophy.md) pages link here rather than repeat it.
 
-By clicking on settings &rarr; execution modes you can set how the flow will be executed the next time you run the flow.
+The gear icon in the top toolbar opens **Flow Settings**, where **Execution Mode** sets how the flow runs the next time you run it.
 
-![execution settings](../assets/images/guides/technical_architecture/execution_settings.png)
+![Flow Settings modal: Execution Mode, Execution location Auto (default worker), Show details during execution, Parallel workers, and the Display and Parameters sections](../assets/images/guides/building-flows/flow-settings-modal.png){ width="480px" }
 
 Flowfile offers two execution modes tailored for different needs:
 

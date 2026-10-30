@@ -85,7 +85,11 @@ With an exchange store, a node whose backend cannot run it (a worker that does n
 
 Without an exchange store nothing moves: the run is refused, and the message says an exchange store would let such nodes run on the default worker.
 
-After a run, a refused one included, an edge between nodes placed on different backends shows a round badge with two arrows. It reflects the last run, so a change of backend shows after the next one. When a crossing is refused (the exchange store could not be used, or the input was above the row limit), the reading node's row on the run report says why.
+After a run, a refused one included, an edge between nodes placed on different backends shows a round badge with two arrows; hover it to see the two nodes. It reflects the last run, so a change of backend shows after the next one. When a crossing is refused (the exchange store could not be used, or the input was above the row limit), the reading node's row on the run report says why.
+
+Each crossing is a copy: the upstream node's whole result is written to the exchange store and read back on the other backend, and the reading node stores its result even in **Performance** mode. Keeping connected nodes on one backend avoids it.
+
+![A Read data node with an amber → default worker badge and a Select data node, joined by an edge with the round crossing badge; its tooltip reads Data copied between backends, Node 1 → Node 2: select, and says node 1's output is written to the exchange store for node 2 to read, which adds time to the run.](../../assets/images/guides/compute/crossing-badge.png){ width="480px" }
 
 ### Settings warnings
 
