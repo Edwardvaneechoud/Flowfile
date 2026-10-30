@@ -132,6 +132,65 @@ def test_a_data_type_unpivot_rebuilds_exactly(data_type, runner_kind):
     assert set(grade(graph, result).values()) == {"EXACT"}
 
 
+def _drawer_row(name: str, data_type: str, position: int, keep: bool = True) -> dict:
+    """A select row as the Select drawer saves it: every input column listed, positioned and typed."""
+    return {
+        "old_name": name,
+        "new_name": name,
+        "data_type": data_type,
+        "keep": keep,
+        "join_key": False,
+        "is_altered": False,
+        "data_type_change": False,
+        "is_available": True,
+        "position": position,
+        "original_position": position,
+    }
+
+
+@pytest.mark.parametrize(
+    ("keep_missing", "shape"),
+    [
+        pytest.param(True, '.drop(["name"])', id="keep_missing_on"),
+        pytest.param(False, ".select([", id="keep_missing_off"),
+    ],
+)
+def test_a_drawer_saved_select_renders_by_its_keep_missing_flag(keep_missing, shape):
+    source = ff.from_dict({"id": [1, 2], "name": ["a", "b"], "city": ["x", "y"]})
+    graph = source.flow_graph
+    rows = [
+        _drawer_row("id", "Int64", 0),
+        _drawer_row("name", "String", 1, keep=False),
+        _drawer_row("city", "String", 2),
+    ]
+    payload = {
+        "flow_id": graph.flow_id,
+        "node_id": 900,
+        "depending_on_id": source.node_id,
+        "keep_missing": keep_missing,
+        "select_input": rows,
+        "sorted_by": "none",
+    }
+    graph.add_select(input_schema.NodeSelect.model_validate(payload))
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(source.node_id, 900))
+    rendering = render(graph)
+    cell = next(c for c in rendering.cells if 900 in c.node_ids)
+    assert shape in cell.code
+    assert (".drop(" in cell.code) is keep_missing
+    provenance = {c.cell_id: [(graph.get_node(n).node_type, n) for n in c.node_ids] for c in rendering.cells}
+    try:
+        cells = [(c.cell_id, c.code) for c in rendering.cells]
+        executor = RUNNERS["interpreting"].executor()
+        result = clean_run(cells, 900, provenance, user_id=NOTEBOOK_OWNER_ID, executor=executor)
+    finally:
+        if notebook.current() is not None:
+            notebook.exit()
+    assert result["ok"], result.get("error")
+    assert grade(graph, result)[900] == "EXACT"
+    rebuilt = next(n for n in result["flowfile_data"]["nodes"] if n["id"] == 900)
+    assert rebuilt["setting_input"]["keep_missing"] is keep_missing
+
+
 def test_parameters_cell_runs_against_the_frame_api():
     params = next(cell for cell in render(_pipeline()).cells if cell.kind == "parameters")
     flow = FlowGraph()
