@@ -431,11 +431,10 @@ class ExecutionMixin(GraphMixinBase):
     ) -> RunInformation | None:
         """Executes a specific node in the graph by its ID.
 
-        The defaults are the data-preview contract: a non-performance run, so the
-        node stores its result and can serve the 100-row example grid. Callers
-        that only need the node's query plan (the Explore Data drawer) pass
-        ``performance_mode=True``, which skips that store entirely, and
-        ``reset_cache=False`` so exploring doesn't evict a useful cache.
+        The defaults are the data-preview contract: the node fills its 100-row example grid, stored with an inline
+        sample in a Development flow, sampled from the deferred plan in a Performance one. Callers that only need
+        the query plan (the Explore Data drawer) pass ``performance_mode=True``, which installs no grid and stores
+        nothing, and ``reset_cache=False`` so exploring doesn't evict a useful cache.
         ``claimed`` says the caller already holds the run slot (``try_claim_run``),
         as the fetch route does before it answers; the slot is released here either way.
 
