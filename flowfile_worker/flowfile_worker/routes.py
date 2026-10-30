@@ -1352,7 +1352,7 @@ def set_pool_state(payload: models.PoolConfigInput) -> dict:
 def cancel_task(task_id: str):
     """Cancel a running task by ID.
 
-    As ``POST /v1/jobs/{id}/cancel`` (``service._stop``): a task still ``Starting`` has no child yet, so its entry is
+    As ``POST /v1/jobs/{id}/cancel`` (``service.stop_job``): a task still ``Starting`` has no child yet, so its entry is
     marked ``Cancelled`` and the monitor stops the child as the task starts; a ``Processing`` task's child is stopped
     now. A task that ended, or one running in this process, is 404.
 
@@ -1366,7 +1366,7 @@ def cancel_task(task_id: str):
         HTTPException: If task cannot be cancelled
     """
     logger.info(f"Attempting to cancel task: {task_id}")
-    if not service._stop(task_id):
+    if not service.stop_job(task_id):
         logger.warning(f"Cannot cancel task: {task_id}")
         raise HTTPException(status_code=404, detail="Task not found or already completed")
     logger.info(f"Successfully cancelled task: {task_id}")

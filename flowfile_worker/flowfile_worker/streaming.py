@@ -467,7 +467,7 @@ async def _send_job_progress(websocket: WebSocket, job: asyncio.Future, job_id: 
 
     A frame goes out on each change and every ``_HEARTBEAT_INTERVAL`` otherwise, polled with the
     ``_monitor_progress`` backoff. A failed send means the client left, and core never reads a result after its
-    socket closed, so the job is stopped (``service._stop``, as a cancel does) and the wait ends with it.
+    socket closed, so the job is stopped (``service.stop_job``, as a cancel does) and the wait ends with it.
     """
     connected = True
     last_progress = None
@@ -485,7 +485,7 @@ async def _send_job_progress(websocket: WebSocket, job: asyncio.Future, job_id: 
             except Exception:
                 logger.warning(f"[WS] Client left during /v1 submit {job_id}; the submit is stopped")
                 connected = False
-                await asyncio.to_thread(service._stop, job_id)
+                await asyncio.to_thread(service.stop_job, job_id)
             last_progress = current
             last_sent = monotonic()
         await asyncio.wait({job}, timeout=delay)

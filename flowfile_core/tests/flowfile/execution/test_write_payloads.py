@@ -25,7 +25,13 @@ from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
-from flowfile_core.flowfile.execution.errors import PlanRejected, TaskFailed, VersionMismatch
+from flowfile_core.flowfile.execution.errors import (
+    ComputeError,
+    ComputeUnavailable,
+    PlanRejected,
+    TaskFailed,
+    VersionMismatch,
+)
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, OpResult
 from flowfile_core.flowfile.execution.payloads import (
@@ -489,6 +495,32 @@ def test_a_cloud_write_to_an_ambient_backend_whose_verdict_was_dropped_carries_n
     assert {field: request["json"]["connection"][field] for field in CREDENTIAL_FIELDS} == dict.fromkeys(
         CREDENTIAL_FIELDS
     )
+
+
+def test_a_cloud_write_to_a_backend_with_no_report_is_refused_when_its_capabilities_cannot_be_read(
+    backend_reporting, monkeypatch
+):
+    """With no cached verdict the write asks the backend; a backend that cannot answer gets nothing, not a guess."""
+    write = cloud_write()
+    backend = backend_reporting("worker:unreachable", "ambient")
+    assert handshake.cached_verdict(backend) is None
+
+    def unreachable():
+        raise ComputeUnavailable("Connection refused", backend_id=backend.id)
+
+    monkeypatch.setattr(backend, "capabilities", unreachable)
+    recorder = V1Recorder()
+    monkeypatch.setattr(
+        WorkerBackend,
+        "_v1",
+        lambda backend, method, path, **kwargs: recorder.request(method, path, backend=backend.id, **kwargs),
+    )
+
+    with pytest.raises(ComputeError):
+        backend._resolves_ambient()
+    with pytest.raises(ComputeError):
+        backend.run_op(OperationKind.cloud_write, op_payload(write))
+    assert recorder.sent == []
 
 
 @pytest.mark.usefixtures("protocol_on")
