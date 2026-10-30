@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   applySelectPositions,
+  createNodeSelect,
   createSelectInput,
   restoreBlankName,
   restoreSourceType,
@@ -195,5 +196,19 @@ describe("applySelectPositions with a cleared rename box", () => {
     const [result] = applySelectPositions([cleared], [column("a", "String")]);
     expect(result.new_name).toBe("a");
     expect(result.is_altered).toBe(false);
+  });
+});
+
+describe("createNodeSelect", () => {
+  it("starts with keep_missing on, as core's default, and no columns listed", () => {
+    const node = createNodeSelect(3, 7).value;
+
+    expect(node.keep_missing).toBe(true);
+    expect(node.select_input).toEqual([]);
+    expect([node.flow_id, node.node_id]).toEqual([3, 7]);
+  });
+
+  it("takes keep_missing when it is given", () => {
+    expect(createNodeSelect(1, 2, 0, 0, false, false).value.keep_missing).toBe(false);
   });
 });
