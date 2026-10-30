@@ -60,8 +60,8 @@ class SubmitHints:
     Attributes:
         must_materialise: Compute and hold the rows rather than keep a deferred plan.
         wide: The plan reshapes data across rows (join, group by, sort, pivot) rather than mapping each row.
-        fanout: How many downstream nodes read the result in this run; a backend may store a wide result
-            several consumers would otherwise each compute again.
+        fanout: How many distinct plans of this run execute the result; a backend may store a wide result
+            several plans would otherwise each compute again.
         preview_rows: The most rows the inline sample may hold; ``None`` asks for no sample.
     """
 
@@ -69,6 +69,16 @@ class SubmitHints:
     wide: bool
     fanout: int
     preview_rows: int | None
+
+
+def worker_stores(hints: SubmitHints) -> bool:
+    """Whether the worker's policy stores a plan submitted with ``hints``.
+
+    Core's copy of ``flowfile_worker.service._materialise``, which the worker cannot import from core; a test pins
+    the two to the same answer. ``WorkerBackend``'s task-route submit applies it, and ``hints_for`` reads it to tell
+    which consumers store their result.
+    """
+    return hints.must_materialise or (hints.wide and (hints.preview_rows is not None or hints.fanout > 1))
 
 
 @dataclass(frozen=True)

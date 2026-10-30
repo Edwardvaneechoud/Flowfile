@@ -124,7 +124,7 @@ In Performance mode, Flowfile fully embraces Polars' lazy evaluation. Each node 
 
 - **Output nodes** (writing to a file, a database or cloud storage) run their write as an operation on the flow's backend, which computes the plan it is given.
 - **Nodes with `cache_results` enabled** submit with `must_materialise`, so the backend stores their rows whatever the mode.
-- **Wide nodes read by more than one node** (a join, a group by or a sort feeding two writers) submit with `fanout > 1`, so the backend stores their rows once instead of computing them inside each consumer's plan.
+- **Wide nodes executed by more than one plan** (a join, a group by or a sort feeding two writers) submit with `fanout > 1`, so the backend stores their rows once instead of computing them inside each consumer's plan. `fanout` counts the plans that execute the result, not the consumers: a consumer that writes, runs an operation or is stored counts once, a deferred one passes on its own count, so a node nothing collects has fan-out 0.
 
 This minimizes computation and memory usage by avoiding unnecessary intermediate materializations.
 
@@ -138,7 +138,7 @@ This minimizes computation and memory usage by avoiding unnecessary intermediate
 hints = SubmitHints(
     must_materialise=node.node_settings.cache_results,  # correctness: the user asked for a stored result
     wide=not is_narrow_transform(node),                  # join, group_by, sort, …
-    fanout=len({n.node_id for n in node.leads_to_nodes} & running),  # consumers that run in this run
+    fanout=plans_executing(node, running),  # plans this run executes the result in: sinks, operations, stored results
     preview_rows=None if performance_mode and not node.node_settings.cache_results else 100,
 )
 # The backend's policy decides from the hints whether to store the rows or keep the plan.
