@@ -501,7 +501,7 @@ def test_a_kernel_session_seeds_a_canvas_read_it_cannot_open_without_reading_it(
     graph = ff.create_flow_graph()
     read_id = ff.read_csv(str(csv), flow_graph=graph).node_id
     hidden = "/nowhere/on/this/machine/canvas.csv"
-    snapshot = json.loads(json.dumps(seed_snapshot(graph)).replace(str(csv), hidden))
+    snapshot = json.loads(json.dumps(seed_snapshot(graph)).replace(json.dumps(str(csv))[1:-1], hidden))
     expected = [{"name": "a", "data_type": "Int64"}, {"name": "b", "data_type": "String"}]
     assert snapshot["schemas"][str(read_id)] == {"output-0": expected}
 
