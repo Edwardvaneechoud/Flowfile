@@ -239,10 +239,14 @@ def seed_deferred_node(node: FlowNode, schemas: dict[str, list[FlowfileColumn]])
     silently serving output-0 for another handle. Run flags and ``cache_results`` stay
     untouched, so ``run_graph()`` ignores the seed and executes the node for real, which
     also clears ``deferred_until_run``. ``placed_deferred`` stays set, so a later reset of
-    the node re-arms ``deferred_until_run`` and the next build read seeds it again.
+    the node re-arms ``deferred_until_run`` and the next build read seeds it again. A failed
+    attempt to run the node (``results.errors``, ``_last_run_error``) is cleared too: a read
+    re-raises the last run's error while it stands, and a seeded node reads as its seed.
     """
     default_schema = schemas.get(DEFAULT_OUTPUT_HANDLE) or []
     with node._execution_lock_held():
+        node.results.errors = None
+        node._last_run_error = None
         node.results.resulting_data = FlowDataEngine.create_from_schema(list(default_schema))
         node._named_outputs = {
             handle: FlowDataEngine.create_from_schema(list(schema or []))
@@ -734,7 +738,6 @@ def materialise(node: FlowNode, handle: str | None = None) -> FlowDataEngine:
         mode, text = current(), str(exc).strip()
         error = f"{type(exc).__name__}: {text.splitlines()[0]}" if text else type(exc).__name__
         mode.unchecked[node.node_id] = (mode.cell_id, node.node_type, error)
-    node.results.errors = None
     seed_deferred_node(node, {h: [] for h in _handles(node)})
     current().column_less.add(node.node_id)
     return _read(node, handle)

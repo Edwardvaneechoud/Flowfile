@@ -124,7 +124,7 @@ def _kinds() -> dict[type, str]:
     from flowfile_frame.custom_node import CustomNode, CustomNodeFactory
     from flowfile_frame.custom_nodes import CustomNodes
     from flowfile_frame.expr import Column, DateTimeMethods, Expr, StringMethods, When
-    from flowfile_frame.flow_frame import FlowFrame
+    from flowfile_frame.flow_frame import _UNPIVOT_DATA_TYPES, FlowFrame
     from flowfile_frame.flow_group import FlowGroup
     from flowfile_frame.gate import Gate
     from flowfile_frame.group_frame import GroupByFrame
@@ -143,6 +143,7 @@ def _kinds() -> dict[type, str]:
         CustomNodes: "CustomNodes", CustomNodeFactory: "CustomNodeFactory", PythonScriptFunction: "ScriptFunction",
         Parameter: "Parameter", FlowRef: "FlowRef", FuzzyMapping: "FuzzyMapping", pl.DataFrame: "pl_frame",
         FlowGraph: "graph", pl.Field: "dtype",
+        **dict.fromkeys(_UNPIVOT_DATA_TYPES, "Selector"),
         _Inert: "inert", _Reader: "reader", _Helper: "helper", _PolarsCodeDef: "polars_code_def", _Datetime: "datetime",
     }  # fmt: skip
 
@@ -200,6 +201,7 @@ def _kind_label(kind: str | None) -> str:
         "none": "None",
         "graph": "the session graph `flow`",
         "polars_code_def": "Polars Code `def`",
+        "Selector": "a data-type selector",
     }
     return labels.get(kind or "", kind or "")
 
@@ -834,6 +836,10 @@ def _check_literal_shape(shape: str, call: ast.Call, cell: _Cell) -> None:
     elif shape == "node_id":
         if not call.args or not (isinstance(call.args[0], ast.Constant) and type(call.args[0].value) is int):
             raise _needs_kernel(f"{cell.text(call)} (a canvas node is named by its literal id)", line)
+    elif shape == "selector":
+        if call.args or call.keywords:
+            hint = "a data-type selector takes no arguments and is read only by `unpivot(on=...)`"
+            raise _needs_kernel(f"{cell.text(call)} ({hint})", line)
     elif shape == "sample":
         data = call.args[0] if len(call.args) == 1 else None
         literal = isinstance(data, ast.Dict) and all(

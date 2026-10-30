@@ -623,8 +623,8 @@ def _fetch_recording_stores(graph, **fetch_kwargs) -> list:
 def test_fetch_in_performance_mode_stores_nothing(protocol_off):
     """The Explore drawer's fetch must not materialise the node.
 
-    The default (preview) fetch stores the whole result so the 100-row example
-    grid has something to read. The chart builder charts through the worker and
+    A Development flow's preview fetch stores the whole result so the 100-row
+    example grid has something to read. The chart builder charts through the worker and
     never reads those rows, so it pays that cost for nothing — on a 294 MB
     Parquet source the store was 4.9 GB.
     """
@@ -636,13 +636,19 @@ def test_fetch_in_performance_mode_stores_nothing(protocol_off):
     assert has_result_to_visualize(graph.get_node(2)), 'the plan must still be built, so the drawer opens'
 
 
-def test_default_fetch_still_stores_for_the_preview_grid(protocol_off):
-    """Regression guard: the data-preview contract is unchanged."""
+@pytest.mark.parametrize(("execution_mode", "stores"), [("Development", True), ("Performance", False)])
+def test_a_preview_fetch_stores_the_result_only_in_a_development_flow(protocol_off, execution_mode, stores):
+    """A Development flow's preview fetch stores the result for its grid; a Performance flow's, which nothing
+    would reuse, keeps the plan deferred and samples the grid when it is read."""
     graph = _explore_flow_for_fetch()
+    graph.flow_settings.execution_mode = execution_mode
 
     attempts = _fetch_recording_stores(graph)
 
-    assert attempts, 'the default fetch must still store the result for the preview grid'
+    assert bool(attempts) is stores, attempts
+    node = graph.get_node(2)
+    if node.results.errors is None:
+        assert (node.results.result_ref.state == "materialised") is stores
 
 
 def _spec_field(fid: str, semantic_type: str = 'nominal', analytic_type: str = 'dimension') -> dict:

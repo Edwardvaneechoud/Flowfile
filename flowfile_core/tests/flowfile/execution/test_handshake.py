@@ -654,17 +654,60 @@ def test_a_node_on_an_earlier_release_or_on_no_worker_fails_with_the_typed_error
 
 
 def test_a_worker_without_a_capabilities_route_is_an_older_release(flag):
+    """With the flag off the 404 may also be a backend that serves only ``/v1``, so the message names the flag."""
     older_worker = f"{WORKER_URL}/no-such-prefix"
     route = "/v1/capabilities" if flag else "/capabilities"
+    cause = "so it is an older release than core" + (
+        "" if flag else ", or a backend that serves only the /v1 wire, which needs FLOWFILE_COMPUTE_PROTOCOL on in core"
+    )
 
     for _ in range(2):
         with pytest.raises(VersionMismatch) as excinfo:
             subops.get_status("no-such-task", worker_url=older_worker)
 
         assert str(excinfo.value) == (
-            f"The worker at {older_worker} does not report its capabilities (GET {route} answered 404), "
-            "so it is an older release than core"
+            f"The worker at {older_worker} does not report its capabilities (GET {route} answered 404), {cause}"
         )
+
+
+def test_a_backend_resolving_credentials_with_its_own_identity_needs_the_protocol_flag_on(flag, monkeypatch, sent):
+    """A Polars cluster declares ``ambient``; with the flag off core's plans would carry ``$ffsec$`` credentials."""
+    worker = registry.backend(registry.WORKER_BACKEND_ID)
+    counted(monkeypatch, worker, local_capabilities().model_copy(update={"credential_resolution": "ambient"}))
+    refusal = handshake.ambient_refusal(registry.WORKER_BACKEND_ID)
+    assert "FLOWFILE_COMPUTE_PROTOCOL" in refusal
+
+    if flag:
+        verdict = handshake.verdict_for(worker)
+
+        assert verdict.ok and verdict.absent == {}
+        assert verdict.backend.credential_resolution == "ambient"
+        assert subops.results_exists("no-such-task", worker_url=WORKER_URL) is False
+        return
+
+    with pytest.raises(VersionMismatch) as refused:
+        subops.results_exists("no-such-task", worker_url=WORKER_URL)
+
+    assert str(refused.value) == refusal
+    assert sent == []
+    verdict = handshake.last_verdict(registry.WORKER_BACKEND_ID)
+    assert (verdict.ok, verdict.error, verdict.error_kind) == (False, refusal, "VersionMismatch")
+    assert verdict.backend.credential_resolution == "ambient"
+
+
+def test_an_ambient_backend_refused_for_the_flag_refuses_its_nodes_before_any_is_sent(protocol_off, monkeypatch):
+    backend = register_team(CoreAsTeam(credential_resolution="ambient"))
+    submitted = []
+    monkeypatch.setattr(backend, "submit", lambda *args, **kwargs: submitted.append(args))
+
+    verdict = handshake.verify(backend)
+
+    assert verdict.ok is False
+    assert verdict.error == handshake.ambient_refusal(TEAM)
+    assert submitted == []
+    with pytest.raises(VersionMismatch) as refused:
+        handshake.ensure_verdict(backend)
+    assert str(refused.value) == handshake.ambient_refusal(TEAM)
 
 
 def test_cleanup_calls_to_a_mismatched_worker_return_false(flag, monkeypatch, sent):

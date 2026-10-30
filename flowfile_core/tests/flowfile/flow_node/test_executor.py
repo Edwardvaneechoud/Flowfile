@@ -43,7 +43,7 @@ from flowfile_core.flowfile.flow_node.executor import (
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from shared.compute_protocol import WorkerLocation
 from shared.storage_config import storage
-from tests.conftest import closed_url, protocol_states
+from tests.conftest import Call, closed_url, protocol_states, spy
 from typing import Literal
 
 
@@ -630,6 +630,232 @@ class TestHintsByNodeType:
         assert hints_for(remote.get_node(2), remote.execution_context, False) == hints_for(
             local.get_node(2), local.execution_context, False
         )
+
+
+def create_graph_with_csv_read(tmp_path: Path, flow_id: int, execution_mode: ExecutionModeLit,
+                               execution_location: ExecutionLocationLit = "local", rows: int = 250) -> FlowGraph:
+    """A csv read (node 1) of ``rows`` rows ``{"id": i, "val": f"v{i}"}``: wide, as a read has no narrow default."""
+    path = tmp_path / "rows.csv"
+    path.write_text("id,val\n" + "".join(f"{i},v{i}\n" for i in range(rows)))
+    graph = create_graph(execution_mode=execution_mode, flow_id=flow_id, execution_location=execution_location)
+    add_node_promise(graph, "read", node_id=1)
+    graph.add_read(
+        input_schema.NodeRead(
+            flow_id=flow_id,
+            node_id=1,
+            received_file=input_schema.ReceivedTable(name="rows.csv", path=str(path), file_type="csv"),
+        )
+    )
+    return graph
+
+
+def _submitted_preview_rows(submits: list[Call], result_id: str) -> list[int | None]:
+    """The ``preview_rows`` of each recorded ``submit`` under ``result_id``."""
+    return [call.args[2].preview_rows for call in submits if call.args[3] == result_id]
+
+
+def _samples_of(samples: list[Call], ref: ResultRef) -> list[tuple[ResultRef, int]]:
+    return [(call.args[0], call.args[1]) for call in samples if call.args[0].result_id == ref.result_id]
+
+
+def add_polars_code(graph: FlowGraph, node_id: int, depending_on_id: int, code: str) -> None:
+    add_node_promise(graph, "polars_code", node_id)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(depending_on_id, node_id))
+    graph.add_polars_code(
+        input_schema.NodePolarsCode(
+            flow_id=graph.flow_id,
+            node_id=node_id,
+            depending_on_ids=[depending_on_id],
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code=code),
+        )
+    )
+
+
+class TestPreviewFetchByExecutionMode:
+    """A preview fetch fills the grid in either flow mode; only a Development flow stores a wide result for it."""
+
+    def test_a_performance_flow_keeps_the_read_deferred_and_samples_the_grid_in_the_fetch(
+        self, tmp_path, monkeypatch, execution_location, protocol
+    ):
+        graph = create_graph_with_csv_read(tmp_path, 60, "Performance", execution_location)
+        backend = registry.backend(graph.execution_context.backend_id)
+        submits = spy(monkeypatch, backend, "submit")
+        samples = spy(monkeypatch, backend, "sample")
+
+        graph.trigger_fetch_node(1)
+
+        read_node = graph.get_node(1)
+        ref = read_node.results.result_ref
+        assert ref.state == "deferred"
+        assert _submitted_preview_rows(submits, read_node.hash) == [None]
+        assert _samples_of(samples, ref) == [(ref, 100)], "the fetch samples the grid once, before it reports the node run"
+        if not protocol and execution_location == "remote":
+            assert read_node.results.example_data_path is not None, "the sample's file backs the first-row reads"
+        example = read_node.get_table_example(include_data=True)
+        assert len(example.data) == 100
+        assert example.data[0] == {"id": 0, "val": "v0"}
+        read_node.get_table_example(include_data=True)
+        assert len(_samples_of(samples, ref)) == 1, "the sampled grid is kept"
+
+    def test_a_plan_that_fails_on_its_rows_fails_the_fetch(self, tmp_path, execution_location, protocol):
+        """The columns resolve, so only reading rows shows the failure: the fetch reads them."""
+        graph = create_graph_with_csv_read(tmp_path, 66, "Performance", execution_location)
+        add_polars_code(graph, 2, 1, 'output_df = input_df.with_columns(pl.col("val").cast(pl.Int64, strict=True))')
+
+        graph.trigger_fetch_node(2)
+
+        node = graph.get_node(2)
+        assert node.results.errors is not None
+        assert node.node_stats.has_completed_last_run is False
+        assert node.results.example_data_generator is None
+        assert node.get_table_example(include_data=True).data == []
+
+    def test_a_fetch_that_releases_a_stored_file_drops_the_nodes_below(self, tmp_path, execution_location, protocol):
+        """A run stores a read two nodes read; its Performance fetch leaves it deferred, so the sort's plan over the
+        stored file is dropped rather than left dangling, and the sort's own fetch rebuilds it."""
+        graph = create_graph_with_csv_read(tmp_path, 67, "Performance", execution_location)
+        add_node_promise(graph, "sort", node_id=2)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        graph.add_sort(
+            input_schema.NodeSort(
+                flow_id=67, node_id=2, depending_on_id=1, sort_input=[transform_schema.SortByInput(column="id", how="desc")]
+            )
+        )
+        add_node_promise(graph, "select", node_id=3)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 3))
+        graph.add_select(
+            input_schema.NodeSelect(
+                flow_id=67, node_id=3, depending_on_id=1, select_input=[transform_schema.SelectInput(old_name="id")]
+            )
+        )
+        assert graph.run_graph().success
+        assert _held_ref_state(graph, 1) == "materialised"
+        sort_node = graph.get_node(2)
+        assert sort_node.node_stats.has_run_with_current_setup
+
+        graph.trigger_fetch_node(1)
+
+        assert _held_ref_state(graph, 1) == "deferred"
+        assert sort_node.results.result_ref is None
+        assert sort_node.node_stats.has_run_with_current_setup is False
+        graph.trigger_fetch_node(2)
+        assert sort_node.results.errors is None
+        assert sort_node.get_table_example(include_data=True).data[0] == {"id": 249, "val": "v249"}
+
+    def test_a_development_fetch_that_stores_again_keeps_the_nodes_below(self, tmp_path, execution_location, protocol):
+        graph = create_graph_with_csv_read(tmp_path, 68, "Development", execution_location)
+        add_node_promise(graph, "sort", node_id=2)
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        graph.add_sort(
+            input_schema.NodeSort(
+                flow_id=68, node_id=2, depending_on_id=1, sort_input=[transform_schema.SortByInput(column="id", how="desc")]
+            )
+        )
+        assert graph.run_graph().success
+        sort_node = graph.get_node(2)
+        held = sort_node.results.result_ref
+
+        graph.trigger_fetch_node(1)
+
+        assert _held_ref_state(graph, 1) == "materialised"
+        assert sort_node.results.result_ref == held
+        assert sort_node.node_stats.has_run_with_current_setup
+
+    def test_a_development_flow_stores_the_read_and_takes_its_sample_inline(
+        self, tmp_path, monkeypatch, execution_location, protocol
+    ):
+        graph = create_graph_with_csv_read(tmp_path, 61, "Development", execution_location)
+        backend = registry.backend(graph.execution_context.backend_id)
+        submits = spy(monkeypatch, backend, "submit")
+
+        graph.trigger_fetch_node(1)
+
+        read_node = graph.get_node(1)
+        ref = read_node.results.result_ref
+        assert ref.state == "materialised"
+        assert _submitted_preview_rows(submits, read_node.hash) == [100]
+        samples = spy(monkeypatch, backend, "sample")
+        assert len(read_node.get_table_example(include_data=True).data) == 100
+        assert _samples_of(samples, ref) == [], "the common case costs no second round trip"
+
+    def test_a_cached_read_in_a_performance_flow_is_stored_with_its_sample_inline(
+        self, tmp_path, monkeypatch, execution_location, protocol
+    ):
+        graph = create_graph_with_csv_read(tmp_path, 62, "Performance", execution_location)
+        read_node = graph.get_node(1)
+        read_node.node_settings.cache_results = True
+        backend = registry.backend(graph.execution_context.backend_id)
+        submits = spy(monkeypatch, backend, "submit")
+
+        graph.trigger_fetch_node(1)
+
+        ref = read_node.results.result_ref
+        assert ref.state == "materialised"
+        assert _submitted_preview_rows(submits, read_node.hash) == [100]
+        samples = spy(monkeypatch, backend, "sample")
+        assert len(read_node.get_table_example(include_data=True).data) == 100
+        assert _samples_of(samples, ref) == []
+
+    @pytest.mark.parametrize("execution_mode", ["Development", "Performance"])
+    def test_an_explore_data_fetch_installs_no_grid(self, tmp_path, execution_mode, protocol):
+        graph = create_graph_with_csv_read(tmp_path, 63, execution_mode)
+
+        graph.trigger_fetch_node(1, performance_mode=True, reset_cache=False)
+
+        read_node = graph.get_node(1)
+        assert read_node.results.result_ref.state == "deferred"
+        assert read_node.results.example_data_generator is None
+
+
+class TestExecuteFillsTheGridByPreview:
+    """``NodeExecutor.execute``'s ``preview`` decides the grid; ``performance_mode`` alone decides the hints."""
+
+    @staticmethod
+    def _execute(graph: FlowGraph, monkeypatch, performance_mode: bool, preview: bool | None):
+        node = graph.get_node(1)
+        backend = registry.backend(graph.execution_context.backend_id)
+        submits, samples = spy(monkeypatch, backend, "submit"), spy(monkeypatch, backend, "sample")
+        with use_context(graph.execution_context):
+            node.executor.execute(
+                reset_cache=True,
+                performance_mode=performance_mode,
+                node_logger=graph.flow_logger.get_node_logger(1),
+                preview=preview,
+            )
+        assert node.results.errors is None
+        return node, _submitted_preview_rows(submits, node.hash), samples
+
+    def test_no_preview_in_development_mode_takes_the_sample_inline(self, tmp_path, monkeypatch):
+        graph = create_graph_with_csv_read(tmp_path, 64, "Development")
+
+        node, preview_rows, samples = self._execute(graph, monkeypatch, performance_mode=False, preview=None)
+
+        assert preview_rows == [100]
+        assert node.results.result_ref.state == "materialised"
+        assert len(node.results.example_data_generator().to_pylist()) == 100
+        assert _samples_of(samples, node.results.result_ref) == [], "the inline sample needs no second round trip"
+
+    def test_no_preview_in_performance_mode_installs_no_grid(self, tmp_path, monkeypatch):
+        graph = create_graph_with_csv_read(tmp_path, 69, "Development")
+
+        node, preview_rows, samples = self._execute(graph, monkeypatch, performance_mode=True, preview=None)
+
+        assert preview_rows == [None]
+        assert node.results.result_ref.state == "deferred"
+        assert node.results.example_data_generator is None
+        assert _samples_of(samples, node.results.result_ref) == []
+
+    def test_a_preview_in_performance_mode_sends_no_preview_rows_and_samples_in_the_run(self, tmp_path, monkeypatch):
+        graph = create_graph_with_csv_read(tmp_path, 65, "Development")
+
+        node, preview_rows, samples = self._execute(graph, monkeypatch, performance_mode=True, preview=True)
+
+        assert preview_rows == [None]
+        ref = node.results.result_ref
+        assert ref.state == "deferred"
+        assert _samples_of(samples, ref) == [(ref, 100)]
+        assert len(node.results.example_data_generator().to_pylist()) == 100
+        assert len(_samples_of(samples, ref)) == 1
 
 
 class TestDecideExecutionByNodeType:

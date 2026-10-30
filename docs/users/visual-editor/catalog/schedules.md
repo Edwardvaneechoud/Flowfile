@@ -117,6 +117,14 @@ The flow detail panel includes:
 
 ---
 
+### How a run computes
+
+Each run is a process of its own. Unless the flow's **Execution location** or `FLOWFILE_COMPUTE_BACKEND` names a worker, it computes on a worker embedded in that process, which runs each job in a child process as the app's worker does ([Where flows run](../../deployment/where-flows-run.md)). A node whose job runs out of memory fails without ending the run, and **Cancel Run** stops the run's child processes with it. On Windows a cancel ends the run's process at once: its warm child process exits within seconds, and any other child runs on until its job ends.
+
+Every job has the worker's task time limit: a job that runs longer than `FLOWFILE_WORKER_TASK_TIMEOUT` seconds (3600 by default) is stopped and its node fails. Set the variable higher, or to `0` for no limit, in the environment the scheduler runs in (core's, in Docker); each run inherits it.
+
+---
+
 ### Run Logs
 
 Scheduled, manual, and on-demand ("Run now" from a schedule) runs write their output to log files. When viewing a run's detail panel, click **View log** to see the full execution log. Logs are stored under the internal storage directory at `logs/scheduled_run_{run_id}.log` — `~/.flowfile/logs/…` on desktop/local installs, and `/app/internal_storage/logs/…` in the shipped Docker image.

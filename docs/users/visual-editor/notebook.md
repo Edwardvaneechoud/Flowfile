@@ -121,47 +121,110 @@ A sync is refused, with the reason on the failing cell or in a message, when:
 
 ## Running on a kernel
 
-In the desktop app, and with `pip install flowfile` in the default mode, the notebook toolbar has a kernel picker. Pick a **notebook kernel**, a [kernel](kernels.md) on the **Notebook** image (the Lite image with this app's `flowfile` installed, published for every Flowfile version), and the cells run as real Python in a session on that kernel: loops, `print`, other imports and `display(...)` work, as in a script. When you have no such kernel, **Create notebook kernel** in the toolbar sets one up in one click: created, started and selected for this flow; nothing is installed on your machine. When the Notebook image is not here yet, the button reads **Download image and create notebook kernel** and downloads it first (several hundred MB, once per Flowfile version). **Customise…** in the picker opens the kernel form with the same settings filled in. A flow you never picked a kernel for selects a notebook kernel by itself as soon as one exists (a running one first). Pick **No kernel** to run on the canvas instead; that choice is remembered for the flow.
+Without a kernel, a cell only describes nodes: Flowfile reads it, updates the canvas and shows the node's preview. With a **notebook kernel** picked, cells run as real Python, so loops, `print`, other imports and `display(...)` work as they do in a script. Running a cell then leaves the canvas alone; **Push** is what changes it. This works in the desktop app and in a default `pip install flowfile` (see [Limits](#limits)).
+
+A notebook kernel is a [kernel](kernels.md) on the **Notebook** image: the Lite image with this app's `flowfile` installed. The **session** is the Python process on that kernel that holds your cells' variables.
+
+### Setting it up
+
+1. Open the kernel picker in the notebook toolbar.
+2. Click **Create notebook kernel**. The kernel is created, started and selected for this flow; nothing is installed on your machine. If the Notebook image is not downloaded yet, the button reads **Download image and create notebook kernel** and downloads it first (several hundred MB, once per Flowfile version).
+
+To adjust the kernel's settings first, pick **Customise…**, which opens the kernel form with the same settings filled in.
+
+A flow you have never picked a kernel for selects a notebook kernel by itself once one exists, a running one first. Pick **No kernel** to go back to running cells on the canvas; the flow remembers that choice.
+
+### What the buttons do
 
 | Action | With a kernel picked |
 |---|---|
 | **Run** | Runs the cell as Python in the session. The canvas does not change. |
 | **Run all** | Runs every cell in the session. |
-| **Push** | Runs every cell again in a fresh session on the kernel, then applies what they build to the canvas as one step, with the same review as without a kernel. The session is then reseeded from the canvas. |
+| **Push** | Runs every cell again in a fresh session, then applies what they build to the canvas as one step, with the same review as without a kernel. The session then starts over from the canvas. |
 | **Run and preview on canvas** (⋯) | Pushes first when the notebook differs from the canvas, then runs the node on the canvas, as without a kernel. |
 | **Reset session** (⋯) | Drops the session's variables and binds one variable per canvas node again. |
 | **Stop** | Shown beside a running cell's run button. Interrupts the cell, and cancels the canvas run it is waiting on for rows. |
 
-When the session opens, every canvas node is bound to its variable, so a cell can use `filtered_2` without running anything first. `display(frame)` shows rows. The kernel computes them itself for frames built on rows it has (manual input, and transforms over rows it was handed); for any other node that is on the canvas, such as a file or catalog table reader, a database reader or a Python Script node, the canvas runs the node and hands its rows to the kernel. A node that exists only in your cells and that the kernel does not run (a file or catalog table read, a database, API or Kafka source, a subflow, a gate, a Python Script on another kernel) is run by the app from the cell's settings, over the rows of its inputs, and its columns are known as soon as the cell builds it; the canvas does not change. So every file a cell names is read by the app, never by the kernel: from the canvas node with the same settings, else from the cell's settings. Only a writer in a cell needs a push: a cell never writes. Running a cell again unchanged does not make its node new: a node a cell builds with a canvas node's settings and inputs keeps reading that canvas node's rows, so a Python Script cell can be run again, alone or with **Run all**, and its frame still shows rows. After an edit to the cell, or to a cell above it, the app runs the node again from the cell.
+### Using canvas nodes in a cell
 
-A canvas node whose columns are only known once it runs, such as a Python Script node without declared outputs, has no columns in the session until the canvas has run it. Once it has, through **Run and preview on canvas** or a run on the canvas, the next cell you run sees its columns, and so do frames built on it in earlier cells. Showing a node's rows in a session does not move a [change-tracking](catalog/change-tracking.md) cursor or commit Kafka offsets, unless that node is a writer the canvas has to run.
+When the session opens, every node on the canvas is already a variable, named as in its cell, so a cell can use it straight away:
 
-`flowfile_ctx` is available in cells, as in a Python Script node ([The flowfile_ctx API](kernel-api.md)). An artifact published with `flowfile_ctx.publish_artifact` in a cell stays in the session: later cells can read it, Python Script nodes on the canvas cannot. To hand a model to the canvas, publish it from the Python Script node's own code, or use `flowfile_ctx.publish_global`, which stores it in the catalog.
+```python
+big = filtered_2.filter(ff.col("quantity") > 10)
+display(big)
+```
 
-The kernel is busy with the cell while the canvas runs, so that run cannot use the notebook's own kernel. When it would have to run a node on it, such as a Python Script node on that kernel (also inside a subflow or a virtual table's producer), the cell stops at once with a message naming the node. Use **Run and preview on canvas** for the node first, so the canvas runs it while the kernel is free, or run the notebook on another kernel.
+`display(frame)` shows the frame's rows. You don't need to run the flow first: when the kernel can't compute a node's rows itself, as for a file, catalog table or database reader, Flowfile runs that node and hands its rows to the kernel.
 
-The kernel mounts no folder of this machine: files, catalog tables, saved flows and custom nodes reach it through the app, which also copies the code of your installed custom nodes into the kernel, so a cell can place them. What a cell looks up in the catalog, such as a table's record, a flow reference, a connection's name or `ff.kernels`, is answered by the app, and stored secrets never reach the kernel in any form: a cloud or database source and a custom node with a secret setting are always run by the app, from the canvas or from the cell's settings. The kernel holds no copy of the catalog database: a cell that opens it itself, through `flowfile_core`'s `get_db_context()`, stops with a message naming the `ff` functions to use instead.
+Two cases behave differently:
 
-In cells, write file paths as they are on your machine (`C:\Users\me\data\sales.csv` on Windows). The kernel never opens them: Flowfile's readers and `list_files` are run by the app, and a push stores the path as written. Plain Polars, such as `pl.read_csv`, or `open()` cannot see a file on this machine from a cell; use `ff.read_csv` or `ff.scan_csv` instead. Writing a file directly from a cell, such as `df.write_csv(...)`, is not possible; an `ff` writer in a cell adds a writer node, which writes when the flow runs.
+- **A Python Script node without declared outputs** has no columns in the session until the canvas has run it. Run it with **Run and preview on canvas**, or run the flow; the next cell you run then sees its columns, and so do frames built on it in earlier cells.
+- **A writer in a cell writes nothing.** It adds a writer node, which writes once you push and the flow runs.
 
-Limits:
+### Files
 
-- Only in the desktop app and in a default `pip install flowfile` (`FLOWFILE_MODE` unset or `electron`), for a local connection. Docker deployments keep the notebook without a kernel.
-- The kernel's `flowfile` must have the same version as the app. After an app update the picked kernel still runs the previous Notebook image, so the toolbar shows **Update notebook kernel**: it stops the kernel and starts it again, which downloads this app's image and drops what the kernel holds in memory.
+The kernel can't see the files on your machine. Flowfile's own readers work because Flowfile reads the file for the kernel; plain Python file access does not.
+
+| Works in a cell | Doesn't work in a cell |
+|---|---|
+| `ff.read_csv(...)`, `ff.scan_csv(...)`, the other `ff` readers and `list_files` | `pl.read_csv(...)`, `open(...)` |
+| An `ff` writer, which adds a writer node that writes when the flow runs | `df.write_csv(...)` and other direct writes |
+
+Write paths as they are on your machine, such as `C:\Users\me\data\sales.csv` on Windows. A push stores the path as written.
+
+### Models and artifacts
+
+`flowfile_ctx` works in cells as it does in a Python Script node ([The flowfile_ctx API](kernel-api.md)). An artifact published with `flowfile_ctx.publish_artifact` in a cell stays in the session: later cells can read it, Python Script nodes on the canvas cannot. To hand a model to the canvas, publish it from the Python Script node's own code, or use `flowfile_ctx.publish_global`, which stores it in the catalog.
+
+!!! warning "A cell can't wait on its own kernel"
+    While a cell runs, its kernel is busy, so a canvas run the cell waits on cannot use that kernel. When the cell needs a node that runs there, such as a Python Script node on the same kernel (also inside a subflow or a virtual table's producer), the cell stops at once with a message naming the node. Run that node first with **Run and preview on canvas**, while the kernel is free, or run the notebook on another kernel.
+
+??? info "How the kernel gets its data"
+    - The kernel mounts no folder of your machine. Files, catalog tables, saved flows and your installed custom nodes reach it through Flowfile, which copies the custom nodes' code into the kernel so a cell can place them.
+    - A node that exists only in your cells and that the kernel can't compute (a file or catalog table read, a database, API or Kafka source, a subflow, a gate, a Python Script on another kernel) is run by Flowfile from the cell's settings, over its inputs' rows. Its columns are known as soon as the cell builds it, and the canvas doesn't change.
+    - A cell that builds a node with the same settings and inputs as a canvas node reads that canvas node's rows, so a Python Script cell run again, alone or with **Run all**, still shows rows. After an edit to the cell, or to a cell above it, Flowfile runs the node again from the cell.
+    - Catalog lookups from a cell, such as a table's record, a flow reference, a connection's name or `ff.kernels`, are answered by Flowfile.
+    - Stored secrets never reach the kernel in any form. Cloud and database sources, and custom nodes with a secret setting, always run in Flowfile, from the canvas or from the cell's settings.
+    - The kernel holds no copy of the catalog database. A cell that opens it itself, through `flowfile_core`'s `get_db_context()`, stops with a message naming the `ff` functions to use instead.
+    - Showing a node's rows does not move a [change-tracking](catalog/change-tracking.md) cursor or commit Kafka offsets, unless that node is a writer the canvas has to run.
+
+### Limits
+
+- Kernel mode is available only in the desktop app and in a `pip install flowfile` with `FLOWFILE_MODE` unset (or `electron`), and only when your browser runs on the same machine as Flowfile. Docker deployments keep the notebook without a kernel.
+- The kernel's `flowfile` must be the same version as the app. After an app update the toolbar shows **Update notebook kernel**: it restarts the kernel on this version's Notebook image, downloading it, which clears everything the session holds in memory.
 
 ## Kernels, Docker and deployments
 
-With **No kernel** picked the notebook starts no Python process and needs no [kernel](kernels.md) and no Docker. A Python Script node in the flow still runs on its kernel: its cell is an `ff.PythonScript` or `@ff.python_script` definition, and running that cell runs the node on its kernel, which needs Docker as it does on the canvas. Python that prints, displays or computes needs a kernel: this notebook [on a kernel](#running-on-a-kernel), a Python Script node or a [catalog notebook](catalog/notebooks.md).
+With **No kernel** picked, the notebook starts no Python process and needs no Docker. The one exception is a Python Script node: its cell is an `ff.PythonScript` or `@ff.python_script` definition, and running that cell runs the node on its [kernel](kernels.md), which needs Docker as it does on the canvas. To run Python that prints, displays or computes, use this notebook [on a kernel](#running-on-a-kernel), a Python Script node or a [catalog notebook](catalog/notebooks.md).
 
-Viewing and editing the cells, and running them while the notebook matches the canvas, work for every user, for their own flows, in the desktop app, with `pip install flowfile` and in a Docker deployment. Syncing works for every user in the default `electron` mode: the desktop app, and `pip install flowfile` unless you set `FLOWFILE_MODE`. With any other `FLOWFILE_MODE` (`docker` in a Docker deployment, or `package`) syncing needs an admin account, because the catalog lookups a cell can reach do not check each user's access. Other users keep editable cells; **Run** and **Run all** when the notebook no longer matches the canvas, and **Push**, leave the edits in the notebook, and a banner says that syncing needs an admin. The notebook has no settings of its own.
+What a user can do with the notebook of their own flows depends on how Flowfile runs:
+
+| | Desktop app, or `pip install flowfile` | Docker deployment, or `FLOWFILE_MODE=package` |
+|---|---|---|
+| View and edit cells | Everyone | Everyone |
+| Run cells while they match the canvas | Everyone | Everyone |
+| Sync edits to the canvas | Everyone | Admins only |
+| Run on a kernel | Yes | No |
+
+Outside the desktop app's mode, syncing needs an admin account because the catalog lookups a cell can reach do not check each user's access. Other users can still edit cells, but **Run** and **Run all** on edited cells, and **Push**, keep the edits in the notebook, and a banner says that syncing needs an admin. The notebook has no settings of its own.
 
 ## Exporting the notebook
 
-The **⋯** menu in the toolbar saves the cells as a file, so the code can leave Flowfile. **Export as Python script…** writes a `.py` file in which every cell opens with a `# %%` marker (`# %% [markdown]` for a Markdown cell, whose text becomes comments): VS Code, Spyder and Jupytext read the markers as cell boundaries, and a plain `python` runs the file top to bottom, since the imports cell comes first. **Export as Jupyter notebook…** writes an `.ipynb` that Jupyter, VS Code and Colab open, carrying the last output of every cell that ran in the panel. **Copy as Python script** puts the same script on the clipboard. The desktop app asks where to save; the browser downloads the file. The file is named after the flow, and nothing is sent anywhere: the export is built from the cells as they are in the panel, edits included.
+The **⋯** menu in the toolbar saves the cells so the code can leave Flowfile:
+
+- **Export as Python script…** writes a `.py` file with a `# %%` marker before each cell (`# %% [markdown]` for a Markdown cell, whose text becomes comments). VS Code, Spyder and Jupytext read the markers as cells, and plain `python` runs the file top to bottom.
+- **Export as Jupyter notebook…** writes an `.ipynb` for Jupyter, VS Code or Colab, with the last output of every cell that ran in the panel.
+- **Copy as Python script** puts the same script on the clipboard.
+
+The file is named after the flow and holds the cells as they are in the panel, unsynced edits included. The desktop app asks where to save; the browser downloads the file. Nothing is sent anywhere.
 
 ## What is not saved with the flow
 
-The notebook is a view of the flow. Edits are kept in this browser window until a sync writes them to the canvas; reloading the page drops them. Saving the flow saves the canvas, not the notebook. A cell you add that places no node, such as `threshold = 8`, is not part of the flow: after a sync it stays in the panel only until the canvas next changes.
+The notebook is a view of the flow, not a file of its own:
+
+- Edits stay in this browser window until a sync writes them to the canvas. Reloading the page drops unsynced edits.
+- Saving the flow saves the canvas, not the notebook.
+- A cell that places no node, such as `threshold = 8`, is not part of the flow. After a sync it stays in the panel only until the canvas next changes.
 
 ## Related
 

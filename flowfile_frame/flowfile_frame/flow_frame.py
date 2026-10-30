@@ -36,6 +36,7 @@ from flowfile_core.flowfile.param_types import ParamValue, typed_parameter_value
 from flowfile_core.flowfile.parameter_resolver import resolve_expression_parameters
 from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_core.schemas.schemas import GroupColor
+from flowfile_frame import selectors
 from flowfile_frame.callable_utils import _get_function_source, process_callable_args
 from flowfile_frame.cloud_storage.frame_helpers import add_write_ff_to_cloud_storage
 from flowfile_frame.config import logger
@@ -76,6 +77,12 @@ class _PolarsCodeText(str):
 
 
 _SNIPPET_FUNCTION_NAME = re.compile(r"_polars_code_\d+")
+
+# The unpivot node's data-type options, keyed by the class of the frame selector of the same name
+_UNPIVOT_DATA_TYPES: dict[type[Selector], str] = {
+    type(getattr(selectors, transform_schema.unpivot_selector_name(data_type))()): data_type
+    for data_type in transform_schema.UNPIVOT_DATA_TYPES
+}
 
 
 def _polars_code_source(code: Any) -> str:
@@ -3689,7 +3696,9 @@ class FlowFrame:
         ----------
         on : list[str | Selector] | str | None | Selector
             Column(s) to unpivot (become values in the value column)
-            If None, all columns not in index will be used
+            If None, all columns not in index will be used. ``ff.numeric()``, ``ff.float_()``,
+            ``ff.string()``, ``ff.date()`` or ``ff.all_()`` selects by data type, as the canvas node does;
+            like Polars, such a selector also unpivots the index columns it matches
         index : list[str] | str | None
             Column(s) to use as identifier variables (stay as columns)
         variable_name : str, optional
@@ -3714,7 +3723,8 @@ class FlowFrame:
         else:
             index_columns = list(index)
         can_use_native = True
-        if on is None:
+        data_type = _UNPIVOT_DATA_TYPES.get(type(on))
+        if on is None or data_type is not None:
             value_columns = []
         elif isinstance(on, str | Selector):
             if isinstance(on, Selector):
@@ -3732,8 +3742,8 @@ class FlowFrame:
             unpivot_input = transform_schema.UnpivotInput(
                 index_columns=index_columns,
                 value_columns=value_columns,
-                data_type_selector=None,
-                data_type_selector_mode="column",
+                data_type_selector=data_type,
+                data_type_selector_mode="column" if data_type is None else "data_type",
             )
 
             unpivot_settings = input_schema.NodeUnpivot(
@@ -3764,7 +3774,8 @@ class FlowFrame:
     """
             if description is None:
                 index_str = ", ".join(index_columns) if index_columns else "none"
-                value_str = ", ".join(map(str, value_columns)) if value_columns else "all non-index columns"
+                shown = [on] if data_type is not None else value_columns
+                value_str = ", ".join(map(str, shown)) if shown else "all non-index columns"
                 description = f"Unpivot data with index: {index_str} and value cols: {value_str}"
 
             self._add_polars_code(new_node_id, code, description)

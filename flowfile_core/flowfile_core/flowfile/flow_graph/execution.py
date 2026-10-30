@@ -431,11 +431,10 @@ class ExecutionMixin(GraphMixinBase):
     ) -> RunInformation | None:
         """Executes a specific node in the graph by its ID.
 
-        The defaults are the data-preview contract: a non-performance run, so the
-        node stores its result and can serve the 100-row example grid. Callers
-        that only need the node's query plan (the Explore Data drawer) pass
-        ``performance_mode=True``, which skips that store entirely, and
-        ``reset_cache=False`` so exploring doesn't evict a useful cache.
+        The defaults are the data-preview contract: the node fills its 100-row example grid, stored with an inline
+        sample in a Development flow, sampled from the deferred plan in a Performance one. Callers that only need
+        the query plan (the Explore Data drawer) pass ``performance_mode=True``, which installs no grid and stores
+        nothing, and ``reset_cache=False`` so exploring doesn't evict a useful cache.
         ``claimed`` says the caller already holds the run slot (``try_claim_run``),
         as the fetch route does before it answers; the slot is released here either way.
 
@@ -502,11 +501,13 @@ class ExecutionMixin(GraphMixinBase):
             try:
                 with use_context(context), node_parameters_resolved(flow_node):
                     flow_node.execute_node(
-                        performance_mode=performance_mode,
+                        # Not one input: a Performance-setting flow keeps a deferred plan yet still samples its grid.
+                        performance_mode=performance_mode or self.flow_settings.execution_mode == "Performance",
                         node_logger=node_logger,
                         reset_cache=reset_cache,
                         unreachable=unreachable,
                         running=frozenset(node.node_id for node in stage.nodes),
+                        preview=not performance_mode,
                     )
             finally:
                 _release_boundary_inputs(flow_node, edges_into)

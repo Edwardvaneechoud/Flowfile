@@ -267,11 +267,11 @@ def _columns_to_dict_list(cols: Any) -> list[dict[str, Any]]:
 
 
 def _extract_sample_rows(node: Any) -> list[dict[str, Any]]:
-    """Up to :data:`_MAX_SAMPLE_ROWS` rows of the node's result, read
-    by ``sample`` on the backend that holds its reference, so core
-    collects nothing of it. A node holding no reference, or a read
-    that fails, gives ``[]`` — a missing sample shouldn't fail the
-    whole observation when the schema is fine.
+    """Up to :data:`_MAX_SAMPLE_ROWS` rows of the node's result: from the
+    preview grid the fetch already sampled, else by ``sample`` on the
+    backend that holds its reference, so core collects nothing of it.
+    No reference or a failed read gives ``[]`` — a missing sample
+    shouldn't fail the observation when the schema is fine.
     """
     ref = node.results.result_ref
     if ref is None:
@@ -283,6 +283,9 @@ def _extract_sample_rows(node: Any) -> list[dict[str, Any]]:
     from flowfile_core.flowfile.execution import registry
 
     try:
+        grid = getattr(node.results, "example_data_generator", None)
+        if grid is not None:
+            return grid().slice(0, _MAX_SAMPLE_ROWS).to_pylist()
         sample = registry.backend(ref.backend_id).sample(ref, _MAX_SAMPLE_ROWS)
         return pl.read_ipc_stream(io.BytesIO(sample)).to_dicts()[:_MAX_SAMPLE_ROWS]
     except Exception:

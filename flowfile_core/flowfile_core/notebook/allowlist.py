@@ -15,6 +15,8 @@ attribute a data key (``ff.custom_nodes.<node key>``).
 
 from __future__ import annotations
 
+from flowfile_core.schemas.transform_schema import UNPIVOT_DATA_TYPES, unpivot_selector_name
+
 CALL = "call"
 READ = "read"
 BOTH = "both"
@@ -32,6 +34,7 @@ _SELECTORS = (
     "all_", "boolean", "by_dtype", "categorical", "contains", "date", "datetime", "duration", "ends_with", "float_",
     "integer", "list_", "matches", "numeric", "object_", "starts_with", "string", "struct", "temporal", "time",
 )  # fmt: skip
+_UNPIVOT_SELECTORS = tuple(unpivot_selector_name(data_type) for data_type in UNPIVOT_DATA_TYPES)
 _CONNECTION_HELPERS = (
     "create_cloud_storage_connection", "create_cloud_storage_connection_if_not_exists", "del_cloud_storage_connection",
     "create_database_connection", "create_database_connection_if_not_exists", "del_database_connection",
@@ -61,6 +64,7 @@ _NOT_EMITTED = (
 FL_VERDICTS: dict[str, tuple[str, str]] = {
     **{name: (ALLOW, BOTH) for name in _DTYPES},
     **{name: (ALLOW, CALL) for name in _FL_CALLS},
+    **{name: (ALLOW, CALL) for name in _UNPIVOT_SELECTORS},
     "python_script": (ALLOW, DECORATOR),
     "custom_nodes": (ALLOW, READ),
     "kernels": (REFUSE, "lists and reaches the user's kernels"),
@@ -77,7 +81,11 @@ FL_VERDICTS: dict[str, tuple[str, str]] = {
         name: (REFUSE, "navigates the catalog, and can create namespaces")
         for name in ("CatalogReference", "SchemaReference", "get_catalog", "list_catalogs", "default_schema")
     },
-    **{name: (REFUSE, "is a selector, which the notebook does not emit") for name in _SELECTORS},
+    **{
+        name: (REFUSE, "is a selector, which the notebook does not emit")
+        for name in _SELECTORS
+        if name not in _UNPIVOT_SELECTORS
+    },
     **{name: (REFUSE, "is not part of the code the notebook emits") for name in _NOT_EMITTED},
 }
 """Every name ``import flowfile as ff`` provides: ``(ALLOW, usage)`` or ``(REFUSE, reason)``."""
@@ -189,10 +197,12 @@ ARGUMENT_KINDS: dict[tuple[str, str], dict[int | str, str]] = {
     ("ff", "explore"): {"group": "FlowGroup"},
     ("ff", "polars_code"): {0: "polars_code_def", "code": "polars_code_def"},
     ("FlowFrame", "polars_code"): {0: "polars_code_def", "code": "polars_code_def"},
+    ("FlowFrame", "unpivot"): {0: "Selector", "on": "Selector"},
     **{(kind, "add_to_group"): {0: "FlowGroup", "group": "FlowGroup"} for kind in ("FlowFrame", "Gate", "NodeOutputs")},
 }
 """Arguments (position or keyword) that also take one non-data kind: the session graph ``flow``, a flow
-input's sample frame, a Polars Code ``def``, or a visual group (``ff.FlowGroup``)."""
+input's sample frame, a Polars Code ``def``, a visual group (``ff.FlowGroup``), or an unpivot node's data-type
+selector."""
 
 REFUSED_KEYWORDS: dict[tuple[str, str], frozenset[str]] = {
     ("ff", "RunFlow"): frozenset({"name", "schema", "overwrite"}),
@@ -218,8 +228,10 @@ LITERAL_ARGUMENTS: dict[tuple[str, str], str] = {
     ("datetime", "date"): "ints",
     ("datetime", "datetime"): "ints",
     ("ff", "canvas_node"): "node_id",
+    **{("ff", name): "selector" for name in _UNPIVOT_SELECTORS},
 }
-"""Calls whose arguments must have one literal shape: a flow input's sample frame, integer date parts, a node id."""
+"""Calls whose arguments must have one literal shape: a flow input's sample frame, integer date parts, a node id,
+or none at all (a data-type selector)."""
 
 BOUNDS: dict[str, int] = {
     "cells_per_request": 1_000,

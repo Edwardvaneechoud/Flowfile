@@ -35,10 +35,12 @@ Frontend (Tauri/Web) --HTTP--> flowfile_core (:63578) --HTTP--> flowfile_worker 
 
 Flows live in **core's process memory** (`flow_file_handler`), not just the DB —
 a core restart or reload invalidates every open flow_id in the browser. The
-worker never talks to a database; it holds results in spawned child processes
-and an on-disk Arrow cache. Keep this triangle in mind: almost every "it's
-broken" symptom below is really "which of these three lost state, or which two
-disagree."
+worker is the only compute: it holds each result (a file or a deferred plan),
+core a `ResultRef` plus preview rows. A plan's `CredentialRef` resolves where it
+runs, so the worker reads the catalog DB too. Headless runs and Flowfile in
+Python embed the worker by default (`docs/for-developers/compute-protocol.md`). Keep this
+triangle in mind: almost every "it's broken" symptom below is really "which of
+these three lost state, or which two disagree."
 
 ---
 
@@ -52,15 +54,15 @@ disagree."
 | UI action appears to do nothing in Docker (works fine in local dev) | axios path and the FastAPI route decorator disagree on a **trailing slash** → FastAPI issues an absolute 307 redirect that silently fails; the Vite dev proxy and pytest's `TestClient` both paper over the mismatch, so it only manifests in Docker/nginx | `docker compose logs -f flowfile-core \| grep 307`; diff the axios call's path string against the `@router.post("/...")` decorator it targets, character for character | Fix the **frontend** path to match the decorator's slash exactly (e.g. `POST /update_settings/` needs the trailing `/`) — see `flowfile-frontend-conventions` |
 | Browser devtools shows "CORS error" / "blocked by CORS policy" | Almost always **not actually a CORS problem** — an unhandled exception (commonly `AttributeError` on a `None` node/connection) becomes a FastAPI 500, and a 500 response is missing the CORS headers a normal response would carry; the browser mislabels this as CORS | Read the **core log** for a traceback at the same timestamp (`~/.flowfile/logs/flow_<flow_id>.log`, or core's stdout) — do NOT trust the browser console's diagnosis | Fix the underlying 500 (typically a missing `None`/existence guard before touching a possibly-deleted node/connection) |
 | A node's preview/result doesn't reflect data that changed **outside** the flow (e.g. new rows landed in a source the node reads) | Worker cache hit: the node's hash (settings + inputs + `parent_uuid`) didn't change, so Development-mode execution logic skips and serves the stale cached result | Force a refresh in the UI (reset_cache) and compare; if scripting directly against a `FlowGraph`/`FlowNode` object, no route exposes this — call it in-process | `node.invalidate_cache()` bumps `_cache_epoch`, busting the hash without touching settings — this is the intended escape hatch for out-of-band data changes (e.g. Kafka offset resets use this pattern) |
-| A node fails with `ComputeUnavailable` ("Is backend "worker" running?") where it used to re-run | `results_exists()` raises `ComputeUnavailable` when the worker cannot be reached, and the node fails with it instead of re-running or falling back to core; `False` means only that the worker answered the result is gone | Is the worker actually up? `curl -sf http://localhost:63579/docs`; check core's startup log line `Worker configured at <URL>` and the Backends page's handshake verdict | Start/restart `poetry run flowfile_worker`; verify `WORKER_HOST`/`FLOWFILE_WORKER_PORT` (or `FLOWFILE_WORKER_URL`) |
+| A node fails with `ComputeUnavailable` ("Is backend "worker" running?") where it used to re-run | `WorkerBackend.exists()` (`HEAD /v1/results/{id}`) raises `ComputeUnavailable` when the worker cannot be reached, and the node fails with it instead of re-running or falling back to core; `False` means only that the worker answered the result is gone | Is the worker actually up? `curl -sf http://localhost:63579/docs`; core's startup line `Compute backend '<id>'; worker configured at <URL>`; the Backends page's handshake verdict | Start/restart `poetry run flowfile_worker`; verify `WORKER_HOST`/`FLOWFILE_WORKER_PORT` (or `FLOWFILE_WORKER_URL`) |
 | Running a flow (or fetching a node) returns `404: Flow <id> is no longer in memory. Reload the flow and try again.` | Flows live only in core's in-process `flow_file_handler`; a core restart, or a "Save As" that mints a new flow_id, orphans the frontend's cached flow_id | Check core's stdout for a recent restart timestamp; compare the frontend's flow_id against the current `flow_registrations` row for that flow name | Not a bug — reload the flow in the UI. Route/message: `flowfile_core/flowfile_core/routes/routes.py` around the flow-run handler |
 | A Python Script (kernel) node hangs, errors connecting, or the container seems gone | The Docker kernel container isn't running, its mapped host port (range **19000-19999**) is blocked/reused, or the image tag doesn't match `FLOWFILE_KERNEL_IMAGE` | `docker ps \| grep flowfile-kernel-`; `docker logs flowfile-kernel-<kernel_id>`; check core's startup/kernel-manager log for the assigned host port | Reconnect/retry from the UI, or `docker rm -f flowfile-kernel-<kernel_id>` and retry so a fresh container is created; confirm `FLOWFILE_KERNEL_IMAGE`/`_BASE`/`_ML`/`_LITE` point at a pulled image |
 | Quit the Tauri desktop app (either via window close **or** Cmd+Q/dock-quit) but `flowfile_core`/`flowfile_worker` processes are still running | Two known open races: (a) quitting during startup can shut down before sidecar PIDs are recorded, so that spawn is never reaped; (b) a sidecar dying mid-shutdown can leave a stale PID that a later `killpg` targets after the PID was recycled. There is currently **no automated desktop E2E test** guarding this | `ps aux \| grep flowfile_core; ps aux \| grep flowfile_worker` — run this test **both** ways (window close, and Cmd+Q/dock-quit) after quitting | Kill leftover PIDs manually for now. This is a known, tracked gap — see `flowfile-frontend-conventions` for the exact races (`lib.rs`, `sidecar/mod.rs`) before touching sidecar shutdown code |
 | An AI agent loops on a tool name, references a nonexistent column, or otherwise does something surprising | Need to see exactly what the model was given (system prompt, tool catalog, message history) — guessing from the output is unreliable | Set `FLOWFILE_AI_LOG_PROMPTS=true`, reproduce the run, then `python -m flowfile_core.ai.prompt_log tail 20` | Also `python -m flowfile_core.ai.prompt_log grep PATTERN [SURFACE]`; see "AI agent misbehavior" below and `flowfile-ai-subsystem` for architecture |
 | A scheduled flow's log is missing from `$FLOWFILE_STORAGE_DIR/logs` | A writer bypassing `shared/run_logs.py::run_log_path`, or a log written by an older version (still under the real home dir) | Every writer routes through `run_log_path`, which honours `FLOWFILE_STORAGE_DIR` and docker mode | Check nothing bypasses `run_log_path` |
 | A run's log is gone after restarting core, even though the run definitely happened recently | Age-based retention removed it, or a new sweep bypasses that retention | Logs expire only by age (`FLOWFILE_RUN_LOG_RETENTION_DAYS`, default 30d). Cross-check the durable record: `sqlite3 ~/.flowfile/database/flowfile_catalog.db 'select id,flow_name,started_at,ended_at,success from flow_runs order by id desc limit 10;'` | Do not add a logs sweep to `cleanup_directories()` — it silently overrides the env var |
-| Worker offload fails with `Connection refused` mentioning `/submit_query/` | The worker process isn't running, or core is pointed at the wrong worker URL | Core startup log line `Worker configured at <WORKER_URL>`; `curl -sf <WORKER_URL>/docs` | Start `poetry run flowfile_worker`; or set the flow's `execution_location` to `local` to bypass the worker entirely |
-| Worker-offloaded node fails with error code `-1` / "unknown error … process got killed by the server" | The worker's **spawned child process** was OOM-killed mid-computation | Check worker stdout around that timestamp for OS-level kill signals; check available memory on the worker host | Core degrades gracefully (keeps its own lazy frame, shows a warning, no example data) — not silent data loss, but you likely need to reduce data volume or fix a memory leak in the transform |
+| Worker offload fails with `Connection refused` mentioning `/submit_query/` (`FLOWFILE_COMPUTE_PROTOCOL=0` only; with it on, see the `ComputeUnavailable` row) | The worker process isn't running, or core points at the wrong worker URL | Core startup line `Compute backend '<id>'; worker configured at <URL>`; `curl -sf <URL>/docs` | Start `poetry run flowfile_worker`. Setting the flow to `local` bypasses it only with the flag off; with it on a serving core refuses `local` |
+| Worker-offloaded node fails with error code `-1` / "unknown error … process got killed by the server" (flag off; on, `TaskFailed: Unknown Error`) | The worker's **spawned child process** was OOM-killed mid-computation | Check worker stdout around that timestamp for OS-level kill signals; check available memory on the worker host | The node fails with `TaskFailed` (`PlanRejected` for a time-limit kill), downstream nodes skip, core computes nothing instead — reduce data volume or fix a memory leak in the transform |
 | "My unrelated change broke N tests" right after a routine edit | See "Discriminating-experiment discipline" below **before** trusting this conclusion | — | — |
 
 ---
@@ -176,8 +178,8 @@ the kernel-visible volume (`shared_directory`/`artifact_staging_directory`/
 `global_artifacts_directory` must stay under `<base>/temp/kernel_shared` or
 `$FLOWFILE_SHARED_DIR`).
 
-Core also stops **every** kernel container on its own shutdown — if kernels
-vanish right when you stop core in dev, that's expected, not a leak.
+Core stops the kernel containers **it started** on its own shutdown — if they
+vanish when you stop core in dev, that's expected, not a leak.
 
 ---
 
@@ -229,15 +231,9 @@ python -m flowfile_core.ai.prompt_log tail 20
 python -m flowfile_core.ai.prompt_log grep '<pattern>' [SURFACE]
 ```
 
-The file lives at `<storage base>/ai_prompts/YYYY-MM-DD.jsonl` (UTC-dated —
-`~/.flowfile/ai_prompts/...` by default), one JSON line per LLM call,
-`jq`-parseable. Lines over 256 KiB (runaway loops) keep the system prompt and
-most-recent turns verbatim and stub older message bodies with
-`[...truncated, len=N chars]` plus `"truncated": true`, so it stays parseable
-even for pathological sessions. Set `FLOWFILE_AI_LOG_PROMPTS_SCRUB=true` before
-sharing a transcript externally — it masks PII in user/tool messages while
-leaving system+assistant content verbatim (that's the part you're debugging).
-Both flags default off; don't leave prompt logging on in production.
+File location, truncation of runaway lines and `FLOWFILE_AI_LOG_PROMPTS_SCRUB`
+(set it before sharing a transcript): root `CLAUDE.md`, "Debugging the AI".
+Don't leave prompt logging on in production.
 
 For the agent architecture itself (assist/copilot/planner surfaces, provider
 registry, rate-limit scheduler caveats) see `flowfile-ai-subsystem`.

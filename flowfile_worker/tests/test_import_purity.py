@@ -146,16 +146,42 @@ def test_importing_the_worker_sets_no_start_method_until_its_first_child_starts(
     assert seen["after"] == ["spawn", "flowfile_worker.__main__", 0]
 
 
-@pytest.mark.worker
-def test_worker_funcs_import_is_lean(tmp_path):
+def _lean_import_env(tmp_path) -> dict[str, str]:
     env = os.environ.copy()
     env["TEST_MODE"] = "1"
     env["FLOWFILE_SKIP_STARTUP_MIGRATION"] = "1"
     env["FLOWFILE_STORAGE_DIR"] = str(tmp_path / "storage")
     env["FLOWFILE_USER_DATA_DIR"] = str(tmp_path / "user_data")
     env["PYTHONPATH"] = os.pathsep.join([str(REPO_ROOT / "flowfile_worker"), str(REPO_ROOT)])
-    # Mimic a spawn-context child (non-MainProcess): configs.py imports connectorx
-    # only in the parent for version logging, so the child path is what we assert on.
+    return env
+
+
+@pytest.mark.worker
+def test_configs_import_in_the_main_process_loads_no_connectorx(tmp_path):
+    """Core imports the embedded worker's configs in its own main process; only the server's run() reads connectorx."""
+    code = textwrap.dedent(
+        """
+        import json, sys
+        import flowfile_worker.configs  # noqa: F401
+        print(json.dumps("connectorx" in sys.modules))
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        env=_lean_import_env(tmp_path),
+        cwd=str(tmp_path),
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout.strip().splitlines()[-1]) is False
+
+
+@pytest.mark.worker
+def test_worker_funcs_import_is_lean(tmp_path):
+    env = _lean_import_env(tmp_path)
+    # Mimic a spawn-context child (non-MainProcess), the path every task import takes.
     code = textwrap.dedent(
         """
         import json, multiprocessing, sys
@@ -180,9 +206,9 @@ def test_worker_funcs_import_is_lean(tmp_path):
     assert leaked == [], f"heavy modules leaked into worker child import: {leaked}"
 
 
-# A console-script launch leaves __main__.__spec__ as None, which makes spawn pass
-# init_main_from_path and re-execute the launcher (and the whole FastAPI app) in every
-# child. The first child's start stamps a ".__main__" spec to take spawn's free path.
+# A console-script launch leaves __main__.__spec__ as None, and `python -m <module>` gives it the module's
+# name; either makes spawn re-execute the launcher (and the whole FastAPI app) in every child. The first
+# child's start stamps a ".__main__" spec to take spawn's free path.
 FORBIDDEN_IN_SPAWNED_CHILD = (
     "fastapi",
     "uvicorn",
@@ -216,7 +242,7 @@ def report(out_path):
         json.dump(sorted(sys.modules), fh)
 '''
 
-# Run as `python launcher.py`, so __main__.__spec__ is None like a console script until the child's start.
+# Run as `python launcher.py` (no spec, like a console script) and as `python -m launcher` (spec `launcher`).
 _LAUNCHER = '''
 import os
 import sys
@@ -235,7 +261,8 @@ if __name__ == "__main__":
 
 
 @pytest.mark.worker
-def test_spawned_child_does_not_reexecute_launcher(tmp_path):
+@pytest.mark.parametrize("launch", ["file", "module"], ids=["python-file", "python-m"])
+def test_spawned_child_does_not_reexecute_launcher(tmp_path, launch):
     out_path = tmp_path / "child_modules.json"
     (tmp_path / "probe_target.py").write_text(_PROBE_TARGET, encoding="utf-8")
     launcher = tmp_path / "launcher.py"
@@ -251,8 +278,9 @@ def test_spawned_child_does_not_reexecute_launcher(tmp_path):
         [str(tmp_path), str(REPO_ROOT / "flowfile_worker"), str(REPO_ROOT)]
     )
 
+    command = [sys.executable, str(launcher)] if launch == "file" else [sys.executable, "-m", "launcher"]
     result = subprocess.run(
-        [sys.executable, str(launcher)],
+        command,
         capture_output=True,
         text=True,
         env=env,
