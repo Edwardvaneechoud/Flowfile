@@ -501,6 +501,7 @@ class ExecutionMixin(GraphMixinBase):
             try:
                 with use_context(context), node_parameters_resolved(flow_node):
                     flow_node.execute_node(
+                        # Not one input: a Performance-setting flow keeps a deferred plan yet still samples its grid.
                         performance_mode=performance_mode or self.flow_settings.execution_mode == "Performance",
                         node_logger=node_logger,
                         reset_cache=reset_cache,

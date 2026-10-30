@@ -125,6 +125,11 @@ def _sample_on_read(backend: ComputeBackend, ref: ResultRef, n: int) -> Callable
     return read
 
 
+def _result_file(backend: ComputeBackend, ref: ResultRef) -> str | None:
+    """The shared-disk file that backs first-row reads of ``ref``; only a worker on core's disk has one."""
+    return backend.result_file(ref) if isinstance(backend, WorkerBackend) else None
+
+
 ExternalTaskHandle = (
     ExternalDfFetcher | ExternalDatabaseFetcher | ExternalDatabaseWriter | ExternalCloudWriter | ExternalOutputWriter
 )
@@ -1392,7 +1397,7 @@ class FlowNode:
                                     input_result = input_result.shallow_copy()
                                 # Truthiness on a FlowDataEngine hits __len__ -> collect(); keep it "is not None".
                                 _df_type = type(input_result.data_frame) if input_result is not None else "None"
-                                self.print(f"Input {i} data type: {type(input_result)}, " f"dataframe type: {_df_type}")
+                                self.print(f"Input {i} data type: {type(input_result)}, dataframe type: {_df_type}")
                                 input_data.append(input_result)
                             self.print(f"All {len(input_data)} inputs collected, calling node function")
                             with self._in_execution_context():
@@ -1999,7 +2004,7 @@ class FlowNode:
             data = FlowDataEngine(plan, schema=ref.schema, number_of_records=ref.row_count)
         self.results.resulting_data = data
         self.node_schema.result_schema = data.schema
-        self.results.example_data_path = backend.result_file(ref) if isinstance(backend, WorkerBackend) else None
+        self.results.example_data_path = _result_file(backend, ref)
         if result.sample is not None:
             table = _arrow_table(result.sample)
             self.results.example_data_generator = lambda: table
@@ -2018,12 +2023,14 @@ class FlowNode:
         generator = self.results.example_data_generator
         if generator is None:
             return
-        generator()
+        try:
+            generator()
+        except Exception:
+            self.results.example_data_generator = None
+            raise
         ref = self.results.result_ref
         if ref is not None and self.results.example_data_path is None:
-            backend = registry.backend(ref.backend_id)
-            if isinstance(backend, WorkerBackend):
-                self.results.example_data_path = backend.result_file(ref)
+            self.results.example_data_path = _result_file(registry.backend(ref.backend_id), ref)
 
     def prepare_before_run(self):
         """Resets results and errors before a new execution."""

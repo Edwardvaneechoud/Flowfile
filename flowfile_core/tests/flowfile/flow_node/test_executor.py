@@ -623,6 +623,7 @@ class TestPreviewFetchByExecutionMode:
         node = graph.get_node(2)
         assert node.results.errors is not None
         assert node.node_stats.has_completed_last_run is False
+        assert node.results.example_data_generator is None
         assert node.get_table_example(include_data=True).data == []
 
     def test_a_fetch_that_releases_a_stored_file_drops_the_nodes_below(self, tmp_path, execution_location, protocol):
