@@ -21,8 +21,9 @@ def run_flow(
         param_overrides: List of "key=value" strings overriding flow parameters.
         run_id: Optional pre-created run ID to report results back to
         backend: The compute backend (``local``, ``worker`` or ``worker:<name>``). Without it, a backend id saved
-            as the flow's ``execution_location`` is used, else the flow runs in this process. The flow is closed
-            when the run ends, so no result it minted stays held on the backend.
+            as the flow's ``execution_location`` is used, else ``FLOWFILE_COMPUTE_BACKEND`` when it is set, else
+            the worker embedded in this process, which runs each job in a child (``registry.headless_run``). The
+            flow is closed when the run ends, so no result it minted stays held on the backend.
 
     Returns:
         Exit code (0 for success, 1 for failure)
@@ -30,7 +31,15 @@ def run_flow(
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     from flowfile_core.flowfile.execution import registry
 
-    backend_id = backend or registry.LOCAL_BACKEND_ID
+    with registry.headless_run():
+        return _run_flow(flow_path, param_overrides, run_id, backend)
+
+
+def _run_flow(flow_path: str, param_overrides: list[str] | None, run_id: int | None, backend: str | None) -> int:
+    """``run_flow``'s run, inside ``registry.headless_run``."""
+    from flowfile_core.flowfile.execution import registry
+
+    backend_id = backend or registry.environment_backend_id() or registry.LOCAL_BACKEND_ID
     registry.set_default_override(backend_id)
 
     from flowfile_core.flowfile.manage.io_flowfile import open_flow
@@ -81,7 +90,7 @@ def run_flow(
         if override_dict:
             print(f"Parameter overrides: {override_dict}")
 
-    # Run in this process unless --backend or the flow's saved backend id names a backend
+    # Run on the embedded worker unless --backend, the flow's saved backend id or FLOWFILE_COMPUTE_BACKEND names one
     if backend is None and flow.execution_location not in ("local", "remote", "auto"):
         backend_id = flow.execution_location
         registry.set_default_override(backend_id)
@@ -441,7 +450,10 @@ def main():
         "--backend",
         metavar="ID",
         default=None,
-        help="Compute backend a flow run uses: local (the default), worker or worker:<name>",
+        help=(
+            "Compute backend a flow run uses: local, worker or worker:<name>. Without it, the backend id saved in "
+            "the flow, else FLOWFILE_COMPUTE_BACKEND, else local"
+        ),
     )
     parser.add_argument(
         "--out",

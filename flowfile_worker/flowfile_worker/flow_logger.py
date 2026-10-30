@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 
 from flowfile_worker.configs import FLOWFILE_CORE_URI
@@ -8,6 +9,9 @@ from flowfile_worker.log_models import RawLogInput
 LOGGING_URL = FLOWFILE_CORE_URI + "/raw_logs"
 # Core's header for worker/kernel callbacks; core→worker calls use X-Flowfile-Internal instead.
 CORE_INTERNAL_TOKEN_HEADER = "X-Internal-Token"
+HEADLESS_RUN_ENV_VAR = "FLOWFILE_HEADLESS_RUN"
+"""``1`` while a headless runner runs its flow (core's ``registry.headless_run``); the children it spawns inherit it
+and post no log to core."""
 
 
 def _runs_jobs_in_process() -> bool:
@@ -38,11 +42,12 @@ class FlowfileLogHandler(logging.Handler):
                 log_type=record.levelname.upper(),
                 extra={},
             )
-            # Without a token, or in a library host, nothing is posted; the stream handler still has the record.
+            # No token, a library host or a headless runner's child: nothing is posted; the stream handler has it.
             if (
                 self.flowfile_flow_id != -1
                 and self.flowfile_node_id != -1
                 and not _runs_jobs_in_process()
+                and os.environ.get(HEADLESS_RUN_ENV_VAR) != "1"
                 and (token := resolve_internal_token())
             ):
                 import requests

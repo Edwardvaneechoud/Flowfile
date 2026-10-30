@@ -338,6 +338,30 @@ class TestSelectSettingUpdator:
         basic_flow.add_select(node.get_node_data(basic_flow.flow_id).setting_input)
         assert basic_flow.get_node(2).get_resulting_data().columns == ['a']
 
+    def test_unlisted_columns_are_placed_after_the_listed_ones_so_a_save_keeps_the_order(self, basic_flow: FlowGraph):
+        create_manual_input_node(basic_flow, 1, [{'a': 1, 'b': 'x', 'c': 2.0, 'd': 3}])
+        basic_flow.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=2, node_type='select'))
+        add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        basic_flow.add_select(input_schema.NodeSelect(
+            flow_id=1,
+            node_id=2,
+            depending_on_id=1,
+            select_input=[transform_schema.SelectInput('c', position=0), transform_schema.SelectInput('a', position=1)],
+            keep_missing=True,
+        ))
+        node = basic_flow.get_node(2)
+        assert node.get_resulting_data().columns == ['c', 'a', 'b', 'd']
+
+        shown = node.get_node_data(basic_flow.flow_id).setting_input
+        entries = {s.old_name: s for s in shown.select_input}
+        assert [entries[c].position for c in ('c', 'a', 'b', 'd')] == [0, 1, 2, 3]
+        assert (entries['b'].original_position, entries['b'].data_type) == (1, 'String')
+        assert (entries['d'].original_position, entries['d'].data_type) == (3, 'Int64')
+
+        shown.select_input.sort(key=lambda s: s.position)
+        basic_flow.add_select(shown)
+        assert basic_flow.get_node(2).get_resulting_data().columns == ['c', 'a', 'b', 'd']
+
 
 class TestSelectInputsRemoveMethod:
     """Tests for the remove_select_input method on SelectInputs."""

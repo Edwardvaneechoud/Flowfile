@@ -405,7 +405,7 @@ The [Technical Architecture page](architecture.md#execution-modes) describes wha
 | `execution_mode = "Development"` | `preview_rows = 100` (`DEFAULT_PREVIEW_ROWS`) |
 | `execution_mode = "Performance"` | `preview_rows = None` |
 
-The default backend is `worker` (`WorkerBackend`) unless `FLOWFILE_COMPUTE_BACKEND` names another, or, with that unset, the legacy `FLOWFILE_OFFLOAD_TO_WORKER=0` makes it `local`; in a process that serves (the desktop sidecar, the Docker image, the pip server, each marked by `main.run`) it is never `local`. The headless runners (`flowfile run flow`, `--run-flow`) make `local`, the worker embedded in their own process, the default of that process.
+The default backend is `worker` (`WorkerBackend`) unless `FLOWFILE_COMPUTE_BACKEND` names another, or, with that unset, the legacy `FLOWFILE_OFFLOAD_TO_WORKER=0` makes it `local`; in a process that serves (the desktop sidecar, the Docker image, the pip server, each marked by `main.run`) it is never `local`. The headless runners (`flowfile run flow`, `--run-flow`) make their run's backend the default of that process: `--backend`, else the backend id saved in the flow, else `FLOWFILE_COMPUTE_BACKEND`, else `local`, the worker embedded in their own process.
 
 `run_graph` enters the graph's context with `use_context`, and every stage thread runs under a copy of it, so a node finds its backend through `current_context()` on whichever thread executes it. A run started inside another run (a `run_flow` subflow) keeps the outer run's context, and a caller outside a run enters the graph's context the same way before it executes a node.
 

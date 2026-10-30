@@ -27,6 +27,7 @@ import {
   plainHttpOffLoopback,
   serverFilesLabel,
   useComputeBackends,
+  workersSummary,
 } from "./useComputeBackends";
 
 const TEAM_URL = "https://team.example:63579";
@@ -389,5 +390,44 @@ describe("serverFilesLabel", () => {
 
   it("says not checked for an unmarked worker with no verdict", () => {
     expect(serverFilesLabel(teamRow(false), undefined)).toBe("Not checked");
+  });
+});
+
+describe("workersSummary", () => {
+  const row = (id: string): ComputeBackend => ({ ...teamRow(), id });
+  const limited = verdict({ absent: { python: "core's Python functions" } });
+  const refused = verdict({ ok: false, error: "version mismatch" });
+
+  it("is null without workers", () => {
+    expect(workersSummary([], {})).toBeNull();
+  });
+
+  it("says a single matching worker matches", () => {
+    expect(workersSummary([teamRow()], { "worker:team": checked })).toEqual({
+      tone: "success",
+      label: "Matches this server",
+    });
+  });
+
+  it("says all match when every worker does", () => {
+    const rows2 = [row("worker:a"), row("worker:b")];
+    expect(workersSummary(rows2, { "worker:a": checked, "worker:b": checked })).toEqual({
+      tone: "success",
+      label: "All match",
+    });
+  });
+
+  it("counts each status worst first and takes the worst tone, leaving out the matches", () => {
+    const rows4 = ["a", "b", "c", "d"].map((name) => row(`worker:${name}`));
+    expect(
+      workersSummary(rows4, { "worker:a": checked, "worker:b": limited, "worker:c": refused }),
+    ).toEqual({ tone: "error", label: "1 can't run flows · 1 with limitations · 1 not checked" });
+  });
+
+  it("counts workers with no verdict as not checked", () => {
+    expect(workersSummary([row("worker:a"), row("worker:b")], {})).toEqual({
+      tone: "neutral",
+      label: "2 not checked",
+    });
   });
 });

@@ -349,9 +349,13 @@ class WorkerBackend(_WorkerReferences):
         except requests.RequestException as e:
             raise ComputeUnavailable(f"Could not reach the worker at {self.url}: {e}", backend_id=self.id) from e
         if response.status_code == 404:
+            cause = "so it is an older release than core"
+            if not settings.FLOWFILE_COMPUTE_PROTOCOL:
+                cause += (
+                    ", or a backend that serves only the /v1 wire, which needs FLOWFILE_COMPUTE_PROTOCOL on in core"
+                )
             raise VersionMismatch(
-                f"The worker at {self.url} does not report its capabilities (GET {route} answered 404), "
-                "so it is an older release than core"
+                f"The worker at {self.url} does not report its capabilities (GET {route} answered 404), {cause}"
             )
         if not response.ok:
             raise _v1_failure(response.status_code, response.content, response.reason)
@@ -434,8 +438,9 @@ class WorkerBackend(_WorkerReferences):
         """Run ``op`` on the worker and wait for it to end.
 
         Each kind takes its frozen dataclass from ``execution/payloads.py`` under ``"payload"``. Frames are serialised
-        here and credentials sent still encrypted. ``cancel(JobHandle(self.id, job_id))`` with the payload's
-        ``job_id`` reaches the job while the call waits.
+        here and credentials sent still encrypted; a backend whose verdict declares ``credential_resolution: ambient``
+        gets a write's cloud connection with its transport options only (``_transport_only``).
+        ``cancel(JobHandle(self.id, job_id))`` with the payload's ``job_id`` reaches the job while the call waits.
 
         With the protocol flag on, the kinds in ``V1_OPS`` go to ``POST /v1/ops/{kind}``, and ``polars_code``
         and ``sql_query`` do in either flag state. Their refs are keyed as on the task routes, each output a ``/v1``
@@ -970,7 +975,11 @@ class WorkerBackend(_WorkerReferences):
             waits=True,
             job_id=job.job_id,
             params={"job_id": job.job_id, **spec.params(job)},
-            json=_json_body(spec.request(job)),
+            json=_json_body(
+                _cloud_write_body(job, ambient=self._resolves_ambient())
+                if op is OperationKind.cloud_write
+                else spec.request(job)
+            ),
         ).json()
         refs = {
             name: self._ref_from_wire(wire.ResultRef.model_validate(raw)) for name, raw in answer["outputs"].items()
@@ -1290,7 +1299,7 @@ class WorkerBackend(_WorkerReferences):
     def _cloud_write(self, payload: OpPayload) -> OpResult:
         """Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag."""
         write = unpack(payload, CloudWritePayload)
-        settings = _cloud_write_settings(write)
+        settings = _cloud_write_settings(write, ambient=self._resolves_ambient())
         self._run_tracked(
             write.job_id, lambda: ExternalCloudWriter(settings, wait_on_completion=False, worker_url=self.url)
         )
@@ -1319,7 +1328,24 @@ class WorkerBackend(_WorkerReferences):
         return OpResult(refs={})
 
     def _delta(self, op: OperationKind, payload: OpPayload) -> OpResult:
-        return self._delta_task(*_delta_job(op, payload))
+        return self._delta_task(*_delta_job(op, payload, ambient=self._resolves_ambient()))
+
+    def _resolves_ambient(self) -> bool:
+        """Whether this backend reports reaching storage with its own identity (``credential_resolution: ambient``).
+
+        The report is its cached verdict's, else its ``capabilities()`` asked now, so a write whose verdict was
+        dropped (a connection error re-arms the handshake mid-run) or never made builds its body from what the
+        backend declares, never from no answer. With the protocol flag off the gate then refuses an ``ambient``
+        backend before anything is sent.
+
+        Raises:
+            ComputeError: The backend had no cached report and its capabilities could not be read.
+        """
+        verdict = cached_verdict(self)
+        reported = verdict.backend if verdict is not None else None
+        if reported is None:
+            reported = self.capabilities()
+        return reported.credential_resolution == "ambient"
 
     def _viz_session(self, payload: OpPayload) -> OpResult:
         """Answer one Graphic Walker request in the worker's visualisation session over the payload's plan."""
@@ -1504,22 +1530,51 @@ def _v1_failure(status_code: int, body: bytes, reason: str) -> ComputeError:
     return _v1_error(status_code, detail)
 
 
-def _storage_payload(connection: FullCloudStorageConnectionWorkerInterface | None) -> dict[str, Any] | None:
+_CONNECTION_CREDENTIALS = (
+    "aws_access_key_id",
+    "aws_secret_access_key",
+    "aws_session_token",
+    "azure_account_key",
+    "azure_client_secret",
+    "azure_sas_token",
+    "gcs_service_account_key",
+)
+"""The fields of a cloud connection that hold a credential; ``_transport_only`` sets them to ``None``."""
+
+
+def _transport_only(connection: FullCloudStorageConnectionWorkerInterface) -> FullCloudStorageConnectionWorkerInterface:
+    """``connection`` without its credentials, as a backend that resolves credentials with its own identity takes it.
+
+    The storage type, auth method, name, region, endpoint, TLS setting, account and project names, profile and role
+    ARN stay; every field ``_CONNECTION_CREDENTIALS`` names is ``None``.
+    """
+    return connection.model_copy(update=dict.fromkeys(_CONNECTION_CREDENTIALS))
+
+
+def _storage_payload(
+    connection: FullCloudStorageConnectionWorkerInterface | None, *, ambient: bool = False
+) -> dict[str, Any] | None:
     """The ``storage_payload`` the worker's Delta operations take; ``None`` for a table on the worker's disk.
 
-    It carries the connection with its secrets still encrypted; the worker decrypts them.
+    It carries the connection with its secrets still encrypted, which the worker decrypts, or for an ``ambient``
+    backend with its transport options only (``_transport_only``).
     """
-    return None if connection is None else {"connection": connection.model_dump()}
+    if connection is None:
+        return None
+    return {"connection": (_transport_only(connection) if ambient else connection).model_dump()}
 
 
-def _delta_destination(write: DeltaWritePayload | DeltaMergePayload | DeltaScd2Payload) -> dict[str, Any]:
+def _delta_destination(
+    write: DeltaWritePayload | DeltaMergePayload | DeltaScd2Payload, *, ambient: bool = False
+) -> dict[str, Any]:
     """Where the worker's Delta operation writes, as its keyword arguments.
 
     A catalog table named by identity goes as ``table_id``, ``table_name`` and a ``storage_payload`` carrying the
     catalog's ``base_uri`` beside the connection (``None`` for the worker's catalog tables directory), so no path
     crosses and the worker resolves the table under its own root; any other write goes as its ``output_path``.
+    ``ambient`` is ``_storage_payload``'s.
     """
-    storage_payload = _storage_payload(write.connection)
+    storage_payload = _storage_payload(write.connection, ambient=ambient)
     if write.table is None:
         return {"output_path": write.path, "storage_payload": storage_payload}
     if write.table.base_uri is not None:
@@ -1555,16 +1610,17 @@ _DELTA_OPS: dict[OperationKind, tuple[type, str, tuple[str, ...]]] = {
 
 
 def _delta_job(
-    op: OperationKind, payload: OpPayload
+    op: OperationKind, payload: OpPayload, *, ambient: bool = False
 ) -> tuple[DeltaWritePayload | DeltaMergePayload | DeltaScd2Payload, str, dict[str, Any]]:
     """The write a Delta ``op`` carries, the worker operation that runs it, and its keyword arguments.
 
     The keywords are ``_delta_destination``'s and then the fields ``_DELTA_OPS`` names, so both backends send the
-    worker's Delta operations the same arguments.
+    worker's Delta operations the same arguments; ``ambient`` is ``_storage_payload``'s.
     """
     payload_type, operation, fields = _DELTA_OPS[op]
     write = unpack(payload, payload_type)
-    return write, operation, {**_delta_destination(write), **{name: getattr(write, name) for name in fields}}
+    destination = _delta_destination(write, ambient=ambient)
+    return write, operation, {**destination, **{name: getattr(write, name) for name in fields}}
 
 
 def _credential_kwargs(credential: CredentialRef | None) -> dict[str, Any]:
@@ -1686,14 +1742,24 @@ def _database_write_settings(write: DatabaseWritePayload) -> DatabaseExternalWri
     return settings.model_copy(update=_filed_under(write))
 
 
-def _cloud_write_settings(write: CloudWritePayload) -> CloudStorageWriteSettingsWorkerInterface:
-    """The worker's cloud write: the plan, the write settings and the connection with its secrets still encrypted."""
+def _cloud_write_settings(
+    write: CloudWritePayload, *, ambient: bool = False
+) -> CloudStorageWriteSettingsWorkerInterface:
+    """The worker's cloud write: the plan, the write settings and the connection with its secrets still encrypted.
+
+    For an ``ambient`` backend the connection carries its transport options only (``_transport_only``).
+    """
     return CloudStorageWriteSettingsWorkerInterface(
         operation=base64.b64encode(write.plan.serialize()).decode(),
         write_settings=write.settings.get_write_setting_worker_interface(),
-        connection=write.connection,
+        connection=_transport_only(write.connection) if ambient else write.connection,
         **_filed_under(write),
     )
+
+
+def _cloud_write_body(write: CloudWritePayload, *, ambient: bool = False) -> dict[str, Any]:
+    """``_cloud_write_settings`` as the body of ``POST /v1/ops/cloud_write``."""
+    return json.loads(_cloud_write_settings(write, ambient=ambient).model_dump_json())
 
 
 def _kafka_read_settings(read: KafkaReadPayload) -> KafkaReadSettings:
@@ -1980,7 +2046,5 @@ V1_OPS: dict[OperationKind, V1Op] = {
     OperationKind.database_write: V1Op(
         DatabaseWritePayload, lambda job: json.loads(_database_write_settings(job).model_dump_json())
     ),
-    OperationKind.cloud_write: V1Op(
-        CloudWritePayload, lambda job: json.loads(_cloud_write_settings(job).model_dump_json())
-    ),
+    OperationKind.cloud_write: V1Op(CloudWritePayload, _cloud_write_body),
 }

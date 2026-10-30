@@ -1,9 +1,10 @@
 """A headless run child must not sweep the cache and temp directories a live core still references, and both
 headless runners make the worker embedded in their process the default through the backend registry, unless
-``--backend`` or a backend id saved as the flow's location names another; a run with no backend named computes there
-and asks for no worker, and one on a saved id whose worker is unreachable fails with ``ComputeUnavailable``; a spawned
-run passes ``--backend`` only when its request names one; and a run on the worker leaves no result it minted held
-there once its runner returns."""
+``--backend``, a backend id saved as the flow's location or ``FLOWFILE_COMPUTE_BACKEND`` in their environment names
+another, in that order; a run with none of the three computes there and asks for no worker, and one on a saved id
+whose worker is unreachable fails with ``ComputeUnavailable``; a spawned run passes ``--backend`` only when its request
+names one, and a scheduled run inherits the variable from core; and a run on the worker leaves no result it minted
+held there once its runner returns."""
 
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
+import polars as pl
 import pytest
 
 import flowfile_core
@@ -87,10 +89,11 @@ def _dev_runner(flow_path: str, backend: str | None = None) -> int:
 
 
 @pytest.mark.parametrize("runner", [_frozen_runner, _dev_runner], ids=["frozen-verb", "dev-cli"])
-def test_a_headless_run_defaults_to_core_s_own_backend_and_leaves_the_offload_flag_alone(tmp_path, runner):
+def test_a_headless_run_defaults_to_core_s_own_backend_and_leaves_the_offload_flag_alone(tmp_path, monkeypatch, runner):
     from flowfile_core.configs import settings
     from flowfile_core.flowfile.execution import registry
 
+    monkeypatch.delenv("FLOWFILE_COMPUTE_BACKEND", raising=False)
     flag_before = (settings.OFFLOAD_TO_WORKER, bool(settings.OFFLOAD_TO_WORKER))
     default_before = registry.default_backend_id()
     previous = registry.default_override()
@@ -139,11 +142,14 @@ def counting() -> list[CountingBackend]:
 
 @pytest.fixture
 def in_process_run(monkeypatch):
-    """A runner called in this process installs no telemetry, and the default override it sets is undone after."""
+    """A runner called in this process installs no telemetry, and the default override it sets and the pool size its
+    embedded worker takes are undone after."""
     from flowfile_core import telemetry
     from flowfile_core.flowfile.execution import registry
+    from flowfile_worker import pool
 
     monkeypatch.setattr(telemetry, "install_headless", lambda: None)
+    monkeypatch.setattr(pool.task_pool, "_size", pool.task_pool._size)
     previous = registry.default_override()
     yield
     registry.set_default_override(previous)
@@ -198,6 +204,26 @@ def _record_embedded_submits(monkeypatch) -> list[tuple[str, int | str]]:
 
     monkeypatch.setattr(EmbeddedWorkerBackend, "submit", submit)
     return submitted
+
+
+def _record_job_pids(monkeypatch, pid_file: Path) -> None:
+    """Every plan with a column ``a`` an ``EmbeddedWorkerBackend`` gets from here on, but the handshake's, calls a Python
+    function on it that appends the pid of the process running the plan to ``pid_file``."""
+    path = str(pid_file)
+
+    def record_pid(series):
+        with open(path, "a") as f:
+            f.write(f"{os.getpid()}\n")
+        return series
+
+    real_submit = EmbeddedWorkerBackend.submit
+
+    def submit(self, plan, inputs, hints, result_id, **kwargs):
+        if not result_id.startswith("handshake-") and "a" in plan.collect_schema():
+            plan = plan.with_columns(pl.col("a").map_batches(record_pid, return_dtype=pl.Int64))
+        return real_submit(self, plan, inputs, hints, result_id, **kwargs)
+
+    monkeypatch.setattr(EmbeddedWorkerBackend, "submit", submit)
 
 
 def _record_runs(monkeypatch) -> list:
@@ -289,10 +315,11 @@ def test_a_headless_run_on_the_worker_leaves_no_result_it_minted_held_there(
         registry.reset()
 
 
+@pytest.mark.parametrize("variable", [None, "", "  "], ids=["unset", "empty", "blank"])
 @pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
 @pytest.mark.parametrize("runner", [_frozen_runner, _dev_runner], ids=["frozen-verb", "dev-cli"])
 def test_a_headless_run_with_no_backend_named_runs_a_saved_remote_flow_in_its_own_process(
-    tmp_path, monkeypatch, counting, in_process_run, runner, flag
+    tmp_path, monkeypatch, counting, in_process_run, runner, flag, variable
 ):
     from flowfile_core.configs import settings
     from flowfile_core.flowfile.execution import registry
@@ -301,7 +328,10 @@ def test_a_headless_run_with_no_backend_named_runs_a_saved_remote_flow_in_its_ow
     monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
     monkeypatch.setattr(spawner, "in_process", False)
     flow_path = _save_group_by_flow(tmp_path / "flow.yaml")
-    monkeypatch.setenv("FLOWFILE_COMPUTE_BACKEND", "counting")
+    if variable is None:
+        monkeypatch.delenv("FLOWFILE_COMPUTE_BACKEND", raising=False)
+    else:
+        monkeypatch.setenv("FLOWFILE_COMPUTE_BACKEND", variable)
     submitted = _record_embedded_submits(monkeypatch)
     worker_lookups: list[str] = []
 
@@ -319,7 +349,78 @@ def test_a_headless_run_with_no_backend_named_runs_a_saved_remote_flow_in_its_ow
     assert not registry.serving()
     assert isinstance(registry.backend(registry.LOCAL_BACKEND_ID), EmbeddedWorkerBackend)
     assert sorted(submitted) == [(registry.LOCAL_BACKEND_ID, 1), (registry.LOCAL_BACKEND_ID, 2)]
-    assert spawner.in_process
+    assert not spawner.in_process
+
+
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+@pytest.mark.parametrize("runner", [_frozen_runner, _dev_runner], ids=["frozen-verb", "dev-cli"])
+def test_a_headless_run_runs_each_job_in_a_child_and_leaves_none_behind(
+    tmp_path, monkeypatch, in_process_run, runner, flag
+):
+    from flowfile_core.configs import settings
+    from flowfile_core.flowfile.execution import registry
+    from flowfile_worker import mp_context, spawner
+
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    monkeypatch.setattr(spawner, "in_process", False)
+    monkeypatch.delenv("FLOWFILE_COMPUTE_BACKEND", raising=False)
+    flow_path = _save_group_by_flow(tmp_path / "flow.yaml")
+    pid_file = tmp_path / "pids"
+    _record_job_pids(monkeypatch, pid_file)
+    children_before = set(mp_context.active_children())
+    registry.reset()
+    try:
+        assert runner(str(flow_path)) == 0
+    finally:
+        registry.reset()
+
+    ran_in = {int(pid) for pid in pid_file.read_text().split()}
+    assert ran_in
+    assert os.getpid() not in ran_in
+    assert set(mp_context.active_children()) <= children_before
+    assert not spawner.in_process
+    assert not registry.headless()
+
+
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+@pytest.mark.parametrize("runner", [_frozen_runner, _dev_runner], ids=["frozen-verb", "dev-cli"])
+def test_a_headless_run_with_no_backend_named_runs_on_the_backend_its_environment_names(
+    tmp_path, monkeypatch, counting, in_process_run, runner, flag
+):
+    """``FLOWFILE_COMPUTE_BACKEND``, which a scheduled run inherits from core, sends a saved ``remote`` flow there."""
+    from flowfile_core.configs import settings
+    from flowfile_core.flowfile.execution import registry
+
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    monkeypatch.setenv("FLOWFILE_COMPUTE_BACKEND", "counting")
+    flow_path = _save_group_by_flow(tmp_path / "flow.yaml")
+
+    assert runner(str(flow_path)) == 0
+
+    assert registry.default_override() == "counting"
+    assert len(counting) == 1
+    assert sorted(counting[0].submitted) == [1, 2]
+
+
+@pytest.mark.parametrize("named_by", ["option", "flow"])
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+@pytest.mark.parametrize("runner", [_frozen_runner, _dev_runner], ids=["frozen-verb", "dev-cli"])
+def test_the_option_and_the_flow_s_saved_backend_id_each_beat_the_environment(
+    tmp_path, monkeypatch, counting, in_process_run, runner, flag, named_by
+):
+    from flowfile_core.configs import settings
+    from flowfile_core.flowfile.execution import registry
+
+    monkeypatch.setattr(settings.FLOWFILE_COMPUTE_PROTOCOL, "value", flag)
+    monkeypatch.setenv("FLOWFILE_COMPUTE_BACKEND", registry.WORKER_BACKEND_ID)
+    registry.register_backend(registry.WORKER_BACKEND_ID, lambda: WorkerBackend(url=closed_url()))
+    flow_path = _save_group_by_flow(tmp_path / "flow.yaml", location="counting" if named_by == "flow" else "remote")
+
+    assert runner(str(flow_path), backend="counting" if named_by == "option" else None) == 0
+
+    assert registry.default_override() == "counting"
+    assert len(counting) == 1
+    assert sorted(counting[0].submitted) == [1, 2]
 
 
 @pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
@@ -478,4 +579,22 @@ def test_a_scheduled_run_runs_on_the_backend_its_request_names_and_in_its_own_pr
 
     monkeypatch.setenv("FLOWFILE_WORKER_URL", closed_url())
     assert _finished_run(flow_path, backend="worker", monkeypatch=monkeypatch)[0] is False
+    assert _finished_run(flow_path, backend=None, monkeypatch=monkeypatch) == (True, 2)
+
+
+@pytest.mark.parametrize("flag", ["0", "1"], ids=["flag-off", "flag-on"])
+def test_a_scheduled_run_with_no_backend_named_runs_on_the_backend_its_environment_names(
+    tmp_path, monkeypatch, session_worker, flag
+):
+    """The child inherits core's ``FLOWFILE_COMPUTE_BACKEND``, as the compose passes it to core; empty, it is unset."""
+    monkeypatch.setenv("FLOWFILE_COMPUTE_PROTOCOL", flag)
+    monkeypatch.setenv("FLOWFILE_WORKER_URL", session_worker)
+    monkeypatch.setenv("FLOWFILE_COMPUTE_BACKEND", "worker")
+    flow_path = _save_group_by_flow(tmp_path / "flow.yaml")
+
+    assert _finished_run(flow_path, backend=None, monkeypatch=monkeypatch) == (True, 2)
+
+    monkeypatch.setenv("FLOWFILE_WORKER_URL", closed_url())
+    assert _finished_run(flow_path, backend=None, monkeypatch=monkeypatch)[0] is False
+    monkeypatch.setenv("FLOWFILE_COMPUTE_BACKEND", "")
     assert _finished_run(flow_path, backend=None, monkeypatch=monkeypatch) == (True, 2)

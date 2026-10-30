@@ -52,7 +52,7 @@ You'll build this pipeline: **read → drop duplicates → filter → group by**
     - **Execution location:** Auto (default worker)
     - **Show details during execution:** on
 
-    ![Flow Settings for step-by-step previews](assets/images/quickstart/flow_settings.gif)
+    ![Flow Settings for step-by-step previews: Execution Mode Development, Execution location Auto (default worker), Show details during execution ticked, Parallel workers 4](assets/images/quickstart/flow_settings.png){ width="480px" }
 
 <details markdown="1">
 <summary>See it: the empty flow</summary>

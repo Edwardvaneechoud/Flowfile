@@ -613,6 +613,7 @@ class FlowGraph(
 
         node._params_getter = _get_params
         node._execution_context_getter = lambda: current_context(_graph)
+        node._flow_canceled = lambda: _graph.flow_settings.is_running and _graph.flow_settings.is_canceled
         self._notify_node_observers(node, is_new=existing_node is None)
         return node
 

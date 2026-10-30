@@ -312,7 +312,7 @@ _claims: dict[str, _Claim] = {}
 """Every submit, import and operation running here, by job id; read and changed under ``status_dict_lock``."""
 
 
-def _stop(job_id: str) -> bool:
+def stop_job(job_id: str) -> bool:
     """Stop the job running under *job_id*; ``False`` when there is none to stop.
 
     A job still ``Starting`` has no child yet, so it is marked ``Cancelled`` and ends as a cancel when it starts. That
@@ -346,9 +346,9 @@ def _claim(job_id: str) -> Iterator[_Claim]:
                 claim = _claims[job_id] = _Claim(job_id)
                 break
             running.unwanted = True
-        _stop(job_id)
+        stop_job(job_id)
         while not running.done.wait(_STOP_POLL_SECONDS):
-            _stop(job_id)
+            stop_job(job_id)
     try:
         yield claim
     finally:
@@ -680,7 +680,7 @@ def release(result_id: str) -> bool:
             claim.unwanted = True
     if claim is None:
         return _forget(result_id)
-    _stop(claim.job_id)
+    stop_job(claim.job_id)
     return True
 
 
@@ -778,12 +778,12 @@ def job_status(job_id: str) -> models.Status:
 
 
 def cancel_job(job_id: str) -> None:
-    """Stop a running job's child and mark the job cancelled (``_stop``).
+    """Stop a running job's child and mark the job cancelled (``stop_job``).
 
     A job still ``Starting`` ends as a cancel when it starts. A job with no child to stop, one that ended or one
     running in this process, is 404.
     """
-    if not _stop(job_id):
+    if not stop_job(job_id):
         raise HTTPException(status_code=404, detail=f"No job {job_id} is running on this worker")
 
 
