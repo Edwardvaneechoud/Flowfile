@@ -25,7 +25,7 @@ The worker is the only compute. What differs is where it lives:
 | A scheduled run, `flowfile run flow` | A worker inside the run's own process, its jobs in child processes, unless a backend is named (below) |
 | Flowfile in Python (`import flowfile`) | A worker inside the Python process |
 
-![Where the worker lives in each way of running Flowfile: in the desktop app and Docker, core and the worker are separate processes, core calls the worker over HTTP and the worker runs a child process per job; with flowfile run ui, a scheduled run and flowfile run flow, core and an embedded worker share one process, core calls it directly and the jobs run in child processes; in Python, core and the embedded worker share one process and each job runs in that process.](../../assets/images/concepts/which-process-computes.svg)
+![Where the worker lives in each way of running Flowfile: in the desktop app and Docker, core and the worker are separate processes, core calls the worker over HTTP and the worker runs each job in a child process; with flowfile run ui, a scheduled run and flowfile run flow, core and an embedded worker share one process, core calls it directly and the jobs run in child processes; in Python, core and the embedded worker share one process and each job runs in that process.](../../assets/images/concepts/which-process-computes.svg)
 
 Everywhere but Python, each job runs in a child process:
 
@@ -33,16 +33,17 @@ Everywhere but Python, each job runs in a child process:
 - **Cancel** stops the child. **Cancel Run** stops a scheduled run with its children.
 - A job that runs past the worker's task time limit, `FLOWFILE_WORKER_TASK_TIMEOUT` in the worker's environment (3600 seconds by default, `0` for none), is stopped and fails its node.
 
-**Scheduled runs compute in their own process.** In Docker that is core's container, with its memory and CPU, not the worker container's; child processes do not change that. To send headless runs to a worker, name it, in this order of precedence:
+The worker keeps up to 4 of these child processes warm by default and hands each job to a free one, saving the process start: about 0.2 seconds on macOS, 0.4 seconds or more on Windows. A job that finds them all busy starts a fresh process, and some jobs always do: a custom node, Polars code, a fuzzy match, training or applying a model, a database, Kafka, REST API or Google Analytics read, and a **Read data** node over Excel, Avro, an Arrow IPC stream or a CSV that is not UTF-8.
+
+Administrators set the size under **Warm worker pool** on the **Default worker** card of **Settings → Execution → Backends** (pictured under [The settings](#the-settings)), or switch the pool off so every job starts a fresh process. A new size applies at once and is kept across restarts; when `FLOWFILE_WORKER_POOL_SIZE` is set in the worker's environment, that value takes over again at the next start. A worker added as `worker:<name>` keeps its own pool, which the card does not size: set the variable in that worker's environment.
+
+**Scheduled runs compute in their own process.** In Docker that is core's container, with its memory and CPU, not the worker container's; child processes do not change that. Such a run keeps one child warm rather than the size set on the Backends page, unless `FLOWFILE_WORKER_POOL_SIZE` is set in its environment. To send headless runs to a worker, name it, in this order of precedence:
 
 1. `--backend <id>` on `flowfile run flow` ([Headless runs](cli.md));
 2. the flow's **Execution location**, set to the worker's id;
 3. `FLOWFILE_COMPUTE_BACKEND` in core's environment (`worker` for the worker container, or a `worker:<name>` id), which every scheduled run inherits.
 
 A named worker that cannot be reached fails the run; the run does not fall back to its own process.
-
-??? info "Child processes in a headless run"
-    A headless run keeps one child process warm for the jobs that can share one. It starts a new child for each other job (a custom node, Polars code, a fuzzy match, training or applying a model, a database, Kafka or API read) and for any job that starts while the warm one is busy. A start costs about 0.2 seconds on macOS and 0.4 seconds or more on Windows. `FLOWFILE_WORKER_POOL_SIZE`, when set, sets how many children it keeps warm; the size on **Settings → Execution → Backends** applies to the app's worker, not to headless runs.
 
 ## What happens when a flow runs
 
@@ -61,7 +62,7 @@ The worker decides per node whether to store the result or keep only the plan. I
 |---|---|---|
 | **Execution location** | **Flow Settings** | The worker the whole flow runs on: **Auto (default worker)**, which is the worker that comes with Flowfile, or a worker an administrator added, by its id `worker:<name>`. |
 | **Compute backend** | a node's **General Settings** | The worker this one node runs on. Used only with an exchange store ([below](#nodes-on-different-workers)); otherwise every node follows the flow. |
-| **Backends** | **Settings → Execution → Backends** (administrators) | Add and remove workers, check one with **Handshake**, mark one **Sees this server's files**, and set the **Exchange store**. |
+| **Backends** | **Settings → Execution → Backends** (administrators) | Size the default worker's **Warm worker pool**, add and remove workers, check one with **Handshake**, mark one **Sees this server's files**, and set the **Exchange store**. |
 
 ![The Backends page: the Default worker card with its status, jobs running and warm worker pool; the Other workers card listing worker:team at its URL with Matches this server, Handshake and Remove, and an Add a worker form; and the Exchange store card, not configured.](../../assets/images/guides/compute/backends-page.png)
 

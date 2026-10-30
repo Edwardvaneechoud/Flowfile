@@ -387,6 +387,39 @@ class TestWebSocketPath:
         for raw in (first_result, second_result):
             assert pl.LazyFrame.deserialize(io.BytesIO(raw)).collect().equals(lf.collect())
 
+    def test_ws_checkin_survives_a_cancel_that_beats_its_thread(self, warm_pool, monkeypatch):
+        """TestClient's context-exit cancel lands before the checkin's executor thread starts; the member still returns.
+
+        Every executor call starts late, as on a loaded runner, so the cancel always wins that race: unshielded, the
+        queued checkin was dropped and the member stayed leased.
+        """
+        import asyncio
+        import concurrent.futures
+
+        def late_start(loop, executor, func, *args):
+            future = concurrent.futures.Future()
+
+            def run():
+                time.sleep(0.3)
+                if future.set_running_or_notify_cancel():
+                    try:
+                        future.set_result(func(*args))
+                    except BaseException as e:
+                        future.set_exception(e)
+
+            threading.Thread(target=run, daemon=True).start()
+            return asyncio.wrap_future(future, loop=loop)
+
+        monkeypatch.setattr(asyncio.BaseEventLoop, "run_in_executor", late_start)
+        with client.websocket_connect("/ws/submit", headers=INTERNAL_AUTH_HEADERS) as ws:
+            ws.send_json({"task_id": "pool-ws-late-checkin", "operation": "store", "flow_id": 1, "node_id": -1})
+            ws.send_bytes(pl.LazyFrame({"a": [1, 2]}).serialize())
+            while json.loads(ws.receive_text())["type"] != "complete":
+                pass
+            ws.receive_bytes()
+        _idle_pid(warm_pool)
+        assert warm_pool.stats() == {"size": 1, "idle": 1, "total": 1}
+
     def test_ws_error_keeps_member(self, warm_pool):
         """A task-level error must not burn the member.
 

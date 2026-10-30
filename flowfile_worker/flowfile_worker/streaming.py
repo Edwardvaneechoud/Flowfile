@@ -27,6 +27,7 @@ from multiprocessing.queues import Queue
 from time import monotonic
 from typing import Any
 
+import anyio
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
@@ -440,7 +441,9 @@ async def ws_submit(websocket: WebSocket):
     finally:
         if member is not None:
             process_manager.remove_process(task_id)
-            await asyncio.to_thread(pool.task_pool.checkin, member, envelope_received)
+            # A cancel before the thread starts would drop the checkin and leak the member's slot.
+            with anyio.CancelScope(shield=True):
+                await asyncio.to_thread(pool.task_pool.checkin, member, envelope_received)
         elif p is not None:
             await asyncio.to_thread(_cleanup_process, task_id, p)
         del p, progress, error_message
