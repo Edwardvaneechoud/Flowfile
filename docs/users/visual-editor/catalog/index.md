@@ -211,7 +211,7 @@ Virtual tables can be created in two ways: via a [Catalog Writer node](../nodes/
 
 Click a table to view:
 
-- **Metadata**: name, namespace, row count, column count, file size, creation date
+- **Metadata**: name, namespace, row count, column count, file size, creation date (a virtual table has no row count or size)
 - **Schema**: column names and data types
 - **Data Preview**: scrollable preview of the first 100 rows
 - **Lineage**: source flow, producing flow, and consumer flows (see [Lineage](#lineage))
@@ -223,7 +223,8 @@ For virtual tables, the detail panel also shows:
 - **Table type**: "virtual" badge
 - **Producer flow**: the registered flow that produces this table
 - **Optimization status**: whether the table uses optimized or standard resolution
-- **Laziness blockers**: if not optimized, which nodes prevent lazy execution
+- **How this table is read** (flow-based): the producer flow's steps up to its Catalog Writer, in plain words, with steps that prevent lazy execution marked *(runs in full)*
+- **SQL Definition** (query-based): the stored SQL query
 
 ![Table detail](../../../assets/images/guides/catalog/table-detail.png)
 
