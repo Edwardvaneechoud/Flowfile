@@ -223,7 +223,7 @@ For virtual tables, the detail panel also shows:
 - **Table type**: "virtual" badge
 - **Producer flow**: the registered flow that produces this table
 - **Optimization status**: whether the table uses optimized or standard resolution
-- **How this table is read** (flow-based): the producer flow's steps up to its Catalog Writer, in plain words, with steps that prevent lazy execution marked *(runs in full)*
+- **Table Definition** (flow-based): the producer flow's nodes up to its Catalog Writer, drawn as a tree
 - **SQL Definition** (query-based): the stored SQL query
 
 ![Table detail](../../../assets/images/guides/catalog/table-detail.png)

@@ -39,6 +39,7 @@ from flowfile_core.flowfile.flow_graph.catalog_resolution import (
     _authorize_catalog_write,
     _effective_namespace_id,
 )
+from flowfile_core.flowfile.graph_tree.graph_tree import render_flow
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.catalog_schema import TableWriteMetadata
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnectionWorkerInterface
@@ -543,29 +544,16 @@ def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
     return json.dumps([v.model_dump() for v in versions])
 
 
-def _readable_plan(writer_node: "FlowNode") -> str:
-    """The steps a read runs through, one line each in run order, worded as the canvas describes each node."""
-    ordered: list[FlowNode] = []
-    seen: set[int] = set()
-
-    def visit(node: "FlowNode") -> None:
-        if node.node_id in seen:
-            return
-        seen.add(node.node_id)
-        for upstream in node.all_inputs:
-            visit(upstream)
-        ordered.append(node)
-
-    visit(writer_node)
-    lines = []
-    for node in ordered:
-        line = node.node_template.name
-        if description := node.display_description:
-            line += f": {description}"
-        if node is not writer_node and node.laziness_blocker() is not None:
-            line += " (runs in full)"
-        lines.append(line)
-    return "\n".join(lines)
+def _readable_plan(graph: "FlowGraph", writer_node: "FlowNode") -> str:
+    """The print_tree drawing of the writer and every node upstream of it."""
+    branch = {writer_node.node_id}
+    stack = list(writer_node.all_inputs)
+    while stack:
+        node = stack.pop()
+        if node.node_id not in branch:
+            branch.add(node.node_id)
+            stack.extend(node.all_inputs)
+    return render_flow([node for node in graph.nodes if node.node_id in branch])
 
 
 def _handle_virtual_table_write(
@@ -603,7 +591,7 @@ def _handle_virtual_table_write(
     writer_node = graph.get_node(node_catalog_writer.node_id)
     is_lazy, _reasons = writer_node.check_upstream_laziness()
     optimize = is_lazy
-    polars_plan = _readable_plan(writer_node)
+    polars_plan = _readable_plan(graph, writer_node)
     if optimize:
         if graph.execution_mode != "performance":
             graph.execution_mode = "performance"

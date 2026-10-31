@@ -305,7 +305,7 @@ class TestVirtualCatalogWriter:
 
     def test_virtual_writer_records_readable_plan_when_lazy(self):
         """A fully lazy graph (manual_input → filter → virtual writer) sets is_optimized=True
-        and records its steps in run order, worded as the canvas describes each node."""
+        and records the print_tree drawing of the writer's branch."""
         ns_id = _create_namespace()
         reg_id = _create_flow_registration(ns_id, name="lazy_flow")
         graph = _create_graph(source_registration_id=reg_id)
@@ -344,18 +344,16 @@ class TestVirtualCatalogWriter:
             table = tables[0]
             assert table.table_type == "virtual"
             assert table.is_optimized is True
-            plan_lines = table.polars_plan.splitlines()
+            plan = table.polars_plan
 
-        names = [graph.get_node(i).node_template.name for i in (1, 2, 3)]
-        assert [line.split(":")[0] for line in plan_lines] == names
-        assert plan_lines[1] == f"{names[1]}: {graph.get_node(2).display_description}"
-        assert plan_lines[2] == f"{names[2]}: Catalog: lazy_virtual"
-        assert "(runs in full)" not in table.polars_plan
-        assert "SCAN" not in table.polars_plan
+        node_rows = [line for line in plan.splitlines() if "●" in line]
+        expected = [f"● {graph.get_node(i).node_template.name} ({i})" for i in (1, 2, 3)]
+        assert node_rows == expected
+        assert "SCAN" not in plan
 
     def test_virtual_writer_non_optimized_when_upstream_eager(self):
         """A graph with an eager node upstream of the virtual writer should
-        set is_optimized=False and mark that step in the readable plan."""
+        set is_optimized=False and still record its branch."""
         ns_id = _create_namespace()
         reg_id = _create_flow_registration(ns_id, name="eager_flow")
         graph = _create_graph(source_registration_id=reg_id)
@@ -396,13 +394,9 @@ class TestVirtualCatalogWriter:
             table = tables[0]
             assert table.table_type == "virtual"
             assert table.is_optimized is False
-            plan_lines = table.polars_plan.splitlines()
+            plan = table.polars_plan
 
-        assert len(plan_lines) == 3
-        assert plan_lines[1].startswith(graph.get_node(2).node_template.name)
-        assert plan_lines[1].endswith("(runs in full)")
-        assert not plan_lines[0].endswith("(runs in full)")
-        assert not plan_lines[2].endswith("(runs in full)")
+        assert [line for line in plan.splitlines() if "●" in line][1] == f"● {graph.get_node(2).node_template.name} (2)"
 
 
 class TestReadVirtualFlowTables:

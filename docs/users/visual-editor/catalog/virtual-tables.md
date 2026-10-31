@@ -88,7 +88,7 @@ When a virtual table is optimized (`is_optimized = true`):
 3. The query engine applies predicate pushdown, projection pushdown, and other optimizations
 4. Only the needed data is computed
 
-The table's detail panel lists these steps under **How this table is read**: one line per node up to the Catalog Writer, worded as each node's description on the canvas. A step that prevents lazy execution is marked *(runs in full)*. The list is recorded each time the producer flow runs or the table is read, so an edit saved since then shows after the next one.
+The table's detail panel draws these steps under **Table Definition**: the producer flow's nodes up to the Catalog Writer, one per line, with their names and ids as on the canvas. The drawing is recorded each time the producer flow runs or the table is read, so an edit saved since then shows after the next one.
 
 Because the plan is a `LazyFrame`, Polars pushes the consumer's filters and column selections *through* the producer's execution plan — query optimization crosses the flow boundary. Work the consumer doesn't need never runs in the producer, and results always reflect the current source data.
 

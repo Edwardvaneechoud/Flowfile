@@ -608,7 +608,7 @@ class CatalogTable(Base):  # Pydantic schemas: schemas/catalog_schema.py; interf
     producer_registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=True)
     is_optimized = Column(Boolean, nullable=True, default=False)
     sql_query = Column(Text, nullable=True)  # SQL definition for query-based virtual tables
-    polars_plan = Column(Text, nullable=True)  # Readable producer steps of a flow virtual table, one per line
+    polars_plan = Column(Text, nullable=True)  # print_tree drawing of a flow virtual table's producer branch
     source_table_versions = Column(Text, nullable=True)  # JSON list of SourceTableVersion for staleness detection
 
     # Timestamps

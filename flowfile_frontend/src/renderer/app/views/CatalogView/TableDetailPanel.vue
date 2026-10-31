@@ -291,18 +291,11 @@
     </div>
 
     <!-- Readable plan (flow virtual tables) -->
-    <div v-if="table.table_type === 'virtual' && readPlanSteps.length > 0" class="section">
-      <h3>How this table is read</h3>
-      <ol class="sql-definition read-plan">
-        <li v-for="(step, i) in readPlanSteps" :key="i">{{ step }}</li>
-      </ol>
+    <div v-if="table.table_type === 'virtual' && table.polars_plan" class="section">
+      <h3>Table Definition</h3>
+      <pre class="sql-definition">{{ table.polars_plan }}</pre>
       <p class="read-plan-note">
-        {{
-          table.is_optimized
-            ? "Nothing is stored. Each read runs these steps lazily, computing only the rows and columns it needs."
-            : "Nothing is stored. Each read runs these steps; those marked (runs in full) compute all their rows."
-        }}
-        Recorded when the producer flow last ran or this table was last read.
+        Each read runs these nodes of the producer flow. Recorded at its last run or read.
       </p>
     </div>
 
@@ -557,7 +550,6 @@ const emit = defineEmits([
   "editsSaved",
 ]);
 
-const readPlanSteps = computed(() => (props.table.polars_plan ?? "").split("\n").filter(Boolean));
 const hasHistory = computed(() => props.tableHistory && props.tableHistory.history.length > 0);
 
 // Show the Version History section when there's history (cached or freshly loaded) or while it loads.
@@ -1357,10 +1349,6 @@ function formatCell(value: any): string {
   margin: 0;
   max-height: 200px;
   overflow-y: auto;
-}
-
-.read-plan {
-  padding-left: calc(var(--spacing-4) + 18px);
 }
 
 .read-plan-note {
