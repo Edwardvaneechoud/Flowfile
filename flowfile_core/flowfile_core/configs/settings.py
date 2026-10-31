@@ -269,6 +269,10 @@ def is_package_mode() -> bool:
     return FLOWFILE_MODE == "package"
 
 
+# The hub this core reports finished runs to, e.g. https://hub.example.com; empty sends no reports.
+FLOWFILE_HUB_URL = os.getenv("FLOWFILE_HUB_URL", "")
+
+
 # Legacy compatibility - will be removed in future versions
 IS_RUNNING_IN_DOCKER = is_docker_mode()
 

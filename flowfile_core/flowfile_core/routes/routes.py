@@ -32,7 +32,7 @@ from starlette.background import BackgroundTask
 from flowfile_core import change_feed, events, flow_file_handler
 
 # Core modules
-from flowfile_core.auth.jwt import get_current_active_user
+from flowfile_core.auth.jwt import get_current_active_user, oauth2_scheme
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
 from flowfile_core.catalog.access import AccessResolver
 from flowfile_core.catalog.exceptions import (
@@ -43,7 +43,7 @@ from flowfile_core.catalog.exceptions import (
 )
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import check_if_has_default_setting, nodes_list
-from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL, is_electron_mode
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL, FLOWFILE_HUB_URL, is_electron_mode
 from flowfile_core.database.connection import get_db, get_db_context
 
 # File handling
@@ -119,6 +119,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     list_db_tables,
 )
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
+from flowfile_core.hub.report import build_run_report, post_run_report
 from flowfile_core.notebook.gate import require_kernel_sessions
 from flowfile_core.notebook.kernel_runner import close_flow_sessions, lineage_commits
 from flowfile_core.notebook.push import NotebookPushRequest, needs_confirmation, node_id_ceiling, plan_push
@@ -478,7 +479,7 @@ def _open_run_record(flow, user_id: int | None, node_ids: set[int] | None) -> tu
     return reg_id, flow_name, flow_path, flow_uuid, run_id, snapshot_yaml
 
 
-def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
+def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None, hub_token: str | None = None):
     """Run a flow (only ``node_ids`` when given) and persist the run record to the database.
 
     Uses a two-phase pattern:
@@ -489,6 +490,10 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
     here when the pre-work fails, by ``run_graph`` otherwise. If DB persistence fails, the run still
     completed but won't appear in the run history. Failures are logged at ERROR level so they're
     visible in logs.
+
+    With ``FLOWFILE_HUB_URL`` set, a run whose record was written is then reported to the hub as the user
+    ``hub_token`` (the bearer token of the request that started it) belongs to; the token is passed on, never
+    stored. A run with no token, or of a flow with no registration, is not reported.
     """
     try:
         reg_id, flow_name, flow_path, flow_uuid, run_id, snapshot_yaml = _open_run_record(flow, user_id, node_ids)
@@ -503,6 +508,7 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
         logger.error(f"Flow '{flow_name}' returned no run_info - run tracking skipped")
         return
 
+    core_run_id = None
     try:
         node_results = None
         try:
@@ -521,6 +527,7 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
                     nodes_completed=run_info.nodes_completed,
                     node_results_json=node_results,
                 )
+            core_run_id = run_id
 
             logger.info(
                 f"Flow '{flow_name}' run completed: success={run_info.success}, "
@@ -530,7 +537,7 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
             # Fallback: create the full record if phase 1 failed
             with get_db_context() as db:
                 service = CatalogService(SQLAlchemyCatalogRepository(db))
-                service.create_completed_run(
+                completed = service.create_completed_run(
                     registration_id=reg_id,
                     flow_name=flow_name,
                     flow_path=flow_path,
@@ -545,6 +552,7 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
                     flow_snapshot=snapshot_yaml,
                     flow_uuid=flow_uuid,
                 )
+                core_run_id = completed.id
     except Exception as exc:
         logger.error(
             f"Failed to update run record for flow '{flow_name}'. "
@@ -553,8 +561,22 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
             exc_info=True,
         )
 
+    if not FLOWFILE_HUB_URL or core_run_id is None:
+        return
+    if not hub_token or not flow_uuid:
+        logger.debug(f"Run {core_run_id} of flow '{flow_name}' not reported to the hub: no token or registration")
+        return
+    try:
+        report = build_run_report(flow, run_info, core_run_id, flow_uuid)
+    except Exception as exc:
+        logger.warning(f"Could not build the hub report for run {core_run_id} of flow '{flow_name}': {exc}")
+        return
+    post_run_report(FLOWFILE_HUB_URL, hub_token, report)
 
-async def _start_run(flow, flow_id: int, user_id, background_tasks: BackgroundTasks, node_ids=None) -> None:
+
+async def _start_run(
+    flow, flow_id: int, user_id, background_tasks: BackgroundTasks, node_ids=None, hub_token: str | None = None
+) -> None:
     """Claim the run under the flow's run lock and queue it; 422 when it is already running.
 
     The claim lands before the response (``try_claim_run`` waits on the edit lock, hence the thread), so
@@ -565,12 +587,15 @@ async def _start_run(flow, flow_id: int, user_id, background_tasks: BackgroundTa
     async with get_flow_run_lock(flow_id):
         if not await asyncio.to_thread(flow.try_claim_run):
             raise HTTPException(422, "Flow is already running")
-        background_tasks.add_task(_run_and_track, flow, user_id, node_ids)
+        background_tasks.add_task(_run_and_track, flow, user_id, node_ids, hub_token)
 
 
 @router.post("/flow/run/", tags=["editor"])
 async def run_flow(
-    flow_id: int, background_tasks: BackgroundTasks, current_user=Depends(get_current_active_user)
+    flow_id: int,
+    background_tasks: BackgroundTasks,
+    current_user=Depends(get_current_active_user),
+    token: str | None = Depends(oauth2_scheme),
 ) -> JSONResponse:
     """Executes a flow in a background task.
 
@@ -587,7 +612,7 @@ async def run_flow(
         flow_id, current_user, detail=f"Flow {flow_id} is no longer in memory. Reload the flow and try again."
     )
     user_id = current_user.id if current_user else None
-    await _start_run(flow, flow_id, user_id, background_tasks)
+    await _start_run(flow, flow_id, user_id, background_tasks, hub_token=token)
     return RunStartedResponse(content={"message": "Data started", "flow_id": flow_id}, status_code=status.HTTP_200_OK)
 
 
