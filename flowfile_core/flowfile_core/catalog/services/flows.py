@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
 
 from flowfile_core.catalog.constants import (
     LOCAL_FLOWS,
@@ -168,12 +169,24 @@ class FlowRegistrationService:
         owner_id: int,
         namespace_id: int | None = None,
         description: str | None = None,
+        flow_uuid: str | None = None,
     ) -> FlowRegistrationOut:
-        """Register a new flow in the catalog."""
+        """Register a new flow in the catalog.
+
+        ``flow_uuid`` lets a flow that already has an identity (a saved flow document, a flow
+        brought over from another server) keep it, so its run history stays under one id. It is
+        parsed as a uuid (``ValueError`` when malformed) and stored in canonical form; a uuid that
+        another registration already holds raises ``FlowExistsError``. Without it a new uuid is
+        generated, as before.
+        """
+        if flow_uuid is not None:
+            flow_uuid = str(uuid.UUID(flow_uuid))
         if namespace_id is not None:
             namespace = self.repo.get_namespace(namespace_id)
             if namespace is None:
                 raise NamespaceNotFoundError(namespace_id=namespace_id)
+        if flow_uuid is not None and self.repo.get_flow_by_uuid(flow_uuid) is not None:
+            raise FlowExistsError(name, namespace_id)
         flow = FlowRegistration(
             name=name,
             description=description,
@@ -181,6 +194,8 @@ class FlowRegistrationService:
             namespace_id=namespace_id,
             owner_id=owner_id,
         )
+        if flow_uuid is not None:
+            flow.flow_uuid = flow_uuid
         flow = self.repo.create_flow(flow)
         return self.enrich_flow_registration(flow, owner_id)
 

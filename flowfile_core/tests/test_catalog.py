@@ -5,6 +5,7 @@ run history, stats, and the default namespace seeding.
 """
 
 import os
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
-from flowfile_core.catalog import CatalogService
+from flowfile_core.catalog import CatalogService, FlowExistsError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.init_db import init_db
@@ -188,6 +189,49 @@ class TestFlowRegistration:
         data = resp.json()
         assert data["name"] == "my_flow"
         assert data["namespace_id"] == ns_id
+
+    # Caller-supplied flow_uuid
+
+    @staticmethod
+    def _register(name: str, **kwargs):
+        with get_db_context() as db:
+            return CatalogService(SQLAlchemyCatalogRepository(db)).register_flow(
+                name=name, flow_path=f"/tmp/{name}.yaml", owner_id=1, **kwargs
+            )
+
+    @staticmethod
+    def _stored_uuids() -> list[str]:
+        with get_db_context() as db:
+            return [row.flow_uuid for row in db.query(FlowRegistration).order_by(FlowRegistration.id)]
+
+    def test_register_flow_keeps_the_given_flow_uuid(self):
+        given = "5f0e6a52-1c3b-4d7e-9a4f-2b8c6d0e1f37"
+        flow = self._register("known_flow", flow_uuid=given)
+        with get_db_context() as db:
+            assert db.get(FlowRegistration, flow.id).flow_uuid == given
+
+    def test_register_flow_stores_the_given_flow_uuid_in_canonical_form(self):
+        self._register("braced_flow", flow_uuid="{5F0E6A52-1C3B-4D7E-9A4F-2B8C6D0E1F37}")
+        assert self._stored_uuids() == ["5f0e6a52-1c3b-4d7e-9a4f-2b8c6d0e1f37"]
+
+    def test_register_flow_refuses_a_flow_uuid_already_registered(self):
+        given = "5f0e6a52-1c3b-4d7e-9a4f-2b8c6d0e1f37"
+        self._register("first_flow", flow_uuid=given)
+        with pytest.raises(FlowExistsError):
+            self._register("second_flow", flow_uuid=given.upper())
+        assert self._stored_uuids() == [given]
+
+    def test_register_flow_refuses_a_malformed_flow_uuid(self):
+        with pytest.raises(ValueError):
+            self._register("bad_uuid_flow", flow_uuid="not-a-uuid")
+        assert self._stored_uuids() == []
+
+    def test_register_flow_without_flow_uuid_generates_one(self):
+        self._register("fresh_a")
+        self._register("fresh_b")
+        stored = self._stored_uuids()
+        assert len(stored) == 2 and stored[0] != stored[1]
+        assert [str(uuid.UUID(u)) for u in stored] == stored
 
     def test_list_flows(self):
         ns_id = self._make_namespace()

@@ -593,10 +593,11 @@ class CatalogService:
         owner_id: int,
         namespace_id: int | None = None,
         description: str | None = None,
+        flow_uuid: str | None = None,
     ) -> FlowRegistrationOut:
-        """Register a new flow in the catalog."""
+        """Register a new flow in the catalog, under ``flow_uuid`` when the caller supplies one."""
         self._require_namespace_writable(namespace_id)
-        return self._flows.register_flow(name, flow_path, owner_id, namespace_id, description)
+        return self._flows.register_flow(name, flow_path, owner_id, namespace_id, description, flow_uuid=flow_uuid)
 
     def update_flow(
         self,
