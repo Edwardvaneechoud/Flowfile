@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -113,7 +113,7 @@ class ArtifactContext:
                 size_bytes=item.get("size_bytes", 0),
                 has_preview=item.get("has_preview", False),
                 preview_mime=item.get("preview_mime") or "",
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
             refs.append(ref)
             state.published.append(ref)

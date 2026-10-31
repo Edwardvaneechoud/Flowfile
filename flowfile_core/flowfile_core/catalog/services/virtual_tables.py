@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import logging
 import re
@@ -17,7 +16,7 @@ from requests.exceptions import RequestException
 
 from flowfile_core.auth import sharing
 from flowfile_core.catalog.constants import QUERY_VIRTUAL_TABLE_RECURSION_LIMIT
-from flowfile_core.catalog.delta_utils import check_source_versions_current, is_delta_table
+from flowfile_core.catalog.delta_utils import is_delta_table
 from flowfile_core.catalog.exceptions import (
     CatalogError,
     FlowNotFoundError,
@@ -31,7 +30,7 @@ from flowfile_core.catalog.services._resolve import resolve_or_log
 from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.services.schedules import ScheduleService
 from flowfile_core.catalog.services.tables import TableService
-from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace, serialized_frame_uses_cloud
+from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace
 from flowfile_core.catalog.text_utils import (
     hash_source_versions,
     is_table_reference,
@@ -107,7 +106,6 @@ class VirtualTableService:
         producer_registration_id: int,
         namespace_id: int | None = None,
         description: str | None = None,
-        serialized_lazy_frame: bytes | None = None,
         is_optimized: bool = False,
         schema_json: str | None = None,
         polars_plan: str | None = None,
@@ -129,7 +127,6 @@ class VirtualTableService:
             storage_format="delta",
             table_type="virtual",
             producer_registration_id=producer_registration_id,
-            serialized_lazy_frame=serialized_lazy_frame,
             is_optimized=is_optimized,
             schema_json=schema_json,
             polars_plan=polars_plan,
@@ -145,7 +142,6 @@ class VirtualTableService:
         description: str | None = None,
         namespace_id: int | None = None,
         producer_registration_id: int | None = None,
-        serialized_lazy_frame: bytes | None = None,
         is_optimized: bool | None = None,
         schema_json: str | None = None,
         polars_plan: str | None = None,
@@ -173,8 +169,6 @@ class VirtualTableService:
             if producer is None:
                 raise FlowNotFoundError(registration_id=producer_registration_id)
             table.producer_registration_id = producer_registration_id
-        if serialized_lazy_frame is not None:
-            table.serialized_lazy_frame = serialized_lazy_frame
         if is_optimized is not None:
             table.is_optimized = is_optimized
         if schema_json is not None:
@@ -228,7 +222,6 @@ class VirtualTableService:
             storage_format="delta",
             table_type="virtual",
             producer_registration_id=None,
-            serialized_lazy_frame=None,
             is_optimized=False,
             sql_query=sql_query,
             schema_json=schema_json,
@@ -363,7 +356,10 @@ class VirtualTableService:
             for alias in aliases_by_table[tbl_id]:
                 sql_context.register(alias, lazy_frame)
 
-        return sql_context.execute(rewritten_query)
+        result = sql_context.execute(rewritten_query)
+        # Polars 2 validates a query when its schema resolves, not in execute(): fail here as before.
+        result.collect_schema()
+        return result
 
     def _resolve_table_for_sql_context(
         self,
@@ -375,8 +371,8 @@ class VirtualTableService:
         """Return a LazyFrame for a single referenced table when resolving a SQL context.
 
         ``resolve_or_log`` covers the broad set of errors that can come out of
-        nested virtual-table resolution — corrupt serialized frames, missing
-        producer files, polars eval errors, recursion bugs.
+        nested virtual-table resolution — missing producer files, polars eval
+        errors, recursion bugs.
         """
         if t.table_type == "virtual":
             if getattr(t, "sql_query", None):
@@ -385,13 +381,6 @@ class VirtualTableService:
                     kind="nested query virtual table",
                     identifier=t.name,
                 )
-            if (
-                t.is_optimized
-                and t.serialized_lazy_frame
-                and not serialized_frame_uses_cloud(t.serialized_lazy_frame)
-                and check_source_versions_current(t.source_table_versions)
-            ):
-                return pl.LazyFrame.deserialize(io.BytesIO(t.serialized_lazy_frame))
             if t.producer_registration_id:
                 return resolve_or_log(
                     lambda: self.resolve_virtual_flow_table(t.id, user_id=user_id),
@@ -415,9 +404,8 @@ class VirtualTableService:
     ) -> pl.LazyFrame:
         """Resolve a virtual flow table to a LazyFrame.
 
-        For optimized tables, deserializes the stored LazyFrame directly.
         For query-based virtual tables, delegates to resolve_query_virtual_table.
-        For non-optimized tables, runs the producer flow's writer node with ``run_location`` as its location, else
+        For the others, runs the producer flow's writer node with ``run_location`` as its location, else
         on the current execution context's backend. A writer that failed on ``ComputeUnavailable`` raises it.
         """
         with self.held_virtual_flow_table(table_id, user_id, run_location, node_logger) as (plan, _):
@@ -433,9 +421,9 @@ class VirtualTableService:
     ) -> Iterator[tuple[pl.LazyFrame, ResultRef | None]]:
         """Resolve a virtual flow table as ``resolve_virtual_flow_table`` does; its plan and its producer run's ref.
 
-        The ref is ``None`` for a table that resolves without a run (a query table, an optimized one whose sources
-        are current). Otherwise it is the writer node's result, held for the block: a deferred one is released when
-        the block ends, a stored one stays, since the plan scans it.
+        The ref is ``None`` for a query table, which resolves without a run. Otherwise it is the writer node's
+        result, held for the block: a deferred one is released when the block ends, a stored one stays, since the
+        plan scans it.
         """
         if run_location is None:
             run_location = current_context().backend_id
@@ -449,16 +437,6 @@ class VirtualTableService:
         if table.sql_query:
             yield self.resolve_query_virtual_table(table_id, user_id=user_id), None
             return
-
-        if (
-            table.is_optimized
-            and table.serialized_lazy_frame
-            and not serialized_frame_uses_cloud(table.serialized_lazy_frame)
-        ):
-            if check_source_versions_current(table.source_table_versions):
-                yield pl.LazyFrame.deserialize(io.BytesIO(table.serialized_lazy_frame)), None
-                return
-            logger.info("Source table versions changed for virtual table %r, running its producer flow", table.name)
 
         if not table.producer_registration_id:
             raise ValueError(f"Virtual table {table.name} has no producer flow")

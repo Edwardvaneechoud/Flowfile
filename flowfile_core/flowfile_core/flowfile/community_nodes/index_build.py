@@ -9,7 +9,7 @@ the same inputs, so CI can commit it and diffs stay reviewable.
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from flowfile_core.flowfile.community_nodes.models import (
@@ -131,7 +131,7 @@ def build_index(
     until a newer one is published.
     """
     repo_root = Path(repo_root)
-    gen = generated_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    gen = generated_at or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     blocklist = _load_json(repo_root / "registry" / "blocklist.json") or {}
     blocked_entries = [_to_blocked(entry) for entry in blocklist.get("blocked", []) or []]

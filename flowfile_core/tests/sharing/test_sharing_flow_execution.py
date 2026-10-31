@@ -67,7 +67,7 @@ def test_reader_denies_unshared_table_for_non_owner(users, alice_table):
     info = _resolve_catalog_table_info(_reader(users["bob"].id, alice_table["table"]))
     assert info.authorized is False
     assert info.file_path is None
-    assert info.serialized_lf is None
+    assert info.producer_fingerprint is None
 
 
 def test_reader_allows_owner(users, alice_table):

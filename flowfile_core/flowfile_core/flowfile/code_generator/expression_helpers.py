@@ -18,6 +18,21 @@ def _is_number(value: str | None) -> bool:
     return bool(value) and _NUMBER.fullmatch(value) is not None
 
 
+def _membership_numbers(values: list[str], field_dtype: str | None) -> list[str]:
+    """Numeric ``is_in`` members typed like the column, which Polars 2 requires.
+
+    A float column gets float members; an integer column drops members no integer equals and
+    writes the rest as integers, so the rows match the ``==`` chain the runtime filter keeps.
+    """
+    base = (field_dtype or "").split("(", 1)[0]
+    if base.startswith("Float"):
+        return [repr(float(v)) for v in values]
+    if base.startswith(("Int", "UInt")):
+        whole = [int(float(v)) for v in values if float(v).is_integer()]
+        return [str(v) for v in whole if v >= 0 or not base.startswith("UInt")]
+    return values
+
+
 def _temporal_base(field_dtype: str | None) -> str | None:
     """``"Date"`` or ``"Datetime"`` for a (possibly parametrized) temporal dtype string, else None."""
     base = (field_dtype or "").split("(", 1)[0]
@@ -181,7 +196,7 @@ class ExpressionHelpersMixin(ConverterMixinBase):
             if temporal:
                 values_str = ", ".join(render(v) for v in values)
             elif all(_is_number(v) for v in values):
-                values_str = ", ".join(values)
+                values_str = ", ".join(_membership_numbers(values, field_dtype))
             else:
                 values_str = ", ".join(self._py_str(v) for v in values)
             return f"{col}.is_in([{values_str}])"
@@ -191,7 +206,7 @@ class ExpressionHelpersMixin(ConverterMixinBase):
             if temporal:
                 values_str = ", ".join(render(v) for v in values)
             elif all(_is_number(v) for v in values):
-                values_str = ", ".join(values)
+                values_str = ", ".join(_membership_numbers(values, field_dtype))
             else:
                 values_str = ", ".join(self._py_str(v) for v in values)
             return f"{col}.is_in([{values_str}]).not_()"

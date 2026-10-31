@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import signal
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from flowfile_core.catalog.exceptions import (
     FlowAlreadyRunningError,
@@ -157,7 +157,7 @@ class FlowRunService:
             flow_name=flow_name,
             flow_path=flow_path,
             user_id=user_id,
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
             number_of_nodes=number_of_nodes,
             run_type=run_type,
             flow_snapshot=flow_snapshot,
@@ -176,7 +176,7 @@ class FlowRunService:
         run = self.repo.get_run(run_id)
         if run is None:
             raise RunNotFoundError(run_id=run_id)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         run.ended_at = now
         run.success = success
         run.nodes_completed = nodes_completed
@@ -271,7 +271,7 @@ class FlowRunService:
         child runs the flow on; without it the child runs in its own process
         unless the flow saved a backend id.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         run = FlowRun(
             registration_id=flow.id,
             flow_uuid=flow.flow_uuid,
@@ -292,7 +292,7 @@ class FlowRunService:
             run.pid = pid
         else:
             logger.error("Failed to spawn subprocess for run %s — marking as failed", run.id)
-            run.ended_at = datetime.now(timezone.utc)
+            run.ended_at = datetime.now(UTC)
             run.success = False
         self.repo.update_run(run)
         return run
@@ -344,7 +344,7 @@ class FlowRunService:
             except OSError:
                 logger.warning("Failed to kill pid %s for run %s", run.pid, run_id, exc_info=True)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         run.ended_at = now
         run.success = False
         # A user-initiated cancel is deliberate; alerting on it is noise.

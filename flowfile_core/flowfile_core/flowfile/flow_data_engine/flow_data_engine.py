@@ -291,7 +291,6 @@ class FlowDataEngine:
     # Configuration attributes
     _optimize_memory: bool = False
     _lazy: bool = None
-    _streamable: bool = True
     _calculate_schema_stats: bool = False
 
     # Cache and optimization attributes
@@ -328,7 +327,6 @@ class FlowDataEngine:
         schema: list[FlowfileColumn] | list[str] | pl.Schema = None,
         number_of_records: int = None,
         calculate_schema_stats: bool = False,
-        streamable: bool = True,
         number_of_records_callback: Callable = None,
         data_callback: Callable = None,
     ):
@@ -344,11 +342,10 @@ class FlowDataEngine:
                 a list of column names, or a Polars `Schema`.
             number_of_records: The number of records, if known.
             calculate_schema_stats: If True, computes detailed statistics for each column.
-            streamable: If True, allows for streaming operations when possible.
             number_of_records_callback: A callback function to retrieve the number of records.
             data_callback: A callback function to retrieve the data.
         """
-        self._initialize_attributes(number_of_records_callback, data_callback, streamable)
+        self._initialize_attributes(number_of_records_callback, data_callback)
 
         if raw_data is not None:
             self._handle_raw_data(raw_data, number_of_records, optimize_memory)
@@ -358,7 +355,7 @@ class FlowDataEngine:
             self.initialize_empty_fl()
         self._finalize_initialization(name, optimize_memory, schema, calculate_schema_stats)
 
-    def _initialize_attributes(self, number_of_records_callback, data_callback, streamable):
+    def _initialize_attributes(self, number_of_records_callback, data_callback):
         """(Internal) Sets the initial default attributes for a new instance.
 
         This helper is called first during initialization to ensure all state-tracking
@@ -368,7 +365,6 @@ class FlowDataEngine:
         self._number_of_records_callback = number_of_records_callback
         self._data_callback = data_callback
         self.ind_schema_calculated = False
-        self._streamable = streamable
         self._org_path = None
         self._lazy = False
         self.errors = []
@@ -658,7 +654,7 @@ class FlowDataEngine:
                 dfs.append(pl.read_ndjson(fs.open(f)))
 
         df = pl.concat(dfs)
-        return cls(df.lazy(), number_of_records=len(df), optimize_memory=True, streamable=True)
+        return cls(df.lazy(), number_of_records=len(df), optimize_memory=True)
 
     @staticmethod
     def _get_schema_from_first_file_in_dir(
@@ -748,7 +744,6 @@ class FlowDataEngine:
                 lf,
                 number_of_records=CLOUD_PLACEHOLDER_RECORD_COUNT,
                 optimize_memory=True,
-                streamable=True,
                 schema=schema,
             )
 
@@ -789,7 +784,6 @@ class FlowDataEngine:
                 lf,
                 number_of_records=CLOUD_PLACEHOLDER_RECORD_COUNT,
                 optimize_memory=True,
-                streamable=True,
                 schema=schema,
             )
         except ComputeError:
@@ -848,7 +842,6 @@ class FlowDataEngine:
                 lf,
                 number_of_records=CLOUD_PLACEHOLDER_RECORD_COUNT,
                 optimize_memory=True,
-                streamable=True,
                 schema=schema,
             )
 
@@ -884,7 +877,7 @@ class FlowDataEngine:
                 path = resource_path.replace("gs://", "")
                 with fs.open(path) as f:
                     df = pl.read_ndjson(f)
-                return cls(df.lazy(), number_of_records=len(df), optimize_memory=True, streamable=True)
+                return cls(df.lazy(), number_of_records=len(df), optimize_memory=True)
 
             lf = pl.scan_ndjson(**scan_kwargs)
             schema = None
@@ -896,7 +889,6 @@ class FlowDataEngine:
                 lf,
                 number_of_records=-1,
                 optimize_memory=True,
-                streamable=True,
                 schema=schema,
             )
 
@@ -1035,8 +1027,7 @@ class FlowDataEngine:
         """Collects the data and returns it as a Polars DataFrame.
 
         This method triggers the execution of the lazy query plan (if applicable)
-        and returns the result. It supports streaming to optimize memory usage
-        for large datasets.
+        and returns the result on Polars' default engine.
 
         Args:
             n_records: The maximum number of records to collect. If None, all
@@ -1046,12 +1037,9 @@ class FlowDataEngine:
             A Polars `DataFrame` containing the collected data.
         """
         if n_records is None:
-            logger.info(f'Fetching all data for Table object "{id(self)}". Settings: streaming={self._streamable}')
+            logger.info(f'Fetching all data for Table object "{id(self)}"')
         else:
-            logger.info(
-                f'Fetching {n_records} record(s) for Table object "{id(self)}". '
-                f"Settings: streaming={self._streamable}"
-            )
+            logger.info(f'Fetching {n_records} record(s) for Table object "{id(self)}"')
 
         if not self.lazy:
             return self.data_frame
@@ -1066,21 +1054,11 @@ class FlowDataEngine:
         """Internal method to handle data collection logic."""
         if n_records is None:
             self.collect_external()
-            if self._streamable:
-                try:
-                    logger.info("Collecting data in streaming mode")
-                    return self.data_frame.collect(engine="streaming")
-                except PanicException:
-                    self._streamable = False
-
-            logger.info("Collecting data in non-streaming mode")
             return self.data_frame.collect()
 
         if self.external_source is not None:
             return self._collect_from_external_source(n_records)
 
-        if self._streamable:
-            return self.data_frame.head(n_records).collect(engine="streaming")
         return self.data_frame.head(n_records).collect()
 
     def _collect_from_external_source(self, n_records: int) -> pl.DataFrame:
@@ -1245,7 +1223,6 @@ class FlowDataEngine:
             df,
             number_of_records=self.number_of_records,
             calculate_schema_stats=calculate_schema,
-            streamable=self._streamable,
             schema=_derived_schema(lambda frame: frame.with_columns(transformations), self),
         )
 
@@ -1270,7 +1247,7 @@ class FlowDataEngine:
             A list where each item is a dictionary representing a row.
         """
         if self.lazy:
-            return self.data_frame.collect(engine="streaming" if self._streamable else "auto").to_dicts()
+            return self.data_frame.collect().to_dicts()
         return self.data_frame.to_dicts()
 
     def to_arrow(self) -> PaTable:
@@ -1283,7 +1260,7 @@ class FlowDataEngine:
             A `pyarrow.Table` instance representing the data.
         """
         if self.lazy:
-            return self.data_frame.collect(engine="streaming" if self._streamable else "auto").to_arrow()
+            return self.data_frame.collect().to_arrow()
         else:
             return self.data_frame.to_arrow()
 
@@ -1307,7 +1284,7 @@ class FlowDataEngine:
             A dictionary mapping column names to lists of their values.
         """
         if self.lazy:
-            return self.data_frame.collect(engine="streaming" if self._streamable else "auto").to_dict(as_series=False)
+            return self.data_frame.collect().to_dict(as_series=False)
         else:
             return self.data_frame.to_dict(as_series=False)
 
@@ -1641,7 +1618,6 @@ class FlowDataEngine:
         # Resolving the output's schema is what checks the predicate.
         return FlowDataEngine(
             self.data_frame.filter(f),
-            streamable=self._streamable,
             schema=_derived_schema(lambda frame: frame.filter(f), self),
         )
 
@@ -1665,12 +1641,10 @@ class FlowDataEngine:
             {
                 "pass": FlowDataEngine(
                     pass_df,
-                    streamable=self._streamable,
                     schema=_derived_schema(lambda frame: frame.filter(f), self),
                 ),
                 "fail": FlowDataEngine(
                     fail_df,
-                    streamable=self._streamable,
                     schema=_derived_schema(lambda frame: frame.filter(~f), self),
                 ),
             }
@@ -1821,23 +1795,6 @@ class FlowDataEngine:
             df = self.collect()
         return df.to_dicts()
 
-    def __get_sample__(self, n_rows: int = 100, streamable: bool = True) -> FlowDataEngine:
-        """Internal method to get a sample of the data."""
-        if not self.lazy:
-            df = self.data_frame.lazy()
-        else:
-            df = self.data_frame
-
-        if streamable:
-            try:
-                df = df.head(n_rows).collect()
-            except Exception as e:
-                logger.warning(f"Error in getting sample: {e}")
-                df = df.head(n_rows).collect(engine="auto")
-        else:
-            df = self.collect()
-        return FlowDataEngine(df, number_of_records=len(df), schema=self.schema)
-
     def get_sample(
         self,
         n_rows: int = 100,
@@ -1864,9 +1821,7 @@ class FlowDataEngine:
                 self.collect_external()
 
             if self.lazy and shuffle:
-                sample_df = self.data_frame.collect(engine="streaming" if self._streamable else "auto").sample(
-                    n_rows, seed=seed, shuffle=shuffle
-                )
+                sample_df = self.data_frame.collect().sample(n_rows, seed=seed, shuffle=shuffle)
             elif shuffle:
                 sample_df = self.data_frame.sample(n_rows, seed=seed, shuffle=shuffle)
             else:
@@ -1914,7 +1869,7 @@ class FlowDataEngine:
         df = self.data_frame if self.lazy else self.data_frame.lazy()
         threshold = (pl.len() * fraction).round().cast(pl.Int64) if fraction is not None else max(0, n)
         sampled = df.filter(pl.int_range(0, pl.len()).shuffle(seed=seed) < threshold)
-        return FlowDataEngine(sampled, schema=self.schema, streamable=self._streamable)
+        return FlowDataEngine(sampled, schema=self.schema)
 
     def random_split(
         self,
@@ -2095,7 +2050,6 @@ class FlowDataEngine:
         return FlowDataEngine(
             crossed(self.data_frame, other.data_frame),
             calculate_schema_stats=False,
-            streamable=False,
             schema=_derived_schema(crossed, self, other),
         )
 
@@ -2139,7 +2093,6 @@ class FlowDataEngine:
                 filtered(left_lf, right_lf),
                 calculate_schema_stats=False,
                 number_of_records=-1,
-                streamable=False,
                 schema=_derived_schema(filtered, self, other),
             )
 
@@ -2172,7 +2125,7 @@ class FlowDataEngine:
                     other=right,
                     left_on=join_manager.left_join_keys,
                     right_on=join_manager.right_join_keys,
-                    how=join_manager.how,
+                    how=transform_schemas.polars_join_how(join_manager.how),
                     suffix="",
                 ).rename(reverse_join_key_mapping)
 
@@ -2202,7 +2155,6 @@ class FlowDataEngine:
             joined(left_lf, right_lf),
             calculate_schema_stats=False,
             number_of_records=-1,
-            streamable=False,
             schema=_derived_schema(joined, self, other),
         )
 
@@ -2382,9 +2334,7 @@ class FlowDataEngine:
                 if warn:
                     logger.warning("Calculating the number of records this can be expensive on a lazy frame")
                 try:
-                    self.number_of_records = self.data_frame.select(pl.len()).collect(
-                        engine="streaming" if self._streamable else "auto"
-                    )[0, 0]
+                    self.number_of_records = self.data_frame.select(pl.len()).collect()[0, 0]
                 except Exception:
                     raise ValueError("Could not get number of records") from None
             else:
@@ -2418,7 +2368,7 @@ class FlowDataEngine:
                     df = self.collect()
                     self.data_frame = df
                 else:
-                    self.data_frame = self.data_frame.collect(engine="streaming" if self._streamable else "auto")
+                    self.data_frame = self.data_frame.collect()
             self._lazy = exec_lazy
 
     @property
@@ -2469,7 +2419,6 @@ class FlowDataEngine:
             self.data_frame.select(selects),
             number_of_records=self.number_of_records,
             schema=new_schema,
-            streamable=self._streamable,
         )
 
     def drop_columns(self, columns: list[str]) -> FlowDataEngine:
@@ -2524,7 +2473,6 @@ class FlowDataEngine:
         return FlowDataEngine(
             aligned(self.data_frame),
             number_of_records=self.number_of_records,
-            streamable=self._streamable,
             schema=_derived_schema(aligned, self),
         )
 
@@ -3085,13 +3033,10 @@ class FlowDataEngine:
             return frame.with_columns(exprs) if exprs else frame
 
         if cleansing_input.remove_null_rows:
-            return FlowDataEngine(
-                cleansed(self.data_frame), streamable=self._streamable, schema=_derived_schema(cleansed, self)
-            )
+            return FlowDataEngine(cleansed(self.data_frame), schema=_derived_schema(cleansed, self))
         return FlowDataEngine(
             cleansed(self.data_frame),
             number_of_records=self.number_of_records,
-            streamable=self._streamable,
             schema=_derived_schema(cleansed, self),
         )
 
@@ -3240,15 +3185,11 @@ class FlowDataEngine:
         )
         return output_file.reorganize_order(sorted_cols)
 
-    def set_streamable(self, streamable: bool = False):
-        """Sets whether DataFrame operations should be streamable."""
-        self._streamable = streamable
-
     def shallow_copy(self) -> FlowDataEngine:
         """Cheap de-aliasing wrapper around the same (immutable) Polars frame.
 
         Shares the frame and the cached schema, but owns its own mutable flags
-        (_lazy, _streamable, number_of_records, _schema), so a consumer handed
+        (_lazy, number_of_records, _schema), so a consumer handed
         this copy can never mutate an engine shared with sibling consumers.
         Collect-free: forwarding number_of_records and the cached schema skips
         both pl.len() and collect_schema() in __init__ (the schema fallback only
@@ -3262,7 +3203,6 @@ class FlowDataEngine:
             optimize_memory=self._optimize_memory,
             schema=self._schema,
             number_of_records=self.number_of_records,
-            streamable=self._streamable,
             number_of_records_callback=self._number_of_records_callback,
             data_callback=self._data_callback,
         )

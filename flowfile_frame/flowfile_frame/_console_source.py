@@ -193,7 +193,12 @@ def console_class_source(cls: type) -> str | None:
     """
     # A base's metaclass may add functions from its own file (pydantic's model_post_init); only ours identify cls.
     methods = [value for value in vars(cls).values() if isinstance(value, types.FunctionType)]
-    own = [inspect.unwrap(m) for m in methods if m.__qualname__.startswith(f"{cls.__qualname__}.")]
+    # Python 3.14 stores a class's annotations as a generated __annotate__ function, which no def in the source holds.
+    own = [
+        inspect.unwrap(m)
+        for m in methods
+        if m.__qualname__.startswith(f"{cls.__qualname__}.") and m.__name__ != "__annotate__"
+    ]
     codes = [fn.__code__ for fn in own]
     filenames = {code.co_filename for code in codes}
     if len(filenames) > 1 or not filenames <= _FRAGMENTS.keys():

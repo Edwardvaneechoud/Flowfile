@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from flowfile_worker import mp_context
+from flowfile_worker import utils as _plan_decryptor  # noqa: F401 (registers the $ffsec$ plan decryptor)
+from flowfile_worker.arrow_sample import sample_stream
 from flowfile_worker.flow_logger import get_worker_logger
 from flowfile_worker.task_errors import (
     WorkerEnvironmentError,
@@ -30,7 +32,6 @@ from flowfile_worker.task_errors import (
     record_task_failure,
     record_task_failure_text,
 )
-from flowfile_worker.utils import collect_lazy_frame, collect_lazy_frame_and_get_streaming_info
 from shared.storage_config import storage
 
 if TYPE_CHECKING:
@@ -216,7 +217,7 @@ def apply_model_task(
         trainer = get_trainer(model["model_type"])
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
         scored_lf = trainer.apply(lf, model, output_column)
-        scored_df = collect_lazy_frame(scored_lf)
+        scored_df = scored_lf.collect()
         scored_df.write_ipc(file_path)
         flowfile_logger.info(f"apply_model_task scored {scored_df.height} rows")
     except BaseException as e:
@@ -268,7 +269,7 @@ def fuzzy_join_task(
         flowfile_logger.error(f"Error during fuzzy join operation: {str(e)}")
         return
     lf = pl.scan_ipc(file_path)
-    number_of_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
+    number_of_records = lf.select(pl.len()).collect()[0, 0]
     flowfile_logger.info(f"Number of records after fuzzy match: {number_of_records}")
     # Put raw bytes in queue - encoding happens at the transport boundary
     queue.put(lf.serialize())
@@ -288,7 +289,7 @@ def process_and_cache(
     """
     try:
         lf = _load_plan(polars_serializable_object)
-        df = collect_lazy_frame(lf)
+        df = lf.collect()
         with environment_failures():
             df.write_ipc(file_path)
         flowfile_logger.info("Process operation completed successfully")
@@ -315,7 +316,7 @@ def store_sample(
     flowfile_logger.info("Starting store sample operation")
     try:
         lf = _load_plan(polars_serializable_object)
-        df = collect_lazy_frame(lf.limit(sample_size))
+        df = lf.limit(sample_size).collect()
         with environment_failures():
             df.write_ipc(file_path)
         flowfile_logger.info("Store sample operation completed successfully")
@@ -376,19 +377,15 @@ def submit_result(
         lf = _load_plan(polars_serializable_object)
         schema = lf.collect_schema()
         if materialise:
-            df = collect_lazy_frame(lf)
+            df = lf.collect()
             with environment_failures():
                 df.write_ipc(file_path)
             row_count = df.height
             head = df.head(preview_rows) if preview_rows is not None else None
         else:
             row_count = None
-            head = collect_lazy_frame(lf.head(preview_rows)) if preview_rows is not None else None
-        sample = None
-        if head is not None:
-            buffer = io.BytesIO()
-            head.write_ipc_stream(buffer)
-            sample = buffer.getvalue()
+            head = lf.head(preview_rows).collect() if preview_rows is not None else None
+        sample = sample_stream(head) if head is not None else None
     except BaseException as e:
         flowfile_logger.error(f"Error during submit: {str(e)}")
         record_task_failure(error_message, progress, e, limit=1024)
@@ -430,8 +427,12 @@ def export_result(
         credential_kwargs = {} if credential is None else credential_ref_kwargs(**credential)
         lf.sink_parquet(file_uri_path(uri), **credential_kwargs)
     except BaseException as e:
-        target = uri.partition("?")[0]
-        flowfile_logger.error(f"Error during export to {target}: {str(e).replace(uri, target)}")
+        target, _, query = uri.partition("?")
+        message = str(e).replace(uri, target)
+        if query:
+            # Polars 2 also quotes the bucket path with its query, so drop the query wherever it appears.
+            message = message.replace(f"?{query}", "")
+        flowfile_logger.error(f"Error during export to {target}: {message}")
         record_task_failure(error_message, progress, e, limit=1024)
         if not isinstance(e, Exception):
             raise
@@ -462,7 +463,7 @@ def split_result(
     try:
         lf = _load_plan(polars_serializable_object)
         schema = lf.collect_schema()
-        df = collect_lazy_frame(lf)
+        df = lf.collect()
         total = df.height
         row_counts = []
         offset = 0
@@ -506,7 +507,7 @@ def _user_code_result(result: pl.LazyFrame | pl.DataFrame | None, file_path: str
     if result is None:
         result = pl.DataFrame()
     if isinstance(result, pl.LazyFrame) and _scans_rows_in_memory(result):
-        result = collect_lazy_frame(result)
+        result = result.collect()
     if isinstance(result, pl.DataFrame):
         with environment_failures():
             result.write_ipc(file_path)
@@ -598,26 +599,20 @@ def calculate_schema_logic(
     schema = df.collect_schema()
     schema_stats = [dict(column_name=k, pl_datatype=str(v), col_index=i) for i, (k, v) in enumerate(schema.items())]
     flowfile_logger.info("Starting to calculate the number of records")
-    collected_streaming_info = collect_lazy_frame_and_get_streaming_info(df.select(pl.len()))
-    n_records = collected_streaming_info.df[0, 0]
+    n_records = df.select(pl.len()).collect()[0, 0]
     if n_records < 10_000:
         flowfile_logger.info("Collecting the whole dataset")
-        df = collect_lazy_frame(df).lazy()
+        df = df.collect().lazy()
     if optimize_memory and n_records > 1_000_000:
         df = df.head(1_000_000)
     null_cols = [col for col, data_type in schema.items() if data_type is pl.Null]
     if not (n_records == 0 and df.width == 0):
-        if len(null_cols) == 0:
-            pl_stats = df.describe()
-        else:
+        if null_cols:
             df = df.drop(null_cols)
+        # Polars 2.1's streaming engine takes minutes on describe()'s wide plan; in-memory takes milliseconds.
+        with pl.Config(engine_affinity="in-memory"):
             pl_stats = df.describe()
-        n_unique_per_cols = list(
-            df.select(pl.all().approx_n_unique())
-            .collect(engine="streaming" if collected_streaming_info.streaming_collect_available else "auto")
-            .to_dicts()[0]
-            .values()
-        )
+        n_unique_per_cols = list(df.select(pl.all().approx_n_unique()).collect().to_dicts()[0].values())
         stats_headers = pl_stats.drop_in_place("statistic").to_list()
         stats = {
             v["column_name"]: v
@@ -683,7 +678,7 @@ def calculate_number_of_records(
     polars_serializable_object_io = io.BytesIO(polars_serializable_object)
     try:
         lf = _load_plan(polars_serializable_object_io)
-        n_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
+        n_records = lf.select(pl.len()).collect()[0, 0]
         queue.put(n_records)
         flowfile_logger.debug("Number of records calculation completed successfully")
         flowfile_logger.debug(f"n_records {n_records}")
@@ -744,7 +739,7 @@ def write_to_database(
 
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info(f"Starting write operation to: {database_write_settings.table_name}")
-    df = collect_lazy_frame(pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object)))
+    df = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object)).collect()
     flowfile_logger.info(f"Starting to write {len(df)} records")
     try:
         write_df_to_database(df, database_write_settings)
@@ -826,7 +821,7 @@ def write_output(
         if data_type == "excel":
             from shared.excel_writer import write_excel_output
 
-            frame = collect_lazy_frame(df) if isinstance(df, pl.LazyFrame) else df
+            frame = df.collect() if isinstance(df, pl.LazyFrame) else df
             write_excel_output(frame, path=path, sheet_name=sheet_name, write_mode=write_mode)
             flowfile_logger.info(f"Number of records written: {frame.height}")
             with progress.get_lock():
@@ -843,7 +838,7 @@ def write_output(
             write_method = getattr(df, "sink_" + data_type)
         elif not has_sink_method:
             if isinstance(df, pl.LazyFrame):
-                df = collect_lazy_frame(df)
+                df = df.collect()
             write_method = getattr(df, write_method_str)
         if write_method is not None:
             execute_write_method(
@@ -861,7 +856,7 @@ def write_output(
                 with open(path, "rb+") as f:
                     os.fsync(f.fileno())
             number_of_records_written = (
-                collect_lazy_frame(df.select(pl.len()))[0, 0] if isinstance(df, pl.LazyFrame) else df.height
+                df.select(pl.len()).collect()[0, 0] if isinstance(df, pl.LazyFrame) else df.height
             )
             flowfile_logger.info(f"Number of records written: {number_of_records_written}")
         else:
@@ -894,7 +889,7 @@ def write_parquet(
     flowfile_logger.info(f"Starting write_parquet operation to: {output_path}")
     try:
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
-        df = collect_lazy_frame(lf)
+        df = lf.collect()
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         df.write_parquet(output_path)
         # fsync so another process reads the whole file; "rb+" since Windows can't fsync a read-only fd.
@@ -948,7 +943,7 @@ def write_delta(
         flowfile_logger.info(f"Starting write_delta operation to: {output_path}{catalog_table}")
         storage_options = _resolve_storage_options(storage_payload)
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
-        df = collect_lazy_frame(lf)
+        df = lf.collect()
         wrote = _write_delta(
             df,
             output_path,
@@ -1026,7 +1021,7 @@ def merge_delta(
         flowfile_logger.info(f"Starting merge_delta ({merge_mode}) to: {output_path}{catalog_table}")
         storage_options = _resolve_storage_options(storage_payload)
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
-        df = collect_lazy_frame(lf)
+        df = lf.collect()
         wrote = merge_into_delta(
             df,
             output_path,
@@ -1114,7 +1109,7 @@ def scd2_delta(
         flowfile_logger.info(f"Starting scd2_delta to: {output_path}{catalog_table}")
         storage_options = _resolve_storage_options(storage_payload)
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
-        df = collect_lazy_frame(lf)
+        df = lf.collect()
         result = scd2_into_delta(
             df,
             output_path,
@@ -1597,7 +1592,7 @@ def generic_task(
             # Function already wrote to file_path (e.g. Kafka spill_path)
             flowfile_logger.info("Function returned None — file already written")
         elif isinstance(result, pl.LazyFrame):
-            df = collect_lazy_frame(result)
+            df = result.collect()
             df.write_ipc(file_path)
             number_of_records = df.height
         elif isinstance(result, pl.DataFrame):
@@ -1616,7 +1611,7 @@ def generic_task(
     lf = pl.scan_ipc(file_path)
     if number_of_records is None:
         # func wrote the file itself (no in-memory frame); count it from disk.
-        number_of_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
+        number_of_records = lf.select(pl.len()).collect()[0, 0]
     flowfile_logger.info(f"Number of records processed: {number_of_records}")
     # Ride-along row count on element 1; element 0 stays byte-identical to the plan bytes.
     queue.put((lf.serialize(), number_of_records))
@@ -1636,7 +1631,7 @@ def _resolve_virtual_table_child(plan_bytes: bytes, target_path: str, queue: Que
     """
     try:
         lf = pl.LazyFrame.deserialize(io.BytesIO(plan_bytes))
-        df = lf.collect(engine="streaming")
+        df = lf.collect()
         target = Path(target_path)
         # Unique tmp per child: concurrent same-key rebuilds must not share one.
         tmp = target.with_name(f"{target.name}.{os.getpid()}.tmp")

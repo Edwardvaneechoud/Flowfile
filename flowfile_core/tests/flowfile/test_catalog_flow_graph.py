@@ -7,7 +7,6 @@ Covers:
 - Round-trip: write → read → verify data integrity
 """
 
-import io as _io
 import json
 import os
 import shutil
@@ -1176,48 +1175,8 @@ class TestCatalogSqlReader:
 class TestResolveVirtualTable:
     """Test _resolve_virtual_table helper."""
 
-    def test_resolve_optimized_virtual_table(self):
-        """An optimized virtual table with a current fingerprint deserializes the stored LazyFrame."""
-        lf = pl.LazyFrame({"x": [1, 2, 3]})
-        buf = _io.BytesIO()
-        lf.serialize(buf)
-        serialized = buf.getvalue()
-        result = _resolve_virtual_table(
-            is_optimized=True,
-            serialized_lf=serialized,
-            catalog_table_id=-1,
-            run_location="local",
-            source_table_versions="[]",
-        )
-
-        assert isinstance(result, pl.LazyFrame)
-        df = result.collect()
-        assert df["x"].to_list() == [1, 2, 3]
-
-    def test_resolve_optimized_without_fingerprint_falls_back(self):
-        """No recorded source versions → the pinned stored plan can't be trusted;
-        resolution must fall back to re-executing the producer flow."""
-        lf = pl.LazyFrame({"x": [1, 2, 3]})
-        buf = _io.BytesIO()
-        lf.serialize(buf)
-        serialized = buf.getvalue()
-
-        with patch("flowfile_core.flowfile.flow_graph.get_db_context") as mock_ctx:
-            mock_db = MagicMock()
-            mock_ctx.return_value.__enter__ = MagicMock(return_value=mock_db)
-            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
-
-            with patch("flowfile_core.flowfile.flow_graph.CatalogService") as MockSvc:
-                mock_svc_instance = MagicMock()
-                mock_svc_instance.resolve_virtual_flow_table.return_value = pl.LazyFrame({"y": [1]})
-                MockSvc.return_value = mock_svc_instance
-
-                _resolve_virtual_table(is_optimized=True, serialized_lf=serialized, catalog_table_id=42)
-
-        mock_svc_instance.resolve_virtual_flow_table.assert_called_once()
-
-    def test_resolve_non_optimized_virtual_table(self):
-        """A non-optimized virtual table should call CatalogService.resolve_virtual_flow_table."""
+    def test_resolve_runs_the_producer_through_the_catalog_service(self):
+        """Every virtual table resolves through CatalogService.resolve_virtual_flow_table; nothing is cached."""
         expected_lf = pl.LazyFrame({"y": [10, 20]})
 
         with patch("flowfile_core.flowfile.flow_graph.get_db_context") as mock_ctx:
@@ -1230,31 +1189,11 @@ class TestResolveVirtualTable:
                 mock_svc_instance.resolve_virtual_flow_table.return_value = expected_lf
                 MockSvc.return_value = mock_svc_instance
 
-                result = _resolve_virtual_table(is_optimized=False, serialized_lf=None, catalog_table_id=42)
+                result = _resolve_virtual_table(catalog_table_id=42)
 
-        assert isinstance(result, pl.LazyFrame)
+        assert result is expected_lf
         mock_svc_instance.resolve_virtual_flow_table.assert_called_once_with(
             42, user_id=None, run_location=None, node_logger=None
-        )
-
-    def test_resolve_optimized_without_serialized_lf_falls_back(self):
-        """When is_optimized=True but serialized_lf is None, should fall back to service resolution."""
-        expected_lf = pl.LazyFrame({"z": [5]})
-
-        with patch("flowfile_core.flowfile.flow_graph.get_db_context") as mock_ctx:
-            mock_db = MagicMock()
-            mock_ctx.return_value.__enter__ = MagicMock(return_value=mock_db)
-            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
-
-            with patch("flowfile_core.flowfile.flow_graph.CatalogService") as MockSvc:
-                mock_svc_instance = MagicMock()
-                mock_svc_instance.resolve_virtual_flow_table.return_value = expected_lf
-                MockSvc.return_value = mock_svc_instance
-
-                _resolve_virtual_table(is_optimized=True, serialized_lf=None, catalog_table_id=99)
-
-        mock_svc_instance.resolve_virtual_flow_table.assert_called_once_with(
-            99, user_id=None, run_location=None, node_logger=None
         )
 
 
@@ -2361,6 +2300,17 @@ class TestCatalogReaderFreshness:
             assert force1 is force2 is False
             assert fp1 == fp2
             assert fp1 is not None
+
+    def test_a_lazy_virtual_source_is_fingerprinted_by_its_producer_flow(self):
+        from flowfile_core.flowfile.flow_graph.freshness import _fingerprint_virtual_source
+
+        first, force = _fingerprint_virtual_source(True, "flow-a", "[]", {})
+        edited, _ = _fingerprint_virtual_source(True, "flow-b", "[]", {})
+        assert force is False
+        assert first != edited
+        assert _fingerprint_virtual_source(True, None, "[]", {}) == ([], True)
+        assert _fingerprint_virtual_source(True, "flow-a", None, {}) == ([], True)
+        assert _fingerprint_virtual_source(False, "flow-a", "[]", {}) == ([], True)
 
     def test_execution_state_round_trips_source_version_info(self):
         from flowfile_core.flowfile.flow_node.state import NodeExecutionState

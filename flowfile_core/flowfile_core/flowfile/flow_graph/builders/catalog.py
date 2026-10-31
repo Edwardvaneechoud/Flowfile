@@ -110,16 +110,13 @@ class CatalogBuildersMixin(GraphMixinBase):
                 else:
                     ctx.register(name, pl.scan_delta(path))
             run_location = current_context(self).backend_id if FLOWFILE_COMPUTE_PROTOCOL else self.execution_location
-            for name, (is_opt, ser_lf, tid, stv) in virtual_tables.items():
+            for name, (_, _, tid, _) in virtual_tables.items():
                 ctx.register(
                     name,
                     _resolve_virtual_table(
-                        is_opt,
-                        ser_lf,
                         tid,
                         node_logger=self.flow_logger.get_node_logger(node_catalog_reader.node_id),
                         run_location=run_location,
-                        source_table_versions=stv,
                         user_id=node_catalog_reader.user_id,
                     ),
                 )
@@ -174,10 +171,7 @@ class CatalogBuildersMixin(GraphMixinBase):
         resolved_path = info.file_path
         delta_version = node_catalog_reader.delta_version
         _table_type = info.table_type
-        _serialized_lf = info.serialized_lf
-        _is_optimized = info.is_optimized
         _catalog_table_id = node_catalog_reader.catalog_table_id
-        _source_table_versions = info.source_table_versions
         _authorized = info.authorized
         _user_id = node_catalog_reader.user_id
 
@@ -311,14 +305,11 @@ class CatalogBuildersMixin(GraphMixinBase):
             if _table_type == "virtual":
                 return FlowDataEngine(
                     _resolve_virtual_table(
-                        _is_optimized,
-                        _serialized_lf,
                         _catalog_table_id,
                         node_logger=self.flow_logger.get_node_logger(node_catalog_reader.node_id),
                         run_location=(
                             current_context(self).backend_id if FLOWFILE_COMPUTE_PROTOCOL else self.execution_location
                         ),
-                        source_table_versions=_source_table_versions,
                         user_id=_user_id,
                     )
                 )

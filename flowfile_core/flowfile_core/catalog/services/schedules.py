@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from flowfile_core.catalog.exceptions import (
     FlowAlreadyRunningError,
@@ -308,7 +308,7 @@ class ScheduleService:
                 logger.info("Skipping push trigger for flow %s — active run exists", schedule.registration_id)
                 continue
 
-            schedule.last_triggered_at = datetime.now(timezone.utc)
+            schedule.last_triggered_at = datetime.now(UTC)
             schedule.last_trigger_table_updated_at = table_updated_at
             self.repo.update_schedule(schedule)
 

@@ -893,7 +893,7 @@ def test_join_operation_left(join_input_dataset, export_func):
     verify_if_execute(code)
     result = normalize_result(get_result_from_generated_code(code))
     expected_df = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
-    assert_frame_equal(result, expected_df)
+    assert_frame_equal(result, expected_df, check_row_order=False)
 
 
 @pytest.mark.parametrize("export_func", [

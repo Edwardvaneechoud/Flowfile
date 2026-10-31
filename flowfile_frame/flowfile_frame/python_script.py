@@ -513,12 +513,22 @@ def _module_reads(source: str, func: ast.FunctionDef) -> list[str]:
     as a branch under ``if False:``, counts as well.
     """
     top = symtable.symtable(source, f"<{func.name}>", "exec")
-    tables = [next(table for table in top.get_children() if table.get_name() == func.name)]
+    function_table = next(table for table in top.get_children() if table.get_name() == func.name)
+    tables = [function_table]
     module_level: set[str] = set()
     while tables:
         scope = tables.pop()
         tables.extend(scope.get_children())
         module_level.update(symbol.get_name() for symbol in scope.get_symbols() if symbol.is_global())
+    # Python 3.14 gives a function's local annotations no scope, so symtable no longer lists their names.
+    local = {symbol.get_name() for symbol in function_table.get_symbols() if symbol.is_local()}
+    module_level.update(
+        name.id
+        for node in ast.walk(func)
+        if isinstance(node, ast.AnnAssign)
+        for name in ast.walk(node.annotation)
+        if isinstance(name, ast.Name) and name.id not in local
+    )
     augmented = {node.target for node in ast.walk(func) if isinstance(node, ast.AugAssign)}
     reads = sorted(
         (node.lineno, node.col_offset, node.id)

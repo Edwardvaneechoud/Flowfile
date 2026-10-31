@@ -1917,16 +1917,14 @@ def sum(*names) -> Expr:
 
 
 @agg_function
-def corr(
-    a: str | Expr, b: str | Expr, *, method: str = "pearson", ddof: int = None, propagate_nans: bool = False
-) -> Expr:
+def corr(a: str | Expr, b: str | Expr, *, method: str = "pearson", propagate_nans: bool = False) -> Expr:
     """
     Compute the correlation between two columns.
     """
     a_expr = a.expr if isinstance(a, Expr) else pl.col(a) if isinstance(a, str) else a
     b_expr = b.expr if isinstance(b, Expr) else pl.col(b) if isinstance(b, str) else b
 
-    return pl.corr(a_expr, b_expr, method=method, ddof=ddof, propagate_nans=propagate_nans)
+    return pl.corr(a_expr, b_expr, method=method, propagate_nans=propagate_nans)
 
 
 @agg_function

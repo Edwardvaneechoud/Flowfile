@@ -37,7 +37,7 @@ import json
 import logging
 import statistics
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -403,7 +403,7 @@ def _format_iso(value: datetime | None) -> str:
     if value is None:
         return "--"
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
+        value = value.replace(tzinfo=UTC)
     return value.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 

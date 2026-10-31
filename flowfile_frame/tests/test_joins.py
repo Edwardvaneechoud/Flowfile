@@ -235,7 +235,7 @@ class TestJoins:
     def test_join_with_expression(self, customers, orders):
         """Test joining with an expression condition."""
         orders_with_year = orders.with_columns(
-            col("order_date").cast(pl.Date).dt.year().alias("order_year")
+            col("order_date").str.to_date("%Y-%m-%d").dt.year().alias("order_year")
         )
 
         customers_with_year = customers.with_columns(

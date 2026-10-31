@@ -186,7 +186,7 @@ pip install --upgrade pip
 pip install flowfile
 ```
 
-Flowfile supports Python 3.10–3.13. Check `python --version` if the resolver complains.
+Flowfile supports Python 3.11–3.14. Check `python --version` if the resolver complains.
 
 </details>
 

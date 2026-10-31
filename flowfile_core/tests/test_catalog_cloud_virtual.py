@@ -1,20 +1,17 @@
 """Object-storage catalog + virtual tables.
 
-A virtual table built over an S3-backed source must NOT cache a serialized Polars plan:
-``LazyFrame.serialize`` embeds the source's ``storage_options`` (decrypted cloud
-credentials) inline, so a cached cloud plan would freeze those secrets in the metadata DB
-(stale on rotation, a secret-at-rest leak). Cloud-sourced virtual tables therefore re-run
-the producer flow on read, resolving credentials fresh.
+A virtual table caches no plan: every read runs its producer flow, so a cloud source's
+credentials resolve fresh where the plan runs and a producer edit shows on the next read.
 
-- Infra-free unit tests cover the serialized-frame cloud sniffer and the read-side guard.
-- A MinIO-gated end-to-end test proves the real write path leaves ``serialized_lazy_frame``
-  empty and the table still reads back correctly through producer re-execution.
+- Infra-free unit tests cover the serialized-frame cloud sniffer (the Explore Data node's
+  guard) and a read that follows its producer flow.
+- A MinIO-gated end-to-end test writes a virtual table over a cloud source and reads it back.
 """
 
 import io
 import tempfile
 import uuid
-from unittest.mock import MagicMock, patch
+from pathlib import Path
 
 import polars as pl
 import pytest
@@ -26,7 +23,8 @@ from flowfile_core.catalog.services.namespaces import NamespaceService
 from flowfile_core.catalog.storage_backend import resolve_for_namespace, serialized_frame_uses_cloud
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.db_connections import store_cloud_connection
-from flowfile_core.flowfile.flow_graph import _resolve_virtual_table, add_connection
+from flowfile_core.flowfile.flow_graph import _resolve_catalog_table_info, add_connection
+from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 from flowfile_core.schemas.transform_schema import BasicFilter, FilterInput
@@ -148,43 +146,6 @@ class TestSerializedFrameUsesCloud:
         assert serialized_frame_uses_cloud(b"") is False
 
 
-# ---- Infra-free: read-side guard refuses a cloud-tainted cache ------------- #
-
-
-class TestCloudCacheReadGuard:
-    def test_resolve_virtual_table_skips_cloud_blob(self):
-        """``_resolve_virtual_table`` must not deserialize a cloud-tainted cache (that would
-        replay frozen creds) — it falls back to ``resolve_virtual_flow_table``."""
-        blob = _serialize_cloud_scan()
-        expected = pl.LazyFrame({"ok": [1]})
-        with patch("flowfile_core.flowfile.flow_graph.get_db_context") as mock_ctx:
-            mock_db = MagicMock()
-            mock_ctx.return_value.__enter__ = MagicMock(return_value=mock_db)
-            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
-            with patch("flowfile_core.flowfile.flow_graph.CatalogService") as MockSvc:
-                inst = MagicMock()
-                inst.resolve_virtual_flow_table.return_value = expected
-                MockSvc.return_value = inst
-                result = _resolve_virtual_table(is_optimized=True, serialized_lf=blob, catalog_table_id=7)
-        inst.resolve_virtual_flow_table.assert_called_once()
-        assert result is expected
-
-    def test_resolve_virtual_table_uses_local_blob(self):
-        """A local serialized plan with a current fingerprint is deserialized directly
-        (no regression). "[]" is the provably-complete no-sources fingerprint; a missing
-        fingerprint (None) deliberately falls back to flow execution instead."""
-        buf = io.BytesIO()
-        pl.LazyFrame({"x": [1, 2, 3]}).serialize(buf)
-        result = _resolve_virtual_table(
-            is_optimized=True,
-            serialized_lf=buf.getvalue(),
-            catalog_table_id=-1,
-            run_location="local",
-            source_table_versions="[]",
-        )
-        assert result.collect()["x"].to_list() == [1, 2, 3]
-
-
 def _build_local_optimized_virtual(ns_id: int, table_name: str) -> int:
     """Run manual_input → age-filter → virtual writer, save the flow, return the new table id.
 
@@ -205,32 +166,43 @@ def _build_local_optimized_virtual(ns_id: int, table_name: str) -> int:
         return next(t.id for t in repo.list_tables(namespace_id=ns_id) if t.name == table_name)
 
 
-class TestServiceRefusesCloudCache:
-    def test_resolve_refuses_cloud_tainted_blob_and_reexecutes(self):
-        """If a virtual-table row carries a cloud-tainted serialized plan (e.g. written before
-        this fix), ``resolve_virtual_flow_table`` ignores it and re-runs the producer flow."""
+class TestOptimizedVirtualReadsThroughItsProducer:
+    def test_a_producer_edit_shows_on_the_next_read(self):
+        """No plan is cached: editing the producer flow after the write changes what the table reads."""
         ns_id = _create_namespace()
-        vt_id = _build_local_optimized_virtual(ns_id, "tainted_vt")
-
+        vt_id = _build_local_optimized_virtual(ns_id, "follows_producer")
         with get_db_context() as db:
-            repo = SQLAlchemyCatalogRepository(db)
-            row = repo.get_table(vt_id)
+            row = SQLAlchemyCatalogRepository(db).get_table(vt_id)
             assert row.is_optimized is True
-            assert row.serialized_lazy_frame is not None  # a real local cache exists
-            row.serialized_lazy_frame = _serialize_cloud_scan()  # simulate a cloud-tainted cache
-            db.commit()
+            flow_path = SQLAlchemyCatalogRepository(db).get_flow(row.producer_registration_id).flow_path
 
         with get_db_context() as db:
             svc = CatalogService(SQLAlchemyCatalogRepository(db))
-            df = svc.resolve_virtual_flow_table(vt_id, run_location="local").collect()
+            assert svc.resolve_virtual_flow_table(vt_id, run_location="local").collect().height == 2
+        reader = input_schema.NodeCatalogReader(flow_id=1, node_id=1, catalog_table_id=vt_id)
+        fingerprint = _resolve_catalog_table_info(reader).producer_fingerprint
+        assert fingerprint is not None
 
-        # The guard refused the cloud blob and re-ran the producer (age > 28 → 2 rows),
-        # rather than deserializing a plan that points at s3://example-bucket.
-        assert df.height == 2
-        assert set(df["name"].to_list()) == {"Alice", "Charlie"}
+        producer = open_flow(Path(flow_path))
+        producer.add_filter(
+            input_schema.NodeFilter(
+                flow_id=producer.flow_id,
+                node_id=2,
+                depending_on_id=1,
+                filter_input=FilterInput(
+                    mode="basic", basic_filter=BasicFilter(field="age", operator="greater_than", value="0")
+                ),
+            )
+        )
+        producer.save_flow(flow_path)
+
+        with get_db_context() as db:
+            svc = CatalogService(SQLAlchemyCatalogRepository(db))
+            assert svc.resolve_virtual_flow_table(vt_id, run_location="local").collect().height == 3
+        assert _resolve_catalog_table_info(reader).producer_fingerprint not in (None, fingerprint)
 
 
-# ---- MinIO-gated: real cloud source leaves no cached plan ------------------ #
+# ---- MinIO-gated: a virtual table over a cloud source reads back ----------- #
 
 
 def _ensure_connection() -> None:
@@ -273,7 +245,7 @@ def _create_cloud_schema(uri: str) -> int:
 
 @requires_minio
 class TestCloudSourcedVirtualWriteE2E:
-    def test_cloud_source_virtual_write_is_not_cached_and_reads_back(self):
+    def test_cloud_source_virtual_write_reads_back(self):
         from shared.delta_utils import write_delta
 
         _ensure_connection()
@@ -328,17 +300,14 @@ class TestCloudSourcedVirtualWriteE2E:
         _run_graph(graph)
         graph.save_flow(flow_path)
 
-        # The cloud-sourced virtual table must carry NO serialized plan (no frozen creds).
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
             vt = next(t for t in repo.list_tables(namespace_id=schema_id) if t.name == "cloud_vt")
             assert vt.table_type == "virtual"
-            assert vt.is_optimized is False
-            assert vt.serialized_lazy_frame is None
+            assert vt.is_optimized is True
             vt_id = vt.id
 
-        # Reading it re-runs the producer flow, resolving cloud credentials fresh — this is
-        # exactly what makes credential rotation safe (nothing was frozen at write time).
+        # Reading it re-runs the producer flow, resolving cloud credentials fresh.
         with get_db_context() as db:
             svc = CatalogService(SQLAlchemyCatalogRepository(db))
             out = svc.resolve_virtual_flow_table(vt_id, run_location="local").collect()

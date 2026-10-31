@@ -117,13 +117,15 @@
 
     <!-- Metadata Grid -->
     <div class="meta-grid">
-      <div class="meta-card">
+      <div v-if="table.table_type !== 'virtual'" class="meta-card">
         <span class="meta-label">Rows</span>
         <span class="meta-value">{{ formatNumber(table.row_count) }}</span>
       </div>
       <div class="meta-card">
         <span class="meta-label">Columns</span>
-        <span class="meta-value">{{ table.column_count ?? "--" }}</span>
+        <span class="meta-value">{{
+          table.column_count ?? table.schema_columns?.length ?? "--"
+        }}</span>
       </div>
       <div v-if="table.table_type !== 'virtual'" class="meta-card">
         <span class="meta-label">Size</span>
@@ -288,10 +290,13 @@
       <pre class="sql-definition">{{ table.sql_query }}</pre>
     </div>
 
-    <!-- Polars Query Plan (optimized virtual flow tables) -->
+    <!-- Readable plan (flow virtual tables) -->
     <div v-if="table.table_type === 'virtual' && table.polars_plan" class="section">
-      <h3>Polars Query Plan</h3>
+      <h3>Table Definition</h3>
       <pre class="sql-definition">{{ table.polars_plan }}</pre>
+      <p class="read-plan-note">
+        Each read runs these nodes of the producer flow. Recorded at its last run or read.
+      </p>
     </div>
 
     <!-- Version History (physical tables only) -->
@@ -1344,6 +1349,12 @@ function formatCell(value: any): string {
   margin: 0;
   max-height: 200px;
   overflow-y: auto;
+}
+
+.read-plan-note {
+  margin: var(--spacing-2) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
 }
 
 /* ========== Modal (read-by list items) ========== */

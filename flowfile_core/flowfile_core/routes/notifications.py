@@ -21,7 +21,7 @@ sides derive the same per-user key from the same master key).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -56,7 +56,7 @@ MAX_TEST_ERROR_CHARS = 300
 
 def _utcnow() -> datetime:
     """Naive UTC — the catalog DB stores and compares naive datetimes."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _mask_url(url: str) -> str:

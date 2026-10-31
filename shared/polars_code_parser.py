@@ -297,6 +297,12 @@ def _assigns_attribute(target: ast.AST) -> bool:
     return False
 
 
+STALE_PLAN_MESSAGE = (
+    "This Polars Code step holds a query plan saved by an older Polars, which this version cannot load. "
+    "flowfile_frame writes such a plan for an operation it cannot express as code: rebuild the step from code."
+)
+
+
 class PolarsCodeParser:
     """
     Securely executes Polars code with restricted access to Python functionality.
@@ -486,9 +492,18 @@ class PolarsCodeParser:
             exec(wrapped_code, self._fresh_globals(), local_namespace)
 
             transform_func = local_namespace["_transform"]
-            return transform_func
         except Exception as e:
             raise ValueError(f"Error executing code: {str(e)}") from e
+
+        def _transform(*frames):
+            try:
+                return transform_func(*frames)
+            except pl.exceptions.ComputeError as e:
+                if "DSL_SCHEMA_HASH" in str(e):
+                    raise ValueError(STALE_PLAN_MESSAGE) from e
+                raise
+
+        return _transform
 
     def _fresh_globals(self) -> dict[str, Any]:
         """A copy of the sandbox globals for one executable, builtins included.

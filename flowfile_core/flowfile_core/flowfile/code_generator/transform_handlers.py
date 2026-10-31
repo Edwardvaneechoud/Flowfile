@@ -513,7 +513,7 @@ class TransformHandlersMixin(ConverterMixinBase):
             self._add_code(f".select([{out_lit}] + [col for col in {input_df}.columns if col != {out_lit}])")
             self._add_code(")")
         else:
-            self._add_code(f"{var_name} = {input_df}.with_row_count(name={out_lit}, offset={record_input.offset})")
+            self._add_code(f"{var_name} = {input_df}.with_row_index(name={out_lit}, offset={record_input.offset})")
         self._add_code("")
 
     def _handle_cross_join(

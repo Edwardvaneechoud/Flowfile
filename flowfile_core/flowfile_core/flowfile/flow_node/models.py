@@ -191,14 +191,12 @@ class NodeStepSettings:
     Attributes:
         cache_results: If True, the node will cache its results to avoid re-computation.
         renew_schema: If True, the schema will be re-evaluated on changes.
-        streamable: If True, the node can process data in a streaming fashion.
         setup_errors: If True, indicates a non-blocking error occurred during setup.
         breaking_setup_errors: If True, indicates an error occurred that prevents execution.
     """
 
     cache_results: bool = False
     renew_schema: bool = True
-    streamable: bool = True
     setup_errors: bool = False
     breaking_setup_errors: bool = False
 

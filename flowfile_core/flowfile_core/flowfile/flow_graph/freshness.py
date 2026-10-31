@@ -1,6 +1,5 @@
 """Source fingerprints that decide whether a catalog or cloud Delta reader must re-run."""
 
-import hashlib
 import json
 import os
 import re
@@ -32,21 +31,21 @@ def _probe_version_entry(path: str, storage_options: dict | None, version_cache:
 
 def _fingerprint_virtual_source(
     is_optimized: bool,
-    serialized_lf: bytes | None,
+    producer_fingerprint: str | None,
     source_table_versions: str | None,
     version_cache: dict[str, int],
 ) -> tuple[list[dict], bool]:
     """Fingerprint entries for a virtual-table source, or force=True.
 
-    An optimized virtual is identified by its stored plan (rotates when the
-    producer re-writes) plus live versions of its recorded Delta sources
-    (rotate on out-of-band writes). A non-optimized or fingerprint-less
-    virtual re-runs its producer flow at resolution, so its output can change
-    with nothing observable here — always invalidate, like run_flow nodes.
+    A virtual table runs its producer flow at resolution, so a lazy one whose
+    sources are all recorded Delta tables is identified by its producer's flow
+    file (rotates on any edit to it) plus the live versions of those sources
+    (rotate on out-of-band writes). Any other virtual can change with nothing
+    observable here — always invalidate, like run_flow nodes.
     """
-    if not is_optimized or not serialized_lf or source_table_versions is None:
+    if not is_optimized or not producer_fingerprint or source_table_versions is None:
         return [], True
-    entries: list[dict] = [{"plan": hashlib.sha256(serialized_lf).hexdigest()}]
+    entries: list[dict] = [{"producer": producer_fingerprint}]
     for entry in json.loads(source_table_versions):
         entries.append(
             {
@@ -122,8 +121,8 @@ def _catalog_reader_source_fingerprint(
                     opts_by_namespace[ns] = resolve_for_namespace(ns).storage_options or None
                 opts = opts_by_namespace[ns]
             entries.append({"name": name, "path": path, "version": _probe_version_entry(path, opts, version_cache)})
-        for name, (is_optimized, serialized_lf, _vid, versions_json) in sorted(virtual.items()):
-            sub_entries, force = _fingerprint_virtual_source(is_optimized, serialized_lf, versions_json, version_cache)
+        for name, (is_optimized, producer, _vid, versions_json) in sorted(virtual.items()):
+            sub_entries, force = _fingerprint_virtual_source(is_optimized, producer, versions_json, version_cache)
             if force:
                 return None, True
             entries.append({"name": name, "virtual": sub_entries})
@@ -134,7 +133,7 @@ def _catalog_reader_source_fingerprint(
         return None, True
     if info.table_type == "virtual":
         sub_entries, force = _fingerprint_virtual_source(
-            info.is_optimized, info.serialized_lf, info.source_table_versions, version_cache
+            info.is_optimized, info.producer_fingerprint, info.source_table_versions, version_cache
         )
         if force:
             return None, True

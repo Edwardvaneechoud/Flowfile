@@ -75,7 +75,7 @@ def build_group_by(input_lf: pl.LazyFrame, settings: dict) -> pl.LazyFrame:
         return input_lf.select(exprs) if exprs else input_lf
     if exprs:
         return input_lf.group_by(group_cols).agg(exprs)
-    return input_lf.group_by(group_cols).agg(pl.count()).drop("count")
+    return input_lf.group_by(group_cols).agg(pl.len()).drop("len")
 
 
 @log_node

@@ -180,7 +180,7 @@ A table that is already SCD2-tracked accepts only further `scd2` writes or a pla
 
 The **Virtual Table** tab creates a [virtual flow table](../catalog/virtual-tables.md) — a catalog entry that stores no data on disk and resolves on demand by executing the producer flow. Selecting the tab checks whether the pipeline supports optimized resolution:
 
-- **Green checkmark** — every upstream node is lazy, so the virtual table stores a serialized execution plan and resolves instantly with predicate and projection pushdown.
+- **Green checkmark** — every upstream node is lazy, so a read builds the producer's plan without computing anything and keeps predicate and projection pushdown.
 - **Yellow warning** — some upstream nodes are eager or conditional, so resolution re-executes the full producer flow on each read. The blocking nodes are listed.
 
 !!! warning "Flow registration required"

@@ -742,13 +742,7 @@ class FlowNode:
             ]
         else:
             node_information.input_connections = None
-        user_description = self.setting_input.description if hasattr(self.setting_input, "description") else ""
-        if user_description:
-            node_information.description = user_description
-        elif hasattr(self.setting_input, "get_default_description"):
-            node_information.description = self.setting_input.get_default_description()
-        else:
-            node_information.description = ""
+        node_information.description = self.display_description
         node_information.node_reference = (
             self.setting_input.node_reference if hasattr(self.setting_input, "node_reference") else None
         )
@@ -821,6 +815,16 @@ class FlowNode:
         return self.node_information
 
     @property
+    def display_description(self) -> str:
+        """The node's one-line description as the canvas shows it: the user's own, else the generated one."""
+        user_description = getattr(self.setting_input, "description", "")
+        if user_description:
+            return user_description
+        if hasattr(self.setting_input, "get_default_description"):
+            return self.setting_input.get_default_description()
+        return ""
+
+    @property
     def function(self) -> Callable:
         """Gets the core processing function of the node.
 
@@ -847,6 +851,14 @@ class FlowNode:
         """
         return self.node_inputs.get_all_inputs()
 
+    def laziness_blocker(self) -> Literal["eager", "conditional", "virtual_source"] | None:
+        """Why this node keeps a virtual table downstream of it from being optimized, or None when it does not."""
+        if isinstance(self.setting_input, input_schema.NodeCatalogReader):
+            return "virtual_source" if self.setting_input.is_virtual_optimized is False else None
+        laziness = self.node_template.laziness
+        # TODO: resolve conditional nodes by isinstance like catalog_reader, then raise ValueError here.
+        return laziness if laziness in ("eager", "conditional") else None
+
     def check_upstream_laziness(self) -> tuple[bool, list[str]]:
         """Check whether all upstream dependencies of this node support lazy execution.
 
@@ -868,22 +880,14 @@ class FlowNode:
                 continue
             visited.add(current)
 
-            if isinstance(current.setting_input, input_schema.NodeCatalogReader):
-                if current.setting_input.is_virtual_optimized is False:
-                    reasons.append(
-                        f"Node '{current.node_template.name}' (id={current.node_id}) reads a "
-                        "non-optimized virtual table"
-                    )
-            else:
-                laziness: schemas.LazinessLiteral = current.node_template.laziness
-                if laziness == "eager":
-                    reasons.append(f"Node '{current.node_template.name}' (id={current.node_id}) is eager")
-                elif laziness == "conditional":
-                    # TODO: resolve conditional nodes by isinstance like catalog_reader, then raise ValueError here.
-                    reasons.append(
-                        f"Node '{current.node_template.name}' (id={current.node_id}) is conditional"
-                        " — defaulting to non-optimized"
-                    )
+            blocker = current.laziness_blocker()
+            label = f"Node '{current.node_template.name}' (id={current.node_id})"
+            if blocker == "virtual_source":
+                reasons.append(f"{label} reads a non-optimized virtual table")
+            elif blocker == "eager":
+                reasons.append(f"{label} is eager")
+            elif blocker == "conditional":
+                reasons.append(f"{label} is conditional — defaulting to non-optimized")
 
             stack.extend(current.all_inputs)
         return len(reasons) == 0, reasons
@@ -1387,7 +1391,6 @@ class FlowNode:
                             with self._in_execution_context():
                                 fl: FlowDataEngine = self.function()
                             fl.collect_external()
-                            self.node_settings.streamable = False
                         else:
                             self.print("Collecting input data from all inputs")
                             input_data = []
@@ -1420,12 +1423,8 @@ class FlowNode:
                         if isinstance(fl, NamedOutputs):
                             self._named_outputs = fl.by_handle()
                             self._named_schemas = {h: e.schema for h, e in self._named_outputs.items()}
-                            for v in self._named_outputs.values():
-                                v.set_streamable(self.node_settings.streamable)
                             # Handle-less consumers read the first output; output_field_config applies to it only.
                             fl = self._named_outputs[DEFAULT_OUTPUT_HANDLE]
-                        else:
-                            fl.set_streamable(self.node_settings.streamable)
 
                         if (
                             hasattr(self._setting_input, "output_field_config")
@@ -2014,7 +2013,6 @@ class FlowNode:
         plan = backend.plan_for(ref)
         if ref.state == "deferred" and engine is not None:
             data = FlowDataEngine(plan, schema=engine.schema, number_of_records=engine.known_record_count())
-            data.set_streamable(self.node_settings.streamable)
         else:
             data = FlowDataEngine(plan, schema=ref.schema, number_of_records=ref.row_count)
         self.results.resulting_data = data
@@ -2025,9 +2023,6 @@ class FlowNode:
             self.results.example_data_generator = lambda: table
         elif preview:
             self.results.example_data_generator = _sample_on_read(backend, ref, preview_rows or DEFAULT_PREVIEW_ROWS)
-        if ref.state == "deferred" and not self.node_settings.streamable:
-            for step in self.leads_to_nodes:
-                step.node_settings.streamable = False
 
     def read_example_data(self) -> None:
         """Takes the grid's rows now, so a plan that fails on its rows fails here rather than on the first grid read.

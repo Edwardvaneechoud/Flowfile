@@ -14,7 +14,7 @@ never touched.
 
 import hashlib
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from flowfile_core.configs import logger
@@ -119,7 +119,7 @@ class InstallOutcome:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _community_icon_name(node_id: str, original_path: str) -> str | None:

@@ -12,7 +12,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -74,7 +74,7 @@ def format_delta_timestamp(ts: object) -> str | None:
     if isinstance(ts, datetime):
         return ts.isoformat()
     if isinstance(ts, int | float):
-        return datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat()
+        return datetime.fromtimestamp(ts / 1000, tz=UTC).isoformat()
     return str(ts)
 
 
@@ -463,7 +463,7 @@ def get_delta_version_at_or_after(
     from deltalake import DeltaTable
 
     if instant.tzinfo is None:
-        instant = instant.replace(tzinfo=timezone.utc)
+        instant = instant.replace(tzinfo=UTC)
     threshold_ms = int(instant.timestamp() * 1000)
     versions = [
         int(entry["version"])
@@ -966,8 +966,8 @@ def scd2_parse_iso_utc(value: str) -> datetime:
     """
     ts = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=timezone.utc)
-    return ts.astimezone(timezone.utc)
+        ts = ts.replace(tzinfo=UTC)
+    return ts.astimezone(UTC)
 
 
 def _scd2_sql_timestamp_literal(ts: datetime) -> str:
@@ -1338,7 +1338,7 @@ def _scd2_guard_clock(
     stamped = [v for v in (stats.item(0, "vf"), stats.item(0, "vt")) if v is not None]
     if not stamped:
         return
-    newest = max(v.replace(tzinfo=timezone.utc) if v.tzinfo is None else v for v in stamped)
+    newest = max(v.replace(tzinfo=UTC) if v.tzinfo is None else v for v in stamped)
     if ts > newest:
         return
     raise ValueError(
