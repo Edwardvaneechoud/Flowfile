@@ -780,6 +780,79 @@ class TestRuns:
         assert client.get(f"/catalog/runs/{run_id}").json()["has_log"] is False
         assert client.get(f"/catalog/runs/{run_id}/log").status_code == 404
 
+    # Completed-run fallback
+
+    @staticmethod
+    def _completed_run(service: CatalogService, registration_id: int | None, **kwargs) -> FlowRun:
+        now = datetime.now(timezone.utc)
+        return service.create_completed_run(
+            registration_id=registration_id,
+            flow_name="done_flow",
+            flow_path="/tmp/done_flow.yaml",
+            user_id=1,
+            started_at=now,
+            ended_at=now,
+            success=True,
+            nodes_completed=1,
+            number_of_nodes=1,
+            run_type="in_designer_run",
+            **kwargs,
+        )
+
+    def test_create_completed_run_keeps_the_given_flow_uuid(self):
+        """The facade forwards flow_uuid: a run with no registration still names its flow."""
+        with get_db_context() as db:
+            run = self._completed_run(
+                CatalogService(SQLAlchemyCatalogRepository(db)),
+                None,
+                flow_uuid="0b1c2d3e-0000-4000-8000-000000000001",
+            )
+            stored = db.get(FlowRun, run.id)
+            assert stored.flow_uuid == "0b1c2d3e-0000-4000-8000-000000000001"
+            assert stored.registration_id is None
+
+    def test_create_completed_run_without_flow_uuid_takes_the_registrations(self):
+        cat = client.post("/catalog/namespaces", json={"name": "DoneCat"}).json()
+        schema = client.post("/catalog/namespaces", json={"name": "DoneSch", "parent_id": cat["id"]}).json()
+        flow = client.post(
+            "/catalog/flows",
+            json={"name": "done_flow", "flow_path": "/tmp/done_flow.yaml", "namespace_id": schema["id"]},
+        ).json()
+        with get_db_context() as db:
+            reg_uuid = db.query(FlowRegistration.flow_uuid).filter_by(id=flow["id"]).scalar()
+            run = self._completed_run(CatalogService(SQLAlchemyCatalogRepository(db)), flow["id"])
+            assert db.get(FlowRun, run.id).flow_uuid == reg_uuid
+
+        resp = client.get("/catalog/runs", params={"registration_id": flow["id"]})
+        assert [item["id"] for item in resp.json()["items"]] == [run.id]
+
+    def test_a_run_whose_start_record_failed_is_written_with_its_flow_uuid(self, tmp_path, monkeypatch):
+        """When the start record cannot be written, the completion write still ties the run to its flow."""
+        from flowfile_core.routes import routes
+
+        flow_path = tmp_path / "fallback_flow.yaml"
+        flow_id = flow_file_handler.add_flow(name="fallback_flow", flow_path=str(flow_path), user_id=1)
+        try:
+            flow = flow_file_handler.get_flow(flow_id)
+            flow.save_flow(str(flow_path))
+            auto_register_flow(str(flow_path), "fallback_flow", 1)
+            with get_db_context() as db:
+                reg = db.query(FlowRegistration).filter_by(flow_path=str(flow_path)).one()
+                reg_id, reg_uuid = reg.id, reg.flow_uuid
+
+            def failing_start_run(self, *args, **kwargs):
+                raise RuntimeError("run table unavailable")
+
+            monkeypatch.setattr(CatalogService, "start_run", failing_start_run)
+            assert flow.try_claim_run()
+            routes._run_and_track(flow, user_id=1)
+
+            with get_db_context() as db:
+                runs = db.query(FlowRun).filter_by(flow_path=str(flow_path)).all()
+                assert [(r.registration_id, r.flow_uuid) for r in runs] == [(reg_id, reg_uuid)]
+        finally:
+            flow_file_handler.delete_flow(flow_id)
+
 
 def test_open_run_snapshot_does_not_reuse_registration(tmp_path):
     """A run snapshot serializes source_registration_id; opening it must NOT let that id be

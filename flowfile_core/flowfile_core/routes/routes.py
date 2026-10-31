@@ -408,24 +408,28 @@ def _discard_relocated_scratch_file(previous_path: str | None, new_path: str) ->
         logger.info(f"Could not unlink old scratch flow file {previous_path}", exc_info=True)
 
 
-def _resolve_run_identity(flow) -> tuple[int | None, str, str | None]:
-    """Return ``(registration_id, display_name, flow_path)`` for run-tracking.
+def _resolve_run_identity(flow) -> tuple[int | None, str, str | None, str | None]:
+    """Return ``(registration_id, display_name, flow_path, flow_uuid)`` for run-tracking.
 
     Prefers the catalog registration's user-typed ``name`` over
     ``flow.flow_settings.name``, which after a save is the file stem
     (``9_house_price`` for ``9_house_price.yaml``) — that prefix is a filename
     collision-avoidance trick that should never reach the run-history UI.
+    ``flow_uuid`` is read from the same registration, so the run row can carry it.
     """
     fallback_name = getattr(flow.flow_settings, "name", None) or getattr(flow, "__name__", "unknown")
     flow_path = flow.flow_settings.path or flow.flow_settings.save_location
     reg_id = getattr(flow.flow_settings, "source_registration_id", None)
     display_name = fallback_name
+    flow_uuid = None
     if reg_id is not None:
         with get_db_context() as db:
             reg = SQLAlchemyCatalogRepository(db).get_flow(reg_id)
-            if reg is not None and reg.name:
-                display_name = reg.name
-    return reg_id, display_name, flow_path
+            if reg is not None:
+                flow_uuid = reg.flow_uuid
+                if reg.name:
+                    display_name = reg.name
+    return reg_id, display_name, flow_path, flow_uuid
 
 
 def _open_run_record(flow, user_id: int | None, node_ids: set[int] | None) -> tuple:
@@ -444,7 +448,7 @@ def _open_run_record(flow, user_id: int | None, node_ids: set[int] | None) -> tu
                 resolve_source_registration_id(flow)
             except Exception:
                 logger.info("First-run catalog registration failed (non-critical)", exc_info=True)
-    reg_id, flow_name, flow_path = _resolve_run_identity(flow)
+    reg_id, flow_name, flow_path, flow_uuid = _resolve_run_identity(flow)
     logger.debug(f"source_registration_id for flow '{flow_name}': {reg_id}")
 
     run_id = None
@@ -471,7 +475,7 @@ def _open_run_record(flow, user_id: int | None, node_ids: set[int] | None) -> tu
             logger.info(f"Flow '{flow_name}' run started: run_id={run_id}")
     except Exception as exc:
         logger.error(f"Failed to create run record for flow '{flow_name}': {exc}", exc_info=True)
-    return reg_id, flow_name, flow_path, run_id, snapshot_yaml
+    return reg_id, flow_name, flow_path, flow_uuid, run_id, snapshot_yaml
 
 
 def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
@@ -487,7 +491,7 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
     visible in logs.
     """
     try:
-        reg_id, flow_name, flow_path, run_id, snapshot_yaml = _open_run_record(flow, user_id, node_ids)
+        reg_id, flow_name, flow_path, flow_uuid, run_id, snapshot_yaml = _open_run_record(flow, user_id, node_ids)
         # A lineage run that writes nothing only looks at rows: change-feed cursors and Kafka offsets stay put.
         commit_sources = node_ids is None or lineage_commits(flow, node_ids)
     except BaseException:
@@ -539,6 +543,7 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
                     run_type="in_designer_run",
                     node_results_json=node_results,
                     flow_snapshot=snapshot_yaml,
+                    flow_uuid=flow_uuid,
                 )
     except Exception as exc:
         logger.error(
