@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 // A session handed over in the URL fragment (`#token=<jwt>`) on the web build.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createRouter, createWebHashHistory, type RouterHistory } from "vue-router";
 
 const base64url = (value: string): string => {
   const bytes = new TextEncoder().encode(value);
@@ -35,6 +36,23 @@ const load = async () => {
 };
 
 const openAt = (hash: string) => window.history.replaceState(null, "", `/editor${hash}`);
+
+const view = { render: () => null };
+
+// The app's router imports the service, so the service is constructed before the hash history.
+const startApp = async () => {
+  const authService = await load();
+  const history = createWebHashHistory();
+  const router = createRouter({
+    history,
+    routes: [
+      { path: "/", redirect: "/designer" },
+      { path: "/designer", component: view },
+      { path: "/:pathMatch(.*)*", redirect: "/designer" },
+    ],
+  });
+  return { authService, history, router };
+};
 
 describe("auth service: token in the URL fragment", () => {
   beforeEach(() => {
@@ -114,5 +132,57 @@ describe("auth service: token in the URL fragment", () => {
     expect(localStorage.getItem("auth_token")).toBeNull();
     expect(localStorage.getItem("auth_username")).toBeNull();
     expect(window.location.hash).toBe("");
+  });
+});
+
+describe("auth service: token in the URL fragment, with the hash router", () => {
+  let history: RouterHistory | undefined;
+
+  beforeEach(() => {
+    vi.stubGlobal("localStorage", fakeLocalStorage());
+    openAt("");
+  });
+
+  afterEach(() => {
+    history?.destroy();
+    history = undefined;
+    vi.unstubAllGlobals();
+    openAt("");
+  });
+
+  it("signs in on a fresh load and leaves no token in the route or history", async () => {
+    const token = jwt({ sub: "alice", exp: inAnHour() });
+    openAt(`#token=${token}`);
+
+    const app = await startApp();
+    history = app.history;
+
+    expect(await app.authService.initialize()).toBe(true);
+    expect(localStorage.getItem("auth_token")).toBe(token);
+    expect(localStorage.getItem("auth_username")).toBe("alice");
+    expect(app.history.location).toBe("/");
+    expect(window.location.hash).toBe("#/");
+    expect(JSON.stringify(window.history.state)).not.toContain(token);
+
+    await app.router.push(app.history.location);
+    expect(app.router.currentRoute.value.fullPath).toBe("/designer");
+    expect(app.router.currentRoute.value.redirectedFrom?.fullPath).toBe("/");
+    expect(window.location.href).not.toContain(token);
+  });
+
+  it("ignores a malformed token and leaves no trace of it", async () => {
+    openAt("#token=not-a-jwt");
+
+    const app = await startApp();
+    history = app.history;
+
+    expect(await app.authService.initialize()).toBe(false);
+    expect(app.authService.requiresLogin()).toBe(true);
+    expect(localStorage.getItem("auth_token")).toBeNull();
+    expect(app.history.location).toBe("/");
+
+    await app.router.push(app.history.location);
+    expect(app.router.currentRoute.value.redirectedFrom?.fullPath).toBe("/");
+    expect(window.location.href).not.toContain("not-a-jwt");
   });
 });

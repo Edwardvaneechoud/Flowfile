@@ -57,6 +57,7 @@ class AuthService {
     this.isDesktopMode.value = this.detectDesktopMode();
     this.clearStoredTokens();
     this.loadStoredToken();
+    this.takeTokenFromFragment();
   }
 
   /**
@@ -113,7 +114,6 @@ class AuthService {
   }
 
   async initialize(): Promise<boolean> {
-    this.takeTokenFromFragment();
     this.clearStoredTokens();
 
     if (this.hasValidToken()) {
@@ -133,6 +133,11 @@ class AuthService {
    * Adopt a session handed over as `#token=<jwt>` by a server that already signed
    * the person in; a fragment never reaches a server or its access logs. The
    * signature is not checked here: the backend verifies the token on every request.
+   *
+   * This runs when the service is constructed, at module load. The router imports
+   * this module, so the fragment is read and removed before its hash history is
+   * created; that history would otherwise rewrite `#token=<jwt>` to `#/token=<jwt>`
+   * and keep it as the initial route.
    */
   private takeTokenFromFragment(): void {
     const token = new URLSearchParams(window.location.hash.slice(1)).get("token");
