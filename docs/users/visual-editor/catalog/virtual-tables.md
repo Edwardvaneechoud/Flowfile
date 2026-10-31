@@ -5,18 +5,18 @@ A virtual table is a catalog table that stores no data on disk. Reading one exec
 !!! info "Not in Flowfile Lite"
     Virtual tables require the full desktop/server build and are not available in the browser-only [Flowfile Lite](../../deployment/lite.md) edition.
 
-The trade against a physical table: nothing is written (the catalog entry holds only metadata and, when optimized, a serialized execution plan), nothing goes stale, and reads pay the producer's compute cost instead of a disk read. Whether that cost is trivial or substantial depends on the laziness classification below.
+The trade against a physical table: nothing is written (the catalog entry holds only metadata), nothing goes stale, and reads pay the producer's compute cost instead of a disk read. Whether that cost is trivial or substantial depends on the laziness classification below.
 
 ---
 
 ## How They Work
 
-A virtual table is a catalog entry linked to a **producer flow** — a registered flow that contains a Catalog Writer node in virtual mode. When something reads from the virtual table, Flowfile resolves it in one of two ways:
+A virtual table is a catalog entry linked to a **producer flow** — a registered flow that contains a Catalog Writer node in virtual mode. When something reads from the virtual table, Flowfile opens the producer flow as it is saved and builds what its virtual writer receives. How much of the producer runs depends on its laziness:
 
 ```mermaid
 graph LR
     A[Producer Flow] -->|runs with virtual writer| B[Virtual Table Entry]
-    B -->|optimized| C[Deserialize LazyFrame]
+    B -->|optimized| C[Build the producer's plan]
     B -->|standard| D[Re-execute Producer Flow]
     C --> E[Query Results]
     D --> E
@@ -55,7 +55,7 @@ Create a query-based virtual table directly from the catalog's [SQL Editor](sql-
 The SQL query is validated, executed once to derive the output schema, and then stored. No data is written to disk — each time the virtual table is read, the query re-executes against the latest catalog data.
 
 !!! info "Query-based vs flow-based"
-    Query-based virtual tables store a SQL query and re-execute it on demand. Flow-based virtual tables (Option 1) store a reference to a producer flow and can be optimized with serialized execution plans. See [SQL Editor — Save as Virtual Table](sql-editor.md#save-as-virtual-table) for more on how query-based resolution works.
+    Query-based virtual tables store a SQL query and re-execute it on demand. Flow-based virtual tables (Option 1) store a reference to a producer flow and are optimized when that flow is fully lazy. See [SQL Editor — Save as Virtual Table](sql-editor.md#save-as-virtual-table) for more on how query-based resolution works.
 
 ---
 
@@ -67,7 +67,7 @@ What a read costs depends on the **laziness system**. Flowfile classifies every 
 
 A virtual table is **optimized** when every node upstream of the Catalog Writer supports Polars' lazy evaluation. This means the entire pipeline can be represented as a deferred execution plan — no intermediate computation required.
 
-When a flow is fully lazy, Flowfile serializes the Polars `LazyFrame` execution plan and stores it alongside the virtual table metadata. Reading an optimized virtual table deserializes that plan instead of re-executing the flow, and runs it with full query optimization, including predicate and projection pushdown.
+When a flow is fully lazy, reading the virtual table builds the producer's Polars `LazyFrame` plan without computing anything, and the consumer runs that plan with full query optimization, including predicate and projection pushdown.
 
 ### Node Laziness Classification
 
@@ -83,12 +83,14 @@ Every node type has a fixed laziness classification, defined in `flowfile_core/c
 
 When a virtual table is optimized (`is_optimized = true`):
 
-1. The serialized `LazyFrame` is read from the catalog database
-2. Polars deserializes the execution plan
+1. The producer flow is opened as it is saved
+2. The plan up to its Catalog Writer is built, with no data computed
 3. The query engine applies predicate pushdown, projection pushdown, and other optimizations
 4. Only the needed data is computed
 
-Because the deserialized plan is a `LazyFrame`, Polars pushes the consumer's filters and column selections *through* the producer's execution plan — query optimization crosses the flow boundary. Work the consumer doesn't need never runs in the producer, and results always reflect the current source data.
+The table's detail panel lists these steps under **How this table is read**: one line per node up to the Catalog Writer, worded as each node's description on the canvas. A step that prevents lazy execution is marked *(runs in full)*. The list is recorded each time the producer flow runs or the table is read, so an edit saved since then shows after the next one.
+
+Because the plan is a `LazyFrame`, Polars pushes the consumer's filters and column selections *through* the producer's execution plan — query optimization crosses the flow boundary. Work the consumer doesn't need never runs in the producer, and results always reflect the current source data.
 
 ### Standard Resolution
 
@@ -124,7 +126,7 @@ Use the **Catalog Reader** node to read a virtual table, just like a physical on
 
 When the flow runs, the Catalog Reader resolves the virtual table automatically:
 
-- **Optimized tables** → deserialize the stored execution plan (instant)
+- **Optimized tables** → build the producer's plan (fast; nothing runs until the reader needs rows)
 - **Standard tables** → execute the producer flow (may take longer)
 
 ### SQL Queries
@@ -178,6 +180,7 @@ Instead of Flow C and Flow D each managing their own cron trying to line up afte
 
 - **Non-optimized tables re-execute the full producer flow** on every read. For complex or slow flows, this can add significant latency.
 - **Requires a registered producer flow** — the flow must be saved and registered in the catalog before a virtual table can reference it.
+- **Reads follow the saved producer flow** — saving an edit to the producer changes what the table returns from the next read on, before the producer runs again.
 - **No Delta versioning** — since no physical data is stored, there's no version history or time-travel capability.
 
 !!! note "Multiple virtual tables per flow"

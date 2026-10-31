@@ -38,7 +38,7 @@ Error mapping:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -223,7 +223,7 @@ def _looks_cold_started(session: sessions.AgentSession) -> bool:
     if repo_kind != "DiskSessionRepository":
         return False
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     delta = (now - session.updated_at).total_seconds()
     # KEEPALIVE_INTERVAL_SECONDS is 15s; any live session would have been
     # touched at least once in that window (planner step boundaries +

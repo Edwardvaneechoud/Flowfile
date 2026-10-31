@@ -40,7 +40,7 @@ joined.add_to_group(sources)
 
 assert sources.flow_graph is joined.flow_graph
 assert sorted(sources.node_ids) == sorted([customers.node_id, regions.node_id, joined.node_id])
-assert joined.collect()["region"].to_list() == ["EU", "US", "EU"]
+assert joined.collect().sort("id")["region"].to_list() == ["EU", "US", "EU"]
 
 # --8<-- [start:export]
 code = export_flow_to_flowframe(flow)

@@ -3,7 +3,7 @@
 Covers:
 - Virtual catalog writer: creates virtual tables without materializing data
 - Virtual writer requires a source_registration_id
-- Serialized lazy frame storage and is_optimized flag
+- Readable plan and is_optimized flag
 - check_flow_laziness / check_upstream_laziness scoping
 - FlowRegistration.flow_path usage (regression for file_path AttributeError)
 - Source table version tracking and staleness detection
@@ -20,7 +20,6 @@ from fastapi.testclient import TestClient
 
 from flowfile_core import main
 from flowfile_core.catalog import CatalogService
-from flowfile_core.catalog.delta_utils import check_source_versions_current
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.services import previews
 from flowfile_core.catalog.services import virtual_tables as virtual_tables_module
@@ -36,7 +35,6 @@ from flowfile_core.flowfile.flow_graph import add_connection
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.transform_schema import BasicFilter, FilterInput, PivotInput
 from shared.compute_protocol import WorkerLocation
-from shared.delta_models import SourceTableVersion
 from tests.conftest import closed_url
 from tests.flowfile.conftest import (
     CATALOG_SAMPLE_DATA as SAMPLE_DATA,
@@ -305,9 +303,9 @@ class TestVirtualCatalogWriter:
         with pytest.raises(AssertionError, match="not linked to a catalog registration"):
             _run_graph(graph)
 
-    def test_virtual_writer_stores_serialized_lazyframe_when_lazy(self):
-        """A fully lazy graph (manual_input → filter → virtual writer) should store
-        a serialized lazy frame and set is_optimized=True."""
+    def test_virtual_writer_records_readable_plan_when_lazy(self):
+        """A fully lazy graph (manual_input → filter → virtual writer) sets is_optimized=True
+        and records its steps in run order, worded as the canvas describes each node."""
         ns_id = _create_namespace()
         reg_id = _create_flow_registration(ns_id, name="lazy_flow")
         graph = _create_graph(source_registration_id=reg_id)
@@ -345,12 +343,19 @@ class TestVirtualCatalogWriter:
             assert len(tables) == 1
             table = tables[0]
             assert table.table_type == "virtual"
-            assert table.serialized_lazy_frame is not None
             assert table.is_optimized is True
+            plan_lines = table.polars_plan.splitlines()
+
+        names = [graph.get_node(i).node_template.name for i in (1, 2, 3)]
+        assert [line.split(":")[0] for line in plan_lines] == names
+        assert plan_lines[1] == f"{names[1]}: {graph.get_node(2).display_description}"
+        assert plan_lines[2] == f"{names[2]}: Catalog: lazy_virtual"
+        assert "(runs in full)" not in table.polars_plan
+        assert "SCAN" not in table.polars_plan
 
     def test_virtual_writer_non_optimized_when_upstream_eager(self):
         """A graph with an eager node upstream of the virtual writer should
-        set is_optimized=False."""
+        set is_optimized=False and mark that step in the readable plan."""
         ns_id = _create_namespace()
         reg_id = _create_flow_registration(ns_id, name="eager_flow")
         graph = _create_graph(source_registration_id=reg_id)
@@ -391,6 +396,13 @@ class TestVirtualCatalogWriter:
             table = tables[0]
             assert table.table_type == "virtual"
             assert table.is_optimized is False
+            plan_lines = table.polars_plan.splitlines()
+
+        assert len(plan_lines) == 3
+        assert plan_lines[1].startswith(graph.get_node(2).node_template.name)
+        assert plan_lines[1].endswith("(runs in full)")
+        assert not plan_lines[0].endswith("(runs in full)")
+        assert not plan_lines[2].endswith("(runs in full)")
 
 
 class TestReadVirtualFlowTables:
@@ -485,7 +497,6 @@ class TestReadVirtualFlowTables:
                 owner_id=1,
                 producer_registration_id=other_reg_id,
                 namespace_id=ns_id,
-                serialized_lazy_frame=b"\x00",
                 is_optimized=True,
             )
             svc.create_query_virtual_table(
@@ -537,7 +548,6 @@ class TestReadVirtualFlowTables:
                 owner_id=1,
                 producer_registration_id=reg_id,
                 namespace_id=ns_id,
-                serialized_lazy_frame=b"\x00",
                 is_optimized=True,
             )
 
@@ -585,7 +595,6 @@ class TestReadVirtualFlowTables:
                 owner_id=1,
                 producer_registration_id=reg_id,
                 namespace_id=ns_id,
-                serialized_lazy_frame=b"\x00",  # invalid bytes on purpose
                 is_optimized=True,
             )
 
@@ -1010,69 +1019,6 @@ class TestVirtualTableOptimizationPropagation:
 # Source table version tracking tests
 
 
-class TestCheckSourceVersionsCurrent:
-    """Unit tests for the check_source_versions_current utility."""
-
-    def test_none_returns_false(self):
-        """No fingerprint can't prove currency — a pinned serialized plan would
-        replay the first snapshot forever, so None must read as stale."""
-        assert check_source_versions_current(None) is False
-
-    def test_empty_string_returns_false(self):
-        """Empty string is no fingerprint either."""
-        assert check_source_versions_current("") is False
-
-    def test_empty_list_returns_true(self):
-        """Empty JSON list should return True (no sources to check)."""
-        assert check_source_versions_current("[]") is True
-
-    def test_invalid_json_returns_false(self):
-        """Malformed JSON should return False (treat as stale)."""
-        assert check_source_versions_current("not json") is False
-
-    def test_matching_versions_returns_true(self):
-        """When source delta table versions match, should return True."""
-        from shared.delta_utils import write_delta
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            delta_path = f"{tmp_dir}/test_table"
-            df = pl.DataFrame({"x": [1, 2, 3]})
-            write_delta(df, delta_path, mode="overwrite")
-
-            from deltalake import DeltaTable
-
-            current_version = DeltaTable(delta_path, without_files=True).version()
-
-            versions_json = json.dumps(
-                [SourceTableVersion(table_id=1, file_path=delta_path, version=current_version).model_dump()]
-            )
-            assert check_source_versions_current(versions_json) is True
-
-    def test_stale_version_returns_false(self):
-        """When source delta table has been updated, should return False."""
-        from shared.delta_utils import write_delta
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            delta_path = f"{tmp_dir}/test_table"
-            df = pl.DataFrame({"x": [1, 2, 3]})
-            write_delta(df, delta_path, mode="overwrite")
-
-            # Record version 0
-            versions_json = json.dumps([SourceTableVersion(table_id=1, file_path=delta_path, version=0).model_dump()])
-
-            # Write again to bump version
-            write_delta(pl.DataFrame({"x": [4, 5, 6]}), delta_path, mode="overwrite")
-
-            assert check_source_versions_current(versions_json) is False
-
-    def test_missing_file_path_returns_false(self):
-        """When the delta table path doesn't exist, should return False."""
-        versions_json = json.dumps(
-            [SourceTableVersion(table_id=1, file_path="/nonexistent/path", version=0).model_dump()]
-        )
-        assert check_source_versions_current(versions_json) is False
-
-
 class TestSourceTableVersionCapture:
     """Test that source_table_versions are captured when creating virtual tables
     from flows that read physical delta catalog tables."""
@@ -1441,15 +1387,15 @@ class TestVirtualTablePreviewThroughABackend:
         assert WorkerLocation.model_validate_json(ref.location).kind == "plan"
         assert not registry.backend(ref.backend_id).exists(ref)
 
-    def test_an_optimised_table_previews_its_plan_through_a_bounded_read(
+    def test_an_optimised_table_previews_a_sample_of_its_producer_runs_reference(
         self, lazy_virtual_table_id, catalog_service, sampled
     ):
         preview = catalog_service.get_table_preview(lazy_virtual_table_id)
 
         assert len(preview.rows) == 2
         assert preview.total_rows == 2
-        assert sampled
-        assert all(ref.result_id.startswith("bounded_") for ref, _ in sampled)
+        [(_, n)] = _run_samples(sampled)
+        assert n == 100
 
     def test_a_query_table_previews_its_plan_through_a_bounded_read(
         self, lazy_virtual_table_id, catalog_service, sampled

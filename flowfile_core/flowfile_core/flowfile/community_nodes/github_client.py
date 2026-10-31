@@ -17,7 +17,7 @@ bodies, tokens, or device codes.
 
 import base64
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 from pydantic import BaseModel
@@ -120,7 +120,7 @@ def _auth_headers(token: str) -> dict[str, str]:
 def _reset_hint(resp: httpx.Response) -> str:
     reset = resp.headers.get("X-RateLimit-Reset", "")
     try:
-        when = datetime.fromtimestamp(int(reset), timezone.utc).strftime("%H:%M UTC")
+        when = datetime.fromtimestamp(int(reset), UTC).strftime("%H:%M UTC")
     except (TypeError, ValueError):
         return ""
     return f" Try again after {when}."

@@ -27,7 +27,7 @@ This is a monorepo managed by Poetry (Python) and npm (frontend):
 
 ### Prerequisites
 
-- Python `>=3.10, <3.14`
+- Python `>=3.11, <3.15`
 - Node.js `20+`
 - [Poetry](https://python-poetry.org/)
 - [Rust](https://rustup.rs) stable toolchain (required only for the Tauri desktop shell — `npm run dev:web` works without it)
@@ -67,7 +67,7 @@ docker compose up -d
 
 ### Python — Ruff
 
-- Line length **120**, target **Python 3.10**
+- Line length **120**, target **Python 3.11**
 - Rules: Pyflakes (F), pycodestyle (E/W), isort (I), pyupgrade (UP), flake8-bugbear (B)
 - Double quotes, space indentation
 - Use **Polars**, not pandas

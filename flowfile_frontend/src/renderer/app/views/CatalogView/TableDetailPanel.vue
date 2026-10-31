@@ -117,13 +117,15 @@
 
     <!-- Metadata Grid -->
     <div class="meta-grid">
-      <div class="meta-card">
+      <div v-if="table.table_type !== 'virtual'" class="meta-card">
         <span class="meta-label">Rows</span>
         <span class="meta-value">{{ formatNumber(table.row_count) }}</span>
       </div>
       <div class="meta-card">
         <span class="meta-label">Columns</span>
-        <span class="meta-value">{{ table.column_count ?? "--" }}</span>
+        <span class="meta-value">{{
+          table.column_count ?? table.schema_columns?.length ?? "--"
+        }}</span>
       </div>
       <div v-if="table.table_type !== 'virtual'" class="meta-card">
         <span class="meta-label">Size</span>
@@ -288,10 +290,20 @@
       <pre class="sql-definition">{{ table.sql_query }}</pre>
     </div>
 
-    <!-- Polars Query Plan (optimized virtual flow tables) -->
-    <div v-if="table.table_type === 'virtual' && table.polars_plan" class="section">
-      <h3>Polars Query Plan</h3>
-      <pre class="sql-definition">{{ table.polars_plan }}</pre>
+    <!-- Readable plan (flow virtual tables) -->
+    <div v-if="table.table_type === 'virtual' && readPlanSteps.length > 0" class="section">
+      <h3>How this table is read</h3>
+      <ol class="sql-definition read-plan">
+        <li v-for="(step, i) in readPlanSteps" :key="i">{{ step }}</li>
+      </ol>
+      <p class="read-plan-note">
+        {{
+          table.is_optimized
+            ? "Nothing is stored. Each read runs these steps lazily, computing only the rows and columns it needs."
+            : "Nothing is stored. Each read runs these steps; those marked (runs in full) compute all their rows."
+        }}
+        Recorded when the producer flow last ran or this table was last read.
+      </p>
     </div>
 
     <!-- Version History (physical tables only) -->
@@ -545,6 +557,7 @@ const emit = defineEmits([
   "editsSaved",
 ]);
 
+const readPlanSteps = computed(() => (props.table.polars_plan ?? "").split("\n").filter(Boolean));
 const hasHistory = computed(() => props.tableHistory && props.tableHistory.history.length > 0);
 
 // Show the Version History section when there's history (cached or freshly loaded) or while it loads.
@@ -1344,6 +1357,16 @@ function formatCell(value: any): string {
   margin: 0;
   max-height: 200px;
   overflow-y: auto;
+}
+
+.read-plan {
+  padding-left: calc(var(--spacing-4) + 18px);
+}
+
+.read-plan-note {
+  margin: var(--spacing-2) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
 }
 
 /* ========== Modal (read-by list items) ========== */

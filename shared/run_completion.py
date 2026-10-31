@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import signal
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
@@ -144,7 +144,7 @@ def reap_orphaned_runs(max_age_seconds: int | None = None) -> int:
 
     engine = get_catalog_engine(get_database_url())
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     now_naive = now.replace(tzinfo=None)
     reaped = 0
 
@@ -218,7 +218,7 @@ def complete_run(
             logger.warning("Run %s not found — skipping completion", run_id)
             return
 
-        _close_run(run, success=success, now=datetime.now(timezone.utc))
+        _close_run(run, success=success, now=datetime.now(UTC))
         run.nodes_completed = nodes_completed
         if number_of_nodes > 0:
             run.number_of_nodes = number_of_nodes

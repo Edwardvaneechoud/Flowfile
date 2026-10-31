@@ -869,7 +869,9 @@ export class FlowToPolarsConverter {
     const leftOn = joinInput.join_mapping.map(jm => jm.left_col)
     const rightOn = joinInput.join_mapping.map(jm => jm.right_col ?? jm.left_col)
     // build_join reads join_type; `how` is core's spelling for the same thing.
-    const how = joinInput.join_type || joinInput.how || 'inner'
+    const strategy = joinInput.join_type || joinInput.how || 'inner'
+    // Polars 2 refuses "outer"; "full" is the same join on every Polars since 1.0.
+    const how = strategy === 'outer' ? 'full' : strategy
     const suffix = joinInput.right_suffix ?? '_right'
 
     this.addCode(`${varName} = ${leftDf}.join(`)

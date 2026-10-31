@@ -409,9 +409,6 @@ class TestRecordIdDeprecation:
     def test_record_id_without_grouping_uses_correct_method(self):
         """Test that record ID without grouping generates working code.
 
-        Note: The code generator uses with_row_count which is deprecated
-        in newer Polars versions (should use with_row_index instead).
-
         Compare flow result with generated code output.
         """
         flow = create_basic_flow()
@@ -927,14 +924,8 @@ class TestDeprecatedMethodUsage:
     be addressed in future updates to the code generator.
     """
 
-    def test_record_id_uses_deprecated_with_row_count(self):
-        """Test that record ID generation uses deprecated with_row_count method.
-
-        BUG: The code generator uses `with_row_count()` which is deprecated
-        in newer Polars versions. It should use `with_row_index()` instead.
-
-        See: https://docs.pola.rs/api/python/stable/reference/lazyframe/api/polars.LazyFrame.with_row_index.html
-        """
+    def test_record_id_uses_with_row_index(self):
+        """Record ID generation uses ``with_row_index``; Polars 2 removed ``with_row_count``."""
         flow = create_basic_flow()
         data = input_schema.NodeManualInput(
             flow_id=1,
@@ -960,16 +951,7 @@ class TestDeprecatedMethodUsage:
 
         code = export_flow_to_polars(flow)
 
-        # Document the deprecated method usage
-        # This test passes when the deprecated method IS used (documenting the bug)
-        # When the code is fixed to use with_row_index, this test should be updated
-        uses_deprecated = "with_row_count" in code
-        uses_modern = "with_row_index" in code
-
-        # Currently the code generator uses the deprecated method
-        assert uses_deprecated or uses_modern, "Neither deprecated nor modern method found"
-
-        # TODO: When fixed, change to: assert uses_modern and not uses_deprecated
+        assert "with_row_index" in code and "with_row_count" not in code
 
     def test_groupby_concat_uses_str_join(self):
         """Test that string concatenation in group_by uses str.join, not the deprecated str.concat.

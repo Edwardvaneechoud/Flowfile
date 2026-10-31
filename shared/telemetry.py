@@ -25,7 +25,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -395,7 +395,7 @@ def _envelope(event: str, props: dict[str, Any], identifier: str) -> dict[str, A
         "app_version": _app_version(),
         "platform": _platform(),
         "mode": _mode(),
-        "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "ts": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "props": _sanitize_props(event, props),
     }
 
@@ -535,7 +535,7 @@ def _spool_batches(entries: list[str], cutoff: datetime):
 
 def _spooled_at(envelope: dict[str, Any]) -> datetime | None:
     try:
-        return datetime.strptime(envelope["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        return datetime.strptime(envelope["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
     except (KeyError, TypeError, ValueError):
         return None
 
@@ -561,7 +561,7 @@ def _drain_spool() -> None:
     if not entries:
         return
 
-    cutoff = datetime.now(timezone.utc) - timedelta(seconds=SPOOL_MAX_AGE_SECONDS)
+    cutoff = datetime.now(UTC) - timedelta(seconds=SPOOL_MAX_AGE_SECONDS)
     resolved = 0
     completed = True
     for batch, consumed in _spool_batches(entries, cutoff):

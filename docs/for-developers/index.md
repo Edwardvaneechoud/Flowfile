@@ -18,7 +18,7 @@ When you write `df.filter(...)`, you programmatically construct a `FlowNode` and
 ### 1. Prerequisites
 To contribute to Flowfile, you should be familiar with:
 
-- **Required Knowledge**: Python 3.10+, and a basic familiarity with Polars or Pandas.
+- **Required Knowledge**: Python 3.11+, and a basic familiarity with Polars or Pandas.
 - **Helpful Knowledge**: Experience with Polars LazyFrames, Directed Acyclic Graphs (DAGs), and Pydantic.
 
 ### 2. Set up your environment

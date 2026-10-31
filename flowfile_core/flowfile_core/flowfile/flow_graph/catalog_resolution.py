@@ -1,6 +1,6 @@
 """Catalog lookups while building and running: table and SQL-view resolution, access checks, virtual plans."""
 
-import io as _io
+import hashlib
 import json
 from pathlib import Path
 from typing import Literal, NamedTuple
@@ -9,12 +9,9 @@ import polars as pl
 
 from flowfile_core.auth import sharing
 from flowfile_core.catalog import CatalogService
-from flowfile_core.catalog.delta_utils import (
-    check_source_versions_current,
-    is_delta_table,
-)
+from flowfile_core.catalog.delta_utils import is_delta_table
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
-from flowfile_core.catalog.storage_backend import _is_cloud_uri, serialized_frame_uses_cloud
+from flowfile_core.catalog.storage_backend import _is_cloud_uri
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import NodeLogger
 from flowfile_core.database import models as db_models
@@ -26,32 +23,18 @@ from flowfile_core.schemas.catalog_schema import scd2_system_columns_missing
 
 
 def _resolve_virtual_table(
-    is_optimized: bool,
-    serialized_lf: bytes | None,
     catalog_table_id: int,
     run_location: Literal["remote", "local"] | None = None,
     node_logger: NodeLogger = None,
-    source_table_versions: str | None = None,
     user_id: int | None = None,
 ) -> pl.LazyFrame:
-    """Resolve a virtual table to a LazyFrame.
-
-    Optimized tables deserialize a stored execution plan if source table
-    versions are still current; otherwise falls back to re-executing
-    the producer flow via CatalogService.
+    """Resolve a virtual table to a LazyFrame by running its producer flow's writer node (CatalogService).
 
     ``user_id`` (the flow's executing principal) is threaded into
     ``resolve_virtual_flow_table`` so a query virtual table's referenced-table
     grants are enforced during flow execution, not just on the API path. ``None``
     means an internal/unscoped run (scheduler, CLI, electron) → unrestricted.
     """
-    if (
-        is_optimized
-        and serialized_lf
-        and not serialized_frame_uses_cloud(serialized_lf)
-        and check_source_versions_current(source_table_versions)
-    ):
-        return pl.LazyFrame.deserialize(_io.BytesIO(serialized_lf))
     with root().get_db_context() as db:
         repo = SQLAlchemyCatalogRepository(db)
         svc = root().CatalogService(repo)
@@ -60,11 +43,25 @@ def _resolve_virtual_table(
         )
 
 
+def _producer_fingerprint(repo: SQLAlchemyCatalogRepository, table) -> str | None:
+    """sha256 of a lazy virtual table's producer flow file, which its output follows; else None."""
+    if not table.is_optimized or not table.producer_registration_id:
+        return None
+    registration = repo.get_flow(table.producer_registration_id)
+    if registration is None or not registration.flow_path:
+        return None
+    try:
+        return hashlib.sha256(Path(registration.flow_path).read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
 class CatalogSqlTables(NamedTuple):
     """Resolved catalog tables for SQL execution."""
 
     table_paths: dict[str, str]
-    virtual_tables: dict[str, tuple[bool, bytes | None, int, str | None]]
+    # name -> (is_optimized, producer_fingerprint, table_id, source_table_versions)
+    virtual_tables: dict[str, tuple[bool, str | None, int, str | None]]
     # Each physical table's namespace_id, for per-catalog storage resolution.
     table_namespaces: dict[str, int | None]
 
@@ -134,7 +131,7 @@ def _resolve_catalog_sql_tables(node_id: int | str, user_id: int | None = None) 
             table_namespaces=dict(answer["table_namespaces"]),
         )
     table_paths: dict[str, str] = {}
-    virtual_tables: dict[str, tuple[bool, bytes | None, int, str | None]] = {}
+    virtual_tables: dict[str, tuple[bool, str | None, int, str | None]] = {}
     table_namespaces: dict[str, int | None] = {}
     try:
         with get_db_context() as db:
@@ -155,7 +152,7 @@ def _resolve_catalog_sql_tables(node_id: int | str, user_id: int | None = None) 
                 if t.table_type == "virtual":
                     virtual_tables[t.name] = (
                         t.is_optimized,
-                        t.serialized_lazy_frame,
+                        _producer_fingerprint(repo, t),
                         t.id,
                         t.source_table_versions,
                     )
@@ -177,7 +174,7 @@ class CatalogTableInfo(NamedTuple):
 
     file_path: str | None
     table_type: str
-    serialized_lf: bytes | None
+    producer_fingerprint: str | None
     is_optimized: bool
     source_table_versions: str | None = None
     # False when the principal may not read the table; the reader then fails closed.
@@ -242,7 +239,7 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
         )
     file_path: str | None = None
     table_type: str = "physical"
-    serialized_lf: bytes | None = None
+    producer_fingerprint: str | None = None
     is_optimized: bool = False
     source_table_versions: str | None = None
     resolved_table_id: int | None = None
@@ -291,7 +288,7 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
                 table_type = table_record.table_type
                 if table_type == "virtual":
                     is_optimized = table_record.is_optimized
-                    serialized_lf = table_record.serialized_lazy_frame
+                    producer_fingerprint = _producer_fingerprint(repo, table_record)
                     source_table_versions = table_record.source_table_versions
                 else:
                     file_path = table_record.file_path
@@ -321,7 +318,7 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
     return CatalogTableInfo(
         file_path=file_path,
         table_type=table_type,
-        serialized_lf=serialized_lf,
+        producer_fingerprint=producer_fingerprint,
         is_optimized=is_optimized,
         source_table_versions=source_table_versions,
         table_id=resolved_table_id,

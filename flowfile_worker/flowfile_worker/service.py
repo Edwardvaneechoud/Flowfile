@@ -15,7 +15,6 @@ the calling process instead of a child.
 """
 
 import functools
-import io
 import json
 import os
 import re
@@ -32,6 +31,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from flowfile_worker import CACHE_EXPIRATION_TIME, PROCESS_MEMORY_USAGE, models, status_dict, status_dict_lock
+from flowfile_worker.arrow_sample import sample_stream
 from flowfile_worker.configs import logger
 from flowfile_worker.create import table_creator_factory_method
 from flowfile_worker.create.models import ReceivedTable
@@ -644,9 +644,7 @@ def sample(result_id: str, n: int) -> bytes:
     if record is None:
         raise _not_held(result_id)
     if record.state == "materialised" and n <= SAMPLE_ROWS_IN_PARENT:
-        buffer = io.BytesIO()
-        pl.scan_ipc(record.path).head(n).collect().write_ipc_stream(buffer)
-        return buffer.getvalue()
+        return sample_stream(pl.scan_ipc(record.path).head(n).collect())
     plan = pl.scan_ipc(record.path).serialize() if record.state == "materialised" else record.plan
     return _run_child(record, plan, "submit_result", {"materialise": False, "preview_rows": n})["sample"]
 

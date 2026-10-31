@@ -475,7 +475,7 @@ from the volume kernels actually mount. Tests avoid this by passing the path exp
 | 001 | initial_schema | Baseline schema. |
 | 002 | virtual_flow_tables | Virtual flow table support. |
 | 003 | query_virtual_tables | `sql_query` column for query-based virtual tables. |
-| 004 | polars_plan | `polars_plan` column (optimized virtual-table query plans). |
+| 004 | polars_plan | `polars_plan` column (optimized virtual-table query plans; since 039 the readable producer steps of every flow virtual table). |
 | 005 | source_table_versions | Staleness detection for virtual tables. |
 | 006 | normalize_run_type | Data fix: remap leaked engine run kinds (`fetch_one`/`full_run`/`init`) in `flow_runs.run_type` → `in_designer_run` (they failed Pydantic validation on `GET /catalog/runs`). |
 | 007 | analytics_data | `google_analytics_connections` + schema-drift cleanup. |

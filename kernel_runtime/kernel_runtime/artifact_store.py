@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import sys
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -101,7 +101,7 @@ class ArtifactStore:
                         "module": meta.get("module", type(obj).__module__),
                         "node_id": meta.get("node_id", -1),
                         "flow_id": flow_id,
-                        "created_at": meta.get("created_at", datetime.now(timezone.utc).isoformat()),
+                        "created_at": meta.get("created_at", datetime.now(UTC).isoformat()),
                         "size_bytes": meta.get("size_bytes", sys.getsizeof(obj)),
                         "persisted": True,
                         "recovered": True,
@@ -182,7 +182,7 @@ class ArtifactStore:
                     "module": meta.get("module", type(obj).__module__),
                     "node_id": meta.get("node_id", -1),
                     "flow_id": flow_id,
-                    "created_at": meta.get("created_at", datetime.now(timezone.utc).isoformat()),
+                    "created_at": meta.get("created_at", datetime.now(UTC).isoformat()),
                     "size_bytes": meta.get("size_bytes", sys.getsizeof(obj)),
                     "persisted": True,
                     "recovered": True,
@@ -210,7 +210,7 @@ class ArtifactStore:
                 "module": type(obj).__module__,
                 "node_id": node_id,
                 "flow_id": flow_id,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
                 "size_bytes": sys.getsizeof(obj),
                 "persisted": False,
                 "persist_pending": self._persistence is not None,

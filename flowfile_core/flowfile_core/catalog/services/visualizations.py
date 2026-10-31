@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy.exc import IntegrityError
@@ -273,7 +273,7 @@ class VisualizationService:
         if payload.expected_updated_at is not None and viz.updated_at != payload.expected_updated_at:
             raise StaleWriteError("visualization", viz_id, expected=payload.expected_updated_at, current=viz.updated_at)
         # Atomic guard (see repo docstring); must precede attribute edits (autoflush would fire onupdate).
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if not self.repo.stamp_visualization_updated_at(viz_id, payload.expected_updated_at, now):
             if payload.expected_updated_at is None:
                 raise VisualizationNotFoundError(viz_id=viz_id)
@@ -429,7 +429,7 @@ class VisualizationService:
                 raise ValueError("layout cannot be cleared")
             self._validate_filter_datasources(payload.layout)
             dashboard.layout_json = payload.layout.model_dump_json()
-        dashboard.updated_at = datetime.now(timezone.utc)
+        dashboard.updated_at = datetime.now(UTC)
         updated = self.repo.update_dashboard(dashboard)
         _project_sync_dashboards(user_id)
         return self._dashboard_to_out(updated)

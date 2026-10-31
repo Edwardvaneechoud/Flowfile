@@ -629,7 +629,7 @@ def test_metadata_lookups_answer_from_the_installed_hook_and_read_the_catalog_wi
     calls: list[tuple[str, dict]] = []
     answers = {
         "namespaces": [{"id": 5, "name": "Remote", "parent_id": None}],
-        "catalog_table": {"file_path": "s3://bucket/catalog/t", "table_type": "physical", "serialized_lf": None,
+        "catalog_table": {"file_path": "s3://bucket/catalog/t", "table_type": "physical", "producer_fingerprint": None,
                           "is_optimized": False},
     }  # fmt: skip
 

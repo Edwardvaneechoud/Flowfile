@@ -11,7 +11,7 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 import polars as pl
-from polars.exceptions import InvalidOperationError, PanicException
+from polars.exceptions import InvalidOperationError
 
 from shared.cloud_storage.gcs import sink_to_gcs, write_delta_to_gcs
 from shared.cloud_storage.utils import normalize_delta_path
@@ -21,11 +21,8 @@ _default_logger = logging.getLogger(__name__)
 
 
 def _collect_lazy_frame(lf: pl.LazyFrame) -> pl.DataFrame:
-    """Collect a LazyFrame, falling back to in-memory if streaming fails."""
-    try:
-        return lf.collect(engine="streaming")
-    except PanicException:
-        return lf.collect(engine="in-memory")
+    """Collect a LazyFrame on Polars' default engine, for the writers that need a DataFrame."""
+    return lf.collect()
 
 
 def write_parquet_to_cloud(

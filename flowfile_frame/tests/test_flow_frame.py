@@ -335,7 +335,7 @@ def test_join_not_in_graph():
     result = df1.join(df2, on="id").collect()
     assert len(result) == 2  # Only matches for id 1 and 2
     assert result.columns == ["id", "name", "age"]
-    assert_frame_equal(result, df1.data.join(df2.data, on="id").collect())
+    assert_frame_equal(result.sort("id"), df1.data.join(df2.data, on="id").collect().sort("id"))
 
 
 def test_join():
@@ -854,9 +854,9 @@ def test_read_csv_parameter_variations():
         assert result["first_name"][0] == "Alice"
 
         df = read_csv(tmp_path, separator=";",
-                      new_columns=["user_id", "first", "last"])
+                      new_columns=["user_id", "first", "last", "pay", "on"])
         result = df.collect()
-        assert result.columns[:3] == ["user_id", "first", "last"]
+        assert result.columns == ["user_id", "first", "last", "pay", "on"]
         df = read_csv(tmp_path, separator=";", has_header=False)
 
         result = df.collect()
@@ -1018,7 +1018,7 @@ def test_read_csv_integration():
         df2 = read_csv(tmp2_path, flow_graph=df1.flow_graph)
 
         joined = df1.join(df2, on="id", how="left")
-        result = joined.collect()
+        result = joined.collect().sort("id")
 
         assert len(result) == 3  # All rows from df1
         assert result["id"].to_list() == [1, 2, 3]

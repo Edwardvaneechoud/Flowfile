@@ -379,7 +379,7 @@ class TestGroupByFrame:
     def test_group_by_mixed_column_types(self, sales_data):
         """Test grouping with a mix of string columns and expressions."""
         sales_with_date = sales_data.with_columns(
-            col("date").cast(pl.Date).alias("order_date")
+            col("date").str.to_date("%Y-%m-%d").alias("order_date")
         )
 
         result = sales_with_date.with_columns(
@@ -404,7 +404,7 @@ class TestGroupByFrame:
     def test_group_by_maintain_order(self, sales_data):
         """Test grouping with maintain_order parameter."""
         result = sales_data.group_by("region", maintain_order=True).count().collect()
-        expected_result = sales_data.data.group_by("region", maintain_order=True).count().collect()
+        expected_result = sales_data.data.group_by("region", maintain_order=True).len(name="count").collect()
         assert_frame_equal(result, expected_result)
 
     def test_group_by_with_description(self, sales_data):

@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 import numpy as np
 import polars as pl
 import pytest
-from polars import FLOAT_DTYPES, NUMERIC_DTYPES
 from polars.exceptions import (
     InvalidOperationError,
     PolarsInefficientMapWarning,
@@ -20,6 +19,13 @@ from polars.testing import assert_frame_equal, assert_series_equal
 
 import flowfile_frame as fl
 from flowfile_frame.flow_frame import FlowFrame
+
+# Polars 2 dropped its dtype groups; these are the 1.x members.
+FLOAT_DTYPES = (pl.Float16, pl.Float32, pl.Float64)
+NUMERIC_DTYPES = (
+    *FLOAT_DTYPES, pl.Decimal, pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.Int128,
+    pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64, pl.UInt128,
+)
 
 
 @pytest.fixture
@@ -377,12 +383,6 @@ def test_inspect(capsys: CaptureFixture[str]) -> None:
     assert len(res.out) > 0
 
 
-@pytest.mark.may_fail_auto_streaming
-def test_fetch(fruits_cars: FlowFrame) -> None:
-    res = fruits_cars.lazy().select("*").fetch(2)
-    assert_frame_equal(res, res[:2])
-
-
 def test_fold_filter() -> None:
 
     def f(a, b):
@@ -468,12 +468,12 @@ def test_head_group_by() -> None:
     ldf = FlowFrame(
         {"letters": ["c", "c", "a", "c", "a", "b"], "nrs": [1, 2, 3, 4, 5, 6]}
     )
-    out = ldf.group_by("letters").tail(2).sort("letters")
+    out = ldf.group_by("letters").tail(2).sort("letters", "nrs")
     assert_frame_equal(
         out.collect(),
         pl.DataFrame({"letters": ["a", "a", "b", "c", "c"], "nrs": [3, 5, 6, 2, 4]}),
     )
-    out = ldf.group_by("letters").head(2).sort("letters")
+    out = ldf.group_by("letters").head(2).sort("letters", "nrs")
     assert_frame_equal(
         out.collect(),
         pl.DataFrame({"letters": ["a", "a", "b", "c", "c"], "nrs": [3, 5, 6, 1, 2]}),

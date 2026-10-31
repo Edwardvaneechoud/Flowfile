@@ -94,7 +94,7 @@ def test_worker_collects_a_plan_whose_credentials_are_encrypted(monkeypatch, wor
         blob = plan.serialize()
         assert MINIO_SECRET_KEY.encode() not in blob
 
-        assert utils.collect_lazy_frame(pl.LazyFrame.deserialize(io.BytesIO(blob))).height == 3
+        assert pl.LazyFrame.deserialize(io.BytesIO(blob)).collect().height == 3
     finally:
         client = get_minio_client()
         client.delete_object(Bucket=_BUCKET, Key=path.removeprefix(f"s3://{_BUCKET}/"))
