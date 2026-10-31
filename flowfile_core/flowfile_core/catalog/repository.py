@@ -10,7 +10,7 @@ from collections.abc import Collection
 from datetime import datetime, timedelta
 from typing import Protocol, runtime_checkable
 
-from sqlalchemy import case, func
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth import sharing
@@ -130,6 +130,11 @@ class CatalogRepository(Protocol):
         run_type: RunType | None = None,
         limit: int = 50,
         offset: int = 0,
+        search: str | None = None,
+        *,
+        visible_user_id: int | None = None,
+        visible_flow_ids: Collection[int] = (),
+        visible_namespace_ids: Collection[int] = (),
     ) -> list[FlowRun]: ...
 
     def create_run(self, run: FlowRun) -> FlowRun: ...
@@ -141,6 +146,10 @@ class CatalogRepository(Protocol):
         registration_id: int | None = None,
         schedule_id: int | None = None,
         run_type: RunType | None = None,
+        *,
+        visible_user_id: int | None = None,
+        visible_flow_ids: Collection[int] = (),
+        visible_namespace_ids: Collection[int] = (),
     ) -> int: ...
 
     def count_runs_by_status(
@@ -148,6 +157,11 @@ class CatalogRepository(Protocol):
         registration_id: int | None = None,
         schedule_id: int | None = None,
         run_type: RunType | None = None,
+        search: str | None = None,
+        *,
+        visible_user_id: int | None = None,
+        visible_flow_ids: Collection[int] = (),
+        visible_namespace_ids: Collection[int] = (),
     ) -> dict[str, int]: ...
 
     # -- Favorites -----------------------------------------------------------
@@ -295,7 +309,13 @@ class CatalogRepository(Protocol):
 
     # -- Active run operations -----------------------------------------------
 
-    def list_active_runs(self) -> list[FlowRun]: ...
+    def list_active_runs(
+        self,
+        *,
+        visible_user_id: int | None = None,
+        visible_flow_ids: Collection[int] = (),
+        visible_namespace_ids: Collection[int] = (),
+    ) -> list[FlowRun]: ...
 
     def has_active_run(self, registration_id: int) -> bool: ...
 
@@ -623,8 +643,18 @@ class SQLAlchemyCatalogRepository:
         schedule_id: int | None = None,
         run_type: RunType | None = None,
         search: str | None = None,
+        visible_user_id: int | None = None,
+        visible_flow_ids: Collection[int] = (),
+        visible_namespace_ids: Collection[int] = (),
     ):
-        """Apply the standard run filters to a FlowRun query."""
+        """Apply the standard run filters to a FlowRun query.
+
+        ``visible_user_id`` limits the query to the runs that user may see: runs
+        they started, runs of a flow in ``visible_flow_ids``, and runs of a flow
+        registered in a namespace in ``visible_namespace_ids``. ``None`` leaves
+        the query unrestricted. The filter is part of the SQL, so pagination and
+        counts are computed over the visible set.
+        """
         if registration_id is not None:
             q = q.filter(self._runs_of_registration(registration_id))
         if schedule_id is not None:
@@ -633,6 +663,17 @@ class SQLAlchemyCatalogRepository:
             q = q.filter(FlowRun.run_type == run_type)
         if search:
             q = q.filter(FlowRun.flow_name.ilike(f"%{search}%"))
+        if visible_user_id is not None:
+            flows_in_visible_namespaces = select(FlowRegistration.id).where(
+                FlowRegistration.namespace_id.in_(list(visible_namespace_ids))
+            )
+            q = q.filter(
+                or_(
+                    FlowRun.user_id == visible_user_id,
+                    FlowRun.registration_id.in_(list(visible_flow_ids)),
+                    FlowRun.registration_id.in_(flows_in_visible_namespaces),
+                )
+            )
         return q
 
     def count_flows_in_namespace(self, namespace_id: int) -> int:
@@ -731,6 +772,10 @@ class SQLAlchemyCatalogRepository:
         limit: int = 50,
         offset: int = 0,
         search: str | None = None,
+        *,
+        visible_user_id: int | None = None,
+        visible_flow_ids: Collection[int] = (),
+        visible_namespace_ids: Collection[int] = (),
     ) -> list[FlowRun]:
         q = self._apply_run_filters(
             self._db.query(FlowRun),
@@ -738,6 +783,9 @@ class SQLAlchemyCatalogRepository:
             schedule_id=schedule_id,
             run_type=run_type,
             search=search,
+            visible_user_id=visible_user_id,
+            visible_flow_ids=visible_flow_ids,
+            visible_namespace_ids=visible_namespace_ids,
         )
         return q.order_by(FlowRun.started_at.desc()).offset(offset).limit(limit).all()
 
@@ -757,12 +805,19 @@ class SQLAlchemyCatalogRepository:
         registration_id: int | None = None,
         schedule_id: int | None = None,
         run_type: RunType | None = None,
+        *,
+        visible_user_id: int | None = None,
+        visible_flow_ids: Collection[int] = (),
+        visible_namespace_ids: Collection[int] = (),
     ) -> int:
         return self._apply_run_filters(
             self._db.query(FlowRun),
             registration_id=registration_id,
             schedule_id=schedule_id,
             run_type=run_type,
+            visible_user_id=visible_user_id,
+            visible_flow_ids=visible_flow_ids,
+            visible_namespace_ids=visible_namespace_ids,
         ).count()
 
     def count_runs_by_status(
@@ -771,6 +826,10 @@ class SQLAlchemyCatalogRepository:
         schedule_id: int | None = None,
         run_type: RunType | None = None,
         search: str | None = None,
+        *,
+        visible_user_id: int | None = None,
+        visible_flow_ids: Collection[int] = (),
+        visible_namespace_ids: Collection[int] = (),
     ) -> dict[str, int]:
         from sqlalchemy import case, func
 
@@ -785,6 +844,9 @@ class SQLAlchemyCatalogRepository:
             schedule_id=schedule_id,
             run_type=run_type,
             search=search,
+            visible_user_id=visible_user_id,
+            visible_flow_ids=visible_flow_ids,
+            visible_namespace_ids=visible_namespace_ids,
         )
         row = q.one()
         return {"total": row.total, "success": row.success, "failed": row.failed, "running": row.running}
@@ -1295,9 +1357,21 @@ class SQLAlchemyCatalogRepository:
 
     # -- Active run operations -----------------------------------------------
 
-    def list_active_runs(self) -> list[FlowRun]:
+    def list_active_runs(
+        self,
+        *,
+        visible_user_id: int | None = None,
+        visible_flow_ids: Collection[int] = (),
+        visible_namespace_ids: Collection[int] = (),
+    ) -> list[FlowRun]:
         """Return runs that have not yet ended (ended_at IS NULL)."""
-        return self._db.query(FlowRun).filter(FlowRun.ended_at.is_(None)).order_by(FlowRun.started_at.desc()).all()
+        q = self._apply_run_filters(
+            self._db.query(FlowRun).filter(FlowRun.ended_at.is_(None)),
+            visible_user_id=visible_user_id,
+            visible_flow_ids=visible_flow_ids,
+            visible_namespace_ids=visible_namespace_ids,
+        )
+        return q.order_by(FlowRun.started_at.desc()).all()
 
     def has_active_run(self, registration_id: int) -> bool:
         """Check if a flow already has an active (unfinished) run."""

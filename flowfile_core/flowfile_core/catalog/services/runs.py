@@ -6,6 +6,7 @@ import logging
 import os
 import signal
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from flowfile_core.catalog.exceptions import (
     FlowAlreadyRunningError,
@@ -25,14 +26,51 @@ from flowfile_core.schemas.catalog_schema import (
 from shared.run_logs import SUBPROCESS_RUN_TYPES, run_log_path
 from shared.subprocess_utils import spawn_flow_subprocess
 
+if TYPE_CHECKING:
+    from flowfile_core.catalog.access import AccessResolver
+
 logger = logging.getLogger(__name__)
 
 
 class FlowRunService:
-    """Owns FlowRun lifecycle: list, fetch, start, complete, cancel."""
+    """Owns FlowRun lifecycle: list, fetch, start, complete, cancel.
 
-    def __init__(self, repo: CatalogRepository) -> None:
+    With a restricted ``access`` resolver, run history (lists, counts, active
+    runs, run detail) covers only the runs the caller may see: runs they
+    started, runs of a flow they own or were granted, and runs of a flow
+    registered in a namespace they can see.
+    """
+
+    def __init__(self, repo: CatalogRepository, access: AccessResolver | None = None) -> None:
         self.repo = repo
+        # None (internal callers, electron mode, tests) is unrestricted.
+        self._access = access
+
+    def visible_run_filters(self) -> dict:
+        """Keyword filters that limit a repository run query to the caller's visible runs.
+
+        Empty when the caller is unrestricted, so the query is unchanged.
+        """
+        if self._access is None or not self._access.restricted:
+            return {}
+        return {
+            "visible_user_id": self._access.user_id,
+            "visible_flow_ids": self._access.accessible_ids("flow"),
+            "visible_namespace_ids": self._access.visible_namespace_ids(),
+        }
+
+    def is_visible(self, run: FlowRun) -> bool:
+        """Whether the caller may see ``run``; the per-row form of ``visible_run_filters``."""
+        if self._access is None or not self._access.restricted:
+            return True
+        if run.user_id == self._access.user_id:
+            return True
+        if run.registration_id is None:
+            return False
+        if run.registration_id in self._access.accessible_ids("flow"):
+            return True
+        reg = self.repo.get_flow(run.registration_id)
+        return reg is not None and reg.namespace_id in self._access.visible_namespace_ids()
 
     @staticmethod
     def _resolve_log_path(run_id: int, run_type: str) -> str | None:
@@ -73,6 +111,7 @@ class FlowRunService:
         search: str | None = None,
     ) -> PaginatedFlowRuns:
         """List run summaries (without snapshots) with total count for pagination."""
+        visible = self.visible_run_filters()
         runs = self.repo.list_runs(
             registration_id=registration_id,
             schedule_id=schedule_id,
@@ -80,9 +119,10 @@ class FlowRunService:
             limit=limit,
             offset=offset,
             search=search,
+            **visible,
         )
         counts = self.repo.count_runs_by_status(
-            registration_id=registration_id, schedule_id=schedule_id, run_type=run_type, search=search
+            registration_id=registration_id, schedule_id=schedule_id, run_type=run_type, search=search, **visible
         )
         name_overrides = self._display_names_for(runs)
         return PaginatedFlowRuns(
@@ -94,9 +134,12 @@ class FlowRunService:
         )
 
     def get_run_detail(self, run_id: int) -> FlowRunDetail:
-        """Get a single run including the YAML snapshot."""
+        """Get a single run including the YAML snapshot.
+
+        A run the caller may not see is reported as not found, so its id reveals nothing.
+        """
         run = self.repo.get_run(run_id)
-        if run is None:
+        if run is None or not self.is_visible(run):
             raise RunNotFoundError(run_id=run_id)
         display_name = None
         if run.registration_id is not None:
@@ -311,7 +354,7 @@ class FlowRunService:
 
     def list_active_runs(self) -> list[ActiveFlowRun]:
         """List all currently running flows (ended_at IS NULL)."""
-        runs = self.repo.list_active_runs()
+        runs = self.repo.list_active_runs(**self.visible_run_filters())
         return [
             ActiveFlowRun(
                 id=r.id,
