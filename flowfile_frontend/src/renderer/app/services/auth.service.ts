@@ -23,6 +23,27 @@ interface UserInfo {
   id?: number;
 }
 
+/**
+ * Read `exp` and `sub` from a JWT payload, or `null` when the token is
+ * malformed, lacks either claim, or has already expired.
+ */
+function decodeTokenClaims(token: string): { exp: number; sub: string } | null {
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const binary = atob(parts[1].replace(/-/g, "+").replace(/_/g, "/"));
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    const payload: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    if (typeof payload !== "object" || payload === null) return null;
+    const { exp, sub } = payload as { exp?: unknown; sub?: unknown };
+    if (typeof exp !== "number" || typeof sub !== "string" || !sub) return null;
+    if (exp * 1000 <= Date.now()) return null;
+    return { exp, sub };
+  } catch {
+    return null;
+  }
+}
+
 class AuthService {
   private token = ref<string | null>(null);
   private tokenExpiration = ref<number | null>(null);
@@ -92,6 +113,7 @@ class AuthService {
   }
 
   async initialize(): Promise<boolean> {
+    this.takeTokenFromFragment();
     this.clearStoredTokens();
 
     if (this.hasValidToken()) {
@@ -105,6 +127,25 @@ class AuthService {
 
     // In Docker/web mode, require manual login.
     return false;
+  }
+
+  /**
+   * Adopt a session handed over as `#token=<jwt>` by a server that already signed
+   * the person in; a fragment never reaches a server or its access logs. The
+   * signature is not checked here: the backend verifies the token on every request.
+   */
+  private takeTokenFromFragment(): void {
+    const token = new URLSearchParams(window.location.hash.slice(1)).get("token");
+    if (token === null) return;
+
+    const { pathname, search } = window.location;
+    window.history.replaceState(window.history.state, "", pathname + search);
+
+    const claims = decodeTokenClaims(token);
+    if (!claims) return;
+    // A refresh token left from an earlier sign-in would renew a different session.
+    localStorage.removeItem("auth_refresh_token");
+    this.setToken(token, claims.exp * 1000, claims.sub);
   }
 
   async login(username: string, password: string): Promise<boolean> {
