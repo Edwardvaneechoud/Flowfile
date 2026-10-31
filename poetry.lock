@@ -1498,26 +1498,34 @@ standard-no-fastapi-cloud-cli = ["email-validator (>=2.0.0)", "fastapi-cli[stand
 
 [[package]]
 name = "fastexcel"
-version = "0.12.1"
+version = "0.21.0"
 description = "A fast excel file reader for Python, written in Rust"
 optional = false
-python-versions = ">=3.8"
+python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "fastexcel-0.12.1-cp38-abi3-macosx_10_12_x86_64.whl", hash = "sha256:7c4c959a49329a53540ed86d4f92cd4af2d774b08c47ad190841e4daf042758a"},
-    {file = "fastexcel-0.12.1-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:e889290b2d1437e57c4fb500657f0d2908de6aa5b291475b93e3b5d7e0cea938"},
-    {file = "fastexcel-0.12.1-cp38-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:c09119f14760dfee0c1cb94ef281bee2abb844975fdf0fbf34c5b836ff58d39d"},
-    {file = "fastexcel-0.12.1-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a169b72df88406007d8449a4b216effddeaad5e9d73f4de1fbd8cbfd6ce6a01c"},
-    {file = "fastexcel-0.12.1-cp38-abi3-win_amd64.whl", hash = "sha256:5c1868546ae0912040449e0b26dd4759db3f76a94e0fa5ac3c86fdaf54185e9c"},
-    {file = "fastexcel-0.12.1.tar.gz", hash = "sha256:5dc2f1ff3ddff6c933d1f924add7f7f5dc20388c1e70b22afae0f28b3c4f01c9"},
+    {file = "fastexcel-0.21.0-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:c3e7ab5d8c8b6c5a787aaf2b64604bd8b93b94694920a2ed731ea556a81d9a35"},
+    {file = "fastexcel-0.21.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:768b663728cb5f29e159428fdf3a3f74e379534c2f0304b300bd95039d482abe"},
+    {file = "fastexcel-0.21.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:3c6e66906fe3b9f68f94c4c94e2ac21b6eebd862b703983c8e0c009f91c71754"},
+    {file = "fastexcel-0.21.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9ddb458fecbbf1804c0952155fb99d18025d86e345b57a5435e0553944f25578"},
+    {file = "fastexcel-0.21.0-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:0376944edf90c98008b49b200f7354122ba9abac6c21bab76487655738b041b7"},
+    {file = "fastexcel-0.21.0-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:e919a4eaa15330341744cfee33d1f87d041d08228ce68809790e3738e80811e8"},
+    {file = "fastexcel-0.21.0-cp310-abi3-win_amd64.whl", hash = "sha256:e1db4666a0790b48c76bb5a43cda06ffecebb22706f9ac6b3f07bcb0e7336134"},
+    {file = "fastexcel-0.21.0-cp310-abi3-win_arm64.whl", hash = "sha256:86af0a1e3c3d8657916ea434f11636df4e4b49e0cf665b4ea39349a83d4ca3c8"},
+    {file = "fastexcel-0.21.0-cp314-cp314t-macosx_10_12_x86_64.whl", hash = "sha256:f6cf28f5f3fed1f34aa15bf021d2c04bf947720df70f54b131258c913bc3b4cf"},
+    {file = "fastexcel-0.21.0-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:ef2a6953e8350966d32632e3bc064edaab64ea2899f2027e564269fa7d75fb58"},
+    {file = "fastexcel-0.21.0-cp314-cp314t-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:6f8fdbfd80647714a2b3d49de2517d0466f6c046aa215c16fb569c48aef8d0ee"},
+    {file = "fastexcel-0.21.0-cp314-cp314t-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:47c6f42b3b82a158e4e6c4e1ed53ba0b96cec132d1fed828c8411e6f6ba5caab"},
+    {file = "fastexcel-0.21.0-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:bce27f751cf1661f823088e89c11375448d19e425e3c3aa993c356720305c873"},
+    {file = "fastexcel-0.21.0-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:1a5742e598516734740ef4142cf3328d6ef6c8e43947d9a66d6a91a5d9bfa3ec"},
+    {file = "fastexcel-0.21.0-cp314-cp314t-win_amd64.whl", hash = "sha256:fe52f6053aac6ff3b8cc879052b671af9cb3ada16853b1c8b4bcac44574e4c10"},
+    {file = "fastexcel-0.21.0.tar.gz", hash = "sha256:07313c1267ab47ba639abf1122efd5985a1fb08efc996194f422ab17f06149c5"},
 ]
 
-[package.dependencies]
-pyarrow = ">=8.0.0"
-
 [package.extras]
-pandas = ["pandas (>=1.4.4)"]
-polars = ["polars (>=0.16.14)"]
+pandas = ["pandas (>=1.4.4)", "pyarrow (>=8.0.0)"]
+polars = ["polars (>=1)"]
+pyarrow = ["pyarrow (>=8.0.0)"]
 
 [[package]]
 name = "fastuuid"
@@ -6946,4 +6954,4 @@ yxdb = ["yxdb"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "af37a213dce63c5a9fe4aefded6974f2466f8cb20b8d1aa24f56a614d94c713f"
+content-hash = "982732a7ecad4746cc1d9744cb91fd1c19159ee313f498d045f61f8a8b95b626"

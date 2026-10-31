@@ -147,7 +147,7 @@ def test_new_source_joined_to_a_session_frame_keeps_every_node_id(mode):
     assert {k: after[k] for k in before} == before
     assert (orders.node_id, filtered.node_id) == tuple(sorted(before))
     assert joined.flow_graph is mode.graph
-    assert joined.collect()["name"].to_list() == ["Ann", "Bob"]
+    assert joined.collect().sort("id")["name"].to_list() == ["Ann", "Bob"]
 
 
 def test_merge_with_another_graph_is_refused(mode):

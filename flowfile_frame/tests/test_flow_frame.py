@@ -356,7 +356,7 @@ def test_join():
 
     result = df1.join(df2, on="id", how="left").collect()
     assert len(result) == 3  # All rows from df1
-    assert result["name"].to_list() == ["Alice", "Bob", "Charlie"]
+    assert result.sort("id")["name"].to_list() == ["Alice", "Bob", "Charlie"]
 
     df3 = FlowFrame({
         "user_id": [1, 2, 4],
