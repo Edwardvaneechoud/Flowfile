@@ -241,13 +241,22 @@ WORKER_URL = config("FLOWFILE_WORKER_URL", cast=str, default=get_default_worker_
 WORKER_ADDRESS_CONFIGURED = bool(config("FLOWFILE_WORKER_URL", cast=str, default="")) or bool(os.getenv("WORKER_HOST"))
 TEMP_DIR = storage.temp_directory
 
-# "electron" (desktop app), "package" (Python package) or "docker" (container).
+# "electron" (desktop app), "package" (Python package), "docker" (container) or "hub" (server behind a hub).
 FLOWFILE_MODE = os.getenv("FLOWFILE_MODE", "electron")
 
 
 def is_docker_mode() -> bool:
     """Check if running in Docker container mode"""
     return FLOWFILE_MODE == "docker"
+
+
+def is_server_mode() -> bool:
+    """Check if running as a multi-user server: the docker image or a node behind a hub.
+
+    Gates server security (a configured master key, an admin user seeded from the environment), not container
+    plumbing, which stays on ``is_docker_mode()``. Reads ``FLOWFILE_MODE`` per call, as those gates always have.
+    """
+    return os.environ.get("FLOWFILE_MODE") in ("docker", "hub")
 
 
 def is_electron_mode() -> bool:
