@@ -51,29 +51,6 @@ from tests.conftest import Call, closed_url, protocol_states, spy
 from typing import Literal
 
 
-def _find_parent_directory(target_dir_name: str) -> Path:
-    current_path = Path(__file__)
-    while current_path != current_path.parent:
-        if current_path.name == target_dir_name:
-            return current_path
-        current_path = current_path.parent
-    raise FileNotFoundError(f"Directory '{target_dir_name}' not found")
-
-
-def find_parent_directory(target_dir_name, start_path=None):
-    """Navigate up directories until finding the target directory"""
-    current_path = Path(start_path) if start_path else Path.cwd()
-
-    while current_path != current_path.parent:
-        if current_path.name == target_dir_name:
-            return current_path
-        if current_path.name == target_dir_name:
-            return current_path
-        current_path = current_path.parent
-
-    raise FileNotFoundError(f"Directory '{target_dir_name}' not found")
-
-
 ExecutionModeLit = Literal["Development", "Performance"]
 ExecutionLocationLit = Literal["remote", "local"]
 
@@ -145,8 +122,8 @@ def create_graph_with_read_and_select(flow_id: int = 10,
     """
     graph = create_graph(execution_mode=execution_mode, flow_id=flow_id, execution_location=execution_location)
     file_path = str(
-        _find_parent_directory('Flowfile')
-        / 'flowfile_core' / 'tests' / 'support_files' / 'data' / 'fake_data.parquet'
+        Path(__file__).resolve().parents[2]
+        / 'support_files' / 'data' / 'fake_data.parquet'
     )
     add_node_promise(graph, 'read', node_id=1)
     read_node = input_schema.NodeRead(
@@ -450,6 +427,90 @@ class TestExecutorIntegration:
 def _held_ref_state(graph: FlowGraph, node_id: int) -> str | None:
     ref = graph.get_node(node_id).results.result_ref
     return None if ref is None else ref.state
+
+
+def test_is_cached_uses_held_materialised_result_without_backend_query():
+    graph = create_graph()
+    add_manual_input(graph, [{"a": 1}], node_id=1)
+    node = graph.get_node(1)
+    node.node_settings.cache_results = True
+    node.results.result_ref = ResultRef(
+        backend_id="worker",
+        result_id=node.hash,
+        schema=[],
+        row_count=1,
+        state="materialised",
+        location=b"",
+    )
+
+    with patch.object(registry, "backend") as lookup:
+        assert node.is_cached is True
+        node.results.reset()
+        assert node.is_cached is True  # Upstream deliberately retains the held reference across reset.
+        node.node_settings.cache_results = False
+        assert node.is_cached is False
+        node.node_settings.cache_results = True
+        node.invalidate_cache()
+        assert node.is_cached is False
+        lookup.assert_not_called()
+        node.release_result()
+        assert node.results.result_ref is None
+        assert node.is_cached is False
+
+
+def test_is_cached_rejects_deferred_or_stale_results():
+    graph = create_graph()
+    add_manual_input(graph, [{"a": 1}], node_id=1)
+    node = graph.get_node(1)
+    node.node_settings.cache_results = True
+    assert node.is_cached is False
+    ref = ResultRef(
+        backend_id="worker",
+        result_id=node.hash,
+        schema=[],
+        row_count=1,
+        state="deferred",
+        location=b"",
+    )
+    node.results.result_ref = ref
+    assert node.is_cached is False
+
+    node.results.result_ref = ResultRef(
+        backend_id="worker",
+        result_id="stale-hash",
+        schema=[],
+        row_count=1,
+        state="materialised",
+        location=b"",
+    )
+    assert node.is_cached is False
+
+
+@pytest.mark.parametrize("validation_enabled", [True, False])
+def test_settings_validation_reports_cached_nodes_without_running_them(validation_enabled):
+    from flowfile_core.routes import routes
+
+    graph = create_graph()
+    graph.flow_settings.validate_settings = validation_enabled
+    add_manual_input(graph, [{"a": 1}], node_id=1)
+    node = graph.get_node(1)
+    node.node_settings.cache_results = True
+    node.results.result_ref = ResultRef(
+        backend_id="worker",
+        result_id=node.hash,
+        schema=[],
+        row_count=1,
+        state="materialised",
+        location=b"",
+    )
+
+    with patch.object(routes, "get_flow_or_404", return_value=graph), patch.object(registry, "backend") as lookup:
+        result = routes.get_flow_settings_validation(graph.flow_id, current_user=None)
+        lookup.assert_not_called()
+
+    assert result.enabled is validation_enabled
+    assert result.cached_node_ids == [1]
+    assert graph.get_node(1).results.result_ref.result_id == node.hash
 
 
 def create_graph_with_output(tmp_path: Path, flow_id: int,
@@ -1556,8 +1617,7 @@ class TestPreviewAfterUpstreamChange:
         graph = create_graph(execution_mode="Development", execution_location=execution_location, flow_id=1)
 
         received_table = input_schema.ReceivedTable(file_type='parquet', name='table.parquet',
-                                                    path=str(Path(find_parent_directory(
-                                                        'Flowfile')) / 'flowfile_core/tests/support_files/data/large_table.parquet'))
+                                                    path=str(Path(__file__).resolve().parents[2] / 'support_files/data/large_table.parquet'))
         add_node_promise(graph, 'read', node_id=1)
         node_read = input_schema.NodeRead(flow_id=1, node_id=1, received_file=received_table)
         graph.add_read(node_read)

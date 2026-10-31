@@ -1731,6 +1731,17 @@ class FlowNode:
             return None
         return ref
 
+    @property
+    def is_cached(self) -> bool:
+        """Whether this node holds its current configured cache as materialised rows."""
+        ref = self.results.result_ref
+        return (
+            self.node_settings.cache_results
+            and ref is not None
+            and ref.state == "materialised"
+            and ref.result_id == self.hash
+        )
+
     def result_backend(self, handle: str = DEFAULT_OUTPUT_HANDLE) -> ComputeBackend | None:
         """The backend that holds the result of output ``handle``, else ``None``; a plan over it runs there."""
         held = self.results.result_ref if handle == DEFAULT_OUTPUT_HANDLE else None
