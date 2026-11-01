@@ -43,7 +43,7 @@ from flowfile_core.catalog.exceptions import (
 )
 from flowfile_core.configs import logger
 from flowfile_core.configs.node_store import check_if_has_default_setting, nodes_list
-from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL, FLOWFILE_HUB_URL, is_electron_mode
+from flowfile_core.configs.settings import FLOWFILE_COMPUTE_PROTOCOL, is_electron_mode
 from flowfile_core.database.connection import get_db, get_db_context
 
 # File handling
@@ -119,7 +119,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     list_db_tables,
 )
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
-from flowfile_core.hub.report import build_run_report, post_run_report
+from flowfile_core.hub.report import build_run_report, hub_target, post_run_report
 from flowfile_core.notebook.gate import require_kernel_sessions
 from flowfile_core.notebook.kernel_runner import close_flow_sessions, lineage_commits
 from flowfile_core.notebook.push import NotebookPushRequest, needs_confirmation, node_id_ceiling, plan_push
@@ -491,9 +491,10 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None, 
     completed but won't appear in the run history. Failures are logged at ERROR level so they're
     visible in logs.
 
-    With ``FLOWFILE_HUB_URL`` set, a run whose record was written is then reported to the hub as the user
-    ``hub_token`` (the bearer token of the request that started it) belongs to; the token is passed on, never
-    stored. A run with no token, or of a flow with no registration, is not reported.
+    A run whose record was written is then reported to the hub ``hub_target`` names, if any: a team node's
+    ``FLOWFILE_HUB_URL`` with ``hub_token`` (the bearer token of the request that started the run, passed on and
+    never stored), or the user's hub session for a flow that came from that hub. A run of a flow with no
+    registration is not reported.
     """
     try:
         reg_id, flow_name, flow_path, flow_uuid, run_id, snapshot_yaml = _open_run_record(flow, user_id, node_ids)
@@ -561,17 +562,21 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None, 
             exc_info=True,
         )
 
-    if not FLOWFILE_HUB_URL or core_run_id is None:
+    if core_run_id is None:
         return
-    if not hub_token or not flow_uuid:
-        logger.debug(f"Run {core_run_id} of flow '{flow_name}' not reported to the hub: no token or registration")
+    target = hub_target(flow, hub_token, user_id)
+    if target is None:
+        return
+    if not flow_uuid:
+        logger.debug(f"Run {core_run_id} of flow '{flow_name}' not reported to the hub: no registration")
         return
     try:
         report = build_run_report(flow, run_info, core_run_id, flow_uuid)
     except Exception as exc:
         logger.warning(f"Could not build the hub report for run {core_run_id} of flow '{flow_name}': {exc}")
         return
-    post_run_report(FLOWFILE_HUB_URL, hub_token, report)
+    hub_url, token = target
+    post_run_report(hub_url, token, report)
 
 
 async def _start_run(

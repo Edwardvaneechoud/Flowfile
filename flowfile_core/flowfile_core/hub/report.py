@@ -1,9 +1,14 @@
-"""The report a finished run sends to the hub at ``FLOWFILE_HUB_URL``.
+"""The report a finished run sends to a hub, and which hub that is.
 
 The hub keeps the organisation's record of runs. It receives who ran which flow (the bearer token says who), the
 outcome and timing of every node, the row counts core already knows and the catalog tables the run's catalog nodes
 read and wrote. A report never carries a plan, a sample, a schema or a column value, and the hub refuses any field
 it does not know, so the shape built here is exact.
+
+Two kinds of core report. A team node has ``FLOWFILE_HUB_URL`` and shares the hub's secret, so it reports every run
+with the bearer token of the request that started it. A desktop has neither; it has a hub session and flows that
+came from the hub, and reports a run of such a flow with a token minted from the session, so the organisation's
+ledger also sees the version that ran on the desktop.
 """
 
 import uuid
@@ -14,10 +19,50 @@ import httpx
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
 from flowfile_core.catalog.exceptions import CatalogError
 from flowfile_core.configs import logger
+from flowfile_core.configs.settings import FLOWFILE_HUB_URL
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.flow_graph.catalog_resolution import _effective_namespace_id
+from flowfile_core.hub_client import session
+from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.output_model import RunInformation
+
+
+def hub_target(flow, request_token: str | None, user_id: int | None) -> tuple[str, str] | None:
+    """Where a run of ``flow`` is reported: ``(hub_url, bearer_token)``, or ``None`` when it is not.
+
+    With ``FLOWFILE_HUB_URL`` set this core is a team node: the run goes there with ``request_token``, the bearer
+    token of the request that started it, and a run with no token is not reported. Without the setting this core
+    is a desktop: the run is reported only when ``user_id`` has a hub session and ``flow`` carries a ``hub_origin``
+    on that same hub, with an access token minted from the session. A refresh the hub does not grant is one
+    warning; every other reason not to report is said at debug level.
+    """
+    if FLOWFILE_HUB_URL:
+        if request_token:
+            return FLOWFILE_HUB_URL, request_token
+        logger.debug("Run not reported to the hub: the request that started it carried no token")
+        return None
+    stored = session.load(user_id) if user_id is not None else None
+    if stored is None:
+        logger.debug("Run not reported to a hub: no FLOWFILE_HUB_URL and no hub session for this user")
+        return None
+    origin = flow.flow_settings.hub_origin
+    if origin is None:
+        logger.debug("Run not reported to the hub: the flow did not come from a hub")
+        return None
+    hub_url = stored["hub_url"]
+    if origin.hub_url.rstrip("/") != hub_url.rstrip("/"):
+        logger.debug(f"Run not reported to the hub: the flow came from another hub ({origin.hub_url})")
+        return None
+    try:
+        token = session.access_token(user_id)
+    except (HubUnreachable, HubRefused, HubVersionRefused) as exc:
+        logger.warning(f"Could not get a token for the hub at {hub_url} to report the run: {exc}")
+        return None
+    if token is None:
+        logger.debug("Run not reported to the hub: the hub session is gone")
+        return None
+    return hub_url, token
 
 
 def _rows_out(node) -> int | None:
@@ -36,7 +81,7 @@ def build_run_report(flow, run_info: RunInformation, core_run_id: int, flow_uuid
     succeeded, resolved to ids the way the nodes resolve them: a reader by its table id, else its table reference;
     a writer by its ``namespace_full_name``, else its ``namespace_id``, and its table name. A table that no longer
     resolves keeps its namespace and name with no table id; one whose namespace cannot be found is left out.
-    Core's flow document carries no published version, so ``flow_version`` is ``None``.
+    ``flow_version`` is the hub version of the flow's ``hub_origin``, ``None`` for a flow that never met a hub.
     """
     nodes, readers, writers = [], [], []
     for result in run_info.node_step_result or []:
@@ -101,12 +146,13 @@ def build_run_report(flow, run_info: RunInformation, core_run_id: int, flow_uuid
                 if ref not in outputs:
                     outputs.append(ref)
 
+    origin = flow.flow_settings.hub_origin
     ended_at = run_info.end_time or datetime.now()
     started_at = run_info.start_time or ended_at
     return {
         "run_id": str(uuid.uuid4()),
         "flow_uuid": flow_uuid,
-        "flow_version": None,
+        "flow_version": origin.version if origin is not None else None,
         "compute_node_id": None,
         "started_at": started_at.astimezone(timezone.utc).isoformat(),
         "ended_at": ended_at.astimezone(timezone.utc).isoformat(),

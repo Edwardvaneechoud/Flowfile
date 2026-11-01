@@ -1,4 +1,4 @@
-"""The run report core posts to a hub: its shape, the post, and the hook in the designer's run path."""
+"""The run report core posts to a hub: its shape, the post, which hub a run reports to, and the hook in the run path."""
 
 import json
 import logging
@@ -9,13 +9,16 @@ import pytest
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
+from flowfile_core.auth import secrets as core_secrets
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CatalogTable, FlowRegistration, FlowRun
 from flowfile_core.flowfile.catalog_helpers import auto_register_flow
 from flowfile_core.flowfile.flow_graph import add_connection
 from flowfile_core.hub import report
+from flowfile_core.hub_client import client as hub_client
+from flowfile_core.hub_client import session
 from flowfile_core.routes import routes
-from flowfile_core.schemas import input_schema
+from flowfile_core.schemas import input_schema, schemas
 from tests.flowfile.conftest import (
     CATALOG_SAMPLE_DATA,
     add_test_catalog_writer,
@@ -25,8 +28,12 @@ from tests.flowfile.conftest import (
     create_test_namespace,
     run_test_graph,
 )
+from tests.hub_client.conftest import FakeHub
 
 HUB_URL = "http://hub.test"
+OTHER_HUB_URL = "http://other-hub.test"
+# The ``hub`` fixture replaces ``httpx.Client`` module-wide; everything that wants a real one takes it from here.
+_REAL_CLIENT = httpx.Client
 REPORT_KEYS = {
     "run_id",
     "flow_uuid",
@@ -71,9 +78,8 @@ def hub(monkeypatch):
         hub.requests.append(request)
         return hub.answer(request)
 
-    real_client = httpx.Client
     monkeypatch.setattr(
-        report.httpx, "Client", lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs)
+        report.httpx, "Client", lambda **kwargs: _REAL_CLIENT(transport=httpx.MockTransport(handler), **kwargs)
     )
     return hub
 
@@ -88,6 +94,34 @@ def warnings(monkeypatch, caplog):
         return [r for r in caplog.records if r.name == report.logger.name and r.levelno == logging.WARNING]
 
     return collected
+
+
+@pytest.fixture
+def desktop(monkeypatch, tmp_path):
+    """A core with no ``FLOWFILE_HUB_URL``, a secure store of its own and a fake hub behind the hub client's seam.
+
+    ``desktop.connect(user_id)`` gives that user a hub session on ``HUB_URL``, as connecting from the Hub tab does;
+    the fake mints the access tokens the session path refreshes with.
+    """
+    monkeypatch.setattr(report, "FLOWFILE_HUB_URL", "")
+    path = tmp_path / "secure_storage"
+    monkeypatch.setenv("FLOWFILE_SECURE_STORAGE_PATH", str(path))
+    monkeypatch.setenv("SECURE_STORAGE_PATH", str(path))
+    monkeypatch.setattr(core_secrets, "_storage", core_secrets.SecureStorage())
+    monkeypatch.setattr(session, "_access_tokens", {})
+    fake = FakeHub()
+    monkeypatch.setattr(hub_client, "_module_http", _REAL_CLIENT(transport=httpx.MockTransport(fake.handle)))
+
+    def connect(user_id: int, hub_url: str = HUB_URL) -> None:
+        tokens = hub_client.sign_in(hub_url, "ana", "s3cret")
+        session.save(
+            user_id,
+            {"hub_url": hub_url, "refresh_token": tokens["refresh_token"], "device_id": 1, "device_name": "laptop"},
+        )
+        fake.calls.clear()
+
+    fake.connect = connect
+    return fake
 
 
 def _table_ref(namespace_id: int, table_name: str) -> dict:
@@ -188,6 +222,19 @@ class TestBuildRunReport:
         assert "table name" in writer["error"]
         assert built["outputs"] == []
 
+    def test_a_flow_that_came_from_a_hub_reports_the_version_it_ran(self):
+        graph = create_test_graph(flow_id=8105)
+        graph.flow_settings.hub_origin = schemas.HubOrigin(hub_url=HUB_URL, flow_uuid=FLOW_UUID, version=4)
+        add_test_manual_input(graph, CATALOG_SAMPLE_DATA, node_id=1)
+        run_info = run_test_graph(graph)
+
+        built = report.build_run_report(graph, run_info, core_run_id=44, flow_uuid=FLOW_UUID)
+
+        _assert_contract_shape(built)
+        assert built["flow_version"] == 4
+        assert built["compute_node_id"] is None
+        assert built["core_run_id"] == 44
+
 
 class TestPostRunReport:
     REPORT = {"run_id": "r-1", "flow_uuid": FLOW_UUID, "core_run_id": 7, "nodes": []}
@@ -253,7 +300,7 @@ class TestRunHook:
     def test_a_run_started_with_a_token_posts_one_report_linked_to_its_run_row(
         self, hub, warnings, registered_flow, monkeypatch
     ):
-        monkeypatch.setattr(routes, "FLOWFILE_HUB_URL", HUB_URL)
+        monkeypatch.setattr(report, "FLOWFILE_HUB_URL", HUB_URL)
         flow_id, flow_uuid = registered_flow
         token = _token()
 
@@ -275,7 +322,7 @@ class TestRunHook:
         assert warnings() == []
 
     def test_a_hub_that_is_down_leaves_the_run_and_its_row_intact(self, hub, warnings, registered_flow, monkeypatch):
-        monkeypatch.setattr(routes, "FLOWFILE_HUB_URL", HUB_URL)
+        monkeypatch.setattr(report, "FLOWFILE_HUB_URL", HUB_URL)
         hub.answer = lambda request: (_ for _ in ()).throw(httpx.ConnectError("refused", request=request))
         flow_id, flow_uuid = registered_flow
         flow = routes.flow_file_handler.get_flow(flow_id)
@@ -289,20 +336,21 @@ class TestRunHook:
         assert len(warnings()) == 1
         assert not flow.flow_settings.is_running
 
-    def test_with_no_hub_url_nothing_is_posted(self, hub, warnings, registered_flow, monkeypatch):
-        monkeypatch.setattr(routes, "FLOWFILE_HUB_URL", "")
+    def test_with_no_hub_url_and_no_session_nothing_is_posted(self, hub, warnings, registered_flow, desktop):
         flow_id, flow_uuid = registered_flow
         flow = routes.flow_file_handler.get_flow(flow_id)
+        flow.flow_settings.hub_origin = schemas.HubOrigin(hub_url=HUB_URL, flow_uuid=flow_uuid, version=1)
 
         assert flow.try_claim_run()
         routes._run_and_track(flow, user_id=1, hub_token="tok-123")
 
         assert len(_runs_of(flow_uuid)) == 1
         assert hub.requests == []
+        assert desktop.calls == []
         assert warnings() == []
 
     def test_a_run_with_no_token_posts_nothing(self, hub, warnings, registered_flow, monkeypatch):
-        monkeypatch.setattr(routes, "FLOWFILE_HUB_URL", HUB_URL)
+        monkeypatch.setattr(report, "FLOWFILE_HUB_URL", HUB_URL)
         flow_id, flow_uuid = registered_flow
         flow = routes.flow_file_handler.get_flow(flow_id)
 
@@ -312,3 +360,143 @@ class TestRunHook:
         assert len(_runs_of(flow_uuid)) == 1
         assert hub.requests == []
         assert warnings() == []
+
+
+def _origin(flow, flow_uuid: str, version: int, hub_url: str = HUB_URL) -> None:
+    flow.flow_settings.hub_origin = schemas.HubOrigin(hub_url=hub_url, flow_uuid=flow_uuid, version=version)
+
+
+class TestDesktopSession:
+    """A core with no ``FLOWFILE_HUB_URL`` reports through the user's hub session, for flows from that hub only."""
+
+    def test_a_flow_opened_from_the_hub_posts_one_report_with_its_version_and_the_sessions_token(
+        self, hub, warnings, registered_flow, desktop
+    ):
+        desktop.connect(1)
+        flow_id, flow_uuid = registered_flow
+        flow = routes.flow_file_handler.get_flow(flow_id)
+        _origin(flow, flow_uuid, version=3)
+
+        assert flow.try_claim_run()
+        routes._run_and_track(flow, user_id=1)
+
+        [run] = _runs_of(flow_uuid)
+        assert run.success is True
+        assert desktop.calls == [("POST", "/auth/refresh")]
+        assert len(hub.requests) == 1
+        sent = hub.requests[0]
+        assert str(sent.url) == f"{HUB_URL}/hub/runs"
+        assert desktop._bearer_user(sent) == "ana", "the bearer token is one the fake hub minted for the session's user"
+        body = json.loads(sent.content)
+        _assert_contract_shape(body)
+        assert (body["flow_uuid"], body["flow_version"], body["core_run_id"]) == (flow_uuid, 3, run.id)
+        assert body["compute_node_id"] is None
+        assert warnings() == []
+
+    def test_a_flow_without_an_origin_posts_nothing(self, hub, warnings, registered_flow, desktop):
+        desktop.connect(1)
+        flow_id, flow_uuid = registered_flow
+        flow = routes.flow_file_handler.get_flow(flow_id)
+        assert flow.flow_settings.hub_origin is None
+
+        assert flow.try_claim_run()
+        routes._run_and_track(flow, user_id=1)
+
+        assert len(_runs_of(flow_uuid)) == 1
+        assert hub.requests == []
+        assert desktop.calls == []
+        assert warnings() == []
+
+    def test_a_flow_from_another_hub_posts_nothing(self, hub, warnings, registered_flow, desktop):
+        desktop.connect(1)
+        flow_id, flow_uuid = registered_flow
+        flow = routes.flow_file_handler.get_flow(flow_id)
+        _origin(flow, flow_uuid, version=2, hub_url=OTHER_HUB_URL)
+
+        assert flow.try_claim_run()
+        routes._run_and_track(flow, user_id=1)
+
+        assert len(_runs_of(flow_uuid)) == 1
+        assert hub.requests == []
+        assert desktop.calls == []
+        assert warnings() == []
+
+    def test_a_session_of_another_user_does_not_report_this_users_run(self, hub, warnings, registered_flow, desktop):
+        desktop.connect(2)
+        flow_id, flow_uuid = registered_flow
+        flow = routes.flow_file_handler.get_flow(flow_id)
+        _origin(flow, flow_uuid, version=2)
+
+        assert flow.try_claim_run()
+        routes._run_and_track(flow, user_id=1)
+
+        assert len(_runs_of(flow_uuid)) == 1
+        assert hub.requests == []
+        assert desktop.calls == []
+
+    def test_the_hub_url_wins_over_the_session(self, hub, warnings, registered_flow, desktop, monkeypatch):
+        desktop.connect(1)
+        monkeypatch.setattr(report, "FLOWFILE_HUB_URL", HUB_URL)
+        flow_id, flow_uuid = registered_flow
+        flow = routes.flow_file_handler.get_flow(flow_id)
+        _origin(flow, flow_uuid, version=5)
+
+        assert flow.try_claim_run()
+        routes._run_and_track(flow, user_id=1, hub_token="tok-123")
+
+        assert desktop.calls == []
+        assert len(hub.requests) == 1
+        assert hub.requests[0].headers["Authorization"] == "Bearer tok-123"
+        assert json.loads(hub.requests[0].content)["flow_version"] == 5
+        assert warnings() == []
+
+    def test_the_hub_url_with_a_request_token_reports_without_any_session(
+        self, hub, warnings, registered_flow, desktop, monkeypatch
+    ):
+        monkeypatch.setattr(report, "FLOWFILE_HUB_URL", HUB_URL)
+        flow_id, flow_uuid = registered_flow
+        flow = routes.flow_file_handler.get_flow(flow_id)
+
+        assert flow.try_claim_run()
+        routes._run_and_track(flow, user_id=1, hub_token="tok-123")
+
+        assert desktop.calls == []
+        assert len(hub.requests) == 1
+        assert hub.requests[0].headers["Authorization"] == "Bearer tok-123"
+        assert json.loads(hub.requests[0].content)["flow_version"] is None
+        assert warnings() == []
+
+    def test_a_hub_that_is_down_costs_one_warning_and_the_run_completes(self, hub, warnings, registered_flow, desktop):
+        desktop.connect(1)
+        hub.answer = lambda request: (_ for _ in ()).throw(httpx.ConnectError("refused", request=request))
+        flow_id, flow_uuid = registered_flow
+        flow = routes.flow_file_handler.get_flow(flow_id)
+        _origin(flow, flow_uuid, version=3)
+
+        assert flow.try_claim_run()
+        routes._run_and_track(flow, user_id=1)
+
+        [run] = _runs_of(flow_uuid)
+        assert run.success is True and run.ended_at is not None and run.nodes_completed == 1
+        assert len(hub.requests) == 1
+        assert len(warnings()) == 1
+        assert not flow.flow_settings.is_running
+
+    def test_a_refresh_the_hub_does_not_grant_costs_one_warning_and_posts_nothing(
+        self, hub, warnings, registered_flow, desktop
+    ):
+        desktop.connect(1)
+        desktop.live_refresh.clear()
+        flow_id, flow_uuid = registered_flow
+        flow = routes.flow_file_handler.get_flow(flow_id)
+        _origin(flow, flow_uuid, version=3)
+
+        assert flow.try_claim_run()
+        routes._run_and_track(flow, user_id=1)
+
+        [run] = _runs_of(flow_uuid)
+        assert run.success is True
+        assert desktop.calls == [("POST", "/auth/refresh")]
+        assert hub.requests == []
+        assert len(warnings()) == 1
+        assert not flow.flow_settings.is_running
