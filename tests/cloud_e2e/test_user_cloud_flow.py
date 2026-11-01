@@ -217,6 +217,6 @@ def test_writer_formats_and_modes(stack, user_flow, minio_connection, new_target
         assert last_commit["operationParameters"]["mode"] == "Overwrite"
     if settings.get("track_changes"):
         assert table.metadata().configuration.get("delta.enableChangeDataFeed") == "true"
-        changes = pl.from_arrow(table.load_cdf(starting_version=table.version()).read_all())
+        changes = pl.DataFrame(table.load_cdf(starting_version=table.version()).read_all())
         assert changes.height == 6
         assert changes["_change_type"].unique().to_list() == ["insert"]

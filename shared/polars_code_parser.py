@@ -192,7 +192,7 @@ def remove_comments_and_docstrings(source: str) -> str:
             return self.generic_visit(node)
 
         def visit_Expr(self, node):
-            if isinstance(node.value, ast.Str | ast.Constant) and isinstance(getattr(node.value, "value", None), str):
+            if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
                 return None
             return self.generic_visit(node)
 
