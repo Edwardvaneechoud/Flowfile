@@ -59,6 +59,7 @@ from flowfile_core.routes.file_manager import router as file_manager_router
 from flowfile_core.routes.flow_api import data_router as flow_api_data_router
 from flowfile_core.routes.flow_api import management_router as flow_api_management_router
 from flowfile_core.routes.ga_connections import router as ga_connections_router
+from flowfile_core.routes.hub_client import router as hub_client_router
 from flowfile_core.routes.kafka import router as kafka_router
 from flowfile_core.routes.logs import router as logs_router
 from flowfile_core.routes.node_requests import router as node_requests_router
@@ -256,6 +257,7 @@ app.include_router(user_defined_components_router, prefix="/user_defined_compone
 app.include_router(custom_node_mounts_router, prefix="/custom-node-mounts", tags=["custom_node_mounts"])
 app.include_router(community_nodes_router, prefix="/community_nodes", tags=["community_nodes"])
 app.include_router(community_github_router, prefix="/community_nodes/github", tags=["community_nodes"])
+app.include_router(hub_client_router, prefix="/hub_client", tags=["hub_client"])
 app.include_router(kernel_router, tags=["kernels"])
 app.include_router(lsp_router, tags=["lsp"])
 app.include_router(file_manager_router, prefix="/file_manager", tags=["file_manager"])
