@@ -466,6 +466,19 @@ class TestLegacyPickleLoad:
         print(f"Nodes: {len(data['nodes'])}")
         print(yaml.dump(data, default_flow_style=False)[:1000] + "...")
 
+    def test_a_settings_object_without_hub_origin_saves_a_null_origin(self, temp_dir: Path):
+        """A FlowSettings unpickled from a release before hub_origin existed has no such attribute at all."""
+        graph = create_graph(flow_id=77)
+        legacy = {k: v for k, v in graph.flow_settings.__dict__.items() if k != "hub_origin"}
+        object.__setattr__(graph.flow_settings, "__dict__", legacy)
+        add_manual_input(graph, [{"a": 1}])
+
+        assert graph.get_flowfile_data().flowfile_settings.hub_origin is None
+
+        yaml_path = temp_dir / "legacy_settings.yaml"
+        graph.save_flow(str(yaml_path))
+        assert yaml.safe_load(yaml_path.read_text())["flowfile_settings"]["hub_origin"] is None
+
 
 class TestFlowfileDataModel:
     """Test FlowfileData Pydantic model."""

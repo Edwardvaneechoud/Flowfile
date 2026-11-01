@@ -346,7 +346,7 @@ def publish(request: HubPublishRequest, current_user=Depends(get_current_active_
     flow_path = flow.flow_settings.path or flow.flow_settings.save_location
     if not flow_path:
         raise HTTPException(status_code=422, detail="save the flow first")
-    origin = flow.flow_settings.hub_origin
+    origin = getattr(flow.flow_settings, "hub_origin", None)
     if origin is not None and origin.hub_url.rstrip("/") != hub_url.rstrip("/"):
         raise HTTPException(status_code=409, detail={"kind": "other_hub", "hub_url": origin.hub_url})
 

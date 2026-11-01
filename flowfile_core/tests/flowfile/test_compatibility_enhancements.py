@@ -368,7 +368,7 @@ class TestEnsureFlowSettings:
         """A FlowSettings unpickled from an older release has no __dict__ entry for new fields."""
         fs = schemas.FlowSettings(flow_id=1, name="legacy", path=".")
         legacy_dict = {k: v for k, v in fs.__dict__.items()
-                       if k not in ("validate_settings", "track_history", "parameters")}
+                       if k not in ("validate_settings", "track_history", "parameters", "hub_origin")}
         object.__setattr__(fs, "__dict__", legacy_dict)
 
         class FakeFlowObj:
@@ -379,3 +379,4 @@ class TestEnsureFlowSettings:
         assert flow_obj.flow_settings.validate_settings is True
         assert flow_obj.flow_settings.track_history is True
         assert flow_obj.flow_settings.parameters == []
+        assert flow_obj.flow_settings.hub_origin is None

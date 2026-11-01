@@ -46,7 +46,7 @@ def hub_target(flow, request_token: str | None, user_id: int | None) -> tuple[st
     if stored is None:
         logger.debug("Run not reported to a hub: no FLOWFILE_HUB_URL and no hub session for this user")
         return None
-    origin = flow.flow_settings.hub_origin
+    origin = getattr(flow.flow_settings, "hub_origin", None)
     if origin is None:
         logger.debug("Run not reported to the hub: the flow did not come from a hub")
         return None
@@ -146,7 +146,7 @@ def build_run_report(flow, run_info: RunInformation, core_run_id: int, flow_uuid
                 if ref not in outputs:
                     outputs.append(ref)
 
-    origin = flow.flow_settings.hub_origin
+    origin = getattr(flow.flow_settings, "hub_origin", None)
     ended_at = run_info.end_time or datetime.now()
     started_at = run_info.start_time or ended_at
     return {
