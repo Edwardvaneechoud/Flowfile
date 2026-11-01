@@ -295,7 +295,7 @@
       <h3>Table Definition</h3>
       <pre class="sql-definition">{{ table.polars_plan }}</pre>
       <p class="read-plan-note">
-        Each read runs these nodes of the producer flow. Recorded at its last run or read.
+        Each read runs these nodes of the producer flow. Recorded when the producer last ran.
       </p>
     </div>
 

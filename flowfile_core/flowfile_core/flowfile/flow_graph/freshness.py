@@ -102,7 +102,7 @@ def _catalog_reader_source_fingerprint(
     entries: list[dict] = []
 
     if settings.sql_query:
-        resolved = _resolve_catalog_sql_tables(settings.node_id, settings.user_id)
+        resolved = _resolve_catalog_sql_tables(settings.node_id, settings.user_id, settings.sql_query)
 
         def _referenced(name: str) -> bool:
             return re.search(rf"\b{re.escape(name)}\b", settings.sql_query, re.IGNORECASE) is not None

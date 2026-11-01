@@ -12,6 +12,7 @@ from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.delta_utils import is_delta_table
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.storage_backend import _is_cloud_uri
+from flowfile_core.catalog.text_utils import is_table_reference
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import NodeLogger
 from flowfile_core.database import models as db_models
@@ -44,7 +45,11 @@ def _resolve_virtual_table(
 
 
 def _producer_fingerprint(repo: SQLAlchemyCatalogRepository, table) -> str | None:
-    """sha256 of a lazy virtual table's producer flow file, which its output follows; else None."""
+    """sha256 of a lazy virtual table's producer flow file, which its output follows; else None.
+
+    Reads resolve the producer from its saved file, so an unsaved edit in an open editor is not seen
+    here either.
+    """
     if not table.is_optimized or not table.producer_registration_id:
         return None
     registration = repo.get_flow(table.producer_registration_id)
@@ -53,6 +58,7 @@ def _producer_fingerprint(repo: SQLAlchemyCatalogRepository, table) -> str | Non
     try:
         return hashlib.sha256(Path(registration.flow_path).read_bytes()).hexdigest()
     except OSError:
+        logger.debug("Producer flow file of virtual table %s is unreadable; reruns it every run", table.id)
         return None
 
 
@@ -115,16 +121,20 @@ def _authorize_catalog_write(db, user_id: int | None, *, existing, namespace_id:
         raise PermissionError("Not authorized to create a table in the target catalog namespace")
 
 
-def _resolve_catalog_sql_tables(node_id: int | str, user_id: int | None = None) -> CatalogSqlTables:
+def _resolve_catalog_sql_tables(
+    node_id: int | str, user_id: int | None = None, sql_query: str | None = None
+) -> CatalogSqlTables:
     """Resolve all catalog tables (physical Delta + virtual) for a SQL query node.
 
     In multi-user mode the registered tables are restricted to those the
     executing ``user_id`` may read, mirroring ``CatalogService.execute_sql_query``;
     a query referencing an inaccessible table simply finds it unregistered.
+    Given ``sql_query``, only the virtual tables it references are resolved, since
+    each one is fingerprinted here and runs its producer when read.
     """
     remote = metadata_lookup.get()
     if remote is not None:
-        answer = remote("catalog_sql_tables", {"node_id": node_id})
+        answer = remote("catalog_sql_tables", {"node_id": node_id, "sql_query": sql_query})
         return CatalogSqlTables(
             table_paths=dict(answer["table_paths"]),
             virtual_tables={name: tuple(entry) for name, entry in answer["virtual_tables"].items()},
@@ -150,6 +160,8 @@ def _resolve_catalog_sql_tables(node_id: int | str, user_id: int | None = None) 
                     )
                 seen_names.add(t.name)
                 if t.table_type == "virtual":
+                    if sql_query is not None and not is_table_reference(t.name, sql_query):
+                        continue
                     virtual_tables[t.name] = (
                         t.is_optimized,
                         _producer_fingerprint(repo, t),

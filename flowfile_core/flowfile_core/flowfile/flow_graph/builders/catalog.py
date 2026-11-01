@@ -83,7 +83,9 @@ class CatalogBuildersMixin(GraphMixinBase):
         """
 
         sql_code = node_catalog_reader.sql_query
-        resolved = _resolve_catalog_sql_tables(node_catalog_reader.node_id, node_catalog_reader.user_id)
+        resolved = _resolve_catalog_sql_tables(
+            node_catalog_reader.node_id, node_catalog_reader.user_id, node_catalog_reader.sql_query
+        )
         table_paths = resolved.table_paths
         virtual_tables = resolved.virtual_tables
         table_namespaces = resolved.table_namespaces

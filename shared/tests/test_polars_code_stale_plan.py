@@ -44,3 +44,25 @@ def test_other_compute_errors_pass_through():
 
     with pytest.raises(pl.exceptions.PolarsError):
         run(pl.LazyFrame({"a": [1]})).collect()
+
+
+def test_an_expression_plan_from_another_polars_names_the_fix():
+    step = (
+        "output_df = input_df.with_columns("
+        "pl.Expr.deserialize(BytesIO(b'{\"Foo\": {\"bar\": 1}}'), format='json').alias('b'))"
+    )
+    run = polars_code_parser.get_executable(step, 1)
+
+    with pytest.raises(ValueError, match="rebuild the step from code"):
+        run(pl.LazyFrame({"a": [1]}))
+
+
+def test_a_function_form_step_names_the_fix():
+    step = f"""
+def transform(input_df):
+    return pl.LazyFrame.deserialize(BytesIO(base64.b64decode('{PLAN_FROM_POLARS_1_43}')))
+"""
+    run = polars_code_parser.get_executable(step, 1)
+
+    with pytest.raises(ValueError, match="rebuild the step from code"):
+        run(pl.LazyFrame({"a": [1]}))

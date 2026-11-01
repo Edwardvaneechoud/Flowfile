@@ -3,7 +3,7 @@
 A virtual table now always reads through its producer flow, so ``serialized_lazy_frame`` has no reader. Its
 contents were a Polars plan serialised by the version that wrote it, which no other Polars version can load.
 ``polars_plan`` now holds the print_tree drawing of the producer's branch, so its old ``explain()`` text is
-cleared; the next producer run or read writes the drawing.
+cleared; the next producer run writes the drawing.
 
 Revision ID: 039
 Revises: 038

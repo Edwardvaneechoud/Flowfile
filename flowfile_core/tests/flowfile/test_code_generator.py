@@ -5497,6 +5497,14 @@ def test_basic_filter_not_in(filter_test_data, export_func):
     assert_frame_equal(result_df, expected_df)
 
 
+def test_membership_numbers_keep_integers_past_float_precision():
+    """An integer member beyond 2**53 is written exactly, not through a float."""
+    from flowfile_core.flowfile.code_generator.expression_helpers import _membership_numbers
+
+    assert _membership_numbers(["9007199254740993", "2.0", "2.5"], "Int64") == ["9007199254740993", "2"]
+    assert _membership_numbers(["-1", "3"], "UInt64") == ["3"]
+
+
 @pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
 def test_basic_filter_between(filter_test_data, export_func):
     """Test basic filter with between operator."""

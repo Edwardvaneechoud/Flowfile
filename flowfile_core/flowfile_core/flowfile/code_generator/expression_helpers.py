@@ -1,4 +1,5 @@
 import datetime
+import decimal
 import functools
 import hashlib
 import re
@@ -28,7 +29,8 @@ def _membership_numbers(values: list[str], field_dtype: str | None) -> list[str]
     if base.startswith("Float"):
         return [repr(float(v)) for v in values]
     if base.startswith(("Int", "UInt")):
-        whole = [int(float(v)) for v in values if float(v).is_integer()]
+        exact = [decimal.Decimal(v) for v in values]
+        whole = [int(d) for d in exact if d == d.to_integral_value()]
         return [str(v) for v in whole if v >= 0 or not base.startswith("UInt")]
     return values
 

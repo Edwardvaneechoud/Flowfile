@@ -97,7 +97,7 @@ def _catalog_table(args: dict[str, Any], user_id: int) -> dict[str, Any]:
 def _catalog_sql_tables(args: dict[str, Any], user_id: int) -> dict[str, Any]:
     from flowfile_core.flowfile.flow_graph import _resolve_catalog_sql_tables
 
-    resolved = _resolve_catalog_sql_tables(int(args.get("node_id") or 0), user_id)
+    resolved = _resolve_catalog_sql_tables(int(args.get("node_id") or 0), user_id, args.get("sql_query"))
     return {
         "table_paths": resolved.table_paths,
         "virtual_tables": {name: list(entry) for name, entry in resolved.virtual_tables.items()},

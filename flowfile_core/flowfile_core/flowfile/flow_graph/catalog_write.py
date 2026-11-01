@@ -464,22 +464,39 @@ def _ensure_catalog_cdc_enabled(
         logger.warning("Could not enable change tracking on catalog table %s", table_name, exc_info=True)
 
 
-def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
+_SELF_CONTAINED_SOURCE_TYPES = frozenset({"manual_input", "catalog_reader"})
+
+
+def _branch_nodes(graph: "FlowGraph", writer_node: "FlowNode") -> list["FlowNode"]:
+    """The writer and every node upstream of it, in graph order."""
+    branch = {writer_node.node_id}
+    stack = list(writer_node.all_inputs)
+    while stack:
+        node = stack.pop()
+        if node.node_id not in branch:
+            branch.add(node.node_id)
+            stack.extend(node.all_inputs)
+    return [node for node in graph.nodes if node.node_id in branch]
+
+
+def _collect_source_table_versions(graph: "FlowGraph", writer_node: "FlowNode | None" = None) -> str | None:
     """Collect delta versions of upstream catalog tables used by this flow.
 
     For each catalog_reader node that reads a physical delta table, records
     the current delta version. For optimized virtual table sources, includes
-    their transitive source_table_versions.
+    their transitive source_table_versions. With ``writer_node`` only its
+    branch is considered, else the whole graph.
 
-    Complete-or-nothing: returns None as soon as any catalog source can't be
-    fingerprinted (SQL reader, missing record, virtual source without its own
-    versions, cloud/non-delta path, probe failure). A partial fingerprint would
-    let version checks pass while the unfingerprinted source changed, so plan
-    replay and the worker's IPC cache would serve stale data. None degrades to
-    fall-back-to-flow-execution / always-rebuild, which is correct.
+    Complete-or-nothing: returns None as soon as any source can't be
+    fingerprinted (a file, cloud, database or other external source, SQL
+    reader, missing record, virtual source without its own versions,
+    cloud/non-delta path, probe failure). A partial fingerprint would let
+    version checks pass while the unfingerprinted source changed, so the
+    downstream cache and the worker's IPC cache would serve stale data. None
+    degrades to always-rebuild, which is correct.
 
-    A flow with no catalog sources at all returns "[]" — provably complete
-    (the serialized plan embeds all its data), so plan replay stays valid.
+    A flow whose only sources are manual inputs returns "[]": their rows live
+    in the flow file, which the producer fingerprint already covers.
 
     Returns a JSON string of SourceTableVersion entries ("[]" when none), or
     None when unfingerprintable.
@@ -491,8 +508,11 @@ def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
     versions: list[SourceTableVersion] = []
     seen_table_ids: set[int] = set()
 
+    nodes = _branch_nodes(graph, writer_node) if writer_node is not None else list(graph.nodes)
     table_ids: list[int] = []
-    for node in graph.nodes:
+    for node in nodes:
+        if not node.all_inputs and node.node_type not in _SELF_CONTAINED_SOURCE_TYPES:
+            return None
         if node.node_type != "catalog_reader":
             continue
         setting = node.setting_input
@@ -544,16 +564,18 @@ def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
     return json.dumps([v.model_dump() for v in versions])
 
 
-def _readable_plan(graph: "FlowGraph", writer_node: "FlowNode") -> str:
-    """The print_tree drawing of the writer and every node upstream of it."""
-    branch = {writer_node.node_id}
-    stack = list(writer_node.all_inputs)
-    while stack:
-        node = stack.pop()
-        if node.node_id not in branch:
-            branch.add(node.node_id)
-            stack.extend(node.all_inputs)
-    return render_flow([node for node in graph.nodes if node.node_id in branch])
+def _readable_plan(graph: "FlowGraph", writer_node: "FlowNode") -> str | None:
+    """The print_tree drawing of the writer's branch, or None when it cannot be drawn.
+
+    The drawing is display-only, so a failure to draw it never fails the write.
+    """
+    try:
+        return render_flow(_branch_nodes(graph, writer_node))
+    except Exception:
+        logger.warning(
+            "Could not draw the producer branch of virtual table writer %s", writer_node.node_id, exc_info=True
+        )
+        return None
 
 
 def _handle_virtual_table_write(
@@ -600,7 +622,7 @@ def _handle_virtual_table_write(
             incoming_node = graph.get_node(node_catalog_writer.node_id).node_inputs.main_inputs[0]
             df = incoming_node.get_resulting_data()
         graph.flow_logger.info("creating a lazy virtual table")
-        source_table_versions = _collect_source_table_versions(graph)
+        source_table_versions = _collect_source_table_versions(graph, writer_node)
     else:
         graph.flow_logger.info("creating a virtual table from workflow")
 

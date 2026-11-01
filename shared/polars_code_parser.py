@@ -302,6 +302,22 @@ STALE_PLAN_MESSAGE = (
     "flowfile_frame writes such a plan for an operation it cannot express as code: rebuild the step from code."
 )
 
+_STALE_PLAN_MARKERS = ("DSL_SCHEMA_HASH", "DSL_VERSION", "could not deserialize input into an expression")
+
+
+def _stale_plan_guard(function: Callable) -> Callable:
+    """``function``, with a Polars error loading a plan saved by another Polars raised as ``STALE_PLAN_MESSAGE``."""
+
+    def _guarded(*frames):
+        try:
+            return function(*frames)
+        except pl.exceptions.ComputeError as e:
+            if any(marker in str(e) for marker in _STALE_PLAN_MARKERS):
+                raise ValueError(STALE_PLAN_MESSAGE) from e
+            raise
+
+    return _guarded
+
 
 class PolarsCodeParser:
     """
@@ -495,15 +511,7 @@ class PolarsCodeParser:
         except Exception as e:
             raise ValueError(f"Error executing code: {str(e)}") from e
 
-        def _transform(*frames):
-            try:
-                return transform_func(*frames)
-            except pl.exceptions.ComputeError as e:
-                if "DSL_SCHEMA_HASH" in str(e):
-                    raise ValueError(STALE_PLAN_MESSAGE) from e
-                raise
-
-        return _transform
+        return _stale_plan_guard(transform_func)
 
     def _fresh_globals(self) -> dict[str, Any]:
         """A copy of the sandbox globals for one executable, builtins included.
@@ -535,7 +543,7 @@ class PolarsCodeParser:
                 raise ValueError(f"`{name}` returned {type(result).__name__}, not a Polars LazyFrame or DataFrame")
             return result
 
-        return _call
+        return _stale_plan_guard(_call)
 
     def validate_code(self, code: str):
         """

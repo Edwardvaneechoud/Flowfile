@@ -1100,7 +1100,7 @@ class TestSourceTableVersionCapture:
 
     def test_virtual_table_without_catalog_source_has_empty_versions(self):
         """A virtual table from a flow with only manual input stores "[]" —
-        a provably complete (empty) fingerprint, so plan replay stays valid.
+        its rows live in the flow file, which the producer fingerprint covers.
         None is reserved for unfingerprintable sources."""
         ns_id = _create_namespace()
         reg_id = _create_flow_registration(ns_id, name="no_source_flow")
@@ -1141,6 +1141,29 @@ class TestSourceTableVersionCapture:
             assert vt.is_optimized is True
             assert vt.source_table_versions is not None
             assert json.loads(vt.source_table_versions) == []
+
+    def test_virtual_write_survives_a_plan_drawing_failure(self, monkeypatch):
+        """The plan drawing is display-only: when it fails the table is still written, without one."""
+        from flowfile_core.flowfile.flow_graph import catalog_write
+
+        def _fail(_nodes):
+            raise RuntimeError("cannot draw")
+
+        monkeypatch.setattr(catalog_write, "render_flow", _fail)
+        ns_id = _create_namespace()
+        reg_id = _create_flow_registration(ns_id, name="undrawable_flow")
+        graph = _create_graph(source_registration_id=reg_id)
+        _add_manual_input(graph, SAMPLE_DATA, node_id=1)
+        _add_catalog_writer(
+            graph, node_id=2, depending_on_id=1, table_name="undrawable_virtual", namespace_id=ns_id, write_mode="virtual"
+        )
+
+        _run_graph(graph)
+
+        with get_db_context() as db:
+            tables = SQLAlchemyCatalogRepository(db).list_tables(namespace_id=ns_id)
+            vt = next(t for t in tables if t.name == "undrawable_virtual")
+            assert vt.polars_plan is None
 
 
 class TestVersionRestampAndClear:
@@ -1332,6 +1355,25 @@ class TestVersionRestampAndClear:
                 )
             )
             assert _collect_source_table_versions(graph) is None
+
+    def test_versions_none_when_a_file_source_feeds_the_writer(self):
+        """A file read is outside the producer's flow file, so its branch is unfingerprintable."""
+        from flowfile_core.flowfile.flow_graph import _collect_source_table_versions
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = f"{tmp_dir}/source.parquet"
+            pl.DataFrame({"x": [1]}).write_parquet(path)
+            graph = _create_graph()
+            graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="read"))
+            graph.add_read(
+                input_schema.NodeRead(
+                    flow_id=graph.flow_id,
+                    node_id=1,
+                    received_file=input_schema.ReceivedTable(file_type="parquet", name="source.parquet", path=path),
+                )
+            )
+            assert _collect_source_table_versions(graph) is None
+            assert _collect_source_table_versions(graph, graph.get_node(1)) is None
 
 
 @pytest.fixture()
