@@ -1,0 +1,209 @@
+/* Shared look of the hub publish and open dialogs. */
+.hub-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+  padding: var(--spacing-2) var(--spacing-1);
+  font-family: var(--font-family-base);
+}
+
+.form-group label,
+.pane-label {
+  display: block;
+  margin-bottom: var(--spacing-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.hub-dialog-status,
+.hub-dialog-hint {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-normal);
+}
+
+.hub-dialog-success,
+.hub-dialog-conflict,
+.hub-dialog-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-2);
+  margin: 0;
+  padding: var(--spacing-3);
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
+.hub-dialog-success {
+  background: var(--color-success-light);
+  color: var(--color-success-dark);
+}
+
+.hub-dialog-conflict {
+  background: var(--color-warning-light);
+  color: var(--color-warning-dark);
+}
+
+.hub-dialog-error {
+  margin-top: var(--spacing-3);
+  background: var(--color-danger-light);
+  color: var(--color-danger-dark);
+}
+
+.hub-dialog-success .material-icons,
+.hub-dialog-conflict .material-icons,
+.hub-dialog-warnings .material-icons {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.hub-dialog-warnings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+}
+
+.hub-dialog-warnings li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  border-radius: var(--border-radius-md);
+  background: var(--color-warning-light);
+  color: var(--color-warning-dark);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.hub-version-compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--spacing-3);
+}
+
+.hub-version-card {
+  padding: var(--spacing-3);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-secondary);
+}
+
+.hub-version-card h4 {
+  margin: 0 0 var(--spacing-2);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold, 600);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
+}
+
+.hub-version-card dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--spacing-1) var(--spacing-3);
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+.hub-version-card dt {
+  color: var(--color-text-secondary);
+}
+
+.hub-version-card dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.hub-open-body {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr 1.4fr;
+  gap: var(--spacing-3);
+  min-height: 320px;
+  font-family: var(--font-family-base);
+}
+
+.hub-open-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.hub-open-list {
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  max-height: 360px;
+}
+
+.hub-open-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.hub-open-row:last-child {
+  border-bottom: none;
+}
+
+.hub-open-row:hover {
+  background: var(--color-background-tertiary);
+}
+
+.hub-open-row.selected {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+.hub-open-row.nested {
+  padding-left: var(--spacing-5);
+}
+
+.hub-open-row .material-icons {
+  font-size: 18px;
+  color: var(--color-text-secondary);
+}
+
+.hub-open-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hub-open-row-meta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted, #999);
+  white-space: nowrap;
+}
+
+.hub-open-row--version {
+  flex-wrap: wrap;
+}
+
+.hub-open-row-message {
+  flex-basis: 100%;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-2);
+}

@@ -36,7 +36,12 @@
           </p>
         </div>
       </el-popover>
-      <el-dropdown trigger="click" placement="bottom-end" :hide-on-click="true">
+      <el-dropdown
+        trigger="click"
+        placement="bottom-end"
+        :hide-on-click="true"
+        @visible-change="onActionMenuToggle"
+      >
         <button class="action-btn action-btn--split-caret" aria-label="More save options">
           <span class="material-icons btn-icon">arrow_drop_down</span>
         </button>
@@ -46,39 +51,74 @@
               <span class="material-icons save-as-icon">save_as</span>
               Save As…
             </el-dropdown-item>
+            <el-dropdown-item
+              v-if="hubConnected"
+              divided
+              data-testid="publish-to-hub"
+              @click="openHubPublishDialog"
+            >
+              <span class="material-icons save-as-icon">cloud_upload</span>
+              Publish to hub…
+            </el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
     </div>
-    <el-popover
-      placement="bottom"
-      :width="240"
-      trigger="hover"
-      :show-after="200"
-      popper-class="header-action-popover"
-      :show-arrow="true"
-    >
-      <template #reference>
-        <button class="action-btn" data-tutorial="open-btn" @click="modalVisibleForOpen = true">
-          <span class="material-icons btn-icon">folder_open</span>
-          <span class="btn-text">Open</span>
-        </button>
-      </template>
-      <div class="header-action-popover-body">
-        <div class="header-action-popover-title">
-          <span class="material-icons header-action-popover-icon">folder_open</span>
-          <span>Open</span>
+    <div :class="{ 'action-btn-split': hubConnected }">
+      <el-popover
+        placement="bottom"
+        :width="240"
+        trigger="hover"
+        :show-after="200"
+        popper-class="header-action-popover"
+        :show-arrow="true"
+      >
+        <template #reference>
+          <button
+            class="action-btn"
+            :class="{ 'action-btn--split-main': hubConnected }"
+            data-tutorial="open-btn"
+            @click="modalVisibleForOpen = true"
+          >
+            <span class="material-icons btn-icon">folder_open</span>
+            <span class="btn-text">Open</span>
+          </button>
+        </template>
+        <div class="header-action-popover-body">
+          <div class="header-action-popover-title">
+            <span class="material-icons header-action-popover-icon">folder_open</span>
+            <span>Open</span>
+          </div>
+          <p class="header-action-popover-desc">Open an existing flow.</p>
+          <p class="header-action-popover-shortcut-hint">
+            <span class="header-action-popover-shortcut">
+              <kbd>{{ MODIFIER_LABEL }}</kbd>
+              <kbd>O</kbd>
+            </span>
+            to open the picker.
+          </p>
         </div>
-        <p class="header-action-popover-desc">Open an existing flow.</p>
-        <p class="header-action-popover-shortcut-hint">
-          <span class="header-action-popover-shortcut">
-            <kbd>{{ MODIFIER_LABEL }}</kbd>
-            <kbd>O</kbd>
-          </span>
-          to open the picker.
-        </p>
-      </div>
-    </el-popover>
+      </el-popover>
+      <el-dropdown
+        v-if="hubConnected"
+        trigger="click"
+        placement="bottom-end"
+        :hide-on-click="true"
+        @visible-change="onActionMenuToggle"
+      >
+        <button class="action-btn action-btn--split-caret" aria-label="More open options">
+          <span class="material-icons btn-icon">arrow_drop_down</span>
+        </button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item data-testid="open-from-hub" @click="modalVisibleForHubOpen = true">
+              <span class="material-icons save-as-icon">cloud_download</span>
+              Open from hub…
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+    </div>
     <div class="action-btn-split" data-tutorial="quick-create-btn">
       <el-popover
         placement="bottom"
@@ -164,6 +204,16 @@
   />
 
   <alteryx-import-dialog v-model:visible="modalVisibleForAlteryx" @imported="emit('refreshFlow')" />
+
+  <hub-publish-dialog
+    v-model:visible="modalVisibleForHubPublish"
+    :flow-id="nodeStore.flow_id"
+    :hub-origin="flowSettings?.hub_origin ?? null"
+    @published="handleHubPublished"
+    @open-flow="handleOpenFromDialog"
+  />
+
+  <hub-open-dialog v-model:visible="modalVisibleForHubOpen" @open-flow="handleOpenFromDialog" />
 
   <el-dialog
     v-model="modalVisibleForSettings"
@@ -290,6 +340,8 @@ import SaveDialog from "../../../features/designer/components/SaveDialog.vue";
 import OpenDialog from "../../../features/designer/components/OpenDialog.vue";
 import CreateDialog from "../../../features/designer/components/CreateDialog.vue";
 import AlteryxImportDialog from "../../../features/designer/components/AlteryxImportDialog.vue";
+import HubPublishDialog from "../../../features/designer/components/HubPublishDialog.vue";
+import HubOpenDialog from "../../../features/designer/components/HubOpenDialog.vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useFlowStore } from "../../../stores/flow-store";
 import { useEditorStore } from "../../../stores/editor-store";
@@ -308,6 +360,7 @@ import {
 import { MODIFIER_LABEL } from "../../../utils/shortcuts";
 import { executionLocationOptions, type BackendRow } from "../../../utils/executionLocation";
 import { listComputeBackends } from "../../../api/computeBackends.api";
+import { getHubConnection } from "../../../api/hubConnection.api";
 import BackendHandshakeStatus from "../../settings/BackendHandshakeStatus.vue";
 
 const nodeStore = useNodeStore();
@@ -323,6 +376,33 @@ const modalVisibleForSave = ref(false);
 const modalVisibleForCreate = ref(false);
 const modalVisibleForAlteryx = ref(false);
 const modalVisibleForSettings = ref(false);
+const modalVisibleForHubPublish = ref(false);
+const modalVisibleForHubOpen = ref(false);
+
+// "Publish to hub…" and "Open from hub…" show only while this Flowfile is connected to a hub.
+// Re-read when a menu opens, so connecting under Compute → Hub shows them without a reload.
+const hubConnected = ref(false);
+const loadHubConnection = async () => {
+  try {
+    hubConnected.value = (await getHubConnection()).connected;
+  } catch {
+    hubConnected.value = false;
+  }
+};
+const onActionMenuToggle = (open: boolean) => {
+  if (open) void loadHubConnection();
+};
+
+const openHubPublishDialog = () => {
+  modalVisibleForHubPublish.value = true;
+};
+
+// A publish saves the flow with its new hub version; refresh what the header caches about it.
+const handleHubPublished = async () => {
+  emit("flowSaved", nodeStore.flow_id);
+  projectStore.onSourceChanged();
+  await loadFlowSettings();
+};
 
 // Save is a no-op when no flow is loaded; hide the button entirely rather
 // than leaving a disabled control in the header.
@@ -634,6 +714,7 @@ defineExpose({
 });
 
 onMounted(async () => {
+  void loadHubConnection();
   if (nodeStore.flow_id && nodeStore.flow_id > 0) {
     await loadFlowSettings();
   }

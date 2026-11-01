@@ -25,11 +25,19 @@ export interface FlowParameter {
 
 // Flow Settings
 
+/** The hub flow and version a document came from or was last published as; travels with the file. */
+export interface HubOrigin {
+  hub_url: string;
+  flow_uuid: string;
+  version: number;
+}
+
 export interface FlowSettings {
   flow_id: number;
   name: string;
   description?: string;
   source_registration_id?: number | null;
+  hub_origin?: HubOrigin | null;
   save_location?: string;
   auto_save: boolean;
   modified_on?: number;
