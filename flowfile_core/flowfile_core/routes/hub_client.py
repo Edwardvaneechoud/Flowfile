@@ -32,6 +32,7 @@ from flowfile_core.flowfile.catalog_helpers import (
     FlowNameNamespaceCollision,
     FlowPathNamespaceCollision,
     register_flow_in_namespace,
+    require_flow_save_permitted,
     resolve_source_registration_id,
 )
 from flowfile_core.flowfile.utils import create_unique_id
@@ -427,7 +428,9 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
     The file lands under ``flows/hub`` with ``hub_origin`` stamped, so a later publish from it names this version as
     its base, and the local registration carries the hub's uuid, so runs of it are the hub flow's runs. A local
     copy that exists already (the file of the registration holding this uuid, or an earlier open) is 409
-    ``local_copy_exists`` unless ``replace`` is set, which overwrites the file and keeps the registration.
+    ``local_copy_exists`` unless ``replace`` is set, which overwrites the file and keeps the registration. On a
+    shared core the local copy may be another user's flow: a caller who may not save over it is refused with 403
+    before the copy is named or written, as every other save is.
     """
     hub_url, token = _hub(current_user)
     try:
@@ -436,6 +439,11 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
         raise _hub_error(e) from e
 
     flow_path, registered = _local_copy_path(checked_out["flow_uuid"], checked_out["name"])
+    namespace_id = None if registered else _local_flows_namespace_id()
+    try:
+        require_flow_save_permitted(flow_path, namespace_id, current_user)
+    except NotAuthorizedError as err:
+        raise HTTPException(status_code=403, detail=str(err)) from None
     existing_id = None
     if os.path.exists(flow_path):
         if not request.replace:
@@ -460,7 +468,7 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
                 flow_path,
                 checked_out["name"],
                 current_user.id,
-                _local_flows_namespace_id(),
+                namespace_id,
                 requesting_user=current_user,
                 flow_uuid=checked_out["flow_uuid"],
             )

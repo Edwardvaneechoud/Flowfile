@@ -14,9 +14,12 @@ import yaml
 from fastapi.testclient import TestClient
 
 from flowfile_core import flow_file_handler, main
+from flowfile_core.auth.password import get_password_hash
+from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.flowfile.catalog_helpers import auto_register_flow
+from flowfile_core.flowfile.catalog_helpers import auto_register_flow, register_flow_in_namespace
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.hub_client import client
@@ -189,6 +192,61 @@ def connected(api, hub) -> TestClient:
 @pytest.fixture
 def user_id(api) -> int:
     return api.get("/auth/users/me").json()["id"]
+
+
+@pytest.fixture
+def shared_core(store, hub, monkeypatch):
+    """A multi-user core with two regular users, each signed in and connected to the fake hub.
+
+    Yields ``{"owner": (user_id, client), "stranger": (user_id, client)}``; the users and the flows registered
+    under them are removed afterwards.
+    """
+    monkeypatch.setenv("FLOWFILE_MODE", "docker")
+    monkeypatch.setenv("JWT_SECRET_KEY", "hub-flows-test-secret")
+    password = "hub-flows-test-password"
+    people: dict[str, tuple[int, str]] = {}
+    with get_db_context() as db:
+        for key in ("owner", "stranger"):
+            username = f"hub_flows_{key}"
+            stale = db.query(db_models.User).filter(db_models.User.username == username).first()
+            if stale is not None:
+                db.delete(stale)
+                db.commit()
+            user = db_models.User(
+                username=username,
+                email=f"{username}@flowfile.app",
+                full_name=username,
+                hashed_password=get_password_hash(password),
+                disabled=False,
+                is_admin=False,
+                must_change_password=False,
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            people[key] = (user.id, username)
+    clients = {}
+    for key, (uid, username) in people.items():
+        c = TestClient(main.app)
+        token = c.post("/auth/token", data={"username": username, "password": password})
+        assert token.status_code == 200, token.text
+        c.headers["Authorization"] = f"Bearer {token.json()['access_token']}"
+        assert c.post("/hub_client/connection", json={**CONNECT, "device_name": username}).status_code == 200
+        clients[key] = (uid, c)
+    hub.calls.clear()
+    yield clients
+    ids = [uid for uid, _ in clients.values()]
+    for _, c in clients.values():
+        c.close()
+    with get_db_context() as db:
+        db.query(db_models.FlowRegistration).filter(db_models.FlowRegistration.owner_id.in_(ids)).delete(
+            synchronize_session=False
+        )
+        for uid in ids:
+            user = db.get(db_models.User, uid)
+            if user is not None:
+                db.delete(user)
+        db.commit()
 
 
 @pytest.fixture
@@ -481,6 +539,34 @@ def test_open_of_a_flow_published_from_here_points_at_its_own_file(connected, hu
     assert replaced.json()["flow_path"] == str(path)
     assert _saved_origin(path)["version"] == 2
     assert yaml.safe_load(path.read_text(encoding="utf-8"))["flowfile_id"] == flow.flow_id
+
+
+def test_open_on_a_shared_core_refuses_to_name_or_replace_another_users_local_copy(shared_core, hub, tmp_path):
+    owner_id, owner = shared_core["owner"]
+    _, stranger = shared_core["stranger"]
+    flow_uuid = "99999999-8888-4777-8666-555555555555"
+    hub.seed(flow_uuid, "Payroll", _new_flow(owner_id, None).get_flowfile_data().model_dump(mode="json"))
+    owners_copy = tmp_path / "owners_copy.yaml"
+    owners_copy.write_text("flowfile_id: 1\n", encoding="utf-8")
+    with get_db_context() as db:
+        namespace_id = CatalogService(SQLAlchemyCatalogRepository(db)).ensure_local_flows_namespace().id
+    register_flow_in_namespace(str(owners_copy), "Payroll", owner_id, namespace_id, flow_uuid=flow_uuid)
+    registration = _registration(uuid=flow_uuid)
+
+    for body in ({"flow_uuid": flow_uuid}, {"flow_uuid": flow_uuid, "replace": True}):
+        refused = stranger.post("/hub_client/open", json=body)
+        assert refused.status_code == 403, refused.text
+        assert str(owners_copy) not in refused.text
+    assert owners_copy.read_text(encoding="utf-8") == "flowfile_id: 1\n"
+    assert _registration(uuid=flow_uuid) == registration
+
+    repeat = owner.post("/hub_client/open", json={"flow_uuid": flow_uuid})
+    assert repeat.status_code == 409, repeat.text
+    assert repeat.json()["detail"] == {"kind": "local_copy_exists", "flow_path": str(owners_copy)}
+    replaced = owner.post("/hub_client/open", json={"flow_uuid": flow_uuid, "replace": True})
+    assert replaced.status_code == 200, replaced.text
+    assert _saved_origin(owners_copy) == {"hub_url": HUB_URL, "flow_uuid": flow_uuid, "version": 1}
+    assert _registration(uuid=flow_uuid) == registration
 
 
 def test_open_of_an_unknown_flow_or_a_malformed_uuid_is_refused(connected, hub):
