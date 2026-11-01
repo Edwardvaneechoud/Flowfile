@@ -340,9 +340,11 @@ def publish(request: HubPublishRequest, current_user=Depends(get_current_active_
 
     A stale base is 409 ``stale_base`` with the base and current versions as the hub lists them; a document that
     came from another hub is 409 ``other_hub``; any other hub refusal keeps the hub's status under ``refused``.
+    The flow is looked up for the caller before the hub session is checked, so a flow the caller cannot see is 404
+    whether or not a hub is connected.
     """
-    hub_url, token = _hub(current_user)
     flow = get_flow_or_404(request.flow_id, current_user)
+    hub_url, token = _hub(current_user)
     flow_path = flow.flow_settings.path or flow.flow_settings.save_location
     if not flow_path:
         raise HTTPException(status_code=422, detail="save the flow first")

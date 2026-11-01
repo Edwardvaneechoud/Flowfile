@@ -305,12 +305,13 @@ def _saved_origin(path: Path) -> dict | None:
     return yaml.safe_load(path.read_text(encoding="utf-8"))["flowfile_settings"]["hub_origin"]
 
 
-def test_every_flow_route_needs_a_hub_connection_and_never_answers_401(api, hub):
+def test_every_flow_route_needs_a_hub_connection_and_never_answers_401(api, hub, user_id):
+    own_flow = _new_flow(user_id, None)
     for method, path, kwargs in (
         ("GET", "/hub_client/namespaces", {}),
         ("GET", "/hub_client/flows", {}),
         ("GET", "/hub_client/flows/3f7b4b8e-1b2a-4c3d-9e8f-0a1b2c3d4e5f/versions", {}),
-        ("POST", "/hub_client/publish", {"json": {"flow_id": 1}}),
+        ("POST", "/hub_client/publish", {"json": {"flow_id": own_flow.flow_id}}),
         ("POST", "/hub_client/open", {"json": {"flow_uuid": "3f7b4b8e-1b2a-4c3d-9e8f-0a1b2c3d4e5f"}}),
     ):
         response = api.request(method, path, **kwargs)
@@ -475,6 +476,16 @@ def test_another_users_flow_is_not_found(connected, hub, user_id, tmp_path):
     flow = _new_flow(user_id + 1000, tmp_path / "theirs.yaml")
     assert connected.post("/hub_client/publish", json={"flow_id": flow.flow_id}).status_code == 404
     assert connected.get("/hub_client/publish_check", params={"flow_id": flow.flow_id}).status_code == 404
+
+
+def test_another_users_flow_is_not_found_without_a_hub_connection_too(api, hub, user_id, tmp_path):
+    """The flow is resolved for the caller before the hub session is checked, so no 400 tells a flow id apart."""
+    flow = _new_flow(user_id + 1000, tmp_path / "theirs.yaml")
+
+    response = api.post("/hub_client/publish", json={"flow_id": flow.flow_id})
+
+    assert response.status_code == 404
+    assert hub.calls == []
 
 
 def test_open_writes_a_registered_copy_refuses_a_repeat_and_overwrites_with_replace(
