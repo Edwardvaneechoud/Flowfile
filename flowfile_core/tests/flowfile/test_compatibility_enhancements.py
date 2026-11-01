@@ -367,8 +367,11 @@ class TestEnsureFlowSettings:
     def test_backfills_fields_added_after_the_pickle_format(self):
         """A FlowSettings unpickled from an older release has no __dict__ entry for new fields."""
         fs = schemas.FlowSettings(flow_id=1, name="legacy", path=".")
-        legacy_dict = {k: v for k, v in fs.__dict__.items()
-                       if k not in ("validate_settings", "track_history", "parameters", "hub_origin")}
+        legacy_dict = {
+            k: v
+            for k, v in fs.__dict__.items()
+            if k not in ("validate_settings", "track_history", "parameters", "hub_origin")
+        }
         object.__setattr__(fs, "__dict__", legacy_dict)
 
         class FakeFlowObj:

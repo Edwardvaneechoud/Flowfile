@@ -479,7 +479,7 @@ def test_another_users_flow_is_not_found(connected, hub, user_id, tmp_path):
 
 
 def test_another_users_flow_is_not_found_without_a_hub_connection_too(api, hub, user_id, tmp_path):
-    """The flow is resolved for the caller before the hub session is checked, so no 400 tells a flow id apart."""
+    """The flow is resolved for the caller before the hub session is checked, so a 400 never reveals a flow id."""
     flow = _new_flow(user_id + 1000, tmp_path / "theirs.yaml")
 
     response = api.post("/hub_client/publish", json={"flow_id": flow.flow_id})
