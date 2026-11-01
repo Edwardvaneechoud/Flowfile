@@ -123,6 +123,7 @@ def register_flow_in_namespace(
     namespace_id: int | None,
     *,
     requesting_user=None,
+    flow_uuid: str | None = None,
 ) -> None:
     """Register a flow in a specific namespace, or auto-register if namespace_id is None.
 
@@ -139,6 +140,9 @@ def register_flow_in_namespace(
     Unlike :func:`auto_register_flow`, this is an explicit save-to-namespace path:
     unexpected errors (e.g. DB failures) propagate to the caller instead of being
     swallowed.
+
+    ``flow_uuid`` registers a new flow under an identity it already has elsewhere (a flow
+    checked out from a hub); an existing registration keeps its own uuid.
     """
     if namespace_id is None:
         auto_register_flow(flow_path, name, user_id)
@@ -177,6 +181,7 @@ def register_flow_in_namespace(
             flow_path=flow_path,
             owner_id=user_id,
             namespace_id=namespace_id,
+            flow_uuid=flow_uuid,
         )
 
 

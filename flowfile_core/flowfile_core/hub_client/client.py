@@ -2,8 +2,8 @@
 
 Each function takes the hub's base URL and an optional ``http`` client, which tests replace with a
 ``httpx.MockTransport``. Sign-in and refresh use the auth routes the hub mounts from core (form fields, a token pair
-back); ``/hub/info`` and ``/hub/devices`` are the hub's own. Requests log method, path and status only, never a
-body, a password or a token.
+back), as does ``/catalog/namespaces``; ``/hub/info``, ``/hub/devices`` and ``/hub/flows`` are the hub's own.
+Requests log method, path and status only, never a body, a password or a token.
 """
 
 import threading
@@ -20,12 +20,17 @@ class HubUnreachable(Exception):
 
 
 class HubRefused(Exception):
-    """The hub answered with an error, or with something that is not a hub's answer."""
+    """The hub answered with an error, or with something that is not a hub's answer.
 
-    def __init__(self, status: int, detail: str):
+    ``detail`` is the hub's text; ``payload`` is its ``detail`` object when the hub sent one (the stale-base
+    409 carries ``current_version`` and ``base_version`` that way), else ``None``.
+    """
+
+    def __init__(self, status: int, detail: str, payload: dict | None = None):
         super().__init__(detail)
         self.status = status
         self.detail = detail
+        self.payload = payload
 
 
 class HubVersionRefused(Exception):
@@ -51,17 +56,23 @@ def _http(http: httpx.Client | None) -> httpx.Client:
         return _module_http
 
 
-def _detail(resp: httpx.Response) -> str:
+def _raw_detail(resp: httpx.Response):
     try:
-        detail = resp.json().get("detail")
+        return resp.json().get("detail")
     except (ValueError, AttributeError):
-        detail = None
+        return None
+
+
+def _detail(resp: httpx.Response) -> str:
+    detail = _raw_detail(resp)
     if isinstance(detail, str) and detail:
         return detail
+    if isinstance(detail, dict) and isinstance(detail.get("message"), str):
+        return detail["message"]
     return f"The hub answered {resp.status_code}."
 
 
-def _request(method: str, url: str, path: str, http: httpx.Client | None, **kwargs) -> dict:
+def _send(method: str, url: str, path: str, http: httpx.Client | None, **kwargs):
     try:
         resp = _http(http).request(method, f"{url.rstrip('/')}{path}", **kwargs)
     except httpx.TransportError as e:
@@ -70,14 +81,30 @@ def _request(method: str, url: str, path: str, http: httpx.Client | None, **kwar
     if resp.status_code == 426:
         raise HubVersionRefused(_detail(resp))
     if resp.status_code >= 400:
-        raise HubRefused(resp.status_code, _detail(resp))
+        detail = _raw_detail(resp)
+        raise HubRefused(resp.status_code, _detail(resp), detail if isinstance(detail, dict) else None)
     try:
-        body = resp.json()
+        return resp.json()
     except ValueError:
-        body = None
+        return None
+
+
+def _request(method: str, url: str, path: str, http: httpx.Client | None, **kwargs) -> dict:
+    body = _send(method, url, path, http, **kwargs)
     if not isinstance(body, dict):
-        raise HubRefused(resp.status_code, f"{url} did not answer {path} as a Flowfile hub does.")
+        raise HubRefused(200, f"{url} did not answer {path} as a Flowfile hub does.")
     return body
+
+
+def _request_list(method: str, url: str, path: str, http: httpx.Client | None, **kwargs) -> list:
+    body = _send(method, url, path, http, **kwargs)
+    if not isinstance(body, list):
+        raise HubRefused(200, f"{url} did not answer {path} as a Flowfile hub does.")
+    return body
+
+
+def _bearer(access_token: str) -> dict:
+    return {"Authorization": f"Bearer {access_token}"}
 
 
 def _require(body: dict, fields: tuple[str, ...], url: str, path: str) -> dict:
@@ -117,6 +144,43 @@ def register_device(
         "/hub/devices",
         http,
         json={"name": name, "client_version": client_version},
-        headers={"Authorization": f"Bearer {access_token}"},
+        headers=_bearer(access_token),
     )
     return _require(body, ("id", "name"), url, "/hub/devices")
+
+
+def list_namespaces(url: str, access_token: str, *, http: httpx.Client | None = None) -> list:
+    """The catalog namespaces the signed-in account can see on the hub, as the hub lists them."""
+    return _request_list("GET", url, "/catalog/namespaces", http, headers=_bearer(access_token))
+
+
+def list_flows(
+    url: str, access_token: str, namespace_id: int | None = None, *, http: httpx.Client | None = None
+) -> list:
+    """The flows the account may read, each with its newest hub version; ``namespace_id`` narrows the list."""
+    params = {"namespace_id": namespace_id} if namespace_id is not None else None
+    return _request_list("GET", url, "/hub/flows", http, params=params, headers=_bearer(access_token))
+
+
+def list_versions(url: str, access_token: str, flow_uuid: str, *, http: httpx.Client | None = None) -> list:
+    """Every published version of the flow, newest first."""
+    return _request_list("GET", url, f"/hub/flows/{flow_uuid}/versions", http, headers=_bearer(access_token))
+
+
+def checkout(
+    url: str, access_token: str, flow_uuid: str, version: int | None = None, *, http: httpx.Client | None = None
+) -> dict:
+    """The stored document of ``version`` (the newest when omitted) with the flow's name and namespace."""
+    params = {"version": version} if version is not None else None
+    body = _request("GET", url, f"/hub/flows/{flow_uuid}/checkout", http, params=params, headers=_bearer(access_token))
+    return _require(body, ("flow_uuid", "version", "name", "definition"), url, "/hub/flows/{flow_uuid}/checkout")
+
+
+def publish(url: str, access_token: str, flow_uuid: str, body: dict, *, http: httpx.Client | None = None) -> dict:
+    """Store ``body["definition"]`` as the flow's next version; the hub's 201 answer with the version it got.
+
+    A stale ``base_version`` is the hub's 409, raised as ``HubRefused`` whose ``payload`` carries
+    ``current_version`` and ``base_version``.
+    """
+    answer = _request("POST", url, f"/hub/flows/{flow_uuid}/publish", http, json=body, headers=_bearer(access_token))
+    return _require(answer, ("flow_uuid", "version", "name"), url, "/hub/flows/{flow_uuid}/publish")

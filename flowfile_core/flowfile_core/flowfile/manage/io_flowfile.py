@@ -266,6 +266,7 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
         max_parallel_workers=flowfile_data.flowfile_settings.max_parallel_workers,
         source_registration_id=flowfile_data.flowfile_settings.source_registration_id,
         parameters=flowfile_data.flowfile_settings.parameters,
+        hub_origin=flowfile_data.flowfile_settings.hub_origin,
     )
 
     return schemas.FlowInformation(

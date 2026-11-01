@@ -2694,6 +2694,7 @@ _SERVER_OWNED_FLOW_SETTINGS = (
     "path",
     "save_location",
     "source_registration_id",
+    "hub_origin",
     "modified_on",
     "is_running",
     "is_canceled",
