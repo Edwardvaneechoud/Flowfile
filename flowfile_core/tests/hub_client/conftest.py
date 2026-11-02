@@ -1,11 +1,16 @@
 """A fake hub behind ``httpx.MockTransport``, and a secure store of the test's own.
 
 The fake answers the routes a desktop uses: ``/hub/info``, core's ``/auth/token`` and ``/auth/refresh`` (form
-fields, rotating refresh tokens) and ``POST /hub/devices``, which upserts on the account and the device name as the
-hub does. Its tokens are real JWTs with an ``exp`` claim, signed with a key only the fake knows.
+fields, rotating refresh tokens), ``POST /hub/devices``, which upserts on the account and the device name as the
+hub does, ``GET /hub/compute-nodes`` (whatever ``nodes`` holds) and ``POST /hub/node-tokens``, which signs a ``run``
+token for an enabled node and refuses as the hub does. Its tokens are real JWTs with an ``exp`` claim, signed with
+a key only the fake knows.
 """
 
+import json
 import time
+import uuid
+from datetime import datetime, timezone
 from urllib.parse import parse_qs
 
 import httpx
@@ -18,6 +23,21 @@ from flowfile_core.hub_client import client, session
 _KEY = "a signing key only the fake hub knows"
 HUB_URL = "https://hub.example.test"
 INFO = {"org_name": "Acme Data", "hub_version": "0.3.0", "core_version": "0.24.0", "vend_mode": "static"}
+NODE_TOKEN_KID = "hub-key-1"
+
+
+def compute_node(node_id: int, name: str, *, enabled: bool = True, worker_url: str | None = None) -> dict:
+    """One node as the hub lists it; the worker URL defaults to ``https://<name>-worker.example.test:63579``."""
+    return {
+        "id": node_id,
+        "name": name,
+        "kind": "flowfile",
+        "core_url": f"https://{name}-core.example.test:63578",
+        "worker_url": worker_url or f"https://{name}-worker.example.test:63579",
+        "ui_url": None,
+        "enabled": enabled,
+        "is_default": node_id == 1,
+    }
 
 
 class FakeHub:
@@ -30,6 +50,10 @@ class FakeHub:
         self.devices: dict[tuple[str, str], int] = {}
         self.live_refresh: dict[str, str] = {}
         self.calls: list[tuple[str, str]] = []
+        self.nodes: list[dict] = []
+        self.nodes_failure: int | None = None
+        self.node_token_ttl = 3600
+        self.minted: list[dict] = []
         self._issued = 0
 
     def http(self) -> httpx.Client:
@@ -93,7 +117,56 @@ class FakeHub:
                     "last_seen_at": "2026-11-01T12:00:00Z",
                 },
             )
+        if request.method == "GET" and path == "/hub/compute-nodes":
+            if self._bearer_user(request) is None:
+                return httpx.Response(401, json={"detail": "Could not validate credentials"})
+            if self.nodes_failure is not None:
+                return httpx.Response(self.nodes_failure, json={"detail": "compute nodes unavailable"})
+            return httpx.Response(200, json=self.nodes)
+        if request.method == "POST" and path == "/hub/node-tokens":
+            return self._mint(request)
         return httpx.Response(404, json={"detail": "Not Found"})
+
+    def _mint(self, request: httpx.Request) -> httpx.Response:
+        user = self._bearer_user(request)
+        if user is None:
+            return httpx.Response(401, json={"detail": "Could not validate credentials"})
+        body = json.loads(request.content)
+        node = next((n for n in self.nodes if n["id"] == body["node_id"]), None)
+        if node is None:
+            return httpx.Response(404, json={"detail": "no such compute node"})
+        if not node["enabled"]:
+            return httpx.Response(403, json={"detail": f"node {node['name']} is disabled"})
+        scope = body.get("scope", "run")
+        if scope != "run":
+            return httpx.Response(403, json={"detail": "dispatch tokens are the hub's own"})
+        now = int(time.time())
+        claims = {
+            "iss": HUB_URL,
+            "sub": user,
+            "uid": 1,
+            "aud": node["name"],
+            "scope": scope,
+            "jti": uuid.uuid4().hex,
+            "iat": now,
+            "exp": now + self.node_token_ttl,
+        }
+        token = jwt.encode(claims, _KEY, algorithm="HS256", headers={"kid": NODE_TOKEN_KID})
+        self.minted.append({"user": user, "node_id": node["id"], "scope": scope})
+        iso = lambda t: datetime.fromtimestamp(t, timezone.utc).isoformat()  # noqa: E731
+        return httpx.Response(
+            201,
+            json={
+                "token": token,
+                "node_id": node["id"],
+                "node_name": node["name"],
+                "scope": scope,
+                "kid": NODE_TOKEN_KID,
+                "issued_at": iso(now),
+                "expires_at": iso(now + self.node_token_ttl),
+                "issuer": HUB_URL,
+            },
+        )
 
 
 @pytest.fixture

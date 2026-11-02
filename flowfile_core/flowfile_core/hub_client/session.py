@@ -4,6 +4,7 @@ A connection is one JSON string in the secure store (service ``flowfile_hub``, k
 ``hub_url``, ``refresh_token``, ``refresh_expires_at``, ``device_id`` and ``device_name``. It is not a ``Secret`` row,
 so it never shows in the Secrets page and no node can reference it. No password is ever part of it. Access tokens
 live only in this process's memory; each refresh rotates the refresh token and the new one is stored straight away.
+The node tokens minted through a connection (``node_tokens``) go with it when it is replaced or cleared.
 
 A token's expiry is read from its own ``exp`` claim without verifying the signature: the hub verifies its tokens,
 this side only needs to know when to ask for a new one.
@@ -65,13 +66,21 @@ def save(user_id: int, session: dict) -> None:
     with _lock:
         _access_tokens.pop(user_id, None)
         secrets.set_password(SERVICE, _key(user_id), json.dumps(stored))
+    _forget_node_tokens(user_id)
 
 
 def clear(user_id: int) -> None:
-    """Forget the connection of ``user_id`` on this machine; the hub is not told."""
+    """Forget the connection of ``user_id`` and its node tokens on this machine; the hub is not told."""
     with _lock:
         _access_tokens.pop(user_id, None)
         secrets.delete_password(SERVICE, _key(user_id))
+    _forget_node_tokens(user_id)
+
+
+def _forget_node_tokens(user_id: int) -> None:
+    from flowfile_core.hub_client import node_tokens  # imported here: it imports this module
+
+    node_tokens.clear(user_id)
 
 
 def access_token(user_id: int) -> str | None:

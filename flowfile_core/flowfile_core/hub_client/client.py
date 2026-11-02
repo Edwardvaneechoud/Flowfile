@@ -2,8 +2,8 @@
 
 Each function takes the hub's base URL and an optional ``http`` client, which tests replace with a
 ``httpx.MockTransport``. Sign-in and refresh use the auth routes the hub mounts from core (form fields, a token pair
-back), as does ``/catalog/namespaces``; ``/hub/info``, ``/hub/devices`` and ``/hub/flows`` are the hub's own.
-Requests log method, path and status only, never a body, a password or a token.
+back), as does ``/catalog/namespaces``; ``/hub/info``, ``/hub/devices``, ``/hub/flows``, ``/hub/compute-nodes`` and
+``/hub/node-tokens`` are the hub's own. Requests log method, path and status only, never a body, a password or a token.
 """
 
 import threading
@@ -184,3 +184,38 @@ def publish(url: str, access_token: str, flow_uuid: str, body: dict, *, http: ht
     """
     answer = _request("POST", url, f"/hub/flows/{flow_uuid}/publish", http, json=body, headers=_bearer(access_token))
     return _require(answer, ("flow_uuid", "version", "name"), url, "/hub/flows/{flow_uuid}/publish")
+
+
+def list_compute_nodes(url: str, access_token: str, *, http: httpx.Client | None = None) -> list:
+    """The compute nodes registered on the hub, enabled or not, as the hub lists them.
+
+    Each carries ``id``, ``name``, ``kind``, ``core_url``, ``worker_url``, ``ui_url``, ``enabled`` and ``is_default``.
+    """
+    nodes = _request_list("GET", url, "/hub/compute-nodes", http, headers=_bearer(access_token))
+    for node in nodes:
+        if not isinstance(node, dict):
+            raise HubRefused(200, f"{url} did not answer /hub/compute-nodes as a Flowfile hub does.")
+        _require(node, ("id", "name", "worker_url"), url, "/hub/compute-nodes")
+        if not isinstance(node.get("enabled"), bool):
+            raise HubRefused(200, f"{url} did not answer /hub/compute-nodes as a Flowfile hub does.")
+    return nodes
+
+
+def mint_node_token(
+    url: str, access_token: str, node_id: int, scope: str = "run", *, http: httpx.Client | None = None
+) -> dict:
+    """A short-lived token the hub signs for one of its nodes, for the signed-in account.
+
+    Answers the hub's body: ``token``, ``node_id``, ``node_name`` (the token's audience), ``scope``, ``kid``,
+    ``issued_at``, ``expires_at`` and ``issuer``. The hub shows the token once and keeps none; a node that does
+    not exist, is disabled, or a ``dispatch`` scope is the hub's refusal.
+    """
+    body = _request(
+        "POST",
+        url,
+        "/hub/node-tokens",
+        http,
+        json={"node_id": node_id, "scope": scope},
+        headers=_bearer(access_token),
+    )
+    return _require(body, ("token", "node_name", "kid", "expires_at", "issuer"), url, "/hub/node-tokens")
