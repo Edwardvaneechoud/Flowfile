@@ -140,13 +140,13 @@ def test_an_added_worker_is_listed_by_id_and_url_and_its_token_is_stored_encrypt
     added = add(admin_client, "http://team-worker.test:63579/")
 
     assert added.status_code == 201, added.text
-    assert added.json() == {"id": "worker:team", "url": "http://team-worker.test:63579", "shares_core_disk": False, "verdict": None, "source": "local"}
+    assert added.json() == {"id": "worker:team", "url": "http://team-worker.test:63579", "shares_core_disk": False, "verdict": None, "source": "local", "reachable": None, "reason": None}
     with get_db_context() as db:
         stored = db.get(ConfiguredBackend, "worker:team").token
     assert stored.startswith("$ffsec$")
     assert "row-token" not in stored
     listed = admin_client.get(ROUTE).json()
-    assert listed == [{"id": "worker:team", "url": "http://team-worker.test:63579", "shares_core_disk": False, "verdict": None, "source": "local"}]
+    assert listed == [{"id": "worker:team", "url": "http://team-worker.test:63579", "shares_core_disk": False, "verdict": None, "source": "local", "reachable": None, "reason": None}]
     assert "row-token" not in admin_client.get(ROUTE).text
 
 
@@ -157,7 +157,7 @@ def test_adding_an_id_that_exists_is_a_conflict(admin_client):
 
     assert again.status_code == 409, again.text
     assert admin_client.get(ROUTE).json() == [
-        {"id": "worker:team", "url": "http://team-worker.test:63579", "shares_core_disk": False, "verdict": None, "source": "local"}
+        {"id": "worker:team", "url": "http://team-worker.test:63579", "shares_core_disk": False, "verdict": None, "source": "local", "reachable": None, "reason": None}
     ]
 
 
@@ -188,11 +188,11 @@ def test_an_added_worker_keeps_its_ca_certificate_and_is_listed_without_it(admin
     added = add(admin_client, "https://team-worker.test:63579", ca_cert=pem)
 
     assert added.status_code == 201, added.text
-    assert added.json() == {"id": "worker:team", "url": "https://team-worker.test:63579", "shares_core_disk": False, "verdict": None, "source": "local"}
+    assert added.json() == {"id": "worker:team", "url": "https://team-worker.test:63579", "shares_core_disk": False, "verdict": None, "source": "local", "reachable": None, "reason": None}
     with get_db_context() as db:
         assert db.get(ConfiguredBackend, "worker:team").ca_cert == pem
     listed = admin_client.get(ROUTE)
-    assert listed.json() == [{"id": "worker:team", "url": "https://team-worker.test:63579", "shares_core_disk": False, "verdict": None, "source": "local"}]
+    assert listed.json() == [{"id": "worker:team", "url": "https://team-worker.test:63579", "shares_core_disk": False, "verdict": None, "source": "local", "reachable": None, "reason": None}]
     assert "BEGIN CERTIFICATE" not in listed.text
 
 
@@ -212,7 +212,7 @@ def test_a_worker_marked_as_seeing_cores_files_is_stored_and_listed_so(admin_cli
     with get_db_context() as db:
         assert db.get(ConfiguredBackend, "worker:team").shares_core_disk is True
     assert admin_client.get(ROUTE).json() == [
-        {"id": "worker:team", "url": "http://team-worker.test:63579", "shares_core_disk": True, "verdict": None, "source": "local"}
+        {"id": "worker:team", "url": "http://team-worker.test:63579", "shares_core_disk": True, "verdict": None, "source": "local", "reachable": None, "reason": None}
     ]
 
 
@@ -304,7 +304,7 @@ def test_a_row_at_the_session_worker_passes_the_handshake_with_every_probe(admin
     assert verdict["absent"] == {}
     assert set(EXPRESSION_PLUGINS) <= verdict["offered"]["plugins"].keys()
     listed = admin_client.get(ROUTE).json()
-    assert listed == [{"id": "worker:team", "url": registry.worker_url(), "shares_core_disk": False, "verdict": verdict, "source": "local"}]
+    assert listed == [{"id": "worker:team", "url": registry.worker_url(), "shares_core_disk": False, "verdict": verdict, "source": "local", "reachable": None, "reason": None}]
 
 
 def test_a_worker_on_other_versions_fails_the_handshake_naming_both_sides(admin_client, fake_worker, flag):
@@ -433,8 +433,8 @@ def test_a_non_admin_lists_the_ids_and_last_verdicts_without_the_urls_and_is_ref
         }
     )
     assert listed.json() == [
-        {"id": "worker:team", "url": None, "shares_core_disk": False, "verdict": seen.model_dump(mode="json"), "source": "local"},
-        {"id": "worker:unchecked", "url": None, "shares_core_disk": False, "verdict": None, "source": "local"},
+        {"id": "worker:team", "url": None, "shares_core_disk": False, "verdict": seen.model_dump(mode="json"), "source": "local", "reachable": None, "reason": None},
+        {"id": "worker:unchecked", "url": None, "shares_core_disk": False, "verdict": None, "source": "local", "reachable": None, "reason": None},
     ]
     assert url.split("://", 1)[1] not in listed.text
     assert add(non_admin_client, "http://team-worker.test:63579").status_code == 403

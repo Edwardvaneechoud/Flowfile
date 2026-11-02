@@ -16,7 +16,7 @@ from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
-from flowfile_core.hub_client import HUB_CONTRACT_VERSION, node_tokens, session
+from flowfile_core.hub_client import HUB_CONTRACT_VERSION, node_tokens, reachability, session
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared._version import get_version
 from tests.hub_client.conftest import HUB_URL, INFO, compute_node
@@ -29,8 +29,13 @@ OLD = compute_node(3, "old", enabled=False)
 
 @pytest.fixture(autouse=True)
 def no_configured_backends(monkeypatch):
-    """Every backends row a test left is removed when it ends, the registry forgets it and no node token stays."""
+    """Every backends row a test left is removed when it ends, the registry forgets it and no node token stays.
+
+    The reachability check a sync queues is stood down here: the nodes' worker URLs are names nothing resolves, and
+    ``test_reachability.py`` checks real workers.
+    """
     monkeypatch.setattr(node_tokens, "_tokens", {})
+    monkeypatch.setattr(reachability, "check_all", lambda backend_ids: None)
     yield
     with get_db_context() as db:
         for row in db.query(ConfiguredBackend).all():
@@ -38,6 +43,7 @@ def no_configured_backends(monkeypatch):
             db.delete(row)
         db.commit()
     handshake.reset_handshake()
+    reachability.clear()
 
 
 def _rows() -> dict[str, ConfiguredBackend]:
@@ -78,7 +84,16 @@ def test_not_connected_reports_the_hostname_as_the_default_device_name(api, hub)
     assert body["client_version"] == get_version()
     assert body["contract_version"] == HUB_CONTRACT_VERSION
     assert body["reachable"] is False
+    assert body["node_name"] is None
     assert hub.calls == []
+
+
+def test_the_connection_names_the_node_this_core_is_connected_or_not(api, hub, monkeypatch):
+    monkeypatch.setenv("FLOWFILE_NODE_NAME", "team-local")
+
+    assert api.get("/hub_client/connection").json()["node_name"] == "team-local"
+    assert api.post("/hub_client/connection", json=CONNECT).json()["node_name"] == "team-local"
+    assert api.get("/hub_client/connection").json()["node_name"] == "team-local"
 
 
 def test_connecting_stores_the_refresh_token_and_device_and_never_the_password(api, hub):
@@ -297,6 +312,24 @@ def test_sync_renames_a_node_by_removing_its_old_row(api, hub):
 
     assert response.status_code == 200, response.text
     assert sorted(_rows()) == ["worker:team-two"]
+
+
+def test_a_core_that_is_a_node_itself_never_lists_its_own_node_and_drops_a_row_written_before(api, hub, monkeypatch):
+    hub.nodes = [compute_node(1, "team-local"), GPU]
+    api.post("/hub_client/connection", json=CONNECT)
+    assert sorted(_rows()) == ["worker:gpu", "worker:team-local"]
+    monkeypatch.setenv("FLOWFILE_NODE_NAME", "team-local")
+
+    response = api.post("/hub_client/compute_nodes/sync")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["skipped"] == []
+    assert [row["id"] for row in response.json()["backends"]] == ["worker:gpu"]
+    assert sorted(_rows()) == ["worker:gpu"]
+    reconnected = api.post("/hub_client/connection", json=CONNECT)
+    assert reconnected.json()["nodes_synced"] == 1
+    assert reconnected.json()["sync_error"] is None
+    assert sorted(_rows()) == ["worker:gpu"]
 
 
 def test_a_hand_added_row_with_a_hub_nodes_name_is_skipped_and_untouched(api, hub):
