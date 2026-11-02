@@ -1,20 +1,43 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { httpError } from "../../__fixtures__/promises";
 import type { HubConnection } from "../../api/hubConnection.api";
+import type { ComputeBackend } from "../../api/computeBackends.api";
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   connect: vi.fn(),
   disconnect: vi.fn(),
+  sync: vi.fn(),
+  listBackends: vi.fn(),
 }));
 
 vi.mock("../../api/hubConnection.api", () => ({
   getHubConnection: mocks.get,
   connectHub: mocks.connect,
   disconnectHub: mocks.disconnect,
+  syncHubComputeNodes: mocks.sync,
 }));
 
-import { useHubConnection } from "./useHubConnection";
+vi.mock("../../api/computeBackends.api", () => ({
+  listComputeBackends: mocks.listBackends,
+}));
+
+import { hubNodesOf, nodeNameOf, syncNoticeOf, useHubConnection } from "./useHubConnection";
+
+const teamNode: ComputeBackend = {
+  id: "worker:team",
+  url: "https://team-worker.example.test:63579",
+  shares_core_disk: false,
+  verdict: null,
+  source: "hub",
+};
+const ownWorker: ComputeBackend = {
+  id: "worker:own",
+  url: "https://own.example.test:63579",
+  shares_core_disk: false,
+  verdict: null,
+  source: "local",
+};
 
 const none: HubConnection = {
   connected: false,
@@ -30,6 +53,8 @@ const none: HubConnection = {
   vendMode: null,
   reachable: false,
   error: null,
+  nodesSynced: null,
+  syncError: null,
 };
 
 const connected: HubConnection = {
@@ -49,8 +74,26 @@ const input = { hubUrl: "https://hub.example.test", username: "ana", password: "
 
 beforeEach(() => {
   mocks.get.mockReset().mockResolvedValue(none);
-  mocks.connect.mockReset().mockResolvedValue(connected);
+  mocks.connect.mockReset().mockResolvedValue({ ...connected, nodesSynced: 1 });
   mocks.disconnect.mockReset().mockResolvedValue(undefined);
+  mocks.sync.mockReset().mockResolvedValue({ backends: [ownWorker, teamNode], skipped: [] });
+  mocks.listBackends.mockReset().mockResolvedValue([ownWorker, teamNode]);
+});
+
+describe("hub nodes", () => {
+  it("keeps the rows the hub filled and drops the ones added here", () => {
+    expect(hubNodesOf([ownWorker, teamNode])).toEqual([teamNode]);
+    expect(nodeNameOf(teamNode)).toBe("team");
+  });
+
+  it("words a connect's sync outcome", () => {
+    expect(syncNoticeOf(none)).toBe("");
+    expect(syncNoticeOf({ ...connected, nodesSynced: 1 })).toBe("1 team node synced");
+    expect(syncNoticeOf({ ...connected, nodesSynced: 3 })).toBe("3 team nodes synced");
+    expect(syncNoticeOf({ ...connected, syncError: "Could not reach the hub" })).toBe(
+      "Team nodes were not synced: Could not reach the hub",
+    );
+  });
 });
 
 describe("useHubConnection", () => {
@@ -106,14 +149,89 @@ describe("useHubConnection", () => {
     await expect(hub.connect(input)).rejects.toThrow("Couldn't connect to the hub.");
   });
 
-  it("disconnects and reloads the not-connected state", async () => {
+  it("disconnects, reloads the not-connected state and empties the team nodes", async () => {
     mocks.get.mockResolvedValueOnce(connected);
     const hub = useHubConnection();
     await hub.load();
+    expect(hub.nodes.value).toEqual([teamNode]);
 
     await hub.disconnect();
 
     expect(mocks.disconnect).toHaveBeenCalledOnce();
     expect(hub.state.value).toEqual(none);
+    expect(hub.nodes.value).toEqual([]);
+    expect(hub.syncNotice.value).toBe("");
+  });
+
+  it("lists the hub's team nodes only while connected", async () => {
+    const hub = useHubConnection();
+
+    await hub.load();
+
+    expect(mocks.listBackends).not.toHaveBeenCalled();
+    expect(hub.nodes.value).toEqual([]);
+  });
+
+  it("reads the team nodes from the backends after a connect and keeps the sync count", async () => {
+    const hub = useHubConnection();
+    await hub.load();
+
+    await hub.connect(input);
+
+    expect(hub.nodes.value).toEqual([teamNode]);
+    expect(hub.syncNotice.value).toBe("1 team node synced");
+  });
+
+  it("shows why a connect's node sync failed while the connection stands", async () => {
+    mocks.connect.mockResolvedValue({ ...connected, syncError: "compute nodes unavailable" });
+    mocks.listBackends.mockResolvedValue([ownWorker]);
+    const hub = useHubConnection();
+
+    const next = await hub.connect(input);
+
+    expect(next.connected).toBe(true);
+    expect(hub.nodes.value).toEqual([]);
+    expect(hub.syncNotice.value).toBe("Team nodes were not synced: compute nodes unavailable");
+  });
+
+  it("syncs the nodes on request and takes the rows the route answers", async () => {
+    const gpu: ComputeBackend = { ...teamNode, id: "worker:gpu" };
+    mocks.sync.mockResolvedValue({ backends: [ownWorker, teamNode, gpu], skipped: [] });
+    const hub = useHubConnection();
+
+    const count = await hub.syncNodes();
+
+    expect(mocks.sync).toHaveBeenCalledOnce();
+    expect(count).toBe(2);
+    expect(hub.nodes.value).toEqual([teamNode, gpu]);
+    expect(hub.syncNotice.value).toBe("2 team nodes synced");
+    expect(hub.syncing.value).toBe(false);
+  });
+
+  it("names the worker added here that a sync left alone", async () => {
+    mocks.sync.mockResolvedValue({ backends: [ownWorker, teamNode], skipped: ["worker:own"] });
+    const hub = useHubConnection();
+
+    await hub.syncNodes();
+
+    expect(hub.syncNotice.value).toBe(
+      "1 team node synced; kept the worker added here under worker:own",
+    );
+  });
+
+  it("surfaces a refused sync in the route's words and keeps the list", async () => {
+    mocks.sync.mockRejectedValue(
+      httpError(502, "Could not reach the hub at https://hub.example.test."),
+    );
+    mocks.get.mockResolvedValueOnce(connected);
+    const hub = useHubConnection();
+    await hub.load();
+
+    await expect(hub.syncNodes()).rejects.toThrow(
+      "Could not reach the hub at https://hub.example.test.",
+    );
+    expect(hub.nodes.value).toEqual([teamNode]);
+    expect(hub.syncNotice.value).toBe("Could not reach the hub at https://hub.example.test.");
+    expect(hub.syncing.value).toBe(false);
   });
 });

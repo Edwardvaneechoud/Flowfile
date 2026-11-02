@@ -6,13 +6,15 @@ const COMPUTE_BACKENDS_URL = "/compute_backends";
 
 /**
  * A configured worker as every user lists it: `url` is null for a non-administrator, `verdict` until it was
- * checked. `shares_core_disk`: core offers the worker local files whatever it declares.
+ * checked. `shares_core_disk`: core offers the worker local files whatever it declares. `source` says who filled
+ * the row: `local` for one added on the Backends page, `hub` for one of the connected hub's compute nodes.
  */
 export interface ComputeBackend {
   id: string;
   url: string | null;
   shares_core_disk: boolean;
   verdict: HandshakeVerdict | null;
+  source: "local" | "hub";
 }
 
 /** The add body, an administrator's; the token and CA certificate are sent once and never answered. */

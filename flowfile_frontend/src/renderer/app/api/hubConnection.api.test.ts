@@ -46,6 +46,8 @@ const connected = {
   vendMode: "static",
   reachable: true,
   error: null,
+  nodesSynced: null,
+  syncError: null,
 };
 
 describe("hubConnection.api", () => {
@@ -90,6 +92,42 @@ describe("hubConnection.api", () => {
     await api.connectHub({ hubUrl: "https://hub.example.test", username: "ana", password: "x" });
 
     expect(post.mock.calls[0][1].device_name).toBeNull();
+  });
+
+  it("maps the node sync count a connect answers", async () => {
+    const { post, api } = await loadModule();
+    post.mockResolvedValueOnce({ data: { ...pyConnected, nodes_synced: 2, sync_error: null } });
+
+    const result = await api.connectHub({
+      hubUrl: "https://hub.example.test",
+      username: "ana",
+      password: "x",
+    });
+
+    expect(result.nodesSynced).toBe(2);
+    expect(result.syncError).toBeNull();
+  });
+
+  it("posts /hub_client/compute_nodes/sync and returns the rows and the skipped ids", async () => {
+    const { post, api } = await loadModule();
+    const answer = {
+      backends: [
+        {
+          id: "worker:team",
+          url: "https://team-worker.example.test:63579",
+          shares_core_disk: false,
+          verdict: null,
+          source: "hub",
+        },
+      ],
+      skipped: ["worker:gpu"],
+    };
+    post.mockResolvedValueOnce({ data: answer });
+
+    const result = await api.syncHubComputeNodes();
+
+    expect(post).toHaveBeenCalledWith("/hub_client/compute_nodes/sync");
+    expect(result).toEqual(answer);
   });
 
   it("deletes /hub_client/connection to disconnect", async () => {

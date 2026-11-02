@@ -72,6 +72,45 @@
           <dt>Session expires</dt>
           <dd>{{ expiresLabel }}</dd>
         </dl>
+
+        <section class="hub-nodes" aria-labelledby="hub-nodes-title">
+          <div class="hub-nodes__header">
+            <h3 id="hub-nodes-title" class="hub-nodes__title">Team nodes</h3>
+            <el-button
+              size="small"
+              plain
+              :loading="syncing"
+              data-testid="hub-sync-nodes"
+              @click="onSyncNodes"
+            >
+              <i class="fa-solid fa-rotate" aria-hidden="true"></i> Sync nodes
+            </el-button>
+          </div>
+          <p class="hub-nodes__hint">
+            The hub's compute nodes, listed as workers a flow or node can pick. Each use asks the
+            hub for a token that lasts an hour; nothing is stored here.
+          </p>
+          <p v-if="syncNotice" class="hub-nodes__notice" data-testid="hub-sync-notice">
+            {{ syncNotice }}
+          </p>
+          <ul v-if="nodes.length" class="hub-nodes__list" aria-label="Team nodes">
+            <li
+              v-for="node in nodes"
+              :key="node.id"
+              class="hub-node"
+              :data-testid="`hub-node-${node.id}`"
+            >
+              <div class="hub-node__identity">
+                <code>{{ nodeNameOf(node) }}</code>
+                <span class="hub-node__url">{{ node.url ?? "—" }}</span>
+              </div>
+              <span class="compute-chip compute-chip--success">Enabled</span>
+            </li>
+          </ul>
+          <p v-else class="hub-nodes__empty" data-testid="hub-nodes-empty">
+            No team nodes yet. Sync to read the hub's list.
+          </p>
+        </section>
       </template>
 
       <div v-else-if="state" class="hub-card__fields">
@@ -140,10 +179,22 @@ import { computed, onMounted, reactive, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { NO_AUTOFILL } from "../../utils/noAutofill";
 import ComputeCard from "./ComputeCard.vue";
-import { useHubConnection } from "./useHubConnection";
+import { nodeNameOf, useHubConnection } from "./useHubConnection";
 import type { StatusSummary } from "../../components/settings/handshakeStatus";
 
-const { state, loading, loadError, busy, load, connect, disconnect } = useHubConnection();
+const {
+  state,
+  loading,
+  loadError,
+  busy,
+  nodes,
+  syncing,
+  syncNotice,
+  load,
+  connect,
+  disconnect,
+  syncNodes,
+} = useHubConnection();
 
 const form = reactive({ hubUrl: "", username: "", password: "", deviceName: "" });
 
@@ -187,6 +238,14 @@ const onDisconnect = async () => {
   try {
     await disconnect();
     ElMessage.success("Disconnected from the hub.");
+  } catch (error) {
+    ElMessage.error((error as Error).message);
+  }
+};
+
+const onSyncNodes = async () => {
+  try {
+    await syncNodes();
   } catch (error) {
     ElMessage.error((error as Error).message);
   }
@@ -276,6 +335,62 @@ onMounted(() => {
 }
 .hub-card__facts dd {
   margin: 0;
+  overflow-wrap: anywhere;
+}
+.hub-nodes {
+  margin-top: var(--spacing-5);
+  padding-top: var(--spacing-4);
+  border-top: 1px solid var(--color-border-light);
+}
+.hub-nodes__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-3);
+}
+.hub-nodes__title {
+  margin: 0;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+}
+.hub-nodes__hint,
+.hub-nodes__empty {
+  margin: var(--spacing-2) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-normal);
+}
+.hub-nodes__notice {
+  margin: var(--spacing-2) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+}
+.hub-nodes__list {
+  list-style: none;
+  margin: var(--spacing-3) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--spacing-2);
+}
+.hub-node {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-3);
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-secondary);
+  font-size: var(--font-size-sm);
+}
+.hub-node__identity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+  min-width: 0;
+}
+.hub-node__url {
+  color: var(--color-text-secondary);
   overflow-wrap: anywhere;
 }
 .hub-card__fields {
