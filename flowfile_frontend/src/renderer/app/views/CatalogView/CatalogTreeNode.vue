@@ -15,6 +15,7 @@
         class="ns-icon"
       ></i>
       <span class="ns-name">{{ node.name }}</span>
+      <HubBadge v-if="isHub" kind="namespace" />
       <SharedBadge :access="node.access" />
       <CatalogStorageBadge
         v-if="node.level === 0"
@@ -22,7 +23,7 @@
         :connection-name="node.storage_connection_name"
       />
       <span v-if="totalFlows > 0" class="ns-count">{{ totalFlows }}</span>
-      <div class="tree-actions" @click.stop>
+      <div v-if="!isHub" class="tree-actions" @click.stop>
         <button
           v-if="isMultiUser && isOwned(node)"
           class="action-btn"
@@ -221,9 +222,7 @@
             'file-missing': table.table_type !== 'virtual' && table.file_exists === false,
           }"
           @click.stop="$emit('selectTable', table.id)"
-          @contextmenu.prevent.stop="
-            $emit('tableContextMenu', { table, x: $event.clientX, y: $event.clientY })
-          "
+          @contextmenu.prevent.stop="onTableContextMenu(table, $event)"
         >
           <i
             v-if="table.table_type === 'virtual'"
@@ -232,6 +231,7 @@
           ></i>
           <i v-else class="fa-solid fa-table table-icon"></i>
           <span class="table-name">{{ table.name }}</span>
+          <HubBadge v-if="isHubRow(table)" kind="table" />
           <span
             v-if="table.table_type === 'virtual'"
             class="table-virtual-badge"
@@ -253,7 +253,7 @@
           >
             <i class="fa-solid fa-triangle-exclamation missing-icon"></i>
           </el-tooltip>
-          <div class="flow-actions" @click.stop>
+          <div v-if="!isHubRow(table)" class="flow-actions" @click.stop>
             <button
               class="action-btn star-btn"
               :class="{ active: table.is_favorite }"
@@ -336,7 +336,7 @@
 <script setup lang="ts">
 import { computed, watch } from "vue";
 import { SCRATCH_NAMESPACE_NAMES, SYSTEM_NAMESPACE_NAMES } from "../../types";
-import type { GlobalArtifact, NamespaceTree } from "../../types";
+import type { CatalogTable, GlobalArtifact, NamespaceTree } from "../../types";
 import TreeSection from "./components/TreeSection.vue";
 import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
 import { isEmptySchema, isSeededSchema } from "./catalogStorageEdit";
@@ -358,6 +358,8 @@ import {
 } from "./catalogTreeFilter";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import CatalogStorageBadge from "./CatalogStorageBadge.vue";
+import HubBadge from "./HubBadge.vue";
+import { isHubRow } from "./hubRows";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 
 const { isMultiUser, isOwned, canManage } = useResourceSharing();
@@ -419,6 +421,14 @@ function containsArtifact(node: NamespaceTree, artifactId: number): boolean {
 function containsTable(node: NamespaceTree, tableId: number): boolean {
   if ((node.tables ?? []).some((t) => t.id === tableId)) return true;
   return node.children.some((child) => containsTable(child, tableId));
+}
+
+const isHub = computed(() => isHubRow(props.node));
+
+// A hub table is browsed only, so it gets no context menu.
+function onTableContextMenu(table: CatalogTable, event: MouseEvent) {
+  if (isHubRow(table)) return;
+  emit("tableContextMenu", { table, x: event.clientX, y: event.clientY });
 }
 
 const rawQuery = computed(() => normalizeQuery(props.searchQuery));

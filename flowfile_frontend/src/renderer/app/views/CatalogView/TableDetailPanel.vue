@@ -15,6 +15,7 @@
             "
           ></i>
           <h2>{{ table.name }}</h2>
+          <HubBadge v-if="isHub" kind="table" />
           <span
             v-if="table.table_type === 'virtual' && table.sql_query"
             class="virtual-badge sql-virtual-badge"
@@ -28,7 +29,7 @@
         </div>
         <p v-if="table.description" class="description">{{ table.description }}</p>
       </div>
-      <div class="header-actions">
+      <div v-if="!isHub" class="header-actions">
         <button
           class="action-btn-lg"
           :disabled="!table.file_exists"
@@ -96,7 +97,10 @@
     />
 
     <!-- File missing banner (physical tables only) -->
-    <div v-if="table.table_type !== 'virtual' && !table.file_exists" class="missing-banner">
+    <div
+      v-if="!isHub && table.table_type !== 'virtual' && !table.file_exists"
+      class="missing-banner"
+    >
       <i class="fa-solid fa-triangle-exclamation"></i>
       <div>
         <strong>Table data not found</strong>
@@ -116,7 +120,20 @@
     </div>
 
     <!-- Metadata Grid -->
-    <div class="meta-grid">
+    <div v-if="isHub" class="meta-grid" data-testid="hub-table-facts">
+      <div v-for="fact in hubFacts" :key="fact.label" class="meta-card">
+        <span class="meta-label">{{ fact.label }}</span>
+        <span class="meta-value">{{ fact.value }}</span>
+      </div>
+      <div v-if="hubProducer" class="meta-card">
+        <span class="meta-label">Produced by</span>
+        <span class="meta-value meta-static" :title="hubProducer">
+          <i class="fa-solid fa-diagram-project"></i>
+          <span class="meta-link-text">{{ hubProducer }}</span>
+        </span>
+      </div>
+    </div>
+    <div v-else class="meta-grid">
       <div class="meta-card">
         <span class="meta-label">Rows</span>
         <span class="meta-value">{{ formatNumber(table.row_count) }}</span>
@@ -419,7 +436,13 @@
     </div>
 
     <!-- Data Preview -->
-    <div class="section">
+    <div v-if="isHub" class="section">
+      <div class="section-header">
+        <h3>Data Preview</h3>
+      </div>
+      <div class="empty-state" data-testid="hub-preview-note">{{ HUB_PREVIEW_NOTE }}</div>
+    </div>
+    <div v-else class="section">
       <div v-if="isViewingHistorical" class="version-banner">
         <i class="fa-solid fa-clock-rotate-left"></i>
         Viewing version {{ selectedVersion }}
@@ -487,7 +510,7 @@
     </div>
 
     <!-- Visualizations -->
-    <div class="section viz-section">
+    <div v-if="!isHub" class="section viz-section">
       <VisualizationsTab :table-id="table.id" />
     </div>
   </div>
@@ -514,6 +537,8 @@ import TableEditorDialog from "./TableEditorDialog.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
+import HubBadge from "./HubBadge.vue";
+import { HUB_PREVIEW_NOTE, hubTableFacts, isHubRow } from "./hubRows";
 
 const showReadByModal = ref(false);
 const showShareDialog = ref(false);
@@ -545,11 +570,21 @@ const emit = defineEmits([
   "editsSaved",
 ]);
 
+const isHub = computed(() => isHubRow(props.table));
+const hubFacts = computed(() => hubTableFacts(props.table));
+// The flow ids are the hub's, so the producer is shown by name and links nowhere.
+const hubProducer = computed(
+  () => props.table.producer_registration_name ?? props.table.source_registration_name ?? null,
+);
+
 const hasHistory = computed(() => props.tableHistory && props.tableHistory.history.length > 0);
 
 // Show the Version History section when there's history (cached or freshly loaded) or while it loads.
 const showVersionHistory = computed(
-  () => props.table.table_type !== "virtual" && (!!hasHistory.value || props.loadingTableHistory),
+  () =>
+    !isHub.value &&
+    props.table.table_type !== "virtual" &&
+    (!!hasHistory.value || props.loadingTableHistory),
 );
 
 const historyStale = computed(() => !!hasHistory.value && props.tableHistoryStale);

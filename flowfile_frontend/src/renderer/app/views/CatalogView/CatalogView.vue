@@ -622,6 +622,7 @@ import VisualizationEditor from "./VisualizationEditor.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
+import { isHubRow, withoutHubRows } from "./hubRows";
 import { useFlowOpener } from "../../composables/useFlowOpener";
 import { useRecentFlows } from "../../composables/useRecentFlows";
 import { countMatches, normalizeQuery } from "./catalogTreeFilter";
@@ -930,7 +931,9 @@ async function refreshAll() {
 // --- Demo catalog (optional sample data) ---
 
 const demoBusy = ref(false);
-const hasDemoCatalog = computed(() => catalogStore.tree.some((n) => n.name === "Demo"));
+const hasDemoCatalog = computed(() =>
+  withoutHubRows(catalogStore.tree).some((n) => n.name === "Demo"),
+);
 
 async function handleLoadDemoData() {
   demoBusy.value = true;
@@ -1034,6 +1037,7 @@ function closeVizViewer() {
 }
 
 function onTableContextMenu(payload: { table: CatalogTable; x: number; y: number }) {
+  if (isHubRow(payload.table)) return;
   tableMenu.value = payload;
 }
 
@@ -1365,6 +1369,8 @@ async function confirmDeleteWithFile(opts: {
 }
 
 async function handleDeleteTable(tableId: number) {
+  const table = catalogStore.findTableInTree(tableId);
+  if (table && isHubRow(table)) return;
   const result = await confirmDeleteWithFile({
     title: "Delete Table",
     question: "Delete this table from the catalog?",

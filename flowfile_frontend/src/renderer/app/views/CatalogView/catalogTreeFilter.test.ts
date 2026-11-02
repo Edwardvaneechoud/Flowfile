@@ -148,7 +148,11 @@ describe("leaf filters", () => {
 
 describe("groupArtifacts", () => {
   it("groups by name, picking the highest version as latest", () => {
-    const groups = groupArtifacts([artifact("model", 1), artifact("model", 3), artifact("other", 1)]);
+    const groups = groupArtifacts([
+      artifact("model", 1),
+      artifact("model", 3),
+      artifact("other", 1),
+    ]);
     const model = groups.find((g) => g.name === "model")!;
     expect(model.latest.version).toBe(3);
     expect(model.versionCount).toBe(2);
@@ -186,5 +190,31 @@ describe("countMatches", () => {
     });
     const miss = node({ id: 3, name: "Archive", level: 0 });
     expect(countMatches([hit, miss], filter("sales"))).toBe(1);
+  });
+});
+
+describe("hub rows", () => {
+  it("match a search like local rows", () => {
+    const hubTable = { id: -7, name: "Orders 2026", file_exists: true, source: "hub" } as any;
+    const hubSchema = node({
+      id: -3,
+      name: "raw",
+      level: 1,
+      tables: [hubTable],
+      source: "hub",
+    } as any);
+    const hubCatalog = node({
+      id: -1,
+      name: "sales",
+      level: 0,
+      children: [hubSchema],
+      source: "hub",
+    } as any);
+    const local = node({ id: 1, name: "General", level: 0 });
+
+    expect(visibleTables(hubSchema, filter("orders"))).toEqual([hubTable]);
+    expect(subtreeMatches(hubCatalog, filter("orders"))).toBe(true);
+    expect(subtreeLeafCount(hubCatalog, filter("orders"))).toBe(1);
+    expect(countMatches([local, hubCatalog], filter("orders"))).toBe(1);
   });
 });

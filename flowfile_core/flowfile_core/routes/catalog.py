@@ -1706,12 +1706,13 @@ def get_catalog_overview(
 
     FastAPI caches ``get_db`` per request, so ``db`` is the session the service was
     built on: the whole screen costs one pooled connection instead of one per call.
-    The individual endpoints stay for detail views, mutations and the poll loop.
+    The individual endpoints stay for detail views, mutations and the poll loop. The tree is the one
+    ``/namespaces/tree`` answers, a connected hub's catalogs after the local ones.
     """
     user_id = current_user.id
     return CatalogOverview(
         stats=service.get_catalog_stats(user_id=user_id),
-        tree=service.get_namespace_tree(user_id=user_id),
+        tree=service.get_namespace_tree(user_id=user_id) + hub_catalog.tree(user_id),
         flows=service.list_flows(user_id=user_id),
         tables=service.list_tables(user_id=user_id),
         favorites=service.list_favorites(user_id=user_id),

@@ -33,6 +33,7 @@ import {
 } from "../../../types";
 import type { NamespaceTree } from "../../../types";
 import { useWritableNamespaces } from "../../../composables/useWritableNamespaces";
+import { withoutHubRows } from "../../../views/CatalogView/hubRows";
 
 const { isWritableNamespace } = useWritableNamespaces();
 
@@ -67,7 +68,7 @@ const loadTree = async () => {
   loading.value = true;
   error.value = null;
   try {
-    const fetched = await CatalogApi.getNamespaceTree();
+    const fetched = withoutHubRows(await CatalogApi.getNamespaceTree());
     tree.value = props.hideSystemNamespaces ? filterSelectableNamespaces(fetched) : fetched;
     // Auto-select the most appropriate "General" child when nothing is selected.
     if (selectedId.value === null) {

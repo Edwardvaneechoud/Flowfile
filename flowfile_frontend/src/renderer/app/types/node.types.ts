@@ -1460,6 +1460,7 @@ export interface CatalogNamespaceOut {
   level: number;
   description?: string | null;
   access?: AccessInfo | null;
+  source?: "local" | "hub";
 }
 
 export interface CatalogNamespaceTree extends CatalogNamespaceOut {
