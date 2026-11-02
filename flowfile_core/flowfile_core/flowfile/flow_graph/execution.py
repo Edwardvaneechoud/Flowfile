@@ -1608,7 +1608,9 @@ class ExecutionMixin(GraphMixinBase):
             # Released once: a second release would end a run another caller claimed meanwhile.
             if not released:
                 self.release_run()
-            self.hub_vend = None
+            # Only this run's: a run claimed once this one released its slot holds its own.
+            if self.hub_vend is not None and self.hub_vend.run_id == exchange_run.run_id:
+                self.hub_vend = None
             self._end_exchange_run(exchange_run)
 
     def _vend_hub_tables(self, nodes: list[FlowNode], run_id: str) -> tuple[list[FlowNode], str] | None:
