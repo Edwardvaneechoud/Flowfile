@@ -41,6 +41,8 @@ const teamRow = (
   shares_core_disk,
   verdict: seen,
   source: "local",
+  reachable: null,
+  reason: null,
 });
 
 let rows: ComputeBackend[] = [];
@@ -55,6 +57,8 @@ beforeEach(() => {
       shares_core_disk: input.shares_core_disk ?? false,
       verdict: null,
       source: "local" as const,
+      reachable: null,
+      reason: null,
     };
     rows.push(row);
     return { ...row };
@@ -89,6 +93,8 @@ describe("load", () => {
         shares_core_disk: false,
         verdict: null,
         source: "local",
+        reachable: null,
+        reason: null,
       },
     ];
     const page = useComputeBackends();

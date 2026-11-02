@@ -9,10 +9,24 @@ import {
   executionLocationOptions,
   nodeExecutionLocationLabel,
   nodeExecutionLocationOptions,
+  unreachableNote,
   verdictSummary,
+  type BackendRow,
 } from "./executionLocation";
 
-const rows = (backendIds: string[]) => backendIds.map((id) => ({ id, verdict: null }));
+const row = (id: string, overrides: Partial<BackendRow> = {}): BackendRow => ({
+  id,
+  verdict: null,
+  source: "local",
+  reachable: null,
+  reason: null,
+  ...overrides,
+});
+
+const rows = (backendIds: string[]) => backendIds.map((id) => row(id));
+
+const hubRow = (overrides: Partial<BackendRow> = {}) =>
+  row("worker:team", { source: "hub", ...overrides });
 
 const keys = (current: string, backendIds: string[]) =>
   executionLocationOptions(current, rows(backendIds)).map((option) => option.key);
@@ -82,7 +96,7 @@ describe("executionLocationOptions", () => {
 
 describe("the verdict beside a configured backend's id", () => {
   it.each(VERDICTS)("labels a %s backend in the dialog and the picker", (_, given, summary) => {
-    const listed = [{ id: "worker:team", verdict: given }];
+    const listed = [row("worker:team", { verdict: given })];
 
     expect(executionLocationOptions("auto", listed)).toEqual([
       { key: "auto", label: "Auto (default worker)" },
@@ -96,7 +110,7 @@ describe("the verdict beside a configured backend's id", () => {
   });
 
   it("labels a saved id that is no longer configured by its id alone", () => {
-    const listed = [{ id: "worker:team", verdict: verdict({}) }];
+    const listed = [row("worker:team", { verdict: verdict({}) })];
 
     for (const options of [
       executionLocationOptions("worker:gone", listed),
@@ -104,6 +118,42 @@ describe("the verdict beside a configured backend's id", () => {
     ]) {
       expect(options[options.length - 1]).toEqual({ key: "worker:gone", label: "worker:gone" });
     }
+  });
+});
+
+describe("a hub node's reachability in the picker", () => {
+  const label = (listed: BackendRow[]) =>
+    executionLocationOptions("auto", listed)[1].label.replace("worker:team · ", "");
+
+  it("uses the reachability word while the node has no verdict yet", () => {
+    expect(label([hubRow()])).toBe("Not checked");
+    expect(label([hubRow({ reachable: true })])).toBe("Reachable");
+    expect(label([hubRow({ reachable: false, reason: "can't reach it" })])).toBe("Unreachable");
+    expect(nodeExecutionLocationOptions("auto", [hubRow({ reachable: true })])[2].label).toBe(
+      "worker:team · Reachable",
+    );
+  });
+
+  it("gives way to the verdict's word once the node has one", () => {
+    expect(label([hubRow({ reachable: true, verdict: verdict({}) })])).toBe("Compatible");
+    expect(label([hubRow({ reachable: false, verdict: verdict({ ok: false }) })])).toBe(
+      "Not accepted",
+    );
+  });
+
+  it("keeps Not checked for a worker added here, whatever its fields say", () => {
+    expect(label([row("worker:team", { reachable: true })])).toBe("Not checked");
+  });
+
+  it("notes why a hub node is unreachable, and nothing otherwise", () => {
+    const reason =
+      "can't reach https://team-worker.example.test:63579 from this computer: no route";
+    expect(unreachableNote(hubRow({ reachable: false, reason }))).toBe(reason);
+    expect(unreachableNote(hubRow({ reachable: false, reason: null }))).toBe("");
+    expect(unreachableNote(hubRow({ reachable: true }))).toBe("");
+    expect(unreachableNote(hubRow())).toBe("");
+    expect(unreachableNote(row("worker:own", { reachable: false, reason: "x" }))).toBe("");
+    expect(unreachableNote(undefined)).toBe("");
   });
 });
 

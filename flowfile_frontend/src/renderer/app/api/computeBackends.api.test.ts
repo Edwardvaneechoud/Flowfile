@@ -35,8 +35,18 @@ describe("listComputeBackends", () => {
         shares_core_disk: false,
         verdict: null,
         source: "local",
+        reachable: null,
+        reason: null,
       },
-      { id: "worker:gpu", url: null, shares_core_disk: false, verdict: null, source: "local" },
+      {
+        id: "worker:gpu",
+        url: null,
+        shares_core_disk: false,
+        verdict: null,
+        source: "local",
+        reachable: null,
+        reason: null,
+      },
     ];
     mocks.get.mockResolvedValue({ data: rows });
 
@@ -55,6 +65,8 @@ describe("addComputeBackend", () => {
       shares_core_disk: false,
       verdict: null,
       source: "local",
+      reachable: null,
+      reason: null,
     };
     mocks.post.mockResolvedValue({ status: 201, data: row });
 

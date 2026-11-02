@@ -5,6 +5,7 @@ import type { ComputeBackend } from "./computeBackends.api";
 
 const CONNECTION_URL = "/hub_client/connection";
 const COMPUTE_NODES_SYNC_URL = "/hub_client/compute_nodes/sync";
+const COMPUTE_NODES_CHECK_URL = "/hub_client/compute_nodes/check";
 
 export interface HubConnection {
   connected: boolean;
@@ -26,6 +27,8 @@ export interface HubConnection {
   nodesSynced: number | null;
   /** After a connect whose node sync failed: why. The connection itself stands. */
   syncError: string | null;
+  /** This core's own name as a node on the hub, connected or not; a sync never lists that node as a backend. */
+  nodeName: string | null;
 }
 
 /** What a node sync left behind: every configured backend, and the hub nodes skipped for a hand-added row. */
@@ -57,6 +60,7 @@ interface PyHubConnection {
   error: string | null;
   nodes_synced?: number | null;
   sync_error?: string | null;
+  node_name?: string | null;
 }
 
 const fromPy = (raw: PyHubConnection): HubConnection => ({
@@ -75,6 +79,7 @@ const fromPy = (raw: PyHubConnection): HubConnection => ({
   error: raw.error,
   nodesSynced: raw.nodes_synced ?? null,
   syncError: raw.sync_error ?? null,
+  nodeName: raw.node_name ?? null,
 });
 
 export async function getHubConnection(): Promise<HubConnection> {
@@ -101,5 +106,11 @@ export async function disconnectHub(): Promise<void> {
 /** Reads the hub's compute nodes now and makes the backends table match them. */
 export async function syncHubComputeNodes(): Promise<HubComputeNodesSync> {
   const response = await axios.post<HubComputeNodesSync>(COMPUTE_NODES_SYNC_URL);
+  return response.data;
+}
+
+/** Checks now whether this computer reaches each of the hub's nodes; the hub rows with the outcome filled. */
+export async function checkHubComputeNodes(): Promise<ComputeBackend[]> {
+  const response = await axios.post<ComputeBackend[]>(COMPUTE_NODES_CHECK_URL);
   return response.data;
 }

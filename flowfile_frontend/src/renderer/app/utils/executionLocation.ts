@@ -2,8 +2,9 @@
 
 import type { ComputeBackend, HandshakeVerdict } from "../api/computeBackends.api";
 import type { ExecutionLocation } from "../types";
+import { reachabilityStatus } from "../components/settings/handshakeStatus";
 
-export type BackendRow = Pick<ComputeBackend, "id" | "verdict">;
+export type BackendRow = Pick<ComputeBackend, "id" | "verdict" | "source" | "reachable" | "reason">;
 
 export interface ExecutionLocationOption {
   key: ExecutionLocation;
@@ -35,18 +36,31 @@ export function verdictSummary(verdict: HandshakeVerdict | null): string {
   return verdict.differences.length ? "Accepted with differences" : "Compatible";
 }
 
+/**
+ * The word beside a backend's id in a picker: its verdict's summary, or for a hub node without a verdict yet the
+ * reachability word ("Reachable", "Unreachable", "Not checked") in place of "Not checked".
+ */
+export function backendSummary(row: BackendRow): string {
+  if (!row.verdict) return reachabilityStatus(row)?.label ?? verdictSummary(null);
+  return verdictSummary(row.verdict);
+}
+
+/** The reason a hub node could not be reached from this computer, for the line under a picker; "" otherwise. */
+export function unreachableNote(row: BackendRow | undefined): string {
+  if (!row || row.source !== "hub" || row.reachable !== false) return "";
+  return row.reason ?? "";
+}
+
 function withVerdicts(
   keys: ExecutionLocation[],
   rows: BackendRow[],
   label: (key: ExecutionLocation) => string,
 ): ExecutionLocationOption[] {
-  const verdicts = new Map(rows.map((row) => [row.id, row.verdict]));
-  return keys.map((key) => ({
-    key,
-    label: verdicts.has(key)
-      ? `${label(key)} · ${verdictSummary(verdicts.get(key) ?? null)}`
-      : label(key),
-  }));
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return keys.map((key) => {
+    const row = byId.get(key);
+    return { key, label: row ? `${label(key)} · ${backendSummary(row)}` : label(key) };
+  });
 }
 
 /**

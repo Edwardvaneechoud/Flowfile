@@ -76,35 +76,59 @@
         <section class="hub-nodes" aria-labelledby="hub-nodes-title">
           <div class="hub-nodes__header">
             <h3 id="hub-nodes-title" class="hub-nodes__title">Team nodes</h3>
-            <el-button
-              size="small"
-              plain
-              :loading="syncing"
-              data-testid="hub-sync-nodes"
-              @click="onSyncNodes"
-            >
-              <i class="fa-solid fa-rotate" aria-hidden="true"></i> Sync nodes
-            </el-button>
+            <div class="hub-nodes__actions">
+              <el-button
+                size="small"
+                plain
+                :loading="syncing"
+                data-testid="hub-sync-nodes"
+                @click="onSyncNodes"
+              >
+                <i class="fa-solid fa-rotate" aria-hidden="true"></i> Sync nodes
+              </el-button>
+              <el-button
+                size="small"
+                plain
+                :loading="checking"
+                data-testid="hub-check-nodes"
+                @click="onCheckNodes"
+              >
+                <i class="fa-solid fa-satellite-dish" aria-hidden="true"></i> Check
+              </el-button>
+            </div>
           </div>
           <p class="hub-nodes__hint">
-            The hub's compute nodes, listed as workers a flow or node can pick. Each use asks the
-            hub for a token that lasts an hour; nothing is stored here.
+            The hub's compute nodes, listed as workers a flow or node can pick. The first use asks
+            the hub for a token that lasts an hour; nothing is stored here. After a sync each node
+            is checked once from this computer; Check asks again.
           </p>
           <p v-if="syncNotice" class="hub-nodes__notice" data-testid="hub-sync-notice">
             {{ syncNotice }}
           </p>
-          <ul v-if="nodes.length" class="hub-nodes__list" aria-label="Team nodes">
+          <ul v-if="teamNodes.length" class="hub-nodes__list" aria-label="Team nodes">
             <li
-              v-for="node in nodes"
-              :key="node.id"
+              v-for="row in teamNodes"
+              :key="row.key"
               class="hub-node"
-              :data-testid="`hub-node-${node.id}`"
+              :data-testid="`hub-node-${row.key}`"
             >
               <div class="hub-node__identity">
-                <code>{{ nodeNameOf(node) }}</code>
-                <span class="hub-node__url">{{ node.url ?? "—" }}</span>
+                <code>{{ row.name }}</code>
+                <span v-if="row.label" class="hub-node__label">{{ row.label }}</span>
+                <span v-if="row.backend" class="hub-node__url">{{ row.backend.url ?? "—" }}</span>
+                <span
+                  v-if="row.backend && unreachableNote(row.backend)"
+                  class="hub-node__reason"
+                  :data-testid="`hub-node-reason-${row.key}`"
+                  >{{ unreachableNote(row.backend) }}</span
+                >
               </div>
-              <span class="compute-chip compute-chip--success">Enabled</span>
+              <span
+                v-if="row.backend && reachabilityStatus(row.backend)"
+                :class="['compute-chip', `compute-chip--${reachabilityStatus(row.backend)?.tone}`]"
+                :data-testid="`hub-node-reachability-${row.key}`"
+                >{{ reachabilityStatus(row.backend)?.label }}</span
+              >
             </li>
           </ul>
           <p v-else class="hub-nodes__empty" data-testid="hub-nodes-empty">
@@ -179,8 +203,9 @@ import { computed, onMounted, reactive, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { NO_AUTOFILL } from "../../utils/noAutofill";
 import ComputeCard from "./ComputeCard.vue";
-import { nodeNameOf, useHubConnection } from "./useHubConnection";
-import type { StatusSummary } from "../../components/settings/handshakeStatus";
+import { teamNodeRows, useHubConnection } from "./useHubConnection";
+import { reachabilityStatus, type StatusSummary } from "../../components/settings/handshakeStatus";
+import { unreachableNote } from "../../utils/executionLocation";
 
 const {
   state,
@@ -189,12 +214,16 @@ const {
   busy,
   nodes,
   syncing,
+  checking,
   syncNotice,
   load,
   connect,
   disconnect,
   syncNodes,
+  checkNodes,
 } = useHubConnection();
+
+const teamNodes = computed(() => teamNodeRows(state.value, nodes.value));
 
 const form = reactive({ hubUrl: "", username: "", password: "", deviceName: "" });
 
@@ -246,6 +275,14 @@ const onDisconnect = async () => {
 const onSyncNodes = async () => {
   try {
     await syncNodes();
+  } catch (error) {
+    ElMessage.error((error as Error).message);
+  }
+};
+
+const onCheckNodes = async () => {
+  try {
+    await checkNodes();
   } catch (error) {
     ElMessage.error((error as Error).message);
   }
@@ -353,6 +390,13 @@ onMounted(() => {
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
 }
+.hub-nodes__actions {
+  display: flex;
+  gap: var(--spacing-2);
+}
+.hub-nodes__actions .el-button + .el-button {
+  margin-left: 0;
+}
 .hub-nodes__hint,
 .hub-nodes__empty {
   margin: var(--spacing-2) 0 0;
@@ -391,6 +435,13 @@ onMounted(() => {
 }
 .hub-node__url {
   color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+.hub-node__label {
+  color: var(--color-text-secondary);
+}
+.hub-node__reason {
+  color: var(--color-danger-dark);
   overflow-wrap: anywhere;
 }
 .hub-card__fields {

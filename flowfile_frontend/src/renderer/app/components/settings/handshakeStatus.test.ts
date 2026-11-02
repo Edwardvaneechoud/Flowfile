@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { verdict } from "../../api/__fixtures__/computeBackends";
-import { handshakeStatus } from "./handshakeStatus";
+import { handshakeStatus, reachabilityStatus } from "./handshakeStatus";
 
 describe("handshakeStatus", () => {
   it("is not checked without a verdict", () => {
@@ -41,5 +41,27 @@ describe("handshakeStatus", () => {
       tone: "error",
       label: "Handshake failed",
     });
+  });
+});
+
+describe("reachabilityStatus", () => {
+  it("says whether this computer reached a hub node, not checked until it was", () => {
+    expect(reachabilityStatus({ source: "hub", reachable: true })).toEqual({
+      tone: "success",
+      label: "Reachable",
+    });
+    expect(reachabilityStatus({ source: "hub", reachable: false })).toEqual({
+      tone: "error",
+      label: "Unreachable",
+    });
+    expect(reachabilityStatus({ source: "hub", reachable: null })).toEqual({
+      tone: "neutral",
+      label: "Not checked",
+    });
+  });
+
+  it("has none for a worker added here, which is never checked", () => {
+    expect(reachabilityStatus({ source: "local", reachable: null })).toBeNull();
+    expect(reachabilityStatus({ source: "local", reachable: true })).toBeNull();
   });
 });

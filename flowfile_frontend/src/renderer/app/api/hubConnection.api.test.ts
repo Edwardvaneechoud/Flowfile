@@ -48,6 +48,7 @@ const connected = {
   error: null,
   nodesSynced: null,
   syncError: null,
+  nodeName: null,
 };
 
 describe("hubConnection.api", () => {
@@ -94,6 +95,15 @@ describe("hubConnection.api", () => {
     expect(post.mock.calls[0][1].device_name).toBeNull();
   });
 
+  it("maps the node name a core that is itself a node answers", async () => {
+    const { get, api } = await loadModule();
+    get.mockResolvedValueOnce({ data: { ...pyConnected, node_name: "team-local" } });
+
+    const result = await api.getHubConnection();
+
+    expect(result.nodeName).toBe("team-local");
+  });
+
   it("maps the node sync count a connect answers", async () => {
     const { post, api } = await loadModule();
     post.mockResolvedValueOnce({ data: { ...pyConnected, nodes_synced: 2, sync_error: null } });
@@ -118,6 +128,8 @@ describe("hubConnection.api", () => {
           shares_core_disk: false,
           verdict: null,
           source: "hub",
+          reachable: null,
+          reason: null,
         },
       ],
       skipped: ["worker:gpu"],
@@ -128,6 +140,28 @@ describe("hubConnection.api", () => {
 
     expect(post).toHaveBeenCalledWith("/hub_client/compute_nodes/sync");
     expect(result).toEqual(answer);
+  });
+
+  it("posts /hub_client/compute_nodes/check and returns the checked rows", async () => {
+    const { post, api } = await loadModule();
+    const rows = [
+      {
+        id: "worker:team",
+        url: "https://team-worker.example.test:63579",
+        shares_core_disk: false,
+        verdict: null,
+        source: "hub",
+        reachable: false,
+        reason:
+          "can't reach https://team-worker.example.test:63579 from this computer: name not known",
+      },
+    ];
+    post.mockResolvedValueOnce({ data: rows });
+
+    const result = await api.checkHubComputeNodes();
+
+    expect(post).toHaveBeenCalledWith("/hub_client/compute_nodes/check");
+    expect(result).toEqual(rows);
   });
 
   it("deletes /hub_client/connection to disconnect", async () => {

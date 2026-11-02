@@ -91,7 +91,20 @@
                     <code>{{ backend.id }}</code>
                   </h4>
                   <div class="backends-url">{{ backend.url }}</div>
+                  <div
+                    v-if="unreachableNote(backend)"
+                    class="backends-reason"
+                    :data-testid="`backend-reason-${backend.id}`"
+                  >
+                    {{ unreachableNote(backend) }}
+                  </div>
                 </div>
+                <span
+                  v-if="reachabilityStatus(backend)"
+                  :class="['compute-chip', `compute-chip--${reachabilityStatus(backend)?.tone}`]"
+                  :data-testid="`backend-reachability-${backend.id}`"
+                  >{{ reachabilityStatus(backend)?.label }}</span
+                >
                 <span
                   v-if="!openRows[backend.id]"
                   :class="['compute-chip', `compute-chip--${rowStatus(backend.id).tone}`]"
@@ -290,7 +303,12 @@ import { useAuthStore } from "../../stores/auth-store";
 import { NO_AUTOFILL } from "../../utils/noAutofill";
 import BackendHandshakeStatus from "../../components/settings/BackendHandshakeStatus.vue";
 import WorkerPoolCard from "../../components/settings/WorkerPoolCard.vue";
-import { handshakeStatus, type StatusSummary } from "../../components/settings/handshakeStatus";
+import {
+  handshakeStatus,
+  reachabilityStatus,
+  type StatusSummary,
+} from "../../components/settings/handshakeStatus";
+import { unreachableNote } from "../../utils/executionLocation";
 import ComputeCard from "./ComputeCard.vue";
 import ExchangeStoreCard from "./ExchangeStoreCard.vue";
 import {
@@ -547,6 +565,12 @@ watch(
   font-family: var(--font-family-mono);
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+.backends-reason {
+  margin-top: var(--spacing-1);
+  font-size: var(--font-size-sm);
+  color: var(--color-danger-dark);
   overflow-wrap: anywhere;
 }
 .backends-actions {

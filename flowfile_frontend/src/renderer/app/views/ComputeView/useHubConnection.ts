@@ -1,6 +1,7 @@
 import { ref } from "vue";
 import type { Ref } from "vue";
 import {
+  checkHubComputeNodes,
   connectHub,
   disconnectHub,
   getHubConnection,
@@ -19,6 +20,37 @@ export function hubNodesOf(backends: ComputeBackend[]): ComputeBackend[] {
 /** The node name a hub row stands for: its id without the `worker:` prefix. */
 export function nodeNameOf(backend: ComputeBackend): string {
   return backend.id.replace(/^worker:/, "");
+}
+
+/** One line of the Hub tab's team-node list: a hub node with its backend row, or this core's own node without one. */
+export interface TeamNodeRow {
+  key: string;
+  name: string;
+  /** "This node" for the node this core is itself; null for a hub node. */
+  label: string | null;
+  backend: ComputeBackend | null;
+}
+
+export const THIS_NODE = "This node";
+
+/**
+ * The team-node list: when this core is itself a node on the hub (`nodeName`), a row for it first, with no
+ * backend, no URL and no reachability behind it, since its worker is the one beside this core; then the hub rows.
+ */
+export function teamNodeRows(
+  connection: Pick<HubConnection, "nodeName"> | null,
+  backends: ComputeBackend[],
+): TeamNodeRow[] {
+  const rows: TeamNodeRow[] = backends.map((backend) => ({
+    key: backend.id,
+    name: nodeNameOf(backend),
+    label: null,
+    backend,
+  }));
+  if (connection?.nodeName) {
+    rows.unshift({ key: "this-node", name: connection.nodeName, label: THIS_NODE, backend: null });
+  }
+  return rows;
 }
 
 /** The line a connect leaves about its node sync: the count, or why the hub's list could not be read. */
@@ -44,6 +76,7 @@ export function useHubConnection() {
   const busy = ref(false);
   const nodes: Ref<ComputeBackend[]> = ref([]);
   const syncing = ref(false);
+  const checking = ref(false);
   const syncNotice = ref("");
 
   const loadNodes = async () => {
@@ -100,6 +133,18 @@ export function useHubConnection() {
     }
   };
 
+  const checkNodes = async (): Promise<ComputeBackend[]> => {
+    checking.value = true;
+    try {
+      nodes.value = hubNodesOf(await checkHubComputeNodes());
+      return nodes.value;
+    } catch (error) {
+      throw new Error(detailOf(error, "Couldn't check the team nodes."));
+    } finally {
+      checking.value = false;
+    }
+  };
+
   const disconnect = async () => {
     busy.value = true;
     try {
@@ -121,10 +166,12 @@ export function useHubConnection() {
     busy,
     nodes,
     syncing,
+    checking,
     syncNotice,
     load,
     connect,
     disconnect,
     syncNodes,
+    checkNodes,
   };
 }

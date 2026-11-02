@@ -255,8 +255,15 @@
                 :value="executionLocationOption.key"
               />
             </el-select>
+            <p
+              v-if="unreachableNote(selectedBackend)"
+              class="form-hint backend-unreachable"
+              data-testid="flow-backend-unreachable"
+            >
+              {{ unreachableNote(selectedBackend) }}
+            </p>
             <BackendHandshakeStatus
-              v-if="selectedBackend?.verdict"
+              v-else-if="selectedBackend?.verdict"
               :key="selectedBackend.id"
               :verdict="selectedBackend.verdict"
               compact
@@ -358,7 +365,11 @@ import {
   getRunStatus,
 } from "../../nodes/nodeLogic";
 import { MODIFIER_LABEL } from "../../../utils/shortcuts";
-import { executionLocationOptions, type BackendRow } from "../../../utils/executionLocation";
+import {
+  executionLocationOptions,
+  unreachableNote,
+  type BackendRow,
+} from "../../../utils/executionLocation";
 import { listComputeBackends } from "../../../api/computeBackends.api";
 import { getHubConnection } from "../../../api/hubConnection.api";
 import BackendHandshakeStatus from "../../settings/BackendHandshakeStatus.vue";
@@ -904,6 +915,12 @@ onMounted(async () => {
   font-size: var(--font-size-xs, 11px);
   color: var(--color-text-muted, #999);
   line-height: 1.4;
+}
+
+.backend-unreachable {
+  margin: var(--spacing-1) 0 0;
+  color: var(--color-danger-dark, var(--el-color-danger));
+  overflow-wrap: anywhere;
 }
 
 .dialog-footer {
