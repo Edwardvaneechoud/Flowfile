@@ -9,6 +9,7 @@ Covers:
 - Source table version tracking and staleness detection
 - Virtual table previews read through a backend with the protocol flag on
 - A virtual table's producer runs on the execution context's backend, and a stopped worker answers 503
+- A lazy table's read builds its plan without running the writer or writing the catalog row
 """
 
 import json
@@ -32,6 +33,8 @@ from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.execution.context import ExecutionContext, use_context
 from flowfile_core.flowfile.flow_graph import add_connection
+from flowfile_core.flowfile.flow_graph.builders import catalog as catalog_builders
+from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.transform_schema import BasicFilter, FilterInput, PivotInput
 from shared.compute_protocol import WorkerLocation
@@ -415,6 +418,17 @@ class TestReadVirtualFlowTables:
         assert isinstance(lf, pl.LazyFrame)
         df = lf.collect()
         assert df.height == 2
+
+    def test_a_lazy_read_runs_no_node_and_writes_no_row(self, lazy_virtual_table_id, catalog_service, monkeypatch):
+        def _refused(*_args, **_kwargs):
+            pytest.fail("a lazy virtual table read ran its producer")
+
+        monkeypatch.setattr(FlowNode, "execute_node", _refused)
+        monkeypatch.setattr(catalog_builders, "_handle_virtual_table_write", _refused)
+
+        lf = catalog_service.resolve_virtual_flow_table(lazy_virtual_table_id, run_location="remote")
+
+        assert sorted(lf.collect()["age"].to_list()) == [30, 35]
 
     def test_eager_frame_table_preview(self, eager_virtual_table_id, catalog_service):
         """Preview of a non-optimized (eager) virtual table should re-execute the flow."""
@@ -1155,7 +1169,12 @@ class TestSourceTableVersionCapture:
         graph = _create_graph(source_registration_id=reg_id)
         _add_manual_input(graph, SAMPLE_DATA, node_id=1)
         _add_catalog_writer(
-            graph, node_id=2, depending_on_id=1, table_name="undrawable_virtual", namespace_id=ns_id, write_mode="virtual"
+            graph,
+            node_id=2,
+            depending_on_id=1,
+            table_name="undrawable_virtual",
+            namespace_id=ns_id,
+            write_mode="virtual",
         )
 
         _run_graph(graph)
@@ -1223,9 +1242,8 @@ class TestVersionRestampAndClear:
             vt = next(t for t in repo.list_tables(namespace_id=ns_id) if t.name == "restamp_virtual")
             return physical_id, vt.id, delta_path
 
-    def test_resolution_restamps_versions_after_source_change(self):
-        """Stale versions → resolution re-runs the producer flow and re-stamps,
-        and fresh_versions_hash (post-resolution, identity-map-bypassing) sees it."""
+    def test_the_snapshot_key_follows_a_source_change_without_a_restamp(self):
+        """A lazy read leaves the recorded versions as they are; fresh_versions_hash probes the live ones."""
         from flowfile_core.catalog.text_utils import hash_source_versions
 
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -1250,8 +1268,9 @@ class TestVersionRestampAndClear:
 
                 fresh_hash = svc.fresh_versions_hash(virtual_id)
                 assert fresh_hash != stale_hash
+                assert svc.fresh_versions_hash(virtual_id) == fresh_hash
                 fresh_row = repo.get_table_fresh(virtual_id)
-                assert json.loads(fresh_row.source_table_versions)[0]["version"] == 1
+                assert json.loads(fresh_row.source_table_versions)[0]["version"] == 0
 
     def test_preview_reflects_out_of_band_source_change(self, catalog_service):
         """End-to-end fresh-result-not-discarded proof: the preview after an
@@ -1423,15 +1442,15 @@ class TestVirtualTablePreviewThroughABackend:
         assert WorkerLocation.model_validate_json(ref.location).kind == "plan"
         assert not registry.backend(ref.backend_id).exists(ref)
 
-    def test_an_optimised_table_previews_a_sample_of_its_producer_runs_reference(
+    def test_an_optimised_table_previews_its_plan_through_a_bounded_read(
         self, lazy_virtual_table_id, catalog_service, sampled
     ):
         preview = catalog_service.get_table_preview(lazy_virtual_table_id)
 
         assert len(preview.rows) == 2
         assert preview.total_rows == 2
-        [(_, n)] = _run_samples(sampled)
-        assert n == 100
+        assert sampled
+        assert _run_samples(sampled) == []
 
     def test_a_query_table_previews_its_plan_through_a_bounded_read(
         self, lazy_virtual_table_id, catalog_service, sampled

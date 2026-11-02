@@ -88,7 +88,9 @@ When a virtual table is optimized (`is_optimized = true`):
 3. The query engine applies predicate pushdown, projection pushdown, and other optimizations
 4. Only the needed data is computed
 
-The table's detail panel draws these steps under **Table Definition**: the producer flow's nodes up to the Catalog Writer, one per line, with their names and ids as on the canvas. The drawing is recorded each time the producer flow runs or the table is read, so an edit saved since then shows after the next one.
+Laziness is checked on the producer flow as it is saved, so an edit that makes it eager takes the standard path on the next read. A read of an optimized table runs no node of the producer, sends nothing to a worker and writes nothing to the catalog: the plan travels with the reader and runs wherever the reader's rows are computed. A dashboard or SQL view over many optimized tables pays for building each plan, not for running each producer.
+
+The table's detail panel draws these steps under **Table Definition**: the producer flow's nodes up to the Catalog Writer, one per line, with their names and ids as on the canvas. The drawing is recorded each time the producer flow runs, so an edit saved since then shows after its next run.
 
 Because the plan is a `LazyFrame`, Polars pushes the consumer's filters and column selections *through* the producer's execution plan — query optimization crosses the flow boundary. Work the consumer doesn't need never runs in the producer, and results always reflect the current source data.
 
@@ -100,7 +102,7 @@ When a virtual table is **not** optimized (eager or conditional nodes upstream):
 2. The Catalog Writer node's output is captured as a `LazyFrame`
 3. The result is returned to the caller
 
-This path is slower because it executes the entire producer flow, but it guarantees correct results regardless of pipeline complexity.
+This path is slower because it executes the entire producer flow, but it guarantees correct results regardless of pipeline complexity. Each read runs the producer up to its Catalog Writer on the flow's compute (the worker, by default), so a dashboard or SQL view that reads several standard tables runs each producer once per read.
 
 ### Laziness Blockers
 

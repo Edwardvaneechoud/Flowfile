@@ -307,7 +307,7 @@ class TestCloudSourcedVirtualWriteE2E:
             assert vt.is_optimized is True
             vt_id = vt.id
 
-        # Reading it re-runs the producer flow, resolving cloud credentials fresh.
+        # Reading it builds the producer's plan again, resolving cloud credentials fresh.
         with get_db_context() as db:
             svc = CatalogService(SQLAlchemyCatalogRepository(db))
             out = svc.resolve_virtual_flow_table(vt_id, run_location="local").collect()

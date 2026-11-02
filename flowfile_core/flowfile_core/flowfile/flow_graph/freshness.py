@@ -37,7 +37,7 @@ def _fingerprint_virtual_source(
 ) -> tuple[list[dict], bool]:
     """Fingerprint entries for a virtual-table source, or force=True.
 
-    A virtual table runs its producer flow at resolution, so a lazy one whose
+    A virtual table reads through its producer flow at resolution, so a lazy one whose
     sources are all recorded Delta tables is identified by its producer's flow
     file (rotates on any edit to it) plus the live versions of those sources
     (rotate on out-of-band writes). Any other virtual can change with nothing
