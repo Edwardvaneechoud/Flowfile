@@ -74,6 +74,7 @@ from flowfile_core.database.models import RunType, SchedulerLock
 from flowfile_core.fileExplorer import validate_path_under_cwd
 from flowfile_core.flowfile.execution.errors import ComputeUnavailable
 from flowfile_core.flowfile.utils import create_unique_id
+from flowfile_core.hub_client import catalog as hub_catalog
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
 from flowfile_core.schemas.catalog_schema import (
     ActiveFlowRun,
@@ -406,8 +407,12 @@ def get_namespace_tree(
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Return the full catalog tree with flows nested under schemas."""
-    return service.get_namespace_tree(user_id=current_user.id)
+    """Return the full catalog tree with flows nested under schemas.
+
+    The local catalogs come first; a user connected to a hub gets the hub's catalogs and tables after them, each
+    row marked ``source: "hub"`` with the negative of the hub's id as its ``id``.
+    """
+    return service.get_namespace_tree(user_id=current_user.id) + hub_catalog.tree(current_user.id)
 
 
 # Default namespace helper

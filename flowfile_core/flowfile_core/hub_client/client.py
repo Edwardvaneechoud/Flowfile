@@ -2,8 +2,9 @@
 
 Each function takes the hub's base URL and an optional ``http`` client, which tests replace with a
 ``httpx.MockTransport``. Sign-in and refresh use the auth routes the hub mounts from core (form fields, a token pair
-back), as does ``/catalog/namespaces``; ``/hub/info``, ``/hub/devices``, ``/hub/flows``, ``/hub/compute-nodes`` and
-``/hub/node-tokens`` are the hub's own. Requests log method, path and status only, never a body, a password or a token.
+back), as do ``/catalog/namespaces`` and ``/catalog/tables``; ``/hub/info``, ``/hub/devices``, ``/hub/flows``,
+``/hub/compute-nodes`` and ``/hub/node-tokens`` are the hub's own. Requests log method, path and status only, never a
+body, a password or a token.
 """
 
 import threading
@@ -158,6 +159,22 @@ def list_namespaces(
     """
     params = {"parent_id": parent_id} if parent_id is not None else None
     return _request_list("GET", url, "/catalog/namespaces", http, params=params, headers=_bearer(access_token))
+
+
+def list_tables(
+    url: str, access_token: str, namespace_id: int | None = None, *, http: httpx.Client | None = None
+) -> list:
+    """The catalog tables the signed-in account can see on the hub, as the hub lists them.
+
+    Without ``namespace_id`` the hub answers every table the account can see; with one, that namespace's tables.
+    """
+    params = {"namespace_id": namespace_id} if namespace_id is not None else None
+    tables = _request_list("GET", url, "/catalog/tables", http, params=params, headers=_bearer(access_token))
+    for table in tables:
+        if not isinstance(table, dict):
+            raise HubRefused(200, f"{url} did not answer /catalog/tables as a Flowfile hub does.")
+        _require(table, ("id", "name"), url, "/catalog/tables")
+    return tables
 
 
 def list_flows(

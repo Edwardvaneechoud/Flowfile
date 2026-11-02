@@ -1935,6 +1935,20 @@ class CatalogWriteSettings(BaseModel):
     scd2: Scd2Settings | None = None
     # Enable-only: True turns the Delta change data feed on; False never turns it off.
     track_changes: bool = False
+    # A namespace on the hub, by the hub's own id; set instead of the local namespace fields.
+    hub_namespace_id: int | None = None
+
+    @model_validator(mode="after")
+    def _validate_hub_namespace(self) -> "CatalogWriteSettings":
+        if self.hub_namespace_id is None:
+            return self
+        if self.write_mode == "virtual":
+            raise ValueError("A virtual table is kept in the local catalog, not on the hub")
+        if self.write_mode == "scd2":
+            raise ValueError("An SCD2 table on the hub is not supported yet")
+        if self.track_changes:
+            raise ValueError("Change tracking is set on the hub")
+        return self
 
     @model_validator(mode="after")
     def _validate_merge_keys(self) -> "CatalogWriteSettings":
@@ -2006,6 +2020,25 @@ class NodeCatalogReader(ChangeFeedReadSettings, NodeBase):
     is_virtual_optimized: bool | None = None
     cdc_consumer_name: str | None = None  # names the cursor; without one it is keyed on flow + node
     cdc_start: Literal["now", "beginning"] = "now"
+    # A table on the hub, by the hub's own ids; set instead of the local table fields.
+    hub_table_id: int | None = None
+    hub_namespace_id: int | None = None
+
+    @model_validator(mode="after")
+    def _validate_hub_table(self) -> "NodeCatalogReader":
+        if self.hub_table_id is None:
+            return self
+        if self.hub_namespace_id is None:
+            raise ValueError("A table on the hub is named by its hub_table_id and hub_namespace_id together")
+        if (
+            self.delta_version is not None
+            or self.scd2_view is not None
+            or self.scd2_as_of
+            or self.sql_query
+            or self.cdc_mode != "off"
+        ):
+            raise ValueError("A table on the hub is read as it is now: no version, history view, SQL or change feed")
+        return self
 
     @model_validator(mode="after")
     def _validate_cdc(self) -> "NodeCatalogReader":

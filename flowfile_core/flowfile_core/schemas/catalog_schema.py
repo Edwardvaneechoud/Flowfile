@@ -47,6 +47,9 @@ class NamespaceOut(BaseModel):
     # How the requesting user accesses this resource (multi-user mode); None when
     # unrestricted (admin / electron / internal) — the frontend shows no badge then.
     access: AccessInfo | None = None
+    # Where the namespace lives; a hub's row carries the negative of the hub's id as ``id`` and that id as ``hub_id``.
+    source: Literal["local", "hub"] = "local"
+    hub_id: int | None = None
 
     model_config = {"from_attributes": True}
 
@@ -476,6 +479,10 @@ class CatalogTableOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     access: AccessInfo | None = None
+    # Where the table lives; a hub's row carries negated ids and the hub's own ids beside them.
+    source: Literal["local", "hub"] = "local"
+    hub_id: int | None = None
+    hub_namespace_id: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

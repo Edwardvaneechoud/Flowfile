@@ -4,7 +4,7 @@ The fake answers the routes a desktop uses: ``/hub/info``, core's ``/auth/token`
 fields, rotating refresh tokens), ``POST /hub/devices``, which upserts on the account and the device name as the
 hub does, ``GET /hub/compute-nodes`` (whatever ``nodes`` holds) and ``POST /hub/node-tokens``, which signs a ``run``
 token for an enabled node and refuses as the hub does. Its tokens are real JWTs with an ``exp`` claim, signed with
-a key only the fake knows.
+a key only the fake knows. ``FakeHubWithCatalog`` adds the hub's catalog namespaces and tables.
 """
 
 import json
@@ -19,6 +19,7 @@ import pytest
 
 from flowfile_core.auth import secrets as core_secrets
 from flowfile_core.hub_client import client, session
+from flowfile_core.schemas.catalog_schema import CatalogTableOut, NamespaceOut
 
 _KEY = "a signing key only the fake hub knows"
 HUB_URL = "https://hub.example.test"
@@ -166,6 +167,80 @@ class FakeHub:
                 "expires_at": iso(now + self.node_token_ttl),
                 "issuer": HUB_URL,
             },
+        )
+
+
+_STAMP = "2026-11-01T12:00:00Z"
+_LOCAL_ONLY = {"source", "hub_id", "hub_namespace_id"}
+
+
+class FakeHubWithCatalog(FakeHub):
+    """The connection fake plus core's ``GET /catalog/namespaces`` and ``GET /catalog/tables``, as the hub mounts them.
+
+    ``namespaces`` and ``tables`` hold the hub's rows as core 0.24.0 dumps ``NamespaceOut`` and ``CatalogTableOut``;
+    ``catalog_calls`` records each catalog request as ``(path, query string)``.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.namespaces: list[dict] = []
+        self.tables: list[dict] = []
+        self.catalog_calls: list[tuple[str, str]] = []
+
+    def seed_catalog(self, name: str, **fields) -> dict:
+        """A root namespace (a catalog) on the hub."""
+        return self._add_namespace(name, None, 0, fields)
+
+    def seed_schema(self, catalog: dict, name: str, **fields) -> dict:
+        """A schema under ``catalog`` on the hub."""
+        return self._add_namespace(name, catalog["id"], 1, fields)
+
+    def seed_table(self, namespace: dict, name: str, **fields) -> dict:
+        """A table in ``namespace`` on the hub, with the fields the hub fills for a physical Delta table."""
+        row = CatalogTableOut(
+            id=len(self.tables) + 101,
+            name=name,
+            namespace_id=namespace["id"],
+            namespace_name=namespace["name"],
+            owner_id=1,
+            created_at=_STAMP,
+            updated_at=_STAMP,
+            **fields,
+        ).model_dump(mode="json", exclude=_LOCAL_ONLY)
+        self.tables.append(row)
+        return row
+
+    def _add_namespace(self, name: str, parent_id: int | None, level: int, fields: dict) -> dict:
+        row = NamespaceOut(
+            id=len(self.namespaces) + 1,
+            name=name,
+            parent_id=parent_id,
+            level=level,
+            owner_id=1,
+            created_at=_STAMP,
+            updated_at=_STAMP,
+            **fields,
+        ).model_dump(mode="json", exclude=_LOCAL_ONLY)
+        self.namespaces.append(row)
+        return row
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.method != "GET" or path not in ("/catalog/namespaces", "/catalog/tables"):
+            return super().handle(request)
+        self.calls.append((request.method, path))
+        self.catalog_calls.append((path, request.url.query.decode()))
+        if self.down:
+            raise httpx.ConnectError("connection refused", request=request)
+        if self._bearer_user(request) is None:
+            return httpx.Response(401, json={"detail": "Could not validate credentials"})
+        if path == "/catalog/namespaces":
+            parent = request.url.params.get("parent_id")
+            parent_id = None if parent is None else int(parent)
+            return httpx.Response(200, json=[ns for ns in self.namespaces if ns["parent_id"] == parent_id])
+        namespace = request.url.params.get("namespace_id")
+        return httpx.Response(
+            200, json=[t for t in self.tables if namespace is None or t["namespace_id"] == int(namespace)]
         )
 
 
