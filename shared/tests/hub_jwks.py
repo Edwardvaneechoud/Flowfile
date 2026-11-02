@@ -35,7 +35,7 @@ class SigningKey:
 
 
 class HubSigner:
-    """Serves a JWKS of ``served`` keys and signs tokens with ``key``; ``rotate()`` replaces both."""
+    """Serves a JWKS of ``served`` keys and signs tokens with ``key``."""
 
     def __init__(self):
         self.key = SigningKey()
@@ -64,12 +64,6 @@ class HubSigner:
         self.url = f"http://127.0.0.1:{self._server.server_address[1]}"
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
-
-    def rotate(self) -> SigningKey:
-        """Sign with a new key from now on and serve only that one, as a hub that retired the old key does."""
-        self.key = SigningKey()
-        self.served = [self.key]
-        return self.key
 
     def token(
         self,
