@@ -142,9 +142,14 @@ class ConfiguredBackend(Base):
 
     - ``id``: the backend id a flow saves, ``worker:<name>``.
     - ``url``: the worker's base URL, without a trailing slash.
-    - ``token``: the bearer token as ``encrypt_secret`` ciphertext, never the token itself.
+    - ``token``: the bearer token as ``encrypt_secret`` ciphertext, never the token itself; ``None`` on a hub-filled
+      row.
     - ``ca_cert``: the PEM of the CA core trusts for a non-public worker certificate, else ``None``.
     - ``shares_core_disk``: the worker sees core's files, so core offers it ``file`` whatever it declares.
+    - ``hub_node_id``: set on a row filled from a hub's compute nodes, the node's id there; ``None`` on a row added
+      by hand. A hub-filled row stores no token and no CA: the registry asks the hub for a short-lived token when
+      the backend is used.
+    - ``hub_user_id``: on a hub-filled row, the local user whose hub session mints those tokens.
 
     The built-in ``local`` and ``worker`` are never rows. The registry reads a row on the first lookup of its id.
     """
@@ -153,9 +158,11 @@ class ConfiguredBackend(Base):
 
     id = Column(String, primary_key=True)
     url = Column(String, nullable=False)
-    token = Column(Text, nullable=False)
+    token = Column(Text, nullable=True)
     ca_cert = Column(Text, nullable=True)
     shares_core_disk = Column(Boolean, nullable=False, default=False, server_default=sa.false())
+    hub_node_id = Column(Integer, nullable=True)
+    hub_user_id = Column(Integer, nullable=True)
 
 
 # ==================== Catalog Models ====================

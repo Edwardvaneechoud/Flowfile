@@ -12,7 +12,9 @@ from:
 A configured worker, ``worker:<name>``, is a row of core's ``compute_backends`` table (``ConfiguredBackend``): its URL,
 its bearer token as secret-manager ciphertext, and an optional CA certificate. Its first lookup reads the row and makes
 a ``WorkerBackend`` from it. No row is a ``LookupError``. ``forget`` drops the cached instance, so the next lookup
-reads the row again.
+reads the row again. A row filled from a hub (``hub_node_id`` set) stores no token: its backend signs with the
+short-lived token the hub mints for that node through the row's user's hub session (``hub_client.node_tokens``),
+asked for on the first lookup and again when it nears expiry, when the backend is made anew with the new token.
 
 A process that serves (the desktop sidecar, the Docker image, the pip server) is marked by ``mark_serving``. Its
 compute is the worker beside it, so its default backend is never ``local`` and a run placed on ``local`` is refused.
@@ -88,15 +90,17 @@ def _worker_backend() -> ComputeBackend:
     return WorkerBackend(url=settings.WORKER_URL, shares_core_disk=not settings.WORKER_ADDRESS_CONFIGURED)
 
 
-def _configured_worker_backend(backend_id: str) -> ComputeBackend:
+def _configured_worker_backend(backend_id: str, hub_token: str | None = None) -> ComputeBackend:
     """The ``WorkerBackend`` the ``compute_backends`` row of ``backend_id`` configures.
 
-    It signs with the row's token, trusts the row's CA certificate, and offers ``file`` when the row is marked
+    It signs with the row's token, or for a hub-filled row with the token the hub mints for its node (``hub_token``
+    when the caller holds it already), trusts the row's CA certificate, and offers ``file`` when the row is marked
     ``shares_core_disk``.
 
     Raises:
-        LookupError: No row configures ``backend_id``, or its token no longer decrypts (the master key changed), so
-            it must be added again.
+        LookupError: No row configures ``backend_id``; its token no longer decrypts (the master key changed), so it
+            must be added again; or, for a hub-filled row, no token could be minted (the message says to connect to
+            the hub again when the hub session is missing or expired).
     """
     from cryptography.fernet import InvalidToken
 
@@ -110,16 +114,44 @@ def _configured_worker_backend(backend_id: str) -> ComputeBackend:
         if row is None:
             raise LookupError(f"Unknown compute backend {backend_id!r}; no compute_backends row has that id")
         url, ciphertext, ca_cert, shares_core_disk = row.url, row.token, row.ca_cert, bool(row.shares_core_disk)
-    try:
-        token = decrypt_secret(ciphertext).get_secret_value()
-    except (InvalidToken, ValueError) as e:
-        raise LookupError(
-            f"Compute backend {backend_id!r} cannot be used: its stored token does not decrypt with this core's master "
-            "key. Remove it and add it again on the Backends page"
-        ) from e
+        hub_row = (row.hub_user_id, row.hub_node_id) if row.hub_node_id is not None else None
+    if hub_row is not None:
+        token = hub_token or _hub_token(backend_id, *hub_row)
+        _hub_rows[backend_id] = hub_row
+    else:
+        try:
+            token = decrypt_secret(ciphertext).get_secret_value()
+        except (InvalidToken, ValueError) as e:
+            raise LookupError(
+                f"Compute backend {backend_id!r} cannot be used: its stored token does not decrypt with this core's "
+                "master key. Remove it and add it again on the Backends page"
+            ) from e
     return WorkerBackend(
         url=url, backend_id=backend_id, token=token, ca_cert=ca_cert, shares_core_disk=shares_core_disk
     )
+
+
+def _hub_token(backend_id: str, hub_user_id: int, hub_node_id: int) -> str:
+    """The token the hub mints for the node ``backend_id`` is filled from, through the row's user's hub session."""
+    from flowfile_core.hub_client import node_tokens
+
+    try:
+        return node_tokens.token_for(hub_user_id, hub_node_id, backend_id.removeprefix(CONFIGURED_WORKER_PREFIX))
+    except LookupError as e:
+        raise LookupError(f"Compute backend {backend_id!r} cannot be used: {e}") from e
+
+
+def _replacement_token(backend_id: str, instance: ComputeBackend) -> str | None:
+    """The hub's current token for a hub-filled backend when it is not the one ``instance`` signs with, else ``None``.
+
+    A hub token lasts an hour; ``node_tokens.token_for`` answers the cached one until a minute before it expires
+    and mints a new one then. A backend signs with the token it was made with, so a new token means a new backend.
+    """
+    hub_row = _hub_rows.get(backend_id)
+    if hub_row is None:
+        return None
+    token = _hub_token(backend_id, *hub_row)
+    return None if getattr(instance, "token", None) == token else token
 
 
 _BUILTIN: dict[str, BackendFactory] = {
@@ -131,6 +163,8 @@ _BUILTIN: dict[str, BackendFactory] = {
 _lock = threading.RLock()
 _factories: dict[str, BackendFactory] = {}
 _instances: dict[str, ComputeBackend] = {}
+_hub_rows: dict[str, tuple[int, int]] = {}
+"""Backend id -> ``(hub_user_id, hub_node_id)`` of each hub-filled row an instance was made from."""
 _entry_points_scanned = False
 _default_override: str | None = None
 _serving = False
@@ -150,15 +184,20 @@ def register_backend(backend_id: str, factory: BackendFactory) -> None:
 def backend(backend_id: str) -> ComputeBackend:
     """The process's instance of ``backend_id``, made by its factory on first use.
 
-    A ``worker:`` id with no factory is made from its ``compute_backends`` row.
+    A ``worker:`` id with no factory is made from its ``compute_backends`` row; one made from a hub-filled row is
+    made again when the hub's token for it has been replaced (``_replacement_token``).
 
     Raises:
         LookupError: No factory is known for ``backend_id`` (the message lists the known ids), or a ``worker:`` id
-            has no row or a token that no longer decrypts.
+            has no row, a token that no longer decrypts, or a hub session that mints none.
     """
     with _lock:
         instance = _instances.get(backend_id)
         if instance is not None:
+            replacement = _replacement_token(backend_id, instance)
+            if replacement is None:
+                return instance
+            instance = _instances[backend_id] = _configured_worker_backend(backend_id, replacement)
             return instance
         if backend_id not in _factories and backend_id in _BUILTIN:
             _factories[backend_id] = _BUILTIN[backend_id]
@@ -179,6 +218,7 @@ def forget(backend_id: str) -> None:
     """Drop the process's instance of ``backend_id``; the next lookup makes it again, or fails once its row is gone."""
     with _lock:
         _instances.pop(backend_id, None)
+        _hub_rows.pop(backend_id, None)
 
 
 def default_backend_id() -> str:
@@ -346,6 +386,7 @@ def reset() -> None:
     with _lock:
         _factories.clear()
         _instances.clear()
+        _hub_rows.clear()
         _entry_points_scanned = False
 
 

@@ -11,11 +11,38 @@ from fastapi.testclient import TestClient
 
 from flowfile_core import main
 from flowfile_core.auth import secrets as core_secrets
-from flowfile_core.hub_client import HUB_CONTRACT_VERSION, session
+from flowfile_core.database.connection import get_db_context
+from flowfile_core.database.models import ConfiguredBackend
+from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
+from flowfile_core.hub_client import HUB_CONTRACT_VERSION, node_tokens, session
+from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared._version import get_version
-from tests.hub_client.conftest import HUB_URL, INFO
+from tests.hub_client.conftest import HUB_URL, INFO, compute_node
 
 CONNECT = {"hub_url": HUB_URL, "username": "ana", "password": "s3cret", "device_name": "ana-laptop"}
+TEAM = compute_node(1, "team")
+GPU = compute_node(2, "gpu")
+OLD = compute_node(3, "old", enabled=False)
+
+
+@pytest.fixture(autouse=True)
+def no_configured_backends(monkeypatch):
+    """Every backends row a test left is removed when it ends, the registry forgets it and no node token stays."""
+    monkeypatch.setattr(node_tokens, "_tokens", {})
+    yield
+    with get_db_context() as db:
+        for row in db.query(ConfiguredBackend).all():
+            registry.forget(row.id)
+            db.delete(row)
+        db.commit()
+    handshake.reset_handshake()
+
+
+def _rows() -> dict[str, ConfiguredBackend]:
+    with get_db_context() as db:
+        return {row.id: row for row in db.query(ConfiguredBackend).all()}
 
 
 @pytest.fixture
@@ -66,7 +93,12 @@ def test_connecting_stores_the_refresh_token_and_device_and_never_the_password(a
     assert body["vend_mode"] == "static"
     assert body["expires_at"] is not None
     assert "s3cret" not in response.text
-    assert hub.calls == [("GET", "/hub/info"), ("POST", "/auth/token"), ("POST", "/hub/devices")]
+    assert hub.calls == [
+        ("GET", "/hub/info"),
+        ("POST", "/auth/token"),
+        ("POST", "/hub/devices"),
+        ("GET", "/hub/compute-nodes"),
+    ]
 
     raw = _stored_raw(api)
     assert "s3cret" not in raw
@@ -185,3 +217,179 @@ def test_a_hub_that_refuses_the_device_with_401_answers_400(api, hub, monkeypatc
 
     assert response.status_code == 400
     assert _stored_raw(api) is None
+
+
+def test_connecting_fills_the_backends_table_with_the_hubs_enabled_nodes(api, hub):
+    hub.nodes = [TEAM, GPU, OLD]
+
+    response = api.post("/hub_client/connection", json=CONNECT)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["nodes_synced"] == 2
+    assert response.json()["sync_error"] is None
+    assert hub.calls[-1] == ("GET", "/hub/compute-nodes")
+    rows = _rows()
+    assert sorted(rows) == ["worker:gpu", "worker:team"]
+    team = rows["worker:team"]
+    assert team.url == TEAM["worker_url"]
+    assert team.token is None and team.ca_cert is None
+    assert team.hub_node_id == TEAM["id"]
+    assert team.hub_user_id == _user_id(api)
+    listed = api.get("/compute_backends").json()
+    assert [(row["id"], row["source"], row["url"]) for row in listed] == [
+        ("worker:gpu", "hub", GPU["worker_url"]),
+        ("worker:team", "hub", TEAM["worker_url"]),
+    ]
+    assert hub.minted == []
+
+
+def test_a_failed_node_sync_does_not_fail_the_connect(api, hub):
+    hub.nodes = [TEAM]
+    hub.nodes_failure = 500
+
+    response = api.post("/hub_client/connection", json=CONNECT)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["connected"] is True
+    assert body["nodes_synced"] is None
+    assert body["sync_error"] == "compute nodes unavailable"
+    assert _rows() == {}
+    assert api.get("/hub_client/connection").json()["connected"] is True
+
+
+def test_sync_writes_updates_and_removes_rows_as_the_hub_changed(api, hub):
+    hub.nodes = [TEAM, GPU]
+    api.post("/hub_client/connection", json=CONNECT)
+    team_backend = registry.backend("worker:team")
+    moved = compute_node(TEAM["id"], "team", worker_url="https://team-moved.example.test:63579")
+    etl = compute_node(4, "etl")
+    hub.nodes = [moved, compute_node(GPU["id"], "gpu", enabled=False), etl]
+    hub.calls.clear()
+
+    response = api.post("/hub_client/compute_nodes/sync")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert hub.calls == [("GET", "/hub/compute-nodes")]
+    assert body["skipped"] == []
+    assert [(row["id"], row["source"], row["url"]) for row in body["backends"]] == [
+        ("worker:etl", "hub", etl["worker_url"]),
+        ("worker:team", "hub", moved["worker_url"]),
+    ]
+    rows = _rows()
+    assert sorted(rows) == ["worker:etl", "worker:team"]
+    assert rows["worker:team"].url == moved["worker_url"]
+    remade = registry.backend("worker:team")
+    assert remade is not team_backend
+    assert isinstance(remade, WorkerBackend)
+    assert remade.url == moved["worker_url"]
+    with pytest.raises(LookupError):
+        registry.backend("worker:gpu")
+
+
+def test_sync_renames_a_node_by_removing_its_old_row(api, hub):
+    hub.nodes = [TEAM]
+    api.post("/hub_client/connection", json=CONNECT)
+    hub.nodes = [compute_node(TEAM["id"], "team-two")]
+
+    response = api.post("/hub_client/compute_nodes/sync")
+
+    assert response.status_code == 200, response.text
+    assert sorted(_rows()) == ["worker:team-two"]
+
+
+def test_a_hand_added_row_with_a_hub_nodes_name_is_skipped_and_untouched(api, hub):
+    stored = encrypt_secret("row-token", 1)
+    with get_db_context() as db:
+        db.add(ConfiguredBackend(id="worker:team", url="https://own-team.example.test:63579", token=stored))
+        db.commit()
+    hub.nodes = [TEAM, GPU]
+
+    connected = api.post("/hub_client/connection", json=CONNECT)
+    synced = api.post("/hub_client/compute_nodes/sync")
+
+    assert connected.json()["nodes_synced"] == 1
+    assert synced.status_code == 200, synced.text
+    assert synced.json()["skipped"] == ["worker:team"]
+    team = _rows()["worker:team"]
+    assert team.url == "https://own-team.example.test:63579"
+    assert team.token == stored
+    assert team.hub_node_id is None and team.hub_user_id is None
+    sources = {row["id"]: row["source"] for row in synced.json()["backends"]}
+    assert sources == {"worker:team": "local", "worker:gpu": "hub"}
+
+
+def test_sync_without_a_hub_connection_is_refused_with_400(api, hub):
+    hub.nodes = [TEAM]
+
+    response = api.post("/hub_client/compute_nodes/sync")
+
+    assert response.status_code == 400
+    assert "Connect to a hub first" in response.json()["detail"]
+    assert hub.calls == []
+    assert _rows() == {}
+
+
+def test_sync_when_the_hub_is_down_is_502_and_keeps_the_rows(api, hub):
+    hub.nodes = [TEAM]
+    api.post("/hub_client/connection", json=CONNECT)
+    hub.down = True
+
+    response = api.post("/hub_client/compute_nodes/sync")
+
+    assert response.status_code == 502
+    assert sorted(_rows()) == ["worker:team"]
+
+
+def test_sync_requires_the_local_sign_in(store):
+    assert TestClient(main.app).post("/hub_client/compute_nodes/sync").status_code == 401
+
+
+def test_a_hub_filled_backend_mints_a_run_token_on_first_use_and_reuses_it(api, hub):
+    hub.nodes = [TEAM]
+    api.post("/hub_client/connection", json=CONNECT)
+    hub.calls.clear()
+
+    backend = registry.backend("worker:team")
+
+    assert isinstance(backend, WorkerBackend)
+    assert backend.token
+    assert hub.minted == [{"user": "ana", "node_id": TEAM["id"], "scope": "run"}]
+    assert ("POST", "/hub/node-tokens") in hub.calls
+    hub.calls.clear()
+    assert registry.backend("worker:team") is backend
+    assert hub.calls == []
+
+
+def test_disconnecting_removes_the_callers_hub_filled_rows_and_the_token_cache_but_not_a_hand_added_row(api, hub):
+    stored = encrypt_secret("row-token", 1)
+    with get_db_context() as db:
+        db.add(ConfiguredBackend(id="worker:own", url="https://own.example.test:63579", token=stored))
+        db.commit()
+    hub.nodes = [TEAM, GPU]
+    api.post("/hub_client/connection", json=CONNECT)
+    registry.backend("worker:team")
+    assert node_tokens._tokens
+    hub.calls.clear()
+
+    response = api.delete("/hub_client/connection")
+
+    assert response.status_code == 200
+    assert hub.calls == []
+    assert sorted(_rows()) == ["worker:own"]
+    assert node_tokens._tokens == {}
+    assert [row["id"] for row in api.get("/compute_backends").json()] == ["worker:own"]
+    with pytest.raises(LookupError, match="no compute_backends row"):
+        registry.backend("worker:team")
+
+
+def test_a_hub_filled_row_is_not_removed_on_the_backends_page(api, hub):
+    hub.nodes = [TEAM]
+    api.post("/hub_client/connection", json=CONNECT)
+
+    response = api.delete("/compute_backends/worker:team")
+
+    assert response.status_code == 409, response.text
+    assert "managed by the hub connection" in response.json()["detail"]
+    assert sorted(_rows()) == ["worker:team"]
