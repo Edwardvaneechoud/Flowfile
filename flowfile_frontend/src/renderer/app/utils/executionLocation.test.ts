@@ -9,6 +9,7 @@ import {
   executionLocationOptions,
   nodeExecutionLocationLabel,
   nodeExecutionLocationOptions,
+  reachabilityNote,
   unreachableNote,
   verdictSummary,
   type BackendRow,
@@ -154,6 +155,19 @@ describe("a hub node's reachability in the picker", () => {
     expect(unreachableNote(hubRow())).toBe("");
     expect(unreachableNote(row("worker:own", { reachable: false, reason: "x" }))).toBe("");
     expect(unreachableNote(undefined)).toBe("");
+  });
+
+  it("notes what the check said about a hub node whether it was reached or refused", () => {
+    const refusal = "401 Unauthorized: the node does not trust this hub's tokens";
+    const unreachable =
+      "can't reach https://team-worker.example.test:63579 from this computer: no route";
+    expect(reachabilityNote(hubRow({ reachable: true, reason: refusal }))).toBe(refusal);
+    expect(reachabilityNote(hubRow({ reachable: false, reason: unreachable }))).toBe(unreachable);
+    expect(reachabilityNote(hubRow({ reachable: true }))).toBe("");
+    expect(reachabilityNote(hubRow())).toBe("");
+    expect(reachabilityNote(row("worker:own", { reachable: true, reason: "x" }))).toBe("");
+    expect(reachabilityNote(undefined)).toBe("");
+    expect(unreachableNote(hubRow({ reachable: true, reason: refusal }))).toBe("");
   });
 });
 

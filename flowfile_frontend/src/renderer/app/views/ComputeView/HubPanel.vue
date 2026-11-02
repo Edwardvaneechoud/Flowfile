@@ -117,10 +117,10 @@
                 <span v-if="row.label" class="hub-node__label">{{ row.label }}</span>
                 <span v-if="row.backend" class="hub-node__url">{{ row.backend.url ?? "—" }}</span>
                 <span
-                  v-if="row.backend && unreachableNote(row.backend)"
+                  v-if="row.backend && reachabilityNote(row.backend)"
                   class="hub-node__reason"
                   :data-testid="`hub-node-reason-${row.key}`"
-                  >{{ unreachableNote(row.backend) }}</span
+                  >{{ reachabilityNote(row.backend) }}</span
                 >
               </div>
               <span
@@ -205,7 +205,7 @@ import { NO_AUTOFILL } from "../../utils/noAutofill";
 import ComputeCard from "./ComputeCard.vue";
 import { teamNodeRows, useHubConnection } from "./useHubConnection";
 import { reachabilityStatus, type StatusSummary } from "../../components/settings/handshakeStatus";
-import { unreachableNote } from "../../utils/executionLocation";
+import { reachabilityNote } from "../../utils/executionLocation";
 
 const {
   state,

@@ -92,11 +92,11 @@
                   </h4>
                   <div class="backends-url">{{ backend.url }}</div>
                   <div
-                    v-if="unreachableNote(backend)"
+                    v-if="reachabilityNote(backend)"
                     class="backends-reason"
                     :data-testid="`backend-reason-${backend.id}`"
                   >
-                    {{ unreachableNote(backend) }}
+                    {{ reachabilityNote(backend) }}
                   </div>
                 </div>
                 <span
@@ -308,7 +308,7 @@ import {
   reachabilityStatus,
   type StatusSummary,
 } from "../../components/settings/handshakeStatus";
-import { unreachableNote } from "../../utils/executionLocation";
+import { reachabilityNote } from "../../utils/executionLocation";
 import ComputeCard from "./ComputeCard.vue";
 import ExchangeStoreCard from "./ExchangeStoreCard.vue";
 import {

@@ -45,10 +45,18 @@ export function backendSummary(row: BackendRow): string {
   return verdictSummary(row.verdict);
 }
 
+/**
+ * What the last check said about a hub node, reachable or not: why it could not be reached, or the refusal its
+ * worker answered with. The line under its URL on the Hub tab and in the Backends list; "" otherwise.
+ */
+export function reachabilityNote(row: BackendRow | undefined): string {
+  if (!row || row.source !== "hub") return "";
+  return row.reason ?? "";
+}
+
 /** The reason a hub node could not be reached from this computer, for the line under a picker; "" otherwise. */
 export function unreachableNote(row: BackendRow | undefined): string {
-  if (!row || row.source !== "hub" || row.reachable !== false) return "";
-  return row.reason ?? "";
+  return row?.reachable === false ? reachabilityNote(row) : "";
 }
 
 function withVerdicts(
