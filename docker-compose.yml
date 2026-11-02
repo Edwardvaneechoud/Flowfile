@@ -36,6 +36,12 @@ services:
       - FLOWFILE_COMPUTE_PROTOCOL=${FLOWFILE_COMPUTE_PROTOCOL:-1}
       # The backend flows run on when they name none; empty means the worker below. See .env.example.
       - FLOWFILE_COMPUTE_BACKEND=${FLOWFILE_COMPUTE_BACKEND:-}
+      # A node on a hub: where the hub is reached, this node's name there (the audience of the tokens the hub signs
+      # for it) and, when the node reaches the hub by another address than the one the hub signs with, the issuer
+      # to expect. Set the same three on the worker. Unset, the node takes only the internal token.
+      # - FLOWFILE_HUB_URL=${FLOWFILE_HUB_URL:-}
+      # - FLOWFILE_NODE_NAME=${FLOWFILE_NODE_NAME:-}
+      # - FLOWFILE_HUB_ISSUER=${FLOWFILE_HUB_ISSUER:-}
       - WORKER_HOST=flowfile-worker
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data
@@ -81,6 +87,10 @@ services:
       - FLOWFILE_USER_DATA_DIR=/app/user_data
       # Shares core's data volumes, so it declares local files among the schemes it reads and writes
       - FLOWFILE_WORKER_LOCAL_FILES=1
+      # A node on a hub: the same three as on flowfile-core, so the worker takes the hub's tokens for this node
+      # - FLOWFILE_HUB_URL=${FLOWFILE_HUB_URL:-}
+      # - FLOWFILE_NODE_NAME=${FLOWFILE_NODE_NAME:-}
+      # - FLOWFILE_HUB_ISSUER=${FLOWFILE_HUB_ISSUER:-}
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
     volumes:
