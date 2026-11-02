@@ -286,7 +286,7 @@ def place(
             continue
         artifact_scheme = _artifact_scheme(node)
         try:
-            target, namespace, namespace_id = _catalog_target(settings)
+            target, namespace, namespace_id = _catalog_target(settings, flow)
             requirements = requirements_for(
                 node.node_template, settings, catalog_target=target, artifact_scheme=artifact_scheme
             )
@@ -413,6 +413,12 @@ def _own_reasons(
     reasons = _unmet(needs.requirements, capabilities, needs.namespace, needs.artifact_scheme, absent_here)
     if capabilities.credential_resolution == "ambient":
         reasons += _unresolvable_connections(node, needs.requirements.credentials, needs.namespace_id)
+        hub = hub_table_namespace(node.setting_input)
+        if hub is not None and flow.hub_vend is not None:
+            reasons.append(
+                f"it {'writes' if hub[1] else 'reads'} a table on the hub with a credential the hub vends to this run, "
+                "which this backend cannot take"
+            )
     if isinstance(node.setting_input, input_schema.NodeRunFlow):
         reasons += _child_refusals(flow, node, backend_id, backends, policy, absent, log)
     return reasons
@@ -610,14 +616,37 @@ def _artifact_scheme(node: FlowNode) -> str | None:
     return "https" if isinstance(store, S3Storage) else "file"
 
 
-def _catalog_target(settings: object) -> tuple[CatalogStorageTarget | None, str | None, int | None]:
+def hub_table_namespace(settings: object) -> tuple[int, bool] | None:
+    """The hub namespace a catalog node's ``settings`` read or write and whether they write; ``None`` off the hub."""
+    if isinstance(settings, input_schema.NodeCatalogReader) and settings.hub_table_id is not None:
+        return settings.hub_namespace_id, False
+    if isinstance(settings, input_schema.NodeCatalogWriter):
+        namespace_id = settings.catalog_write_settings.hub_namespace_id
+        if namespace_id is not None:
+            return namespace_id, True
+    return None
+
+
+def _catalog_target(settings: object, flow: FlowGraph) -> tuple[CatalogStorageTarget | None, str | None, int | None]:
     """Where the namespace of a catalog writer's or reader's ``settings`` keeps its tables, its name and its id.
 
     ``(None, None, None)`` for any other node's settings. A writer's namespace is its ``namespace_full_name``, else its
     ``namespace_id``; with neither, the default namespace's local catalog tables directory. A reader's is its
     ``catalog_namespace_id``; a reader without one claims no storage. A namespace whose storage cannot be located
-    answers ``(None, None, None)`` too, so the node fails when it runs.
+    answers ``(None, None, None)`` too, so the node fails when it runs. A node on a table on the hub is placed by the
+    base of the credential the hub vended to ``flow``'s run, naming no stored connection; outside a run it claims
+    nothing.
     """
+    hub = hub_table_namespace(settings)
+    if hub is not None:
+        run_vend = flow.hub_vend
+        if run_vend is None:
+            return None, None, None
+        try:
+            credential = run_vend.for_namespace(hub[0])
+        except LookupError:
+            return None, None, None
+        return CatalogStorageTarget(is_cloud=True, base=credential.base_uri), run_vend.names.get(hub[0]), None
     if isinstance(settings, input_schema.NodeCatalogWriter):
         write_settings = settings.catalog_write_settings
         with get_db_context() as db:

@@ -3,8 +3,8 @@
 Each function takes the hub's base URL and an optional ``http`` client, which tests replace with a
 ``httpx.MockTransport``. Sign-in and refresh use the auth routes the hub mounts from core (form fields, a token pair
 back), as do ``/catalog/namespaces`` and ``/catalog/tables``; ``/hub/info``, ``/hub/devices``, ``/hub/flows``,
-``/hub/compute-nodes`` and ``/hub/node-tokens`` are the hub's own. Requests log method, path and status only, never a
-body, a password or a token.
+``/hub/compute-nodes``, ``/hub/node-tokens`` and ``/hub/vend`` are the hub's own. Requests log method, path and status
+only, never a body, a password or a token.
 """
 
 import threading
@@ -175,6 +175,61 @@ def list_tables(
             raise HubRefused(200, f"{url} did not answer /catalog/tables as a Flowfile hub does.")
         _require(table, ("id", "name"), url, "/catalog/tables")
     return tables
+
+
+def get_table(url: str, access_token: str, table_id: int, *, http: httpx.Client | None = None) -> dict:
+    """The hub's catalog table ``table_id`` as core's ``CatalogTableOut``; an unknown table is the hub's 404."""
+    body = _request("GET", url, f"/catalog/tables/{table_id}", http, headers=_bearer(access_token))
+    return _require(body, ("id", "name"), url, "/catalog/tables/{table_id}")
+
+
+def register_table_from_data(url: str, access_token: str, body: dict, *, http: httpx.Client | None = None) -> dict:
+    """Record a table whose data is already written under a namespace's storage root on the hub; its 201 answer.
+
+    ``body`` is core's ``CatalogTableFromDataCreate``. A ``table_path`` that is not a table directory under the
+    namespace's storage root is the hub's 403, a name already taken in the namespace its 409.
+    """
+    answer = _request("POST", url, "/catalog/tables/from-data", http, json=body, headers=_bearer(access_token))
+    return _require(answer, ("id", "name"), url, "/catalog/tables/from-data")
+
+
+def vend(
+    url: str,
+    access_token: str,
+    run_id: str,
+    read_namespace_ids: list[int],
+    write_namespace_ids: list[int],
+    *,
+    http: httpx.Client | None = None,
+) -> dict:
+    """A credential for each storage root the namespaces live under, for the run ``run_id``; the hub records the vend.
+
+    Answers ``vend_id`` and ``credentials``, each with ``base_uri``, ``storage_options``, ``expires_at``, ``mode``,
+    ``read_prefixes`` and ``write_prefixes``. A namespace the account may not use (read) or manage (write) is the
+    hub's 403, one on the hub's own disk its 422, a hub whose vending is not configured its 501.
+    """
+    body = _request(
+        "POST",
+        url,
+        "/hub/vend",
+        http,
+        json={
+            "run_id": run_id,
+            "read_namespace_ids": list(read_namespace_ids),
+            "write_namespace_ids": list(write_namespace_ids),
+        },
+        headers=_bearer(access_token),
+    )
+    _require(body, ("vend_id",), url, "/hub/vend")
+    credentials = body.get("credentials")
+    if not isinstance(credentials, list) or not all(
+        isinstance(credential, dict)
+        and isinstance(credential.get("base_uri"), str)
+        and isinstance(credential.get("storage_options"), dict)
+        for credential in credentials
+    ):
+        raise HubRefused(200, f"{url} did not answer /hub/vend as a Flowfile hub does.")
+    return body
 
 
 def list_flows(

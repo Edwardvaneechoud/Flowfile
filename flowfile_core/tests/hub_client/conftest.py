@@ -4,13 +4,14 @@ The fake answers the routes a desktop uses: ``/hub/info``, core's ``/auth/token`
 fields, rotating refresh tokens), ``POST /hub/devices``, which upserts on the account and the device name as the
 hub does, ``GET /hub/compute-nodes`` (whatever ``nodes`` holds) and ``POST /hub/node-tokens``, which signs a ``run``
 token for an enabled node and refuses as the hub does. Its tokens are real JWTs with an ``exp`` claim, signed with
-a key only the fake knows. ``FakeHubWithCatalog`` adds the hub's catalog namespaces and tables.
+a key only the fake knows. ``FakeHubWithCatalog`` adds the hub's catalog namespaces and tables, and the credentials
+the hub vends to a run over them.
 """
 
 import json
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs
 
 import httpx
@@ -175,10 +176,14 @@ _LOCAL_ONLY = {"source", "hub_id", "hub_namespace_id"}
 
 
 class FakeHubWithCatalog(FakeHub):
-    """The connection fake plus core's ``GET /catalog/namespaces`` and ``GET /catalog/tables``, as the hub mounts them.
+    """The connection fake plus core's catalog routes the hub mounts, and ``POST /hub/vend`` as the hub answers it.
 
     ``namespaces`` and ``tables`` hold the hub's rows as core 0.24.0 dumps ``NamespaceOut`` and ``CatalogTableOut``;
-    ``catalog_calls`` records each catalog request as ``(path, query string)``.
+    ``catalog_calls`` records each catalog request as ``(path, query string)``. ``GET /catalog/tables/{id}`` answers a
+    row of ``tables`` (404 for another id) and ``POST /catalog/tables/from-data`` appends one (409 on a name taken in
+    the namespace), each body kept in ``registered``. A vend checks ``grants`` (``"use"`` or ``"manage"`` per
+    namespace id) and answers one static credential per root ``storage_uri``, its options ``vend_options`` of that
+    root; each body is kept in ``vend_calls``. ``vend_failure`` set answers that status instead.
     """
 
     def __init__(self):
@@ -186,6 +191,12 @@ class FakeHubWithCatalog(FakeHub):
         self.namespaces: list[dict] = []
         self.tables: list[dict] = []
         self.catalog_calls: list[tuple[str, str]] = []
+        self.grants: dict[int, str] = {}
+        self.vend_options: dict[str, dict] = {}
+        self.vend_calls: list[dict] = []
+        self.registered: list[dict] = []
+        self.vend_failure: int | None = None
+        self._vends = 0
 
     def seed_catalog(self, name: str, **fields) -> dict:
         """A root namespace (a catalog) on the hub."""
@@ -224,9 +235,75 @@ class FakeHubWithCatalog(FakeHub):
         self.namespaces.append(row)
         return row
 
+    def _root(self, namespace_id: int) -> dict | None:
+        namespace = next((ns for ns in self.namespaces if ns["id"] == namespace_id), None)
+        while namespace is not None and namespace["parent_id"] is not None:
+            namespace = next(ns for ns in self.namespaces if ns["id"] == namespace["parent_id"])
+        return namespace
+
+    def _vend(self, body: dict) -> httpx.Response:
+        self.vend_calls.append(body)
+        if self.vend_failure is not None:
+            return httpx.Response(self.vend_failure, json={"detail": "vending is not configured on this hub"})
+        for ns in body["read_namespace_ids"]:
+            if self.grants.get(ns) not in ("use", "manage"):
+                return httpx.Response(403, json={"detail": f"no use grant on namespace {ns}"})
+        for ns in body["write_namespace_ids"]:
+            if self.grants.get(ns) != "manage":
+                return httpx.Response(403, json={"detail": f"no manage grant on namespace {ns}"})
+        by_base: dict[str, dict] = {}
+        for ns, write in [(n, False) for n in body["read_namespace_ids"]] + [
+            (n, True) for n in body["write_namespace_ids"]
+        ]:
+            root = self._root(ns)
+            if root is None or not root.get("storage_uri"):
+                return httpx.Response(422, json={"detail": f"namespace {ns} lives on local disk and cannot be vended"})
+            base = root["storage_uri"].rstrip("/")
+            grant = by_base.setdefault(
+                base, {"options": self.vend_options.get(root["storage_uri"], {}), "write": False}
+            )
+            grant["write"] = grant["write"] or write
+        if not by_base:
+            return httpx.Response(422, json={"detail": "nothing to vend"})
+        self._vends += 1
+        expires = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+        credentials = [
+            {
+                "base_uri": base,
+                "storage_options": grant["options"],
+                "expires_at": expires,
+                "mode": "static",
+                "read_prefixes": [base],
+                "write_prefixes": [base] if grant["write"] else [],
+            }
+            for base, grant in by_base.items()
+        ]
+        return httpx.Response(200, json={"vend_id": self._vends, "credentials": credentials})
+
+    def _register(self, body: dict) -> httpx.Response:
+        self.registered.append(body)
+        if any(t["name"] == body["name"] and t["namespace_id"] == body["namespace_id"] for t in self.tables):
+            return httpx.Response(409, json={"detail": f"Catalog table '{body['name']}' already exists"})
+        namespace = next(ns for ns in self.namespaces if ns["id"] == body["namespace_id"])
+        row = self.seed_table(
+            namespace,
+            body["name"],
+            file_path=body["table_path"],
+            is_remote_storage=True,
+            schema_columns=body.get("schema_columns") or [],
+            row_count=body.get("row_count"),
+            column_count=body.get("column_count"),
+            size_bytes=body.get("size_bytes"),
+        )
+        return httpx.Response(201, json=row)
+
     def handle(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
-        if request.method != "GET" or path not in ("/catalog/namespaces", "/catalog/tables"):
+        catalog_read = request.method == "GET" and (
+            path in ("/catalog/namespaces", "/catalog/tables") or path.startswith("/catalog/tables/")
+        )
+        catalog_write = request.method == "POST" and path in ("/hub/vend", "/catalog/tables/from-data")
+        if not (catalog_read or catalog_write):
             return super().handle(request)
         self.calls.append((request.method, path))
         self.catalog_calls.append((path, request.url.query.decode()))
@@ -234,6 +311,16 @@ class FakeHubWithCatalog(FakeHub):
             raise httpx.ConnectError("connection refused", request=request)
         if self._bearer_user(request) is None:
             return httpx.Response(401, json={"detail": "Could not validate credentials"})
+        if path == "/hub/vend":
+            return self._vend(json.loads(request.content))
+        if path == "/catalog/tables/from-data":
+            return self._register(json.loads(request.content))
+        if path.startswith("/catalog/tables/"):
+            table_id = int(path.rsplit("/", 1)[1])
+            table = next((t for t in self.tables if t["id"] == table_id), None)
+            if table is None:
+                return httpx.Response(404, json={"detail": "Catalog table not found"})
+            return httpx.Response(200, json=table)
         if path == "/catalog/namespaces":
             parent = request.url.params.get("parent_id")
             parent_id = None if parent is None else int(parent)

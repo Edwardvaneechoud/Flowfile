@@ -34,6 +34,7 @@ from flowfile_core.flowfile.execution.placement import (
     Placement,
     Refusal,
     SingleBackendPolicy,
+    hub_table_namespace,
     place,
     remedy_for,
 )
@@ -72,6 +73,7 @@ from flowfile_core.flowfile.util.skip_rules import (
     parameter_gate_is_open,
     uses_any_rule,
 )
+from flowfile_core.hub_client import vend
 from flowfile_core.kernel.execution import (
     KernelHold,
 )
@@ -257,6 +259,10 @@ def _release_boundary_inputs(node: FlowNode, edges: Sequence[BoundaryEdge]) -> N
 class ExecutionMixin(GraphMixinBase):
     # The running run's prefix in the exchange store; None between runs.
     exchange_run: ExchangeRun | None = None
+    # What the hub vended to the running run over its tables; None between runs and in a run with no hub table.
+    hub_vend: vend.RunVend | None = None
+    # (run id, vend id) of the last run's vend, for its report; holds no credential.
+    last_hub_vend: tuple[str, int] | None = None
 
     @property
     def last_closed_gate_handles(self) -> Mapping[str | int, frozenset[str]]:
@@ -1372,6 +1378,8 @@ class ExecutionMixin(GraphMixinBase):
             if not cloud_change_read:
                 if node.node_type != "catalog_reader" or not isinstance(settings, input_schema.NodeCatalogReader):
                     continue
+                if settings.hub_table_id is not None:
+                    continue
                 if not settings.sql_query and settings.delta_version is not None:
                     continue
             try:
@@ -1474,6 +1482,10 @@ class ExecutionMixin(GraphMixinBase):
         input from another backend crossing through the exchange store. ``RunInformation.boundaries`` lists those
         edges, a refused run's included.
 
+        A run with nodes on tables on the hub first asks the hub for their credentials, once (``_vend_hub_tables``),
+        before placement; a hub that cannot be asked or refuses ends the run before a node starts, each of those nodes a
+        failed result with the reason. ``hub_vend`` holds the answer for the run only and is ``None`` once it ends.
+
         The run holds ``exchange_run`` from before ``flow_run_started`` is published. However the run ends, its prefix
         is removed and ``exchange_run`` is ``None`` again (``_end_exchange_run``).
 
@@ -1536,8 +1548,12 @@ class ExecutionMixin(GraphMixinBase):
                     closed_gate_handles=closed_gate_handles,
                 )
 
-                placement, edges = self._place_run(execution_plan, exchange_run)
-                if placement is not None and placement.refusals:
+                hub_refusal = self._vend_hub_tables(run_nodes, exchange_run.run_id)
+                placement, edges = (None, []) if hub_refusal else self._place_run(execution_plan, exchange_run)
+                if hub_refusal:
+                    self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")
+                    self._record_hub_refusal(*hub_refusal)
+                elif placement is not None and placement.refusals:
                     # Refused before any node starts: nothing is prepared, executed, skipped or committed.
                     self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")
                     self.latest_run_info.boundaries = list(placement.boundaries)
@@ -1592,7 +1608,49 @@ class ExecutionMixin(GraphMixinBase):
             # Released once: a second release would end a run another caller claimed meanwhile.
             if not released:
                 self.release_run()
+            self.hub_vend = None
             self._end_exchange_run(exchange_run)
+
+    def _vend_hub_tables(self, nodes: list[FlowNode], run_id: str) -> tuple[list[FlowNode], str] | None:
+        """Ask the hub once for the credentials of the run's nodes on hub tables, held as ``hub_vend`` for the run.
+
+        ``last_hub_vend`` is the run's ``(run_id, vend_id)``, ``None`` when nothing was vended. A run with no node on a
+        hub table asks nothing. The user is the hub nodes' own; nodes of two users ask as the first, which the flow log
+        says. Answers the hub nodes and the sentence when the hub cannot be asked or refuses, else ``None``.
+        """
+        self.last_hub_vend = None
+        hub = {node.node_id: hub_table_namespace(node.setting_input) for node in nodes}
+        hub_nodes = [node for node in nodes if hub[node.node_id] is not None]
+        if not hub_nodes:
+            return None
+        user_ids = list(dict.fromkeys(node.setting_input.user_id for node in hub_nodes))
+        if len(user_ids) > 1:
+            self.flow_logger.warning(
+                f"The nodes on hub tables belong to users {', '.join(map(str, user_ids))}; "
+                f"the hub is asked as user {user_ids[0]}"
+            )
+        readers = {hub[node.node_id][0] for node in hub_nodes if not hub[node.node_id][1]}
+        writers = {hub[node.node_id][0] for node in hub_nodes if hub[node.node_id][1]}
+        try:
+            self.hub_vend = vend.request(user_ids[0], run_id, readers, writers)
+        except LookupError as e:
+            return hub_nodes, str(e)
+        self.last_hub_vend = (run_id, self.hub_vend.vend_id)
+        return None
+
+    def _record_hub_refusal(self, nodes: list[FlowNode], sentence: str) -> None:
+        """Record each node on a hub table as a failed result, ``sentence`` its error, of a run that starts no node."""
+        for node in nodes:
+            self.flow_logger.get_node_logger(node.node_id).error(sentence)
+            node_result = NodeResult(
+                node_id=node.node_id,
+                node_name=node.name,
+                description=node.get_node_information().description,
+                compute_error="Refusal",
+            )
+            node_result.finish(success=False, error=sentence)
+            self.latest_run_info.node_step_result.append(node_result)
+        self.flow_logger.error(f"{len(nodes)} node(s) on hub tables cannot run: {sentence}; no node was started")
 
     def _end_exchange_run(self, exchange_run: ExchangeRun) -> None:
         """Remove what the run wrote to the exchange store; a failure is a warning on the flow log, never the run's.

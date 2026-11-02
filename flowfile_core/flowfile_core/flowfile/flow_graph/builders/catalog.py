@@ -46,6 +46,7 @@ from flowfile_core.flowfile.flow_node.flow_node import (
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
     validate_sql_query,
 )
+from flowfile_core.hub_client import catalog as hub_catalog
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.history_schema import (
     HistoryActionType,
@@ -54,6 +55,31 @@ from shared.delta_utils import (
     get_delta_head_version,
     scan_delta_changes,
 )
+
+
+def _filtered_frame(lf: pl.LazyFrame, row_filter: pl.Expr | None, backend: ComputeBackend | None) -> FlowDataEngine:
+    """``lf`` under ``row_filter``; with a ``backend``, its schema read there with the plan held deferred."""
+    plan = lf if row_filter is None else lf.filter(row_filter)
+    if backend is None:
+        return FlowDataEngine(plan)
+    with _deferred(backend, plan) as ref:
+        return FlowDataEngine(plan, schema=ref.schema)
+
+
+def _hub_reader_table(user_id: int | None, hub_table_id: int) -> dict:
+    """The hub's table ``hub_table_id`` as a reader takes it: a physical table on object storage.
+
+    Raises:
+        LookupError: The hub has no such table, does not answer, or this Flowfile is not connected to it.
+        ValueError: The hub keeps the table on its own disk, or it is a virtual table.
+    """
+    table = hub_catalog.table(user_id, hub_table_id)
+    if table.get("table_type", "physical") != "physical":
+        raise ValueError("A virtual table on the hub cannot be read from this Flowfile")
+    if not table.get("file_path") or not _is_cloud_uri(table["file_path"]):
+        namespace = hub_catalog.locate(user_id, table["namespace_id"]).full_name
+        raise ValueError(f"The hub keeps the tables of {namespace} on its own disk; this Flowfile cannot read them")
+    return table
 
 
 class CatalogBuildersMixin(GraphMixinBase):
@@ -66,7 +92,9 @@ class CatalogBuildersMixin(GraphMixinBase):
         the SQL against all catalog Delta tables instead.
         """
 
-        if node_catalog_reader.sql_query:
+        if node_catalog_reader.hub_table_id is not None:
+            is_virtual_optimized = self._add_hub_table_reader(node_catalog_reader)
+        elif node_catalog_reader.sql_query:
             is_virtual_optimized = self._add_catalog_sql_reader(node_catalog_reader)
         else:
             is_virtual_optimized = self._add_catalog_table_reader(node_catalog_reader)
@@ -147,6 +175,51 @@ class CatalogBuildersMixin(GraphMixinBase):
 
         return is_virtual_optimized
 
+    def _add_hub_table_reader(self, node_catalog_reader: input_schema.NodeCatalogReader) -> None:
+        """Read a table on the hub, named by the hub's own ids, through the credential the hub vends to the run.
+
+        The table is looked up on the hub once here, and its columns are the node's predicted schema; a hub that does
+        not answer leaves its message on the node, and the table is looked up again when the run reads it. The scan
+        carries the run's credential encrypted (``RunVend.scan_kwargs``), so outside a run it cannot read.
+        """
+        user_id = node_catalog_reader.user_id
+        hub_table_id = node_catalog_reader.hub_table_id
+        node_logger = self.flow_logger.get_node_logger(node_catalog_reader.node_id)
+        try:
+            designed: dict | None = _hub_reader_table(user_id, hub_table_id)
+            unread = None
+        except LookupError as e:
+            designed, unread = None, str(e)
+        row_filter = _scd2_row_filter(None, node_catalog_reader.scd2_view, None, node_logger=node_logger)
+
+        def _func() -> FlowDataEngine:
+            if self.hub_vend is None:
+                raise ValueError("Run the flow to read a table on the hub")
+            file_path = (designed or _hub_reader_table(user_id, hub_table_id))["file_path"]
+            lf = pl.scan_delta(file_path, **self.hub_vend.scan_kwargs(file_path, user_id))
+            backend = current_context(self).backend if FLOWFILE_COMPUTE_PROTOCOL else None
+            return _filtered_frame(lf, row_filter, backend)
+
+        def _schema_callback() -> list[FlowfileColumn]:
+            return [
+                FlowfileColumn.from_input(column_name=column["name"], data_type=column["dtype"])
+                for column in designed["schema_columns"]
+            ]
+
+        self.add_node_step(
+            node_id=node_catalog_reader.node_id,
+            function=_func,
+            input_columns=[],
+            node_type="catalog_reader",
+            setting_input=node_catalog_reader,
+            schema_callback=_schema_callback if designed is not None else None,
+        )
+        node = self.get_node(node_catalog_reader.node_id)
+        self.add_node_to_starting_list(node)
+        if unread is not None:
+            node.results.errors = unread
+        return None
+
     def _add_catalog_table_reader(self, node_catalog_reader: input_schema.NodeCatalogReader) -> bool | None:
         """Read a single table from the catalog (physical or virtual).
 
@@ -205,11 +278,7 @@ class CatalogBuildersMixin(GraphMixinBase):
                 raise ValueError("Change tracking is not available for legacy parquet catalog tables")
 
         def _apply_scd2_filter(lf: pl.LazyFrame, backend: ComputeBackend | None = None) -> FlowDataEngine:
-            plan = lf if _scd2_filter is None else lf.filter(_scd2_filter)
-            if backend is None:
-                return FlowDataEngine(plan)
-            with _deferred(backend, plan) as ref:
-                return FlowDataEngine(plan, schema=ref.schema)
+            return _filtered_frame(lf, _scd2_filter, backend)
 
         def _resolve_table_row(db):
             repo = SQLAlchemyCatalogRepository(db)
