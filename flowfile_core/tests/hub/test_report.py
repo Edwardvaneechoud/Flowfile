@@ -19,6 +19,7 @@ from flowfile_core.hub_client import client as hub_client
 from flowfile_core.hub_client import session
 from flowfile_core.routes import routes
 from flowfile_core.schemas import input_schema, schemas
+from flowfile_core.schemas.output_model import NodeResult, RunInformation
 from tests.flowfile.conftest import (
     CATALOG_SAMPLE_DATA,
     add_test_catalog_writer,
@@ -28,7 +29,7 @@ from tests.flowfile.conftest import (
     create_test_namespace,
     run_test_graph,
 )
-from tests.hub_client.conftest import FakeHub
+from tests.hub_client.conftest import FakeHubWithCatalog
 
 HUB_URL = "http://hub.test"
 OTHER_HUB_URL = "http://other-hub.test"
@@ -101,7 +102,7 @@ def desktop(monkeypatch, tmp_path):
     """A core with no ``FLOWFILE_HUB_URL``, a secure store of its own and a fake hub behind the hub client's seam.
 
     ``desktop.connect(user_id)`` gives that user a hub session on ``HUB_URL``, as connecting from the Hub tab does;
-    the fake mints the access tokens the session path refreshes with.
+    the fake mints the access tokens the session path refreshes with and answers the hub's catalog routes.
     """
     monkeypatch.setattr(report, "FLOWFILE_HUB_URL", "")
     path = tmp_path / "secure_storage"
@@ -109,7 +110,7 @@ def desktop(monkeypatch, tmp_path):
     monkeypatch.setenv("SECURE_STORAGE_PATH", str(path))
     monkeypatch.setattr(core_secrets, "_storage", core_secrets.SecureStorage())
     monkeypatch.setattr(session, "_access_tokens", {})
-    fake = FakeHub()
+    fake = FakeHubWithCatalog()
     monkeypatch.setattr(hub_client, "_module_http", _REAL_CLIENT(transport=httpx.MockTransport(fake.handle)))
 
     def connect(user_id: int, hub_url: str = HUB_URL) -> None:
@@ -453,6 +454,8 @@ class TestDesktopSession:
         _assert_contract_shape(body)
         assert (body["flow_uuid"], body["flow_version"], body["core_run_id"]) == (flow_uuid, 3, None)
         assert body["compute_node_id"] is None
+        uuid.UUID(body["run_id"])
+        assert body["vend_ids"] == []
         assert warnings() == []
 
     def test_a_flow_without_an_origin_posts_nothing(self, hub, warnings, registered_flow, desktop):
@@ -562,3 +565,143 @@ class TestDesktopSession:
         assert hub.requests == []
         assert len(warnings()) == 1
         assert not flow.flow_settings.is_running
+
+
+HUB_RUN_ID = "5f0c9a1e8b7d4c3a9e2f1d0c6b5a4f3e"
+ORDERS_COLUMNS = [{"name": "id", "dtype": "Int64"}, {"name": "country", "dtype": "String"}]
+
+
+@pytest.fixture
+def hub_tables_flow(registered_flow, desktop):
+    """The registered flow, connected for user 1, with a reader of the hub's ``sales.eu.orders`` (node 2) feeding a
+    writer of ``orders_eu`` into the same schema (node 3); ``(flow, flow_uuid, schema)``.
+    """
+    desktop.connect(1)
+    catalog = desktop.seed_catalog("sales", storage_uri="s3://acme/sales")
+    schema = desktop.seed_schema(catalog, "eu")
+    orders = desktop.seed_table(
+        schema, "orders", file_path="s3://acme/sales/orders", is_remote_storage=True, schema_columns=ORDERS_COLUMNS
+    )
+    flow_id, flow_uuid = registered_flow
+    flow = routes.flow_file_handler.get_flow(flow_id)
+    _add_reader(
+        flow, 2, user_id=1, hub_table_id=orders["id"], hub_namespace_id=schema["id"], catalog_table_name="orders"
+    )
+    flow.add_node_promise(input_schema.NodePromise(flow_id=flow.flow_id, node_id=3, node_type="catalog_writer"))
+    flow.add_catalog_writer(
+        input_schema.NodeCatalogWriter(
+            flow_id=flow.flow_id,
+            node_id=3,
+            depending_on_id=2,
+            user_id=1,
+            catalog_write_settings=input_schema.CatalogWriteSettings(
+                table_name="orders_eu", hub_namespace_id=schema["id"]
+            ),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(from_id=2, to_id=3))
+    desktop.calls.clear()
+    desktop.catalog_calls.clear()
+    return flow, flow_uuid, schema
+
+
+def _ran(flow, monkeypatch, last_hub_vend: tuple[str, int] | None, success: bool = True) -> None:
+    """Replace ``flow``'s run with one whose three nodes ended as ``success`` says and that leaves ``last_hub_vend``.
+
+    The vend and the storage a real run reaches are the end-to-end test's; here only what the report reads is set.
+    """
+
+    def run_graph(**kwargs) -> RunInformation:
+        flow.last_hub_vend = last_hub_vend
+        results = []
+        for node_id in (1, 2, 3):
+            result = NodeResult(node_id=node_id)
+            result.finish(success=success or node_id == 1, error="" if success or node_id == 1 else "refused")
+            results.append(result)
+        flow.release_run()
+        return RunInformation(
+            flow_id=flow.flow_id,
+            end_time=None,
+            success=success,
+            nodes_completed=3 if success else 1,
+            number_of_nodes=3,
+            node_step_result=results,
+            run_type="full_run",
+        )
+
+    monkeypatch.setattr(flow, "run_graph", run_graph)
+
+
+class TestHubTables:
+    """A desktop reports a run that vended from its hub, naming the hub's tables by the hub's ids and the vend."""
+
+    @pytest.mark.parametrize("listed", [True, False], ids=["written-table-listed", "written-table-not-listed"])
+    def test_a_run_that_vended_posts_one_report_with_the_vend_and_the_hubs_table_ids(
+        self, hub, warnings, hub_tables_flow, desktop, monkeypatch, listed
+    ):
+        flow, flow_uuid, schema = hub_tables_flow
+        written = desktop.seed_table(schema, "orders_eu", file_path="s3://acme/sales/orders_eu_1") if listed else None
+        _ran(flow, monkeypatch, (HUB_RUN_ID, 7))
+        assert flow.flow_settings.hub_origin is None
+
+        assert flow.try_claim_run()
+        routes._run_and_track(flow, user_id=1)
+
+        [run] = _runs_of(flow_uuid)
+        assert run.success is True
+        assert desktop.calls == [("GET", "/catalog/tables")], "one hub call beside the post, on the cached token"
+        assert desktop.catalog_calls == [("/catalog/tables", f"namespace_id={schema['id']}")]
+        [sent] = hub.requests
+        assert str(sent.url) == f"{HUB_URL}/hub/runs"
+        assert desktop._bearer_user(sent) == "ana"
+        body = json.loads(sent.content)
+        _assert_contract_shape(body)
+        assert (body["run_id"], body["vend_ids"]) == (HUB_RUN_ID, [7])
+        assert (body["flow_uuid"], body["flow_version"], body["core_run_id"]) == (flow_uuid, None, None)
+        orders = next(t for t in desktop.tables if t["name"] == "orders")
+        assert body["inputs"] == [{"namespace_id": schema["id"], "table_id": orders["id"], "table_name": "orders"}]
+        assert body["outputs"] == [
+            {
+                "namespace_id": schema["id"],
+                "table_id": written["id"] if listed else None,
+                "table_name": "orders_eu",
+            }
+        ]
+        assert warnings() == []
+
+    def test_a_hub_that_does_not_list_its_tables_leaves_the_written_id_out_with_one_warning(
+        self, hub, warnings, hub_tables_flow, desktop, monkeypatch
+    ):
+        flow, flow_uuid, schema = hub_tables_flow
+        _ran(flow, monkeypatch, (HUB_RUN_ID, 7))
+
+        def handle(request):
+            if request.url.path == "/catalog/tables":
+                return httpx.Response(503, json={"detail": "catalog unavailable"})
+            return desktop.handle(request)
+
+        monkeypatch.setattr(hub_client, "_module_http", _REAL_CLIENT(transport=httpx.MockTransport(handle)))
+
+        assert flow.try_claim_run()
+        routes._run_and_track(flow, user_id=1)
+
+        [sent] = hub.requests
+        body = json.loads(sent.content)
+        assert body["outputs"] == [{"namespace_id": schema["id"], "table_id": None, "table_name": "orders_eu"}]
+        assert body["vend_ids"] == [7]
+        assert len(warnings()) == 1
+        assert "catalog unavailable" in warnings()[0].getMessage()
+
+    def test_a_run_of_hub_tables_that_vended_nothing_posts_nothing(
+        self, hub, warnings, hub_tables_flow, desktop, monkeypatch
+    ):
+        flow, flow_uuid, _ = hub_tables_flow
+        _ran(flow, monkeypatch, None, success=False)
+
+        assert flow.try_claim_run()
+        routes._run_and_track(flow, user_id=1)
+
+        assert len(_runs_of(flow_uuid)) == 1
+        assert hub.requests == []
+        assert desktop.calls == []
+        assert warnings() == []

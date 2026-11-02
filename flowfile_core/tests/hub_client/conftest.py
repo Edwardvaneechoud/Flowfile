@@ -4,14 +4,18 @@ The fake answers the routes a desktop uses: ``/hub/info``, core's ``/auth/token`
 fields, rotating refresh tokens), ``POST /hub/devices``, which upserts on the account and the device name as the
 hub does, ``GET /hub/compute-nodes`` (whatever ``nodes`` holds) and ``POST /hub/node-tokens``, which signs a ``run``
 token for an enabled node and refuses as the hub does. Its tokens are real JWTs with an ``exp`` claim, signed with
-a key only the fake knows. ``FakeHubWithCatalog`` adds the hub's catalog namespaces and tables, and the credentials
-the hub vends to a run over them.
+a key only the fake knows. ``FakeHubWithCatalog`` adds the hub's catalog namespaces and tables, the credentials the
+hub vends to a run over them and the run reports it receives. ``serve_fake`` serves a fake over real HTTP on a
+loopback port, for tests in which nothing may stand between the client and the wire.
 """
 
 import json
+import threading
 import time
 import uuid
+from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 import httpx
@@ -183,7 +187,8 @@ class FakeHubWithCatalog(FakeHub):
     row of ``tables`` (404 for another id) and ``POST /catalog/tables/from-data`` appends one (409 on a name taken in
     the namespace), each body kept in ``registered``. A vend checks ``grants`` (``"use"`` or ``"manage"`` per
     namespace id) and answers one static credential per root ``storage_uri``, its options ``vend_options`` of that
-    root; each body is kept in ``vend_calls``. ``vend_failure`` set answers that status instead.
+    root; each body is kept in ``vend_calls``. ``vend_failure`` set answers that status instead. ``POST /hub/runs``
+    keeps each run report in ``reports`` and answers 201.
     """
 
     def __init__(self):
@@ -195,6 +200,7 @@ class FakeHubWithCatalog(FakeHub):
         self.vend_options: dict[str, dict] = {}
         self.vend_calls: list[dict] = []
         self.registered: list[dict] = []
+        self.reports: list[dict] = []
         self.vend_failure: int | None = None
         self._vends = 0
 
@@ -302,7 +308,7 @@ class FakeHubWithCatalog(FakeHub):
         catalog_read = request.method == "GET" and (
             path in ("/catalog/namespaces", "/catalog/tables") or path.startswith("/catalog/tables/")
         )
-        catalog_write = request.method == "POST" and path in ("/hub/vend", "/catalog/tables/from-data")
+        catalog_write = request.method == "POST" and path in ("/hub/vend", "/catalog/tables/from-data", "/hub/runs")
         if not (catalog_read or catalog_write):
             return super().handle(request)
         self.calls.append((request.method, path))
@@ -313,6 +319,9 @@ class FakeHubWithCatalog(FakeHub):
             return httpx.Response(401, json={"detail": "Could not validate credentials"})
         if path == "/hub/vend":
             return self._vend(json.loads(request.content))
+        if path == "/hub/runs":
+            self.reports.append(json.loads(request.content))
+            return httpx.Response(201, json={"run_id": self.reports[-1].get("run_id")})
         if path == "/catalog/tables/from-data":
             return self._register(json.loads(request.content))
         if path.startswith("/catalog/tables/"):
@@ -329,6 +338,60 @@ class FakeHubWithCatalog(FakeHub):
         return httpx.Response(
             200, json=[t for t in self.tables if namespace is None or t["namespace_id"] == int(namespace)]
         )
+
+
+_HOP_HEADERS = {"content-length", "transfer-encoding", "connection", "content-encoding"}
+
+
+@pytest.fixture
+def serve_fake() -> Iterator[Callable[[FakeHub], str]]:
+    """``serve_fake(fake)`` serves ``fake`` over HTTP on a free loopback port and answers its base URL.
+
+    Each request is handed to ``fake.handle`` as the ``httpx.Request`` it was on the wire (method, path, query,
+    headers, body) and its ``httpx.Response`` is written back, so the hub client and the run report reach the fake
+    with their own ``httpx`` clients. A fake that is ``down`` closes the connection without an answer. The servers
+    are shut down when the test ends.
+    """
+    servers: list[ThreadingHTTPServer] = []
+
+    def serve(fake: FakeHub) -> str:
+        class Handler(BaseHTTPRequestHandler):
+            def _answer(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                request = httpx.Request(
+                    self.command,
+                    f"http://{self.headers['Host']}{self.path}",
+                    headers=list(self.headers.items()),
+                    content=self.rfile.read(length) if length else b"",
+                )
+                try:
+                    response = fake.handle(request)
+                except httpx.TransportError:
+                    self.close_connection = True
+                    return
+                body = response.read()
+                self.send_response(response.status_code)
+                for name, value in response.headers.items():
+                    if name.lower() not in _HOP_HEADERS:
+                        self.send_header(name, value)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = _answer
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        servers.append(server)
+        return f"http://127.0.0.1:{server.server_address[1]}"
+
+    yield serve
+    for server in servers:
+        server.shutdown()
+        server.server_close()
 
 
 @pytest.fixture
