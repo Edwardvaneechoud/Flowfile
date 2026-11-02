@@ -281,14 +281,14 @@ def _hub_claims(token: str) -> hub_tokens.HubClaims | None:
         ) from None
 
 
-def _is_hub_token(token: str | None) -> bool:
-    """Whether ``token`` authenticates through the configured issuer rather than core's own secret."""
-    if not token or _decode_core_token(token) is not None:
-        return False
-    try:
-        return hub_tokens.verify(token) is not None
-    except hub_tokens.HubTokenRefused:
-        return True
+def _refuse_hub_tokens(token: str = Depends(oauth2_scheme)) -> None:
+    """Refuse a token from the configured issuer with 403, whoever it names; anything else passes through untouched.
+
+    Listed before ``get_current_user`` in a dependency so it runs first: a ``dispatch`` token, which that dependency
+    would refuse as no user, is told the same thing as a ``run`` token here.
+    """
+    if token and _decode_core_token(token) is None and _hub_claims(token) is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin routes take no hub token")
 
 
 def _resolve_hub_user(db: Session, claims: hub_tokens.HubClaims, credentials_exception: HTTPException) -> User:
@@ -396,13 +396,13 @@ def decode_refresh_token(token: str) -> str:
         raise credentials_exception from None
 
 
-async def get_current_admin_user(current_user: User = Depends(get_current_user), token: str = Depends(oauth2_scheme)):
+async def get_current_admin_user(
+    _no_hub_token: None = Depends(_refuse_hub_tokens), current_user: User = Depends(get_current_user)
+):
     """Dependency that requires the current user to be an admin, signed in with a session of this core.
 
     A token from the configured issuer is refused whoever it names: administration needs a session here.
     """
-    if _is_hub_token(token):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin routes take no hub token")
     if not current_user.is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required")
     return current_user

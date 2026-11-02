@@ -130,7 +130,8 @@ def test_an_admin_route_refuses_a_hub_token_even_for_an_administrator(team_node,
 def test_an_admin_route_refuses_a_dispatch_token(team_node):
     response = client.get("/auth/users", headers=bearer(team_node.token(scope="dispatch", sub="hub", uid=None)))
 
-    assert response.status_code in (401, 403)
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Admin routes take no hub token"
 
 
 def test_a_dispatch_token_starts_a_run_owned_by_the_service_identity(team_node, registration, no_spawn, monkeypatch):
