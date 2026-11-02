@@ -9,6 +9,10 @@ Two kinds of core report. A team node has ``FLOWFILE_HUB_URL`` and shares the hu
 with the bearer token of the request that started it. A desktop has neither; it has a hub session and flows that
 came from the hub, and reports a run of such a flow with a token minted from the session, so the organisation's
 ledger also sees the version that ran on the desktop.
+
+Only a core in server mode names its own run row in the report, since such a core may share the hub's database and
+the hub then links the report to that row. A desktop reports its runs of a hub flow without a run id of its own,
+and the hub writes the run row itself.
 """
 
 import uuid
@@ -19,7 +23,7 @@ import httpx
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
 from flowfile_core.catalog.exceptions import CatalogError
 from flowfile_core.configs import logger
-from flowfile_core.configs.settings import FLOWFILE_HUB_URL
+from flowfile_core.configs.settings import FLOWFILE_HUB_URL, is_server_mode
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.flow_graph.catalog_resolution import _effective_namespace_id
 from flowfile_core.hub_client import session
@@ -77,6 +81,9 @@ def _rows_out(node) -> int | None:
 def build_run_report(flow, run_info: RunInformation, core_run_id: int, flow_uuid: str) -> dict:
     """The report of a finished run of ``flow``, for the run row ``core_run_id`` of the registration ``flow_uuid``.
 
+    ``core_run_id`` is sent when this core runs in server mode (``is_server_mode()``, read per call), where the hub
+    may share its database and link the report to the row; a desktop reports its runs of a hub flow without a run
+    id of its own, and the field is ``None``.
     ``inputs`` and ``outputs`` are the catalog tables of the catalog reader and writer nodes that ran and
     succeeded, resolved to ids the way the nodes resolve them: a reader by its table id, else its table reference;
     a writer by its ``namespace_full_name``, else its ``namespace_id``, and its table name. A table that no longer
@@ -161,7 +168,7 @@ def build_run_report(flow, run_info: RunInformation, core_run_id: int, flow_uuid
         "inputs": inputs,
         "outputs": outputs,
         "vend_ids": [],
-        "core_run_id": core_run_id,
+        "core_run_id": core_run_id if is_server_mode() else None,
     }
 
 

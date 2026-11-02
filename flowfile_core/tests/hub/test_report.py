@@ -154,7 +154,7 @@ class TestBuildRunReport:
         _assert_contract_shape(built)
         uuid.UUID(built["run_id"])
         assert built["flow_uuid"] == FLOW_UUID
-        assert built["core_run_id"] == 41
+        assert built["core_run_id"] is None
         assert (built["flow_version"], built["compute_node_id"], built["vend_ids"]) == (None, None, [])
         assert built["success"] is True
         assert built["started_at"] <= built["ended_at"]
@@ -233,7 +233,47 @@ class TestBuildRunReport:
         _assert_contract_shape(built)
         assert built["flow_version"] == 4
         assert built["compute_node_id"] is None
-        assert built["core_run_id"] == 44
+        assert built["core_run_id"] is None
+
+    @pytest.mark.parametrize(
+        ("mode", "expected"),
+        [("hub", 45), ("docker", 45), (None, None), ("electron", None), ("package", None)],
+        ids=["hub", "docker", "no-mode", "electron", "package"],
+    )
+    def test_only_a_server_core_names_its_own_run_row(self, monkeypatch, mode, expected):
+        if mode is None:
+            monkeypatch.delenv("FLOWFILE_MODE", raising=False)
+        else:
+            monkeypatch.setenv("FLOWFILE_MODE", mode)
+        graph = create_test_graph(flow_id=8106)
+        add_test_manual_input(graph, CATALOG_SAMPLE_DATA, node_id=1)
+        run_info = run_test_graph(graph)
+
+        built = report.build_run_report(graph, run_info, core_run_id=45, flow_uuid=FLOW_UUID)
+
+        _assert_contract_shape(built)
+        assert built["core_run_id"] == expected
+
+    def test_a_desktop_report_differs_from_a_server_cores_only_in_the_run_row_id(self, monkeypatch):
+        ns_id = create_test_namespace()
+        graph = create_test_graph(flow_id=8107)
+        graph.flow_settings.hub_origin = schemas.HubOrigin(hub_url=HUB_URL, flow_uuid=FLOW_UUID, version=6)
+        add_test_manual_input(graph, CATALOG_SAMPLE_DATA, node_id=1)
+        add_test_catalog_writer(graph, node_id=2, depending_on_id=1, table_name="hub_both", namespace_id=ns_id)
+        run_info = run_test_graph(graph)
+
+        monkeypatch.setenv("FLOWFILE_MODE", "hub")
+        on_server = report.build_run_report(graph, run_info, core_run_id=46, flow_uuid=FLOW_UUID)
+        monkeypatch.delenv("FLOWFILE_MODE")
+        on_desktop = report.build_run_report(graph, run_info, core_run_id=46, flow_uuid=FLOW_UUID)
+
+        assert on_server["core_run_id"] == 46
+        assert on_desktop["core_run_id"] is None
+        assert uuid.UUID(on_server["run_id"]) != uuid.UUID(on_desktop["run_id"])
+        same = REPORT_KEYS - {"run_id", "core_run_id"}
+        assert {k: on_desktop[k] for k in same} == {k: on_server[k] for k in same}
+        assert on_desktop["flow_version"] == 6
+        assert on_desktop["outputs"] == [_table_ref(ns_id, "hub_both")]
 
 
 class TestPostRunReport:
@@ -300,6 +340,8 @@ class TestRunHook:
     def test_a_run_started_with_a_token_posts_one_report_linked_to_its_run_row(
         self, hub, warnings, registered_flow, monkeypatch
     ):
+        # The route authenticates as a desktop here; only the report is built as a server core builds it.
+        monkeypatch.setattr(report, "is_server_mode", lambda: True)
         monkeypatch.setattr(report, "FLOWFILE_HUB_URL", HUB_URL)
         flow_id, flow_uuid = registered_flow
         token = _token()
@@ -322,6 +364,7 @@ class TestRunHook:
         assert warnings() == []
 
     def test_a_hub_that_is_down_leaves_the_run_and_its_row_intact(self, hub, warnings, registered_flow, monkeypatch):
+        monkeypatch.setenv("FLOWFILE_MODE", "hub")
         monkeypatch.setattr(report, "FLOWFILE_HUB_URL", HUB_URL)
         hub.answer = lambda request: (_ for _ in ()).throw(httpx.ConnectError("refused", request=request))
         flow_id, flow_uuid = registered_flow
@@ -335,6 +378,25 @@ class TestRunHook:
         assert len(hub.requests) == 1
         assert len(warnings()) == 1
         assert not flow.flow_settings.is_running
+
+    def test_a_core_with_a_hub_url_outside_server_mode_posts_one_report_without_its_run_row(
+        self, hub, warnings, registered_flow, monkeypatch
+    ):
+        monkeypatch.delenv("FLOWFILE_MODE", raising=False)
+        monkeypatch.setattr(report, "FLOWFILE_HUB_URL", HUB_URL)
+        flow_id, flow_uuid = registered_flow
+        flow = routes.flow_file_handler.get_flow(flow_id)
+
+        assert flow.try_claim_run()
+        routes._run_and_track(flow, user_id=1, hub_token="tok-123")
+
+        [run] = _runs_of(flow_uuid)
+        assert run.success is True and run.ended_at is not None
+        assert len(hub.requests) == 1
+        sent = json.loads(hub.requests[0].content)
+        _assert_contract_shape(sent)
+        assert (sent["flow_uuid"], sent["core_run_id"], sent["success"]) == (flow_uuid, None, True)
+        assert warnings() == []
 
     def test_with_no_hub_url_and_no_session_nothing_is_posted(self, hub, warnings, registered_flow, desktop):
         flow_id, flow_uuid = registered_flow
@@ -389,7 +451,7 @@ class TestDesktopSession:
         assert desktop._bearer_user(sent) == "ana", "the bearer token is one the fake hub minted for the session's user"
         body = json.loads(sent.content)
         _assert_contract_shape(body)
-        assert (body["flow_uuid"], body["flow_version"], body["core_run_id"]) == (flow_uuid, 3, run.id)
+        assert (body["flow_uuid"], body["flow_version"], body["core_run_id"]) == (flow_uuid, 3, None)
         assert body["compute_node_id"] is None
         assert warnings() == []
 
