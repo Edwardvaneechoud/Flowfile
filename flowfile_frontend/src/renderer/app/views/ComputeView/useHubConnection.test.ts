@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { httpError } from "../../__fixtures__/promises";
 import type { HubConnection } from "../../api/hubConnection.api";
 import type { ComputeBackend } from "../../api/computeBackends.api";
@@ -27,6 +27,7 @@ vi.mock("../../api/computeBackends.api", () => ({
 import {
   hubNodesOf,
   nodeNameOf,
+  REREAD_DELAY_MS,
   syncNoticeOf,
   teamNodeRows,
   useHubConnection,
@@ -92,6 +93,10 @@ beforeEach(() => {
   mocks.sync.mockReset().mockResolvedValue({ backends: [ownWorker, teamNode], skipped: [] });
   mocks.check.mockReset().mockResolvedValue([{ ...teamNode, reachable: true }]);
   mocks.listBackends.mockReset().mockResolvedValue([ownWorker, teamNode]);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("hub nodes", () => {
@@ -296,5 +301,70 @@ describe("useHubConnection", () => {
     expect(hub.nodes.value).toEqual([teamNode]);
     expect(hub.syncNotice.value).toBe("Could not reach the hub at https://hub.example.test.");
     expect(hub.syncing.value).toBe(false);
+  });
+
+  describe("the delayed re-read", () => {
+    const checked: ComputeBackend = { ...teamNode, reachable: true };
+
+    it("reads the nodes once more after a connect, once the check behind it has had time to answer", async () => {
+      vi.useFakeTimers();
+      mocks.listBackends
+        .mockResolvedValueOnce([ownWorker, teamNode])
+        .mockResolvedValue([ownWorker, checked]);
+      const hub = useHubConnection();
+
+      await hub.connect(input);
+      expect(mocks.listBackends).toHaveBeenCalledTimes(1);
+      expect(hub.nodes.value).toEqual([teamNode]);
+
+      await vi.advanceTimersByTimeAsync(REREAD_DELAY_MS - 1);
+      expect(mocks.listBackends).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(mocks.listBackends).toHaveBeenCalledTimes(2);
+      expect(hub.nodes.value).toEqual([checked]);
+
+      await vi.advanceTimersByTimeAsync(10 * REREAD_DELAY_MS);
+      expect(mocks.listBackends).toHaveBeenCalledTimes(2);
+    });
+
+    it("reads the nodes once more after a sync, and once for two syncs within the delay", async () => {
+      vi.useFakeTimers();
+      mocks.listBackends.mockResolvedValue([ownWorker, checked]);
+      const hub = useHubConnection();
+
+      await hub.syncNodes();
+      await vi.advanceTimersByTimeAsync(REREAD_DELAY_MS / 2);
+      await hub.syncNodes();
+      expect(hub.nodes.value).toEqual([teamNode]);
+      expect(mocks.listBackends).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(REREAD_DELAY_MS / 2);
+      expect(mocks.listBackends).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(REREAD_DELAY_MS / 2);
+      expect(mocks.listBackends).toHaveBeenCalledTimes(1);
+      expect(hub.nodes.value).toEqual([checked]);
+
+      await vi.advanceTimersByTimeAsync(10 * REREAD_DELAY_MS);
+      expect(mocks.listBackends).toHaveBeenCalledTimes(1);
+    });
+
+    it("is dropped by a disconnect, and by a check that already answered the rows", async () => {
+      vi.useFakeTimers();
+      const hub = useHubConnection();
+
+      await hub.connect(input);
+      await hub.disconnect();
+      await vi.advanceTimersByTimeAsync(REREAD_DELAY_MS);
+      expect(mocks.listBackends).toHaveBeenCalledTimes(1);
+      expect(hub.nodes.value).toEqual([]);
+
+      await hub.syncNodes();
+      await hub.checkNodes();
+      await vi.advanceTimersByTimeAsync(REREAD_DELAY_MS);
+      expect(mocks.listBackends).toHaveBeenCalledTimes(1);
+      expect(hub.nodes.value).toEqual([checked]);
+    });
   });
 });

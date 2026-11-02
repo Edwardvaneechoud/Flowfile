@@ -1,4 +1,4 @@
-import { ref } from "vue";
+import { onScopeDispose, ref } from "vue";
 import type { Ref } from "vue";
 import {
   checkHubComputeNodes,
@@ -65,9 +65,16 @@ export function nodesSyncedLabel(count: number): string {
 }
 
 /**
+ * How long after a connect or a sync answers the team nodes are read once more. Core checks each synced node in
+ * the background, behind its answer, so the rows a connect or a sync hands back still carry the previous outcome.
+ */
+export const REREAD_DELAY_MS = 3000;
+
+/**
  * This user's hub connection, and the connect and disconnect that change it, plus the hub's team nodes as the
- * backends table lists them and the explicit sync that refreshes them. The caller loads; nothing polls. A refused
- * connect leaves the state as it was and throws the route's words.
+ * backends table lists them and the explicit sync that refreshes them. The caller loads; nothing polls: after a
+ * connect or a sync the nodes are read once more, `REREAD_DELAY_MS` later, for the check core queued behind its
+ * answer. A refused connect leaves the state as it was and throws the route's words.
  */
 export function useHubConnection() {
   const state: Ref<HubConnection | null> = ref(null);
@@ -78,6 +85,7 @@ export function useHubConnection() {
   const syncing = ref(false);
   const checking = ref(false);
   const syncNotice = ref("");
+  let rereadTimer: ReturnType<typeof setTimeout> | null = null;
 
   const loadNodes = async () => {
     try {
@@ -86,6 +94,23 @@ export function useHubConnection() {
       syncNotice.value = detailOf(error, "Couldn't read the team nodes.");
     }
   };
+
+  const cancelReread = () => {
+    if (rereadTimer === null) return;
+    clearTimeout(rereadTimer);
+    rereadTimer = null;
+  };
+
+  /** One more read of the nodes, once, after the sync's background check has had time to answer. */
+  const rereadNodesLater = () => {
+    cancelReread();
+    rereadTimer = setTimeout(() => {
+      rereadTimer = null;
+      void loadNodes();
+    }, REREAD_DELAY_MS);
+  };
+
+  onScopeDispose(cancelReread, true);
 
   const load = async () => {
     loading.value = true;
@@ -107,6 +132,7 @@ export function useHubConnection() {
       state.value = await connectHub(input);
       syncNotice.value = syncNoticeOf(state.value);
       await loadNodes();
+      rereadNodesLater();
       return state.value;
     } catch (error) {
       throw new Error(detailOf(error, "Couldn't connect to the hub."));
@@ -124,6 +150,7 @@ export function useHubConnection() {
       if (synced.skipped.length) {
         syncNotice.value += `; kept the worker added here under ${synced.skipped.join(", ")}`;
       }
+      rereadNodesLater();
       return nodes.value.length;
     } catch (error) {
       syncNotice.value = detailOf(error, "Couldn't sync the team nodes.");
@@ -137,6 +164,7 @@ export function useHubConnection() {
     checking.value = true;
     try {
       nodes.value = hubNodesOf(await checkHubComputeNodes());
+      cancelReread();
       return nodes.value;
     } catch (error) {
       throw new Error(detailOf(error, "Couldn't check the team nodes."));
@@ -147,6 +175,7 @@ export function useHubConnection() {
 
   const disconnect = async () => {
     busy.value = true;
+    cancelReread();
     try {
       await disconnectHub();
       state.value = await getHubConnection();
