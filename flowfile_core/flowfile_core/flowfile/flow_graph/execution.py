@@ -1484,7 +1484,8 @@ class ExecutionMixin(GraphMixinBase):
 
         A run with nodes on tables on the hub first asks the hub for their credentials, once (``_vend_hub_tables``),
         before placement; a hub that cannot be asked or refuses ends the run before a node starts, each of those nodes a
-        failed result with the reason. ``hub_vend`` holds the answer for the run only and is ``None`` once it ends.
+        failed result with the reason. ``hub_vend`` holds the answer for the run only, and once the run ends neither it
+        nor any node's result holds the credential (``_end_hub_vend``).
 
         The run holds ``exchange_run`` from before ``flow_run_started`` is published. However the run ends, its prefix
         is removed and ``exchange_run`` is ``None`` again (``_end_exchange_run``).
@@ -1592,6 +1593,7 @@ class ExecutionMixin(GraphMixinBase):
 
                 self.latest_run_info.end_time = datetime.datetime.now()
                 self.end_datetime = datetime.datetime.now()
+                self._end_hub_vend(exchange_run)
                 self.release_run()
                 released = True
                 if self.flow_settings.is_canceled:
@@ -1607,10 +1609,8 @@ class ExecutionMixin(GraphMixinBase):
             ambient_kernel_hold.reset(ambient)
             # Released once: a second release would end a run another caller claimed meanwhile.
             if not released:
+                self._end_hub_vend(exchange_run)
                 self.release_run()
-            # Only this run's: a run claimed once this one released its slot holds its own.
-            if self.hub_vend is not None and self.hub_vend.run_id == exchange_run.run_id:
-                self.hub_vend = None
             self._end_exchange_run(exchange_run)
 
     def _vend_hub_tables(self, nodes: list[FlowNode], run_id: str) -> tuple[list[FlowNode], str] | None:
@@ -1653,6 +1653,39 @@ class ExecutionMixin(GraphMixinBase):
             node_result.finish(success=False, error=sentence)
             self.latest_run_info.node_step_result.append(node_result)
         self.flow_logger.error(f"{len(nodes)} node(s) on hub tables cannot run: {sentence}; no node was started")
+
+    def _end_hub_vend(self, exchange_run: ExchangeRun) -> None:
+        """Forget what the hub vended to the run: ``hub_vend``, and every node result that embeds its credential.
+
+        A hub reader's scan carries the credential, so a hub reader's result, and each result downstream of one, that
+        is still a plan (deferred, not handed to a backend, or with named outputs) is released and its node counts as
+        not run: a later preview or run reads the hub table again under a vend of its own. A result the backend stored
+        is kept, since it reads the stored file. Called before the run releases its slot, and only the run's own vend
+        is reset, so a run claimed afterwards keeps its own.
+        """
+        run_vend = self.hub_vend
+        if run_vend is None or run_vend.run_id != exchange_run.run_id:
+            return
+        self.hub_vend = None
+        seen: set[int] = set()
+        stack = [node for node in self.nodes if (hub := hub_table_namespace(node.setting_input)) and not hub[1]]
+        while stack:
+            node = stack.pop()
+            if id(node) in seen:
+                continue
+            seen.add(id(node))
+            stack.extend(node.leads_to_nodes)
+            ref = node.results.result_ref
+            if ref is not None and ref.state == "materialised" and not node._named_outputs:
+                continue
+            node.release_result()
+            node.results.reset()
+            node.results.example_data_generator = None
+            node._named_outputs = {}
+            node.node_stats.has_run_with_current_setup = False
+            node.node_stats.has_completed_last_run = False
+            node._execution_state.has_run_with_current_setup = False
+            node._execution_state.has_completed_last_run = False
 
     def _end_exchange_run(self, exchange_run: ExchangeRun) -> None:
         """Remove what the run wrote to the exchange store; a failure is a warning on the flow log, never the run's.

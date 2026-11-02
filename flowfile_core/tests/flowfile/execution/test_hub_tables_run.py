@@ -10,6 +10,7 @@ import pytest
 
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CatalogTable
+from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.payloads import CatalogTableIdentity, DeltaWritePayload, unpack
 from flowfile_core.flowfile.execution.protocol import OperationKind, OpResult
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
@@ -18,7 +19,7 @@ from flowfile_core.hub_client.client import HubRefused
 from flowfile_core.schemas import input_schema
 from shared.cloud_credential_provider import PROVIDER_CREDENTIAL_KEYS, EncryptedCredentialProvider
 from tests.conftest import protocol_states
-from tests.flowfile.execution.graph_helpers import add_manual_input, add_promise, connect, make_graph
+from tests.flowfile.execution.graph_helpers import add_filter_on, add_manual_input, add_promise, connect, make_graph
 from tests.hub_client import conftest as hub_conftest
 from tests.hub_client.conftest import HUB_URL, FakeHubWithCatalog
 
@@ -73,6 +74,24 @@ def scans(monkeypatch) -> list[tuple[str, dict]]:
     def scan_delta(path, **kwargs):
         recorded.append((path, kwargs))
         return pl.LazyFrame(ROWS)
+
+    monkeypatch.setattr(pl, "scan_delta", scan_delta)
+    return recorded
+
+
+@pytest.fixture
+def carrying_scans(monkeypatch, tmp_path) -> list[tuple[str, dict]]:
+    """Every Delta scan as ``(path, kwargs)``, answered with a scan of ``ROWS`` whose plan holds the given provider.
+
+    So the plan carries the credential as a real scan of a hub table does, as does every plan composed on it.
+    """
+    rows = tmp_path / "rows.parquet"
+    pl.DataFrame(ROWS).write_parquet(rows)
+    recorded: list[tuple[str, dict]] = []
+
+    def scan_delta(path, **kwargs):
+        recorded.append((path, kwargs))
+        return pl.scan_parquet(rows, credential_provider=kwargs["credential_provider"])
 
     monkeypatch.setattr(pl, "scan_delta", scan_delta)
     return recorded
@@ -319,3 +338,42 @@ def test_a_flow_with_no_hub_table_asks_the_hub_nothing(connected):
     assert run_info.success is True
     assert connected.calls == []
     assert graph.hub_vend is None and graph.last_hub_vend is None
+
+
+@pytest.mark.parametrize("mode", ["Performance", "Development"])
+def test_after_a_run_over_a_hub_table_no_node_result_holds_its_credential(
+    connected, carrying_scans, operations, monkeypatch, flag, mode
+):
+    flow_id = 8711 + 100 * flag + 10 * (mode == "Development")
+    graph = make_graph(flow_id, execution_location="local", execution_mode=mode)
+    add_hub_reader(graph, 1, connected)
+    add_hub_writer(graph, 2, 1, connected.ids["curated"], "orders_out")
+    add_filter_on(graph, 3, 1, "[id] > 1")
+    during: list = []
+    recording = FlowNode.run_op
+
+    def holding(self, backend, op, payload, *, job_id):
+        during.append(graph.get_node(1).results.result_ref)
+        return recording(self, backend, op, payload, job_id=job_id)
+
+    monkeypatch.setattr(FlowNode, "run_op", holding)
+
+    run_info = graph.run_graph()
+
+    assert run_info.success is True, [result.error for result in run_info.node_step_result]
+    [(_, kwargs)] = carrying_scans
+    ciphertext = kwargs["credential_provider"].encrypted_credentials.encode()
+    [reader_ref] = during
+    for node in graph.nodes:
+        plans = [node.results.resulting_data, *node._named_outputs.values()]
+        assert not any(ciphertext in data.data_frame.lazy().serialize() for data in plans if data is not None)
+        ref = node.results.result_ref
+        assert ref is None or ref.state == "materialised"
+    reader = graph.get_node(1)
+    if reader_ref.state == "deferred":
+        assert reader.results.result_ref is None and not reader.node_stats.has_run_with_current_setup
+        assert registry.backend(reader_ref.backend_id).exists(reader_ref) is False
+    else:
+        assert reader.results.result_ref == reader_ref and reader.node_stats.has_run_with_current_setup
+    assert mode == "Development" or reader_ref.state == "deferred"
+    assert graph.hub_vend is None
