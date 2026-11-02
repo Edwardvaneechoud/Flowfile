@@ -25,7 +25,7 @@
           <div class="catalog-field">
             <label class="catalog-label">Catalog / Schema</label>
             <el-select
-              v-model="nodeData.catalog_namespace_id"
+              v-model="selectedNamespaceId"
               size="small"
               placeholder="Select namespace"
               clearable
@@ -35,15 +35,18 @@
                 v-for="ns in catalogNamespaces"
                 :key="ns.id"
                 :label="ns.label"
-                :value="ns.id"
-              />
+                :value="pickerRowId(ns)"
+              >
+                {{ ns.label }}
+                <HubBadge v-if="ns.source === 'hub'" kind="namespace" />
+              </el-option>
             </el-select>
           </div>
 
           <div class="catalog-field">
             <label class="catalog-label">Table</label>
             <el-select
-              v-model="nodeData.catalog_table_id"
+              v-model="selectedTableId"
               size="small"
               placeholder="Select table"
               filterable
@@ -53,7 +56,7 @@
                 v-for="table in filteredTables"
                 :key="table.id"
                 :label="tableOptionLabel(table)"
-                :value="table.id"
+                :value="pickerRowId(table)"
               >
                 <i
                   :class="
@@ -63,11 +66,13 @@
                   "
                 ></i>
                 {{ tableOptionLabel(table) }}
+                <HubBadge v-if="isHubRow(table)" kind="table" />
               </el-option>
             </el-select>
           </div>
 
           <ChangeFeedReadSection
+            v-if="!hubTarget"
             :model-value="cdcSettings"
             :node-id="nodeData.node_id"
             :status="cdcSectionStatus"
@@ -83,7 +88,10 @@
             @reset-cursor="handleResetCursor"
           />
 
-          <div v-if="versionOptions.length > 0 && !selectedScd2" class="catalog-field">
+          <div
+            v-if="!hubTarget && versionOptions.length > 0 && !selectedScd2"
+            class="catalog-field"
+          >
             <label class="catalog-label">Version</label>
             <el-select v-model="nodeData.delta_version" size="small" placeholder="Latest" clearable>
               <el-option
@@ -190,11 +198,11 @@
           </div>
 
           <!-- Available tables reference -->
-          <div v-if="allTables.length > 0" class="available-tables">
+          <div v-if="localTables.length > 0" class="available-tables">
             <label class="catalog-label">Available tables</label>
             <div class="table-chips">
               <span
-                v-for="t in allTables"
+                v-for="t in localTables"
                 :key="t.id"
                 class="table-chip"
                 :title="t.full_table_name ?? t.name"
@@ -221,6 +229,18 @@ import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { useResourceSharing } from "../../../../../composables/useResourceSharing";
 import { CatalogApi } from "../../../../../api/catalog.api";
+import HubBadge from "../../../../../views/CatalogView/HubBadge.vue";
+import { isHubRow, withoutHubRows } from "../../../../../views/CatalogView/hubRows";
+import {
+  isHubTarget,
+  namespaceOptions,
+  pickerRowId,
+  readerNamespaceChoice,
+  selectedNamespaceRow,
+  selectedTableRow,
+  tableChoice,
+  type NamespaceOption,
+} from "../catalogPick";
 import { ChangeFeedReadSection, CollapsibleSection, DateTimePicker } from "../../../../common";
 import {
   CDF_COLUMNS,
@@ -253,6 +273,10 @@ const cachedTableState = ref<{
   catalog_table_name: string | null;
   catalog_full_table_name: string | null;
   catalog_namespace_id: number | null;
+  hub_table_id: number | null;
+  hub_namespace_id: number | null;
+  selectedNamespaceId: number | null;
+  selectedTableId: number | null;
   delta_version: number | null;
   scd2_view: "active" | "all" | "active_at" | null;
   scd2_as_of: string | null;
@@ -281,14 +305,21 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
   },
 });
 
-const catalogNamespaces = ref<{ id: number; label: string }[]>([]);
+const catalogNamespaces = ref<NamespaceOption[]>([]);
 const allTables = ref<CatalogTable[]>([]);
 const selectedTableMeta = ref<CatalogTable | null>(null);
 const deltaVersions = ref<DeltaVersionCommit[]>([]);
+// The selects bind tree ids (negative for a hub row); the settings hold local or hub ids.
+const selectedNamespaceId = ref<number | null>(null);
+const selectedTableId = ref<number | null>(null);
+
+// SQL reads local tables only.
+const localTables = computed(() => withoutHubRows(allTables.value));
+const hubTarget = computed(() => !!nodeData.value && isHubTarget(nodeData.value));
 
 const tableSchema = computed(() => {
   const schema: Record<string, string[]> = {};
-  for (const t of allTables.value) {
+  for (const t of localTables.value) {
     schema[t.full_table_name ?? t.name] = (t.schema_columns ?? []).map((c) => c.name);
   }
   return schema;
@@ -300,8 +331,8 @@ const extensions = computed(() => [
 ]);
 
 const filteredTables = computed(() => {
-  if (nodeData.value?.catalog_namespace_id == null) return allTables.value;
-  return allTables.value.filter((t) => t.namespace_id === nodeData.value?.catalog_namespace_id);
+  if (selectedNamespaceId.value == null) return allTables.value;
+  return allTables.value.filter((t) => t.namespace_id === selectedNamespaceId.value);
 });
 
 // Whether the candidate list has any name collisions — used to force qualified
@@ -316,7 +347,7 @@ const hasNameCollisions = computed(() => {
 });
 
 function tableOptionLabel(table: CatalogTable): string {
-  if (nodeData.value?.catalog_namespace_id == null || hasNameCollisions.value) {
+  if (selectedNamespaceId.value == null || hasNameCollisions.value) {
     return table.full_table_name ?? table.name;
   }
   return table.name;
@@ -324,7 +355,9 @@ function tableOptionLabel(table: CatalogTable): string {
 
 const versionOptions = computed(() => deltaVersionOptions(deltaVersions.value));
 
-const selectedScd2 = computed(() => selectedTableMeta.value?.scd2 ?? null);
+const selectedScd2 = computed(() =>
+  hubTarget.value ? null : (selectedTableMeta.value?.scd2 ?? null),
+);
 // null on the wire means "all records" (no filter) — surface it explicitly so the
 // control is never blank. Choosing "All" writes null back (not the string "all"),
 // keeping the wire value the same as an unconfigured reader.
@@ -494,6 +527,10 @@ function switchMode(newMode: "table" | "sql") {
       catalog_table_name: nodeData.value.catalog_table_name,
       catalog_full_table_name: nodeData.value.catalog_full_table_name,
       catalog_namespace_id: nodeData.value.catalog_namespace_id,
+      hub_table_id: nodeData.value.hub_table_id,
+      hub_namespace_id: nodeData.value.hub_namespace_id,
+      selectedNamespaceId: selectedNamespaceId.value,
+      selectedTableId: selectedTableId.value,
       delta_version: nodeData.value.delta_version,
       scd2_view: nodeData.value.scd2_view,
       scd2_as_of: nodeData.value.scd2_as_of,
@@ -501,9 +538,8 @@ function switchMode(newMode: "table" | "sql") {
       selectedTableMeta: selectedTableMeta.value,
       deltaVersions: [...deltaVersions.value],
     };
-    nodeData.value.catalog_table_id = null;
-    nodeData.value.catalog_table_name = null;
-    nodeData.value.catalog_full_table_name = null;
+    Object.assign(nodeData.value, tableChoice(null));
+    selectedTableId.value = null;
     nodeData.value.delta_version = null;
     nodeData.value.scd2_view = null;
     nodeData.value.scd2_as_of = null;
@@ -525,6 +561,10 @@ function switchMode(newMode: "table" | "sql") {
       nodeData.value.catalog_table_name = cachedTableState.value.catalog_table_name;
       nodeData.value.catalog_full_table_name = cachedTableState.value.catalog_full_table_name;
       nodeData.value.catalog_namespace_id = cachedTableState.value.catalog_namespace_id;
+      nodeData.value.hub_table_id = cachedTableState.value.hub_table_id;
+      nodeData.value.hub_namespace_id = cachedTableState.value.hub_namespace_id;
+      selectedNamespaceId.value = cachedTableState.value.selectedNamespaceId;
+      selectedTableId.value = cachedTableState.value.selectedTableId;
       nodeData.value.delta_version = cachedTableState.value.delta_version;
       nodeData.value.scd2_view = cachedTableState.value.scd2_view;
       nodeData.value.scd2_as_of = cachedTableState.value.scd2_as_of;
@@ -549,11 +589,11 @@ function formatNumber(n: number | null): string {
   return n.toLocaleString();
 }
 
-function handleNamespaceChange() {
+function handleNamespaceChange(id: number | null) {
+  selectedTableId.value = null;
   if (nodeData.value) {
-    nodeData.value.catalog_table_id = null;
-    nodeData.value.catalog_table_name = null;
-    nodeData.value.catalog_full_table_name = null;
+    const option = catalogNamespaces.value.find((ns) => pickerRowId(ns) === id) ?? null;
+    Object.assign(nodeData.value, readerNamespaceChoice(option), tableChoice(null));
     nodeData.value.delta_version = null;
     nodeData.value.scd2_view = null;
     nodeData.value.scd2_as_of = null;
@@ -570,21 +610,20 @@ async function handleTableChange(tableId: number | null) {
   // Cursors are per table, so a retarget always starts over.
   resetCdcSettings();
 
-  const table = allTables.value.find((t) => t.id === tableId);
+  const table = allTables.value.find((t) => pickerRowId(t) === tableId);
   if (table) {
-    nodeData.value.catalog_table_name = table.name;
-    nodeData.value.catalog_namespace_id = table.namespace_id;
-    nodeData.value.catalog_full_table_name = table.full_table_name ?? null;
+    Object.assign(nodeData.value, tableChoice(table));
+    selectedNamespaceId.value = table.namespace_id;
     selectedTableMeta.value = table;
     // The newly selected table may not be SCD2-tracked — drop a stale view/timestamp.
-    if (!table.scd2) {
+    if (!table.scd2 || isHubRow(table)) {
       nodeData.value.scd2_view = null;
       nodeData.value.scd2_as_of = null;
     }
-    await loadTableHistory(table.id);
+    // A hub table is read as it is now: no history to offer.
+    if (!isHubRow(table)) await loadTableHistory(table.id);
   } else {
-    nodeData.value.catalog_table_name = null;
-    nodeData.value.catalog_full_table_name = null;
+    Object.assign(nodeData.value, tableChoice(null));
     nodeData.value.scd2_view = null;
     nodeData.value.scd2_as_of = null;
     selectedTableMeta.value = null;
@@ -616,14 +655,7 @@ let catalogLoadPromise: Promise<void> | null = null;
 async function loadCatalogData() {
   try {
     const tree = await CatalogApi.getNamespaceTree();
-    for (const catalog of tree) {
-      for (const schema of catalog.children ?? []) {
-        catalogNamespaces.value.push({
-          id: schema.id,
-          label: `${catalog.name} / ${schema.name}`,
-        });
-      }
-    }
+    catalogNamespaces.value = namespaceOptions(tree, true);
     allTables.value = collectTablesFromTree(tree).filter(
       (t) => t.file_exists || t.table_type === "virtual",
     );
@@ -659,6 +691,12 @@ async function loadNodeData(nodeId: number) {
     if (nodeData.value!.cdc_mode === undefined) {
       Object.assign(nodeData.value!, DEFAULT_CDC_SETTINGS);
     }
+    if (nodeData.value!.hub_table_id === undefined) {
+      nodeData.value!.hub_table_id = null;
+    }
+    if (nodeData.value!.hub_namespace_id === undefined) {
+      nodeData.value!.hub_namespace_id = null;
+    }
   } else {
     nodeData.value = {
       catalog_table_id: null,
@@ -670,6 +708,8 @@ async function loadNodeData(nodeId: number) {
       scd2_as_of: null,
       sql_query: null,
       ...DEFAULT_CDC_SETTINGS,
+      hub_table_id: null,
+      hub_namespace_id: null,
       flow_id: nodeStore.flow_id,
       node_id: nodeId,
       cache_results: false,
@@ -691,10 +731,18 @@ async function loadNodeData(nodeId: number) {
 
   if (catalogLoadPromise) await catalogLoadPromise;
 
-  if (mode.value === "table" && nodeData.value?.catalog_table_id) {
-    const table = allTables.value.find((t) => t.id === nodeData.value?.catalog_table_id);
-    if (table) {
-      selectedTableMeta.value = table;
+  if (!nodeData.value) return;
+  // A row the tree no longer lists keeps the saved local id in view, as before.
+  const namespaceRow = selectedNamespaceRow(nodeData.value, catalogNamespaces.value);
+  selectedNamespaceId.value = namespaceRow
+    ? pickerRowId(namespaceRow)
+    : nodeData.value.catalog_namespace_id;
+  const table = selectedTableRow(nodeData.value, allTables.value);
+  selectedTableId.value = table ? pickerRowId(table) : nodeData.value.catalog_table_id;
+
+  if (mode.value === "table" && table) {
+    selectedTableMeta.value = table;
+    if (!isHubRow(table)) {
       await loadTableHistory(table.id);
       if (nodeData.value.cdc_mode === "since_last_run") await loadCdcStatus();
     }
