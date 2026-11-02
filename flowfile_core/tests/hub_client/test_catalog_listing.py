@@ -182,12 +182,51 @@ def test_a_hub_answering_401_leaves_its_catalogs_out_with_one_warning(
         assert hub.catalog_calls == [("/catalog/namespaces", "")]
 
 
+@pytest.mark.parametrize(
+    "malformed", ["a root without an id", "a schema with a text id", "a table in a text namespace"]
+)
+def test_a_hub_answering_rows_core_cannot_read_leaves_its_catalogs_out_with_one_warning(
+    connected, hub, user_id, warnings, malformed
+):
+    seeded = _seed(hub)
+    if malformed == "a root without an id":
+        del next(ns for ns in hub.namespaces if ns["id"] == seeded["finance"]["id"])["id"]
+    elif malformed == "a schema with a text id":
+        next(ns for ns in hub.namespaces if ns["id"] == seeded["raw"]["id"])["id"] = "raw"
+    else:
+        next(t for t in hub.tables if t["id"] == seeded["ledger"]["id"])["namespace_id"] = "finance"
+    resp = connected.get("/catalog/namespaces/tree")
+    assert resp.status_code == 200
+    assert resp.json() == _local_tree(user_id)
+    assert len(warnings) == 1 and HUB_URL in warnings[0]
+
+
 def test_the_other_catalog_routes_stay_local(connected, hub):
     seeded = _seed(hub)
     assert connected.get("/catalog/tables").status_code == 200
     assert connected.get("/catalog/namespaces").status_code == 200
     assert connected.get(f"/catalog/tables/{-seeded['orders']['id']}").status_code == 404
     assert hub.calls == []
+
+
+def test_the_overview_tree_is_the_listing_tree(connected, hub, user_id):
+    _seed(hub)
+    overview = connected.get("/catalog/overview")
+    assert overview.status_code == 200
+    tree = overview.json()["tree"]
+    assert tree == connected.get("/catalog/namespaces/tree").json()
+    assert [node["name"] for node in tree[len(_local_tree(user_id)) :]] == ["sales", "finance"]
+    assert all(table["source"] == "local" for table in overview.json()["tables"])
+
+
+def test_the_overview_of_a_user_not_connected_never_asks_a_hub(api, user_id, monkeypatch):
+    def refuse(request):
+        pytest.fail(f"the hub was called: {request.method} {request.url}")
+
+    monkeypatch.setattr(client, "_module_http", httpx.Client(transport=httpx.MockTransport(refuse)))
+    overview = api.get("/catalog/overview")
+    assert overview.status_code == 200
+    assert overview.json()["tree"] == _local_tree(user_id)
 
 
 class TestHubTableReader:

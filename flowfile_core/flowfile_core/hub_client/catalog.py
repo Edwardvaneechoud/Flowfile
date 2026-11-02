@@ -57,12 +57,16 @@ def tree(user_id: int) -> list[NamespaceTree]:
 
 
 def _walk(hub_url: str, access_token: str) -> list[NamespaceTree]:
-    roots = client.list_namespaces(hub_url, access_token)
-    children = {root["id"]: client.list_namespaces(hub_url, access_token, parent_id=root["id"]) for root in roots}
+    roots = _namespaces(hub_url, client.list_namespaces(hub_url, access_token))
+    children = {
+        root["id"]: _namespaces(hub_url, client.list_namespaces(hub_url, access_token, parent_id=root["id"]))
+        for root in roots
+    }
     tables: dict[int, list[CatalogTableOut]] = {}
     for table in client.list_tables(hub_url, access_token):
         if table.get("namespace_id") is not None:
-            tables.setdefault(table["namespace_id"], []).append(_table(hub_url, table))
+            row = _table(hub_url, table)
+            tables.setdefault(row.hub_namespace_id, []).append(row)
     return [
         _namespace(
             hub_url,
@@ -72,6 +76,14 @@ def _walk(hub_url: str, access_token: str) -> list[NamespaceTree]:
         )
         for root in roots
     ]
+
+
+def _namespaces(hub_url: str, rows: list) -> list[dict]:
+    """``rows`` as the hub answered them, refused unless each is a namespace with an integer ``id`` and a ``name``."""
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("id"), int) or not row.get("name"):
+            raise HubRefused(200, f"{hub_url} did not answer /catalog/namespaces as a Flowfile hub does.")
+    return rows
 
 
 def _namespace(
@@ -103,5 +115,5 @@ def _table(hub_url: str, table: dict) -> CatalogTableOut:
                 "hub_namespace_id": table["namespace_id"],
             }
         )
-    except ValidationError as e:
+    except (ValidationError, TypeError) as e:
         raise HubRefused(200, f"{hub_url} did not answer /catalog/tables as a Flowfile hub does.") from e
