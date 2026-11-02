@@ -9,20 +9,13 @@
     <div class="hub-open-body">
       <div class="hub-open-pane">
         <label class="pane-label">Namespace</label>
-        <p v-if="loadingNamespaces" class="hub-dialog-status">Loading…</p>
-        <ul v-else class="hub-open-list" data-testid="hub-open-namespaces">
-          <li
-            v-for="ns in namespaces"
-            :key="ns.id"
-            class="hub-open-row"
-            :class="{ selected: selectedNamespaceId === ns.id, nested: ns.level > 0 }"
-            @click="selectNamespace(ns.id)"
-          >
-            <span class="material-icons">{{ ns.level > 0 ? "schema" : "folder" }}</span>
-            <span>{{ ns.name }}</span>
-          </li>
-          <li v-if="!namespaces.length" class="hub-dialog-status">No namespaces on this hub.</li>
-        </ul>
+        <!-- Mounted per open, so the tree is fetched afresh each time. -->
+        <HubNamespaceTree
+          v-if="isVisible"
+          :model-value="selectedNamespaceId"
+          data-testid="hub-open-namespaces"
+          @update:model-value="selectNamespace"
+        />
       </div>
       <div class="hub-open-pane">
         <label class="pane-label">Flows</label>
@@ -96,15 +89,14 @@ import { ElMessageBox } from "element-plus";
 import {
   listHubFlowVersions,
   listHubFlows,
-  listHubNamespaces,
   openFromHub,
   refusalOf,
   type HubFlow,
   type HubFlowVersion,
-  type HubNamespace,
 } from "../../../api/hubFlows.api";
 import { detailOf } from "../../../utils/apiDetail";
 import { authorLabel, latestVersionLabel, refusalMessage } from "../hubFlows";
+import HubNamespaceTree from "./HubNamespaceTree.vue";
 
 const props = defineProps<{ visible: boolean }>();
 
@@ -114,13 +106,11 @@ const emit = defineEmits<{
 }>();
 
 const isVisible = ref(props.visible);
-const namespaces = ref<HubNamespace[]>([]);
 const flows = ref<HubFlow[]>([]);
 const versions = ref<HubFlowVersion[]>([]);
 const selectedNamespaceId = ref<number | null>(null);
 const selectedFlow = ref<HubFlow | null>(null);
 const selectedVersion = ref<number | null>(null);
-const loadingNamespaces = ref(false);
 const loadingFlows = ref(false);
 const loadingVersions = ref(false);
 const busy = ref(false);
@@ -132,7 +122,7 @@ watch(
   () => props.visible,
   (v) => {
     isVisible.value = v;
-    if (v) void loadNamespaces();
+    if (v) reset();
   },
 );
 
@@ -142,25 +132,21 @@ watch(isVisible, (v) => {
 
 const publishedAt = (version: HubFlowVersion) => new Date(version.publishedAt).toLocaleString();
 
-async function loadNamespaces() {
+function reset() {
   error.value = "";
   flows.value = [];
   versions.value = [];
+  selectedNamespaceId.value = null;
   selectedFlow.value = null;
   selectedVersion.value = null;
-  loadingNamespaces.value = true;
-  try {
-    namespaces.value = await listHubNamespaces();
-    if (selectedNamespaceId.value !== null) await loadFlows(selectedNamespaceId.value);
-  } catch (err) {
-    error.value = detailOf(err, "Couldn't reach the hub.");
-  } finally {
-    loadingNamespaces.value = false;
-  }
 }
 
-async function selectNamespace(id: number) {
+async function selectNamespace(id: number | null) {
   selectedNamespaceId.value = id;
+  if (id === null) {
+    flows.value = [];
+    return;
+  }
   await loadFlows(id);
 }
 

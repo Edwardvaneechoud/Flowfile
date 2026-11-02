@@ -168,8 +168,22 @@
   color: var(--color-accent);
 }
 
-.hub-open-row.nested {
-  padding-left: var(--spacing-5);
+.hub-open-row.hub-tree-row {
+  padding-left: calc(var(--spacing-3) + var(--tree-depth, 0) * var(--spacing-4));
+}
+
+.hub-tree-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
 }
 
 .hub-open-row .material-icons {

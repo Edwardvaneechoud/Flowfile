@@ -48,6 +48,17 @@ describe("listing", () => {
     expect(result).toEqual([{ id: 2, name: "sales", parentId: 1, level: 1, description: null }]);
   });
 
+  it("asks for a namespace's children through parent_id", async () => {
+    mocks.get.mockResolvedValue({
+      data: [{ id: 2, name: "sales", parent_id: 1, level: 1, description: null, owner_id: 1 }],
+    });
+
+    const result = await listHubNamespaces(1);
+
+    expect(mocks.get).toHaveBeenCalledWith("/hub_client/namespaces", { params: { parent_id: 1 } });
+    expect(result).toEqual([{ id: 2, name: "sales", parentId: 1, level: 1, description: null }]);
+  });
+
   it("narrows the flows to a namespace through the query and sends none without one", async () => {
     mocks.get.mockResolvedValue({
       data: [

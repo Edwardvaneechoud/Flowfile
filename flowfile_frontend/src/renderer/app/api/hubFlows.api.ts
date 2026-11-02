@@ -152,8 +152,12 @@ const versionFromPy = (raw: PyVersion | null | undefined): HubFlowVersion | null
       }
     : null;
 
-export async function listHubNamespaces(): Promise<HubNamespace[]> {
-  const response = await axios.get<PyNamespace[]>(`${BASE}/namespaces`);
+/** The hub's root namespaces, or the children of `parentId`: one level of the tree per call. */
+export async function listHubNamespaces(parentId?: number | null): Promise<HubNamespace[]> {
+  const response =
+    parentId == null
+      ? await axios.get<PyNamespace[]>(`${BASE}/namespaces`)
+      : await axios.get<PyNamespace[]>(`${BASE}/namespaces`, { params: { parent_id: parentId } });
   return response.data.map(namespaceFromPy);
 }
 

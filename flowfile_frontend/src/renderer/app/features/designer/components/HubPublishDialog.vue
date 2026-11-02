@@ -54,21 +54,11 @@
       <template v-else>
         <div v-if="!hubOrigin" class="form-group">
           <label>Namespace</label>
-          <el-select
+          <HubNamespaceTree
             v-model="namespaceId"
-            size="small"
-            clearable
-            placeholder="The hub's default namespace"
-            style="width: 100%"
+            none-label="The hub's default namespace"
             data-testid="hub-publish-namespace"
-          >
-            <el-option
-              v-for="ns in namespaces"
-              :key="ns.id"
-              :label="namespaceLabel(ns)"
-              :value="ns.id"
-            />
-          </el-select>
+          />
         </div>
         <p v-else class="hub-dialog-hint">
           This flow is on the hub as version {{ hubOrigin.version }}; this publish becomes the next
@@ -145,13 +135,11 @@
 import { ref, watch } from "vue";
 import { ElMessageBox } from "element-plus";
 import {
-  listHubNamespaces,
   openFromHub,
   publishCheck,
   publishToHub,
   refusalOf,
   type HubFlowVersion,
-  type HubNamespace,
   type HubPublishResult,
 } from "../../../api/hubFlows.api";
 import type { HubOrigin } from "../../../types";
@@ -165,6 +153,7 @@ import {
   versionFacts,
   warningLines,
 } from "../hubFlows";
+import HubNamespaceTree from "./HubNamespaceTree.vue";
 
 const props = defineProps<{
   visible: boolean;
@@ -188,7 +177,6 @@ const isVisible = ref(props.visible);
 const loading = ref(false);
 const busy = ref(false);
 const error = ref("");
-const namespaces = ref<HubNamespace[]>([]);
 const namespaceId = ref<number | null>(null);
 const message = ref("");
 const warnings = ref<string[]>([]);
@@ -207,8 +195,6 @@ watch(isVisible, (v) => {
   if (v !== props.visible) emit("update:visible", v);
 });
 
-const namespaceLabel = (ns: HubNamespace) => (ns.level > 0 ? `  ${ns.name}` : ns.name);
-
 async function prepare() {
   loading.value = true;
   error.value = "";
@@ -218,12 +204,7 @@ async function prepare() {
   namespaceId.value = null;
   warnings.value = [];
   try {
-    const [uses, hubNamespaces] = await Promise.all([
-      publishCheck(props.flowId),
-      props.hubOrigin ? Promise.resolve([] as HubNamespace[]) : listHubNamespaces(),
-    ]);
-    warnings.value = warningLines(uses);
-    namespaces.value = hubNamespaces;
+    warnings.value = warningLines(await publishCheck(props.flowId));
   } catch (err) {
     error.value = detailOf(err, "Couldn't reach the hub.");
   } finally {
