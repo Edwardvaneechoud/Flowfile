@@ -122,6 +122,35 @@ describe("useHubNamespaceTree", () => {
     expect(names(tree.visible.value)).toEqual(["General", "sales", "hr", "Demo"]);
   });
 
+  it("a second click while the first fetch is pending neither fetches again nor lists the children twice", async () => {
+    let answer!: (children: HubNamespace[]) => void;
+    mocks.listNamespaces.mockResolvedValueOnce([general, demo]).mockImplementationOnce(
+      () =>
+        new Promise<HubNamespace[]>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const tree = useHubNamespaceTree();
+    await tree.load();
+
+    const first = tree.expand(1);
+    const second = tree.expand(1);
+    answer([sales, hr]);
+    await Promise.all([first, second]);
+
+    expect(mocks.listNamespaces).toHaveBeenCalledTimes(2);
+    expect(names(tree.rows.value)).toEqual(["General", "sales", "hr", "Demo"]);
+    expect(tree.visible.value[0]).toMatchObject({
+      expanded: true,
+      loaded: true,
+      hasChildren: true,
+    });
+
+    await tree.expand(1);
+    expect(names(tree.visible.value)).toEqual(["General", "Demo"]);
+    expect(mocks.listNamespaces).toHaveBeenCalledTimes(2);
+  });
+
   it("a namespace whose fetch returned no rows loses its chevron", async () => {
     mocks.listNamespaces.mockResolvedValueOnce([general, demo]).mockResolvedValueOnce([]);
     const tree = useHubNamespaceTree();
