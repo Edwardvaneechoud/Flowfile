@@ -19,6 +19,7 @@ from flowfile_core.auth.secrets import get_password, set_password
 from flowfile_core.configs.settings import ACCESS_TOKEN_EXPIRE_MINUTES
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
+from shared import hub_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +221,18 @@ def invalidate_user_cache(username: str | None = None) -> None:
             _user_cache.pop(username, None)
 
 
+def _user_from_row(row: db_models.User) -> User:
+    return User(
+        username=row.username,
+        id=row.id,
+        email=row.email,
+        full_name=row.full_name,
+        disabled=row.disabled,
+        is_admin=row.is_admin,
+        must_change_password=row.must_change_password,
+    )
+
+
 def _resolve_token_user(db: Session, username: str, credentials_exception: HTTPException) -> User:
     """Token subject → ``User``.
 
@@ -240,15 +253,7 @@ def _resolve_token_user(db: Session, username: str, credentials_exception: HTTPE
         row = db.query(db_models.User).filter(db_models.User.username == username).first()
         if row is None:
             raise credentials_exception
-        user = User(
-            username=row.username,
-            id=row.id,
-            email=row.email,
-            full_name=row.full_name,
-            disabled=row.disabled,
-            is_admin=row.is_admin,
-            must_change_password=row.must_change_password,
-        )
+        user = _user_from_row(row)
         with _user_cache_lock:
             _user_cache[username] = (now + USER_CACHE_TTL_SECONDS, user)
     if user.disabled:
@@ -256,8 +261,67 @@ def _resolve_token_user(db: Session, username: str, credentials_exception: HTTPE
     return user.model_copy()
 
 
+def _decode_core_token(token: str) -> dict | None:
+    """The payload of a token core signed itself, ``None`` for anything else."""
+    try:
+        return jwt.decode(token, get_jwt_secret(), algorithms=[ALGORITHM])
+    except JWTError:
+        return None
+
+
+def _hub_claims(token: str) -> hub_tokens.HubClaims | None:
+    """The claims of a token from the configured issuer; ``None`` when it is none, 401 with the reason when refused."""
+    try:
+        return hub_tokens.verify(token)
+    except hub_tokens.HubTokenRefused as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Hub token refused: {exc.reason}",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from None
+
+
+def _is_hub_token(token: str | None) -> bool:
+    """Whether ``token`` authenticates through the configured issuer rather than core's own secret."""
+    if not token or _decode_core_token(token) is not None:
+        return False
+    try:
+        return hub_tokens.verify(token) is not None
+    except hub_tokens.HubTokenRefused:
+        return True
+
+
+def _resolve_hub_user(db: Session, claims: hub_tokens.HubClaims, credentials_exception: HTTPException) -> User:
+    """The user a ``run`` token names: by its ``uid`` claim, else by the username in ``sub``.
+
+    A node on a hub shares the hub's user table, so the id the hub put in the token is this core's id too. A
+    ``dispatch`` token is the hub acting as itself and names no user, so it is refused here.
+    """
+    if claims.scope == "dispatch":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="dispatch tokens are not user tokens",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    row = None
+    if claims.user_id is not None:
+        row = db.query(db_models.User).filter(db_models.User.id == claims.user_id).first()
+    if row is None:
+        row = db.query(db_models.User).filter(db_models.User.username == claims.subject).first()
+    if row is None:
+        raise credentials_exception
+    user = _user_from_row(row)
+    if user.disabled:
+        raise HTTPException(status_code=400, detail="Inactive user")
+    return user
+
+
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    """Sync on purpose: a pool wait must land on the threadpool, not the event loop."""
+    """Sync on purpose: a pool wait must land on the threadpool, not the event loop.
+
+    Core's own token is tried first; what it does not sign may be a token from the configured issuer
+    (``shared.hub_tokens``), which is the user it names. Without that configuration nothing else is accepted.
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -267,17 +331,19 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     if not token:
         raise credentials_exception
 
-    try:
-        payload = jwt.decode(token, get_jwt_secret(), algorithms=[ALGORITHM])
-        # Reject refresh tokens used as access tokens
-        if payload.get("type") == "refresh":
+    payload = _decode_core_token(token)
+    if payload is None:
+        claims = _hub_claims(token)
+        if claims is None:
             raise credentials_exception
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-        token_data = TokenData(username=username)
-    except JWTError:
-        raise credentials_exception from None
+        return _resolve_hub_user(db, claims, credentials_exception)
+    # Reject refresh tokens used as access tokens
+    if payload.get("type") == "refresh":
+        raise credentials_exception
+    username: str = payload.get("sub")
+    if username is None:
+        raise credentials_exception
+    token_data = TokenData(username=username)
 
     return _resolve_token_user(db, token_data.username, credentials_exception)
 
@@ -330,11 +396,63 @@ def decode_refresh_token(token: str) -> str:
         raise credentials_exception from None
 
 
-async def get_current_admin_user(current_user: User = Depends(get_current_user)):
-    """Dependency that requires the current user to be an admin"""
+async def get_current_admin_user(current_user: User = Depends(get_current_user), token: str = Depends(oauth2_scheme)):
+    """Dependency that requires the current user to be an admin, signed in with a session of this core.
+
+    A token from the configured issuer is refused whoever it names: administration needs a session here.
+    """
+    if _is_hub_token(token):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin routes take no hub token")
     if not current_user.is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required")
     return current_user
+
+
+def _internal_service_user() -> User:
+    """The identity that owns work the system does itself; its id is ``FLOWFILE_INTERNAL_SERVICE_USER_ID`` (1)."""
+    service_user_id = int(os.environ.get("FLOWFILE_INTERNAL_SERVICE_USER_ID", "1"))
+    return User(
+        username="_internal_service",
+        id=service_user_id,
+        disabled=False,
+        is_admin=False,
+        must_change_password=False,
+    )
+
+
+def get_user_or_hub_dispatch(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+    """Who may start a run now: the signed-in user, or the service identity for a hub's ``dispatch`` token.
+
+    A hub that starts a run on this node does so with a ``dispatch`` token, which names no user, so the run is owned by
+    the service identity as a kernel's work is. A ``run`` token is a user's token for sending work to this node and
+    starts no run here: 403.
+    """
+    if token and _decode_core_token(token) is None:
+        claims = _hub_claims(token)
+        if claims is not None:
+            if claims.scope == "dispatch":
+                return _internal_service_user()
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="run tokens cannot start a run")
+    return get_current_active_user(get_current_user(token=token, db=db))
+
+
+def require_user_internal_service_or_hub_dispatch(
+    token: str = Depends(oauth2_scheme),
+    x_internal_token: str | None = Header(None, alias="X-Internal-Token"),
+    x_kernel_id: str | None = Header(None, alias="X-Kernel-Id"),
+    db: Session = Depends(get_db),
+) -> None:
+    """The catalog router's gate: what ``get_user_or_internal_service`` admits, and a hub's ``dispatch`` token.
+
+    A router dependency runs before a route's own, so without this a ``dispatch`` token would be refused before
+    ``run_flow_now`` could take it. Every route still resolves its caller itself, and only ``run_flow_now`` does so
+    through ``get_user_or_hub_dispatch``; everywhere else the ``dispatch`` token is refused as it is on any user route.
+    """
+    if token and _decode_core_token(token) is None:
+        claims = _hub_claims(token)
+        if claims is not None and claims.scope == "dispatch":
+            return
+    get_user_or_internal_service(token=token, x_internal_token=x_internal_token, x_kernel_id=x_kernel_id, db=db)
 
 
 def get_user_or_internal_service(
@@ -384,17 +502,8 @@ def get_user_or_internal_service(
                                 must_change_password=owner.must_change_password,
                             )
 
-                # Fall through to synthetic service user. ID is configurable
-                # via FLOWFILE_INTERNAL_SERVICE_USER_ID; default 1 (typically
-                # the first/admin user).
-                service_user_id = int(os.environ.get("FLOWFILE_INTERNAL_SERVICE_USER_ID", "1"))
-                return User(
-                    username="_internal_service",
-                    id=service_user_id,
-                    disabled=False,
-                    is_admin=False,
-                    must_change_password=False,
-                )
+                # Fall through to the synthetic service user (id from FLOWFILE_INTERNAL_SERVICE_USER_ID, default 1).
+                return _internal_service_user()
         except ValueError:
             # Token not configured or invalid user ID - fall through to JWT auth
             pass
