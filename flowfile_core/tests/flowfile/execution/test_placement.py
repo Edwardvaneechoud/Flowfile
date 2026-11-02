@@ -1249,6 +1249,7 @@ def test_a_write_whose_needs_cannot_be_read_is_refused_before_any_node_starts_an
     assert warning.getMessage() == f'Node 2 of flow {flow_id} is refused on backend "{BACKEND_ID}": {unchecked(error)}'
     assert warning.exc_info[1] is error
 
+
 HUB_READ_REFUSAL = (
     "it reads a table on the hub with a credential the hub vends to this run, which this backend cannot take"
 )
