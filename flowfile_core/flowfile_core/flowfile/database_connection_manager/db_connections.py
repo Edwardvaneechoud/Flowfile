@@ -638,6 +638,9 @@ def delete_cloud_connection(db: Session, connection_name: str, user_id: int) -> 
     """
     Deletes a cloud storage connection (by name and owner user ID) and all of its
     associated secrets from the database.
+
+    The connection row holds foreign keys to its secrets, which Postgres enforces
+    and SQLite does not, so the row goes first and the secrets after it.
     """
     db_connection = _get_own_cloud_connection(db, connection_name, user_id)
 
@@ -652,10 +655,12 @@ def delete_cloud_connection(db: Session, connection_name: str, user_id: int) -> 
         ]
         secret_ids_to_delete = [id for id in secret_ids_to_delete if id is not None]
 
+        sharing.delete_grants_for_resource(db, "cloud_connection", db_connection.id)
+        db.delete(db_connection)
+        db.flush()
+
         if secret_ids_to_delete:
             db.query(Secret).filter(Secret.id.in_(secret_ids_to_delete)).delete(synchronize_session=False)
 
-        sharing.delete_grants_for_resource(db, "cloud_connection", db_connection.id)
-        db.delete(db_connection)
         db.commit()
         _project_sync_connection("cloud", connection_name, user_id, deleted=True)
