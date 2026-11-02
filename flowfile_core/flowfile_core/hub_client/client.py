@@ -149,9 +149,15 @@ def register_device(
     return _require(body, ("id", "name"), url, "/hub/devices")
 
 
-def list_namespaces(url: str, access_token: str, *, http: httpx.Client | None = None) -> list:
-    """The catalog namespaces the signed-in account can see on the hub, as the hub lists them."""
-    return _request_list("GET", url, "/catalog/namespaces", http, headers=_bearer(access_token))
+def list_namespaces(
+    url: str, access_token: str, parent_id: int | None = None, *, http: httpx.Client | None = None
+) -> list:
+    """The catalog namespaces the signed-in account can see on the hub, as the hub lists them.
+
+    The hub answers its root namespaces without ``parent_id`` and the children of that namespace with one.
+    """
+    params = {"parent_id": parent_id} if parent_id is not None else None
+    return _request_list("GET", url, "/catalog/namespaces", http, params=params, headers=_bearer(access_token))
 
 
 def list_flows(

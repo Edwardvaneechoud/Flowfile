@@ -360,11 +360,15 @@ def _label(node) -> str:
 
 
 @router.get("/namespaces", summary="The hub's catalog namespaces")
-def hub_namespaces(current_user=Depends(get_current_active_user)) -> list[dict]:
-    """The namespaces the hub lists for this account, passed through as the hub answers them."""
+def hub_namespaces(parent_id: int | None = None, current_user=Depends(get_current_active_user)) -> list[dict]:
+    """The namespaces the hub lists for this account, passed through as the hub answers them.
+
+    Without ``parent_id`` the hub answers its top level only; with one, the children of that namespace. The
+    dialogs walk the tree one level at a time this way.
+    """
     hub_url, token = _hub(current_user)
     try:
-        return client.list_namespaces(hub_url, token)
+        return client.list_namespaces(hub_url, token, parent_id)
     except (HubUnreachable, HubRefused, HubVersionRefused) as e:
         raise _hub_error(e) from e
 
