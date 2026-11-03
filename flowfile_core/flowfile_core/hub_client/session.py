@@ -7,10 +7,11 @@ live only in this process's memory; each refresh rotates the refresh token and t
 The node tokens minted through a connection (``node_tokens``) go with it when it is replaced or cleared.
 
 On a server that joined a hub, a person who signed in through the hub has a session of ``kind: "delegation"`` instead
-(``save_delegation``): ``hub_url``, the delegation's ``refresh_token`` and ``refresh_expires_at``. Its tokens are
-opaque, so their expiries are the hub's answer counted from when it came, not ``exp`` claims. It is refreshed through
-``delegation.refresh``, signed by this node, and it ends when the hub says so: a refresh the hub answers
-``invalid_grant`` (the person signed out everywhere, disabled or no longer allowed on this node) clears it.
+(``save_delegation``): ``hub_url``, the delegation's ``refresh_token`` and ``refresh_expires_at``, and ``sid``, the id
+of that sign-in, which core's own refresh tokens for it carry. Its tokens are opaque, so their expiries are the hub's
+answer counted from when it came, not ``exp`` claims. It is refreshed through ``delegation.refresh``, signed by this
+node, and it ends when the hub says so: a refresh the hub answers ``invalid_grant`` (the person signed out everywhere,
+disabled or no longer allowed on this node) clears it.
 
 A token's expiry is read from its own ``exp`` claim without verifying the signature: the hub verifies its tokens,
 this side only needs to know when to ask for a new one.
@@ -19,6 +20,7 @@ this side only needs to know when to ask for a new one.
 import json
 import threading
 import time
+import uuid
 
 import jwt
 
@@ -78,24 +80,28 @@ def save(user_id: int, session: dict) -> None:
     _forget_node_tokens(user_id)
 
 
-def save_delegation(user_id: int, hub_url: str, granted: Delegation) -> None:
-    """Store a sign-in through the hub as the session of ``user_id``, replacing any earlier one, and cache its access
-    token in this process until the hub's ``expires_in`` runs out.
+def save_delegation(user_id: int, hub_url: str, granted: Delegation) -> str:
+    """Store a sign-in through the hub as the session of ``user_id``, replacing any earlier one, cache its access token
+    in this process until the hub's ``expires_in`` runs out, and return the sign-in's ``sid``.
 
-    The session holds ``kind: "delegation"``, ``hub_url``, the refresh token and ``refresh_expires_at``, the hub's
-    ``refresh_expires_in`` from now; the access token is never stored.
+    The session holds ``kind: "delegation"``, ``hub_url``, the refresh token, ``refresh_expires_at`` (the hub's
+    ``refresh_expires_in`` from now) and ``sid``, a random id core's own tokens for this sign-in carry so that only they
+    renew it (``refresh_delegation``); the access token is never stored.
     """
     now = time.time()
+    sid = uuid.uuid4().hex
     stored = {
         "kind": "delegation",
         "hub_url": hub_url.rstrip("/"),
         "refresh_token": granted.refresh_token,
         "refresh_expires_at": now + granted.refresh_expires_in,
+        "sid": sid,
     }
     with _lock:
         secrets.set_password(SERVICE, _key(user_id), json.dumps(stored))
         _access_tokens[user_id] = (granted.access_token, now + granted.expires_in)
     _forget_node_tokens(user_id)
+    return sid
 
 
 def clear(user_id: int) -> None:
@@ -177,9 +183,10 @@ def access_token(user_id: int) -> str | None:
         raise
 
 
-def refresh_delegation(user_id: int) -> Delegation | None:
-    """Refresh ``user_id``'s sign-in through the hub at the hub now, whatever access token is cached, and keep what it
-    answers; ``None`` when they have no sign-in through the hub here.
+def refresh_delegation(user_id: int, sid: str | None) -> Delegation | None:
+    """Refresh the sign-in through the hub ``sid`` names at the hub now, whatever access token is cached, and keep what
+    it answers; ``None``, with nothing asked, when ``user_id`` has no sign-in through the hub here or the one kept is
+    not ``sid`` (it ended, or a later sign-in replaced it).
 
     Raises as ``access_token`` does for a delegation: ``HubRefused``, the session cleared first when the hub answered
     ``invalid_grant``, or ``HubUnreachable`` with the session kept.
@@ -187,7 +194,7 @@ def refresh_delegation(user_id: int) -> Delegation | None:
     try:
         with _lock:
             stored = load(user_id)
-            if stored is None or stored.get("kind") != "delegation":
+            if stored is None or stored.get("kind") != "delegation" or sid is None or stored.get("sid") != sid:
                 return None
             return _refresh_delegation(user_id, stored)
     except client.HubRefused as e:

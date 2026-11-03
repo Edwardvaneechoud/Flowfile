@@ -260,10 +260,11 @@ def test_a_delegation_is_kept_as_the_users_session_with_its_access_token_in_memo
     answer = sign_in(hub)
     before = time.time()
 
-    session.save_delegation(USER_ID, hub.url + "/", answer)
+    sid = session.save_delegation(USER_ID, hub.url + "/", answer)
 
     stored = json.loads(core_secrets.get_password(session.SERVICE, f"session:{USER_ID}"))
-    assert set(stored) == {"kind", "hub_url", "refresh_token", "refresh_expires_at"}
+    assert set(stored) == {"kind", "hub_url", "refresh_token", "refresh_expires_at", "sid"}
+    assert stored["sid"] == sid and len(sid) == 32
     assert (stored["kind"], stored["hub_url"], stored["refresh_token"]) == ("delegation", hub.url, answer.refresh_token)
     expires_at = stored["refresh_expires_at"]
     assert before + answer.refresh_expires_in - 1 <= expires_at <= time.time() + answer.refresh_expires_in
@@ -388,20 +389,32 @@ def test_a_node_that_lost_its_keys_cannot_refresh_and_keeps_the_session(hub, sto
 
 def test_refresh_delegation_asks_the_hub_whatever_access_token_is_cached(hub, store):
     first = sign_in(hub)
-    session.save_delegation(USER_ID, hub.url, first)
+    sid = session.save_delegation(USER_ID, hub.url, first)
 
-    refreshed = session.refresh_delegation(USER_ID)
+    refreshed = session.refresh_delegation(USER_ID, sid)
 
     assert refreshed.refresh_token == session.load(USER_ID)["refresh_token"] != first.refresh_token
+    assert session.load(USER_ID)["sid"] == sid
     assert session.access_token(USER_ID) == refreshed.access_token
     assert len(refreshes(hub)) == 1
 
 
 def test_refresh_delegation_without_a_sign_in_through_the_hub_asks_nothing(hub, store):
-    assert session.refresh_delegation(USER_ID) is None
+    assert session.refresh_delegation(USER_ID, "a sign-in") is None
     core_secrets.set_password(session.SERVICE, f"session:{USER_ID}", json.dumps({"hub_url": hub.url}))
-    assert session.refresh_delegation(USER_ID) is None
+    assert session.refresh_delegation(USER_ID, "a sign-in") is None
     assert sent(hub, TOKEN_PATH) == []
+
+
+@pytest.mark.parametrize("sid", ["another sign-in", None], ids=["another sign-in", "no sign-in named"])
+def test_refresh_delegation_of_a_sign_in_that_is_not_the_one_kept_asks_nothing_and_keeps_it(hub, store, sid):
+    signed_in_session(hub)
+    before = session.load(USER_ID)
+
+    assert session.refresh_delegation(USER_ID, sid) is None
+
+    assert session.load(USER_ID) == before
+    assert sent(hub, TOKEN_PATH)[1:] == []
 
 
 def test_refresh_delegation_the_hub_refuses_clears_the_session_and_its_node_tokens(hub, store, minted):
@@ -409,7 +422,7 @@ def test_refresh_delegation_the_hub_refuses_clears_the_session_and_its_node_toke
     mint_for_node_3(minted)
     hub.refuse_next_refresh = True
 
-    refused = refusal(session.refresh_delegation, USER_ID)
+    refused = refusal(session.refresh_delegation, USER_ID, session.load(USER_ID)["sid"])
 
     assert refused.payload["error"] == "invalid_grant"
     assert session.load(USER_ID) is None and minted == {}

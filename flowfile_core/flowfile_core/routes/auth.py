@@ -78,10 +78,12 @@ def refresh_access_token(
 ):
     """Exchange a valid refresh token for a new access token and refresh token.
 
-    For a person who signed in through the hub, the sign-in is refreshed at the hub first, so this server's session
-    never outlives the hub's: once the hub no longer takes it, the answer is a 401 and nothing is issued.
+    For a person who signed in through the hub, the sign-in the token was issued for is refreshed at the hub first, so
+    this server's session never outlives the hub's: once the hub no longer takes it, or it was replaced here by a later
+    sign-in or ended by a sign-out, the answer is a 401 and nothing is issued.
     """
-    username = decode_refresh_token(refresh_token)
+    claims = decode_refresh_token(refresh_token)
+    username, sid = claims["sub"], claims.get("sid")
 
     user = db.query(db_models.User).filter(db_models.User.username == username).first()
     if user is None:
@@ -98,12 +100,14 @@ def refresh_access_token(
         )
 
     expires = None
+    renewed = {"sub": user.username}
     mapping = db.query(db_models.IssuerAccount).filter(db_models.IssuerAccount.user_id == user.id).first()
     if mapping is not None:
-        _refresh_through_hub(user.id, mapping.issuer)
+        _refresh_through_hub(user.id, mapping.issuer, sid)
         expires = HUB_ACCESS_TOKEN_EXPIRES
+        renewed["sid"] = sid
     new_access_token = create_access_token(data={"sub": user.username}, expires_delta=expires)
-    new_refresh_token = create_refresh_token(data={"sub": user.username})
+    new_refresh_token = create_refresh_token(data=renewed)
     return {"access_token": new_access_token, "refresh_token": new_refresh_token, "token_type": "bearer"}
 
 
@@ -124,12 +128,12 @@ def logout(current_user: User = Depends(get_current_active_user)) -> None:
     return None
 
 
-def _refresh_through_hub(user_id: int, issuer: str) -> None:
-    """Refresh the sign-in through the hub of ``user_id`` at the hub; a 401 when the hub no longer takes it or none is
-    kept here, a 502 when the hub does not answer.
+def _refresh_through_hub(user_id: int, issuer: str, sid: str | None) -> None:
+    """Refresh the sign-in through the hub ``sid`` names at the hub; a 401 when the hub no longer takes it or it is not
+    the one kept here for ``user_id``, a 502 when the hub does not answer.
     """
     try:
-        refreshed = hub_session.refresh_delegation(user_id)
+        refreshed = hub_session.refresh_delegation(user_id, sid)
     except HubUnreachable as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from None
     except HubRefused:
@@ -170,8 +174,8 @@ def sign_in_through_hub(token: str = Body(..., embed=True), db: Session = Depend
     delegation signed with this node's own key. The person's local account is the one mapped to the hub's issuer and
     their id there, made at their first sign-in; whether it administers this server follows ``node_admin`` at every
     sign-in. The delegation is kept as the person's hub session, never in the database, and the answer is this core's
-    own token pair, as ``/auth/token`` answers, its access token living 15 minutes as the hub's does. A token or an
-    exchange the hub refuses is a 401 with one sentence.
+    own token pair, as ``/auth/token`` answers, its access token living 15 minutes as the hub's does and its refresh
+    token naming this sign-in (``sid``). A token or an exchange the hub refuses is a 401 with one sentence.
     """
     if issuer_accounts.joined_with_keys() is None:
         raise _refused("This server does not sign people in through a hub.")
@@ -201,9 +205,9 @@ def sign_in_through_hub(token: str = Body(..., embed=True), db: Session = Depend
     user.is_admin = granted.user["node_admin"]
     db.commit()
     invalidate_user_cache(user.username)
-    hub_session.save_delegation(user.id, settings.hub_url, granted)
+    sid = hub_session.save_delegation(user.id, settings.hub_url, granted)
     access_token = create_access_token(data={"sub": user.username}, expires_delta=HUB_ACCESS_TOKEN_EXPIRES)
-    refresh_token = create_refresh_token(data={"sub": user.username})
+    refresh_token = create_refresh_token(data={"sub": user.username, "sid": sid})
     return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
 

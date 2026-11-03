@@ -162,7 +162,8 @@ def test_a_sign_in_token_for_this_node_signs_the_person_in_with_an_account_mappe
     stored = session.load(person["id"])
     assert (stored["kind"], stored["hub_url"]) == ("delegation", hub.url)
     assert stored["refresh_token"] in hub.live_refresh_tokens()
-    assert set(stored) == {"kind", "hub_url", "refresh_token", "refresh_expires_at"}
+    assert set(stored) == {"kind", "hub_url", "refresh_token", "refresh_expires_at", "sid"}
+    assert jwt.decode(answer["refresh_token"], options={"verify_signature": False})["sid"] == stored["sid"]
 
 
 def test_the_delegation_is_written_nowhere_but_the_session_store(hub, username):
@@ -512,6 +513,52 @@ def test_logout_answers_204_and_forgets_the_sign_in_when_the_hub_does_not_take_t
 
     assert response.status_code == 204
     assert session.load(user_id) is None and session.access_token(user_id) is None
+
+
+def sign_out_everywhere(hub: FakeJoinHub, answer: dict) -> None:
+    """The person signs out everywhere on the hub; this browser learns it at its next refresh."""
+    hub.sign_out_everywhere(7)
+    assert refresh(answer["refresh_token"]).json() == {"detail": ENDED}
+
+
+def log_out(hub: FakeJoinHub, answer: dict) -> None:
+    assert client.post("/auth/logout", headers=bearer(answer["access_token"])).status_code == 204
+
+
+@pytest.mark.parametrize("end", [sign_out_everywhere, log_out], ids=["signed out everywhere", "logged out here"])
+def test_a_sign_in_that_ended_is_not_renewed_by_a_later_sign_in_of_the_same_person(hub, username, end):
+    ended = sign_in(hub.sign_in_token(NODE, uid=7, username=username)).json()
+    end(hub, ended)
+    later = sign_in(hub.sign_in_token(NODE, uid=7, username=username)).json()
+    calls = len(hub.calls)
+
+    response = refresh(ended["refresh_token"])
+
+    assert (response.status_code, response.json()) == (401, {"detail": ENDED})
+    assert len(hub.calls) == calls
+    assert refresh(later["refresh_token"]).status_code == 200
+
+
+def test_a_second_sign_in_of_the_same_person_ends_the_first_browsers_session_at_its_next_refresh(hub, username):
+    first = sign_in(hub.sign_in_token(NODE, uid=7, username=username)).json()
+    second = sign_in(hub.sign_in_token(NODE, uid=7, username=username)).json()
+    calls = len(hub.calls)
+
+    response = refresh(first["refresh_token"])
+
+    assert (response.status_code, response.json()) == (401, {"detail": ENDED})
+    assert len(hub.calls) == calls
+    assert refresh(second["refresh_token"]).status_code == 200
+
+
+def test_a_refresh_token_that_names_no_sign_in_renews_none(hub, username):
+    me(sign_in(hub.sign_in_token(NODE, uid=7, username=username)).json()["access_token"])
+    calls = len(hub.calls)
+
+    response = refresh(create_refresh_token(data={"sub": username}))
+
+    assert (response.status_code, response.json()) == (401, {"detail": ENDED})
+    assert len(hub.calls) == calls
 
 
 def test_logout_of_an_account_without_a_sign_in_through_the_hub_keeps_its_hub_connection(

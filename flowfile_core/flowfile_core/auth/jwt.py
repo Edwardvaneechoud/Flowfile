@@ -402,8 +402,9 @@ def create_refresh_token(data: dict) -> str:
     return jwt.encode(to_encode, get_jwt_secret(), algorithm=ALGORITHM)
 
 
-def decode_refresh_token(token: str) -> str:
-    """Decode a refresh token and return the username.
+def decode_refresh_token(token: str) -> dict:
+    """Decode a refresh token and return its claims: ``sub`` is the username, ``sid`` the sign-in through a hub it
+    renews, when it was issued for one.
 
     Raises HTTPException(401) if the token is invalid, expired, or not a refresh token.
     """
@@ -416,10 +417,9 @@ def decode_refresh_token(token: str) -> str:
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[ALGORITHM])
         if payload.get("type") != "refresh":
             raise credentials_exception
-        username: str = payload.get("sub")
-        if username is None:
+        if payload.get("sub") is None:
             raise credentials_exception
-        return username
+        return payload
     except JWTError:
         raise credentials_exception from None
 

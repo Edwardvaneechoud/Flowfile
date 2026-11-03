@@ -97,6 +97,7 @@ class FakeJoinHub:
     person whose name or rights changed. A user id in ``refused_people`` may not use any node now. Setting
     ``refuse_next_refresh`` ends the delegation the next refresh names, as the hub ends one by itself ("Sign out
     everywhere", the node removed): that refresh is ``invalid_grant`` and its token is refused from then on.
+    ``sign_out_everywhere`` ends every delegation of one person at once.
     """
 
     def __init__(self, signer: HubSigner | None = None):
@@ -396,6 +397,14 @@ class FakeJoinHub:
             if delegation is not None and delegation["node"] == verified["node"]:
                 del self._delegations[form["token"]]
         return 200, {}
+
+    def sign_out_everywhere(self, uid: int) -> None:
+        """End every delegation of the person ``uid`` on every node, as "Sign out everywhere" on the hub does: each of
+        their refresh tokens is refused from then on.
+        """
+        with self._lock:
+            for refresh_token in [token for token, held in self._delegations.items() if held["uid"] == uid]:
+                del self._delegations[refresh_token]
 
     def live_refresh_tokens(self) -> list[str]:
         """The refresh tokens the hub would take now, for any node."""
