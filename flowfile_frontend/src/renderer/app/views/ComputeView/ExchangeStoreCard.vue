@@ -59,7 +59,11 @@
         </template>
         <template v-else>
           <strong>{{
-            state.maxRowsError ? "Row limit needs attention" : "Exchange store configured"
+            state.source === "hub"
+              ? "Set by your hub"
+              : state.maxRowsError
+                ? "Row limit needs attention"
+                : "Exchange store configured"
           }}</strong>
           <p>
             Results cross through <code>{{ state.uri }}</code> with the connection
@@ -72,6 +76,27 @@
       </div>
     </div>
 
+    <p
+      v-if="state?.source === 'saved' && state.hub"
+      class="compute-field__hint exchange-card__hub"
+      data-testid="exchange-store-hub"
+    >
+      Your hub sets <code>{{ state.hub.uri }}</code
+      >. Clear this store to use it.
+    </p>
+
+    <p
+      v-if="state?.source === 'hub' && state.maxRowsError"
+      class="exchange-card__warning"
+      data-testid="exchange-store-max-rows-error"
+    >
+      <i class="fa-solid fa-triangle-exclamation"></i>
+      <span
+        >{{ state.maxRowsError }}; every crossing between backends is refused until it is
+        fixed.</span
+      >
+    </p>
+
     <p v-if="state?.envOverride" class="exchange-card__warning" data-testid="exchange-store-env">
       <i class="fa-solid fa-triangle-exclamation"></i>
       <span>
@@ -80,7 +105,7 @@
       </span>
     </p>
 
-    <div v-if="state" class="exchange-card__fields">
+    <div v-if="state && state.source !== 'hub'" class="exchange-card__fields">
       <label class="compute-field">
         <span class="compute-field__label">S3 prefix</span>
         <el-input
@@ -129,7 +154,7 @@
         </span>
       </label>
     </div>
-    <template v-if="state" #footer>
+    <template v-if="state && state.source !== 'hub'" #footer>
       <el-button
         type="primary"
         size="small"
@@ -174,6 +199,7 @@ const statusSummary = computed<StatusSummary | null>(() => {
   if (state.value.source === "none") return { tone: "neutral", label: "Not configured" };
   if (!state.value.connection) return { tone: "warning", label: "Connection required" };
   if (state.value.maxRowsError) return { tone: "warning", label: "Row limit needs attention" };
+  if (state.value.source === "hub") return { tone: "success", label: "Set by your hub" };
   return { tone: "success", label: "Configured" };
 });
 
@@ -250,6 +276,9 @@ onMounted(() => {
 .exchange-card__status > i {
   margin-top: 3px;
   flex-shrink: 0;
+}
+.exchange-card__hub {
+  margin: var(--spacing-2) 0 0;
 }
 .exchange-card__loading {
   margin: 0;

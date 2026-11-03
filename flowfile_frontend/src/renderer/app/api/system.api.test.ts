@@ -41,8 +41,39 @@ describe("the exchange store API", () => {
       source: "saved",
       envOverride: false,
       saved: { uri: "s3://bucket/flowfile", connection: "exchange", maxRows: 1000 },
+      hub: null,
       connections: ["exchange", "other"],
     });
+  });
+
+  it("reads what the hub sets in camelCase", async () => {
+    const hub = { uri: "s3://org-bucket/exchange", connection: "org-exchange", max_rows: 5000 };
+    mocks.get.mockResolvedValue({
+      data: {
+        ...answer,
+        ...hub,
+        source: "hub",
+        saved: { uri: null, connection: null, max_rows: null },
+        hub,
+      },
+    });
+
+    const state = await getExchangeStore();
+
+    expect(state.source).toBe("hub");
+    expect(state.hub).toEqual({
+      uri: "s3://org-bucket/exchange",
+      connection: "org-exchange",
+      maxRows: 5000,
+    });
+  });
+
+  it("reads a null hub as no hub", async () => {
+    mocks.get.mockResolvedValue({ data: { ...answer, hub: null } });
+
+    const state = await getExchangeStore();
+
+    expect(state.hub).toBeNull();
   });
 
   it("reads why the environment's row limit is refused", async () => {
