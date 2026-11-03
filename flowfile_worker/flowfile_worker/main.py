@@ -37,13 +37,20 @@ server_instance = None
 
 @asynccontextmanager
 async def shutdown_handler(app: FastAPI):
-    """Handle application startup and shutdown"""
+    """Handle application startup and shutdown.
+
+    A worker that joined a hub alone, with keys of its own, tells the hub the node is up while it serves; beside a core
+    that joined for both, the core does (``hub_node.start_heartbeat``).
+    """
     logger.info("Starting application...")
+    beating = hub_node.start_heartbeat("worker")
     task_pool.prewarm()
     try:
         yield
     finally:
         logger.info("Shutting down application...")
+        if beating is not None:
+            beating.set()
         try:
             task_pool.shutdown()
         except Exception as e:
