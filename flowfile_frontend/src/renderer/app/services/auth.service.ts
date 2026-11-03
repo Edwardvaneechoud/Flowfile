@@ -23,6 +23,18 @@ interface UserInfo {
   id?: number;
 }
 
+/** How people sign in on this server: with a password, or through the hub it joined. */
+export type SignInMethod = { method: "password" } | { method: "hub"; url: string; hub_url: string };
+
+const HUB_SIGN_IN_FAILED =
+  "Signing in through the hub did not work. Open this server from the hub again.";
+
+/** The server's own sentence for a refused request, or `fallback` when it sent none. */
+function refusalSentence(error: unknown, fallback: string): string {
+  const detail = axios.isAxiosError(error) ? error.response?.data?.detail : undefined;
+  return typeof detail === "string" && detail ? detail : fallback;
+}
+
 /**
  * Read `exp` and `sub` from a JWT payload, or `null` when the token is
  * malformed, lacks either claim, or has already expired.
@@ -51,6 +63,9 @@ class AuthService {
   private modeInitialized = false;
   private refreshPromise: Promise<string | null> | null = null;
   private currentUsername = ref<string | null>(null);
+  // Held in memory only, from the fragment until `initialize` posts it.
+  private hubSignInToken: string | null = null;
+  private hubSignInError: string | null = null;
 
   constructor() {
     // Initial detection based on the Tauri runtime presence.
@@ -116,6 +131,12 @@ class AuthService {
   async initialize(): Promise<boolean> {
     this.clearStoredTokens();
 
+    const signInToken = this.hubSignInToken;
+    this.hubSignInToken = null;
+    if (signInToken !== null && !this.isDesktopMode.value) {
+      return await this.signInThroughHub(signInToken);
+    }
+
     if (this.hasValidToken()) {
       return true;
     }
@@ -133,6 +154,8 @@ class AuthService {
    * Adopt a session handed over as `#token=<jwt>` by a server that already signed
    * the person in; a fragment never reaches a server or its access logs. The
    * signature is not checked here: the backend verifies the token on every request.
+   * A hub's one-time sign-in token, `#signin=<token>`, is only kept in memory here;
+   * `initialize` trades it for a session.
    *
    * This runs when the service is constructed, at module load. The router imports
    * this module, so the fragment is read and removed before its hash history is
@@ -140,17 +163,73 @@ class AuthService {
    * and keep it as the initial route.
    */
   private takeTokenFromFragment(): void {
-    const token = new URLSearchParams(window.location.hash.slice(1)).get("token");
-    if (token === null) return;
+    const fragment = new URLSearchParams(window.location.hash.slice(1));
+    const token = fragment.get("token");
+    const signInToken = fragment.get("signin");
+    if (token === null && signInToken === null) return;
 
     const { pathname, search } = window.location;
     window.history.replaceState(window.history.state, "", pathname + search);
+
+    if (signInToken) this.hubSignInToken = signInToken;
+    if (token === null) return;
 
     const claims = decodeTokenClaims(token);
     if (!claims) return;
     // A refresh token left from an earlier sign-in would renew a different session.
     localStorage.removeItem("auth_refresh_token");
     this.setToken(token, claims.exp * 1000, claims.sub);
+  }
+
+  /**
+   * Trade the hub's sign-in token for this server's session, stored as a password
+   * sign-in stores it. The token is posted once, on a client without the
+   * interceptors that renew a session or retry a refused request, since the hub
+   * takes it only once. A refusal ends any earlier session in this browser and
+   * keeps the server's sentence for the sign-in page.
+   */
+  private async signInThroughHub(signInToken: string): Promise<boolean> {
+    try {
+      const response = await axios
+        .create()
+        .post<AuthResponse>("/auth/hub/signin", { token: signInToken });
+      const accessToken = response.data?.access_token;
+      const claims = accessToken ? decodeTokenClaims(accessToken) : null;
+      if (!accessToken || !claims) throw new Error("The server answered no session.");
+      this.setToken(accessToken, claims.exp * 1000, claims.sub);
+      if (response.data.refresh_token) {
+        localStorage.setItem("auth_refresh_token", response.data.refresh_token);
+      } else {
+        localStorage.removeItem("auth_refresh_token");
+      }
+      this.hubSignInError = null;
+      return true;
+    } catch (error) {
+      this.logout();
+      this.hubSignInError = refusalSentence(error, HUB_SIGN_IN_FAILED);
+      return false;
+    }
+  }
+
+  /** The server's sentence for a hub sign-in it refused at this load, given once. */
+  takeHubSignInError(): string | null {
+    const sentence = this.hubSignInError;
+    this.hubSignInError = null;
+    return sentence;
+  }
+
+  /** How this server signs people in; a password form when it cannot be asked. */
+  async getSignInMethod(): Promise<SignInMethod> {
+    try {
+      const response = await axios.get<SignInMethod>("/auth/sign_in_method", {
+        headers: { "X-Skip-Auth-Header": "true" },
+      });
+      const answer = response.data;
+      if (answer?.method === "hub" && typeof answer.url === "string" && answer.url) return answer;
+    } catch (error) {
+      console.error("Could not read how this server signs people in:", error);
+    }
+    return { method: "password" };
   }
 
   async login(username: string, password: string): Promise<boolean> {
@@ -279,7 +358,11 @@ class AuthService {
       });
 
       if (response.data?.access_token) {
-        const expirationTime = response.data.expires_at || this.calculateExpiration();
+        // A session through a hub lives 15 minutes, so the token's own expiry is the one kept.
+        const exp = decodeTokenClaims(response.data.access_token)?.exp;
+        const expirationTime = exp
+          ? exp * 1000
+          : response.data.expires_at || this.calculateExpiration();
         this.setToken(response.data.access_token, expirationTime);
         if (response.data.refresh_token) {
           localStorage.setItem("auth_refresh_token", response.data.refresh_token);
@@ -332,6 +415,33 @@ class AuthService {
 
   isAuthenticated(): boolean {
     return this.hasValidToken();
+  }
+
+  /**
+   * Sign out: tell the server first, so a sign-in through a hub ends there too,
+   * then clear this browser's session whatever the server answered. The requests
+   * go on a client without the interceptors, which would renew the session or
+   * send the browser to the sign-in page on a refusal.
+   */
+  async signOut(): Promise<void> {
+    const client = axios.create();
+    try {
+      let token = this.hasValidToken() ? this.token.value : null;
+      const refreshToken = localStorage.getItem("auth_refresh_token");
+      if (!token && refreshToken && !this.isDesktopMode.value) {
+        const formData = new FormData();
+        formData.append("refresh_token", refreshToken);
+        const response = await client.post<AuthResponse>("/auth/refresh", formData);
+        token = response.data?.access_token ?? null;
+      }
+      if (token) {
+        await client.post("/auth/logout", null, { headers: { Authorization: `Bearer ${token}` } });
+      }
+    } catch (error) {
+      console.error("The server was not told of the sign-out:", error);
+    } finally {
+      this.logout();
+    }
   }
 
   logout(): void {
