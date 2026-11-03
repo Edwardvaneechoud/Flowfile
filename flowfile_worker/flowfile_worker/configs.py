@@ -33,6 +33,20 @@ def parse_args():
         default=DEFAULT_CORE_PORT,
         help="Port of the core service",
     )
+    parser.add_argument(
+        "--join",
+        type=str,
+        default=os.environ.get("FLOWFILE_HUB_JOIN_TOKEN") or None,
+        help="A join token from the hub's Compute page; the worker joins that hub before it serves",
+    )
+    parser.add_argument("--hub", type=str, default=os.environ.get("FLOWFILE_HUB_URL") or None, help="The hub to join")
+    parser.add_argument(
+        "--name",
+        type=str,
+        default=os.environ.get("FLOWFILE_NODE_NAME") or None,
+        help="This worker's name on the hub; the machine's name when not given",
+    )
+    parser.add_argument("--url", type=str, default=None, help="This worker's address as desktops reach it")
 
     # Use known_args to handle PyInstaller's extra args
     args = parser.parse_known_args()[0]
@@ -48,6 +62,9 @@ def parse_args():
 
     if not args.core_host:
         raise ValueError("Core host cannot be empty")
+
+    if args.join and not args.hub:
+        raise ValueError("--join needs --hub, the address of the hub to join")
 
     return args
 
@@ -77,11 +94,19 @@ if _is_main_process():
     SERVICE_PORT = args.port
     CORE_HOST = args.core_host
     CORE_PORT = args.core_port
+    JOIN_TOKEN = args.join
+    HUB_URL = args.hub
+    NODE_NAME = args.name
+    NODE_URL = args.url
 else:
     # In spawned processes, use defaults from environment variables
     SERVICE_HOST = DEFAULT_SERVICE_HOST
     SERVICE_PORT = DEFAULT_SERVICE_PORT
     CORE_HOST = DEFAULT_CORE_HOST
     CORE_PORT = DEFAULT_CORE_PORT
+    JOIN_TOKEN = None
+    HUB_URL = None
+    NODE_NAME = None
+    NODE_URL = None
 
 FLOWFILE_CORE_URI = get_core_url(CORE_HOST, CORE_PORT)

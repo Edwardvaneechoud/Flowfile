@@ -12,11 +12,21 @@ from fastapi.responses import JSONResponse
 
 from flowfile_worker import mp_context
 from flowfile_worker.auth import carries_internal_token
-from flowfile_worker.configs import FLOWFILE_CORE_URI, SERVICE_HOST, SERVICE_PORT, logger
+from flowfile_worker.configs import (
+    FLOWFILE_CORE_URI,
+    HUB_URL,
+    JOIN_TOKEN,
+    NODE_NAME,
+    NODE_URL,
+    SERVICE_HOST,
+    SERVICE_PORT,
+    logger,
+)
 from flowfile_worker.pool import task_pool
 from flowfile_worker.protocol_routes import router as protocol_router
 from flowfile_worker.routes import router
 from flowfile_worker.streaming import streaming_router, v1_streaming_router
+from shared import hub_node
 from shared.parent_watcher import start_parent_death_watcher
 from shared.storage_config import storage
 
@@ -117,10 +127,29 @@ def signal_handler(signum, frame):
         server_instance.should_exit = True
 
 
+def join_hub(port: int | None = None) -> None:
+    """Join the hub ``--join`` names, before the worker serves on ``port``; without a join token, nothing.
+
+    The worker asks for ``--name``, else the machine's name, and gives ``--url``, else this machine's full name and
+    the port, ``https`` when it serves TLS. A worker that joined already makes no request (``shared.hub_node``).
+    """
+    if not JOIN_TOKEN:
+        return
+    tls = bool(os.environ.get("FLOWFILE_WORKER_TLS_CERT"))
+    hub_node.join_at_start(
+        HUB_URL,
+        JOIN_TOKEN,
+        name=NODE_NAME or hub_node.default_name(),
+        worker_url=NODE_URL or hub_node.default_url(port or SERVICE_PORT, tls=tls),
+    )
+
+
 def run(host: str = None, port: int = None):
     """Run the FastAPI app with graceful shutdown.
 
-    Serves TLS when ``FLOWFILE_WORKER_TLS_CERT`` and ``FLOWFILE_WORKER_TLS_KEY`` name a certificate and its key.
+    A worker started with a join token joins its hub first (``join_hub``), and one the hub refuses exits with code 2
+    before it serves. Serves TLS when ``FLOWFILE_WORKER_TLS_CERT`` and ``FLOWFILE_WORKER_TLS_KEY`` name a certificate
+    and its key.
     """
     global server_instance
 
@@ -128,6 +157,8 @@ def run(host: str = None, port: int = None):
         host = SERVICE_HOST
     if port is None:
         port = SERVICE_PORT
+
+    join_hub(port)
 
     from connectorx import __version__ as connectorx_version
 
