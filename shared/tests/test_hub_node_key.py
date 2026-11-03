@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -112,7 +113,7 @@ def test_the_public_jwks_have_the_contracts_members_and_no_private_part():
     assert (enc["kty"], enc["crv"], enc["use"]) == ("OKP", "X25519", "enc")
     for jwk in (sig, enc):
         assert "d" not in jwk
-        assert len(jwk["kid"]) == 16 and int(jwk["kid"], 16) >= 0
+        assert re.fullmatch(r"[0-9a-f]{16}", jwk["kid"])
 
 
 def test_each_kid_is_the_sha256_of_its_public_keys_der_and_the_jwks_carry_the_kept_keys(key_file):
