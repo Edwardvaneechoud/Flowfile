@@ -441,7 +441,13 @@ def main():
         help="Host to bind the server to; for run ui, a host other machines reach needs a server mode "
         "(FLOWFILE_MODE=hub or docker), where everyone signs in",
     )
-    parser.add_argument("--port", type=int, default=63578, help="Port to bind the server to")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Port to bind the server to (63578 when not given; for run ui and run core, a server joining a hub "
+        "moves to a free port when that one is in use)",
+    )
     parser.add_argument("--no-browser", action="store_true", help="Don't open a browser window")
     parser.add_argument(
         "--param",
@@ -510,7 +516,7 @@ def main():
             # Only for direct worker service usage
             from flowfile_worker.main import run as run_worker
 
-            run_worker(host=args.host, port=args.port)
+            run_worker(host=args.host, port=63578 if args.port is None else args.port)
         elif args.component == "flow":
             if not args.file_path:
                 print("Error: 'flow' component requires a file path", file=sys.stderr)

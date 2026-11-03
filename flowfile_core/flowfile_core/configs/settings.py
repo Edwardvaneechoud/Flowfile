@@ -1,5 +1,4 @@
 # flowfile_core/flowfile_core/configs/settings.py
-import argparse
 import ipaddress
 import logging
 import os
@@ -10,12 +9,12 @@ from passlib.context import CryptContext
 from starlette.config import Config
 
 from flowfile_core.configs import exchange_config
+from flowfile_core.configs.command_line import DEFAULT_SERVER_HOST, parse_args
 from flowfile_core.configs.utils import MutableBool
 from shared import hub_node
 from shared.storage_config import storage
 
 # Constants for server and worker configuration
-DEFAULT_SERVER_HOST = "0.0.0.0"
 DEFAULT_SERVER_PORT = 63578
 DEFAULT_WORKER_PORT = 63579
 
@@ -178,39 +177,6 @@ def get_community_github_client_id() -> str:
     return config("FLOWFILE_COMMUNITY_GITHUB_CLIENT_ID", cast=str, default="") or COMMUNITY_GITHUB_CLIENT_ID_DEFAULT
 
 
-def parse_args():
-    """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description="Flowfile Backend Server")
-    parser.add_argument("--host", type=str, default=DEFAULT_SERVER_HOST, help="Host to bind to")
-    parser.add_argument("--port", type=int, help="Port to bind to")
-    parser.add_argument(
-        "--worker-port",
-        type=int,
-        help="Port for the worker process",
-    )
-    parser.add_argument(
-        "--join",
-        type=str,
-        default=os.environ.get("FLOWFILE_HUB_JOIN_TOKEN") or None,
-        help="A join token from the hub's Compute page; core joins that hub for itself and its worker before it serves",
-    )
-    parser.add_argument("--hub", type=str, default=os.environ.get("FLOWFILE_HUB_URL") or None, help="The hub to join")
-    parser.add_argument(
-        "--name",
-        type=str,
-        default=os.environ.get("FLOWFILE_NODE_NAME") or None,
-        help="This node's name on the hub; the machine's name when not given",
-    )
-    parser.add_argument("--url", type=str, default=None, help="This core's address as a browser and the hub reach it")
-    parser.add_argument("--worker-url", type=str, default=None, help="The worker's address as desktops reach it")
-    args = parser.parse_known_args()[0]
-
-    if args.join and not args.hub:
-        raise ValueError("--join needs --hub, the address of the hub to join")
-
-    return args
-
-
 def get_temp_dir() -> str:
     """Get the appropriate temp directory path based on environment"""
     docker_temp = os.getenv("TEMP_DIR")
@@ -251,6 +217,9 @@ SERVER_PORT = args.port if args.port is not None else int(os.getenv("CORE_PORT",
 WORKER_PORT = (
     args.worker_port if args.worker_port is not None else int(os.getenv("FLOWFILE_WORKER_PORT", DEFAULT_WORKER_PORT))
 )
+# A port the operator chose (a flag or its variable), which a core that joins a hub never moves.
+PORT_GIVEN = args.port is not None or bool(os.getenv("CORE_PORT"))
+WORKER_PORT_GIVEN = args.worker_port is not None or bool(os.getenv("FLOWFILE_WORKER_PORT"))
 # What ``--join`` and its flags name: the hub to join before serving, and how this node and its worker are reached.
 JOIN_TOKEN = args.join
 JOIN_HUB_URL = args.hub
@@ -269,43 +238,74 @@ def is_loopback_host(host: str) -> bool:
         return False
 
 
+def join_worker_port(hub_url: str, token: str, *, mounted: bool = False) -> int | None:
+    """The port a core that joins a hub gives for the worker beside it, which its join keeps for that worker.
+
+    ``None`` when no worker runs beside it: ``--worker-url`` names one elsewhere, or the worker is ``mounted`` in
+    core's app. A port the operator chose (``--worker-port``, ``FLOWFILE_WORKER_PORT``) or a worker address configured
+    (``FLOWFILE_WORKER_URL``, ``WORKER_HOST``): ``WORKER_PORT`` as it is. A core that joined with this token already,
+    so no request follows: the port the hub has for the worker, else ``WORKER_PORT``. A core about to join: the port
+    ``hub_node.beside_port`` finds, the one the node joined with before first. Core then reaches its worker on that
+    port, and so does every run it starts (``FLOWFILE_WORKER_PORT``).
+    """
+    global WORKER_PORT, WORKER_URL
+    if JOIN_WORKER_URL or mounted:
+        return None
+    if WORKER_PORT_GIVEN or WORKER_ADDRESS_CONFIGURED:
+        return WORKER_PORT
+    joined = hub_node.already_joined(hub_url, token)
+    if joined is not None:
+        port = joined.worker_port or WORKER_PORT
+    else:
+        last = hub_node.read()
+        port = hub_node.beside_port(WORKER_PORT, kept=last.worker_port if last else None)
+    if port != WORKER_PORT:
+        WORKER_PORT = port
+        WORKER_URL = get_default_worker_url(port)
+        os.environ["FLOWFILE_WORKER_PORT"] = str(port)
+    return port
+
+
 def join_addresses(
     core_port: int | None = None,
     core_host: str | None = None,
     *,
+    hub_url: str,
+    worker_port: int | None = None,
     worker_path: str | None = None,
     editor_path: str | None = None,
 ) -> tuple[str, str, str | None]:
-    """The addresses a join gives the hub for this node: core's, its worker's, and its editor's when it serves one.
+    """The addresses a join gives the hub at ``hub_url`` for this node: core's, its worker's, and its editor's.
 
     Core's is ``--url`` when given. Else it is core's port (``core_port``, the one core serves on, else
-    ``SERVER_PORT``) on the loopback address core binds (``core_host``, else ``SERVER_HOST``), which only this machine
-    reaches, with one warning saying how to be reached from others; on any other host, this machine's full name. The
-    worker's is ``--worker-url`` when given, else core's address and ``worker_path`` for a worker mounted in core's
-    app, else this machine's full name on ``WORKER_PORT``. The editor's is core's address and ``editor_path``, and
-    ``None`` when core serves no editor. Plain ``http``; composed when called, never at import, since the machine's
-    full name can wait on a reverse lookup.
+    ``SERVER_PORT``) at the address of the host core binds (``core_host``, else ``SERVER_HOST``) as
+    ``hub_node.node_url`` gives it: on every address, this machine's address on the interface that reaches the hub; on
+    one address, that address; on a loopback one, which only this machine reaches, that address with one warning
+    saying how to be reached from others. The worker's is ``--worker-url`` when given, else core's address and
+    ``worker_path`` for a worker mounted in core's app, else the address of a worker beside core on every address, on
+    ``worker_port`` (else ``WORKER_PORT``). The editor's is core's address and ``editor_path``, and ``None`` when core
+    serves no editor. Plain ``http``; composed when called, never at import, since the machine's full name can wait on
+    a reverse lookup.
     """
     port = core_port or SERVER_PORT
     host = core_host or SERVER_HOST
     if JOIN_CORE_URL:
         core_url = JOIN_CORE_URL
-    elif is_loopback_host(host):
-        core_url = f"http://[{host.strip('[]')}]:{port}" if ":" in host else f"http://{host}:{port}"
-        logging.getLogger(__name__).warning(
-            "Core serves on %s, which only this machine reaches, so the address it gives the hub is %s; to be "
-            "reached from other machines, start it with --host 0.0.0.0 and --url <its address as they reach it>",
-            host,
-            core_url,
-        )
     else:
-        core_url = hub_node.default_url(port, tls=False)
+        core_url = hub_node.node_url(hub_url, host, port, tls=False)
+        if is_loopback_host(host):
+            logging.getLogger(__name__).warning(
+                "Core serves on %s, which only this machine reaches, so the address it gives the hub is %s; to be "
+                "reached from other machines, start it with --host 0.0.0.0 and --url <its address as they reach it>",
+                host,
+                core_url,
+            )
     if JOIN_WORKER_URL:
         worker_url = JOIN_WORKER_URL
     elif worker_path:
         worker_url = core_url.rstrip("/") + worker_path
     else:
-        worker_url = hub_node.default_url(WORKER_PORT, tls=False)
+        worker_url = hub_node.node_url(hub_url, "0.0.0.0", worker_port or WORKER_PORT, tls=False)
     ui_url = core_url.rstrip("/") + editor_path if editor_path else None
     return core_url, worker_url, ui_url
 

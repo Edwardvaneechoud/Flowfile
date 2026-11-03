@@ -1,4 +1,6 @@
-"""A core joins a hub with ``--join`` and ``--hub`` for itself and its worker, once, and then knows its own node.
+"""A core joins a hub with ``--join`` and ``--hub`` for itself and its worker, once, and then knows its own node; it
+binds its port before it joins, moves off default ports in use, keeps its files apart from Flowfile desktop's, and the
+worker beside it finds them by the node's name.
 
 The join runs against ``FakeJoinHub`` over real HTTP; the sync through ``/hub_client`` against the fake hub of
 ``tests/hub_client``. ``hub_node.json`` lives under the test's ``tmp_path``, never in the storage dir.
@@ -6,13 +8,19 @@ The join runs against ``FakeJoinHub`` over real HTTP; the sync through ``/hub_cl
 
 import json
 import logging
+import multiprocessing
 import os
+import socket
+import subprocess
 import sys
+import time
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import flowfile_core
 from flowfile_core import main
 from flowfile_core.configs import settings
 from flowfile_core.database.connection import get_db_context
@@ -124,8 +132,9 @@ def test_a_core_joins_for_itself_and_its_worker_and_a_restart_makes_no_request(m
         "http://team-1.example:63579",
     )
     kept = json.loads(node_file.read_text(encoding="utf-8"))
-    assert sorted(kept) == ["has_core", "hub_url", "issuer", "join_token_hash", "joined_at", "name", "node_id"]
-    assert (kept["name"], kept["has_core"]) == ("team-1", True)
+    fields = ["core_port", "has_core", "hub_url", "issuer", "join_token_hash", "joined_at", "name", "node_id"]
+    assert sorted(kept) == fields
+    assert (kept["name"], kept["has_core"], kept["core_port"]) == ("team-1", True, settings.SERVER_PORT)
 
     main._join_hub()
 
@@ -151,12 +160,15 @@ def test_a_core_given_no_addresses_gives_this_machines_on_its_two_ports(
 
 
 def on_this_machine(monkeypatch, host: str = "0.0.0.0") -> None:
-    """Core bound to ``host`` on 64100 beside a worker on 64101, on a machine named ``team-7.example.com``."""
+    """Core bound to ``host`` on 64100 beside a worker given 64101, on a machine named ``team-7.example.com`` with no
+    route the OS names, so that name stands for its address on every address."""
     monkeypatch.setattr(hub_node.socket, "gethostname", lambda: "team-7.example.com")
     monkeypatch.setattr(hub_node.socket, "getfqdn", lambda: "team-7.example.com")
+    monkeypatch.setattr(hub_node, "_route_address", lambda host, port, family: None)
     monkeypatch.setattr(settings, "SERVER_HOST", host)
     monkeypatch.setattr(settings, "SERVER_PORT", 64100)
     monkeypatch.setattr(settings, "WORKER_PORT", 64101)
+    monkeypatch.setattr(settings, "WORKER_PORT_GIVEN", True)
 
 
 @pytest.mark.parametrize(
@@ -223,6 +235,7 @@ def test_a_core_that_serves_the_editor_gives_its_address_and_its_mounted_worker_
 
     body = join_hub.calls[0][1]
     assert (body["core_url"], body["worker_url"], body["ui_url"]) == (core_url, f"{core_url}/worker", f"{core_url}/ui")
+    assert (hub_node.read().core_port, hub_node.read().worker_port) == (64100, None)
 
 
 def test_the_addresses_given_win_over_the_mounted_worker_and_name_the_editor(
@@ -291,13 +304,16 @@ def test_a_refused_join_stops_core_with_exit_code_2_before_it_serves(monkeypatch
     started_with(monkeypatch, join_hub.url, "join-never-minted")
     served = []
     monkeypatch.setattr(main.compute_registry, "mark_serving", lambda: served.append(True))
+    port = free_port()
 
     with pytest.raises(SystemExit) as exited:
-        main.run()
+        main.run(host="127.0.0.1", port=port)
 
     assert exited.value.code == 2
     assert served == []
     assert not node_file.exists()
+    with socket.socket() as again:
+        again.bind(("127.0.0.1", port))
 
 
 def test_the_own_node_is_named_by_the_variable_as_before(monkeypatch, no_variables, node_file):
@@ -363,3 +379,345 @@ def test_a_joined_core_never_lists_its_own_node_and_drops_a_row_written_before(
     assert reconnected.json()["nodes_synced"] == 1
     assert reconnected.json()["node_name"] == "team-local"
     assert _row_ids() == ["worker:gpu"]
+
+
+def free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+@pytest.fixture
+def held():
+    """Ports another server listens on, on 127.0.0.1, for the length of the test."""
+    sockets = []
+
+    def hold() -> int:
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        sock.listen()
+        sockets.append(sock)
+        return sock.getsockname()[1]
+
+    yield hold
+    for sock in sockets:
+        sock.close()
+
+
+@pytest.fixture
+def core_ports(monkeypatch):
+    """Core's ports as the settings left them, its two port variables, and no port given; all put back after the test.
+
+    A core on every address is at ``10.0.0.7`` towards any hub, so no route is asked of the OS.
+    """
+    for name in ("SERVER_PORT", "WORKER_PORT", "WORKER_URL"):
+        monkeypatch.setattr(settings, name, getattr(settings, name))
+    monkeypatch.setattr(settings, "WORKER_PORT_GIVEN", False)
+    monkeypatch.setattr(settings, "WORKER_ADDRESS_CONFIGURED", False)
+    monkeypatch.setattr(main, "PORT_GIVEN", False)
+    monkeypatch.setenv("CORE_PORT", str(settings.SERVER_PORT))
+    monkeypatch.setenv("FLOWFILE_WORKER_PORT", str(settings.WORKER_PORT))
+    monkeypatch.setattr(hub_node, "_route_address", lambda host, port, family: "10.0.0.7")
+
+
+@pytest.fixture
+def serving(monkeypatch, core_ports):
+    """``main.run`` up to the point it serves: the server records the sockets it is handed, and neither the serving
+    mark nor a worker backend made for the start-up lines outlives the test."""
+    served = []
+
+    class Server:
+        def __init__(self, config):
+            self.config = config
+            self.should_exit = False
+
+        def run(self, sockets=None):
+            served.append(sockets)
+
+    monkeypatch.setattr(main, "_Server", Server)
+    monkeypatch.setattr(main.signal, "signal", lambda *args: None)
+    monkeypatch.setattr(main, "start_parent_death_watcher", lambda stop: None)
+    monkeypatch.setattr(main.compute_registry, "mark_serving", lambda: None)
+    monkeypatch.setattr(main.compute_registry, "worker_url", lambda: settings.WORKER_URL)
+    monkeypatch.setattr(main, "NODE_STORAGE_DIR", None)
+    yield served
+    for sockets in served:
+        for sock in sockets or []:
+            sock.close()
+
+
+def served_port(serving) -> int:
+    ((sock,),) = serving
+    return sock.getsockname()[1]
+
+
+@pytest.mark.parametrize("given_by", ["--port", "run"])
+def test_a_core_whose_given_port_is_in_use_exits_1_before_any_request_and_keeps_its_token(
+    monkeypatch, join_hub, node_file, held, serving, caplog, given_by
+):
+    port, token = held(), join_hub.mint()
+    started_with(monkeypatch, join_hub.url, token)
+    if given_by == "--port":
+        monkeypatch.setattr(main, "SERVER_PORT", port)
+        monkeypatch.setattr(main, "PORT_GIVEN", True)
+
+    with caplog.at_level(logging.ERROR), pytest.raises(SystemExit) as exited:
+        main.run(host="127.0.0.1", port=port if given_by == "run" else None)
+
+    assert exited.value.code == 1
+    assert f"Cannot serve on 127.0.0.1:{port}: in use by " in caplog.text
+    assert join_hub.calls == []
+    assert serving == []
+    assert hub_node.join(join_hub.url, token, name="team-1", worker_url="http://w:1").name == "team-1"
+
+
+def test_the_default_ports_in_use_give_way_to_free_ones_which_the_join_reports_and_core_uses(
+    monkeypatch, join_hub, node_file, held, serving, caplog
+):
+    core_default, worker_default = held(), held()
+    monkeypatch.setattr(main, "SERVER_PORT", core_default)
+    monkeypatch.setattr(settings, "WORKER_PORT", worker_default)
+    started_with(monkeypatch, join_hub.url, join_hub.mint(), core_url=None, worker_url=None)
+
+    with caplog.at_level(logging.INFO):
+        main.run(host="127.0.0.1")
+
+    core_port, kept = served_port(serving), hub_node.read()
+    assert core_port != core_default
+    assert kept.worker_port not in (worker_default, core_port)
+    body = join_hub.calls[0][1]
+    assert (body["core_url"], body["worker_url"]) == (
+        f"http://127.0.0.1:{core_port}",
+        f"http://10.0.0.7:{kept.worker_port}",
+    )
+    assert (kept.core_port, kept.has_core) == (core_port, True)
+    assert (settings.SERVER_PORT, os.environ["CORE_PORT"]) == (core_port, str(core_port))
+    assert settings.WORKER_PORT == kept.worker_port
+    assert settings.WORKER_URL.endswith(f":{kept.worker_port}")
+    assert os.environ["FLOWFILE_WORKER_PORT"] == str(kept.worker_port)
+    assert f"Port {core_default} is in use; serving on {core_port}" in caplog.text
+    assert f"Port {worker_default} is in use; the worker beside this core is to serve on {kept.worker_port}" in (
+        caplog.text
+    )
+
+
+def test_a_core_on_every_address_or_one_gives_the_address_the_hub_reaches_it_at(
+    monkeypatch, join_hub, node_file, core_ports
+):
+    started_with(monkeypatch, join_hub.url, join_hub.mint(), core_url=None, worker_url=None)
+    main._join_hub(64100, "0.0.0.0")
+    started_with(monkeypatch, join_hub.url, join_hub.mint(), core_url=None, worker_url=None)
+    main._join_hub(64100, "10.1.2.3")
+
+    assert [body["core_url"] for _, body in join_hub.calls] == ["http://10.0.0.7:64100", "http://10.1.2.3:64100"]
+    assert {body["worker_url"] for _, body in join_hub.calls} == {f"http://10.0.0.7:{hub_node.read().worker_port}"}
+
+
+def test_a_restart_with_the_same_token_serves_on_the_ports_the_hub_has(monkeypatch, join_hub, node_file, serving):
+    core_port, worker_port, token = free_port(), free_port(), join_hub.mint()
+    hub_node.join(
+        join_hub.url,
+        token,
+        name="team-1",
+        worker_url=f"http://w:{worker_port}",
+        core_url=f"http://c:{core_port}",
+        core_port=core_port,
+        worker_port=worker_port,
+    )
+    monkeypatch.setattr(main, "SERVER_PORT", free_port())
+    started_with(monkeypatch, join_hub.url, token, core_url=None, worker_url=None)
+
+    main.run(host="127.0.0.1")
+
+    assert served_port(serving) == core_port
+    assert (settings.WORKER_PORT, os.environ["FLOWFILE_WORKER_PORT"]) == (worker_port, str(worker_port))
+    assert len(join_hub.calls) == 1
+
+
+def test_a_restart_whose_port_is_in_use_exits_1_saying_the_hub_has_the_node_there(
+    monkeypatch, join_hub, node_file, held, serving, caplog
+):
+    core_port, token = held(), join_hub.mint()
+    hub_node.join(
+        join_hub.url, token, name="team-1", worker_url="http://w:1", core_url="http://c:2", core_port=core_port
+    )
+    monkeypatch.setattr(main, "SERVER_PORT", free_port())
+    started_with(monkeypatch, join_hub.url, token)
+
+    with caplog.at_level(logging.ERROR), pytest.raises(SystemExit) as exited:
+        main.run(host="127.0.0.1")
+
+    assert exited.value.code == 1
+    assert f"Cannot serve on 127.0.0.1:{core_port}: in use by " in caplog.text
+    assert "the hub has this node at that port, so free it or join again with a new join token" in caplog.text
+    assert serving == []
+    assert len(join_hub.calls) == 1
+
+
+def test_a_new_token_gives_the_worker_port_the_node_joined_with_even_while_its_worker_serves_there(
+    monkeypatch, join_hub, node_file, held, core_ports
+):
+    beside = held()
+    hub_node.join(
+        join_hub.url, join_hub.mint(), name="team-1", worker_url="http://w:1", core_url="http://c:2", worker_port=beside
+    )
+    started_with(monkeypatch, join_hub.url, join_hub.mint(), core_url=None, worker_url=None)
+
+    main._join_hub(free_port(), "127.0.0.1")
+
+    assert join_hub.calls[-1][1]["worker_url"] == f"http://10.0.0.7:{beside}"
+    assert hub_node.read().worker_port == beside
+
+
+def test_a_worker_port_the_operator_gives_is_reported_as_given(monkeypatch, join_hub, node_file, held, core_ports):
+    given = held()
+    monkeypatch.setattr(settings, "WORKER_PORT", given)
+    monkeypatch.setattr(settings, "WORKER_PORT_GIVEN", True)
+    started_with(monkeypatch, join_hub.url, join_hub.mint(), core_url=None, worker_url=None)
+
+    main._join_hub(free_port(), "127.0.0.1")
+
+    assert join_hub.calls[0][1]["worker_url"] == f"http://10.0.0.7:{given}"
+    assert (hub_node.read().worker_port, settings.WORKER_PORT) == (given, given)
+
+
+def test_a_core_whose_worker_is_elsewhere_keeps_no_worker_port(monkeypatch, join_hub, node_file, core_ports):
+    started_with(monkeypatch, join_hub.url, join_hub.mint(), worker_url="http://worker.example:63579")
+
+    main._join_hub(free_port(), "127.0.0.1")
+
+    assert hub_node.read().worker_port is None
+
+
+@pytest.mark.parametrize(
+    "argv,command,starts",
+    [
+        (["/venv/bin/flowfile_core", "--join", "t"], ["/venv/bin/python", "/venv/bin/flowfile_core"], True),
+        (["-m", "--join", "t"], ["python", "-m", "flowfile_core.main", "--join", "t"], True),
+        (["/venv/bin/flowfile", "run", "ui", "--join", "t"], ["/venv/bin/python", "/venv/bin/flowfile"], True),
+        (["/venv/bin/flowfile", "run", "core"], ["/venv/bin/python", "/venv/bin/flowfile"], True),
+        (["-m", "run", "ui"], ["python", "-m", "flowfile", "run", "ui"], True),
+        (["/venv/bin/flowfile", "run", "flow", "f.yaml"], ["/venv/bin/python", "/venv/bin/flowfile"], False),
+        (["/venv/bin/flowfile", "run", "worker"], ["/venv/bin/python", "/venv/bin/flowfile"], False),
+        (["/venv/bin/flowfile_worker", "--join", "t"], ["/venv/bin/python", "/venv/bin/flowfile_worker"], False),
+        (["/venv/bin/pytest"], ["/venv/bin/python", "/venv/bin/pytest"], False),
+    ],
+    ids=[
+        "console script",
+        "python -m",
+        "run ui",
+        "run core",
+        "python -m flowfile",
+        "run flow",
+        "run worker",
+        "worker",
+        "pytest",
+    ],
+)
+def test_only_a_command_that_serves_core_chooses_a_storage_dir(monkeypatch, argv, command, starts):
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr(sys, "orig_argv", command, raising=False)
+
+    assert flowfile_core._starts_core() is starts
+
+
+def test_a_spawned_child_of_core_never_chooses_a_storage_dir(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["/venv/bin/flowfile", "run", "ui", "--join", "t"])
+    monkeypatch.setattr(multiprocessing.current_process(), "name", "SpawnProcess-1")
+
+    assert flowfile_core._starts_core() is False
+
+
+STORAGE_VARIABLES = (
+    "FLOWFILE_STORAGE_DIR",
+    "FLOWFILE_SECURE_STORAGE_PATH",
+    "SECURE_STORAGE_PATH",
+    "FLOWFILE_MODE",
+    "TESTING",
+    "CORE_PORT",
+    "FLOWFILE_WORKER_PORT",
+)
+
+
+def _wait_for(proc: subprocess.Popen, url: str, log) -> None:
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            pytest.fail(f"exited with {proc.returncode}:\n{log.read_text(encoding='utf-8')}")
+        try:
+            if httpx.get(url, timeout=2).status_code == 200:
+                return
+        except httpx.HTTPError:
+            pass
+        time.sleep(0.3)
+    pytest.fail(f"{url} did not answer:\n{log.read_text(encoding='utf-8')}")
+
+
+def _stop(proc: subprocess.Popen) -> None:
+    proc.terminate()
+    try:
+        proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=10)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the home directory comes from HOME on POSIX only")
+def test_the_pair_a_hub_prints_keeps_one_folder_apart_from_the_desktops_and_the_worker_finds_it_by_name(
+    tmp_path, join_hub
+):
+    home = tmp_path / "home"
+    desktop = home / ".flowfile"
+    desktop.mkdir(parents=True)
+    (desktop / hub_node.FILE_NAME).write_text('{"name": "the desktop\'s node"}\n', encoding="utf-8")
+    core_port, worker_port = free_port(), free_port()
+    environment = {name: value for name, value in os.environ.items() if name not in (*STORAGE_VARIABLES, *VARIABLES)}
+    environment.update(HOME=str(home), FLOWFILE_WORKER_POOL_SIZE="0", FLOWFILE_SCHEDULER_ENABLED="0")
+    core_log, worker_log = tmp_path / "core.log", tmp_path / "worker.log"
+    core_flags = ["--host", "127.0.0.1", "--port", str(core_port), "--worker-port", str(worker_port)]
+    join_flags = ["--hub", join_hub.url, "--join", join_hub.mint(), "--name", "card-node"]
+    with core_log.open("wb") as out:
+        core = subprocess.Popen(
+            [sys.executable, "-m", "flowfile_core.main", *core_flags, *join_flags],
+            env=environment,
+            cwd=tmp_path,
+            stdout=out,
+            stderr=out,
+        )
+    worker = None
+    try:
+        _wait_for(core, f"http://127.0.0.1:{core_port}/health/status", core_log)
+        with worker_log.open("wb") as out:
+            worker = subprocess.Popen(
+                [sys.executable, "-m", "flowfile_worker", "--host", "127.0.0.1", "--name", "card-node"],
+                env=environment,
+                cwd=tmp_path,
+                stdout=out,
+                stderr=out,
+            )
+        _wait_for(worker, f"http://127.0.0.1:{worker_port}/health", worker_log)
+    finally:
+        if worker is not None:
+            _stop(worker)
+        _stop(core)
+
+    folder = home / ".flowfile-node" / "card-node"
+    joins = [body for path, body in join_hub.calls if path == hub_join.JOIN_PATH]
+    assert len(joins) == 1
+    assert joins[0]["core_url"] == f"http://127.0.0.1:{core_port}"
+    assert joins[0]["worker_url"].endswith(f":{worker_port}")
+    kept = json.loads((folder / hub_node.FILE_NAME).read_text(encoding="utf-8"))
+    assert (kept["name"], kept["has_core"], kept["core_port"], kept["worker_port"]) == (
+        "card-node",
+        True,
+        core_port,
+        worker_port,
+    )
+    assert "Keeping this node's files in ~/.flowfile-node/card-node, apart from Flowfile desktop's" in (
+        core_log.read_text(encoding="utf-8")
+    )
+    found = f"Found node card-node in ~/.flowfile-node/card-node; serving on {worker_port}, the port its join gave"
+    assert found in worker_log.read_text(encoding="utf-8")
+    assert sorted(path.name for path in home.iterdir()) == [".flowfile", ".flowfile-node"]
+    assert sorted(path.name for path in desktop.iterdir()) == [hub_node.FILE_NAME]
+    assert (desktop / hub_node.FILE_NAME).read_text(encoding="utf-8") == '{"name": "the desktop\'s node"}\n'

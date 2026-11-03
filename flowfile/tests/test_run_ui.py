@@ -8,7 +8,9 @@ stubbed and a bare app in place of core's, so no port is bound and no browser op
 restored after the test.
 """
 
+import logging
 import os
+import socket
 import sys
 
 import pytest
@@ -19,6 +21,7 @@ import flowfile.web as web
 import flowfile_core.main as core_main
 from flowfile.__main__ import main
 from flowfile_core.configs import settings
+from shared import hub_node
 
 JOIN_FLAGS = (
     "--join",
@@ -67,7 +70,7 @@ def test_run_ui_without_flags_serves_this_machine_only(monkeypatch):
 
     main()
 
-    assert started == [{"host": "127.0.0.1", "port": 63578, "open_browser": False}]
+    assert started == [{"host": "127.0.0.1", "port": None, "open_browser": False}]
 
 
 @pytest.fixture
@@ -87,7 +90,7 @@ def served(monkeypatch) -> dict:
     """Runs ``start_server`` up to uvicorn: the app it extends and the host and port it hands core's ``run``."""
     seen: dict = {"app": FastAPI()}
     monkeypatch.setattr(core_main, "app", seen["app"])
-    monkeypatch.setattr(core_main, "run", lambda host, port: seen.update(host=host, port=port))
+    monkeypatch.setattr(core_main, "run", lambda host, port, sock=None: seen.update(host=host, port=port, sock=sock))
     monkeypatch.setattr(settings.OFFLOAD_TO_WORKER, "value", settings.OFFLOAD_TO_WORKER.value)
     monkeypatch.setattr(settings.SINGLE_FILE_MODE, "value", settings.SINGLE_FILE_MODE.value)
     monkeypatch.setattr(settings, "WORKER_URL", settings.WORKER_URL)
@@ -154,7 +157,7 @@ def test_a_server_without_the_editor_s_files_marks_no_editor(served, tmp_path, m
 
     web.start_server(open_browser=False)
 
-    assert (served["host"], served["port"]) == ("127.0.0.1", 63578)
+    assert (served["host"], served["port"], served["sock"]) == ("127.0.0.1", 63578, None)
     assert not hasattr(served["app"].state, "editor_path")
     assert served["app"].state.worker_path == "/worker"
 
@@ -170,3 +173,49 @@ def test_the_editor_is_served_at_ui_slash_and_never_a_file_outside_its_folder(se
     for path in (f"/ui/{editor_files / 'secret.txt'}", "/ui/..%2Fsecret.txt", "/ui/%2Fetc%2Fhosts"):
         response = client.get(path, follow_redirects=False)
         assert (response.status_code, response.text) == (200, "<html>editor</html>"), path
+
+
+@pytest.fixture
+def held():
+    """A port another server listens on, on 127.0.0.1, for the length of the test."""
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    sock.listen()
+    yield sock.getsockname()[1]
+    sock.close()
+
+
+@pytest.fixture
+def joining(monkeypatch, tmp_path):
+    """Core's command line carried a join token, and this node never joined: its file is under ``tmp_path``."""
+    monkeypatch.setattr(core_main, "JOIN_TOKEN", "join-t")
+    monkeypatch.setattr(core_main, "JOIN_HUB_URL", "http://hub.example")
+    monkeypatch.setattr(core_main, "NODE_STORAGE_DIR", None)
+    monkeypatch.setattr(hub_node, "path", lambda: tmp_path / "storage" / hub_node.FILE_NAME)
+
+
+def test_a_server_that_joins_binds_first_and_moves_off_the_default_port_in_use(
+    served, joining, held, monkeypatch, caplog
+):
+    monkeypatch.setattr(settings, "DEFAULT_SERVER_PORT", held)
+
+    with caplog.at_level(logging.INFO, logger="flowfile.hub_node"):
+        web.start_server(open_browser=False)
+
+    with served["sock"] as sock:
+        moved = sock.getsockname()[1]
+    assert moved != held
+    assert (served["host"], served["port"]) == ("127.0.0.1", moved)
+    assert settings.WORKER_URL == f"http://127.0.0.1:{moved}/worker"
+    assert f"Port {held} is in use; serving on {moved}" in caplog.text
+
+
+def test_a_server_that_joins_on_a_port_it_is_given_and_in_use_exits_1_before_serving(served, joining, held):
+    worker_url = settings.WORKER_URL
+
+    with pytest.raises(SystemExit) as exited:
+        web.start_server(port=held, open_browser=False)
+
+    assert exited.value.code == 1
+    assert "host" not in served
+    assert settings.WORKER_URL == worker_url
