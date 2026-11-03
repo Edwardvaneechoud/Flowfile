@@ -208,6 +208,30 @@ def test_a_file_that_does_not_hold_a_nodes_keys_raises_and_is_left_as_it_is(key_
     assert key_file.read_text(encoding="utf-8") == text
 
 
+def test_loading_without_a_key_file_is_none_and_makes_no_keys(key_file):
+    assert hub_node_key.load() is None
+
+    assert not key_file.exists()
+
+
+def test_loading_reads_the_keys_the_first_call_made(key_file):
+    made = hub_node_key.load_or_create()
+
+    loaded = hub_node_key.load()
+
+    assert loaded.public_jwks() == made.public_jwks()
+
+
+def test_loading_a_file_that_does_not_hold_a_nodes_keys_raises_and_leaves_it(key_file):
+    key_file.parent.mkdir(parents=True)
+    key_file.write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        hub_node_key.load()
+
+    assert key_file.read_text(encoding="utf-8") == "{not json"
+
+
 @POSIX_MODES
 @pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root writes into a read-only directory")
 def test_a_storage_dir_that_cannot_hold_the_file_raises_and_keeps_no_part_of_it(key_file):

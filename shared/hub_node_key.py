@@ -132,6 +132,18 @@ def _write(target: Path, text: str) -> None:
         raise
 
 
+def load() -> NodeKeys | None:
+    """This node's keys from the file, or ``None`` when it has none; never makes them.
+
+    For what a joined node signs after its join, which must not give it keys the hub was never sent. ``OSError`` and
+    ``ValueError`` as ``load_or_create``.
+    """
+    try:
+        return _read(path())
+    except FileNotFoundError:
+        return None
+
+
 def load_or_create() -> NodeKeys:
     """This node's keys from the file, or both key pairs made now and the file written whole with mode 0600.
 
