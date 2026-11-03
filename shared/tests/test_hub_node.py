@@ -9,7 +9,7 @@ import pytest
 from shared import hub_node
 from shared.hub_node import HubNode, JoinRefused, NodeSettings
 from shared.tests import hub_join
-from shared.tests.hub_join import USED, FakeJoinHub
+from shared.tests.hub_join import EXPIRED, NOT_VALID, USED, FakeJoinHub
 
 join_hub = hub_join.join_hub
 
@@ -262,13 +262,34 @@ def test_joining_at_start_with_a_file_from_another_hub_warns_and_makes_no_reques
     assert HUB in warnings[0] and join_hub.url in warnings[0] and f"delete {node_file}" in warnings[0]
 
 
-def test_a_refused_join_at_start_exits_2_with_the_hubs_sentence(join_hub, node_file, caplog):
+@pytest.mark.parametrize(
+    ("refusal", "sentence"),
+    [
+        ("not valid", NOT_VALID),
+        ("expired", EXPIRED),
+        ("used", USED),
+        ("bad name", "The hub refused this node's name or address: String should match pattern"),
+    ],
+)
+def test_a_refused_join_at_start_exits_2_with_the_hubs_sentence(join_hub, node_file, caplog, refusal, sentence):
+    token, name = join_hub.mint(), "worker-1"
+    if refusal == "not valid":
+        token = "join-never-minted"
+    elif refusal == "expired":
+        token = join_hub.mint(expired=True)
+    elif refusal == "used":
+        join_with(join_hub, token)
+        node_file.unlink()
+    else:
+        name = "bad name"
+
     with caplog.at_level(logging.INFO, logger="flowfile.hub_node"):
         with pytest.raises(SystemExit) as exited:
-            hub_node.join_at_start(join_hub.url, "join-never-minted", name="worker-1", worker_url="http://w:1")
+            hub_node.join_at_start(join_hub.url, token, name=name, worker_url="http://w:1")
 
     assert exited.value.code == 2
-    assert f"Could not join {join_hub.url}: this join token is not valid" in caplog.text
+    assert f"Could not join {join_hub.url}: {sentence}" in caplog.text
+    assert token not in caplog.text
     assert not node_file.exists()
 
 
