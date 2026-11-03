@@ -260,9 +260,11 @@ def test_a_new_join_token_joins_again_under_its_name(join_hub, node_file, caplog
     assert len(join_hub.calls) == 2
     assert node.name == "worker-2" and hub_node.read() == node
     warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
-    assert warnings == [
+    assert len(warnings) == 1
+    assert warnings[0].startswith(
         f"This node was worker-1 on {join_hub.url}; joining {join_hub.url} with the new join token replaces that"
-    ]
+    )
+    assert "needs its own FLOWFILE_STORAGE_DIR" in warnings[0]
 
 
 def test_a_new_join_token_moves_a_node_from_another_hub(join_hub, node_file):
@@ -275,7 +277,7 @@ def test_a_new_join_token_moves_a_node_from_another_hub(join_hub, node_file):
 
 
 def test_a_refused_new_join_token_keeps_the_node_as_it_was(join_hub, node_file, caplog):
-    kept = write_node(node_file, hub_url=join_hub.url)
+    kept = write_node(node_file, hub_url=join_hub.url, join_token_hash="0" * 16)
 
     with caplog.at_level(logging.INFO, logger="flowfile.hub_node"):
         with pytest.raises(SystemExit) as exited:
@@ -290,6 +292,17 @@ def test_a_file_from_before_the_token_hash_still_reads(node_file):
     write_node(node_file)
 
     assert hub_node.read().join_token_hash == ""
+
+
+def test_a_file_from_before_the_token_hash_restarts_on_its_own_hub_without_a_request(join_hub, node_file, caplog):
+    write_node(node_file, hub_url=join_hub.url)
+
+    with caplog.at_level(logging.INFO, logger="flowfile.hub_node"):
+        node = hub_node.join_at_start(join_hub.url, join_hub.mint(), name="worker-2", worker_url="http://w:1")
+
+    assert join_hub.calls == []
+    assert node.name == "team"
+    assert "Delete that file to join with this token" in caplog.text and str(node_file) in caplog.text
 
 
 @pytest.mark.parametrize(

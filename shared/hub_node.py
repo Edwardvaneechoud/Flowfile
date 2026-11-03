@@ -10,7 +10,9 @@ spent by the join and written nowhere, and the hub's keys, the only thing a node
 (``FLOWFILE_HUB_URL``, ``FLOWFILE_NODE_NAME``, ``FLOWFILE_HUB_ISSUER``), the file second, and the file only for the hub
 it names, so a node set up by hand behaves as before whatever the file says. The file also keeps a short hash of the
 join token it was written with: a start with that same token makes no request, so a restart with an unchanged command
-is quiet, and a start with any other join token joins again and replaces the file.
+is quiet, and a start with any other join token joins again and replaces the file. A file from before the hash was
+kept cannot tell its own token from a new one, so for its own hub it keeps the old rule: no request until it is deleted.
+One storage dir holds one node: every process reading it takes the name the latest join wrote.
 """
 
 import hashlib
@@ -245,19 +247,31 @@ def join_at_start(hub_url: str, token: str, *, name: str, worker_url: str, core_
 
     The join token this node joined with makes no request a second time, so a restart with the same command keeps
     the node as it is. Any other join token joins ``hub_url`` and replaces the file, whichever hub and name it held:
-    a new token on the command line is the operator asking for a new join.
+    a new token on the command line is the operator asking for a new join. A file without the token's hash, from
+    before it was kept, makes no request for its own hub, since its own spent token would be refused at every start.
     """
     hub_url = hub_url.strip().rstrip("/")
     joined = read()
     if joined is not None and joined.join_token_hash == token_hash(token):
         logger.info("Already joined %s as %s; the join token is not used", joined.hub_url, joined.name)
         return joined
+    if joined is not None and not joined.join_token_hash and joined.hub_url.rstrip("/") == hub_url:
+        logger.warning(
+            "Already joined %s as %s; the join token is not used, since %s cannot tell it from the one it joined "
+            "with. Delete that file to join with this token",
+            joined.hub_url,
+            joined.name,
+            path(),
+        )
+        return joined
     if joined is not None:
         logger.warning(
-            "This node was %s on %s; joining %s with the new join token replaces that",
+            "This node was %s on %s; joining %s with the new join token replaces that, for every process using %s. "
+            "A second node on this machine needs its own FLOWFILE_STORAGE_DIR",
             joined.name,
             joined.hub_url,
             hub_url,
+            path().parent,
         )
     try:
         node, enabled = _join(hub_url, token, name=name, worker_url=worker_url, core_url=core_url)
