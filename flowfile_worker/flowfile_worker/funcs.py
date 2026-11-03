@@ -969,14 +969,21 @@ def write_delta(
         schema = [{"name": col, "dtype": str(df[col].dtype)} for col in df.columns]
         row_count = df.height
         if mode == "append":
-            row_count = pl.scan_delta(output_path, storage_options=storage_options).select(pl.len()).collect().item()
+            from deltalake import DeltaTable
+
+            from shared.delta_utils import delta_row_count
+
+            result_df = pl.scan_delta(output_path, storage_options=storage_options)
+            result_schema = result_df.collect_schema()
+            schema = [{"name": n, "dtype": str(d)} for n, d in result_schema.items()]
+            row_count = delta_row_count(DeltaTable(output_path, storage_options=storage_options), storage_options)
 
         queue.put(
             models.DeltaWriteReport(
                 table_path=output_path,
                 column_schema=schema,
                 row_count=row_count,
-                column_count=len(df.columns),
+                column_count=len(schema),
                 size_bytes=size_bytes,
             ).model_dump(by_alias=True)
         )
@@ -1021,8 +1028,10 @@ def merge_delta(
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     try:
+        from deltalake import DeltaTable
+
         from flowfile_worker import models
-        from shared.delta_utils import merge_into_delta
+        from shared.delta_utils import delta_row_count, merge_into_delta
 
         output_path = _delta_target(output_path, table_name, storage_payload)
         catalog_table = f" (catalog table {table_id})" if table_id is not None else ""
@@ -1050,7 +1059,7 @@ def merge_delta(
         result_df = pl.scan_delta(output_path, storage_options=storage_options)
         result_schema = result_df.collect_schema()
         schema = [{"name": n, "dtype": str(d)} for n, d in result_schema.items()]
-        row_count = result_df.select(pl.len()).collect().item()
+        row_count = delta_row_count(DeltaTable(output_path, storage_options=storage_options), storage_options)
         size_bytes = _get_delta_size_bytes(output_path, storage_options=storage_options)
 
         queue.put(

@@ -948,6 +948,31 @@ class TestGetTableHistory:
             with pytest.raises(TableNotFoundError):
                 svc.get_table_history(999999)
 
+    def test_managed_history_routes_to_worker_without_local_files(self, monkeypatch):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+
+        from flowfile_core.catalog.services import previews
+        from shared.storage_config import storage
+
+        path = storage.catalog_tables_directory / "worker_only_history"
+        table = SimpleNamespace(file_path=str(path), namespace_id=1)
+        repo = Mock()
+        repo.get_table.return_value = table
+        expected = previews.DeltaTableHistory(current_version=2, history=[])
+        trigger = Mock(return_value=expected)
+        monkeypatch.setattr(previews, "uses_worker", lambda: True)
+        monkeypatch.setattr(previews.registry, "worker_url", lambda: "http://remote-worker:63579")
+        monkeypatch.setattr(previews, "trigger_delta_history", trigger)
+        monkeypatch.setattr(previews, "is_delta_table", lambda path: False)
+
+        result = previews.TablePreviewService(repo, Mock(), Mock()).get_table_history(123, limit=5)
+
+        assert result == expected
+        trigger.assert_called_once_with(
+            "worker_only_history", 5, storage=None, worker_url="http://remote-worker:63579"
+        )
+
     def test_worker_on_other_versions_is_refused_and_the_history_not_read_in_core(self, monkeypatch):
         """A worker that fails core's handshake is refused with the mismatch; core does not read the history itself."""
         import shutil

@@ -308,9 +308,6 @@ class TablePreviewService:
             return DeltaTableHistory(current_version=0, history=[])
 
         is_cloud = _is_cloud_uri(table.file_path)
-        if not is_cloud and not is_delta_table(Path(table.file_path)):
-            return DeltaTableHistory(current_version=0, history=[])
-
         target = resolve_for_namespace(table.namespace_id) if is_cloud else None
         table_path = table.file_path
         storage_payload = target.to_worker_payload() if target else None
@@ -326,6 +323,9 @@ class TablePreviewService:
                 )
             except RequestException as exc:
                 raise ComputeUnavailable(f"Could not reach the worker at {worker_url}: {exc}") from exc
+
+        if not is_cloud and not is_delta_table(Path(table_path)):
+            return DeltaTableHistory(current_version=0, history=[])
 
         delta_table = DeltaTable(table_path, without_files=True, storage_options=storage_options)
         raw_history = delta_table.history(limit)
