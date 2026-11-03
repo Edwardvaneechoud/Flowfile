@@ -2,6 +2,7 @@
 
 import os
 import secrets
+from datetime import timedelta
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Body, Depends, Form, HTTPException, Request, status
@@ -28,6 +29,9 @@ from shared import hub_node, hub_node_key, hub_tokens
 
 router = APIRouter()
 
+HUB_ACCESS_TOKEN_EXPIRES = timedelta(minutes=15)
+"""How long this core's own access token lives for a person who signed in through the hub: as long as the hub's."""
+
 
 @router.post("/token", response_model=Token)
 def login_for_access_token(
@@ -42,6 +46,12 @@ def login_for_access_token(
         return {"access_token": access_token, "token_type": "bearer"}
     else:
         # In Docker mode, authenticate against database
+        node = _joined_with_keys()
+        if node is not None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"This server signs people in through {_hub_host(node.hub_url)}",
+            )
         if not username or not password:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -68,7 +78,11 @@ def refresh_access_token(
     refresh_token: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    """Exchange a valid refresh token for a new access token and refresh token."""
+    """Exchange a valid refresh token for a new access token and refresh token.
+
+    For a person who signed in through the hub, the sign-in is refreshed at the hub first, so this server's session
+    never outlives the hub's: once the hub no longer takes it, the answer is a 401 and nothing is issued.
+    """
     username = decode_refresh_token(refresh_token)
 
     user = db.query(db_models.User).filter(db_models.User.username == username).first()
@@ -85,9 +99,50 @@ def refresh_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    new_access_token = create_access_token(data={"sub": user.username})
+    expires = None
+    mapping = db.query(db_models.IssuerAccount).filter(db_models.IssuerAccount.user_id == user.id).first()
+    if mapping is not None:
+        _refresh_through_hub(user.id, mapping.issuer)
+        expires = HUB_ACCESS_TOKEN_EXPIRES
+    new_access_token = create_access_token(data={"sub": user.username}, expires_delta=expires)
     new_refresh_token = create_refresh_token(data={"sub": user.username})
     return {"access_token": new_access_token, "refresh_token": new_refresh_token, "token_type": "bearer"}
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(current_user: User = Depends(get_current_active_user)) -> None:
+    """Sign out: a sign-in through the hub is revoked at the hub as far as it answers, and forgotten here.
+
+    Answers 204 whether or not the hub took the revocation. Any other hub connection of the account is left as it is.
+    """
+    stored = hub_session.load(current_user.id)
+    if stored is None or stored.get("kind") != "delegation":
+        return None
+    try:
+        delegation.revoke(stored["hub_url"], hub_node.resolved().issuer, stored["refresh_token"])
+    except (HubRefused, HubUnreachable, LookupError) as e:
+        logger.warning("The hub was not told of a sign-out on this server: %s", e)
+    hub_session.clear(current_user.id)
+    return None
+
+
+def _hub_host(url: str) -> str:
+    return urlparse(url).hostname or url
+
+
+def _refresh_through_hub(user_id: int, issuer: str) -> None:
+    """Refresh the sign-in through the hub of ``user_id`` at the hub; a 401 when the hub no longer takes it or none is
+    kept here, a 502 when the hub does not answer.
+    """
+    try:
+        refreshed = hub_session.refresh_delegation(user_id)
+    except HubUnreachable as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from None
+    except HubRefused:
+        refreshed = None
+    if refreshed is None:
+        host = _hub_host(hub_node.resolved().hub_url or issuer)
+        raise _refused(f"Your sign-in through {host} has ended; sign in again")
 
 
 def _joined_with_keys() -> hub_node.HubNode | None:
@@ -149,7 +204,7 @@ def _new_issuer_account(db: Session, issuer: str, hub_url: str, person: dict) ->
 
     Its password is a hash of random bytes nobody keeps, so the account signs in through the hub only.
     """
-    hub_host = urlparse(hub_url).hostname or hub_url
+    hub_host = _hub_host(hub_url)
     username = _free_username(db, person["username"], hub_host)
     if username is None:
         raise HTTPException(
@@ -180,7 +235,8 @@ def sign_in_through_hub(token: str = Body(..., embed=True), db: Session = Depend
     delegation signed with this node's own key. The person's local account is the one mapped to the hub's issuer and
     their id there, made at their first sign-in; whether it administers this server follows ``node_admin`` at every
     sign-in. The delegation is kept as the person's hub session, never in the database, and the answer is this core's
-    own token pair, as ``/auth/token`` answers. A token or an exchange the hub refuses is a 401 with one sentence.
+    own token pair, as ``/auth/token`` answers, its access token living 15 minutes as the hub's does. A token or an
+    exchange the hub refuses is a 401 with one sentence.
     """
     if _joined_with_keys() is None:
         raise _refused("This server does not sign people in through a hub.")
@@ -211,7 +267,7 @@ def sign_in_through_hub(token: str = Body(..., embed=True), db: Session = Depend
     db.commit()
     invalidate_user_cache(user.username)
     hub_session.save_delegation(user.id, settings.hub_url, granted)
-    access_token = create_access_token(data={"sub": user.username})
+    access_token = create_access_token(data={"sub": user.username}, expires_delta=HUB_ACCESS_TOKEN_EXPIRES)
     refresh_token = create_refresh_token(data={"sub": user.username})
     return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 

@@ -7,27 +7,31 @@ secure store live under the test's ``tmp_path``.
 """
 
 import json
+import time
 import uuid
 
+import jwt
 import pytest
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
 from flowfile_core.auth import secrets as core_secrets
-from flowfile_core.auth.jwt import invalidate_user_cache
-from flowfile_core.auth.password import get_password_hash
+from flowfile_core.auth.jwt import create_refresh_token, invalidate_user_cache
+from flowfile_core.auth.password import get_password_hash, verify_password
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.hub_client import client as hub_client
 from flowfile_core.hub_client import session
 from shared import hub_node, hub_node_key, hub_tokens
-from shared.tests.hub_join import TOKEN_EXCHANGE, TOKEN_PATH, FakeJoinHub
+from shared.tests.hub_join import REVOKE_PATH, TOKEN_EXCHANGE, TOKEN_PATH, FakeJoinHub
 from shared.tests.hub_jwks import HubSigner
 
 client = TestClient(main.app)
 
 NODE = "team-1"
 VARIABLES = ("FLOWFILE_HUB_JOIN_TOKEN", "FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME", "FLOWFILE_HUB_ISSUER")
+ENDED = "Your sign-in through 127.0.0.1 has ended; sign in again"
+THROUGH_THE_HUB = "This server signs people in through 127.0.0.1"
 
 
 def bearer(token: str) -> dict:
@@ -170,8 +174,6 @@ def test_the_delegation_is_written_nowhere_but_the_session_store(hub, username):
         columns = {column.name: str(getattr(row, column.name)) for column in row.__table__.columns}
     assert refresh_token not in json.dumps(columns) and refresh_token not in response.text
     assert columns["hashed_password"].startswith("$2b$")
-    no_password = client.post("/auth/token", data={"username": columns["username"], "password": ""})
-    assert no_password.status_code == 401
 
 
 def test_a_second_sign_in_is_the_same_account_and_administration_follows_node_admin_each_time(hub, username):
@@ -194,8 +196,9 @@ def test_a_local_account_holding_the_hub_username_is_never_taken_over(hub, usern
     person = me(response.json()["access_token"])
     assert person["username"] == f"{username}@127.0.0.1" and person["id"] != local_id
     assert mapping(hub, 7) == person["id"]
-    password = client.post("/auth/token", data={"username": username, "password": "local-password-1!"})
-    assert me(password.json()["access_token"])["id"] == local_id
+    with get_db_context() as db:
+        local = db.query(db_models.User).filter(db_models.User.id == local_id).one()
+        assert local.username == username and verify_password("local-password-1!", local.hashed_password)
 
 
 def test_a_person_whose_both_names_are_taken_is_refused_with_a_sentence(hub, username, local_user):
@@ -379,3 +382,181 @@ def test_the_sign_in_method_of_a_joined_server_is_the_hubs_open_page_for_this_no
     assert answer == {"method": "hub", "url": f"{hub.url}/open/{node_id}", "hub_url": hub.url}
     node_file.with_name(hub_node_key.FILE_NAME).unlink()
     assert client.get("/auth/sign_in_method").json() == {"method": "password"}
+
+
+def refresh(refresh_token: str):
+    return client.post("/auth/refresh", data={"refresh_token": refresh_token})
+
+
+def password_sign_in(name: str, password: str = "local-password-1!"):
+    return client.post("/auth/token", data={"username": name, "password": password})
+
+
+def lives(access_token: str) -> float:
+    """Seconds until core's access token expires, read from its own ``exp``."""
+    return jwt.decode(access_token, options={"verify_signature": False})["exp"] - time.time()
+
+
+def refreshes(hub: FakeJoinHub) -> list[dict]:
+    return [request for request in hub.token_requests if request["grant_type"] == "refresh_token"]
+
+
+def revocations(hub: FakeJoinHub) -> list[dict]:
+    return [form for path, form in hub.calls if path == REVOKE_PATH]
+
+
+def test_cores_access_token_for_a_person_from_the_hub_lives_fifteen_minutes(hub, username):
+    answer = sign_in(hub.sign_in_token(NODE, uid=7, username=username)).json()
+
+    assert 15 * 60 - 5 <= lives(answer["access_token"]) <= 15 * 60
+
+
+def test_a_refresh_of_cores_session_refreshes_the_sign_in_at_the_hub_first(hub, username):
+    answer = sign_in(hub.sign_in_token(NODE, uid=7, username=username)).json()
+    user_id = me(answer["access_token"])["id"]
+    first = session.load(user_id)["refresh_token"]
+
+    response = refresh(answer["refresh_token"])
+
+    assert response.status_code == 200, response.text
+    renewed = response.json()
+    assert me(renewed["access_token"])["id"] == user_id
+    assert 15 * 60 - 5 <= lives(renewed["access_token"]) <= 15 * 60
+    [taken] = refreshes(hub)
+    assert (taken["claims"]["sub"], taken["claims"]["aud"]) == (f"node:{NODE}", hub.issuer + TOKEN_PATH)
+    rotated = session.load(user_id)["refresh_token"]
+    assert rotated != first and rotated in hub.live_refresh_tokens() and first not in hub.live_refresh_tokens()
+    assert refresh(renewed["refresh_token"]).status_code == 200
+    assert len(refreshes(hub)) == 2
+
+
+@pytest.mark.parametrize(
+    "end",
+    [lambda hub: setattr(hub, "refuse_next_refresh", True), lambda hub: hub.refused_people.add(7)],
+    ids=["the hub ended the sign-in", "the person may no longer use this node"],
+)
+def test_once_the_hub_refuses_the_refresh_core_issues_nothing_and_keeps_nothing_of_the_sign_in(hub, username, end):
+    answer = sign_in(hub.sign_in_token(NODE, uid=7, username=username)).json()
+    user_id = me(answer["access_token"])["id"]
+    end(hub)
+
+    response = refresh(answer["refresh_token"])
+
+    assert (response.status_code, response.json()) == (401, {"detail": ENDED})
+    assert session.load(user_id) is None and session.access_token(user_id) is None
+    calls = len(hub.calls)
+    again = refresh(answer["refresh_token"])
+    assert (again.status_code, again.json()["detail"]) == (401, ENDED)
+    assert len(hub.calls) == calls
+
+
+def test_a_refresh_the_hub_refuses_this_node_is_401_and_issues_nothing(hub, username):
+    answer = sign_in(hub.sign_in_token(NODE, uid=7, username=username)).json()
+    hub.set_enabled(NODE, False)
+
+    response = refresh(answer["refresh_token"])
+
+    assert (response.status_code, response.json()) == (401, {"detail": ENDED})
+
+
+def test_a_refresh_while_the_hub_does_not_answer_is_a_502_and_keeps_the_sign_in(hub, username):
+    answer = sign_in(hub.sign_in_token(NODE, uid=7, username=username)).json()
+    user_id = me(answer["access_token"])["id"]
+    before = session.load(user_id)
+    hub.close()
+
+    response = refresh(answer["refresh_token"])
+
+    assert (response.status_code, response.json()) == (502, {"detail": f"Could not reach the hub at {hub.url}."})
+    assert session.load(user_id) == before
+
+
+def test_a_refresh_of_an_account_not_from_the_hub_asks_the_hub_nothing(hub, local_user, username):
+    local_user(username)
+
+    response = refresh(create_refresh_token(data={"sub": username}))
+
+    assert response.status_code == 200, response.text
+    assert lives(response.json()["access_token"]) > 60 * 60
+    assert hub.token_requests == []
+
+
+def test_logout_revokes_the_sign_in_at_the_hub_and_forgets_it_here(hub, username):
+    answer = sign_in(hub.sign_in_token(NODE, uid=7, username=username)).json()
+    user_id = me(answer["access_token"])["id"]
+    refresh_token = session.load(user_id)["refresh_token"]
+
+    response = client.post("/auth/logout", headers=bearer(answer["access_token"]))
+
+    assert (response.status_code, response.content) == (204, b"")
+    [form] = revocations(hub)
+    assert (form["token"], form["token_type_hint"]) == (refresh_token, "refresh_token")
+    assert refresh_token not in hub.live_refresh_tokens()
+    assert session.load(user_id) is None and session.access_token(user_id) is None
+    after = refresh(answer["refresh_token"])
+    assert (after.status_code, after.json()["detail"]) == (401, ENDED)
+
+
+@pytest.mark.parametrize(
+    "refuse",
+    [lambda hub: hub.close(), lambda hub: hub.set_enabled(NODE, False)],
+    ids=["the hub does not answer", "the hub refuses this node"],
+)
+def test_logout_answers_204_and_forgets_the_sign_in_when_the_hub_does_not_take_the_revocation(hub, username, refuse):
+    answer = sign_in(hub.sign_in_token(NODE, uid=7, username=username)).json()
+    user_id = me(answer["access_token"])["id"]
+    refuse(hub)
+
+    response = client.post("/auth/logout", headers=bearer(answer["access_token"]))
+
+    assert response.status_code == 204
+    assert session.load(user_id) is None and session.access_token(user_id) is None
+
+
+def test_logout_of_an_account_without_a_sign_in_through_the_hub_keeps_its_hub_connection(
+    node_file, local_user, username
+):
+    user_id = local_user(username)
+    signed_in = password_sign_in(username)
+    assert signed_in.status_code == 200, signed_in.text
+    session.save(user_id, {"hub_url": "https://hub.example.test", "refresh_token": "a desktop's refresh token"})
+    before = session.load(user_id)
+
+    response = client.post("/auth/logout", headers=bearer(signed_in.json()["access_token"]))
+
+    assert response.status_code == 204
+    assert session.load(user_id) == before
+
+
+def test_no_password_signs_anyone_in_on_a_server_that_joined_its_hub_with_keys(hub, local_user, username):
+    local_user(username)
+
+    for response in (
+        password_sign_in(username),
+        password_sign_in(username, "not the password"),
+        client.post("/auth/token"),
+    ):
+        assert (response.status_code, response.json()) == (403, {"detail": THROUGH_THE_HUB})
+
+
+def test_password_sign_in_is_unchanged_on_a_server_that_did_not_join_with_keys(hub, node_file, local_user, username):
+    local_user(username)
+    node_file.with_name(hub_node_key.FILE_NAME).unlink()
+    without_keys = password_sign_in(username)
+    node_file.unlink()
+    not_joined = password_sign_in(username)
+
+    for response in (without_keys, not_joined):
+        assert response.status_code == 200, response.text
+        assert me(response.json()["access_token"])["username"] == username
+    wrong = password_sign_in(username, "not the password")
+    assert (wrong.status_code, wrong.json()["detail"]) == (401, "Incorrect username or password")
+
+
+def test_the_desktops_own_sign_in_is_unchanged_on_a_storage_dir_that_joined_a_hub(hub, monkeypatch):
+    monkeypatch.setenv("FLOWFILE_MODE", "electron")
+
+    response = client.post("/auth/token")
+
+    assert response.status_code == 200, response.text
+    assert jwt.decode(response.json()["access_token"], options={"verify_signature": False})["sub"] == "local_user"
