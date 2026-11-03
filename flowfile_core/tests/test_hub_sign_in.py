@@ -545,6 +545,55 @@ def test_logout_answers_204_and_forgets_the_sign_in_when_the_hub_does_not_take_t
     assert session.load(user_id) is None and session.access_token(user_id) is None
 
 
+def leave_the_hub(node_file) -> None:
+    node_file.unlink()
+
+
+def lose_the_keys(node_file) -> None:
+    node_file.with_name(hub_node_key.FILE_NAME).unlink()
+
+
+def garble_the_keys(node_file) -> None:
+    node_file.with_name(hub_node_key.FILE_NAME).write_text("not a node's keys", encoding="utf-8")
+
+
+cannot_sign = pytest.mark.parametrize(
+    "lose", [leave_the_hub, lose_the_keys, garble_the_keys], ids=["left the hub", "keys gone", "keys unreadable"]
+)
+
+
+@cannot_sign
+def test_logout_answers_204_and_forgets_the_sign_in_when_this_server_cannot_sign_for_itself(
+    hub, node_file, username, lose, caplog
+):
+    answer = sign_in(hub.sign_in_token(NODE, uid=7, username=username)).json()
+    user_id = me(answer["access_token"])["id"]
+    lose(node_file)
+
+    response = client.post("/auth/logout", headers=bearer(answer["access_token"]))
+
+    assert (response.status_code, response.content) == (204, b"")
+    assert session.load(user_id) is None and session.access_token(user_id) is None
+    assert revocations(hub) == []
+    assert "The hub was not told of a sign-out on this server" in caplog.text
+
+
+@cannot_sign
+def test_a_refresh_this_server_cannot_sign_for_at_its_hub_is_401_naming_the_hub_and_keeps_the_sign_in(
+    hub, node_file, username, lose
+):
+    answer = sign_in(hub.sign_in_token(NODE, uid=7, username=username)).json()
+    user_id = me(answer["access_token"])["id"]
+    before = session.load(user_id)
+    calls = len(hub.calls)
+    lose(node_file)
+
+    response = refresh(answer["refresh_token"])
+
+    assert (response.status_code, response.json()) == (401, {"detail": ENDED})
+    assert len(hub.calls) == calls and session.load(user_id) == before
+
+
 def sign_out_everywhere(hub: FakeJoinHub, answer: dict) -> None:
     """The person signs out everywhere on the hub; this browser learns it at its next refresh."""
     hub.sign_out_everywhere(7)
