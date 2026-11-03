@@ -5,6 +5,7 @@ The join runs against ``FakeJoinHub`` over real HTTP; the sync through ``/hub_cl
 """
 
 import json
+import os
 import sys
 
 import pytest
@@ -147,6 +148,23 @@ def test_a_core_given_no_addresses_gives_this_machines_on_its_two_ports(
         f"http://team-7.example.com:{core_port}",
         "http://team-7.example.com:64101",
     )
+
+
+def test_a_core_given_the_token_as_a_variable_starts_no_run_that_reads_it_without_the_hub(
+    monkeypatch, no_variables, join_hub, node_file
+):
+    token = join_hub.mint()
+    monkeypatch.setenv("FLOWFILE_HUB_JOIN_TOKEN", token)
+    started_with(monkeypatch, join_hub.url, token)
+    monkeypatch.setattr(sys, "argv", ["flowfile", "run", "flow", "f.yaml", "--run-id", "1"])
+    with pytest.raises(ValueError, match="--join needs --hub"):
+        settings.parse_args()
+
+    main._join_hub()
+
+    assert len(join_hub.calls) == 1
+    assert "FLOWFILE_HUB_JOIN_TOKEN" not in os.environ
+    assert settings.parse_args().join is None
 
 
 def test_a_core_without_a_join_token_asks_nothing(monkeypatch, join_hub, node_file):

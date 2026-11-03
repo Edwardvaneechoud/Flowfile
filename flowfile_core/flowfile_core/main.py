@@ -337,10 +337,12 @@ def _join_hub(port: int | None = None) -> None:
     One join registers the pair as one node: the name is ``--name``, else the machine's, and the two addresses are
     ``--url`` and ``--worker-url``, else this machine's full name on core's port and on the worker's, plain ``http``.
     The worker beside it reads the joined name from the storage dir they share. A core that joined already makes no
-    request (``shared.hub_node``).
+    request (``shared.hub_node``). The token leaves this process's environment first, so no run or worker that core
+    starts later reads ``FLOWFILE_HUB_JOIN_TOKEN`` without the hub given as ``--hub``, or joins with it again.
     """
     if not JOIN_TOKEN:
         return
+    os.environ.pop("FLOWFILE_HUB_JOIN_TOKEN", None)
     hub_node.join_at_start(
         JOIN_HUB_URL,
         JOIN_TOKEN,
