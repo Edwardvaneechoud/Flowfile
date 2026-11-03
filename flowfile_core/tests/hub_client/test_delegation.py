@@ -14,6 +14,7 @@ import jwt
 import pytest
 
 from flowfile_core.auth import secrets as core_secrets
+from flowfile_core.configs import logger as core_logger
 from flowfile_core.hub_client import client, delegation, node_tokens, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable
 from flowfile_core.hub_client.delegation import REVOKE_PATH, TOKEN_PATH, Delegation
@@ -248,9 +249,13 @@ def test_an_answer_that_is_not_a_delegation_is_refused(hub, monkeypatch, answer)
 
 
 def test_the_log_names_the_route_and_status_and_never_a_token(hub, caplog):
-    with caplog.at_level(logging.DEBUG):
-        answer = sign_in(hub)
-        delegation.refresh(hub.url, hub.issuer, answer.refresh_token)
+    core_logger.addHandler(caplog.handler)  # core's logger does not propagate, so caplog sees it only through this
+    try:
+        with caplog.at_level(logging.DEBUG):
+            answer = sign_in(hub)
+            delegation.refresh(hub.url, hub.issuer, answer.refresh_token)
+    finally:
+        core_logger.removeHandler(caplog.handler)
 
     assert "hub POST /hub/token -> 200" in caplog.text
     assert "eyJ" not in caplog.text and "hub-refresh-" not in caplog.text and "hub-access-" not in caplog.text
