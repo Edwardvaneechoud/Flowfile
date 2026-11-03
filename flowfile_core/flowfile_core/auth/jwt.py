@@ -14,12 +14,13 @@ from fastapi.security import OAuth2PasswordBearer
 from jwt import PyJWTError as JWTError
 from sqlalchemy.orm import Session
 
+from flowfile_core.auth import issuer_accounts
 from flowfile_core.auth.models import TokenData, User
 from flowfile_core.auth.secrets import get_password, set_password
 from flowfile_core.configs.settings import ACCESS_TOKEN_EXPIRE_MINUTES
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
-from shared import hub_tokens
+from shared import hub_node, hub_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -292,10 +293,17 @@ def _refuse_hub_tokens(token: str = Depends(oauth2_scheme)) -> None:
 
 
 def _resolve_hub_user(db: Session, claims: hub_tokens.HubClaims, credentials_exception: HTTPException) -> User:
-    """The user a ``run`` token names: by its ``uid`` claim, else by the username in ``sub``.
+    """The user a ``run`` token names; which rule finds them depends on whether this server has people of its own.
 
-    A node on a hub shares the hub's user table, so the id the hub put in the token is this core's id too. A
-    ``dispatch`` token is the hub acting as itself and names no user, so it is refused here.
+    On a server that joined its hub with keys of its own (``issuer_accounts.joined_with_keys``, the rule the hub
+    sign-in and ``/auth/sign_in_method`` follow), the person is the account ``issuer_accounts`` maps to the hub's issuer
+    and the token's ``uid``, never a local id or a username, so a token without ``uid`` is refused. A person not mapped
+    yet gets their account as at a first sign-in, but never as an administrator and with no full name, since a ``run``
+    token carries neither; a mapped account keeps its ``is_admin``, which only a sign-in changes.
+
+    Anywhere else (a node set up by hand, or joined without keys) the node shares the hub's user table, so the id the
+    hub put in the token is this core's id too, and the username in ``sub`` is the fallback. A ``dispatch`` token is the
+    hub acting as itself and names no user, so it is refused here.
     """
     if claims.scope == "dispatch":
         raise HTTPException(
@@ -303,17 +311,37 @@ def _resolve_hub_user(db: Session, claims: hub_tokens.HubClaims, credentials_exc
             detail="dispatch tokens are not user tokens",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    row = None
-    if claims.user_id is not None:
-        row = db.query(db_models.User).filter(db_models.User.id == claims.user_id).first()
-    if row is None:
-        row = db.query(db_models.User).filter(db_models.User.username == claims.subject).first()
+    if issuer_accounts.joined_with_keys() is not None:
+        row = _issuer_account_for(db, claims)
+    else:
+        row = None
+        if claims.user_id is not None:
+            row = db.query(db_models.User).filter(db_models.User.id == claims.user_id).first()
+        if row is None:
+            row = db.query(db_models.User).filter(db_models.User.username == claims.subject).first()
     if row is None:
         raise credentials_exception
     user = _user_from_row(row)
     if user.disabled:
         raise HTTPException(status_code=400, detail="Inactive user")
     return user
+
+
+def _issuer_account_for(db: Session, claims: hub_tokens.HubClaims) -> db_models.User:
+    """The account mapped to the person a ``run`` token names, made at their first token and never an administrator."""
+    if claims.user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Hub token refused: missing claim uid",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    settings = hub_node.resolved()
+    row = issuer_accounts.issuer_account(db, settings.issuer, claims.user_id)
+    if row is None:
+        person = {"uid": claims.user_id, "username": claims.subject, "full_name": None, "node_admin": False}
+        row = issuer_accounts.new_issuer_account(db, settings.issuer, settings.hub_url, person)
+        db.commit()
+    return row
 
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
