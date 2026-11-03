@@ -1,5 +1,5 @@
-"""A node's identity on a hub: how the variables and the joined file combine, the join itself, joining at start, and
-the heartbeat that tells the hub the node is up."""
+"""A node's identity on a hub: how the variables and the joined file combine, the join itself, joining at start, the
+folder, port and address a node that joins takes, and the heartbeat that tells the hub the node is up."""
 
 import json
 import logging
@@ -450,6 +450,276 @@ def test_a_reverse_lookup_name_is_not_an_address_a_desktop_reaches(monkeypatch):
     monkeypatch.setattr(hub_node.socket, "getfqdn", lambda: "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa")
 
     assert hub_node.default_url(63579, tls=False) == "http://build-7.local:63579"
+
+
+def test_a_join_keeps_the_port_the_worker_serves_on_and_a_cores_join_keeps_none(join_hub, node_file):
+    hub_node.join(join_hub.url, join_hub.mint(), name="worker-1", worker_url="http://w:64001", worker_port=64001)
+
+    assert json.loads(node_file.read_text(encoding="utf-8"))["worker_port"] == 64001
+    assert hub_node.read().worker_port == 64001
+
+    hub_node.join(join_hub.url, join_hub.mint(), name="team", worker_url="http://w:1", core_url="http://c:2")
+
+    assert "worker_port" not in json.loads(node_file.read_text(encoding="utf-8"))
+    assert hub_node.read().worker_port is None
+
+
+@pytest.mark.parametrize("port", [0, 70000, "63579", True], ids=["zero", "too high", "text", "bool"])
+def test_a_kept_port_that_is_no_port_reads_as_none(node_file, port):
+    write_node(node_file, worker_port=port)
+
+    assert hub_node.read().worker_port is None
+
+
+def test_a_start_with_the_token_the_node_joined_with_is_already_joined(join_hub, node_file):
+    token = join_hub.mint()
+    join_with(join_hub, token)
+
+    assert hub_node.already_joined(join_hub.url + "/", token).name == "worker-1"
+    assert hub_node.already_joined(join_hub.url, join_hub.mint()) is None
+
+
+def test_a_file_from_before_the_token_hash_is_already_joined_for_its_own_hub_only(node_file):
+    write_node(node_file)
+
+    assert hub_node.already_joined(HUB, "any-token").name == "team"
+    assert hub_node.already_joined("http://other.example:63580", "any-token") is None
+
+
+@pytest.fixture
+def home(tmp_path, monkeypatch):
+    """A home directory of the test's own, and none of the storage variables set."""
+    target = tmp_path / "home"
+    target.mkdir()
+    monkeypatch.setenv("HOME", str(target))
+    for name in ("FLOWFILE_STORAGE_DIR", "SECURE_STORAGE_PATH", "FLOWFILE_SECURE_STORAGE_PATH", "FLOWFILE_MODE"):
+        monkeypatch.delenv(name, raising=False)
+    return target
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the home directory comes from HOME on POSIX only")
+def test_a_node_that_joins_keeps_its_files_in_a_folder_of_its_own(home):
+    folder = hub_node.node_storage("join-token", "card-node")
+
+    assert folder == home / ".flowfile-node" / "card-node"
+    assert stat.S_IMODE(folder.stat().st_mode) == 0o700
+    assert stat.S_IMODE(folder.parent.stat().st_mode) == 0o700
+    assert os.environ["FLOWFILE_STORAGE_DIR"] == str(folder)
+    assert os.environ["SECURE_STORAGE_PATH"] == os.environ["FLOWFILE_SECURE_STORAGE_PATH"] == str(folder / "secure")
+    assert sorted(path.name for path in home.iterdir()) == [".flowfile-node"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the home directory comes from HOME on POSIX only")
+def test_a_node_given_no_name_keeps_its_files_under_the_machines_name(home, monkeypatch):
+    monkeypatch.setattr(hub_node.socket, "gethostname", lambda: "build-7.example.com")
+
+    assert hub_node.node_storage("join-token", None) == home / ".flowfile-node" / "build-7"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the home directory comes from HOME on POSIX only")
+def test_a_secure_storage_path_already_set_is_kept(home, monkeypatch):
+    monkeypatch.setenv("FLOWFILE_SECURE_STORAGE_PATH", "/vault/flowfile")
+
+    folder = hub_node.node_storage("join-token", "card-node")
+
+    assert os.environ["FLOWFILE_SECURE_STORAGE_PATH"] == "/vault/flowfile"
+    assert os.environ["SECURE_STORAGE_PATH"] == str(folder / "secure")
+
+
+@pytest.mark.parametrize(
+    "token,variables",
+    [
+        ("join-token", {"FLOWFILE_STORAGE_DIR": "/srv/flowfile"}),
+        (None, {}),
+        ("", {}),
+        ("join-token", {"FLOWFILE_MODE": "docker"}),
+    ],
+    ids=["storage dir set", "no token", "empty token", "docker"],
+)
+def test_the_storage_dir_is_left_alone_without_a_token_or_with_one_set(home, monkeypatch, token, variables):
+    for name, value in variables.items():
+        monkeypatch.setenv(name, value)
+
+    assert hub_node.node_storage(token, "card-node") is None
+    assert os.environ.get("FLOWFILE_STORAGE_DIR") == variables.get("FLOWFILE_STORAGE_DIR")
+    assert "FLOWFILE_SECURE_STORAGE_PATH" not in os.environ
+    assert list(home.iterdir()) == []
+
+
+@pytest.mark.parametrize("name", ["../desktop", "a/b", ".hidden", "with space"])
+def test_a_name_a_hub_would_refuse_is_no_folder_and_exits_2(home, caplog, name):
+    with caplog.at_level(logging.ERROR, logger="flowfile.hub_node"), pytest.raises(SystemExit) as exited:
+        hub_node.node_storage("join-token", name)
+
+    assert exited.value.code == 2
+    assert "give one with --name" in caplog.text
+    assert "FLOWFILE_STORAGE_DIR" not in os.environ
+    assert list(home.iterdir()) == []
+
+
+@pytest.fixture
+def held():
+    """Listening sockets that hold ports the way another server would; ``held(host)`` gives one and its port."""
+    sockets = []
+
+    def hold(host: str = "127.0.0.1", port: int = 0) -> int:
+        sock = socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET)
+        sock.bind((host, port))
+        sock.listen()
+        sockets.append(sock)
+        return sock.getsockname()[1]
+
+    yield hold
+    for sock in sockets:
+        sock.close()
+
+
+def free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def test_a_node_listens_on_the_port_it_is_given(held):
+    port = free_port()
+
+    with hub_node.listen("127.0.0.1", port) as sock:
+        assert sock.getsockname() == ("127.0.0.1", port)
+        socket.create_connection(("127.0.0.1", port), timeout=2).close()
+
+
+def test_a_given_port_in_use_is_refused_naming_the_host_the_port_and_what_holds_it(held):
+    port = held()
+
+    with pytest.raises(hub_node.CannotServe) as refused:
+        hub_node.listen("127.0.0.1", port)
+
+    assert refused.value.in_use
+    assert refused.value.reason.startswith(f"Cannot serve on 127.0.0.1:{port}: in use by ")
+    assert f"(pid {os.getpid()})" in refused.value.reason
+
+
+def test_an_address_this_machine_does_not_have_is_refused_with_the_os_reason_even_when_moving():
+    port = free_port()
+
+    with pytest.raises(hub_node.CannotServe) as refused:
+        hub_node.listen("192.0.2.1", port, move=True)
+
+    assert not refused.value.in_use
+    assert refused.value.reason.startswith(f"Cannot serve on 192.0.2.1:{port}: ")
+    assert "in use" not in refused.value.reason
+
+
+def test_a_port_in_use_gives_way_to_the_next_free_one_and_says_so(held, caplog):
+    port = held()
+
+    with caplog.at_level(logging.INFO, logger="flowfile.hub_node"):
+        with hub_node.listen("127.0.0.1", port, move=True) as sock:
+            moved = sock.getsockname()[1]
+
+    assert moved != port
+    assert f"Port {port} is in use; serving on {moved}" in caplog.text
+
+
+def test_a_port_in_use_gives_way_to_the_kept_port_first(held):
+    port, kept = held(), free_port()
+
+    with hub_node.listen("127.0.0.1", port, move=True, kept=kept) as sock:
+        assert sock.getsockname()[1] == kept
+
+
+def test_a_kept_port_in_use_too_gives_way_to_another(held):
+    port, kept = held(), held()
+
+    with hub_node.listen("127.0.0.1", port, move=True, kept=kept) as sock:
+        assert sock.getsockname()[1] not in (port, kept)
+
+
+def test_the_ports_a_node_moves_to_skip_a_hubs_and_end_with_one_the_os_picks():
+    ports = hub_node._other_ports(63579, None)
+
+    assert ports[:3] == [63581, 63582, 63583]
+    assert hub_node.HUB_PORT not in ports
+    assert ports[-2:] == [63629, 0]
+    assert hub_node._other_ports(63579, 64000)[:2] == [64000, 63581]
+    assert hub_node._other_ports(63579, 63582).count(63582) == 1
+    assert hub_node._other_ports(65533, None) == [65534, 65535, 0]
+
+
+def test_a_port_another_server_holds_on_loopback_counts_as_in_use_for_every_address(held):
+    port = held("127.0.0.1")
+
+    with hub_node.listen("0.0.0.0", port, move=True) as sock:
+        assert sock.getsockname()[1] != port
+
+
+def test_a_port_no_other_server_holds_is_not_shadowed():
+    with hub_node._bind("0.0.0.0", 0) as sock:
+        assert not hub_node._shadowed(sock)
+
+
+@pytest.fixture
+def routes(monkeypatch):
+    """The routes asked of the OS, each answered from ``answers`` (``None`` when absent): no network needed."""
+    asked, answers = [], {}
+
+    def route(host, port, family):
+        asked.append((host, port, family))
+        return answers.get(host)
+
+    monkeypatch.setattr(hub_node, "_route_address", route)
+    return asked, answers
+
+
+@pytest.mark.parametrize("host", ["10.1.2.3", "127.0.0.1", "localhost", "::1", "[::1]"])
+def test_a_node_bound_to_one_address_gives_that_address(routes, host):
+    asked, _ = routes
+
+    assert hub_node.address_for(HUB, host) == host.strip("[]")
+    assert asked == []
+
+
+def test_a_node_on_every_address_gives_its_address_towards_the_hub(routes):
+    asked, answers = routes
+    answers["hub.example"] = "10.0.0.7"
+
+    assert hub_node.node_url(HUB, "0.0.0.0", 63581, tls=False) == "http://10.0.0.7:63581"
+    assert asked == [("hub.example", 63580, socket.AF_INET)]
+
+
+@pytest.mark.parametrize("hub_url", ["http://localhost:63580", "http://127.0.0.1:63580", "http://[::1]:63580"])
+def test_a_node_beside_its_hub_gives_its_address_towards_other_machines(routes, hub_url):
+    asked, answers = routes
+    answers["192.0.2.1"] = "192.168.1.20"
+
+    assert hub_node.node_url(hub_url, "0.0.0.0", 63579, tls=True) == "https://192.168.1.20:63579"
+    assert asked == [("192.0.2.1", 80, socket.AF_INET)]
+
+
+def test_a_hub_with_no_route_falls_back_to_the_route_towards_other_machines(routes):
+    asked, answers = routes
+    answers["192.0.2.1"] = "192.168.1.20"
+
+    assert hub_node.address_for("https://hub.example", "0.0.0.0") == "192.168.1.20"
+    assert asked == [("hub.example", 443, socket.AF_INET), ("192.0.2.1", 80, socket.AF_INET)]
+
+
+def test_with_no_route_at_all_a_node_gives_the_machines_name(routes, monkeypatch):
+    monkeypatch.setattr(hub_node.socket, "getfqdn", lambda: "build-7.example.com")
+
+    assert hub_node.node_url(HUB, "0.0.0.0", 63579, tls=False) == "http://build-7.example.com:63579"
+
+
+def test_a_node_on_every_ipv6_address_gives_an_ipv6_address_in_brackets(routes):
+    asked, answers = routes
+    answers["2001:db8::1"] = "2001:db8::5"
+
+    assert hub_node.node_url("http://localhost:63580", "::", 63579, tls=False) == "http://[2001:db8::5]:63579"
+    assert asked == [("2001:db8::1", 80, socket.AF_INET6)]
+
+
+def test_the_os_route_to_loopback_is_no_address_for_a_hub():
+    assert hub_node._route_address("127.0.0.1", 9, socket.AF_INET) is None
 
 
 def joined_with_keys(hub: FakeJoinHub, *, enabled: bool = True, core_url: str | None = None) -> HubNode:
