@@ -34,7 +34,7 @@ def single_file_app(monkeypatch) -> FastAPI:
     """The process as ``start_server`` leaves it before uvicorn starts: marked as serving, in single-file mode."""
     app = FastAPI()
     monkeypatch.setattr(core_main, "app", app)
-    monkeypatch.setattr(core_main, "run", lambda host, port: registry.mark_serving())
+    monkeypatch.setattr(core_main, "run", lambda host, port, sock=None: registry.mark_serving())
     monkeypatch.setattr(registry, "_serving", False)
     monkeypatch.setattr(settings.OFFLOAD_TO_WORKER, "value", settings.OFFLOAD_TO_WORKER.value)
     monkeypatch.setattr(settings.SINGLE_FILE_MODE, "value", settings.SINGLE_FILE_MODE.value)
