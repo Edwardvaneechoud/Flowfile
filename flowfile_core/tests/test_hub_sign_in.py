@@ -207,7 +207,7 @@ def test_a_person_whose_both_names_are_taken_is_refused_with_a_sentence(hub, use
     assert response.status_code == 409
     assert response.json()["detail"] == (
         f"This server already has accounts named {username} and {username}@127.0.0.1; "
-        "an administrator renames one of them before this person can sign in here."
+        "an administrator removes one of them before this person can sign in here."
     )
     assert mapping(hub, 7) is None
 

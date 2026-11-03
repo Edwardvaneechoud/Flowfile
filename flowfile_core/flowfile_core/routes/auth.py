@@ -155,7 +155,7 @@ def _new_issuer_account(db: Session, issuer: str, hub_url: str, person: dict) ->
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"This server already has accounts named {person['username']} and {person['username']}@{hub_host}; "
-            "an administrator renames one of them before this person can sign in here.",
+            "an administrator removes one of them before this person can sign in here.",
         )
     user = db_models.User(
         username=username,
