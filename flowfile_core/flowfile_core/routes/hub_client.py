@@ -14,7 +14,8 @@ The hub's compute nodes fill core's ``compute_backends`` table (``/compute_nodes
 ``worker:<name>`` row per enabled node, holding no token, so placement and the per-node picker see them as any other
 worker while the registry asks the hub for a short-lived token when one is used. A row an administrator added by
 hand under the same id is never touched. Disconnecting removes the caller's hub-filled rows. A core that is itself a
-node on the hub (``FLOWFILE_NODE_NAME``) never writes a row for its own node: its worker is its built-in one.
+node on the hub, named by ``FLOWFILE_NODE_NAME`` or by the hub it joined (``hub_node.json``), never writes a row for
+its own node: its worker is its built-in one.
 
 Right after a sync each row it wrote is checked once, in the background, for whether this machine reaches the node's
 worker (``hub_client.reachability``); the listing carries the outcome, and ``/compute_nodes/check`` runs the check
@@ -55,6 +56,7 @@ from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersi
 from flowfile_core.routes.compute_backends import ComputeBackendOut, listed_backends
 from flowfile_core.routes.routes import get_flow_or_404
 from flowfile_core.schemas import schemas
+from shared import hub_node
 from shared._version import get_version
 from shared.storage_config import storage
 
@@ -83,8 +85,9 @@ class HubConnection(BaseModel):
     sync_error: str | None = None
     """After a connect whose node sync failed, why; the connection itself stands."""
     node_name: str | None = None
-    """This core's own name as a node on the hub (``FLOWFILE_NODE_NAME``), connected or not; ``None`` when it is
-    not one. A sync never lists that node as a backend: its worker is the one beside this core."""
+    """This core's own name as a node on the hub (``FLOWFILE_NODE_NAME``, or the name it joined with), connected or
+    not; ``None`` when it is not one. A sync never lists that node as a backend: its worker is the one beside this
+    core."""
 
 
 class HubConnectRequest(BaseModel):
@@ -108,8 +111,12 @@ def _hostname() -> str:
 
 
 def _own_node_name() -> str | None:
-    """The name this core carries as a node on the hub, ``FLOWFILE_NODE_NAME``; ``None`` when it is not one."""
-    return os.environ.get("FLOWFILE_NODE_NAME", "").strip() or None
+    """The name this core carries as a node on the hub; ``None`` when it is not one.
+
+    ``FLOWFILE_NODE_NAME`` first, then the name it joined the hub with (``shared.hub_node.resolved``), so a core named
+    by hand and one that joined are both their own node.
+    """
+    return hub_node.resolved().name
 
 
 def _connection(stored: dict | None, info: dict | None = None, error: str | None = None) -> HubConnection:
@@ -239,7 +246,7 @@ def _sync_nodes(db: Session, user_id: int, hub_url: str, access_token: str) -> t
     node's id on the hub and ``hub_user_id`` the caller, whose hub session mints the tokens the backend signs with.
     A hub-filled row whose node is gone, disabled or renamed is removed; a row added by hand is never touched and its
     node is reported as skipped. A row written or updated is forgotten in the registry, so its next use reads it.
-    The node this core is itself (``FLOWFILE_NODE_NAME``) is neither written nor counted nor skipped, and a row an
+    The node this core is itself (``_own_node_name``) is neither written nor counted nor skipped, and a row an
     earlier sync wrote for it goes. The hub's errors propagate; nothing is committed then.
     """
     nodes = client.list_compute_nodes(hub_url, access_token)
