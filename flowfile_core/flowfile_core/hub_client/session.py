@@ -6,6 +6,10 @@ so it never shows in the Secrets page and no node can reference it. No password 
 live only in this process's memory; each refresh rotates the refresh token and the new one is stored straight away.
 The node tokens minted through a connection (``node_tokens``) go with it when it is replaced or cleared.
 
+On a server that joined a hub, a person who signed in through the hub has a session of ``kind: "delegation"`` instead
+(``save_delegation``): ``hub_url``, the delegation's ``refresh_token`` and ``refresh_expires_at``. Its tokens are
+opaque, so their expiries are the hub's answer counted from when it came, not ``exp`` claims.
+
 A token's expiry is read from its own ``exp`` claim without verifying the signature: the hub verifies its tokens,
 this side only needs to know when to ask for a new one.
 """
@@ -13,11 +17,15 @@ this side only needs to know when to ask for a new one.
 import json
 import threading
 import time
+from typing import TYPE_CHECKING
 
 import jwt
 
 from flowfile_core.auth import secrets
 from flowfile_core.hub_client import client
+
+if TYPE_CHECKING:
+    from flowfile_core.hub_client.delegation import Delegation
 
 SERVICE = "flowfile_hub"
 _REFRESH_MARGIN_SECONDS = 60
@@ -66,6 +74,26 @@ def save(user_id: int, session: dict) -> None:
     with _lock:
         _access_tokens.pop(user_id, None)
         secrets.set_password(SERVICE, _key(user_id), json.dumps(stored))
+    _forget_node_tokens(user_id)
+
+
+def save_delegation(user_id: int, hub_url: str, delegation: "Delegation") -> None:
+    """Store a sign-in through the hub as the session of ``user_id``, replacing any earlier one, and cache its access
+    token in this process until the hub's ``expires_in`` runs out.
+
+    The session holds ``kind: "delegation"``, ``hub_url``, the refresh token and ``refresh_expires_at``, the hub's
+    ``refresh_expires_in`` from now; the access token is never stored.
+    """
+    now = time.time()
+    stored = {
+        "kind": "delegation",
+        "hub_url": hub_url.rstrip("/"),
+        "refresh_token": delegation.refresh_token,
+        "refresh_expires_at": now + delegation.refresh_expires_in,
+    }
+    with _lock:
+        secrets.set_password(SERVICE, _key(user_id), json.dumps(stored))
+        _access_tokens[user_id] = (delegation.access_token, now + delegation.expires_in)
     _forget_node_tokens(user_id)
 
 
