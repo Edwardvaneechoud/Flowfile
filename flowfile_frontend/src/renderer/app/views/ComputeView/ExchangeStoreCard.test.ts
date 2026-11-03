@@ -104,6 +104,11 @@ const summary = async () => {
 beforeEach(() => {
   mocks.get.mockReset();
   mocks.set.mockReset();
+  try {
+    localStorage.clear();
+  } catch {
+    // no localStorage here, so nothing carries the card's open state to the next mount
+  }
 });
 
 afterEach(() => {
