@@ -27,6 +27,7 @@ from flowfile_worker.protocol_routes import router as protocol_router
 from flowfile_worker.routes import router
 from flowfile_worker.streaming import streaming_router, v1_streaming_router
 from shared import hub_node
+from shared._version import get_version
 from shared.parent_watcher import start_parent_death_watcher
 from shared.storage_config import storage
 
@@ -81,6 +82,16 @@ async def request_validation_without_input(request: Request, exc: RequestValidat
     """FastAPI's 422 without each error's ``input``, which repeats the body (an export or import's presigned URI)."""
     errors = [{key: value for key, value in error.items() if key != "input"} for error in exc.errors()]
     return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    """Say the worker is up and which Flowfile release it runs, to any caller, with or without a token.
+
+    Nothing more: the host, Python, Polars and the operations are in ``/v1/capabilities``, behind a token.
+    Core never calls this route, so it is not part of the worker contract.
+    """
+    return {"status": "ok", "version": get_version()}
 
 
 def _supervising_shell(request: Request) -> bool:

@@ -7,12 +7,16 @@ from pydantic import BaseModel
 from flowfile_core.auth.secrets import generate_master_key, is_master_key_configured
 from flowfile_core.configs import settings
 from flowfile_core.project.git_ops import git_available
+from shared._version import get_version
 
 router = APIRouter()
 
 
 class SetupStatus(BaseModel):
-    """Response model for the setup status endpoint."""
+    """Response model for the setup status endpoint, which answers without a token.
+
+    ``version`` is the Flowfile release this core runs, so whatever watches the server can read it without signing in.
+    """
 
     setup_required: bool
     master_key_configured: bool
@@ -20,6 +24,7 @@ class SetupStatus(BaseModel):
     projects_enabled: bool
     projects_confined: bool
     git_available: bool
+    version: str
 
 
 class GeneratedKey(BaseModel):
@@ -51,6 +56,7 @@ async def get_setup_status():
         projects_enabled=(not settings.is_docker_mode()) or bool(settings.FLOWFILE_ENABLE_PROJECTS),
         projects_confined=not settings.is_electron_mode(),
         git_available=git_available(),
+        version=get_version(),
     )
 
 

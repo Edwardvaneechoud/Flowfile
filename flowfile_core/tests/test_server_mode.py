@@ -1,5 +1,6 @@
 """Server-mode security gates: ``docker`` and ``hub`` both require a configured master key and seed the admin
-user from the environment; ``electron`` and ``package`` keep generating a local key and seed no admin.
+user from the environment; ``electron`` and ``package`` keep generating a local key and seed no admin. Without a token,
+a server's ``GET /health/status`` names the Flowfile version it runs.
 
 ``FLOWFILE_MODE`` is set per test through ``monkeypatch.setenv``, since these gates read it per call.
 """
@@ -18,6 +19,7 @@ from flowfile_core.configs.settings import is_docker_mode, is_server_mode
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.init_db import create_docker_admin_user
+from shared._version import __version__
 
 SERVER_MODES = ["docker", "hub"]
 LOCAL_MODES = ["electron", "package"]
@@ -128,6 +130,20 @@ class TestMasterKeyGate:
         monkeypatch.setenv("FLOWFILE_MASTER_KEY", env_key)
 
         assert get_master_key() != env_key
+
+
+class TestHealthStatus:
+    @pytest.mark.parametrize("mode", SERVER_MODES)
+    def test_server_mode_names_the_version_without_a_token(self, monkeypatch, mode):
+        monkeypatch.setenv("FLOWFILE_MODE", mode)
+
+        with TestClient(main.app) as client:
+            response = client.get("/health/status")
+            refused = client.get("/auth/users/me")
+
+        assert response.status_code == 200
+        assert response.json()["version"] == __version__
+        assert refused.status_code == 401
 
 
 class TestAdminSeeding:

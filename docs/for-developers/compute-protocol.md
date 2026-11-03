@@ -296,6 +296,8 @@ Core and a worker of different app releases work together while they speak one c
 
 The worker serves its capabilities at `GET /capabilities` and `GET /v1/capabilities`. `POST /shutdown` takes the internal token like every other route; without it, the worker answers only a loopback peer while the desktop shell supervises it (`FLOWFILE_SUPERVISOR_PID`).
 
+`GET /health` takes no token and answers `{"status": "ok", "version": "<the worker's Flowfile version>"}` and nothing more, so whatever watches the worker can tell it is up and which release it runs; core never calls it, and it is not part of the contract.
+
 ## Bounded reads
 
 A backend provides rows; core renders them. `sample` answers an Arrow IPC stream, and with `preview_rows` set, `submit` returns it inline on every backend. The common case costs no second round trip, and a plan that cannot run fails its node in Development mode on every backend alike. Reopening a flow, another row count or an on-demand probe calls `sample(ref, n)`, and core caches the bytes per node hash. A read of a node whose last run failed raises that run's error (`FlowNode.get_resulting_data`).
