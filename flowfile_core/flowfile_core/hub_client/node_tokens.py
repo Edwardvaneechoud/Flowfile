@@ -19,7 +19,7 @@ RECONNECT = "connect to the hub again"
 _MARGIN_SECONDS = 60
 
 _tokens: dict[tuple[int, int], tuple[str, float | None]] = {}
-_lock = threading.Lock()
+_lock = threading.RLock()  # a refresh inside token_for that ends the session clears these tokens
 
 
 def token_for(user_id: int, node_id: int, node_name: str) -> str:

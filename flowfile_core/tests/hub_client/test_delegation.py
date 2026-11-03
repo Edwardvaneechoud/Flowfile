@@ -13,7 +13,7 @@ import jwt
 import pytest
 
 from flowfile_core.auth import secrets as core_secrets
-from flowfile_core.hub_client import client, delegation, session
+from flowfile_core.hub_client import client, delegation, node_tokens, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable
 from flowfile_core.hub_client.delegation import REVOKE_PATH, TOKEN_PATH, Delegation
 from shared import hub_node, hub_node_key
@@ -281,3 +281,146 @@ def test_a_delegation_replaces_a_desktop_connection_and_its_cached_access_token(
 
     assert session.load(USER_ID)["kind"] == "delegation"
     assert session.access_token(USER_ID) == answer.access_token
+
+
+@pytest.fixture
+def minted(monkeypatch) -> dict:
+    """This process's node tokens, the test's own and empty."""
+    tokens: dict = {}
+    monkeypatch.setattr(node_tokens, "_tokens", tokens)
+    return tokens
+
+
+def mint_for_node_3(minted: dict) -> None:
+    minted[(USER_ID, 3)] = ("a node token minted through the sign-in", time.time() + 3600)
+
+
+def signed_in_session(hub: FakeJoinHub, **claims) -> Delegation:
+    """A delegation kept as ``USER_ID``'s session, its cached access token made to be within a minute of its end."""
+    answer = sign_in(hub, **claims)
+    session.save_delegation(USER_ID, hub.url, answer)
+    session._access_tokens[USER_ID] = (answer.access_token, time.time() + 30)
+    return answer
+
+
+def refreshes(hub: FakeJoinHub) -> list[dict]:
+    return [request for request in hub.token_requests if request["grant_type"] == "refresh_token"]
+
+
+def test_an_access_token_near_its_end_is_refreshed_through_the_hub_and_the_rotated_token_kept(hub, store):
+    first = signed_in_session(hub)
+
+    token = session.access_token(USER_ID)
+
+    assert token.startswith("hub-access-") and token != first.access_token
+    [refreshed] = refreshes(hub)
+    assert refreshed["claims"]["aud"] == hub.issuer + TOKEN_PATH
+    assert [form["refresh_token"] for form in sent(hub, TOKEN_PATH)[1:]] == [first.refresh_token]
+    stored = session.load(USER_ID)
+    assert stored["kind"] == "delegation" and stored["refresh_token"] in hub.live_refresh_tokens()
+    assert first.refresh_token not in hub.live_refresh_tokens()
+    assert time.time() + DELEGATION_SECONDS - 10 <= stored["refresh_expires_at"] <= time.time() + DELEGATION_SECONDS
+    assert session.access_token(USER_ID) == token
+    assert len(refreshes(hub)) == 1
+
+
+def test_a_refresh_the_hub_answers_invalid_grant_clears_the_session_and_raises(hub, store, minted):
+    signed_in_session(hub)
+    mint_for_node_3(minted)
+    hub.refuse_next_refresh = True
+
+    refused = refusal(session.access_token, USER_ID)
+
+    assert (refused.status, refused.detail) == (400, "this sign-in was ended on the hub")
+    assert refused.payload["error"] == "invalid_grant"
+    assert session.load(USER_ID) is None and USER_ID not in session._access_tokens
+    assert minted == {}
+    calls = len(hub.calls)
+    assert session.access_token(USER_ID) is None
+    assert len(hub.calls) == calls
+
+
+def test_a_person_no_longer_allowed_on_the_node_has_the_session_cleared(hub, store):
+    signed_in_session(hub)
+    hub.refused_people.add(7)
+
+    refused = refusal(session.access_token, USER_ID)
+
+    assert (refused.detail, refused.payload["error"]) == ("this person may not use this node now", "invalid_grant")
+    assert session.load(USER_ID) is None
+
+
+def test_a_refresh_refused_for_another_reason_keeps_the_session(hub, store):
+    signed_in_session(hub)
+    before = session.load(USER_ID)
+    hub.set_enabled(NODE, False)
+
+    refused = refusal(session.access_token, USER_ID)
+
+    assert (refused.status, refused.payload["error"]) == (401, "invalid_client")
+    assert session.load(USER_ID) == before
+
+
+def test_a_hub_that_does_not_answer_the_refresh_keeps_the_session(hub, store):
+    signed_in_session(hub)
+    before = session.load(USER_ID)
+    hub.close()
+
+    with pytest.raises(HubUnreachable):
+        session.access_token(USER_ID)
+
+    assert session.load(USER_ID) == before
+
+
+def test_a_node_that_lost_its_keys_cannot_refresh_and_keeps_the_session(hub, store, node_file, caplog):
+    signed_in_session(hub)
+    before = session.load(USER_ID)
+    calls = len(hub.calls)
+    node_file.with_name(hub_node_key.FILE_NAME).unlink()
+
+    refused = refusal(session.access_token, USER_ID)
+
+    assert (refused.status, refused.detail) == (401, "This server cannot sign for itself at its hub.")
+    assert len(hub.calls) == calls and session.load(USER_ID) == before
+    assert "this node has no keys of its own at" in caplog.text
+
+
+def test_refresh_delegation_asks_the_hub_whatever_access_token_is_cached(hub, store):
+    first = sign_in(hub)
+    session.save_delegation(USER_ID, hub.url, first)
+
+    refreshed = session.refresh_delegation(USER_ID)
+
+    assert refreshed.refresh_token == session.load(USER_ID)["refresh_token"] != first.refresh_token
+    assert session.access_token(USER_ID) == refreshed.access_token
+    assert len(refreshes(hub)) == 1
+
+
+def test_refresh_delegation_without_a_sign_in_through_the_hub_asks_nothing(hub, store):
+    assert session.refresh_delegation(USER_ID) is None
+    core_secrets.set_password(session.SERVICE, f"session:{USER_ID}", json.dumps({"hub_url": hub.url}))
+    assert session.refresh_delegation(USER_ID) is None
+    assert sent(hub, TOKEN_PATH) == []
+
+
+def test_refresh_delegation_the_hub_refuses_clears_the_session_and_its_node_tokens(hub, store, minted):
+    signed_in_session(hub)
+    mint_for_node_3(minted)
+    hub.refuse_next_refresh = True
+
+    refused = refusal(session.refresh_delegation, USER_ID)
+
+    assert refused.payload["error"] == "invalid_grant"
+    assert session.load(USER_ID) is None and minted == {}
+
+
+@pytest.mark.timeout(60)
+def test_a_node_token_asked_for_when_the_hub_ended_the_sign_in_is_refused_and_forgotten(hub, store, minted):
+    signed_in_session(hub)
+    mint_for_node_3(minted)
+    hub.refuse_next_refresh = True
+
+    with pytest.raises(LookupError, match="the hub refused a token for node 'team-2': this sign-in was ended"):
+        node_tokens.token_for(USER_ID, 4, "team-2")
+
+    assert session.load(USER_ID) is None and minted == {}
