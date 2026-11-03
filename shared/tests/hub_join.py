@@ -1,10 +1,11 @@
 """A hub that answers joins for the tests: ``POST /hub/nodes/join`` as the hub's contract has it, served from a thread.
 
-``mint()`` hands out an opaque join token; the join route checks a body as the hub's model does (a 422 in FastAPI's
-shape), refuses a token it did not mint, an expired one and a used one with the hub's sentences, and answers the
-others once. Given a ``HubSigner`` it also serves that signer's keys at ``/.well-known/jwks.json`` and names the
-signer's URL as the issuer, so one URL is the whole hub for a node that joins it and then verifies its tokens. Import
-the fixture into a test module: ``from shared.tests.hub_join import join_hub  # noqa: F401``.
+``mint()`` hands out an opaque join token; the join route checks a body as the hub's model does, the editor's
+``ui_url`` included (a 422 in FastAPI's shape), refuses a token it did not mint, an expired one and a used one with
+the hub's sentences, and answers the others once. Given a ``HubSigner`` it also serves that signer's keys at
+``/.well-known/jwks.json`` and names the signer's URL as the issuer, so one URL is the whole hub for a node that joins
+it and then verifies its tokens. Import the fixture into a test module:
+``from shared.tests.hub_join import join_hub  # noqa: F401``.
 """
 
 import json
@@ -31,7 +32,8 @@ def _validation_errors(body) -> list[dict]:
         return [{"type": "model_attributes_type", "loc": ["body"], "msg": "Input should be a valid dictionary"}]
     errors = []
     fields = (("token", None, True), ("name", NAME_PATTERN, True), ("worker_url", URL_PATTERN, True))
-    for field, pattern, required in (*fields, ("core_url", URL_PATTERN, False)):
+    optional = (("core_url", URL_PATTERN, False), ("ui_url", URL_PATTERN, False))
+    for field, pattern, required in (*fields, *optional):
         loc = ["body", field]
         if field not in body or (not required and body[field] is None):
             if required:

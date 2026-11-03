@@ -185,6 +185,7 @@ def _join(
     name: str,
     worker_url: str,
     core_url: str | None,
+    ui_url: str | None = None,
     http: "httpx.Client | None" = None,
 ) -> tuple[HubNode, bool]:
     """``join``, and whether the hub enabled the node at once."""
@@ -192,6 +193,8 @@ def _join(
 
     hub_url = hub_url.strip().rstrip("/")
     body = {"token": token, "name": name, "worker_url": worker_url, "core_url": core_url}
+    if ui_url:
+        body["ui_url"] = ui_url
     client = http or httpx.Client(
         timeout=httpx.Timeout(connect=5.0, read=15.0, write=15.0, pool=5.0), follow_redirects=False
     )
@@ -231,18 +234,28 @@ def join(
     name: str,
     worker_url: str,
     core_url: str | None = None,
+    ui_url: str | None = None,
     http: "httpx.Client | None" = None,
 ) -> HubNode:
     """Join the hub at ``hub_url`` with a join token and keep its answer in the file; ``JoinRefused`` when it says no.
 
-    ``name`` is the name this node asks for, ``worker_url`` the address desktops reach its worker at and ``core_url``
-    its core's, when it has one. The file is written whole or not at all, with the name and issuer the hub answered.
-    Logs the method, the path and the status, never the token or a body.
+    ``name`` is the name this node asks for, ``worker_url`` the address desktops reach its worker at, ``core_url``
+    its core's, when it has one, and ``ui_url`` the browser editor's, when its core serves one; without it the join
+    says nothing about an editor. The file is written whole or not at all, with the name and issuer the hub
+    answered. Logs the method, the path and the status, never the token or a body.
     """
-    return _join(hub_url, token, name=name, worker_url=worker_url, core_url=core_url, http=http)[0]
+    return _join(hub_url, token, name=name, worker_url=worker_url, core_url=core_url, ui_url=ui_url, http=http)[0]
 
 
-def join_at_start(hub_url: str, token: str, *, name: str, worker_url: str, core_url: str | None = None) -> HubNode:
+def join_at_start(
+    hub_url: str,
+    token: str,
+    *,
+    name: str,
+    worker_url: str,
+    core_url: str | None = None,
+    ui_url: str | None = None,
+) -> HubNode:
     """Join before serving; a refused join exits with code 2 and leaves the file as it was.
 
     The join token this node joined with makes no request a second time, so a restart with the same command keeps
@@ -274,7 +287,7 @@ def join_at_start(hub_url: str, token: str, *, name: str, worker_url: str, core_
             path().parent,
         )
     try:
-        node, enabled = _join(hub_url, token, name=name, worker_url=worker_url, core_url=core_url)
+        node, enabled = _join(hub_url, token, name=name, worker_url=worker_url, core_url=core_url, ui_url=ui_url)
     except JoinRefused as refused:
         logger.error("Could not join %s: %s", hub_url, refused.reason)
         raise SystemExit(2) from None
