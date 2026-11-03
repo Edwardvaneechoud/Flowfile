@@ -1,14 +1,12 @@
 # app_routes/auth.py
 
 import os
-import secrets
 from datetime import timedelta
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, Body, Depends, Form, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from flowfile_core.auth import sharing
+from flowfile_core.auth import issuer_accounts, sharing
 from flowfile_core.auth.jwt import (
     create_access_token,
     create_refresh_token,
@@ -25,7 +23,7 @@ from flowfile_core.database.connection import get_db
 from flowfile_core.hub_client import delegation
 from flowfile_core.hub_client import session as hub_session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable
-from shared import hub_node, hub_node_key, hub_tokens
+from shared import hub_node, hub_tokens
 
 router = APIRouter()
 
@@ -46,11 +44,11 @@ def login_for_access_token(
         return {"access_token": access_token, "token_type": "bearer"}
     else:
         # In Docker mode, authenticate against database
-        node = _joined_with_keys()
+        node = issuer_accounts.joined_with_keys()
         if node is not None:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"This server signs people in through {_hub_host(node.hub_url)}",
+                detail=f"This server signs people in through {issuer_accounts.hub_host(node.hub_url)}",
             )
         if not username or not password:
             raise HTTPException(
@@ -126,10 +124,6 @@ def logout(current_user: User = Depends(get_current_active_user)) -> None:
     return None
 
 
-def _hub_host(url: str) -> str:
-    return urlparse(url).hostname or url
-
-
 def _refresh_through_hub(user_id: int, issuer: str) -> None:
     """Refresh the sign-in through the hub of ``user_id`` at the hub; a 401 when the hub no longer takes it or none is
     kept here, a 502 when the hub does not answer.
@@ -141,14 +135,8 @@ def _refresh_through_hub(user_id: int, issuer: str) -> None:
     except HubRefused:
         refreshed = None
     if refreshed is None:
-        host = _hub_host(hub_node.resolved().hub_url or issuer)
+        host = issuer_accounts.hub_host(hub_node.resolved().hub_url or issuer)
         raise _refused(f"Your sign-in through {host} has ended; sign in again")
-
-
-def _joined_with_keys() -> hub_node.HubNode | None:
-    """This storage dir's node when it joined a hub and has keys of its own, so people sign in here through that hub."""
-    node = hub_node.read()
-    return node if node is not None and hub_node_key.path().is_file() else None
 
 
 @router.get("/sign_in_method")
@@ -157,7 +145,7 @@ def sign_in_method() -> dict:
 
     Through the hub, ``url`` is the hub's Open page for this node, where a person's browser starts the sign-in.
     """
-    node = _joined_with_keys()
+    node = issuer_accounts.joined_with_keys()
     if node is None:
         return {"method": "password"}
     hub_url = node.hub_url.rstrip("/")
@@ -174,59 +162,6 @@ def _sentence(text: str) -> str:
     return text.rstrip(".") + "."
 
 
-def _issuer_account(db: Session, issuer: str, subject_id: int) -> db_models.User | None:
-    """The local account of the issuer's person ``subject_id``; a mapping whose account is gone is dropped."""
-    mapping = (
-        db.query(db_models.IssuerAccount)
-        .filter(db_models.IssuerAccount.issuer == issuer, db_models.IssuerAccount.subject_id == subject_id)
-        .first()
-    )
-    if mapping is None:
-        return None
-    user = db.query(db_models.User).filter(db_models.User.id == mapping.user_id).first()
-    if user is None:
-        db.delete(mapping)
-        db.flush()
-    return user
-
-
-def _free_username(db: Session, wanted: str, hub_host: str) -> str | None:
-    for candidate in (wanted, f"{wanted}@{hub_host}"):
-        if candidate == sharing.INTERNAL_SERVICE_USERNAME:
-            continue
-        if db.query(db_models.User.id).filter(db_models.User.username == candidate).first() is None:
-            return candidate
-    return None
-
-
-def _new_issuer_account(db: Session, issuer: str, hub_url: str, person: dict) -> db_models.User:
-    """A local account for a person from the hub, named as on the hub unless a local account already holds that name.
-
-    Its password is a hash of random bytes nobody keeps, so the account signs in through the hub only.
-    """
-    hub_host = _hub_host(hub_url)
-    username = _free_username(db, person["username"], hub_host)
-    if username is None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"This server already has accounts named {person['username']} and {person['username']}@{hub_host}; "
-            "an administrator removes one of them before this person can sign in here.",
-        )
-    user = db_models.User(
-        username=username,
-        email=None,
-        full_name=person["full_name"],
-        hashed_password=get_password_hash(secrets.token_urlsafe(32)),
-        disabled=False,
-        is_admin=person["node_admin"],
-        must_change_password=False,
-    )
-    db.add(user)
-    db.flush()
-    db.add(db_models.IssuerAccount(issuer=issuer, subject_id=person["uid"], user_id=user.id))
-    return user
-
-
 @router.post("/hub/signin", response_model=Token)
 def sign_in_through_hub(token: str = Body(..., embed=True), db: Session = Depends(get_db)):
     """Sign a person in with the one-time sign-in token the hub's Open page gave their browser.
@@ -238,7 +173,7 @@ def sign_in_through_hub(token: str = Body(..., embed=True), db: Session = Depend
     own token pair, as ``/auth/token`` answers, its access token living 15 minutes as the hub's does. A token or an
     exchange the hub refuses is a 401 with one sentence.
     """
-    if _joined_with_keys() is None:
+    if issuer_accounts.joined_with_keys() is None:
         raise _refused("This server does not sign people in through a hub.")
     settings = hub_node.resolved()
     try:
@@ -247,7 +182,7 @@ def sign_in_through_hub(token: str = Body(..., embed=True), db: Session = Depend
         raise _refused(_sentence(f"The hub's sign-in token was refused: {e.reason}")) from None
     if claims is None or claims.user_id is None:
         raise _refused("This is not a sign-in token from the hub.")
-    user = _issuer_account(db, settings.issuer, claims.user_id)
+    user = issuer_accounts.issuer_account(db, settings.issuer, claims.user_id)
     if user is not None and user.disabled:
         raise _refused("This account is disabled on this server.")
     try:
@@ -262,7 +197,7 @@ def sign_in_through_hub(token: str = Body(..., embed=True), db: Session = Depend
     if granted.user["uid"] != claims.user_id:
         raise _refused("The hub answered this sign-in for another person.")
     if user is None:
-        user = _new_issuer_account(db, settings.issuer, settings.hub_url, granted.user)
+        user = issuer_accounts.new_issuer_account(db, settings.issuer, settings.hub_url, granted.user)
     user.is_admin = granted.user["node_admin"]
     db.commit()
     invalidate_user_cache(user.username)
