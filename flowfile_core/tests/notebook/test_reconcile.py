@@ -100,6 +100,16 @@ def test_cosmetic_formula_difference_is_no_op():
     assert reconcile(live, session, ["node-2"], _cells(1, 2)).operations == []
 
 
+def test_an_edited_source_cell_keeps_the_columns_the_canvas_cached():
+    request = {"rest_api_settings": {"url": "https://api.example.com/rows"}}
+    cached = {**request, "fields": [{"name": "date", "data_type": "String"}]}
+    live = _payload(_node(1, "rest_api_reader", cached))
+    session = _payload(_node(1, "rest_api_reader", {**request, "fields": None}))
+    assert reconcile(live, session, ["node-1"], _cells(1)).operations == []
+    moved = _payload(_node(1, "rest_api_reader", {"rest_api_settings": {"url": "https://api.example.com/v2"}}))
+    assert _kinds(reconcile(live, moved, ["node-1"], _cells(1))) == ["update_settings"]
+
+
 def test_edited_cell_updates_only_its_node():
     live = _payload(_manual(), _filter(2, 1, "[a] > 1"), _sort(3, 2))
     session = _payload(_manual(), _filter(2, 1, "[a] > 2"), _sort(3, 2))

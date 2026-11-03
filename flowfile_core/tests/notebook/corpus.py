@@ -66,6 +66,7 @@ CODEGEN_TESTS = (
     "test_to_date_and_to_datetime_formula_exports_match_the_canvas",
     "test_train_apply_evaluate_full_chain_round_trip",
     "test_union_multiple_dataframes",
+    "test_unpivot_by_data_type",
     "test_unpivot_operation",
     "test_wait_for_round_trip",
     "test_window_functions_partition_aggregate",

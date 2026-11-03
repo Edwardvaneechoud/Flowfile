@@ -73,7 +73,11 @@ def _run_task(task_id: str, operation: str, payload: bytes, file_path: str, **kw
         _cleanup_status(task_id)
 
 
-def _idle_pid(test_pool: TaskPool) -> int:
+def _idle_pid(test_pool: TaskPool, timeout: float = 10.0) -> int:
+    """The warm member's pid once it is idle; the WS route checks a member in after its final frame went out."""
+    deadline = time.monotonic() + timeout
+    while test_pool.stats()["idle"] != 1 and time.monotonic() < deadline:
+        time.sleep(0.02)
     assert test_pool.stats()["idle"] == 1, f"expected one idle member, stats={test_pool.stats()}"
     return test_pool._idle[0].process.pid
 
@@ -245,6 +249,31 @@ class TestCancellation:
         assert after.status == "Completed", after.error_message
         assert warm_pool.stats()["total"] == 1, "the pool must refill on the next acquire"
 
+    def test_a_cancel_posted_while_a_task_is_starting_stops_it_when_it_starts(self, warm_pool, tmp_path):
+        """Before the child is registered the route marks the entry ``Cancelled``, as ``POST /v1/jobs/{id}/cancel``
+        does, and the monitor's first poll stops the child the task then starts."""
+        task_id = "pool-cancel-starting"
+        _register_status(task_id, str(tmp_path / "c.arrow"))
+
+        response = client.post(f"/cancel_task/{task_id}")
+
+        assert response.status_code == 200, response.text
+        assert _get_status(task_id).status == "Cancelled"
+        try:
+            start_process(
+                _sleeping_lazyframe(30).serialize(),
+                task_id,
+                "store",
+                str(tmp_path / "c.arrow"),
+                flowfile_flow_id=1,
+                flowfile_node_id=1,
+            )
+            assert _get_status(task_id).status == "Cancelled"
+        finally:
+            _cleanup_status(task_id)
+        assert warm_pool.stats()["total"] == 0, "the member the cancelled task started in is retired"
+        assert not (tmp_path / "c.arrow").exists()
+
     def test_stale_cancel_of_finished_task_cannot_kill_member(self, warm_pool, tmp_path):
         """The member is unmapped before checkin, so cancelling a done task 404s instead of killing it."""
         lf = pl.LazyFrame({"a": [1, 2, 3]})
@@ -357,6 +386,39 @@ class TestWebSocketPath:
         assert _idle_pid(warm_pool) == pid_after_first, "WS tasks must reuse the warm member"
         for raw in (first_result, second_result):
             assert pl.LazyFrame.deserialize(io.BytesIO(raw)).collect().equals(lf.collect())
+
+    def test_ws_checkin_survives_a_cancel_that_beats_its_thread(self, warm_pool, monkeypatch):
+        """TestClient's context-exit cancel lands before the checkin's executor thread starts; the member still returns.
+
+        Every executor call starts late, as on a loaded runner, so the cancel always wins that race: unshielded, the
+        queued checkin was dropped and the member stayed leased.
+        """
+        import asyncio
+        import concurrent.futures
+
+        def late_start(loop, executor, func, *args):
+            future = concurrent.futures.Future()
+
+            def run():
+                time.sleep(0.3)
+                if future.set_running_or_notify_cancel():
+                    try:
+                        future.set_result(func(*args))
+                    except BaseException as e:
+                        future.set_exception(e)
+
+            threading.Thread(target=run, daemon=True).start()
+            return asyncio.wrap_future(future, loop=loop)
+
+        monkeypatch.setattr(asyncio.BaseEventLoop, "run_in_executor", late_start)
+        with client.websocket_connect("/ws/submit", headers=INTERNAL_AUTH_HEADERS) as ws:
+            ws.send_json({"task_id": "pool-ws-late-checkin", "operation": "store", "flow_id": 1, "node_id": -1})
+            ws.send_bytes(pl.LazyFrame({"a": [1, 2]}).serialize())
+            while json.loads(ws.receive_text())["type"] != "complete":
+                pass
+            ws.receive_bytes()
+        _idle_pid(warm_pool)
+        assert warm_pool.stats() == {"size": 1, "idle": 1, "total": 1}
 
     def test_ws_error_keeps_member(self, warm_pool):
         """A task-level error must not burn the member.

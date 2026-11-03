@@ -19,7 +19,7 @@ from flowfile_core.flowfile.execution.context import (
     use_context,
 )
 from flowfile_core.flowfile.execution.errors import ComputeError
-from flowfile_core.flowfile.execution.protocol import SubmitHints
+from flowfile_core.flowfile.execution.protocol import SubmitHints, worker_stores
 from flowfile_core.flowfile.flow_node.models import (
     ExecutionDecision,
     InvalidationReason,
@@ -27,6 +27,7 @@ from flowfile_core.flowfile.flow_node.models import (
 )
 from flowfile_core.flowfile.flow_node.state import NodeExecutionState, SourceFileInfo
 from flowfile_core.flowfile.parameter_resolver import node_parameters_resolved
+from flowfile_core.schemas import input_schema
 from shared.path_utils import is_url
 
 if TYPE_CHECKING:
@@ -38,6 +39,24 @@ IN_CORE_NODE_TYPES = frozenset({"output", "api_response", "flow_output", "run_fl
 node's the child flow's output. They are never wide, ask no preview, and are materialised only for a boundary input,
 so otherwise no backend computes or samples their rows during the run."""
 
+OPERATION_NODE_TYPES = frozenset(
+    {
+        "database_writer",
+        "cloud_storage_writer",
+        "catalog_writer",
+        "fuzzy_match",
+        "random_split",
+        "train_model",
+        "apply_model",
+        "polars_code",
+        "sql_query",
+        "python_script",
+    }
+)
+"""Built-in node types whose function hands its inputs' plans to an operation (``FlowNode.run_op``) or a kernel, which
+runs them itself: the writers, the fuzzy join, the random split, the ML nodes, Polars Code and SQL Query, and the
+Python Script node, whose inputs are written for its kernel. Custom nodes (``UserDefinedNode`` settings) do too."""
+
 
 def is_narrow_transform(node: FlowNode) -> bool:
     """Whether ``node`` maps rows without reshaping data across them, by its template's ``transform_type``.
@@ -46,6 +65,15 @@ def is_narrow_transform(node: FlowNode) -> bool:
     is not narrow.
     """
     return node.node_default is not None and node.node_default.transform_type == "narrow"
+
+
+def _runs_its_inputs(node: FlowNode) -> bool:
+    """Whether executing ``node`` runs its inputs' plans itself rather than composing its plan on them."""
+    return (
+        node.node_type in IN_CORE_NODE_TYPES
+        or node.node_type in OPERATION_NODE_TYPES
+        or isinstance(node.setting_input, input_schema.UserDefinedNode)
+    )
 
 
 def hints_for(
@@ -60,26 +88,53 @@ def hints_for(
       that crossed from another backend (``_boundary_inputs``), so no result refers to the exchange prefix once the
       run removes it.
     - ``wide``: neither ``is_narrow_transform`` nor in ``IN_CORE_NODE_TYPES``.
-    - ``fanout``: the number of distinct downstream nodes among *running*, the ids of the nodes this run executes,
-      or of every downstream node when *running* is ``None``. The worker stores a wide result read by more than one,
-      which would otherwise be computed again inside each consumer's plan.
+    - ``fanout``: how many distinct plans this run executes the result in, so the worker stores a wide result only
+      when more than one would otherwise compute it again. Counted over the consumers among *running*, the ids of the
+      nodes this run executes (every consumer when *running* is ``None``): a consumer that collects counts as one, a
+      deferred one passes on its own fan-out, since every plan that executes it inlines this node's plan. A consumer
+      collects when it runs its inputs itself (``IN_CORE_NODE_TYPES``, ``OPERATION_NODE_TYPES``, a custom node) or
+      its own hints make the worker store it (``worker_stores``). A node no sink, operation or stored result reads
+      has fan-out 0, as in a Performance run of a read into group-bys with no writer, which stays deferred. A
+      consumer reading the node on two inputs (a self-join) is one plan and counts once. The consumers are walked
+      depth first with an explicit stack, so a long chain never reaches the recursion limit.
     - ``preview_rows``: the context's, else ``DEFAULT_PREVIEW_ROWS``. ``None`` for ``IN_CORE_NODE_TYPES`` and in
       *performance_mode*, except for a ``cache_results`` node.
     """
-    in_core = node.node_type in IN_CORE_NODE_TYPES
-    caches = node.node_settings.cache_results
-    preview_rows = None
-    if not in_core and (caches or not performance_mode):
-        preview_rows = context.preview_rows if context.preview_rows is not None else DEFAULT_PREVIEW_ROWS
-    consumers = {consumer.node_id for consumer in node.leads_to_nodes}
-    if running is not None:
-        consumers = {consumer for consumer in consumers if consumer in running}
-    return SubmitHints(
-        must_materialise=(caches and not in_core) or bool(node._boundary_inputs),
-        wide=not in_core and not is_narrow_transform(node),
-        fanout=len(consumers),
-        preview_rows=preview_rows,
-    )
+    known: dict[int | str, SubmitHints] = {}
+    pending = [node]
+    while pending:
+        current = pending[-1]
+        if current.node_id in known:
+            pending.pop()
+            continue
+        consumers = [
+            consumer
+            for consumer_id, consumer in {c.node_id: c for c in current.leads_to_nodes}.items()
+            if running is None or consumer_id in running
+        ]
+        unknown = [consumer for consumer in consumers if consumer.node_id not in known]
+        if unknown:
+            pending.extend(unknown)
+            continue
+        pending.pop()
+        in_core = current.node_type in IN_CORE_NODE_TYPES
+        caches = current.node_settings.cache_results
+        preview_rows = None
+        if not in_core and (caches or not performance_mode):
+            preview_rows = context.preview_rows if context.preview_rows is not None else DEFAULT_PREVIEW_ROWS
+        fanout = sum(
+            1
+            if _runs_its_inputs(consumer) or worker_stores(known[consumer.node_id])
+            else known[consumer.node_id].fanout
+            for consumer in consumers
+        )
+        known[current.node_id] = SubmitHints(
+            must_materialise=(caches and not in_core) or bool(current._boundary_inputs),
+            wide=not in_core and not is_narrow_transform(current),
+            fanout=fanout,
+            preview_rows=preview_rows,
+        )
+    return known[node.node_id]
 
 
 class StateProvider(Protocol):
@@ -149,6 +204,7 @@ class NodeExecutor:
         node_logger: NodeLogger = None,
         unreachable: Exception | None = None,
         running: Collection[int | str] | None = None,
+        preview: bool | None = None,
     ) -> None:
         """
         Main execution entry point.
@@ -173,15 +229,37 @@ class NodeExecutor:
                 nothing is decided or sent.
             running: The ids of the nodes this run executes, which ``hints_for`` counts the consumers among;
                 ``None`` counts every consumer.
+            preview: Fill the 100-row grid even when *performance_mode* sends no ``preview_rows``, by a ``sample``
+                taken before the node is reported run, so a failure on the rows fails the node; ``None`` means
+                ``not performance_mode``, the grid then sampled on first read. A ``cache_results`` node always fills
+                it.
+
+        A ``reset_cache`` that released a stored result the node does not store again (a Performance-mode fetch of
+        a node an earlier run stored) drops the results of the nodes below, whose plans scanned its file.
         """
         if node_logger is None:
             raise ValueError("node_logger is required")
 
         state = self.state_provider.get_state(self.node.node_id, self.node.parent_uuid)
 
-        if reset_cache:
-            self._clear_cache(state)
+        released_stored = reset_cache and self._clear_cache(state)
+        try:
+            self._run(state, reset_cache, performance_mode, retry, node_logger, unreachable, running, preview)
+        finally:
+            if released_stored and not self._holds_stored_result():
+                self.node.drop_downstream_results()
 
+    def _run(
+        self,
+        state: NodeExecutionState,
+        reset_cache: bool,
+        performance_mode: bool,
+        retry: bool,
+        node_logger: NodeLogger,
+        unreachable: Exception | None,
+        running: Collection[int | str] | None,
+        preview: bool | None,
+    ) -> None:
         if unreachable is not None:
             self._prepare_for_execution(state)
             self._handle_error(state, unreachable, performance_mode, False, node_logger, running)
@@ -203,6 +281,7 @@ class NodeExecutor:
 
         # A cache_results node keeps its example data even in Performance mode.
         effective_performance_mode = performance_mode and not self.node.node_settings.cache_results
+        grid = (preview if preview is not None else not performance_mode) or not effective_performance_mode
 
         if decision.reason == InvalidationReason.SOURCE_FILE_CHANGED:
             # A backend keys results by node hash, which a source change does not rotate.
@@ -218,7 +297,9 @@ class NodeExecutor:
 
         try:
             self._raise_on_invalid_expression()
-            self.node._do_execute(hints, effective_performance_mode, node_logger)
+            self.node._do_execute(hints, grid, node_logger)
+            if preview:
+                self.node.read_example_data()
             if self.node.results.resulting_data is not None:
                 state.result_schema = self.node.results.resulting_data.schema
             if self.node.results.errors is None and not self.node.node_stats.is_canceled:
@@ -234,7 +315,7 @@ class NodeExecutor:
                 state.reset_results_only()
                 self._sync_state_to_legacy(state)
                 return
-            self._handle_error(state, e, effective_performance_mode, retry, node_logger, running)
+            self._handle_error(state, e, effective_performance_mode, retry, node_logger, running, preview)
 
     def _raise_on_invalid_expression(self) -> None:
         """Fail a formula/advanced-filter node whose expression cannot run against its input.
@@ -398,14 +479,23 @@ class NodeExecutor:
             # the seed's per-handle schemas would outlive the run: multi-output refills skip them
             self.node._named_schemas = {}
 
-    def _clear_cache(self, state: NodeExecutionState) -> None:
-        """Clear cached results; when that released operation outputs, the nodes downstream drop theirs too."""
+    def _clear_cache(self, state: NodeExecutionState) -> bool:
+        """Clear cached results; when that released operation outputs, the nodes downstream drop theirs too.
+
+        Answers whether a stored result was released: its file is gone until the node stores again under its hash.
+        """
         minted_outputs = bool(self.node._operation_refs)
+        released_stored = self._holds_stored_result()
         self.node.remove_cache()
         if minted_outputs:
             self.node.drop_downstream_results()
         state.has_run_with_current_setup = False
         state.has_completed_last_run = False
+        return released_stored
+
+    def _holds_stored_result(self) -> bool:
+        ref = self.node.results.result_ref
+        return ref is not None and ref.state == "materialised"
 
     def _sync_state_to_legacy(self, state: NodeExecutionState) -> None:
         """Sync _execution_state to legacy node_stats for backwards compatibility."""
@@ -422,14 +512,15 @@ class NodeExecutor:
         retry: bool,
         node_logger: NodeLogger,
         running: Collection[int | str] | None = None,
+        preview: bool | None = None,
     ) -> None:
         """Handle execution errors with retry logic.
 
-        With ``retry`` set, a Polars missing-file error reruns the node's inputs, then the node once. With
-        ``settings.FLOWFILE_COMPUTE_PROTOCOL`` off the message alone is enough, the results being core's own files.
-        With it on, an input must also hold a result that is gone (``NodeResults.artifact_is_missing``). Otherwise
-        the error is the node's own and the inputs' results are kept. An input reruns on the backend that holds its
-        result for its current setup (``FlowNode.held_result``), else where the node runs.
+        With ``retry`` set, a Polars missing-file error reruns the node's inputs, then the node once with *preview*.
+        With ``settings.FLOWFILE_COMPUTE_PROTOCOL`` off the message alone is enough, the results being core's own
+        files. With it on, an input must also hold a result that is gone (``NodeResults.artifact_is_missing``).
+        Otherwise the error is the node's own and the inputs' results are kept. An input reruns on the backend that
+        holds its result for its current setup (``FlowNode.held_result``), else where the node runs.
         """
         error_str = str(error)
         state.mark_failed(error_str)
@@ -475,6 +566,7 @@ class NodeExecutor:
                 retry=False,
                 node_logger=node_logger,
                 running=running,
+                preview=preview,
             )
             return
 

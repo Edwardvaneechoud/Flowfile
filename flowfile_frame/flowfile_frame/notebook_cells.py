@@ -52,6 +52,7 @@ from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.native import (
     NativeNode,
     NativeNodeError,
+    _kernel_hidden_path,
     _placeholder_schema,
     _twin_settings,
     ancestors,
@@ -267,11 +268,17 @@ def _topological(graph: FlowGraph) -> list[FlowNode]:
 
 
 def _seeds_live(node: FlowNode, live: set[int]) -> bool:
-    """Whether ``node`` seeds live: a ``LIVE_SOURCE_TYPES`` source, or a pure transform whose inputs are all live."""
+    """Whether ``node`` seeds live: a ``LIVE_SOURCE_TYPES`` source, or a pure transform whose inputs are all live.
+
+    A file source a kernel session cannot open (:func:`native._kernel_hidden_path`: the kernel mounts no host
+    folder) is seeded from the schemas core sent, never read here.
+    """
     settings = node.setting_input
     if settings is None or isinstance(settings, input_schema.NodePromise | input_schema.UserDefinedNode):
         return False
     if node.node_type == "gate" or notebook_defers(node.node_type, settings):
+        return False
+    if _kernel_hidden_path(node) is not None:
         return False
     if node.node_type in LIVE_SOURCE_TYPES:
         return True
@@ -347,7 +354,8 @@ def seed_session(
     The graph is local, history-off and has its own flow id; ``parameters`` (``FlowParameter``
     models or dicts) are declared on it. A node that seeds live (``manual_input``,
     ``read``, ``list_files``, a non-virtual non-SQL ``catalog_reader`` of a table in local storage
-    and pure transforms whose inputs are all live) holds its lazy plan; every other node is seeded
+    and pure transforms whose inputs are all live) holds its lazy plan; every other node, and in a
+    kernel session a ``read`` or ``list_files`` of a host path (the kernel opens none), is seeded
     from ``schemas[node_id][handle]`` (``{"name", "data_type"}`` entries) and its frames are
     deferred. A variable is ``names[node_id]``, else ``<type_label>_<id>``; a multi-output or
     native node binds a :class:`SeededNode`, any other node a ``FlowFrame``. ``flow`` is bound to

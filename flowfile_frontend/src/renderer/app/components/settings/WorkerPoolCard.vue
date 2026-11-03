@@ -199,10 +199,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { getWorkerPool, setWorkerPool, type WorkerPoolState } from "../../api/system.api";
 import { useAuthStore } from "../../stores/auth-store";
+import type { StatusSummary } from "./handshakeStatus";
+
+const emit = defineEmits<{ (e: "summary", summary: StatusSummary | null): void }>();
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -297,6 +300,14 @@ const warmSub = computed(() => {
   if (aliveCount.value === 0) return "start on demand";
   return `${state.value.idle} ready · ${state.value.busy} busy`;
 });
+/** The worker's state in one line, for the Default worker card's folded header. */
+const summary = computed<StatusSummary | null>(() => {
+  if (serviceDown.value) return { tone: "error", label: "Unreachable" };
+  if (!state.value) return null;
+  if (!state.value.enabled) return { tone: "success", label: "Connected · warm pool off" };
+  return { tone: "success", label: `Connected · ${aliveCount.value}/${state.value.size} warm` };
+});
+watch(summary, (next) => emit("summary", next), { immediate: true });
 const ttlText = computed<string | null>(() => {
   const s = state.value?.idleTtlSeconds ?? 0;
   if (s <= 0) return null;

@@ -40,6 +40,21 @@ def test_select_compares_the_ordered_projection():
     assert not settings_equal({**a, "keep_missing": True}, {**b, "keep_missing": True}, "select")
 
 
+@pytest.mark.parametrize(
+    "node_type, request_settings",
+    [
+        ("rest_api_reader", {"rest_api_settings": {"url": "https://api.example.com/rows"}}),
+        ("database_reader", {"database_settings": {"query_mode": "table", "table_name": "orders"}}),
+        ("kafka_source", {"kafka_settings": {"topic_name": "orders"}}),
+    ],
+)
+def test_a_sources_cached_fields_are_not_its_settings(node_type, request_settings):
+    cached = {**request_settings, "fields": [{"name": "date", "data_type": "String"}]}
+    assert settings_equal(cached, {**request_settings, "fields": None}, node_type)
+    other = {key: {**value, "changed": True} for key, value in request_settings.items()}
+    assert not settings_equal(cached, other, node_type)
+
+
 def test_python_script_cells_compare_by_code_and_gate_by_its_active_source():
     script = {"python_script_input": {"code": "x", "cells": [{"id": "one", "code": "x"}]}}
     same = {"python_script_input": {"code": "x", "cells": [{"id": "two", "code": "x"}]}}

@@ -38,6 +38,7 @@
   "to_date_and_to_datetime_formula_exports_match_the_canvas": [],
   "train_apply_evaluate_full_chain_round_trip": [],
   "union_multiple_dataframes": [],
+  "unpivot_by_data_type": [],
   "unpivot_operation": [],
   "wait_for_round_trip": [],
   "window_functions_partition_aggregate": [],

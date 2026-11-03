@@ -191,6 +191,12 @@ def test_cancel_interrupts_a_blocked_collect(flowfile_worker):
                 break
             threading.Event().wait(0.05)
         assert graph.flow_settings.is_running, "run did not start"
+        # Cancel once the upstream node is done, so the cancel lands while node 2 is the one in flight.
+        for _ in range(600):
+            if graph.get_node(1).node_stats.has_completed_last_run:
+                break
+            threading.Event().wait(0.05)
+        assert graph.get_node(1).node_stats.has_completed_last_run, "upstream node did not finish"
 
         graph.cancel()
 

@@ -1,3 +1,4 @@
+import inspect
 import logging
 import os
 import platform
@@ -674,7 +675,12 @@ class Call:
 
 
 def spy(monkeypatch, owner, name: str) -> list[Call]:
-    """Wrap ``owner.<name>`` so every call is recorded before the real one runs; answers the record list."""
+    """Wrap ``owner.<name>`` so every call is recorded before the real one runs; answers the record list.
+
+    On an instance that inherits the attribute the wrapper goes into its ``__dict__`` and the undo removes it again:
+    ``monkeypatch.setattr`` would restore the bound method onto the instance, where it shadows every later patch of
+    the class (the registry's shared backends outlive a test).
+    """
     calls: list[Call] = []
     real = getattr(owner, name)
 
@@ -688,7 +694,10 @@ def spy(monkeypatch, owner, name: str) -> list[Call]:
             raise
         return call.result
 
-    monkeypatch.setattr(owner, name, recording)
+    if inspect.isclass(owner) or inspect.ismodule(owner) or name in vars(owner):
+        monkeypatch.setattr(owner, name, recording)
+    else:
+        monkeypatch.setitem(vars(owner), name, recording)
     return calls
 
 

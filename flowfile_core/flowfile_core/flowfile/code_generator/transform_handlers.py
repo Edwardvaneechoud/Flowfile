@@ -153,13 +153,20 @@ class TransformHandlersMixin(ConverterMixinBase):
         if unpivot_input.index_columns:
             self._add_code(f"    index={unpivot_input.index_columns},")
 
-        if unpivot_input.value_columns:
+        if unpivot_input.data_type_selector_mode == "data_type":
+            self._add_code(f"    on={self._unpivot_selector(unpivot_input.data_type_selector or 'all')},")
+        elif unpivot_input.value_columns:
             self._add_code(f"    on={unpivot_input.value_columns},")
 
         self._add_code("    variable_name='variable',")
         self._add_code("    value_name='value'")
         self._add_code(")")
         self._add_code("")
+
+    def _unpivot_selector(self, data_type: str) -> str:
+        """The selector for an unpivot node's data-type option, which the engine reads as ``polars.selectors``."""
+        self.imports.add("import polars.selectors as cs")
+        return f"cs.{data_type}()"
 
     def _handle_union(self, settings: input_schema.NodeUnion, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle union nodes.

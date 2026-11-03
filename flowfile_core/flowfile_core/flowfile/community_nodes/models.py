@@ -9,6 +9,7 @@ repo is generated from ``CommunityManifest`` (``cli schema``) so it cannot drift
 import re
 from typing import Literal
 
+from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from shared._version import get_version
@@ -50,12 +51,20 @@ def semver_gt(a: str, b: str) -> bool:
     return parsed_a > parsed_b
 
 
+def _parse_app_version(value: str) -> Version | None:
+    """PEP 440 parse, so a prerelease app (``0.24.0-rc.1``) still gates and sorts below its release."""
+    try:
+        return Version(value or "")
+    except InvalidVersion:
+        return None
+
+
 def is_version_compatible(min_flowfile_version: str, app_version: str) -> bool:
     """False only when both versions parse and the minimum exceeds the app."""
-    minimum, current = parse_semver(min_flowfile_version), parse_semver(app_version)
+    minimum, current = parse_semver(min_flowfile_version), _parse_app_version(app_version)
     if minimum is None or current is None:
         return True
-    return current >= minimum
+    return current >= Version(min_flowfile_version)
 
 
 def get_app_version() -> str:

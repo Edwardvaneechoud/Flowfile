@@ -376,6 +376,36 @@ def test_a_file_a_cell_names_is_read_by_core(smoke_flow, notebook_kernel, client
     assert not _in_kernel(str(path))
 
 
+def test_a_canvas_read_of_a_host_file_seeds_the_session_and_reads_from_core(
+    open_as, notebook_kernel, client_as, tmp_path
+):
+    """The canvas reads a file on this machine, which the kernel cannot open: the session seeds that node deferred
+    from the schemas core sent, a cell showing it gets the canvas rows from core (``POST
+    /notebook/session/node_result``), and a cell reading the same file by path gets its columns the same way."""
+    import flowfile as ff
+
+    path = tmp_path / "canvas.csv"
+    path.write_text("a,b\n1,x\n2,y\n")
+    flow = open_as(ff.read_csv(str(path)).flow_graph)
+    read_id = _node_id(flow, "read")
+    client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
+    key = {"flow_id": flow.flow_id, "kernel_id": KERNEL_ID}
+    opened = client.post("/notebook/session/open", json=key)
+    assert opened.status_code == 200, opened.text
+
+    cell = _bind("src", read_id) + "print(src.columns)\ndisplay(src)"
+    shown = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-canvas-read", "code": cell})
+    assert shown.status_code == 200 and shown.json()["success"], shown.text
+    assert shown.json()["stdout"].strip() == "['a', 'b']", shown.json()
+    assert _table_rows(shown.json()) == [{"a": 1, "b": "x"}, {"a": 2, "b": "y"}], shown.json()
+
+    same = f"again = ff.scan_csv({str(path)!r})\nprint(again.columns)"
+    named = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-same-file", "code": same})
+    assert named.status_code == 200 and named.json()["success"], named.text
+    assert named.json()["stdout"].strip() == "['a', 'b']", named.json()
+    assert not _in_kernel(str(path))
+
+
 def test_an_installed_custom_node_is_mirrored_into_the_kernel(smoke_flow, notebook_kernel, client_as):
     """Core's installed custom node files reach the kernel through the ``custom_node_sources`` lookup: a cell places
     ``mood_emoji`` and the kernel runs it on its own copy of the file."""

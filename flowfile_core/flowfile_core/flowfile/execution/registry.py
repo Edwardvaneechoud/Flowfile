@@ -17,7 +17,8 @@ reads the row again.
 A process that serves (the desktop sidecar, the Docker image, the pip server) is marked by ``mark_serving``. Its
 compute is the worker beside it, so its default backend is never ``local`` and a run placed on ``local`` is refused.
 The pip server has no worker beside it: in single-file mode the built-in ``worker`` is the worker embedded in this
-process.
+process. A headless runner (``flowfile run flow``, the ``--run-flow`` verb) runs its flow inside ``headless_run``,
+where the worker embedded in it runs each job in a child.
 
 This is the one module outside ``configs/settings.py`` that reads ``OFFLOAD_TO_WORKER`` and ``WORKER_URL``. Every
 other module asks the registry (``default_backend_id``, ``worker_url``, ``child_env``) or the backend it holds.
@@ -27,8 +28,11 @@ from __future__ import annotations
 
 import importlib.metadata
 import os
+import signal
+import sys
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, cast
 
 from flowfile_core.configs import settings
@@ -45,18 +49,26 @@ LEGACY_OFFLOAD_ENV_VAR = "FLOWFILE_OFFLOAD_TO_WORKER"
 LOCAL_BACKEND_ID = "local"
 WORKER_BACKEND_ID = "worker"
 CONFIGURED_WORKER_PREFIX = "worker:"
+HEADLESS_POOL_SIZE = 1
+"""Warm children a headless runner keeps: one, so a scheduled run holds at most one idle interpreter. Jobs the pool
+does not take, or that start while its member is busy, spawn a child of their own."""
 
 
 def _local_backend() -> ComputeBackend:
     """The worker embedded in this process.
 
-    In a process that does not serve (a headless run, a flow built in code, a test) its jobs run in this process
-    (``spawner.in_process``). In one that serves they run in the worker's pool or a child, never in the serving process.
+    In a process that neither serves nor runs a flow headless (a flow built in code, a test) its jobs run in this
+    process (``spawner.in_process``). In one that serves they run in the worker's pool or a child, never in the serving
+    process, and so do a headless runner's (``headless_run``), its pool cut to ``HEADLESS_POOL_SIZE`` unless
+    ``FLOWFILE_WORKER_POOL_SIZE`` sets one; the size saved on the Backends page is the server's.
     """
     from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
-    from flowfile_worker import spawner
+    from flowfile_worker import pool, spawner
 
-    if not _serving:
+    if _headless:
+        if not pool.env_override_active():
+            pool.task_pool.resize(HEADLESS_POOL_SIZE)
+    elif not _serving:
         spawner.in_process = True
     return EmbeddedWorkerBackend()
 
@@ -122,6 +134,7 @@ _instances: dict[str, ComputeBackend] = {}
 _entry_points_scanned = False
 _default_override: str | None = None
 _serving = False
+_headless = False
 
 
 def register_backend(backend_id: str, factory: BackendFactory) -> None:
@@ -177,9 +190,7 @@ def default_backend_id() -> str:
     """
     backend_id = _default_override
     if backend_id is None:
-        backend_id = os.environ.get(BACKEND_ENV_VAR, "").strip() or (
-            WORKER_BACKEND_ID if settings.OFFLOAD_TO_WORKER else LOCAL_BACKEND_ID
-        )
+        backend_id = environment_backend_id() or (WORKER_BACKEND_ID if settings.OFFLOAD_TO_WORKER else LOCAL_BACKEND_ID)
     if _serving and backend_id == LOCAL_BACKEND_ID:
         return WORKER_BACKEND_ID
     return backend_id
@@ -188,6 +199,15 @@ def default_backend_id() -> str:
 def default_backend() -> ComputeBackend:
     """The instance of the default backend."""
     return backend(default_backend_id())
+
+
+def environment_backend_id() -> str | None:
+    """The backend id ``FLOWFILE_COMPUTE_BACKEND`` names, or ``None`` when it is unset or empty.
+
+    The headless runners read it after ``--backend`` and the flow's saved backend id and before ``local``, so a
+    deployment that sets it for core, as the compose does, sends its scheduled runs to that backend.
+    """
+    return os.environ.get(BACKEND_ENV_VAR, "").strip() or None
 
 
 def fallback_backend_id() -> str:
@@ -230,6 +250,74 @@ def mark_serving() -> None:
 def serving() -> bool:
     """Whether this process serves (``mark_serving``)."""
     return _serving
+
+
+@contextmanager
+def headless_run() -> Iterator[None]:
+    """Run a flow headless; ``flowfile run flow`` and the ``--run-flow`` verb enter it before any backend is looked up.
+
+    Inside it the worker embedded in this process runs each job in a child (``_local_backend``), so a job has the task
+    time limit, a node can be cancelled and a child that runs out of memory fails its node, not the run. The children
+    post no node log to core (``flow_logger.HEADLESS_RUN_ENV_VAR``): a run outside core has none to post to, and core
+    does not know the run's flow ids; each line still goes to the runner's stderr, which is a scheduled run's log.
+
+    A SIGTERM, which is how ``FlowRunService.cancel_run`` cancels a scheduled run, terminates the run's children and
+    ends the process at once, as it ended it before. On any other way out the pool is shut and every child the run
+    started is terminated, as the worker's lifespan does. The mark, the variable and the SIGTERM handler are put back
+    when it ends, so a process that called a runner (a test) is as it was.
+    """
+    global _headless
+    from flowfile_worker import flow_logger, mp_context
+
+    started_before = set(mp_context.active_children())
+    previous_headless, _headless = _headless, True
+    previous_variable = os.environ.get(flow_logger.HEADLESS_RUN_ENV_VAR)
+    os.environ[flow_logger.HEADLESS_RUN_ENV_VAR] = "1"
+    on_main_thread = threading.current_thread() is threading.main_thread()
+    if on_main_thread:
+        previous_handler = signal.getsignal(signal.SIGTERM)
+        signal.signal(signal.SIGTERM, lambda signum, frame: _end_on_signal(signum, started_before))
+    try:
+        yield
+    finally:
+        pool = sys.modules.get("flowfile_worker.pool")
+        if pool is not None:
+            pool.task_pool.shutdown()
+        _terminate_children(started_before)
+        if on_main_thread:
+            signal.signal(signal.SIGTERM, previous_handler)
+        if previous_variable is None:
+            os.environ.pop(flow_logger.HEADLESS_RUN_ENV_VAR, None)
+        else:
+            os.environ[flow_logger.HEADLESS_RUN_ENV_VAR] = previous_variable
+        _headless = previous_headless
+
+
+def headless() -> bool:
+    """Whether this process is running a flow headless (``headless_run``)."""
+    return _headless
+
+
+def _terminate_children(started_before: set) -> None:
+    """Terminate and join every multiprocessing child alive now that ``started_before`` does not hold."""
+    from flowfile_worker import mp_context
+
+    children = set(mp_context.active_children()) - started_before
+    for child in children:
+        child.terminate()
+    for child in children:
+        child.join(timeout=5)
+
+
+def _end_on_signal(signum: int, started_before: set) -> None:
+    """End a headless run on ``signum``: its children first, then the process, with no cleanup that could wait on them.
+
+    A stage's node threads wait on their children, so unwinding first would wait out every job still running.
+    """
+    _terminate_children(started_before)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(128 + signum)
 
 
 def child_env() -> dict[str, str]:

@@ -220,6 +220,7 @@ EMITTED_OUTSIDE_THE_CORPUS: dict[tuple[str, str], str] = {
     **{("Expr", name): _FORMULA for name in (*allowlist._FORMULA_EXPR, "dt")},
     **{("StringNS", name): _FORMULA for name in allowlist._FORMULA_STR},
     **{("DateTimeNS", name): _FORMULA for name in allowlist._FORMULA_DT},
+    **{("ff", name): f"{_FF}._unpivot_selector" for name in ("all_", "date", "numeric", "string")},
     ("NodeOutputs", "[]"): f"{_NATIVE}._bind_outputs",
     ("NodeOutputs", "add_to_group"): f"{_FF}._tag_group",
     ("CustomNodes", "[]"): f"{_NATIVE}._handle_user_defined",
@@ -250,6 +251,7 @@ def test_argument_rules_name_allowed_entries_and_known_kinds():
         "pl_frame",
         "polars_code_def",
         "FlowGroup",
+        "Selector",
     }
 
 

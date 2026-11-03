@@ -87,26 +87,6 @@ class _ResultSlot:
         self.item = item
 
 
-def _start_orphan_watch(poll_interval: float = 5.0) -> None:
-    """Exit the member when the worker dies without running its shutdown ladder.
-
-    Per-task children die naturally at task end; a member blocked on task_q.get()
-    would outlive a SIGKILLed worker forever. multiprocessing.parent_process()
-    is the worker on every platform.
-    """
-    import multiprocessing
-    from time import sleep
-
-    parent = multiprocessing.parent_process()
-
-    def watch() -> None:
-        while parent.is_alive():
-            sleep(poll_interval)
-        os._exit(1)
-
-    threading.Thread(target=watch, daemon=True, name="pool-orphan-watch").start()
-
-
 def member_loop(task_q: Queue, result_q: Queue, progress, error_message) -> None:
     """Child entrypoint: run funcs tasks until the ``None`` shutdown sentinel.
 
@@ -114,11 +94,12 @@ def member_loop(task_q: Queue, result_q: Queue, progress, error_message) -> None
     at spawn (a Windows requirement: sharedctypes cannot travel through queues)
     and injected into every task call; the parent resets them before each submit.
     An uncaught exception ends the process - the parent treats a dead member like
-    any dead task child and replaces it on the next acquire.
+    any dead task child and replaces it on the next acquire. A member blocked on
+    task_q.get() would outlive a SIGKILLed worker; like every child ``mp_context``
+    starts, it ends itself once its parent is gone (``flowfile_worker._watch_parent``).
     """
     from flowfile_worker import funcs
 
-    _start_orphan_watch()
     while True:
         message = task_q.get()
         if message is None:

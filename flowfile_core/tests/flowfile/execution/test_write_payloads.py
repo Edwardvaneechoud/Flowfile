@@ -17,6 +17,7 @@ import uuid
 
 import polars as pl
 import pytest
+import requests
 from pydantic import SecretStr
 
 from flowfile_core.configs.settings import WORKER_URL
@@ -24,7 +25,14 @@ from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends import worker as worker_module
 from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
-from flowfile_core.flowfile.execution.errors import PlanRejected, TaskFailed
+from flowfile_core.flowfile.execution.errors import (
+    ComputeError,
+    ComputeUnavailable,
+    PlanRejected,
+    TaskFailed,
+    VersionMismatch,
+)
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.execution.protocol import JobHandle, OperationKind, OpResult
 from flowfile_core.flowfile.execution.payloads import (
     op_payload,
@@ -46,6 +54,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
     FullCloudStorageConnection,
 )
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
+from shared.compute_protocol import local_capabilities
 from shared.storage_config import storage
 from tests.flowfile.conftest import add_test_manual_input, create_test_graph
 
@@ -365,6 +374,153 @@ def test_the_worker_backend_posts_a_cloud_write_with_its_secrets_still_encrypted
     assert pl.LazyFrame.deserialize(io.BytesIO(base64.b64decode(body["operation"]))).collect().equals(ROWS)
     assert SECRET not in json.dumps(body)
     assert built == []
+
+
+CREDENTIAL_FIELDS = (
+    "aws_access_key_id",
+    "aws_secret_access_key",
+    "aws_session_token",
+    "azure_account_key",
+    "azure_client_secret",
+    "azure_sas_token",
+    "gcs_service_account_key",
+)
+
+
+@pytest.fixture
+def backend_reporting(monkeypatch):
+    """Make a worker backend on a URL of its own reporting core's capabilities with a ``credential_resolution``.
+
+    Its check runs no probe and reaches no worker; the verdicts are dropped when the test ends.
+    """
+    made: list[WorkerBackend] = []
+    monkeypatch.setattr(handshake, "_run_probe", lambda backend, name, plan: None)
+
+    def make(backend_id: str, credential_resolution: str) -> WorkerBackend:
+        backend = WorkerBackend(url=f"http://{backend_id.replace(':', '-')}.invalid", backend_id=backend_id)
+        reported = local_capabilities().model_copy(update={"credential_resolution": credential_resolution})
+        monkeypatch.setattr(backend, "capabilities", lambda: reported)
+        made.append(backend)
+        return backend
+
+    yield make
+    for backend in made:
+        handshake.reset_handshake(backend.url)
+
+
+def test_a_cloud_write_to_an_ambient_backend_carries_its_connection_without_credentials(
+    protocol, backend_reporting, monkeypatch
+):
+    connection = cloud_write().connection.model_copy(
+        update={field: encrypt_secret(f"{field}-value", USER_ID) for field in CREDENTIAL_FIELDS}
+    )
+    write = dataclasses.replace(cloud_write(), connection=connection)
+    ambient = backend_reporting("worker:ambient", "ambient")
+    keyed = backend_reporting("worker:keyed", "master_key")
+
+    if not protocol:
+        requests_sent = []
+        real_send = requests.Session.send
+
+        def recording_send(session, request, **kwargs):
+            requests_sent.append(request.url)
+            return real_send(session, request, **kwargs)
+
+        monkeypatch.setattr(requests.Session, "send", recording_send)
+        with pytest.raises(VersionMismatch) as refused:
+            ambient.run_op(OperationKind.cloud_write, op_payload(write))
+        assert str(refused.value) == handshake.ambient_refusal("worker:ambient")
+        assert requests_sent == []
+
+        fetchers: list[RecordingFetcher] = []
+        monkeypatch.setattr(worker_module, "ExternalCloudWriter", lambda *a, **k: RecordingFetcher(fetchers, *a, **k))
+        keyed.run_op(OperationKind.cloud_write, op_payload(write))
+        (fetcher,) = fetchers
+        (keyed_settings,) = fetcher.args
+        assert keyed_settings.connection == connection
+        return
+
+    recorder = V1Recorder()
+    monkeypatch.setattr(
+        WorkerBackend,
+        "_v1",
+        lambda backend, method, path, **kwargs: recorder.request(method, path, backend=backend.id, **kwargs),
+    )
+    for backend in (ambient, keyed):
+        assert handshake.verdict_for(backend).ok
+        backend.run_op(OperationKind.cloud_write, op_payload(write))
+
+    bodies = {request["backend"]: request["json"] for request in recorder.sent}
+    assert "$ffsec$" not in json.dumps(bodies["worker:ambient"])
+    stripped = bodies["worker:ambient"]["connection"]
+    assert {field: stripped[field] for field in CREDENTIAL_FIELDS} == dict.fromkeys(CREDENTIAL_FIELDS)
+    assert {field: value for field, value in stripped.items() if field not in CREDENTIAL_FIELDS} == {
+        field: value for field, value in connection.model_dump(mode="json").items() if field not in CREDENTIAL_FIELDS
+    }
+    assert (stripped["storage_type"], stripped["auth_method"], stripped["aws_region"], stripped["endpoint_url"]) == (
+        "s3",
+        "access_key",
+        "us-east-1",
+        "http://localhost:9000",
+    )
+    assert bodies["worker:keyed"]["connection"] == connection.model_dump(mode="json")
+    assert all(bodies["worker:keyed"]["connection"][field].startswith("$ffsec$") for field in CREDENTIAL_FIELDS)
+    assert bodies["worker:ambient"]["write_settings"] == bodies["worker:keyed"]["write_settings"]
+
+
+@pytest.mark.usefixtures("protocol_on")
+def test_a_cloud_write_to_an_ambient_backend_whose_verdict_was_dropped_carries_no_credentials(
+    backend_reporting, monkeypatch
+):
+    """A connection error re-arms the handshake mid-run; the write checks the backend again before building its body."""
+    connection = cloud_write().connection.model_copy(
+        update={field: encrypt_secret(f"{field}-value", USER_ID) for field in CREDENTIAL_FIELDS}
+    )
+    write = dataclasses.replace(cloud_write(), connection=connection)
+    ambient = backend_reporting("worker:ambient", "ambient")
+    assert handshake.verdict_for(ambient).ok
+    handshake.reset_handshake(ambient.url)
+    assert handshake.cached_verdict(ambient) is None
+    recorder = V1Recorder()
+    monkeypatch.setattr(
+        WorkerBackend,
+        "_v1",
+        lambda backend, method, path, **kwargs: recorder.request(method, path, backend=backend.id, **kwargs),
+    )
+
+    ambient.run_op(OperationKind.cloud_write, op_payload(write))
+
+    (request,) = recorder.sent
+    assert "$ffsec$" not in json.dumps(request["json"])
+    assert {field: request["json"]["connection"][field] for field in CREDENTIAL_FIELDS} == dict.fromkeys(
+        CREDENTIAL_FIELDS
+    )
+
+
+def test_a_cloud_write_to_a_backend_with_no_report_is_refused_when_its_capabilities_cannot_be_read(
+    backend_reporting, monkeypatch
+):
+    """With no cached verdict the write asks the backend; a backend that cannot answer gets nothing, not a guess."""
+    write = cloud_write()
+    backend = backend_reporting("worker:unreachable", "ambient")
+    assert handshake.cached_verdict(backend) is None
+
+    def unreachable():
+        raise ComputeUnavailable("Connection refused", backend_id=backend.id)
+
+    monkeypatch.setattr(backend, "capabilities", unreachable)
+    recorder = V1Recorder()
+    monkeypatch.setattr(
+        WorkerBackend,
+        "_v1",
+        lambda backend, method, path, **kwargs: recorder.request(method, path, backend=backend.id, **kwargs),
+    )
+
+    with pytest.raises(ComputeError):
+        backend._resolves_ambient()
+    with pytest.raises(ComputeError):
+        backend.run_op(OperationKind.cloud_write, op_payload(write))
+    assert recorder.sent == []
 
 
 @pytest.mark.usefixtures("protocol_on")

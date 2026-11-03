@@ -23,7 +23,7 @@ def _never_collected(*args, **kwargs):
     raise AssertionError("the observation collected the node's engine in core")
 
 
-def test_a_performance_observation_samples_the_node_s_result_on_its_backend(tmp_path, monkeypatch) -> None:
+def test_a_performance_observation_reads_the_preview_the_fetch_took_on_its_backend(tmp_path, monkeypatch) -> None:
     flow = create_test_graph(31, execution_mode="Performance", path=str(tmp_path / "flow.yaml"))
     add_test_manual_input(flow, ORDERS)
     sampled: list[tuple[str, str, int]] = []
@@ -41,7 +41,29 @@ def test_a_performance_observation_samples_the_node_s_result_on_its_backend(tmp_
     assert result.success, result.error_message
     assert result.sample_rows == ORDERS[:3]
     ref = flow.get_node(1).results.result_ref
-    assert sampled == [(registry.LOCAL_BACKEND_ID, ref.result_id, 3)]
+    # the fetch's preview grid is the one sample; the observation reads its rows from it
+    assert sampled == [(registry.LOCAL_BACKEND_ID, ref.result_id, 100)]
+
+
+def test_a_node_holding_no_preview_is_sampled_on_its_backend(tmp_path, monkeypatch) -> None:
+    flow = create_test_graph(32, execution_mode="Performance", path=str(tmp_path / "flow.yaml"))
+    add_test_manual_input(flow, ORDERS)
+    sampled: list[tuple[str, str, int]] = []
+    real_sample = EmbeddedWorkerBackend.sample
+
+    def recording_sample(self, ref, n):
+        sampled.append((self.id, ref.result_id, n))
+        return real_sample(self, ref, n)
+
+    monkeypatch.setattr(EmbeddedWorkerBackend, "sample", recording_sample)
+    monkeypatch.setattr(FlowDataEngine, "collect", _never_collected)
+    flow.trigger_fetch_node(1)
+    node = flow.get_node(1)
+    node.results.example_data_generator = None
+    sampled.clear()
+
+    assert live_observation._extract_sample_rows(node) == ORDERS[:3]
+    assert sampled == [(registry.LOCAL_BACKEND_ID, node.results.result_ref.result_id, 3)]
 
 
 def test_a_node_holding_no_reference_gives_no_rows() -> None:

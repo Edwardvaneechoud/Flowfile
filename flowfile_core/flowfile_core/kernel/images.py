@@ -8,6 +8,8 @@ docker client); this module only knows the configured tags.
 
 import os
 
+from packaging.version import InvalidVersion, Version
+
 from flowfile_core.kernel.models import ImageFlavour
 from shared._version import get_version
 
@@ -62,17 +64,16 @@ def _flavour_images() -> dict[ImageFlavour, str]:
     }
 
 
-def parse_image_version(image_tag: str) -> tuple[int, ...] | None:
-    """Parse a numeric version tuple from an image tag's ``:version`` suffix.
+def parse_image_version(image_tag: str) -> Version | None:
+    """Parse the PEP 440 version of an image tag's ``:version`` suffix.
 
-    Returns None for tags without a dotted-numeric version (e.g. ``:local``,
-    digests), so callers can skip update comparisons for non-release images.
+    Prereleases parse and sort below their release (``0.24.0-rc.1`` < ``0.24.0``).
+    Returns None for tags without a version (e.g. ``:local``, digests), so callers
+    can skip update comparisons for non-release images.
     """
     if ":" not in image_tag:
         return None
-    tag = image_tag.rsplit(":", 1)[1]
-    parts = tag.split(".")
     try:
-        return tuple(int(p) for p in parts)
-    except ValueError:
+        return Version(image_tag.rsplit(":", 1)[1])
+    except InvalidVersion:
         return None

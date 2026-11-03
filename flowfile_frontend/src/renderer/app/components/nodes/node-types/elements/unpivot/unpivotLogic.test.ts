@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { UnpivotInput } from "../../../baseNode/nodeInput";
 import {
   dataTypeLabel,
-  missingUnpivotParts,
   rowsFromUnpivot,
+  valueColumnsLabel,
   writeUnpivotRows,
 } from "./unpivotLogic";
 
@@ -30,13 +30,11 @@ describe("rowsFromUnpivot / writeUnpivotRows", () => {
   });
 });
 
-describe("missingUnpivotParts", () => {
-  it("wants value columns in column mode and nothing in data-type mode", () => {
-    expect(missingUnpivotParts(input())).toEqual([]);
-    expect(missingUnpivotParts({ ...input(), value_columns: [] })).toEqual(["value columns"]);
-    const byType = { ...input(), data_type_selector_mode: "data_type" as const };
-    expect(missingUnpivotParts(byType)).toEqual([]);
-    expect(missingUnpivotParts({ ...byType, data_type_selector: "numeric" })).toEqual([]);
+describe("valueColumnsLabel", () => {
+  it("counts the chosen columns and reads none as every other column, like the backend", () => {
+    expect(valueColumnsLabel(["q1", "q2"])).toBe("2 columns");
+    expect(valueColumnsLabel(["q1"])).toBe("1 column");
+    expect(valueColumnsLabel([])).toBe("every other column");
   });
 });
 

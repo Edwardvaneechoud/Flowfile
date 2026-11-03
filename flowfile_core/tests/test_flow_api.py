@@ -124,6 +124,37 @@ def test_run_flow_as_api_records_with_param(tmp_path):
     assert out["data"] == [{"region": "US", "v": 2}]
 
 
+def test_run_flow_as_api_with_never_configured_response_node(tmp_path):
+    """A flow saved before the response node's drawer was opened stores it with no settings."""
+    flow_path = tmp_path / "flow.yaml"
+    handler = FlowfileHandler()
+    handler.register_flow(
+        schemas.FlowSettings(flow_id=1, name="api_flow", path=str(flow_path), execution_location="local")
+    )
+    graph = handler.get_flow(1)
+    graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input"))
+    graph.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=1, node_id=1, raw_data_format=input_schema.RawData.from_pylist([{"name": "edward"}])
+        )
+    )
+    graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=2, node_type="api_response"))
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    graph.save_flow(str(flow_path))
+    assert not graph.get_node(2).is_setup
+
+    out = api_runner.run_flow_as_api(str(flow_path), owner_id=1, param_specs=[], query={})
+
+    assert out["orientation"] == "records"
+    assert out["data"] == [{"name": "edward"}]
+
+
+def test_api_response_is_configured_when_dropped_on_the_canvas():
+    from flowfile_core.configs.node_store import check_if_has_default_setting
+
+    assert check_if_has_default_setting("api_response")
+
+
 def test_run_flow_as_api_uses_flow_default_when_param_omitted(tmp_path):
     flow_path = tmp_path / "flow.yaml"
     _build_and_save_flow(flow_path, "records")

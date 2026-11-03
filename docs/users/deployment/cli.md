@@ -43,7 +43,8 @@ Accepted file formats are `.yaml`, `.yml`, and `.json`. (The legacy `.flowfile` 
 
 What a headless run does:
 
-- **Runs in-process by default.** The flow computes on a worker embedded in the command's own process, so no worker service needs to be running, unless `--backend <id>` or the flow's saved **Execution location**, when it is a backend id such as `worker:<name>`, names a backend; the run then uses that backend, and fails if it cannot be reached. A flow saved as **Auto** runs in-process.
+- **Runs on its own worker by default.** The flow computes on a worker embedded in the command's own process, so no worker service needs to be running, unless `--backend <id>`, the flow's saved **Execution location**, when it is a backend id such as `worker:<name>`, or `FLOWFILE_COMPUTE_BACKEND` in the command's environment names a backend; the run then uses that backend, and fails if it cannot be reached. A flow saved as **Auto** runs on the embedded worker unless the variable is set.
+- **Runs each job in a child process.** A job that runs out of memory fails its node, not the run, and stopping the command stops its child processes too. Every job has the worker's task time limit: one that runs longer than `FLOWFILE_WORKER_TASK_TIMEOUT` seconds (3600 by default) is stopped and fails its node. Set the variable higher, or to `0` for no limit, in the command's environment. [Where flows run](where-flows-run.md#which-process-computes) has what a child process costs.
 - **Skips UI-only nodes.** `explore_data` nodes are dropped before the run (they require the interactive UI); the command reports how many it skipped.
 - **Prints progress.** It shows the flow name, node count, the node tree, and a per-node error summary if anything fails. The log lines the embedded worker writes for each node go to standard error, which a scheduled run writes to its run log.
 
@@ -51,7 +52,7 @@ Flags:
 
 - `--param KEY=VALUE` — override a flow parameter. Repeat the flag for several overrides. An override that names a parameter the flow doesn't have is added as a new one.
 - `--run-id N` — report the run's result back to a pre-created run record (used by the scheduler). You normally don't set this by hand.
-- `--backend ID` — the compute backend the run uses: `local` (the default, the worker embedded in the command's process), `worker` or `worker:<name>`. It takes precedence over the backend id saved in the flow.
+- `--backend ID` — the compute backend the run uses: `local` (the worker embedded in the command's process), `worker` or `worker:<name>`. It takes precedence over the backend id saved in the flow, which takes precedence over `FLOWFILE_COMPUTE_BACKEND`; with none of the three, the run uses `local`.
 
 ```bash
 # Override two parameters
@@ -90,7 +91,7 @@ The desktop app and packaged builds run a saved flow through the core module dir
 python -m flowfile_core.main --run-flow <path> --run-id <N> [--backend <id>]
 ```
 
-This computes on the worker embedded in its own process unless `--backend` or the flow's saved backend id names a backend, and drops `explore_data` nodes, exactly like `flowfile run flow`. Here `--run-id` is required — the packaged path always reports back to a run record. Prefer `flowfile run flow` for your own headless runs; this form exists for the scheduler and installed builds.
+This computes on the worker embedded in its own process unless `--backend`, the flow's saved backend id or `FLOWFILE_COMPUTE_BACKEND` names a backend, and drops `explore_data` nodes, exactly like `flowfile run flow`. Here `--run-id` is required — the packaged path always reports back to a run record. Prefer `flowfile run flow` for your own headless runs; this form exists for the scheduler and installed builds.
 
 ## Demo catalog
 
@@ -113,7 +114,7 @@ These are the headless equivalents of the app's project controls. Opening a proj
 
 ## Scheduling
 
-To run flows on a timer rather than on demand, use the scheduler. In the desktop app and pip package it runs inside the app; for a standalone service the `flowfile_scheduler` console script polls for due runs and executes each one through the same headless path documented above. Each run is a process of its own that computes on the worker embedded in it, not on the app's worker, which it uses only for a Google Analytics read: in the desktop app it runs beside that worker, and in [Docker](docker.md) inside the core container. See [Schedules](../visual-editor/catalog/schedules.md) for setup, cron syntax, and the standalone-service mode.
+To run flows on a timer rather than on demand, use the scheduler. In the desktop app and pip package it runs inside the app; for a standalone service the `flowfile_scheduler` console script polls for due runs and executes each one through the same headless path documented above. Each run is a process of its own that computes on the worker embedded in it, each job in a child process under the worker's task time limit (`FLOWFILE_WORKER_TASK_TIMEOUT`, 3600 seconds by default, which the run inherits from the scheduler's environment), not on the app's worker, which it uses only for a Google Analytics read: in the desktop app it runs beside that worker, and in [Docker](docker.md) inside the core container. Set `FLOWFILE_COMPUTE_BACKEND` in the environment the scheduler runs in (core's, in Docker) to `worker` or a `worker:<name>` id, and every scheduled run computes on that worker instead, with that worker's memory and CPU; a flow whose **Execution location** is a backend id keeps running there. See [Schedules](../visual-editor/catalog/schedules.md) for setup, cron syntax, and the standalone-service mode.
 
 ## Related
 

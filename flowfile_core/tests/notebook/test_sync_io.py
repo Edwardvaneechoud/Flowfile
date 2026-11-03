@@ -336,6 +336,40 @@ def test_a_canvas_twin_without_columns_gives_way_to_the_probe_and_then_to_no_col
     assert calls.labels() <= {"collect", "create_from_path", "pl.scan_csv"}, sorted(calls.labels())
 
 
+def test_an_unchanged_rest_source_takes_the_columns_its_canvas_node_cached(monkeypatch):
+    import flowfile_frame as ff
+
+    graph = ff.create_flow_graph()
+    graph.add_rest_api_reader(
+        input_schema.NodeRestApiReader(
+            flow_id=graph.flow_id,
+            node_id=1,
+            user_id=NOTEBOOK_OWNER_ID,
+            rest_api_settings=input_schema.RestApiSettings(url="http://127.0.0.1:1/rates"),
+            fields=[
+                input_schema.MinimalFieldInfo(name=name, data_type=dtype)
+                for name, dtype in (("date", "String"), ("rate", "Float64"), ("extra", "String"))
+            ],
+        )
+    )
+    cells, provenance, ceiling, snapshot = _rendered(graph)
+    rates = render(graph).var_by_node[1]
+    cells += [
+        ("picked", f"picked = {rates}.select([ff.col('date'), ff.col('rate')])"),
+        ("high", "high = picked.filter(ff.col('rate') > 1)"),
+    ]
+    calls = _Calls()
+    held_ran = _record_io(monkeypatch, calls)
+    result = _sync(cells, snapshot, provenance, ceiling)
+    assert result["ok"], result.get("message")
+    assert result["warnings"] == []
+    select = next(node for node in result["flowfile_data"]["nodes"] if node["type"] == "select")
+    kept = {entry["old_name"]: entry.get("keep", True) for entry in select["setting_input"]["select_input"]}
+    assert kept == {"date": True, "rate": True, "extra": False}
+    assert held_ran == []
+    assert calls.labels() <= {"collect"} and calls.named("collect") == []
+
+
 def test_an_unbound_same_type_line_above_a_held_source_leaves_it_its_canvas_twin(canvas, monkeypatch):
     graph, _, rows_id, tmp_path = canvas
     cells, provenance, ceiling, snapshot = _rendered(graph)

@@ -5,6 +5,18 @@
       @update:model-value="handleGenericSettingsUpdate"
       @request-save="saveSettings"
     >
+      <div class="keep-missing-row">
+        <el-switch
+          v-model="nodeSelect.keep_missing"
+          size="small"
+          active-text="Keep missing columns"
+          aria-label="Keep missing columns"
+          data-testid="select-keep-missing"
+        />
+        <div class="keep-missing-hint">
+          Columns not listed here, such as one the source gains later, pass through unchanged.
+        </div>
+      </div>
       <select-dynamic
         v-model:sortedBy="nodeSelect.sorted_by"
         :select-inputs="nodeSelect.select_input"
@@ -41,7 +53,6 @@ import { SelectInput } from "../../../baseNode/nodeInput";
 import selectDynamic from "../../../baseNode/selectComponents/selectDynamic.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
-const keepMissing = ref(false);
 const nodeStore = useNodeStore();
 const nodeSelect = ref<NodeSelect>(createNodeSelect().value);
 const dataLoaded = ref(false);
@@ -51,7 +62,6 @@ const sourceSemanticTypes = ref<Record<string, SemanticType>>({});
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeSelect,
   onBeforeSave: () => {
-    nodeSelect.value.keep_missing = keepMissing.value;
     applySelectPositions(
       nodeSelect.value.select_input,
       nodeStore.getCurrentNodeData()?.main_input?.table_schema,
@@ -69,7 +79,6 @@ const loadNodeData = async (nodeId: number) => {
     try {
       if (result.setting_input && main_input && result.setting_input.is_setup) {
         nodeSelect.value = result.setting_input;
-        keepMissing.value = nodeSelect.value.keep_missing;
         updateNodeSelect(main_input, nodeSelect);
       } else {
         throw new Error("Setting input not available");
@@ -80,7 +89,6 @@ const loadNodeData = async (nodeId: number) => {
         nodeSelect.value.depending_on_id = main_input.node_id;
         nodeSelect.value.flow_id = nodeStore.flow_id;
         nodeSelect.value.node_id = nodeStore.node_id;
-        nodeSelect.value.keep_missing = keepMissing.value;
         updateNodeSelect(main_input, nodeSelect);
       }
     }
@@ -105,6 +113,19 @@ defineExpose({
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+.keep-missing-row {
+  flex-shrink: 0;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--el-border-color-lighter, #e4e7ed);
+}
+
+.keep-missing-hint {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
 }
 
 /* Make the select-dynamic chain fill the tab pane so the table can flex

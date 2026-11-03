@@ -854,7 +854,7 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
         ),
     ]
     nodes_list.sort(key=lambda x: x.name)
-    nodes_with_defaults = {"sample", "sort", "union", "select", "record_count", "data_cleansing"}
+    nodes_with_defaults = {"sample", "sort", "union", "select", "record_count", "data_cleansing", "api_response"}
 
     def check_if_has_default_setting(node_item: str):
         return node_item in nodes_with_defaults

@@ -23,9 +23,11 @@ def run_flow_cli(flow_path: str, run_id: int, backend: str | None = None) -> int
     importing from the top-level ``flowfile`` package.
 
     ``backend`` names the compute backend the run uses; else a backend id saved as the flow's
-    ``execution_location``, else the worker embedded in this process. It becomes the process's default and the
-    flow runs ``"remote"`` on it (``"local"`` on ``local``). The flow is closed when its run ends, so no result it
-    minted stays held on that backend after the process exits.
+    ``execution_location``; else ``FLOWFILE_COMPUTE_BACKEND`` when it is set, as a scheduled run inherits it from
+    core; else the worker embedded in this process. It becomes the process's default and the flow runs ``"remote"``
+    on it (``"local"`` on ``local``). The flow is closed when its run ends, so no result it minted stays held on that
+    backend after the process exits. The run is ``registry.headless_run``'s: each job in a child, which a cancel's
+    SIGTERM takes down with the process.
     """
     # Configure logging early so all messages are captured in the subprocess log file
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -35,7 +37,15 @@ def run_flow_cli(flow_path: str, run_id: int, backend: str | None = None) -> int
 
     from flowfile_core.flowfile.execution import registry
 
-    backend_id = backend or registry.LOCAL_BACKEND_ID
+    with registry.headless_run():
+        return _run_flow(flow_path, run_id, backend)
+
+
+def _run_flow(flow_path: str, run_id: int, backend: str | None) -> int:
+    """``run_flow_cli``'s run, inside ``registry.headless_run``."""
+    from flowfile_core.flowfile.execution import registry
+
+    backend_id = backend or registry.environment_backend_id() or registry.LOCAL_BACKEND_ID
     registry.set_default_override(backend_id)
 
     from flowfile_core.flowfile.manage.io_flowfile import open_flow

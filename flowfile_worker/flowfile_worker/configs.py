@@ -68,7 +68,7 @@ def _is_main_process():
     return multiprocessing.current_process().name == "MainProcess"
 
 
-# Only parse args and log in the main process
+# Only parse args in the main process; the server's run() logs what it was configured with
 # Spawned child processes will use environment variables or defaults
 if _is_main_process():
     args = parse_args()
@@ -77,12 +77,6 @@ if _is_main_process():
     SERVICE_PORT = args.port
     CORE_HOST = args.core_host
     CORE_PORT = args.core_port
-
-    from connectorx import __version__ as _connectorx_version
-
-    logger.info(f"ConnectorX version: {_connectorx_version}")
-    logger.info(f"Worker configured at {SERVICE_HOST}:{SERVICE_PORT}")
-    logger.info(f"Core service configured at {get_core_url(CORE_HOST, CORE_PORT)}")
 else:
     # In spawned processes, use defaults from environment variables
     SERVICE_HOST = DEFAULT_SERVICE_HOST

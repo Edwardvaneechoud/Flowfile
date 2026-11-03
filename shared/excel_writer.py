@@ -173,6 +173,19 @@ def _next_table_name(wb: Workbook) -> str:
     return f"Frame{index}"
 
 
+def _replace(src: str, dst: str) -> None:
+    """``os.replace`` that rides out Windows' transient sharing violations (AV/indexer scans of *dst*)."""
+    for delay in (0.05, 0.1, 0.2, 0.4, 0.8):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if os.name != "nt":
+                raise
+            time.sleep(delay)
+    os.replace(src, dst)
+
+
 def _save_atomically(wb: Workbook, path: str) -> None:
     """Save *wb* over *path* via a temp file + ``os.replace`` so a killed process cannot destroy it.
 
@@ -183,7 +196,7 @@ def _save_atomically(wb: Workbook, path: str) -> None:
     try:
         wb.save(tmp_path)
         shutil.copymode(path, tmp_path)
-        os.replace(tmp_path, path)  # openpyxl truncates in place; the worker's cancel path terminates()
+        _replace(tmp_path, path)  # openpyxl truncates in place; the worker's cancel path terminates()
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
@@ -194,7 +207,7 @@ def _write_fresh_atomically(df: pl.DataFrame, path: str, sheet: str) -> None:
     tmp_path = path + ".tmp"
     try:
         df.write_excel(tmp_path, worksheet=sheet)
-        os.replace(tmp_path, path)
+        _replace(tmp_path, path)
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)

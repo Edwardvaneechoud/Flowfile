@@ -25,7 +25,7 @@ Entry point: Poetry script `flowfile = "flowfile.__main__:main"` (root `pyprojec
 
 ```
 flowfile [command] [component] [file_path] [--host H] [--port P] [--no-browser]
-         [--param KEY=VALUE ...] [--run-id N]
+         [--param KEY=VALUE ...] [--run-id N] [--backend ID]
 ```
 
 | positional | choices | meaning |
@@ -41,6 +41,7 @@ flowfile [command] [component] [file_path] [--host H] [--port P] [--no-browser]
 | `--no-browser` | off | `run ui` | skips `webbrowser.open_new_tab` |
 | `--param KEY=VALUE` | none, repeatable | `run flow` | overrides/creates a `FlowParameter` |
 | `--run-id N` | `None` | `run flow` | pre-created `FlowRun` row id; results reported via `shared.run_completion.complete_run` |
+| `--backend ID` | `None` | `run flow` | compute backend (`local`, `worker`, `worker:<name>`); §3 |
 
 ### Verb behavior
 
@@ -55,13 +56,13 @@ flowfile [command] [component] [file_path] [--host H] [--port P] [--no-browser]
   - `save "<message>"`: projects the DB into the folder and `git commit`s; prints `Saved version <sha8>` or `(no changes)`.
 - **No args** → prints `FlowFile v<version>` + a usage block.
 
-Full multi-line usage/version output, verb list, and demo-seed summary shape are all worth re-reading directly from `flowfile/flowfile/__main__.py` — read its argparse block; it is the ground truth for every flag above (including the `convert`/`import` flags `--out`, `--inspect`, `--format`, `--csv`, `--overwrite`).
+`flowfile/flowfile/__main__.py`'s argparse block is the ground truth for every flag (including the `convert`/`import` flags `--out`, `--inspect`, `--format`, `--csv`, `--overwrite`).
 
 ---
 
 ## 2. Import side effects (they mutate the live catalog DB)
 
-`import flowfile` (`flowfile/flowfile/__init__.py`) sets nothing about the worker: neither `FLOWFILE_WORKER_PORT` nor single-file mode. `flowfile run ui` turns single-file mode on for its own process (§4).
+`import flowfile` sets neither `FLOWFILE_WORKER_PORT` nor single-file mode; `flowfile run ui` turns the mode on, for its own process (§4).
 
 `import flowfile` also imports `flowfile_core`, and `flowfile_core/flowfile_core/__init__.py` runs, **at import time**:
 1. `validate_setup()` — node-registry sanity check.
@@ -84,7 +85,7 @@ Also: `flowfile/__init__.py` mutes the `PipelineHandler` logger to `WARNING` on 
 
 ## 3. Headless flow execution — three equivalent paths
 
-All three run the same logic: make `local`, the worker embedded in this process, the process's default backend (`registry.set_default_override`) unless `--backend` or a backend id saved in the flow names another, so a run with none named computes in-process, each job in the process itself, with no worker service needed; delete any UI-only `explore_data` nodes (prints `Skipping N explore_data node(s) (UI-only)`), stamp catalog producer lineage, call `flow.run_graph()`, and report per-node results.
+All three run the same logic inside `registry.headless_run()`: make the run's backend the process default (`--backend`, else a backend id saved as the flow's location (not `local`/`remote`/`auto`), else `FLOWFILE_COMPUTE_BACKEND`, else `local`, the worker embedded in the runner). On `local` no worker service is needed: each job runs in a child of the runner (a pool of one unless `FLOWFILE_WORKER_POOL_SIZE` is set), and a SIGTERM cancel kills them. An unreachable named worker fails its nodes with `ComputeUnavailable`; nothing falls back to the runner. Then delete any UI-only `explore_data` nodes (prints `Skipping N explore_data node(s) (UI-only)`), stamp catalog producer lineage, call `flow.run_graph()`, and report per-node results.
 
 ### A. CLI (dev / pip install)
 
@@ -101,7 +102,7 @@ Implemented in `flowfile/flowfile/__main__.py:run_flow()`. `--param key=value` (
 ### B. PyInstaller / frozen-sidecar binary
 
 ```bash
-python -m flowfile_core.main --run-flow <path> --run-id <id>   # --run-id is REQUIRED here
+python -m flowfile_core.main --run-flow <path> --run-id <id> [--backend ID]   # --run-id is REQUIRED here
 ```
 
 `flowfile_core/main.py` dispatches `--run-flow` (only reachable via `if __name__ == "__main__"`, checked at the top of the file before any router import or the storage sweep) to `flowfile_core/run_flow_cli.py:run_flow_cli`, which duplicates `run_flow()`'s logic *inside* `flowfile_core` because the top-level `flowfile` package isn't bundled into the PyInstaller binary. Missing `--run-id` prints `Error: --run-id is required` and exits 1 — unlike path A, there is no optional-run-id fallback here.
@@ -124,11 +125,11 @@ The scheduler engine (`flowfile_scheduler/flowfile_scheduler/engine.py`) polls t
 
 ```bash
 poetry run flowfile_core                     # :63578 — start FIRST
-poetry run flowfile_worker                   # :63579 — needed for worker-offloaded / remote-execution runs
+poetry run flowfile_worker                   # :63579 — needed for any flow run
 cd flowfile_frontend && npm run dev:web       # :8080, proxies /api -> :63578
 ```
 
-Core must be up before the frontend — Vite proxies `/api` to core (and nginx does the same in Docker: `proxy_pass http://flowfile-core:63578/`). The worker is independent: core starts fine without it, but any worker-offloaded node run fails until the worker is up. The worker only calls back to core to ship logs (`POST /raw_logs`).
+Core must be up before the frontend — Vite proxies `/api` to core (and nginx does the same in Docker: `proxy_pass http://flowfile-core:63578/`). Core starts without the worker, but a serving core never computes in-process, so until the worker is up every run fails with `ComputeUnavailable` and catalog previews answer 503. The worker only calls back to core to ship logs (`POST /raw_logs`).
 
 ### Single-process ("unified") mode — the pip-install story
 
@@ -140,9 +141,9 @@ Fixed at `127.0.0.1:63578` (see §1). `start_server` sets `FLOWFILE_MODE=electro
 - serves the built Vue SPA from `flowfile/web/static/` under `/ui` (missing build → `{"error": "Web UI not installed..."}`),
 - adds `StripApiPrefixMiddleware` (strips a leading `/api` so the Docker-oriented frontend base URL still resolves),
 - `GET /single_mode` reports whether `FLOWFILE_SINGLE_FILE_MODE == "1"`,
-- **mounts the worker's routers at `/worker` on the same app**, for the callers that still post to a worker URL. Flows compute on the worker embedded in this process (the registry's `worker` in single-file mode) by a direct call, its jobs in the worker's pool, since `main.run` marks the process as serving.
+- **mounts the worker's routers at `/worker` on the same app** for callers that still post to a worker URL; flows compute on the embedded worker (the registry's `worker` in this mode), its jobs in the pool.
 
-`get_default_worker_url()` adds no `/worker`; `start_server` sets the mount's URL itself. Setting `FLOWFILE_SINGLE_FILE_MODE=1` by hand before starting a plain core makes the registry's `worker` the embedded one but mounts nothing, so `registry.worker_url()` names the standalone worker's default URL: this mode is `flowfile run ui`'s.
+Setting `FLOWFILE_SINGLE_FILE_MODE=1` by hand on a plain core mounts nothing and leaves `WORKER_URL` at the standalone default: the mode is `flowfile run ui`'s.
 
 Gotcha: the browser tab opens after `time.sleep(5)` but **before** uvicorn starts listening — the first load can 404/connection-refuse; just reload. `webbrowser.open_new_tab` targets `/ui`; API docs live at `/docs`.
 
@@ -223,7 +224,7 @@ Two roots:
 
 | directory property | local path | docker path | eager mkdir | purpose |
 |---|---|---|---|---|
-| `cache_directory` | `<base>/cache` | same | yes | worker↔core IPC; `.arrow` results under `cache/<flow_id>/<task_id>.arrow`; **cleaned when >1h old at every core startup** |
+| `cache_directory` | `<base>/cache` | same | yes | the worker's stored results, `cache/<flow_id>/<result_id>.arrow`; **cleaned when >1h old at every core startup** |
 | `database_directory` | `<base>/database` | same | yes | `flowfile_catalog.db` (+ legacy `flowfile.db`) |
 | `logs_directory` | `<base>/logs` | same | yes | per-flow `flow_<flow_id>.log` + per-run `scheduled_run_<run_id>.log`; `FLOWFILE_RUN_LOG_RETENTION_DAYS` retention (default 30d). `TESTING=True` redirects to `<base>/temp/test_logs` |
 | `system_logs_directory` | `<base>/system_logs` | same | yes | reserved — no writer currently ships to it |
@@ -264,7 +265,7 @@ Current migration head: `ls flowfile_core/flowfile_core/alembic/versions/ | sort
 - Each catalog table = one directory under `catalog_tables_directory`, a standard Delta table (`_delta_log/00000000000000000000.json` + `part-*.snappy.parquet`). Naming: demo seed uses `demo_<name>`, flow-written tables use `<table_name>_<8-hex>`, unnamed fallback is `catalog_<32-hex>`.
 - The `catalog_tables` DB row's `file_path` holds the table dir as an **absolute path**; `storage_format='delta'`; lineage columns `source_registration_id`/`producer_registration_id` link back to the producing flow. Deleting an orphan Delta directory on disk requires also deleting/fixing its `catalog_tables` row — the two are not self-healing against each other.
 - Namespace tree lives in `catalog_namespaces` (root `General` with children `default`, `Local Flows`, `Unnamed Flows`; `seed-demo` adds a `Demo` namespace with `sales_analytics`/`market` children).
-- All reads/writes go through the **worker**, never core in-process — `flowfile_worker/catalog_reader.py` (`scan_delta` / `scan_ipc`), with every path validated against the two catalog roots.
+- Managed and object-storage table I/O goes to the **worker** (`flowfile_worker/catalog_reader.py`, paths validated against the two catalog roots), or runs in core's process on a `local` backend (`catalog/compute.py::uses_worker`); an unreachable worker is a 503, never a read in core.
 - Optional per-namespace object-storage backend (S3, etc.) resolved via `flowfile_core/catalog/storage_backend.py`; `FLOWFILE_CATALOG_STORAGE_URI`/`_CONNECTION` env vars are creation-time defaults for *new* catalogs only, never a live override of existing local tables.
 - Materialized virtual-table results land as Arrow IPC files under `catalog_virtual_results/`.
 
@@ -287,7 +288,7 @@ Ciphertext format and HKDF derivation are owned by `flowfile-architecture-contra
 | per-flow execution log | `<base>/logs/flow_<flow_id>.log` | `FlowLogger`, `FileHandler`, format `%(asctime)s - %(levelname)s - %(message)s`; node lines prefixed `Node ID: <n> - ` |
 | scheduled/manual/on-demand run subprocess output | `<base>/logs/scheduled_run_<run_id>.log` (via `shared.run_logs.run_log_path`; honors `FLOWFILE_STORAGE_DIR`) | `shared/subprocess_utils.py` |
 | core service log | stdout only, `%(asctime)s [%(levelname)s] %(name)s: %(message)s` | no file handler — Electron/Tauri captures stdout |
-| worker service log | stdout only, `%(asctime)s: %(message)s`; worker subprocesses ship flow-scoped lines back to core via `POST /raw_logs` so they land in the same `flow_<id>.log`; a process that runs the worker's jobs itself (a headless run, Flowfile in Python) posts none, so its node lines go only to stderr, which a scheduled run writes to its run log | no file |
+| worker service log | stdout only, `%(asctime)s: %(message)s`; worker subprocesses ship flow-scoped lines back to core via `POST /raw_logs` so they land in the same `flow_<id>.log`; a headless run or Flowfile in Python posts none, so node lines go to stderr (a scheduled run's run log) | no file |
 | AI prompt log | `<base>/ai_prompts/YYYY-MM-DD.jsonl` (UTC-dated), only when `FLOWFILE_AI_LOG_PROMPTS` is truthy | `flowfile_core/ai/prompt_log.py` |
 | docker logs | container stdout | `docker compose logs -f [service]` |
 
@@ -304,7 +305,7 @@ Access:
 2. Importing `flowfile` or `flowfile_core` migrates + seeds the live DB (§2) — always isolate ad-hoc imports with `FLOWFILE_DB_PATH`.
 3. Run logs live under `storage.logs_directory` (`shared/run_logs.py`), so `FLOWFILE_STORAGE_DIR` / docker / `TESTING` move them — don't assume the real home dir.
 4. Flow logs survive core restarts; both `flow_*.log` and `scheduled_run_*.log` are expired only by `shared.run_logs.cleanup_old_logs` (`FLOWFILE_RUN_LOG_RETENTION_DAYS`, default 30). Per-flow `flow_<id>.log` is still truncated at the start of each run, so only the run logs are true history.
-5. Cache files older than 1h are deleted every time core starts — don't assume a `Status.file_ref` survives a restart.
+5. Cache files older than 1h are deleted every time core starts — don't assume a stored result survives a restart.
 6. Opening a flow renames it in-app to the file's stem; renaming the YAML on disk renames the flow.
 7. Saving `.flowfile` raises `DeprecationWarning`; *loading* `.flowfile` still works via the legacy pickle path.
 8. Docker-mode path sandboxing (§5) only rejects *relative* escapes — verify the current guard before treating it as absolute-path-safe.
@@ -339,8 +340,8 @@ tail -100 ~/.flowfile/logs/flow_<flow_id>.log
 # but FLOWFILE_STORAGE_DIR / docker / TESTING relocate them):
 tail -100 ~/.flowfile/logs/scheduled_run_<run_id>.log
 
-# 4. Worker offload / connectivity — core prints its resolved worker URL at startup
-#    ("Worker configured at <WORKER_URL> (host: ..., port: ...)"); confirm co-hosting:
+# 4. Compute connectivity — core prints its default backend and worker URL at startup
+#    ("Compute backend '<id>'; worker configured at <url>"); confirm co-hosting:
 curl -s http://127.0.0.1:63578/single_mode
 
 # 5. Stale worker-result cache (safe to delete; auto-cleans after 1h anyway)

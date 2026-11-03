@@ -760,7 +760,11 @@ class TestReadsAndRunsDoNotWrite:
         assert graph.has_unsaved_changes() is False
         assert graph.get_node(4).setting_input.cross_join_input.model_dump() == live_cross_join
         shown = graph.get_node(3).get_node_data(graph.flow_id, include_output=False).setting_input.select_input
-        assert {s.old_name: s.is_available for s in shown} == {"a": True, "gone": False}
+        assert {s.old_name: (s.is_available, s.keep) for s in shown} == {
+            "a": (True, True),
+            "gone": (False, False),
+            "b": (True, True),
+        }
 
 
 class TestSnapshotCost:

@@ -1534,11 +1534,14 @@ class FlowDataEngine:
         def unpivoted(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
             if unpivot_input.data_type_selector_expr is not None:
                 return frame.unpivot(on=unpivot_input.data_type_selector_expr(), index=unpivot_input.index_columns)
-            if unpivot_input.value_columns is not None:
-                return frame.unpivot(on=unpivot_input.value_columns, index=unpivot_input.index_columns)
-            return frame.unpivot()
+            return frame.unpivot(on=unpivot_input.value_columns or None, index=unpivot_input.index_columns)
 
-        return FlowDataEngine(unpivoted(self.data_frame), schema=_derived_schema(unpivoted, self))
+        try:
+            schema = _derived_schema(unpivoted, self)
+        except PanicException as e:
+            # Polars panics instead of raising when the unpivoted columns share no type
+            raise ValueError(f"The unpivoted columns have no common type for the value column: {e}") from e
+        return FlowDataEngine(unpivoted(self.data_frame), schema=schema)
 
     def do_pivot(self, pivot_input: transform_schemas.PivotInput, node_logger: NodeLogger = None) -> FlowDataEngine:
         """Converts the DataFrame from a long to a wide format, aggregating values.

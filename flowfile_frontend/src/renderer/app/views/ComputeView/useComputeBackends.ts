@@ -10,6 +10,11 @@ import {
   type HandshakeVerdict,
 } from "../../api/computeBackends.api";
 import { detailOf } from "../../utils/apiDetail";
+import {
+  handshakeStatus,
+  type StatusSummary,
+  type StatusTone,
+} from "../../components/settings/handshakeStatus";
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
@@ -63,6 +68,29 @@ export function serverFilesLabel(
   return declared.read_schemes.includes("file") || declared.write_schemes.includes("file")
     ? "Yes, declared by the worker"
     : "No";
+}
+
+const SUMMARY_PARTS: ReadonlyArray<[StatusTone, string]> = [
+  ["error", "can't run flows"],
+  ["warning", "with limitations"],
+  ["neutral", "not checked"],
+];
+
+/** The collapsed Other workers card's line: the count per status worst first, its tone the worst; null without rows. */
+export function workersSummary(
+  backends: ComputeBackend[],
+  verdicts: Record<string, HandshakeVerdict | undefined>,
+): StatusSummary | null {
+  if (!backends.length) return null;
+  const tones = backends.map((backend) => handshakeStatus(verdicts[backend.id]).tone);
+  const parts = SUMMARY_PARTS.map(([tone, label]) => {
+    const count = tones.filter((t) => t === tone).length;
+    return count ? { tone, label: `${count} ${label}` } : null;
+  }).filter((part): part is StatusSummary => part !== null);
+  if (!parts.length) {
+    return { tone: "success", label: backends.length === 1 ? "Matches this server" : "All match" };
+  }
+  return { tone: parts[0].tone, label: parts.map((part) => part.label).join(" · ") };
 }
 
 /**

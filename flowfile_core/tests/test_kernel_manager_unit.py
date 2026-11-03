@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import docker.errors
 import pytest
+from packaging.version import Version
 
 from flowfile_core.kernel import manager as kernel_manager
 from flowfile_core.kernel.manager import (
@@ -527,7 +528,13 @@ class TestDerivedImageTag:
 
 class TestImageVersionHelpers:
     def test_parse_image_version_parses_dotted_numeric(self):
-        assert parse_image_version("edwardvaneechoud/flowfile-kernel-base:0.3.1") == (0, 3, 1)
+        assert parse_image_version("edwardvaneechoud/flowfile-kernel-base:0.3.1") == Version("0.3.1")
+
+    def test_parse_image_version_orders_prereleases_below_their_release(self):
+        rc = parse_image_version("edwardvaneechoud/flowfile-kernel-notebook:0.24.0-rc.1")
+        assert rc == Version("0.24.0rc1")
+        assert parse_image_version("edwardvaneechoud/flowfile-kernel-notebook:0.23.3") < rc
+        assert rc < parse_image_version("edwardvaneechoud/flowfile-kernel-notebook:0.24.0")
 
     def test_parse_image_version_none_for_non_numeric(self):
         assert parse_image_version("flowfile-kernel-base:local") is None
@@ -541,7 +548,7 @@ class TestImageVersionHelpers:
         v031.tags = ["edwardvaneechoud/flowfile-kernel-base:0.3.1"]
         client.images.list.return_value = [v030, v031]
         result = newest_installed_version("edwardvaneechoud/flowfile-kernel-base", client)
-        assert result == ("edwardvaneechoud/flowfile-kernel-base:0.3.1", (0, 3, 1))
+        assert result == ("edwardvaneechoud/flowfile-kernel-base:0.3.1", Version("0.3.1"))
 
     def test_newest_installed_version_ignores_local_and_other_repos(self):
         client = MagicMock()

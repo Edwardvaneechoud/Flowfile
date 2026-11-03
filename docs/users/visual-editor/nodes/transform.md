@@ -64,9 +64,11 @@ Chooses which columns to keep, what to call them, and what order they appear in.
 | **Column Selection** | Which columns to keep. |
 | **Reordering** | Drag columns into place, or sort them alphabetically. |
 | **Rename Column** | A new name for any selected column; the data is untouched. |
-| **Keep Missing Fields** | Keep columns in the selection list even when they are absent from the current input, so the node survives a source that gains the column back. |
+| **Keep missing columns** | Columns the list does not hold pass through unchanged, after the listed ones, so a column the source gains later is kept. Off, only the ticked columns come out. On by default; a node built from `.select(...)` in code or the notebook has it off. |
 
 A selected column that is missing from the input is marked unavailable rather than failing the node, and the order you set here is the order downstream actions see.
+
+In the [canvas notebook](../notebook.md), a node with **Keep missing columns** on that only unticks columns shows as `.drop([...])`; any other node shows as `.select([...])`, and pushing a `.select` cell turns the setting off.
 
 ## ![Sort data](../../../assets/images/nodes/sort.svg){ width="44" height="44" } Sort data
 

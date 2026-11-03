@@ -42,7 +42,7 @@ This is one toggle, not a migration. **Development** — the default while you b
 <details markdown="1">
 <summary>See it: the execution mode in Flow Settings</summary>
 
-![Flow Settings — execution mode, location, and step previews](../assets/images/quickstart/flow_settings.gif)
+![Flow Settings: Execution Mode Development, Execution location Auto (default worker), Show details during execution ticked, Parallel workers 4](../assets/images/quickstart/flow_settings.png){ width="480px" }
 
 </details>
 

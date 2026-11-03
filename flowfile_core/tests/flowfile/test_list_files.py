@@ -311,7 +311,11 @@ class TestCancellationHardening:
         assert data["file_name"].to_list() == ["a.csv"]
 
     def test_graph_cancel_is_mirrored_onto_the_node(self, sample_tree, monkeypatch):
-        """FlowGraph.cancel sets the graph flag first; the node flag is what reclassifies."""
+        """FlowGraph.cancel sets the graph flag first; the node flag is what reclassifies.
+
+        The node reads the graph flag before its function runs (``_cancel_requested``), so the scan never starts;
+        the scan's own ``DirectoryScanCancelledError`` covers a cancel that lands mid-scan.
+        """
         graph = create_graph()
         graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=1, node_type="list_files"))
         graph.add_list_files(settings(sample_tree))
@@ -322,7 +326,7 @@ class TestCancellationHardening:
         graph.flow_settings.is_canceled = True
         node._execution_state.is_canceled = False
 
-        with pytest.raises(DirectoryScanCancelledError):
+        with pytest.raises(Exception, match="Node execution canceled"):
             node.get_resulting_data()
         assert node._execution_state.is_canceled, "node flag not mirrored; executor would log a failure"
 

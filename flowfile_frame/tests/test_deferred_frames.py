@@ -22,7 +22,7 @@ from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.native import NativeNodeError, _nodes_a_read_executes, ancestors, seed_deferred_node
-from flowfile_frame.utils import generate_node_id
+from flowfile_frame.utils import create_flow_graph, generate_node_id
 
 from .native_helpers import handle_into
 
@@ -85,6 +85,32 @@ def _assert_holds_a_placeholder(node) -> None:
 
 
 # building on a deferred frame (I1)
+
+
+def test_seeding_replaces_a_failed_live_read():
+    """A node read once and failed is seeded afterwards (``seed_session``'s fallback in a kernel): the seed clears
+    the failure, so the next read returns the placeholder instead of re-raising the last run's error."""
+    graph = create_flow_graph()
+    node_id = generate_node_id()
+    graph.add_read(
+        input_schema.NodeRead(
+            flow_id=graph.flow_id,
+            node_id=node_id,
+            received_file=input_schema.ReceivedTable(
+                file_type="csv", path="/nowhere/on/this/machine/gone.csv", name="gone.csv"
+            ),
+            is_setup=True,
+        )
+    )
+    node = graph.get_node(node_id)
+    with pytest.raises(FileNotFoundError):
+        node.get_resulting_data()
+    assert node.results.errors is not None and node._last_run_error is not None
+
+    seed_deferred_node(node, {"output-0": [FlowfileColumn.from_input("a", "Int64")]})
+
+    assert node.results.errors is None and node._last_run_error is None
+    assert node.get_resulting_data().data_frame.collect_schema().names() == ["a"]
 
 
 def test_seed_is_typed_and_empty():

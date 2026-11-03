@@ -302,6 +302,67 @@ class TestJoinSettingUpdator:
         assert len(right_old_names) == len(set(right_old_names)), f"Duplicates in right: {right_old_names}"
 
 
+class TestSelectSettingUpdator:
+    """The drawer is shown every input column, an unlisted one kept only as ``keep_missing`` keeps it."""
+
+    @staticmethod
+    def _select_over(graph: FlowGraph, keep_missing: bool):
+        create_manual_input_node(graph, 1, [{'a': 1, 'b': 'x', 'c': 2.0}])
+        graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=2, node_type='select'))
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        graph.add_select(input_schema.NodeSelect(
+            flow_id=1,
+            node_id=2,
+            depending_on_id=1,
+            select_input=[transform_schema.SelectInput('a'), transform_schema.SelectInput('gone')],
+            keep_missing=keep_missing,
+        ))
+        return graph.get_node(2)
+
+    @pytest.mark.parametrize('keep_missing', [False, True])
+    def test_unlisted_columns_are_listed_as_the_run_treats_them(self, basic_flow: FlowGraph, keep_missing: bool):
+        node = self._select_over(basic_flow, keep_missing)
+        for _ in range(2):
+            node_data = node.get_node_data(basic_flow.flow_id)
+        entries = {s.old_name: s for s in node_data.setting_input.select_input}
+        assert list(entries) == ['a', 'gone', 'b', 'c']
+        assert entries['a'].keep and entries['a'].is_available
+        assert entries['gone'].keep and not entries['gone'].is_available
+        assert [entries[c].keep for c in ('b', 'c')] == [keep_missing, keep_missing]
+        assert entries['b'].new_name == 'b'
+        assert [s.old_name for s in node.setting_input.select_input] == ['a', 'gone']
+
+    def test_the_drawer_saving_what_it_was_shown_keeps_the_output(self, basic_flow: FlowGraph):
+        node = self._select_over(basic_flow, keep_missing=False)
+        assert node.get_resulting_data().columns == ['a']
+        basic_flow.add_select(node.get_node_data(basic_flow.flow_id).setting_input)
+        assert basic_flow.get_node(2).get_resulting_data().columns == ['a']
+
+    def test_unlisted_columns_are_placed_after_the_listed_ones_so_a_save_keeps_the_order(self, basic_flow: FlowGraph):
+        create_manual_input_node(basic_flow, 1, [{'a': 1, 'b': 'x', 'c': 2.0, 'd': 3}])
+        basic_flow.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=2, node_type='select'))
+        add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        basic_flow.add_select(input_schema.NodeSelect(
+            flow_id=1,
+            node_id=2,
+            depending_on_id=1,
+            select_input=[transform_schema.SelectInput('c', position=0), transform_schema.SelectInput('a', position=1)],
+            keep_missing=True,
+        ))
+        node = basic_flow.get_node(2)
+        assert node.get_resulting_data().columns == ['c', 'a', 'b', 'd']
+
+        shown = node.get_node_data(basic_flow.flow_id).setting_input
+        entries = {s.old_name: s for s in shown.select_input}
+        assert [entries[c].position for c in ('c', 'a', 'b', 'd')] == [0, 1, 2, 3]
+        assert (entries['b'].original_position, entries['b'].data_type) == (1, 'String')
+        assert (entries['d'].original_position, entries['d'].data_type) == (3, 'Int64')
+
+        shown.select_input.sort(key=lambda s: s.position)
+        basic_flow.add_select(shown)
+        assert basic_flow.get_node(2).get_resulting_data().columns == ['c', 'a', 'b', 'd']
+
+
 class TestSelectInputsRemoveMethod:
     """Tests for the remove_select_input method on SelectInputs."""
 

@@ -1,135 +1,135 @@
 <template>
-  <section
-    class="compute-card exchange-card"
+  <ComputeCard
+    card-id="exchange-store"
+    title="Exchange store"
+    icon="fa-solid fa-arrow-right-arrow-left"
+    class="exchange-card"
     data-testid="exchange-store-card"
-    aria-labelledby="exchange-store-title"
   >
-    <header class="compute-card__header">
-      <span class="compute-card__icon"
-        ><i class="fa-solid fa-arrow-right-arrow-left" aria-hidden="true"></i
-      ></span>
-      <div class="compute-card__intro">
-        <h3 id="exchange-store-title" class="compute-card__title">Exchange store</h3>
-        <p class="compute-card__description">
-          Shared S3 storage for passing results between backends. Without it, each flow runs on a
-          single backend.
-        </p>
-      </div>
-    </header>
-    <div class="compute-card__body">
-      <div v-if="loadError" class="exchange-card__banner">
-        <i class="fa-solid fa-circle-exclamation"></i>
-        <span>{{ loadError }}</span>
-      </div>
-
-      <p v-if="loading && !state" class="exchange-card__loading">Loading…</p>
-
-      <div
-        v-if="state"
-        class="exchange-card__status"
-        :class="`exchange-card__status--${statusTone}`"
-        data-testid="exchange-store-status"
+    <template #description>
+      Shared S3 storage for passing results between backends. Without it, each flow runs on a single
+      backend.
+    </template>
+    <template #meta="{ open }">
+      <span
+        v-if="!open && statusSummary"
+        :class="['compute-chip', `compute-chip--${statusSummary.tone}`]"
+        data-testid="exchange-store-summary"
+        >{{ statusSummary.label }}</span
       >
-        <i
-          :class="
-            state.source === 'none'
-              ? 'fa-regular fa-circle'
-              : statusTone === 'warning'
-                ? 'fa-solid fa-triangle-exclamation'
-                : 'fa-solid fa-circle-check'
-          "
-          aria-hidden="true"
-        ></i>
-        <div>
-          <template v-if="state.source === 'none'">
-            <strong>Not configured</strong>
-            <p>A node's own Compute backend is ignored until an exchange store is configured.</p>
-          </template>
-          <template v-else-if="!state.connection">
-            <strong>Connection required</strong>
-            <p>
-              <code>{{ state.uri }}</code> has no connection, so every crossing between backends is
-              refused.
-              <template v-if="state.source === 'env'"
-                >Set <code>FLOWFILE_EXCHANGE_CONNECTION</code> to a stored S3 connection's
-                name.</template
-              >
-            </p>
-          </template>
-          <template v-else>
-            <strong>{{
-              state.maxRowsError ? "Row limit needs attention" : "Exchange store configured"
-            }}</strong>
-            <p>
-              Results cross through <code>{{ state.uri }}</code> with the connection
-              <code>{{ state.connection }}</code
-              ><template v-if="state.maxRows !== null"
-                >, at most {{ state.maxRows }} rows per input</template
-              ><template v-if="state.source === 'env'"> (from the environment)</template>.
-            </p>
-          </template>
-        </div>
-      </div>
+    </template>
+    <div v-if="loadError" class="exchange-card__banner">
+      <i class="fa-solid fa-circle-exclamation"></i>
+      <span>{{ loadError }}</span>
+    </div>
 
-      <p v-if="state?.envOverride" class="exchange-card__warning" data-testid="exchange-store-env">
-        <i class="fa-solid fa-triangle-exclamation"></i>
-        <span>
-          <code>FLOWFILE_EXCHANGE_URI</code> is set in the environment and overrides what is saved
-          here. Unset it to manage the store from this page.
-        </span>
-      </p>
+    <p v-if="loading && !state" class="exchange-card__loading">Loading…</p>
 
-      <div v-if="state" class="exchange-card__fields">
-        <label class="compute-field">
-          <span class="compute-field__label">S3 prefix</span>
-          <el-input
-            v-model="form.uri"
-            v-bind="NO_AUTOFILL"
-            placeholder="s3://bucket/flowfile"
-            data-testid="exchange-store-uri"
-          />
-        </label>
-        <label class="compute-field">
-          <span class="compute-field__label">Connection</span>
-          <el-select
-            v-model="form.connection"
-            filterable
-            clearable
-            value-on-clear=""
-            placeholder="A stored S3 connection"
-            data-testid="exchange-store-connection"
-          >
-            <el-option v-for="name in state.connections" :key="name" :label="name" :value="name" />
-          </el-select>
-          <span v-if="!state.connections.length" class="compute-field__hint">
-            No S3 connection yet. Add one under Settings → Connections; every worker and cluster
-            opens the store with it, whoever runs the flow.
-          </span>
-        </label>
-        <label class="compute-field">
-          <span class="compute-field__label">Row limit (optional)</span>
-          <el-input-number
-            v-model="form.maxRows"
-            :min="0"
-            :controls="false"
-            placeholder="no limit"
-            data-testid="exchange-store-max-rows"
-          />
-          <span class="compute-field__hint">
-            Maximum rows per input, checked before the run. Leave empty for no limit.
-          </span>
-          <span
-            v-if="state.maxRowsError"
-            class="exchange-field__error"
-            data-testid="exchange-store-max-rows-error"
-          >
-            <i class="fa-solid fa-triangle-exclamation"></i>
-            {{ state.maxRowsError }}; every crossing between backends is refused until it is fixed.
-          </span>
-        </label>
+    <div
+      v-if="state"
+      class="exchange-card__status"
+      :class="`exchange-card__status--${statusTone}`"
+      data-testid="exchange-store-status"
+    >
+      <i
+        :class="
+          state.source === 'none'
+            ? 'fa-regular fa-circle'
+            : statusTone === 'warning'
+              ? 'fa-solid fa-triangle-exclamation'
+              : 'fa-solid fa-circle-check'
+        "
+        aria-hidden="true"
+      ></i>
+      <div>
+        <template v-if="state.source === 'none'">
+          <strong>Not configured</strong>
+          <p>A node's own Compute backend is ignored until an exchange store is configured.</p>
+        </template>
+        <template v-else-if="!state.connection">
+          <strong>Connection required</strong>
+          <p>
+            <code>{{ state.uri }}</code> has no connection, so every crossing between backends is
+            refused.
+            <template v-if="state.source === 'env'"
+              >Set <code>FLOWFILE_EXCHANGE_CONNECTION</code> to a stored S3 connection's
+              name.</template
+            >
+          </p>
+        </template>
+        <template v-else>
+          <strong>{{
+            state.maxRowsError ? "Row limit needs attention" : "Exchange store configured"
+          }}</strong>
+          <p>
+            Results cross through <code>{{ state.uri }}</code> with the connection
+            <code>{{ state.connection }}</code
+            ><template v-if="state.maxRows !== null"
+              >, at most {{ state.maxRows }} rows per input</template
+            ><template v-if="state.source === 'env'"> (from the environment)</template>.
+          </p>
+        </template>
       </div>
     </div>
-    <footer v-if="state" class="compute-card__footer">
+
+    <p v-if="state?.envOverride" class="exchange-card__warning" data-testid="exchange-store-env">
+      <i class="fa-solid fa-triangle-exclamation"></i>
+      <span>
+        <code>FLOWFILE_EXCHANGE_URI</code> is set in the environment and overrides what is saved
+        here. Unset it to manage the store from this page.
+      </span>
+    </p>
+
+    <div v-if="state" class="exchange-card__fields">
+      <label class="compute-field">
+        <span class="compute-field__label">S3 prefix</span>
+        <el-input
+          v-model="form.uri"
+          v-bind="NO_AUTOFILL"
+          placeholder="s3://bucket/flowfile"
+          data-testid="exchange-store-uri"
+        />
+      </label>
+      <label class="compute-field">
+        <span class="compute-field__label">Connection</span>
+        <el-select
+          v-model="form.connection"
+          filterable
+          clearable
+          value-on-clear=""
+          placeholder="A stored S3 connection"
+          data-testid="exchange-store-connection"
+        >
+          <el-option v-for="name in state.connections" :key="name" :label="name" :value="name" />
+        </el-select>
+        <span v-if="!state.connections.length" class="compute-field__hint">
+          No S3 connection yet. Add one under Settings → Connections; every worker and cluster opens
+          the store with it, whoever runs the flow.
+        </span>
+      </label>
+      <label class="compute-field">
+        <span class="compute-field__label">Row limit (optional)</span>
+        <el-input-number
+          v-model="form.maxRows"
+          :min="0"
+          :controls="false"
+          placeholder="no limit"
+          data-testid="exchange-store-max-rows"
+        />
+        <span class="compute-field__hint">
+          Maximum rows per input, checked before the run. Leave empty for no limit.
+        </span>
+        <span
+          v-if="state.maxRowsError"
+          class="exchange-field__error"
+          data-testid="exchange-store-max-rows-error"
+        >
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          {{ state.maxRowsError }}; every crossing between backends is refused until it is fixed.
+        </span>
+      </label>
+    </div>
+    <template v-if="state" #footer>
       <el-button
         type="primary"
         size="small"
@@ -150,21 +150,31 @@
       >
         Clear store
       </el-button>
-    </footer>
-  </section>
+    </template>
+  </ComputeCard>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { NO_AUTOFILL } from "../../utils/noAutofill";
+import ComputeCard from "./ComputeCard.vue";
 import { useExchangeStore } from "./useExchangeStore";
+import type { StatusSummary } from "../../components/settings/handshakeStatus";
 
 const { state, loading, loadError, saving, load, save, clear } = useExchangeStore();
 
 const statusTone = computed(() => {
   if (!state.value || state.value.source === "none") return "neutral";
   return !state.value.connection || state.value.maxRowsError ? "warning" : "success";
+});
+
+const statusSummary = computed<StatusSummary | null>(() => {
+  if (!state.value) return null;
+  if (state.value.source === "none") return { tone: "neutral", label: "Not configured" };
+  if (!state.value.connection) return { tone: "warning", label: "Connection required" };
+  if (state.value.maxRowsError) return { tone: "warning", label: "Row limit needs attention" };
+  return { tone: "success", label: "Configured" };
 });
 
 const form = reactive<{ uri: string; connection: string; maxRows: number | undefined }>({

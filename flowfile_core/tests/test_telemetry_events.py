@@ -940,6 +940,7 @@ def test_flow_as_api_runs_are_marked_as_system_runs(monkeypatch) -> None:
         node_type = "api_response"
         node_id = 1
         hash = "h"
+        is_setup = True
         setting_input = object()
 
         def get_resulting_data(self):

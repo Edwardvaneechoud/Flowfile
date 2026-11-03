@@ -3670,6 +3670,87 @@ def test_unpivot_operation(export_func):
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
 
+def _unpivot_by_data_type_flow(
+    data_type_selector: str | None, with_date: bool = False, mode: str = "data_type"
+) -> FlowGraph:
+    flow = create_basic_flow()
+    columns = [
+        input_schema.MinimalFieldInfo(name="base", data_type="String"),
+        input_schema.MinimalFieldInfo(name="amount", data_type="Integer"),
+        input_schema.MinimalFieldInfo(name="gbp", data_type="Double"),
+        input_schema.MinimalFieldInfo(name="jpy", data_type="Double"),
+    ]
+    data = [["EUR", "USD"], [1, 2], [0.7, 0.8], [150.0, 160.0]]
+    if with_date:
+        columns.append(input_schema.MinimalFieldInfo(name="day", data_type="Date"))
+        data.append([date(2026, 10, 28), date(2026, 10, 29)])
+    flow.add_manual_input(input_schema.NodeManualInput(
+        flow_id=1, node_id=1, raw_data_format=input_schema.RawData(columns=columns, data=data)
+    ))
+    flow.add_unpivot(input_schema.NodeUnpivot(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        unpivot_input=transform_schema.UnpivotInput(
+            index_columns=["amount"],
+            data_type_selector=data_type_selector,
+            data_type_selector_mode=mode,
+        ),
+    ))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    return flow
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_unpivot_by_data_type(export_func):
+    """A data-type unpivot exports its selector, so the code unpivots the columns the canvas does."""
+    flow = _unpivot_by_data_type_flow("float")
+    code = export_func(flow)
+
+    verify_code_contains(code, "on=cs.float()" if export_func is export_flow_to_polars else "on=ff.float_()")
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert sorted(expected_df["variable"].unique()) == ["gbp", "jpy"]
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+
+
+@pytest.mark.parametrize("data_type_selector", ["all", "date", "float", "numeric", "string", None])
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_unpivot_every_data_type_option_matches_the_canvas(export_func, data_type_selector):
+    flow = _unpivot_by_data_type_flow(data_type_selector, with_date=True)
+    code = export_func(flow)
+
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert expected_df.height > 0
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_unpivot_without_value_columns_unpivots_every_other_column(export_func):
+    """A column unpivot with only index keys unpivots every other column, like Polars' ``on=None``."""
+    flow = _unpivot_by_data_type_flow(None, mode="column")
+    code = export_func(flow)
+
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert sorted(expected_df["variable"].unique()) == ["base", "gbp", "jpy"]
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+
+
+def test_unpivot_settings_hold_only_the_active_mode():
+    by_type = transform_schema.UnpivotInput(data_type_selector_mode="data_type", value_columns=["a"])
+    assert (by_type.data_type_selector, by_type.value_columns) == ("all", [])
+    by_columns = transform_schema.UnpivotInput(value_columns=["a"], data_type_selector="numeric")
+    assert (by_columns.data_type_selector, by_columns.value_columns) == (None, ["a"])
+
+
+def test_unpivot_of_columns_without_a_common_type_fails_with_a_value_error(protocol_on):
+    engine = FlowDataEngine(pl.LazyFrame({"g": ["a"], "n": [1], "tags": [[1, 2]]}))
+    with pytest.raises(ValueError, match="no common type"):
+        engine.unpivot(transform_schema.UnpivotInput(index_columns=["g"]))
+
+
 @pytest.mark.parametrize("export_func", [
     export_flow_to_polars,
     export_flow_to_flowframe,

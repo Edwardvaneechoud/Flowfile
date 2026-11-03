@@ -33,6 +33,7 @@ import requests
 from polars_grouper import graph_solver
 from pydantic import BaseModel, ValidationError
 
+from flowfile_core.configs import settings
 from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavailable, VersionMismatch
 from shared._version import get_version
 from shared.compute_protocol import PROTOCOL_VERSION, Capabilities, local_capabilities
@@ -190,11 +191,21 @@ def _probe_plans() -> dict[str, pl.LazyFrame]:
     }
 
 
+def ambient_refusal(backend_id: str) -> str:
+    """Why a backend declaring ``credential_resolution: ambient`` is refused while the protocol flag is off."""
+    return (
+        f'Backend "{backend_id}" resolves credentials with its own identity (credential_resolution: ambient), which '
+        "needs FLOWFILE_COMPUTE_PROTOCOL on in core: with the flag off, core's plans would carry encrypted "
+        "credentials, which such a backend must not receive"
+    )
+
+
 def verify(backend: ComputeBackend) -> Verdict:
     """Check *backend* now and answer the verdict, which is kept as its last.
 
-    A refused verdict is answered, not raised. While the probes run, the comparison's verdict stands for the backend,
-    so the probe jobs' own calls pass the gate.
+    A refused verdict is answered, not raised: a refusing field that differs, or ``credential_resolution: ambient``
+    while ``FLOWFILE_COMPUTE_PROTOCOL`` is off (``ambient_refusal``). While the probes run, the comparison's verdict
+    stands for the backend, so the probe jobs' own calls pass the gate.
 
     Raises:
         ComputeError: The backend's capabilities could not be read (``ComputeUnavailable`` when it cannot be
@@ -213,8 +224,13 @@ def verify(backend: ComputeBackend) -> Verdict:
         raise
     differences = capability_differences(core, reported)
     refusing = [difference for difference in differences if difference.split(":", 1)[0] in _REFUSING_FIELDS]
-    if refusing:
+    if reported.credential_resolution == "ambient" and not settings.FLOWFILE_COMPUTE_PROTOCOL:
+        error = ambient_refusal(backend.id)
+    elif refusing:
         error = f'Backend "{backend.id}" does not match core ({"; ".join(refusing)})'
+    else:
+        error = None
+    if error is not None:
         verdict = Verdict(
             id=backend.id,
             ok=False,

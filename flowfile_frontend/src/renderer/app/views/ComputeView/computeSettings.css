@@ -96,6 +96,41 @@
 .compute-disclosure p {
   margin: var(--spacing-2) 0 0;
 }
+.compute-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-1-5);
+  max-width: 100%;
+  padding: 2px var(--spacing-2);
+  border-radius: var(--border-radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-normal);
+}
+.compute-chip::before {
+  content: "";
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.compute-chip--neutral {
+  background: var(--color-background-soft);
+  color: var(--color-text-secondary);
+}
+.compute-chip--success {
+  background: var(--color-success-light);
+  color: var(--color-success-dark);
+}
+.compute-chip--warning {
+  background: var(--color-warning-light);
+  color: var(--color-warning-dark);
+}
+.compute-chip--error {
+  background: var(--color-danger-light);
+  color: var(--color-danger-dark);
+}
 .compute-card :deep(.el-input__wrapper),
 .compute-card :deep(.el-select__wrapper) {
   min-height: 34px;

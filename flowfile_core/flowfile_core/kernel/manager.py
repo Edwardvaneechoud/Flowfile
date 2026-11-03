@@ -20,6 +20,7 @@ import docker.errors
 import docker.types
 import docker.utils
 import httpx
+from packaging.version import Version
 
 from flowfile_core.auth import sharing
 from flowfile_core.configs.flow_logger import FlowLogger
@@ -165,8 +166,8 @@ def _resolve_local_image(
     return None
 
 
-def _image_version(img, repo_name: str) -> tuple[int, ...] | None:
-    """Highest dotted version among an image's ``*/flowfile-kernel-<flavour>`` tags, if any."""
+def _image_version(img, repo_name: str) -> Version | None:
+    """Highest version among an image's ``*/flowfile-kernel-<flavour>`` tags, if any."""
     versions = []
     for tag in img.tags or ():
         repo = tag.rsplit(":", 1)[0]
@@ -177,10 +178,10 @@ def _image_version(img, repo_name: str) -> tuple[int, ...] | None:
     return max(versions) if versions else None
 
 
-def newest_installed_version(repo: str, docker_client) -> tuple[str, tuple[int, ...]] | None:
+def newest_installed_version(repo: str, docker_client) -> tuple[str, Version] | None:
     """Return ``(tag, version)`` of the newest locally-present image for ``repo``.
 
-    Only considers tags of ``repo`` carrying a dotted-numeric version; ``:local``
+    Only considers tags of ``repo`` carrying a version; ``:local``
     / digest / non-version tags are ignored. Returns None when none are present.
     Used to detect that an older official kernel image is installed.
     """
@@ -188,7 +189,7 @@ def newest_installed_version(repo: str, docker_client) -> tuple[str, tuple[int, 
         images = docker_client.images.list(name=repo)
     except Exception:
         return None
-    best: tuple[str, tuple[int, ...]] | None = None
+    best: tuple[str, Version] | None = None
     prefix = f"{repo}:"
     for img in images:
         for tag in img.tags or ():

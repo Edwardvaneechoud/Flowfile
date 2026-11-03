@@ -66,16 +66,6 @@
           </button>
         </template>
 
-        <template #strip>
-          <span
-            v-if="missing.length > 0"
-            class="picker-flag"
-            title="Required before this node does anything"
-          >
-            Missing: {{ missing.join(", ") }}
-          </span>
-        </template>
-
         <template
           #settings="{ isRowSelected, activeZone, onRowClick, onRowContextMenu, onRowMouseDown }"
         >
@@ -297,8 +287,8 @@ import {
   DATA_TYPE_OPTIONS,
   UNPIVOT_ROLES,
   dataTypeLabel,
-  missingUnpivotParts,
   rowsFromUnpivot,
+  valueColumnsLabel,
   writeUnpivotRows,
 } from "./unpivotLogic";
 
@@ -318,9 +308,6 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
     }
     return true;
   },
-  onAfterSave: async () => {
-    validateConfig();
-  },
 });
 
 const columns = computed<FileColumn[]>(() => nodeData.value?.main_input?.table_schema ?? []);
@@ -331,7 +318,6 @@ const rows = computed<RoleRow[]>(() => (input.value ? rowsFromUnpivot(input.valu
 const indexed = computed(() => rows.value.map((row, index) => ({ row, index })));
 const indexRows = computed(() => indexed.value.filter(({ row }) => row.role === "index"));
 const valueRows = computed(() => indexed.value.filter(({ row }) => row.role === "value"));
-const missing = computed(() => (input.value ? missingUnpivotParts(input.value) : []));
 const columnNames = computed(() => new Set(columns.value.map((column) => column.name)));
 const usedCount = computed(
   () => rows.value.filter((row) => columnNames.value.has(row.name)).length,
@@ -341,7 +327,7 @@ const settingsCountLabel = computed(() => {
   if (!input.value) return "";
   const keys = pluralize(input.value.index_columns.length, "index key");
   return byColumns.value
-    ? `${keys} · ${pluralize(input.value.value_columns.length, "column")} to unpivot`
+    ? `${keys} · ${valueColumnsLabel(input.value.value_columns)} to unpivot`
     : `${keys} · unpivot ${dataTypeLabel(input.value.data_type_selector).toLowerCase()}`;
 });
 
@@ -447,20 +433,6 @@ const loadNodeData = async (nodeId: number) => {
   }
   nodeUnpivot.value = settings;
   dataLoaded.value = true;
-  validateConfig();
-};
-
-const validateConfig = () => {
-  if (!nodeUnpivot.value) return;
-  const nodeId = nodeUnpivot.value.node_id;
-  if (missing.value.length > 0) {
-    nodeStore.setNodeValidation(nodeId, {
-      isValid: false,
-      error: `Unpivot still needs: ${missing.value.join(", ")}.`,
-    });
-  } else {
-    nodeStore.setNodeValidation(nodeId, { isValid: true, error: "" });
-  }
 };
 
 onUnmounted(() => {

@@ -71,9 +71,11 @@ df.write_avro("output.avro", compression="snappy")
 - Avro: `"uncompressed"` (default), `"snappy"`, `"deflate"`
 
 !!! info "Core never holds the dataset"
-    Lazy formats (IPC, NDJSON) sink directly from the streaming plan; the eager
-    Avro write and all worker-offloaded writes materialise in the worker process,
-    never in `flowfile_core`.
+    Each of these writers runs on the flow's compute backend (for a script, the
+    worker embedded in your Python process), as a file write, or as Polars code
+    when you pass other keyword arguments. The lazy formats (IPC, NDJSON) sink
+    straight from the plan; Avro has no lazy sink, so it is collected first.
+    `flowfile_core` itself never materialises the data.
 
 ## Cloud Storage Writing
 

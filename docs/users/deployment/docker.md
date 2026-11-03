@@ -85,6 +85,8 @@ services:
       - FLOWFILE_ENABLE_PROJECTS=${FLOWFILE_ENABLE_PROJECTS:-true}
       # Core reaches the worker over its versioned /v1 routes (on by default)
       - FLOWFILE_COMPUTE_PROTOCOL=${FLOWFILE_COMPUTE_PROTOCOL:-1}
+      # The backend flows run on when they name none; empty means the worker below, except for scheduled runs (see below)
+      - FLOWFILE_COMPUTE_BACKEND=${FLOWFILE_COMPUTE_BACKEND:-}
       - WORKER_HOST=flowfile-worker
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data
@@ -110,6 +112,8 @@ services:
       - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:-}
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data
+      # Shares core's data volumes, so it declares local files among the schemes it reads and writes
+      - FLOWFILE_WORKER_LOCAL_FILES=1
     volumes:
       - ./flowfile_data:/app/user_data
       - flowfile-internal-storage:/app/internal_storage
@@ -128,7 +132,7 @@ volumes:
 
 The worker can also run on a host of its own; [Remote workers](remote-worker.md) covers what it and core then need.
 
-A flow you run in the designer computes on the worker container. A scheduled run, and a run started from the catalog, do not: core starts each as a process of its own (`flowfile run flow`), which computes on a worker embedded in it, inside the core container and with that container's memory and CPU, while the worker container serves nothing for it, except a **Google Analytics** read, which always runs on the worker. So the core container needs the memory the largest scheduled flow uses. A flow whose **Execution location** names a configured worker runs on that worker instead.
+A flow you run in the designer computes on the worker container. A scheduled run, and a run started from the catalog, do not by default: core starts each as a process of its own (`flowfile run flow`), which computes on a worker embedded in it, inside the core container and with that container's memory and CPU, while the worker container serves nothing for it, except a **Google Analytics** read, which always runs on the worker. So the core container needs the memory the largest scheduled flow uses. To run them on the worker container instead, set `FLOWFILE_COMPUTE_BACKEND=worker` in core's environment (the bundled compose passes it through; a `worker:<name>` id added on the Backends page works too): every scheduled run then computes there, in a child process with the worker's task time limit and **Cancel**. A flow whose **Execution location** names a configured worker runs on that worker whatever the variable says.
 
 ## Environment Variables
 

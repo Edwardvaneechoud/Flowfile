@@ -120,13 +120,17 @@ export const restoreSourceType = (selectInput: SelectInput, sourceType: string):
   return selectInput;
 };
 
+/**
+ * A select node as the drawer starts it. `keep_missing` starts on, as core's `NodeSelect` does and
+ * as the settings `/editor/add_node/` gives a select dropped on the canvas.
+ */
 export const createNodeSelect = (
   flowId = -1,
   nodeId = -1,
   pos_x = 0,
   pos_y = 0,
   cache_input = false,
-  keep_missing = false,
+  keep_missing = true,
 ): Ref<NodeSelect> => {
   const selectInputData: SelectInput[] = [];
   const nodeSelectRef: Ref<NodeSelect> = ref({

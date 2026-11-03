@@ -611,7 +611,7 @@ Every build or materialisation failure raises `ff.NativeNodeError`, a subclass o
 
 ## Known limits
 
-- **`pivot` below a deferred frame raises at build.** Its columns come from the pivot column's values, which the zero-row placeholder does not have: `ValueError: Failed to fetch unique values`. When a `flowfile_worker` process answers that probe instead, the pivot builds with only its index columns. Collect the input first.
+- **`pivot` below a deferred frame builds with only its index columns.** Its other columns come from the pivot column's values, which the zero-row placeholder does not have, so they appear only when the flow runs; `collect()` on the pivoted frame runs its lineage and returns them. Collect the input first when you need them while building.
 - **Build-time effects are refused on deferred frames and below a gate.** `inspect`, the `sink_*` methods that are not `write_*` aliases and the Polars-code fallbacks of `write_parquet` / `write_csv` / `write_excel` raise `NativeNodeError` on both; expressions without a code form raise on deferred frames. Use a `write_*` method with a native writer node, or collect first.
 - **Three inputs at most** on nodes with fixed inputs, custom nodes included; the canvas has the same limit.
 - **Local custom nodes run `process()` at build** to build their lazy plan, as canvas schema prediction does. Pass `deferred=True` to place one without running it.

@@ -205,6 +205,9 @@ NEEDS_KERNEL = {
         "def _polars_code_4(input_df):\n    return input_df\n\n\nx = ff.lit(_polars_code_4)",
         5,
     ),
+    "selector_outside_unpivot": ("x = df.select(ff.numeric())", 1),
+    "selector_in_an_unpivot_list": ("x = df.unpivot([ff.numeric()])", 1),
+    "selector_with_arguments": ("x = ff.date(2024, 1, 1)", 1),
     "multi_line_chain": ("x = (\n    df\n    .filter(ff.col('a') > 1)\n    .collect()\n)", 4, 1),
     "frame_from_data_read": ("x = ff.LazyFrame", 1),
     "frame_from_data_unknown_keyword": ("x = ff.LazyFrame([1], nope=1)", 1),
@@ -252,6 +255,13 @@ def test_a_python_boolean_operator_names_the_expression_operator(code, hint):
     assert (result.line, result.kind) == (1, "needs_kernel")
     assert f"({hint})" in result.message and result.message.endswith("this needs a kernel")
     assert placed == 0
+
+
+@pytest.mark.parametrize("code", ["x = ff.date(2024, 1, 1)", "x = df.select(ff.numeric())"], ids=["called", "passed"])
+def test_a_misused_selector_says_what_it_is(code):
+    result, _ = _interpret(code)
+    assert (result.line, result.kind) == (1, "needs_kernel")
+    assert "data-type selector" in result.message
 
 
 @pytest.mark.parametrize("name", REFUSED_FL)
