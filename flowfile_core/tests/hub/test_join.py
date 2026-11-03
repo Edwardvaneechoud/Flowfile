@@ -5,10 +5,12 @@ The join runs against ``FakeJoinHub`` over real HTTP; the sync through ``/hub_cl
 """
 
 import json
+import logging
 import os
 import sys
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
@@ -134,10 +136,7 @@ def test_a_core_joins_for_itself_and_its_worker_and_a_restart_makes_no_request(m
 def test_a_core_given_no_addresses_gives_this_machines_on_its_two_ports(
     monkeypatch, join_hub, node_file, served_on, core_port
 ):
-    monkeypatch.setattr(hub_node.socket, "gethostname", lambda: "team-7.example.com")
-    monkeypatch.setattr(hub_node.socket, "getfqdn", lambda: "team-7.example.com")
-    monkeypatch.setattr(settings, "SERVER_PORT", 64100)
-    monkeypatch.setattr(settings, "WORKER_PORT", 64101)
+    on_this_machine(monkeypatch)
     started_with(monkeypatch, join_hub.url, join_hub.mint(), name=None, core_url=None, worker_url=None)
 
     main._join_hub(served_on)
@@ -148,6 +147,118 @@ def test_a_core_given_no_addresses_gives_this_machines_on_its_two_ports(
         f"http://team-7.example.com:{core_port}",
         "http://team-7.example.com:64101",
     )
+    assert "ui_url" not in body
+
+
+def on_this_machine(monkeypatch, host: str = "0.0.0.0") -> None:
+    """Core bound to ``host`` on 64100 beside a worker on 64101, on a machine named ``team-7.example.com``."""
+    monkeypatch.setattr(hub_node.socket, "gethostname", lambda: "team-7.example.com")
+    monkeypatch.setattr(hub_node.socket, "getfqdn", lambda: "team-7.example.com")
+    monkeypatch.setattr(settings, "SERVER_HOST", host)
+    monkeypatch.setattr(settings, "SERVER_PORT", 64100)
+    monkeypatch.setattr(settings, "WORKER_PORT", 64101)
+
+
+@pytest.mark.parametrize(
+    "host,core_url",
+    [("127.0.0.1", "http://127.0.0.1:64100"), ("localhost", "http://localhost:64100"), ("::1", "http://[::1]:64100")],
+)
+def test_a_core_bound_to_a_loopback_address_gives_that_address_and_says_how_to_be_reached(
+    monkeypatch, join_hub, node_file, caplog, host, core_url
+):
+    on_this_machine(monkeypatch, host)
+    started_with(monkeypatch, join_hub.url, join_hub.mint(), core_url=None, worker_url=None)
+
+    with caplog.at_level(logging.WARNING):
+        main._join_hub()
+
+    body = join_hub.calls[0][1]
+    assert (body["core_url"], body["worker_url"]) == (core_url, "http://team-7.example.com:64101")
+    warnings = [r.getMessage() for r in caplog.records if r.name == settings.__name__]
+    assert len(warnings) == 1
+    assert core_url in warnings[0] and "--host 0.0.0.0" in warnings[0] and "--url" in warnings[0]
+
+
+def test_the_host_run_is_given_decides_over_the_settings_and_url_wins_over_both(
+    monkeypatch, join_hub, node_file, caplog
+):
+    on_this_machine(monkeypatch, "0.0.0.0")
+    started_with(monkeypatch, join_hub.url, join_hub.mint(), core_url=None, worker_url=None)
+
+    main._join_hub(64200, "127.0.0.1")
+
+    assert join_hub.calls[0][1]["core_url"] == "http://127.0.0.1:64200"
+
+    on_this_machine(monkeypatch, "127.0.0.1")
+    started_with(monkeypatch, join_hub.url, join_hub.mint(), core_url="http://flowfile.example:8080", worker_url=None)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        main._join_hub()
+
+    assert join_hub.calls[1][1]["core_url"] == "http://flowfile.example:8080"
+    assert [r for r in caplog.records if r.name == settings.__name__] == []
+
+
+@pytest.fixture
+def editor_app(monkeypatch) -> FastAPI:
+    """Core's app as the pip server leaves it: the editor's built files served on /ui, the worker mounted on /worker."""
+    app = FastAPI()
+    app.state.editor_path = "/ui"
+    app.state.worker_path = "/worker"
+    monkeypatch.setattr(main, "app", app)
+    return app
+
+
+@pytest.mark.parametrize(
+    "host,core_url",
+    [("0.0.0.0", "http://team-7.example.com:64100"), ("127.0.0.1", "http://127.0.0.1:64100")],
+)
+def test_a_core_that_serves_the_editor_gives_its_address_and_its_mounted_worker_s(
+    monkeypatch, join_hub, node_file, editor_app, host, core_url
+):
+    on_this_machine(monkeypatch, host)
+    started_with(monkeypatch, join_hub.url, join_hub.mint(), core_url=None, worker_url=None)
+
+    main._join_hub()
+
+    body = join_hub.calls[0][1]
+    assert (body["core_url"], body["worker_url"], body["ui_url"]) == (core_url, f"{core_url}/worker", f"{core_url}/ui")
+
+
+def test_the_addresses_given_win_over_the_mounted_worker_and_name_the_editor(
+    monkeypatch, join_hub, node_file, editor_app
+):
+    on_this_machine(monkeypatch)
+    started_with(monkeypatch, join_hub.url, join_hub.mint(), core_url="https://flowfile.example/", worker_url=None)
+
+    main._join_hub()
+
+    body = join_hub.calls[0][1]
+    assert (body["core_url"], body["worker_url"], body["ui_url"]) == (
+        "https://flowfile.example/",
+        "https://flowfile.example/worker",
+        "https://flowfile.example/ui",
+    )
+
+    started_with(monkeypatch, join_hub.url, join_hub.mint(), worker_url="http://w.example:1")
+    main._join_hub()
+
+    body = join_hub.calls[1][1]
+    assert (body["worker_url"], body["ui_url"]) == ("http://w.example:1", "http://team-1.example:63578/ui")
+
+
+def test_a_core_without_the_editor_s_files_says_nothing_about_an_editor(monkeypatch, join_hub, node_file):
+    app = FastAPI()
+    app.state.worker_path = "/worker"
+    monkeypatch.setattr(main, "app", app)
+    on_this_machine(monkeypatch)
+    started_with(monkeypatch, join_hub.url, join_hub.mint(), core_url=None, worker_url=None)
+
+    main._join_hub()
+
+    body = join_hub.calls[0][1]
+    assert "ui_url" not in body
+    assert body["worker_url"] == "http://team-7.example.com:64100/worker"
 
 
 def test_a_core_given_the_token_as_a_variable_starts_no_run_that_reads_it_without_the_hub(

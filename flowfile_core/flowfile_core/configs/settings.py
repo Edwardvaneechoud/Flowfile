@@ -1,5 +1,7 @@
 # flowfile_core/flowfile_core/configs/settings.py
 import argparse
+import ipaddress
+import logging
 import os
 import platform
 import tempfile
@@ -257,16 +259,54 @@ JOIN_CORE_URL = args.url
 JOIN_WORKER_URL = args.worker_url
 
 
-def join_addresses(core_port: int | None = None) -> tuple[str, str]:
-    """The two addresses a join gives the hub for this node: core's and its worker's.
+def _is_loopback(host: str) -> bool:
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
 
-    ``--url`` and ``--worker-url`` when given, else this machine's full name on core's port (``core_port``, the one
-    core serves on, else ``SERVER_PORT``) and on ``WORKER_PORT``, plain ``http``. Composed when called, never at
-    import, since the machine's full name can wait on a reverse lookup.
+
+def join_addresses(
+    core_port: int | None = None,
+    core_host: str | None = None,
+    *,
+    worker_path: str | None = None,
+    editor_path: str | None = None,
+) -> tuple[str, str, str | None]:
+    """The addresses a join gives the hub for this node: core's, its worker's, and its editor's when it serves one.
+
+    Core's is ``--url`` when given. Else it is core's port (``core_port``, the one core serves on, else
+    ``SERVER_PORT``) on the loopback address core binds (``core_host``, else ``SERVER_HOST``), which only this machine
+    reaches, with one warning saying how to be reached from others; on any other host, this machine's full name. The
+    worker's is ``--worker-url`` when given, else core's address and ``worker_path`` for a worker mounted in core's
+    app, else this machine's full name on ``WORKER_PORT``. The editor's is core's address and ``editor_path``, and
+    ``None`` when core serves no editor. Plain ``http``; composed when called, never at import, since the machine's
+    full name can wait on a reverse lookup.
     """
-    core_url = JOIN_CORE_URL or hub_node.default_url(core_port or SERVER_PORT, tls=False)
-    worker_url = JOIN_WORKER_URL or hub_node.default_url(WORKER_PORT, tls=False)
-    return core_url, worker_url
+    port = core_port or SERVER_PORT
+    host = core_host or SERVER_HOST
+    if JOIN_CORE_URL:
+        core_url = JOIN_CORE_URL
+    elif _is_loopback(host):
+        core_url = f"http://[{host.strip('[]')}]:{port}" if ":" in host else f"http://{host}:{port}"
+        logging.getLogger(__name__).warning(
+            "Core serves on %s, which only this machine reaches, so the address it gives the hub is %s; to be "
+            "reached from other machines, start it with --host 0.0.0.0 and --url <its address as they reach it>",
+            host,
+            core_url,
+        )
+    else:
+        core_url = hub_node.default_url(port, tls=False)
+    if JOIN_WORKER_URL:
+        worker_url = JOIN_WORKER_URL
+    elif worker_path:
+        worker_url = core_url.rstrip("/") + worker_path
+    else:
+        worker_url = hub_node.default_url(WORKER_PORT, tls=False)
+    ui_url = core_url.rstrip("/") + editor_path if editor_path else None
+    return core_url, worker_url, ui_url
 
 
 WORKER_HOST = os.getenv("WORKER_HOST", "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1")

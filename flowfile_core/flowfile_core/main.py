@@ -329,26 +329,35 @@ def signal_handler(signum, frame):
         _stop_server(server_instance)
 
 
-def _join_hub(port: int | None = None) -> None:
-    """Join the hub ``--join`` names for this core and its worker before serving on ``port``; with no token, nothing.
+def _join_hub(port: int | None = None, host: str | None = None) -> None:
+    """Join the hub ``--join`` names for this core and its worker before serving on ``host`` and ``port``.
 
-    One join registers the pair as one node: the name is ``--name``, else the machine's, and the two addresses are
-    the settings' ``join_addresses``: ``--url`` and ``--worker-url``, else this machine's full name on core's port and
-    on the worker's, plain ``http``. The worker beside it reads the joined name from the storage dir they share. A
-    core that joined already makes no request (``shared.hub_node``). The token leaves this process's environment
-    first, so no run or worker that core starts later reads ``FLOWFILE_HUB_JOIN_TOKEN`` without the hub given as
-    ``--hub``, or joins with it again.
+    With no token, nothing. One join registers the pair as one node: the name is ``--name``, else the machine's, and
+    the addresses are the settings' ``join_addresses``: ``--url`` and ``--worker-url``, else core's address (the
+    loopback address it binds, or this machine's full name) on core's port and this machine's on the worker's, plain
+    ``http``. An app that serves the browser editor, or mounts its worker, says on which path (``app.state``'s
+    ``editor_path`` and ``worker_path``, set by the pip server), and the join gives the hub the editor's address and
+    that worker's beside core's. The worker beside it reads the joined name from the storage dir they share. A core
+    that joined already makes no request (``shared.hub_node``). The token leaves this process's environment first,
+    so no run or worker that core starts later reads ``FLOWFILE_HUB_JOIN_TOKEN`` without the hub given as ``--hub``,
+    or joins with it again.
     """
     if not JOIN_TOKEN:
         return
     os.environ.pop("FLOWFILE_HUB_JOIN_TOKEN", None)
-    core_url, worker_url = join_addresses(port)
+    core_url, worker_url, ui_url = join_addresses(
+        port,
+        host,
+        worker_path=getattr(app.state, "worker_path", None),
+        editor_path=getattr(app.state, "editor_path", None),
+    )
     hub_node.join_at_start(
         JOIN_HUB_URL,
         JOIN_TOKEN,
         name=JOIN_NODE_NAME or hub_node.default_name(),
         worker_url=worker_url,
         core_url=core_url,
+        ui_url=ui_url,
     )
 
 
@@ -368,7 +377,7 @@ def run(host: str = None, port: int = None):
     """
     global server_instance
 
-    _join_hub(port)
+    _join_hub(port, host)
     compute_registry.mark_serving()
     if host is None:
         host = SERVER_HOST
