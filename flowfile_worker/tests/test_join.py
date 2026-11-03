@@ -83,7 +83,7 @@ def test_a_worker_joins_before_it_serves_and_a_restart_makes_no_request(monkeypa
     assert [path for path, _ in join_hub.calls] == ["/hub/nodes/join"]
     assert join_hub.calls[0][1]["name"] == "worker-1"
     assert join_hub.calls[0][1]["worker_url"] == "http://worker-1.example:63579"
-    assert hub_node.read().name == "worker-1"
+    assert (hub_node.read().name, hub_node.read().has_core) == ("worker-1", False)
 
     main.join_hub()
 

@@ -124,8 +124,8 @@ def test_a_core_joins_for_itself_and_its_worker_and_a_restart_makes_no_request(m
         "http://team-1.example:63579",
     )
     kept = json.loads(node_file.read_text(encoding="utf-8"))
-    assert sorted(kept) == ["hub_url", "issuer", "join_token_hash", "joined_at", "name", "node_id"]
-    assert kept["name"] == "team-1"
+    assert sorted(kept) == ["has_core", "hub_url", "issuer", "join_token_hash", "joined_at", "name", "node_id"]
+    assert (kept["name"], kept["has_core"]) == ("team-1", True)
 
     main._join_hub()
 

@@ -8,6 +8,12 @@ spent by the join and written nowhere, and the hub's keys, the only thing a node
 own keys are another file: at its first join it makes two key pairs, keeps them in ``hub_node_key.json`` beside this
 one (``shared.hub_node_key``) and sends the hub their public halves with every join.
 
+A joined node with keys tells its hub it is up, since the hub may not reach it (behind a NAT, say) while it can always
+reach the hub: ``heartbeat`` posts one beat signed with the node's own key, and ``start_heartbeat`` beats at once and
+then every ``HEARTBEAT_SECONDS`` from a daemon thread. One process speaks for the node: core when one joined for itself
+and its worker (the file's ``has_core``), else the worker. A node without keys, joined by an older Flowfile or set up
+by hand, never beats.
+
 ``shared.hub_tokens`` reads the node's settings through ``resolved()``: the environment first, field by field
 (``FLOWFILE_HUB_URL``, ``FLOWFILE_NODE_NAME``, ``FLOWFILE_HUB_ISSUER``), the file second, and the file only for the hub
 it names, so a node set up by hand behaves as before whatever the file says. The file also keeps a short hash of the
@@ -22,10 +28,11 @@ import json
 import logging
 import os
 import socket
+import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     import httpx
@@ -36,10 +43,15 @@ logger.setLevel(logging.INFO)
 
 FILE_NAME = "hub_node.json"
 JOIN_PATH = "/hub/nodes/join"
+HEARTBEAT_PATH = "/hub/nodes/heartbeat"
+HEARTBEAT_SECONDS = 60
+"""How often a joined node tells its hub it is up, in seconds; not a setting. The hub shows a node Online while its last
+beat is under three minutes old."""
 
 _FIELDS = {"hub_url": str, "issuer": str, "name": str, "node_id": int, "joined_at": str}
-_OPTIONAL_FIELDS = {"join_token_hash": str}
+_OPTIONAL_FIELDS = {"join_token_hash": str, "has_core": bool}
 _warned_unreadable = False
+_warned_beats: set[str] = set()
 
 
 class JoinRefused(Exception):
@@ -56,7 +68,8 @@ class HubNode:
 
     ``joined_at`` is ISO-8601 in UTC. Whether the node is enabled is not kept: that changes on the hub.
     ``join_token_hash`` tells the join token it was written with from another one; empty in a file from before it
-    was kept, or one written by hand.
+    was kept, or one written by hand. ``has_core`` is ``True`` when a core joined for itself and its worker, ``False``
+    when a worker joined alone (and in a file from before it was kept): it decides which of the two beats.
     """
 
     hub_url: str
@@ -65,6 +78,7 @@ class HubNode:
     node_id: int
     joined_at: str
     join_token_hash: str = ""
+    has_core: bool = False
 
 
 @dataclass(frozen=True)
@@ -86,6 +100,8 @@ def path() -> Path:
 def _fits(value, kind: type) -> bool:
     if kind is int:
         return isinstance(value, int) and not isinstance(value, bool)
+    if kind is bool:
+        return isinstance(value, bool)
     return isinstance(value, kind) and bool(value)
 
 
@@ -231,6 +247,7 @@ def _join(
         node_id=answer["node_id"],
         joined_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         join_token_hash=token_hash(token),
+        has_core=core_url is not None,
     )
     _write(node)
     return node, answer["enabled"]
@@ -252,8 +269,9 @@ def join(
     its core's, when it has one, and ``ui_url`` the browser editor's, when its core serves one; without it the join
     says nothing about an editor. The join also sends the public halves of this node's own keys, made at its first
     join and reused after; a storage dir that cannot keep them refuses the join before any request. The file is
-    written whole or not at all, with the name and issuer the hub answered. Logs the method, the path and the status,
-    never the token or a body.
+    written whole or not at all, with the name and issuer the hub answered, and ``has_core`` set when ``core_url`` is
+    given: a core joining for itself and its worker. Logs the method, the path and the status, never the token or a
+    body.
     """
     return _join(hub_url, token, name=name, worker_url=worker_url, core_url=core_url, ui_url=ui_url, http=http)[0]
 
@@ -305,6 +323,97 @@ def join_at_start(
     state = "it is enabled" if enabled else "an admin enables it on the hub's Compute page"
     logger.info("Joined %s as %s (node %s); %s", node.hub_url, node.name, node.node_id, state)
     return node
+
+
+def _not_taken(reason: str) -> bool:
+    if reason not in _warned_beats:
+        _warned_beats.add(reason)
+        logger.warning("The hub did not take this node's heartbeat: %s", reason)
+    return False
+
+
+def heartbeat(process: Literal["core", "worker"], http: "httpx.Client | None" = None) -> bool:
+    """Tell the hub this storage dir's node joined that it is up, as ``process``; whether the hub took the beat.
+
+    Posts ``{version, process}`` to the joined hub's ``/hub/nodes/heartbeat`` with a node assertion signed with this
+    node's own key, its audience the joined issuer and that path. A beat the hub does not take, or one that cannot be
+    sent (no joined node, no keys, a hub that does not answer), logs one warning per distinct reason until a beat is
+    taken again, and never the assertion. Never makes keys.
+    """
+    import httpx
+
+    from shared import hub_node_key
+    from shared._version import get_version
+
+    node = read()
+    if node is None:
+        return _not_taken(f"no node has joined a hub from {path().parent}")
+    try:
+        keys = hub_node_key.load()
+    except (OSError, ValueError) as exc:
+        return _not_taken(f"could not read this node's keys at {hub_node_key.path()}: {type(exc).__name__}")
+    if keys is None:
+        return _not_taken(f"this node has no keys of its own at {hub_node_key.path()}")
+    assertion = keys.assertion(node.name, node.issuer.rstrip("/") + HEARTBEAT_PATH)
+    client = http or httpx.Client(timeout=httpx.Timeout(10.0), follow_redirects=False)
+    try:
+        resp = client.post(
+            f"{node.hub_url.rstrip('/')}{HEARTBEAT_PATH}",
+            json={"version": get_version(), "process": process},
+            headers={"Authorization": f"Bearer {assertion}"},
+        )
+    except (httpx.HTTPError, httpx.InvalidURL) as exc:
+        return _not_taken(f"{node.hub_url} did not answer ({type(exc).__name__})")
+    finally:
+        if http is None:
+            client.close()
+    if resp.status_code != 204:
+        return _not_taken(f"{node.hub_url} answered {resp.status_code}: {_detail(resp) or resp.reason_phrase}")
+    _warned_beats.clear()
+    return True
+
+
+def _speaks_for(node: HubNode | None, process: str) -> bool:
+    return node is not None and (process == "core" or not node.has_core)
+
+
+def _beat(process: Literal["core", "worker"], stop: threading.Event) -> None:
+    """Beat at once and every ``HEARTBEAT_SECONDS`` until ``stop`` is set, each time ``process`` speaks for the node."""
+    while True:
+        if _speaks_for(read(), process):
+            try:
+                heartbeat(process)
+            except Exception as exc:
+                _not_taken(f"the beat failed ({type(exc).__name__})")
+        if stop.wait(HEARTBEAT_SECONDS):
+            return
+
+
+def start_heartbeat(process: Literal["core", "worker"]) -> threading.Event | None:
+    """Beat for this storage dir's node from a daemon thread, at start and every minute; set the event to stop it.
+
+    ``None``, and no thread, when ``process`` does not speak for a node: no node joined a hub from this storage dir, it
+    has no keys of its own (joined by an older Flowfile, or set up by hand; said once), or ``process`` is a worker
+    beside a core that joined for both. Core always speaks for its node. The thread checks the file before every beat,
+    so a worker that beats alone goes quiet once a core joins beside it.
+    """
+    from shared import hub_node_key
+
+    node = read()
+    if not _speaks_for(node, process):
+        return None
+    if not hub_node_key.path().is_file():
+        logger.warning(
+            "%s joined %s without keys of its own, so it does not tell the hub it is up; join again with a new join "
+            "token to make them",
+            node.name,
+            node.hub_url,
+        )
+        return None
+    stop = threading.Event()
+    threading.Thread(target=_beat, args=(process, stop), name="hub-heartbeat", daemon=True).start()
+    logger.info("Telling %s that %s is up, every %s seconds", node.hub_url, node.name, HEARTBEAT_SECONDS)
+    return stop
 
 
 def default_name() -> str:

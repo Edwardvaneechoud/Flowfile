@@ -1,18 +1,23 @@
-"""A node's identity on a hub: how the variables and the joined file combine, the join itself, and joining at start."""
+"""A node's identity on a hub: how the variables and the joined file combine, the join itself, joining at start, and
+the heartbeat that tells the hub the node is up."""
 
 import json
 import logging
 import os
 import socket
 import stat
+import threading
+import uuid
 
 import jwt
 import pytest
 
 from shared import hub_node, hub_node_key
+from shared._version import get_version
 from shared.hub_node import HubNode, JoinRefused, NodeSettings
 from shared.tests import hub_join
-from shared.tests.hub_join import EXPIRED, NOT_VALID, USED, FakeJoinHub
+from shared.tests.hub_join import EXPIRED, HEARTBEAT_PATH, NOT_VALID, USED, FakeJoinHub
+from shared.tests.hub_jwks import HubSigner
 
 join_hub = hub_join.join_hub
 
@@ -26,6 +31,7 @@ def node_file(tmp_path, monkeypatch):
     target = tmp_path / "storage" / hub_node.FILE_NAME
     monkeypatch.setattr(hub_node, "path", lambda: target)
     monkeypatch.setattr(hub_node, "_warned_unreadable", False)
+    monkeypatch.setattr(hub_node, "_warned_beats", set())
     for name in VARIABLES:
         monkeypatch.delenv(name, raising=False)
     return target
@@ -141,7 +147,7 @@ def test_a_join_sends_the_contract_body_and_keeps_the_answer_but_not_the_token(j
         )
     ]
     kept = json.loads(node_file.read_text(encoding="utf-8"))
-    assert set(kept) == {"hub_url", "issuer", "name", "node_id", "joined_at", "join_token_hash"}
+    assert set(kept) == {"hub_url", "issuer", "name", "node_id", "joined_at", "join_token_hash", "has_core"}
     assert (kept["hub_url"], kept["issuer"], kept["name"], kept["node_id"]) == (
         join_hub.url,
         join_hub.url,
@@ -444,3 +450,239 @@ def test_a_reverse_lookup_name_is_not_an_address_a_desktop_reaches(monkeypatch):
     monkeypatch.setattr(hub_node.socket, "getfqdn", lambda: "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa")
 
     assert hub_node.default_url(63579, tls=False) == "http://build-7.local:63579"
+
+
+def joined_with_keys(hub: FakeJoinHub, *, enabled: bool = True, core_url: str | None = None) -> HubNode:
+    """``worker-1`` joined to ``hub`` with keys of its own, by a core for both when ``core_url`` is given."""
+    token = hub.mint(enable_on_join=enabled)
+    return hub_node.join(hub.url, token, name="worker-1", worker_url="http://w:1", core_url=core_url)
+
+
+def beat_warnings(caplog) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "flowfile.hub_node" and record.levelno == logging.WARNING
+    ]
+
+
+def test_a_core_that_joins_for_itself_and_its_worker_keeps_has_core(join_hub, node_file):
+    joined_with_keys(join_hub, core_url="http://team-1.example:63578")
+
+    assert json.loads(node_file.read_text(encoding="utf-8"))["has_core"] is True
+    assert hub_node.read().has_core is True
+
+
+def test_a_worker_that_joins_alone_keeps_has_core_false(join_hub, node_file):
+    joined_with_keys(join_hub)
+
+    assert json.loads(node_file.read_text(encoding="utf-8"))["has_core"] is False
+    assert hub_node.read().has_core is False
+
+
+@pytest.mark.parametrize("fields", [{}, {"has_core": "true"}, {"has_core": 1}], ids=["missing", "text", "number"])
+def test_a_file_without_a_has_core_of_its_own_reads_as_a_worker_alone(node_file, fields):
+    write_node(node_file, **fields)
+
+    assert hub_node.read().has_core is False
+
+
+def test_a_beat_carries_an_assertion_the_hub_verifies_against_the_key_the_node_joined_with(join_hub):
+    joined_with_keys(join_hub)
+    sent = join_hub.calls[0][1]["keys"]["sig"]
+
+    assert hub_node.heartbeat("worker") is True
+
+    [beat] = join_hub.beats
+    assert beat["header"] == {"alg": "ES256", "kid": sent["kid"], "typ": "JWT"}
+    claims = beat["claims"]
+    assert (claims["iss"], claims["sub"]) == ("node:worker-1", "node:worker-1")
+    assert claims["aud"] == join_hub.url + HEARTBEAT_PATH
+    assert claims["exp"] - claims["iat"] == 60
+    assert uuid.UUID(claims["jti"]).version == 4
+    assert beat["body"] == {"version": get_version(), "process": "worker"}
+    assert jwt.PyJWK(sent).key_id == hub_node_key.load().sig_kid
+
+
+def test_a_beat_names_the_issuer_the_hub_answered_as_its_audience(node_file):
+    signer = HubSigner()
+    hub = FakeJoinHub(signer)
+    try:
+        joined_with_keys(hub)
+        taken = hub_node.heartbeat("core")
+    finally:
+        hub.close()
+        signer.close()
+
+    assert taken is True
+    assert signer.url != hub.url
+    assert hub.beats[0]["claims"]["aud"] == signer.url + HEARTBEAT_PATH
+    assert hub.beats[0]["body"]["process"] == "core"
+
+
+def test_every_beat_carries_a_fresh_assertion(join_hub):
+    joined_with_keys(join_hub)
+
+    assert hub_node.heartbeat("worker") is True
+    assert hub_node.heartbeat("worker") is True
+
+    first, second = (beat["claims"]["jti"] for beat in join_hub.beats)
+    assert first != second
+
+
+def test_a_beat_the_hub_refuses_warns_once_with_its_sentence_and_never_the_assertion(join_hub, caplog):
+    joined_with_keys(join_hub, enabled=False)
+
+    with caplog.at_level(logging.DEBUG):
+        assert hub_node.heartbeat("worker") is False
+        assert hub_node.heartbeat("worker") is False
+
+    assert len(join_hub.sent_beats()) == 2 and join_hub.beats == []
+    assert beat_warnings(caplog) == [
+        f"The hub did not take this node's heartbeat: {join_hub.url} answered 401: this node is disabled on the hub"
+    ]
+    assert "eyJ" not in caplog.text
+
+
+def test_a_beat_taken_again_lets_the_next_refusal_warn_again(join_hub, caplog):
+    joined_with_keys(join_hub, enabled=False)
+
+    hub_node.heartbeat("worker")
+    join_hub.set_enabled("worker-1", True)
+    assert hub_node.heartbeat("worker") is True
+    join_hub.set_enabled("worker-1", False)
+    hub_node.heartbeat("worker")
+    hub_node.heartbeat("worker")
+
+    assert len(beat_warnings(caplog)) == 2
+
+
+def test_a_hub_that_does_not_answer_a_beat_warns_once_naming_its_url(node_file, caplog):
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        closed = f"http://127.0.0.1:{probe.getsockname()[1]}"
+    hub_node_key.load_or_create()
+    write_node(node_file, hub_url=closed, issuer=closed)
+
+    assert hub_node.heartbeat("core") is False
+    assert hub_node.heartbeat("core") is False
+
+    [warning] = beat_warnings(caplog)
+    assert warning.startswith(f"The hub did not take this node's heartbeat: {closed} did not answer (")
+
+
+def test_a_node_without_keys_sends_no_beat_and_makes_none(join_hub, node_file, caplog):
+    write_node(node_file, hub_url=join_hub.url, issuer=join_hub.url)
+
+    assert hub_node.heartbeat("core") is False
+
+    assert join_hub.calls == []
+    assert not key_file_of(node_file).exists()
+    assert beat_warnings(caplog) == [
+        f"The hub did not take this node's heartbeat: this node has no keys of its own at {key_file_of(node_file)}"
+    ]
+
+
+def test_a_storage_dir_that_never_joined_sends_no_beat(join_hub, node_file):
+    assert hub_node.heartbeat("core") is False
+
+    assert join_hub.calls == []
+    assert not key_file_of(node_file).exists()
+
+
+def test_no_beat_starts_where_no_node_joined(node_file):
+    assert hub_node.start_heartbeat("core") is None
+    assert hub_node.start_heartbeat("worker") is None
+
+
+def test_a_node_joined_without_keys_starts_no_beat_and_says_so_once(join_hub, node_file, caplog):
+    write_node(node_file, hub_url=join_hub.url, has_core=True)
+
+    assert hub_node.start_heartbeat("core") is None
+
+    [warning] = beat_warnings(caplog)
+    assert warning.startswith(f"team joined {join_hub.url} without keys of its own, so it does not tell the hub")
+    assert "join again with a new join token" in warning
+    assert join_hub.calls == []
+    assert not key_file_of(node_file).exists()
+
+
+@pytest.mark.parametrize(
+    ("core_url", "process", "speaks"),
+    [
+        ("http://team-1.example:63578", "core", True),
+        ("http://team-1.example:63578", "worker", False),
+        (None, "worker", True),
+        (None, "core", True),
+    ],
+    ids=["core of a core's node", "worker beside a joined core", "worker alone", "core of a worker's node"],
+)
+def test_one_process_speaks_for_a_node(join_hub, core_url, process, speaks):
+    joined_with_keys(join_hub, core_url=core_url)
+
+    stop = hub_node.start_heartbeat(process)
+    try:
+        if speaks:
+            assert stop is not None
+            assert join_hub.wait_for_beats(1)[0]["process"] == process
+        else:
+            assert stop is None
+    finally:
+        if stop is not None:
+            stop.set()
+
+
+class Waits(threading.Event):
+    """A stop event that never sleeps: each ``wait`` records its timeout and the beats sent so far, runs ``then``, and
+    stops the loop at the ``stop_at``-th wait."""
+
+    def __init__(self, hub: FakeJoinHub, stop_at: int, then=None):
+        super().__init__()
+        self.hub, self.stop_at, self.then = hub, stop_at, then
+        self.seen: list[tuple[float, int]] = []
+
+    def wait(self, timeout=None):
+        self.seen.append((timeout, len(self.hub.sent_beats())))
+        if self.then is not None:
+            self.then(len(self.seen))
+        return len(self.seen) >= self.stop_at
+
+
+def test_the_beat_comes_at_once_and_then_every_sixty_seconds(join_hub):
+    joined_with_keys(join_hub)
+    stop = Waits(join_hub, stop_at=3)
+
+    hub_node._beat("worker", stop)
+
+    assert stop.seen == [(60, 1), (60, 2), (60, 3)]
+    assert len(join_hub.beats) == 3
+
+
+def test_a_worker_that_beats_alone_goes_quiet_once_a_core_joins_beside_it(join_hub):
+    joined_with_keys(join_hub)
+
+    def core_joins(waits: int) -> None:
+        if waits == 1:
+            joined_with_keys(join_hub, core_url="http://team-1.example:63578")
+
+    stop = Waits(join_hub, stop_at=3, then=core_joins)
+
+    hub_node._beat("worker", stop)
+
+    assert [sent for _, sent in stop.seen] == [1, 1, 1]
+
+
+def test_a_beat_that_fails_unexpectedly_warns_once_and_the_beats_go_on(join_hub, monkeypatch, caplog):
+    joined_with_keys(join_hub)
+    tries = []
+
+    def broken(process):
+        tries.append(process)
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(hub_node, "heartbeat", broken)
+
+    hub_node._beat("worker", Waits(join_hub, stop_at=2))
+
+    assert tries == ["worker", "worker"]
+    assert beat_warnings(caplog) == ["The hub did not take this node's heartbeat: the beat failed (RuntimeError)"]
