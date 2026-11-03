@@ -4,20 +4,22 @@ A node on a hub has a caller beside its own core: the hub signs short-lived toke
 the public half at ``<FLOWFILE_HUB_URL>/.well-known/jwks.json``. This module is the one verifier of such tokens, shared
 by core and the worker so one set of rules applies, and it holds no secret: the keys are public and come from the hub.
 
-The settings are read from the environment at call time. ``FLOWFILE_HUB_URL`` is where the hub is reached and the keys
-are fetched; ``FLOWFILE_NODE_NAME`` is this node's name on the hub, the audience a token must name;
-``FLOWFILE_HUB_ISSUER`` is the ``iss`` claim to expect, the URL when unset, for a node that reaches the hub by another
-address than the one the hub signs with. Hub tokens are accepted only when the first two are set; a URL without a node
-name accepts none and says so once. Nothing runs at import.
+The settings are read at call time, from the environment first and then from ``hub_node.json`` in the storage dir, the
+file a node writes when it joins a hub (``shared.hub_node``), field by field and the file only for the hub it names.
+``FLOWFILE_HUB_URL`` is where the hub is reached and the keys are fetched; ``FLOWFILE_NODE_NAME`` is this node's name on
+the hub, the audience a token must name; ``FLOWFILE_HUB_ISSUER`` is the ``iss`` claim to expect, the URL when unset, for
+a node that reaches the hub by another address than the one the hub signs with. Hub tokens are accepted only when the
+node has a hub URL and a name; a URL without a name accepts none and says so once. Nothing runs at import.
 """
 
 import logging
-import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import jwt
+
+from shared import hub_node
 
 logger = logging.getLogger("flowfile.hub_tokens")
 
@@ -61,19 +63,18 @@ _warned_no_node_name = False
 def _settings() -> tuple[str, str, str] | None:
     """``(jwks_url, node_name, issuer)`` while hub tokens are on, else ``None``."""
     global _warned_no_node_name
-    hub_url = os.environ.get("FLOWFILE_HUB_URL", "").strip().rstrip("/")
-    if not hub_url:
+    node = hub_node.resolved()
+    if not node.hub_url:
         return None
-    node_name = os.environ.get("FLOWFILE_NODE_NAME", "").strip()
-    if not node_name:
+    if not node.name:
         if not _warned_no_node_name:
             logger.warning(
-                "FLOWFILE_HUB_URL is set but FLOWFILE_NODE_NAME is not: no hub token is accepted until it is named"
+                "A hub URL is set but this node has no name on it (FLOWFILE_NODE_NAME, or join the hub): "
+                "no hub token is accepted until it has one"
             )
             _warned_no_node_name = True
         return None
-    issuer = os.environ.get("FLOWFILE_HUB_ISSUER", "").strip() or hub_url
-    return hub_url + JWKS_PATH, node_name, issuer
+    return node.hub_url + JWKS_PATH, node.name, node.issuer
 
 
 def _jwks_client(jwks_url: str) -> jwt.PyJWKClient:

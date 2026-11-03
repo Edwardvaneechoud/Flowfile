@@ -16,7 +16,7 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from shared import hub_tokens
+from shared import hub_node, hub_tokens
 
 NODE_NAME = "team"
 JWKS_PATH = "/.well-known/jwks.json"
@@ -104,12 +104,14 @@ class HubSigner:
 
 
 @pytest.fixture
-def hub_signer(monkeypatch):
+def hub_signer(monkeypatch, tmp_path):
     """A running ``HubSigner`` that this process verifies against: ``FLOWFILE_HUB_URL`` and ``FLOWFILE_NODE_NAME`` set."""
     signer = HubSigner()
     monkeypatch.setenv("FLOWFILE_HUB_URL", signer.url)
     monkeypatch.setenv("FLOWFILE_NODE_NAME", NODE_NAME)
     monkeypatch.delenv("FLOWFILE_HUB_ISSUER", raising=False)
+    # No hub_node.json from this machine's storage dir: the tests set the node up through the variables alone.
+    monkeypatch.setattr(hub_node, "path", lambda: tmp_path / hub_node.FILE_NAME)
     # A fresh key client per test: a reused port would otherwise serve the previous test's cached keys.
     monkeypatch.setattr(hub_tokens, "_client", None)
     try:

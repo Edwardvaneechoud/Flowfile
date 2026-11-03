@@ -1,12 +1,13 @@
 """The one verifier of tokens from a configured issuer: what it accepts, what it refuses and why, and when it is off."""
 
+import json
 import logging
 import time
 from datetime import datetime, timezone
 
 import pytest
 
-from shared import hub_tokens
+from shared import hub_node, hub_tokens
 from shared.hub_tokens import HubClaims, HubTokenRefused, verify
 from shared.tests.hub_jwks import NODE_NAME, SigningKey, hub_signer  # noqa: F401
 
@@ -134,3 +135,26 @@ def test_the_key_client_follows_the_hub_url(hub_signer, monkeypatch):
     monkeypatch.setenv("FLOWFILE_HUB_URL", "http://127.0.0.1:9/elsewhere")
     assert refusal(hub_signer.token(iss="http://127.0.0.1:9/elsewhere")) == "keys unavailable"
     assert hub_tokens._client is not first_client
+
+
+def test_a_joined_node_takes_tokens_for_its_name(hub_signer, monkeypatch, tmp_path):
+    monkeypatch.delenv("FLOWFILE_NODE_NAME")
+    monkeypatch.delenv("FLOWFILE_HUB_URL")
+    joined = tmp_path / "storage" / hub_node.FILE_NAME
+    joined.parent.mkdir()
+    joined.write_text(
+        json.dumps(
+            {
+                "hub_url": hub_signer.url,
+                "issuer": hub_signer.url,
+                "name": "joined-node",
+                "node_id": 4,
+                "joined_at": "2026-11-03T09:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(hub_node, "path", lambda: joined)
+
+    assert verify(hub_signer.token(aud="joined-node")).node == "joined-node"
+    assert refusal(hub_signer.token(aud=NODE_NAME)) == "wrong audience"
