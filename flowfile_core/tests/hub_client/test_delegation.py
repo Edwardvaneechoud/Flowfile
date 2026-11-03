@@ -1,4 +1,5 @@
-"""A server's delegation through its hub: the token exchange, the refresh and the revocation, each signed by the node.
+"""A server's delegation through its hub: the token exchange, the refresh and the revocation, each signed by the node,
+and the session that keeps it, refreshed through the hub until the hub ends it.
 
 The node joins ``FakeJoinHub`` over real HTTP, which keeps the public keys the join sent and checks every assertion
 with them; the sign-in tokens are signed by the fake's own key and name the fake's issuer, which is not its URL, so an

@@ -1,4 +1,5 @@
-"""A server that joined a hub signs a person in with the hub's one-time sign-in token and says how people sign in.
+"""A server that joined a hub signs a person in with the hub's one-time sign-in token, says how people sign in, keeps
+that sign-in no longer than the hub does, and takes no password sign-in.
 
 The core is in docker mode with its own JWT secret, as a server is. Its storage dir's node joins ``FakeJoinHub`` over
 real HTTP with its own keys; the fake serves its signer's keys, signs the sign-in tokens with them, and answers
