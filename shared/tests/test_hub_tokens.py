@@ -9,7 +9,10 @@ import pytest
 
 from shared import hub_node, hub_tokens
 from shared.hub_tokens import HubClaims, HubTokenRefused, verify
-from shared.tests.hub_jwks import NODE_NAME, SigningKey, hub_signer  # noqa: F401
+from shared.tests import hub_jwks
+from shared.tests.hub_jwks import NODE_NAME, SigningKey
+
+hub_signer = hub_jwks.hub_signer
 
 
 def refusal(token: str) -> str:
@@ -158,3 +161,46 @@ def test_a_joined_node_takes_tokens_for_its_name(hub_signer, monkeypatch, tmp_pa
 
     assert verify(hub_signer.token(aud="joined-node")).node == "joined-node"
     assert refusal(hub_signer.token(aud=NODE_NAME)) == "wrong audience"
+
+
+def sign_in_token(hub_signer, **claims) -> str:
+    """A sign-in token as the hub's Open page carries it: two minutes, for this node, with the person's name."""
+    defaults = {"name": "Ana Lima", "node_admin": False, "may_act": {"sub": f"node:{NODE_NAME}"}}
+    return hub_signer.token(scope="signin", sub="ana", uid=7, ttl=120, **{**defaults, **claims})
+
+
+def test_a_sign_in_token_is_accepted_where_its_scope_is_named_with_the_persons_name(hub_signer):
+    claims = verify(sign_in_token(hub_signer, node_admin=True), scopes=("signin",))
+
+    assert (claims.subject, claims.user_id, claims.scope, claims.node) == ("ana", 7, "signin", NODE_NAME)
+    assert (claims.name, claims.node_admin) == ("Ana Lima", True)
+
+
+def test_a_sign_in_token_is_refused_by_every_caller_that_names_no_scope(hub_signer):
+    assert refusal(sign_in_token(hub_signer)) == "a signin token is not accepted here"
+
+
+def test_a_run_or_dispatch_token_is_refused_where_only_a_sign_in_is_taken(hub_signer):
+    for scope in ("run", "dispatch"):
+        with pytest.raises(HubTokenRefused) as refused:
+            verify(hub_signer.token(scope=scope), scopes=("signin",))
+        assert refused.value.reason == f"a {scope} token is not accepted here"
+
+
+def test_an_unknown_scope_is_refused_whatever_scopes_the_caller_names(hub_signer):
+    with pytest.raises(HubTokenRefused) as refused:
+        verify(hub_signer.token(scope="admin"), scopes=("admin",))
+    assert refused.value.reason == "unknown scope"
+
+
+def test_a_token_without_a_name_or_node_admin_has_none_and_false(hub_signer):
+    claims = verify(hub_signer.token(scope="run"))
+
+    assert (claims.name, claims.node_admin) == (None, False)
+
+
+@pytest.mark.parametrize("value", ["true", 1, "yes", None, {"admin": True}])
+def test_node_admin_is_true_only_for_true_and_a_name_only_for_text(hub_signer, value):
+    claims = verify(sign_in_token(hub_signer, node_admin=value, name=42), scopes=("signin",))
+
+    assert (claims.name, claims.node_admin) == (None, False)

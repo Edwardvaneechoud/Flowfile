@@ -23,8 +23,9 @@ from shared import hub_node
 
 logger = logging.getLogger("flowfile.hub_tokens")
 
-SCOPES = ("run", "dispatch")
-"""What a hub token is for: ``run`` sends work to this node as a user, ``dispatch`` starts a run as the hub itself."""
+SCOPES = ("run", "dispatch", "signin")
+"""What a hub token is for: ``run`` sends work to this node as a user, ``dispatch`` starts a run as the hub itself,
+``signin`` signs a person in on this node once, and is taken only by the route that does that."""
 ALGORITHMS = ["ES256", "RS256"]
 LEEWAY_SECONDS = 30
 REQUIRED_CLAIMS = ["exp", "iat", "sub", "aud", "scope", "jti"]
@@ -43,7 +44,9 @@ class HubTokenRefused(Exception):
 class HubClaims:
     """What a verified hub token says: who (``subject``, and ``user_id`` when it names a user), for what, which node.
 
-    ``node`` is this node's name, the audience the token was checked against.
+    ``node`` is this node's name, the audience the token was checked against. A sign-in token also carries the
+    person's full ``name`` and ``node_admin``, whether they manage this node; ``None`` and ``False`` when absent, and
+    ``node_admin`` is ``True`` only for the JSON value ``true``.
     """
 
     subject: str
@@ -52,6 +55,8 @@ class HubClaims:
     node: str
     jti: str
     expires_at: datetime
+    name: str | None = None
+    node_admin: bool = False
 
 
 _client: jwt.PyJWKClient | None = None
@@ -123,11 +128,13 @@ def _decode(token: str, jwks_url: str, node_name: str, issuer: str) -> dict:
         raise HubTokenRefused(f"invalid: {exc}") from None
 
 
-def verify(token: str) -> HubClaims | None:
-    """The claims of ``token`` when it is a hub token this node accepts.
+def verify(token: str, scopes: tuple[str, ...] = ("run", "dispatch")) -> HubClaims | None:
+    """The claims of ``token`` when it is a hub token this node accepts for one of ``scopes``.
 
     ``None`` when hub tokens are off or ``token`` is not a JWT (fewer than two dots), so a caller can try the token
-    it does know first and ask here after; ``HubTokenRefused`` for a JWT that does not verify, with the reason.
+    it does know first and ask here after; ``HubTokenRefused`` for a JWT that does not verify, with the reason. A token
+    of a scope the caller does not name is refused like any other, so a sign-in token is no user's token anywhere but
+    on the sign-in route, which names ``("signin",)``.
     """
     settings = _settings()
     if settings is None or not isinstance(token, str) or token.count(".") < 2:
@@ -136,11 +143,14 @@ def verify(token: str) -> HubClaims | None:
     scope = payload["scope"]
     if scope not in SCOPES:
         raise HubTokenRefused("unknown scope")
+    if scope not in scopes:
+        raise HubTokenRefused(f"a {scope} token is not accepted here")
     uid = payload.get("uid")
     try:
         user_id = None if uid is None else int(uid)
     except (TypeError, ValueError):
         raise HubTokenRefused("malformed claim uid") from None
+    name = payload.get("name")
     return HubClaims(
         subject=str(payload["sub"]),
         user_id=user_id,
@@ -148,4 +158,6 @@ def verify(token: str) -> HubClaims | None:
         node=settings[1],
         jti=str(payload["jti"]),
         expires_at=datetime.fromtimestamp(payload["exp"], tz=timezone.utc),
+        name=name if isinstance(name, str) else None,
+        node_admin=payload.get("node_admin") is True,
     )
