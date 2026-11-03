@@ -35,8 +35,14 @@ from flowfile_core.ai.admin_routes import router as ai_admin_router
 from flowfile_core.artifacts import router as artifacts_router
 from flowfile_core.configs.access_log import install_access_log_redaction
 from flowfile_core.configs.settings import (
+    JOIN_CORE_URL,
+    JOIN_HUB_URL,
+    JOIN_NODE_NAME,
+    JOIN_TOKEN,
+    JOIN_WORKER_URL,
     SERVER_HOST,
     SERVER_PORT,
+    WORKER_PORT,
 )
 from flowfile_core.events import publish
 from flowfile_core.flowfile.execution import registry as compute_registry
@@ -78,6 +84,7 @@ from flowfile_core.routes.telemetry import router as telemetry_router
 from flowfile_core.routes.user_defined_components import router as user_defined_components_router
 from flowfile_core.routes.user_groups import router as user_groups_router
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
+from shared import hub_node
 from shared.parent_watcher import start_parent_death_watcher
 from shared.run_completion import reap_orphaned_runs
 from shared.run_logs import cleanup_old_logs
@@ -324,11 +331,32 @@ def signal_handler(signum, frame):
         _stop_server(server_instance)
 
 
+def _join_hub(port: int | None = None) -> None:
+    """Join the hub ``--join`` names for this core and its worker before serving on ``port``; with no token, nothing.
+
+    One join registers the pair as one node: the name is ``--name``, else the machine's, and the two addresses are
+    ``--url`` and ``--worker-url``, else this machine's full name on core's port and on the worker's, plain ``http``.
+    The worker beside it reads the joined name from the storage dir they share. A core that joined already makes no
+    request (``shared.hub_node``).
+    """
+    if not JOIN_TOKEN:
+        return
+    hub_node.join_at_start(
+        JOIN_HUB_URL,
+        JOIN_TOKEN,
+        name=JOIN_NODE_NAME or hub_node.default_name(),
+        worker_url=JOIN_WORKER_URL or hub_node.default_url(WORKER_PORT, tls=False),
+        core_url=JOIN_CORE_URL or hub_node.default_url(port or SERVER_PORT, tls=False),
+    )
+
+
 def run(host: str = None, port: int = None):
     """Runs the FastAPI application using Uvicorn.
 
     This function configures and starts the Uvicorn server, setting up
-    signal handlers to ensure a graceful shutdown. It first marks the process
+    signal handlers to ensure a graceful shutdown. A core started with a join
+    token first joins its hub for itself and its worker (``_join_hub``), and one
+    the hub refuses exits with code 2 before it serves. It then marks the process
     as serving (``registry.mark_serving``), so its compute is never the worker
     embedded in it.
 
@@ -338,6 +366,7 @@ def run(host: str = None, port: int = None):
     """
     global server_instance
 
+    _join_hub(port)
     compute_registry.mark_serving()
     if host is None:
         host = SERVER_HOST

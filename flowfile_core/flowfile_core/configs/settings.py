@@ -185,7 +185,25 @@ def parse_args():
         type=int,
         help="Port for the worker process",
     )
+    parser.add_argument(
+        "--join",
+        type=str,
+        default=os.environ.get("FLOWFILE_HUB_JOIN_TOKEN") or None,
+        help="A join token from the hub's Compute page; core joins that hub for itself and its worker before it serves",
+    )
+    parser.add_argument("--hub", type=str, default=os.environ.get("FLOWFILE_HUB_URL") or None, help="The hub to join")
+    parser.add_argument(
+        "--name",
+        type=str,
+        default=os.environ.get("FLOWFILE_NODE_NAME") or None,
+        help="This node's name on the hub; the machine's name when not given",
+    )
+    parser.add_argument("--url", type=str, default=None, help="This core's address as a browser and the hub reach it")
+    parser.add_argument("--worker-url", type=str, default=None, help="The worker's address as desktops reach it")
     args = parser.parse_known_args()[0]
+
+    if args.join and not args.hub:
+        raise ValueError("--join needs --hub, the address of the hub to join")
 
     return args
 
@@ -230,6 +248,12 @@ SERVER_PORT = args.port if args.port is not None else int(os.getenv("CORE_PORT",
 WORKER_PORT = (
     args.worker_port if args.worker_port is not None else int(os.getenv("FLOWFILE_WORKER_PORT", DEFAULT_WORKER_PORT))
 )
+# What ``--join`` and its flags name: the hub to join before serving, and how this node and its worker are reached.
+JOIN_TOKEN = args.join
+JOIN_HUB_URL = args.hub
+JOIN_NODE_NAME = args.name
+JOIN_CORE_URL = args.url
+JOIN_WORKER_URL = args.worker_url
 WORKER_HOST = os.getenv("WORKER_HOST", "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1")
 
 config = Config(".env" if os.path.isfile(".env") else None)
