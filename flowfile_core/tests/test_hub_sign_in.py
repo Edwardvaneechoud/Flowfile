@@ -212,6 +212,17 @@ def test_a_person_whose_both_names_are_taken_is_refused_with_a_sentence(hub, use
     assert mapping(hub, 7) is None
 
 
+def test_a_hub_person_named_as_the_internal_service_gets_the_name_at_the_hub_host(hub):
+    response = sign_in(hub.sign_in_token(NODE, uid=7, username="_internal_service"))
+
+    assert response.status_code == 200, response.text
+    person = me(response.json()["access_token"])
+    assert person["username"] == "_internal_service@127.0.0.1"
+    assert mapping(hub, 7) == person["id"]
+    with get_db_context() as db:
+        assert db.query(db_models.User).filter(db_models.User.username == "_internal_service").count() == 0
+
+
 @pytest.mark.parametrize(
     ("token_for", "detail"),
     [
