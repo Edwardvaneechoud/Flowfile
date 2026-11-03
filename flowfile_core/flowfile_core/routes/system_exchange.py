@@ -1,9 +1,11 @@
 """The exchange store's settings: where results cross between compute backends, managed from the Backends page.
 
 Mounted under ``/system`` in :mod:`flowfile_core.main`, admin-only. ``GET`` answers the store a run uses now, its source
-(the environment, the saved file, or none) and the S3 connections it may use; ``POST`` saves or clears it and answers
-the same. A set ``FLOWFILE_EXCHANGE_URI`` keeps winning over the saved values, and ``env_override`` says so. The
-settings are read per call (``configs/exchange_config.py``), so a save takes effect on the next run.
+(the environment, the saved file, this node's hub, or none) and the S3 connections it may use; ``POST`` saves or clears
+it and answers the same. A set ``FLOWFILE_EXCHANGE_URI`` keeps winning over the saved values, and ``env_override`` says
+so. On a team node of a hub, both ask the hub for its store with the request's own token: it applies while nothing is
+saved here, so clearing the saved store hands the node back to the hub's. The settings are read per call
+(``configs/exchange_config.py``), so a save takes effect on the next run.
 """
 
 from __future__ import annotations
@@ -14,10 +16,11 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from flowfile_core.auth.jwt import get_current_admin_user
+from flowfile_core.auth.jwt import get_current_admin_user, oauth2_scheme
 from flowfile_core.auth.models import User
 from flowfile_core.configs import exchange_config
 from flowfile_core.configs.exchange_config import ExchangeConfig
+from flowfile_core.hub.exchange_store import team_node_store
 
 router = APIRouter()
 
@@ -45,9 +48,14 @@ class ExchangeStoreState(BaseModel):
     max_rows_error: str | None = Field(
         default=None, description="Why FLOWFILE_EXCHANGE_MAX_ROWS cannot be read; each crossing is refused until fixed."
     )
-    source: Literal["env", "saved", "none"]
+    source: Literal["env", "saved", "hub", "none"]
     env_override: bool = Field(description="FLOWFILE_EXCHANGE_URI is set and overrides the saved URI and connection.")
     saved: ExchangeStoreSaved
+    hub: ExchangeStoreSaved | None = Field(
+        default=None,
+        description="The store this node's hub sets, when it is a team node of a hub that sets one; it applies while "
+        "nothing is saved here.",
+    )
     connections: list[str] = Field(description="Names of the S3 connections the store may be opened with.")
 
 
@@ -65,18 +73,20 @@ def _eligible_connections() -> list[str]:
         return sorted({name for (name,) in rows.all()})
 
 
-def _state() -> ExchangeStoreState:
+def _state(hub: ExchangeConfig | None = None) -> ExchangeStoreState:
     stored = exchange_config.saved()
-    effective = exchange_config.effective_store(stored)
+    effective = exchange_config.effective_store(stored, hub)
     max_rows_error = None
     try:
-        max_rows = exchange_config.effective_max_rows(stored)
+        max_rows = exchange_config.effective_max_rows(stored, hub)
     except ValueError as e:
         max_rows, max_rows_error = None, str(e)
     if exchange_config.env_pins_store():
-        source: Literal["env", "saved", "none"] = "env"
-    elif effective.uri:
+        source: Literal["env", "saved", "hub", "none"] = "env"
+    elif stored.uri:
         source = "saved"
+    elif hub is not None:
+        source = "hub"
     else:
         source = "none"
     return ExchangeStoreState(
@@ -87,24 +97,30 @@ def _state() -> ExchangeStoreState:
         source=source,
         env_override=exchange_config.env_pins_store(),
         saved=ExchangeStoreSaved(uri=stored.uri, connection=stored.connection, max_rows=stored.max_rows),
+        hub=None if hub is None else ExchangeStoreSaved(uri=hub.uri, connection=hub.connection, max_rows=hub.max_rows),
         connections=_eligible_connections(),
     )
 
 
 @router.get("/exchange_store", response_model=ExchangeStoreState, tags=["system"])
-def get_exchange_store(_current_user: User = Depends(get_current_admin_user)) -> ExchangeStoreState:
+def get_exchange_store(
+    _current_user: User = Depends(get_current_admin_user), token: str | None = Depends(oauth2_scheme)
+) -> ExchangeStoreState:
     """The exchange store as a run uses it now. Admin-only."""
-    return _state()
+    return _state(team_node_store(token))
 
 
 @router.post("/exchange_store", response_model=ExchangeStoreState, tags=["system"])
 def set_exchange_store(
-    payload: ExchangeStoreInput, _current_user: User = Depends(get_current_admin_user)
+    payload: ExchangeStoreInput,
+    _current_user: User = Depends(get_current_admin_user),
+    token: str | None = Depends(oauth2_scheme),
 ) -> ExchangeStoreState:
     """Save the exchange store, or clear it with no URI, and answer the state as ``GET`` does.
 
     The URI must be ``s3://`` and name a bucket, and the connection one of the S3 connections the store may use. A set
-    ``FLOWFILE_EXCHANGE_URI`` keeps winning after a save; the answer says so.
+    ``FLOWFILE_EXCHANGE_URI`` keeps winning after a save; the answer says so. Clearing it on a team node of a hub that
+    sets a store hands the node back to the hub's.
     """
     uri = (payload.uri or "").strip().rstrip("/")
     if not uri:
@@ -131,4 +147,4 @@ def set_exchange_store(
         exchange_config.save(config)
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"Could not save the exchange store: {e}") from e
-    return _state()
+    return _state(team_node_store(token))
