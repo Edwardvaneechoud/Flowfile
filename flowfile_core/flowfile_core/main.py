@@ -99,6 +99,7 @@ if "FLOWFILE_MODE" not in os.environ:
 
 should_exit = False
 server_instance = None
+_LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
 
 @asynccontextmanager
@@ -111,7 +112,7 @@ async def shutdown_handler(app: FastAPI):
     tells the hub the node is up while it serves (``hub_node.start_heartbeat``).
     """
     # Ensure scheduler and subprocess loggers are visible on stdout (Electron pipes this)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    logging.basicConfig(level=logging.INFO, format=_LOG_FORMAT)
 
     print("Starting core application...")
 
@@ -385,10 +386,13 @@ def listen(host: str, port: int, *, given: bool) -> socket.socket | None:
     it: a port ``given`` (``--port``, ``CORE_PORT``, or one a caller of ``run`` names) is that port or exit code 1; a
     restart with the same token is the port the hub has, else exit code 1 saying so; a core about to join takes
     ``port``, else the port it last joined with, else a free one (``hub_node.serving_socket``). Says first where the
-    node keeps its files when it has a folder of its own.
+    node keeps its files when it has a folder of its own. Those lines, and the join's, are logged as the server logs
+    once it serves (the lifespan's ``basicConfig``), from here on: ``flowfile run ui`` and ``run core`` configure no
+    logging before then, and a record at INFO with no handler is dropped.
     """
     if not JOIN_TOKEN:
         return None
+    logging.basicConfig(level=logging.INFO, format=_LOG_FORMAT)
     hub_node.log_storage(NODE_STORAGE_DIR)
     return hub_node.serving_socket("core", host, port, given=given, hub_url=JOIN_HUB_URL, token=JOIN_TOKEN)
 

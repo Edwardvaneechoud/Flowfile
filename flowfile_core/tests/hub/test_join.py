@@ -735,3 +735,48 @@ def test_the_pair_a_hub_prints_keeps_one_folder_apart_from_the_desktops_and_the_
     assert sorted(path.name for path in home.iterdir()) == [".flowfile", ".flowfile-node"]
     assert sorted(path.name for path in desktop.iterdir()) == [hub_node.FILE_NAME]
     assert (desktop / hub_node.FILE_NAME).read_text(encoding="utf-8") == '{"name": "the desktop\'s node"}\n'
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the home directory comes from HOME on POSIX only")
+@pytest.mark.parametrize("component", ["ui", "core"])
+def test_the_flowfile_command_given_the_join_flags_first_keeps_a_folder_of_its_own_and_says_so(
+    tmp_path, join_hub, component
+):
+    home = tmp_path / "home"
+    desktop = home / ".flowfile"
+    desktop.mkdir(parents=True)
+    (desktop / hub_node.FILE_NAME).write_text('{"name": "the desktop\'s node"}\n', encoding="utf-8")
+    port = free_port()
+    environment = {name: value for name, value in os.environ.items() if name not in (*STORAGE_VARIABLES, *VARIABLES)}
+    environment.update(
+        HOME=str(home),
+        FLOWFILE_WORKER_PORT=str(free_port()),
+        FLOWFILE_WORKER_POOL_SIZE="0",
+        FLOWFILE_SCHEDULER_ENABLED="0",
+        FLOWFILE_KERNEL_GC="0",
+    )
+    flags = ["--no-browser", "--host", "127.0.0.1", "--port", str(port)]
+    flags += ["--hub", join_hub.url, "--join", join_hub.mint(), "--name", "flags-first"]
+    log = tmp_path / "flowfile.log"
+    with log.open("wb") as out:
+        server = subprocess.Popen(
+            [sys.executable, "-m", "flowfile", *flags, "run", component],
+            env=environment,
+            cwd=tmp_path,
+            stdout=out,
+            stderr=out,
+        )
+    try:
+        _wait_for(server, f"http://127.0.0.1:{port}/health/status", log)
+    finally:
+        _stop(server)
+
+    output = log.read_text(encoding="utf-8")
+    assert "Keeping this node's files in ~/.flowfile-node/flags-first, apart from Flowfile desktop's" in output
+    assert f"Joined {join_hub.url} as flags-first" in output
+    assert len([body for path, body in join_hub.calls if path == hub_join.JOIN_PATH]) == 1
+    kept = json.loads((home / ".flowfile-node" / "flags-first" / hub_node.FILE_NAME).read_text(encoding="utf-8"))
+    assert (kept["name"], kept["core_port"]) == ("flags-first", port)
+    assert sorted(path.name for path in home.iterdir()) == [".flowfile", ".flowfile-node"]
+    assert sorted(path.name for path in desktop.iterdir()) == [hub_node.FILE_NAME]
+    assert (desktop / hub_node.FILE_NAME).read_text(encoding="utf-8") == '{"name": "the desktop\'s node"}\n'
