@@ -3,9 +3,10 @@ Shared utilities for Flowfile services.
 This package contains common functionality that can be used across
 flowfile_core, flowfile_worker, and other components without creating
 circular dependencies.
-"""
 
-from .storage_config import get_cache_directory, get_flows_directory, get_temp_directory, storage
+Every name is re-exported lazily, ``storage`` included: importing ``shared`` reads no storage dir and makes none, so a
+process can still choose its storage dir with ``shared.hub_node.node_storage`` before ``shared.storage_config`` loads.
+"""
 
 __all__ = [
     "storage",
@@ -30,6 +31,10 @@ __all__ = [
 ]
 
 _LAZY_EXPORTS = {
+    **dict.fromkeys(
+        ("get_cache_directory", "get_flows_directory", "get_temp_directory", "storage"),
+        "shared.storage_config",
+    ),
     **dict.fromkeys(
         (
             "get_lazy_frame_from_gcs_pyarrow_dataset",
@@ -64,11 +69,11 @@ _LAZY_EXPORTS = {
 
 
 # Submodules the old eager re-exports used to bind as attributes of `shared`.
-_LAZY_SUBMODULES = ("db_dialects", "delta_utils", "sql_utils")
+_LAZY_SUBMODULES = ("db_dialects", "delta_utils", "sql_utils", "storage_config")
 
 
 def __getattr__(name: str):
-    # PEP 562: re-export lazily so importing `shared` never loads gcsfs/boto3 or the pydantic-backed dialect registry.
+    # PEP 562: re-export lazily so importing `shared` never loads gcsfs/boto3, the dialect registry or the storage dirs.
     import importlib
 
     if name in _LAZY_SUBMODULES:
