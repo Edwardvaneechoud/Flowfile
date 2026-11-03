@@ -73,6 +73,22 @@ def test_run_ui_without_flags_serves_this_machine_only(monkeypatch):
     assert started == [{"host": "127.0.0.1", "port": None, "open_browser": False}]
 
 
+@pytest.mark.parametrize(
+    "flags,token,port",
+    [([], None, 63578), (["--port", "8080"], None, 8080), ([], "join-t", None), (["--port", "8080"], "join-t", 8080)],
+    ids=["no port", "a port given", "joining", "joining on a port given"],
+)
+def test_run_core_serves_63578_unless_given_a_port_or_joining_a_hub(monkeypatch, flags, token, port):
+    started = []
+    monkeypatch.setattr(core_main, "run", lambda host, port: started.append((host, port)))
+    monkeypatch.setattr(settings, "JOIN_TOKEN", token)
+    monkeypatch.setattr(sys, "argv", ["flowfile", "run", "core", "--host", "127.0.0.1", *flags])
+
+    main()
+
+    assert started == [("127.0.0.1", port)]
+
+
 @pytest.fixture
 def editor_files(tmp_path, monkeypatch):
     """A built editor of two files, and a file beside its folder that it must never serve."""

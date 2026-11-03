@@ -509,9 +509,12 @@ def main():
                 print("\nFlowFile service stopped.")
         elif args.component == "core":
             # Only for direct core service usage
+            from flowfile_core.configs import settings
             from flowfile_core.main import run as run_core
 
-            run_core(host=args.host, port=args.port)
+            # 63578 when no port is given, as before; a core that joins a hub picks its own
+            port = settings.DEFAULT_SERVER_PORT if args.port is None and not settings.JOIN_TOKEN else args.port
+            run_core(host=args.host, port=port)
         elif args.component == "worker":
             # Only for direct worker service usage
             from flowfile_worker.main import run as run_worker
