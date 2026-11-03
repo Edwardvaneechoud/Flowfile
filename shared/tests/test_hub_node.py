@@ -8,6 +8,7 @@ import socket
 import stat
 import threading
 import uuid
+from http import HTTPStatus
 
 import jwt
 import pytest
@@ -32,6 +33,8 @@ def node_file(tmp_path, monkeypatch):
     monkeypatch.setattr(hub_node, "path", lambda: target)
     monkeypatch.setattr(hub_node, "_warned_unreadable", False)
     monkeypatch.setattr(hub_node, "_warned_beats", set())
+    monkeypatch.setattr(hub_node, "_hub_without_beats", False)
+    monkeypatch.setattr(hub_node, "_said_without_beats", False)
     for name in VARIABLES:
         monkeypatch.delenv(name, raising=False)
     return target
@@ -956,3 +959,102 @@ def test_a_beat_that_fails_unexpectedly_warns_once_and_the_beats_go_on(join_hub,
 
     assert tries == ["worker", "worker"]
     assert beat_warnings(caplog) == ["The hub did not take this node's heartbeat: the beat failed (RuntimeError)"]
+
+
+class HubAnswering(FakeJoinHub):
+    """A hub whose heartbeat route answers each beat with the next of ``statuses``, the last one again once they run
+    out: 404 and 405 as a hub built before the route answers, 204 a beat checked as the contract says."""
+
+    def __init__(self, *statuses: int):
+        super().__init__()
+        self.statuses = list(statuses)
+
+    def beat(self, authorization, body):
+        status = self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0]
+        if status == 204:
+            return super().beat(authorization, body)
+        return status, {"detail": HTTPStatus(status).phrase}
+
+
+@pytest.fixture
+def hub_answering():
+    """Starts a ``HubAnswering`` with the given statuses, joins ``worker-1`` to it with keys, and closes it after."""
+    hubs: list[HubAnswering] = []
+
+    def start(*statuses: int) -> HubAnswering:
+        hubs.append(HubAnswering(*statuses))
+        joined_with_keys(hubs[-1])
+        return hubs[-1]
+
+    yield start
+    for hub in hubs:
+        hub.close()
+
+
+def absent_lines(caplog) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "flowfile.hub_node" and "does not take heartbeats" in record.getMessage()
+    ]
+
+
+@pytest.mark.parametrize("status", [404, 405])
+def test_a_hub_without_the_heartbeat_route_is_said_once_and_asked_every_fifteen_minutes(hub_answering, caplog, status):
+    hub = hub_answering(status)
+    stop = Waits(hub, stop_at=4)
+    caplog.clear()
+
+    with caplog.at_level(logging.DEBUG):
+        hub_node._beat("worker", stop)
+
+    assert stop.seen == [(900, 1), (900, 2), (900, 3), (900, 4)]
+    [record] = [record for record in caplog.records if record.name == "flowfile.hub_node"]
+    assert record.levelno == logging.INFO
+    assert record.getMessage() == f"{hub.url} does not take heartbeats yet; this node asks again every 15 minutes"
+    assert hub_node.HEARTBEAT_ABSENT_SECONDS == 15 * 60
+
+
+def test_a_beat_answered_404_is_not_taken(hub_answering, caplog):
+    hub_answering(404)
+
+    assert hub_node.heartbeat("worker") is False
+    assert hub_node.heartbeat("worker") is False
+
+    assert beat_warnings(caplog) == []
+    assert len(absent_lines(caplog)) == 1
+
+
+def test_a_beat_taken_brings_back_the_minute_and_the_line_is_said_once_per_process(hub_answering, caplog):
+    hub = hub_answering(404, 204, 204, 404)
+    stop = Waits(hub, stop_at=4)
+
+    hub_node._beat("worker", stop)
+
+    assert stop.seen == [(900, 1), (60, 2), (60, 3), (900, 4)]
+    assert len(hub.beats) == 2
+    assert len(absent_lines(caplog)) == 1
+    assert beat_warnings(caplog) == []
+
+
+def test_another_answer_after_a_hub_without_the_route_warns_as_today_every_minute(hub_answering, caplog):
+    hub = hub_answering(404, 500)
+    stop = Waits(hub, stop_at=3)
+
+    hub_node._beat("worker", stop)
+
+    assert stop.seen == [(900, 1), (60, 2), (60, 3)]
+    assert beat_warnings(caplog) == [
+        f"The hub did not take this node's heartbeat: {hub.url} answered 500: Internal Server Error"
+    ]
+
+
+def test_a_hub_that_answers_500_warns_once_and_is_asked_every_minute(hub_answering, caplog):
+    hub = hub_answering(500)
+    stop = Waits(hub, stop_at=3)
+
+    hub_node._beat("worker", stop)
+
+    assert stop.seen == [(60, 1), (60, 2), (60, 3)]
+    assert len(beat_warnings(caplog)) == 1
+    assert absent_lines(caplog) == []

@@ -12,7 +12,8 @@ A joined node with keys tells its hub it is up, since the hub may not reach it (
 reach the hub: ``heartbeat`` posts one beat signed with the node's own key, and ``start_heartbeat`` beats at once and
 then every ``HEARTBEAT_SECONDS`` from a daemon thread. One process speaks for the node: core when one joined for itself
 and its worker (the file's ``has_core``), else the worker. A node without keys, joined by an older Flowfile or set up
-by hand, never beats.
+by hand, never beats. A hub that answers a beat 404 or 405 was built before it took heartbeats: that is said once, and
+the node asks it again every ``HEARTBEAT_ABSENT_SECONDS`` instead of every minute.
 
 ``shared.hub_tokens`` reads the node's settings through ``resolved()``: the environment first, field by field
 (``FLOWFILE_HUB_URL``, ``FLOWFILE_NODE_NAME``, ``FLOWFILE_HUB_ISSUER``), the file second, and the file only for the hub
@@ -59,6 +60,9 @@ HEARTBEAT_PATH = "/hub/nodes/heartbeat"
 HEARTBEAT_SECONDS = 60
 """How often a joined node tells its hub it is up, in seconds; not a setting. The hub shows a node Online while its last
 beat is under three minutes old."""
+HEARTBEAT_ABSENT_SECONDS = 15 * 60
+"""How long a node waits after a beat its hub answered 404 or 405, a hub built before it took heartbeats; not a
+setting."""
 
 NODE_FILES_DIR = ".flowfile-node"
 """The folder under the home directory where a node that joins keeps its files when no storage dir is set."""
@@ -75,6 +79,8 @@ _FIELDS = {"hub_url": str, "issuer": str, "name": str, "node_id": int, "joined_a
 _OPTIONAL_FIELDS = {"join_token_hash": str, "has_core": bool, "worker_port": int}
 _warned_unreadable = False
 _warned_beats: set[str] = set()
+_hub_without_beats = False
+_said_without_beats = False
 
 
 class JoinRefused(Exception):
@@ -392,19 +398,33 @@ def _not_taken(reason: str) -> bool:
     return False
 
 
+def _without_beats(hub_url: str) -> bool:
+    global _hub_without_beats, _said_without_beats
+    _hub_without_beats = True
+    if not _said_without_beats:
+        _said_without_beats = True
+        minutes = HEARTBEAT_ABSENT_SECONDS // 60
+        logger.info("%s does not take heartbeats yet; this node asks again every %s minutes", hub_url, minutes)
+    return False
+
+
 def heartbeat(process: Literal["core", "worker"], http: "httpx.Client | None" = None) -> bool:
     """Tell the hub this storage dir's node joined that the node is up, as ``process``; whether the hub took the beat.
 
     Posts ``{version, process}`` to the joined hub's ``/hub/nodes/heartbeat`` with a node assertion signed with this
     node's own key, its audience the joined issuer and that path. A beat the hub does not take, or one that cannot be
     sent (no joined node, no keys, a hub that does not answer), logs one warning per distinct reason until a beat is
-    taken again, and never the assertion. Never makes keys.
+    taken again, and never the assertion. Never makes keys. A 404 or 405 is a hub built before it took heartbeats,
+    not a refusal: said once per process at INFO, never warned, and the beat loop waits ``HEARTBEAT_ABSENT_SECONDS``
+    before it asks again.
     """
+    global _hub_without_beats
     import httpx
 
     from shared import hub_node_key
     from shared._version import get_version
 
+    _hub_without_beats = False
     node = read()
     if node is None:
         return _not_taken(f"no node has joined a hub from {path().parent}")
@@ -427,6 +447,8 @@ def heartbeat(process: Literal["core", "worker"], http: "httpx.Client | None" = 
     finally:
         if http is None:
             client.close()
+    if resp.status_code in (404, 405):
+        return _without_beats(node.hub_url)
     if resp.status_code != 204:
         return _not_taken(f"{node.hub_url} answered {resp.status_code}: {_detail(resp) or resp.reason_phrase}")
     _warned_beats.clear()
@@ -438,19 +460,23 @@ def _speaks_for(node: HubNode | None, process: str) -> bool:
 
 
 def _beat(process: Literal["core", "worker"], stop: threading.Event) -> None:
-    """Beat at once and every ``HEARTBEAT_SECONDS`` until ``stop`` is set, each time ``process`` speaks for the node."""
+    """Beat at once and every ``HEARTBEAT_SECONDS`` until ``stop`` is set, each time ``process`` speaks for the node;
+    after a beat the hub answered 404 or 405 the next one comes ``HEARTBEAT_ABSENT_SECONDS`` later."""
     while True:
+        absent = False
         if _speaks_for(read(), process):
             try:
                 heartbeat(process)
             except Exception as exc:
                 _not_taken(f"the beat failed ({type(exc).__name__})")
-        if stop.wait(HEARTBEAT_SECONDS):
+            absent = _hub_without_beats
+        if stop.wait(HEARTBEAT_ABSENT_SECONDS if absent else HEARTBEAT_SECONDS):
             return
 
 
 def start_heartbeat(process: Literal["core", "worker"]) -> threading.Event | None:
-    """Beat for this storage dir's node from a daemon thread, at start and every minute; set the event to stop it.
+    """Beat for this storage dir's node from a daemon thread, at start and every minute (every 15 minutes while the hub
+    answers that it takes no heartbeats); set the event to stop it.
 
     ``None``, and no thread, when ``process`` does not speak for a node: no node joined a hub from this storage dir, it
     has no keys of its own (joined by an older Flowfile, or set up by hand; said once), ``process`` is a worker beside a
