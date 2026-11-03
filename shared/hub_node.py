@@ -374,7 +374,7 @@ def heartbeat(process: Literal["core", "worker"], http: "httpx.Client | None" = 
 
 
 def _speaks_for(node: HubNode | None, process: str) -> bool:
-    return node is not None and (process == "core" or not node.has_core)
+    return node is not None and node.has_core == (process == "core")
 
 
 def _beat(process: Literal["core", "worker"], stop: threading.Event) -> None:
@@ -393,9 +393,9 @@ def start_heartbeat(process: Literal["core", "worker"]) -> threading.Event | Non
     """Beat for this storage dir's node from a daemon thread, at start and every minute; set the event to stop it.
 
     ``None``, and no thread, when ``process`` does not speak for a node: no node joined a hub from this storage dir, it
-    has no keys of its own (joined by an older Flowfile, or set up by hand; said once), or ``process`` is a worker
-    beside a core that joined for both. Core always speaks for its node. The thread checks the file before every beat,
-    so a worker that beats alone goes quiet once a core joins beside it.
+    has no keys of its own (joined by an older Flowfile, or set up by hand; said once), ``process`` is a worker beside a
+    core that joined for both, or a core on the storage dir of a worker that joined alone. The thread checks the file
+    before every beat, so a worker that beats alone goes quiet once a core joins beside it.
     """
     from shared import hub_node_key
 

@@ -103,8 +103,8 @@ async def shutdown_handler(app: FastAPI):
 
     This context manager ensures that resources, such as log files and kernel
     containers, are cleaned up properly when the application is terminated.
-    A core whose storage dir joined a hub with keys of its own tells the hub
-    the node is up while it serves (``hub_node.start_heartbeat``).
+    A core that joined a hub for itself and its worker, with keys of its own,
+    tells the hub the node is up while it serves (``hub_node.start_heartbeat``).
     """
     # Ensure scheduler and subprocess loggers are visible on stdout (Electron pipes this)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")

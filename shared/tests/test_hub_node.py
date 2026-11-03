@@ -613,9 +613,9 @@ def test_a_node_joined_without_keys_starts_no_beat_and_says_so_once(join_hub, no
         ("http://team-1.example:63578", "core", True),
         ("http://team-1.example:63578", "worker", False),
         (None, "worker", True),
-        (None, "core", True),
+        (None, "core", False),
     ],
-    ids=["core of a core's node", "worker beside a joined core", "worker alone", "core of a worker's node"],
+    ids=["core of a core's node", "worker beside a joined core", "worker alone", "core beside a worker alone"],
 )
 def test_one_process_speaks_for_a_node(join_hub, core_url, process, speaks):
     joined_with_keys(join_hub, core_url=core_url)
