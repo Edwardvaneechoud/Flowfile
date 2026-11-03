@@ -60,11 +60,8 @@ def node_file(tmp_path, monkeypatch):
     invalidate_user_cache()
 
 
-@pytest.fixture
-def hub(node_file):
-    """A hub this server joined with its own keys, enabled; the accounts its people got are removed afterwards."""
-    signer = HubSigner()
-    fake = FakeJoinHub(signer)
+def join(fake: FakeJoinHub) -> None:
+    """This server's storage dir joins ``fake`` as ``NODE`` with keys of its own, enabled."""
     hub_node.join(
         fake.url,
         fake.mint(enable_on_join=True),
@@ -72,6 +69,14 @@ def hub(node_file):
         worker_url="http://team-1.example:63579",
         core_url="http://team-1.example:63578",
     )
+
+
+@pytest.fixture
+def hub(node_file):
+    """A hub this server joined with its own keys, enabled; the accounts its people got are removed afterwards."""
+    signer = HubSigner()
+    fake = FakeJoinHub(signer)
+    join(fake)
     try:
         yield fake
     finally:
@@ -473,13 +478,38 @@ def test_a_refresh_while_the_hub_does_not_answer_is_a_502_and_keeps_the_sign_in(
     assert session.load(user_id) == before
 
 
-def test_a_refresh_of_an_account_not_from_the_hub_asks_the_hub_nothing(hub, local_user, username):
+def test_a_password_session_from_before_the_join_is_not_renewed_once_the_server_joined_with_keys(
+    node_file, local_user, username
+):
     local_user(username)
+    before_the_join = password_sign_in(username)
+    assert before_the_join.status_code == 200, before_the_join.text
+    signer = HubSigner()
+    fake = FakeJoinHub(signer)
+    try:
+        join(fake)
 
-    response = refresh(create_refresh_token(data={"sub": username}))
+        response = refresh(before_the_join.json()["refresh_token"])
+    finally:
+        fake.close()
+        signer.close()
 
-    assert response.status_code == 200, response.text
-    assert lives(response.json()["access_token"]) > 60 * 60
+    assert (response.status_code, response.json()) == (403, {"detail": THROUGH_THE_HUB})
+    assert fake.token_requests == []
+
+
+def test_a_refresh_of_an_account_not_from_the_hub_is_unchanged_on_a_server_that_did_not_join_with_keys(
+    hub, node_file, local_user, username
+):
+    local_user(username)
+    node_file.with_name(hub_node_key.FILE_NAME).unlink()
+    without_keys = refresh(create_refresh_token(data={"sub": username}))
+    node_file.unlink()
+    not_joined = refresh(create_refresh_token(data={"sub": username}))
+
+    for response in (without_keys, not_joined):
+        assert response.status_code == 200, response.text
+        assert lives(response.json()["access_token"]) > 60 * 60
     assert hub.token_requests == []
 
 

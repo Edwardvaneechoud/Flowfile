@@ -44,12 +44,7 @@ def login_for_access_token(
         return {"access_token": access_token, "token_type": "bearer"}
     else:
         # In Docker mode, authenticate against database
-        node = issuer_accounts.joined_with_keys()
-        if node is not None:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"This server signs people in through {issuer_accounts.hub_host(node.hub_url)}",
-            )
+        _refuse_passwords_once_joined()
         if not username or not password:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -71,6 +66,18 @@ def login_for_access_token(
         return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
 
+def _refuse_passwords_once_joined() -> None:
+    """403 while this storage dir's node joined its hub with keys of its own: people sign in here through that hub
+    only, so neither a password nor a session that began with one is taken.
+    """
+    node = issuer_accounts.joined_with_keys()
+    if node is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"This server signs people in through {issuer_accounts.hub_host(node.hub_url)}",
+        )
+
+
 @router.post("/refresh", response_model=Token)
 def refresh_access_token(
     refresh_token: str = Form(...),
@@ -80,7 +87,8 @@ def refresh_access_token(
 
     For a person who signed in through the hub, the sign-in the token was issued for is refreshed at the hub first, so
     this server's session never outlives the hub's: once the hub no longer takes it, or it was replaced here by a later
-    sign-in or ended by a sign-out, the answer is a 401 and nothing is issued.
+    sign-in or ended by a sign-out, the answer is a 401 and nothing is issued. On a server that joined its hub with keys
+    of its own, the session of any other account is not renewed: 403, as its password sign-in is.
     """
     claims = decode_refresh_token(refresh_token)
     username, sid = claims["sub"], claims.get("sid")
@@ -106,6 +114,8 @@ def refresh_access_token(
         _refresh_through_hub(user.id, mapping.issuer, sid)
         expires = HUB_ACCESS_TOKEN_EXPIRES
         renewed["sid"] = sid
+    else:
+        _refuse_passwords_once_joined()
     new_access_token = create_access_token(data={"sub": user.username}, expires_delta=expires)
     new_refresh_token = create_refresh_token(data=renewed)
     return {"access_token": new_access_token, "refresh_token": new_refresh_token, "token_type": "bearer"}
