@@ -94,7 +94,9 @@ class FakeJoinHub:
     assertion's verified ``header`` and ``claims`` and its ``body``; ``token_requests`` each token request answered
     200, its ``grant_type`` and its assertion's ``header`` and ``claims``. ``people`` holds what the hub knows of each
     person a sign-in token was made for, by user id, and answers as their ``user``; a test changes it to model a
-    person whose name or rights changed. A user id in ``refused_people`` may not use any node now.
+    person whose name or rights changed. A user id in ``refused_people`` may not use any node now. Setting
+    ``refuse_next_refresh`` ends the delegation the next refresh names, as the hub ends one by itself ("Sign out
+    everywhere", the node removed): that refresh is ``invalid_grant`` and its token is refused from then on.
     """
 
     def __init__(self, signer: HubSigner | None = None):
@@ -104,6 +106,7 @@ class FakeJoinHub:
         self.token_requests: list[dict] = []
         self.people: dict[int, dict] = {}
         self.refused_people: set[int] = set()
+        self.refuse_next_refresh = False
         self._delegations: dict[str, dict] = {}
         self._spent_sign_ins: set[str] = set()
         self._grants: dict[str, dict] = {}
@@ -355,6 +358,9 @@ class FakeJoinHub:
             if delegation is None or delegation["node"] != node:
                 return "this refresh token is not known to the hub for this node", None
             del self._delegations[refresh_token]
+            if self.refuse_next_refresh:
+                self.refuse_next_refresh = False
+                return "this sign-in was ended on the hub", None
         if time.time() - delegation["signed_in_at"] >= DELEGATION_SECONDS:
             return "this sign-in has expired", None
         if delegation["uid"] in self.refused_people:
