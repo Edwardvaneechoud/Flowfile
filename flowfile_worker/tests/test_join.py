@@ -305,6 +305,29 @@ def test_a_worker_without_a_join_token_serves_on_its_port_or_not_at_all(monkeypa
     assert serving == []
 
 
+@pytest.mark.skipif(os.name == "nt", reason="the home directory comes from HOME on POSIX only")
+def test_a_worker_with_a_folder_of_its_own_says_so_at_start(monkeypatch, tmp_path, serving, caplog):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(main, "NODE_STORAGE_DIR", tmp_path / ".flowfile-node" / "card-node")
+    monkeypatch.setattr(main, "JOIN_TOKEN", None)
+    default_port(monkeypatch, free_port())
+
+    with caplog.at_level(logging.INFO):
+        main.run(host="127.0.0.1")
+
+    assert "Keeping this node's files in ~/.flowfile-node/card-node, apart from Flowfile desktop's" in caplog.text
+
+
+def test_a_worker_whose_storage_dir_is_set_says_nothing_about_it(monkeypatch, serving, caplog):
+    monkeypatch.setattr(main, "JOIN_TOKEN", None)
+    default_port(monkeypatch, free_port())
+
+    with caplog.at_level(logging.INFO):
+        main.run(host="127.0.0.1")
+
+    assert "Keeping this node's files" not in caplog.text
+
+
 def test_a_worker_on_every_address_tells_the_hub_its_address_towards_it(monkeypatch, join_hub, node_file, caplog):
     asked = []
     monkeypatch.setattr(hub_node, "_route_address", lambda host, port, family: asked.append(host) or "10.0.0.7")
@@ -437,5 +460,6 @@ def test_a_worker_started_with_a_join_token_keeps_its_files_apart_from_the_deskt
     kept = json.loads((folder / hub_node.FILE_NAME).read_text(encoding="utf-8"))
     assert (kept["name"], kept["worker_port"]) == ("card-node", port)
     assert (folder / "hub_node_key.json").is_file()
+    assert sorted(path.name for path in home.iterdir()) == [".flowfile", ".flowfile-node"]
     assert sorted(path.name for path in desktop.iterdir()) == [hub_node.FILE_NAME]
     assert (desktop / hub_node.FILE_NAME).read_text(encoding="utf-8") == '{"name": "the desktop\'s node"}\n'
