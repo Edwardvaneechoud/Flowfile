@@ -2,11 +2,14 @@
 
 import json
 import logging
+import os
 import socket
+import stat
 
+import jwt
 import pytest
 
-from shared import hub_node
+from shared import hub_node, hub_node_key
 from shared.hub_node import HubNode, JoinRefused, NodeSettings
 from shared.tests import hub_join
 from shared.tests.hub_join import EXPIRED, NOT_VALID, USED, FakeJoinHub
@@ -128,7 +131,13 @@ def test_a_join_sends_the_contract_body_and_keeps_the_answer_but_not_the_token(j
     assert join_hub.calls == [
         (
             "/hub/nodes/join",
-            {"token": token, "name": "worker-1", "worker_url": "http://worker-1.example:63579", "core_url": None},
+            {
+                "token": token,
+                "name": "worker-1",
+                "worker_url": "http://worker-1.example:63579",
+                "core_url": None,
+                "keys": hub_node_key.load_or_create().public_jwks(),
+            },
         )
     ]
     kept = json.loads(node_file.read_text(encoding="utf-8"))
@@ -219,6 +228,91 @@ def test_an_answer_without_an_issuer_is_not_a_hub(node_file):
 
     assert refused.value.reason == f"{hub.url} did not answer as a Flowfile hub does"
     assert not node_file.exists()
+
+
+def key_file_of(node_file):
+    return node_file.with_name(hub_node_key.FILE_NAME)
+
+
+def test_a_first_join_keeps_the_nodes_keys_and_sends_their_public_halves(join_hub, node_file):
+    join_with(join_hub, join_hub.mint())
+
+    sent = join_hub.calls[0][1]["keys"]
+    assert sent == hub_node_key.load_or_create().public_jwks()
+    assert (sent["sig"]["kty"], sent["enc"]["kty"]) == ("EC", "OKP")
+    assert "d" not in sent["sig"] and "d" not in sent["enc"]
+    if os.name != "nt":
+        assert stat.S_IMODE(key_file_of(node_file).stat().st_mode) == 0o600
+
+
+def test_a_second_join_from_the_same_storage_dir_sends_the_same_keys(join_hub, node_file):
+    join_with(join_hub, join_hub.mint())
+    kept = key_file_of(node_file).read_bytes()
+
+    join_with(join_hub, join_hub.mint(), name="worker-2")
+
+    first, second = (body["keys"] for _, body in join_hub.calls)
+    assert first == second
+    assert key_file_of(node_file).read_bytes() == kept
+
+
+def test_an_assertion_the_node_signs_verifies_with_the_key_it_sent(join_hub):
+    join_with(join_hub, join_hub.mint())
+    audience = join_hub.url + "/hub/nodes/heartbeat"
+
+    token = hub_node_key.load_or_create().assertion("worker-1", audience)
+
+    sent = jwt.PyJWK(join_hub.calls[0][1]["keys"]["sig"])
+    assert jwt.decode(token, sent, algorithms=["ES256"], audience=audience)["sub"] == "node:worker-1"
+
+
+def test_a_join_sends_and_logs_no_private_key(join_hub, node_file, caplog):
+    with caplog.at_level(logging.DEBUG):
+        hub_node.join_at_start(join_hub.url, join_hub.mint(), name="worker-1", worker_url="http://w:1")
+
+    kept = json.loads(key_file_of(node_file).read_text(encoding="utf-8"))
+    sent = json.dumps(join_hub.calls)
+    for secret in (*kept["sig"].splitlines()[1:-1], kept["enc"]):
+        assert secret not in sent and secret not in caplog.text
+
+
+def test_a_restart_that_makes_no_request_makes_no_keys(join_hub, node_file):
+    token = join_hub.mint()
+    write_node(node_file, hub_url=join_hub.url, join_token_hash=hub_node.token_hash(token))
+
+    hub_node.join_at_start(join_hub.url, token, name="team", worker_url="http://w:1")
+
+    assert join_hub.calls == []
+    assert not key_file_of(node_file).exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows keeps no POSIX file modes")
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root writes into a read-only directory")
+def test_a_storage_dir_that_cannot_keep_the_keys_refuses_the_join_and_sends_nothing(join_hub, node_file):
+    node_file.parent.mkdir()
+    node_file.parent.chmod(0o500)
+    try:
+        with pytest.raises(JoinRefused) as refused:
+            join_with(join_hub, join_hub.mint())
+    finally:
+        node_file.parent.chmod(0o700)
+
+    assert refused.value.reason == f"could not keep this node's keys at {key_file_of(node_file)}: PermissionError"
+    assert join_hub.calls == []
+    assert os.listdir(node_file.parent) == []
+
+
+def test_a_join_at_start_whose_keys_cannot_be_kept_exits_2_before_any_request(join_hub, node_file, caplog):
+    node_file.parent.write_text("a file where the storage dir should be", encoding="utf-8")
+
+    with caplog.at_level(logging.INFO, logger="flowfile.hub_node"):
+        with pytest.raises(SystemExit) as exited:
+            hub_node.join_at_start(join_hub.url, join_hub.mint(), name="worker-1", worker_url="http://w:1")
+
+    assert exited.value.code == 2
+    sentence = f"could not keep this node's keys at {key_file_of(node_file)}: "
+    assert f"Could not join {join_hub.url}: {sentence}" in caplog.text
+    assert join_hub.calls == []
 
 
 def test_joining_at_start_joins_once_and_says_whether_the_node_is_enabled(join_hub, node_file, caplog):

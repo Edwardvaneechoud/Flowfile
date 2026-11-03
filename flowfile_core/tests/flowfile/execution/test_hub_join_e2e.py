@@ -19,6 +19,7 @@ import sys
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from unittest.mock import ANY
 
 import pytest
 import requests
@@ -162,7 +163,9 @@ def test_a_worker_joins_with_one_command_and_runs_a_desktops_node(fake_hub, join
         assert token not in kept
         node = json.loads(kept)
         assert (node["hub_url"], node["issuer"], node["name"]) == (fake_hub.url, fake_hub.issuer, JOINED)
-        assert joins(fake_hub) == [{"token": token, "name": JOINED, "worker_url": url_of(port), "core_url": None}]
+        assert joins(fake_hub) == [
+            {"token": token, "name": JOINED, "worker_url": url_of(port), "core_url": None, "keys": ANY}
+        ]
 
         assert capabilities(port, fake_hub.signer.token(uid=USER_ID, aud=JOINED)).status_code == 200
         refused = capabilities(port, fake_hub.signer.token(uid=USER_ID, aud="another"))

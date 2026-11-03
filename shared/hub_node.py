@@ -4,7 +4,9 @@ A worker, or a core, becomes a node on a hub by joining it once: it posts a sing
 Compute page and its own description (its name, the address desktops reach it at) to ``<hub>/hub/nodes/join``, and
 keeps what the hub answers in ``hub_node.json`` in the storage dir: the hub's URL, the issuer the hub signs with, the
 name the hub recorded and the node's id there, and when it joined. The file holds nothing secret. The join token is
-spent by the join and written nowhere, and the hub's keys, the only thing a node verifies with, stay public.
+spent by the join and written nowhere, and the hub's keys, the only thing a node verifies with, stay public. The node's
+own keys are another file: at its first join it makes two key pairs, keeps them in ``hub_node_key.json`` beside this
+one (``shared.hub_node_key``) and sends the hub their public halves with every join.
 
 ``shared.hub_tokens`` reads the node's settings through ``resolved()``: the environment first, field by field
 (``FLOWFILE_HUB_URL``, ``FLOWFILE_NODE_NAME``, ``FLOWFILE_HUB_ISSUER``), the file second, and the file only for the hub
@@ -191,10 +193,17 @@ def _join(
     """``join``, and whether the hub enabled the node at once."""
     import httpx
 
+    from shared import hub_node_key
+
     hub_url = hub_url.strip().rstrip("/")
+    try:
+        keys = hub_node_key.load_or_create()
+    except (OSError, ValueError) as exc:
+        raise JoinRefused(f"could not keep this node's keys at {hub_node_key.path()}: {type(exc).__name__}") from None
     body = {"token": token, "name": name, "worker_url": worker_url, "core_url": core_url}
     if ui_url:
         body["ui_url"] = ui_url
+    body["keys"] = keys.public_jwks()
     client = http or httpx.Client(
         timeout=httpx.Timeout(connect=5.0, read=15.0, write=15.0, pool=5.0), follow_redirects=False
     )
@@ -241,8 +250,10 @@ def join(
 
     ``name`` is the name this node asks for, ``worker_url`` the address desktops reach its worker at, ``core_url``
     its core's, when it has one, and ``ui_url`` the browser editor's, when its core serves one; without it the join
-    says nothing about an editor. The file is written whole or not at all, with the name and issuer the hub
-    answered. Logs the method, the path and the status, never the token or a body.
+    says nothing about an editor. The join also sends the public halves of this node's own keys, made at its first
+    join and reused after; a storage dir that cannot keep them refuses the join before any request. The file is
+    written whole or not at all, with the name and issuer the hub answered. Logs the method, the path and the status,
+    never the token or a body.
     """
     return _join(hub_url, token, name=name, worker_url=worker_url, core_url=core_url, ui_url=ui_url, http=http)[0]
 
