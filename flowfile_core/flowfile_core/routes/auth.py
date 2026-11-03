@@ -1,8 +1,10 @@
 # app_routes/auth.py
 
 import os
+import secrets
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
+from fastapi import APIRouter, Body, Depends, Form, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth import sharing
@@ -18,6 +20,10 @@ from flowfile_core.auth.models import ChangePassword, Token, User, UserCreate, U
 from flowfile_core.auth.password import PASSWORD_REQUIREMENTS, get_password_hash, validate_password, verify_password
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
+from flowfile_core.hub_client import delegation
+from flowfile_core.hub_client import session as hub_session
+from flowfile_core.hub_client.client import HubRefused, HubUnreachable
+from shared import hub_node, hub_node_key, hub_tokens
 
 router = APIRouter()
 
@@ -81,6 +87,131 @@ def refresh_access_token(
     new_access_token = create_access_token(data={"sub": user.username})
     new_refresh_token = create_refresh_token(data={"sub": user.username})
     return {"access_token": new_access_token, "refresh_token": new_refresh_token, "token_type": "bearer"}
+
+
+def _joined_with_keys() -> hub_node.HubNode | None:
+    """This storage dir's node when it joined a hub and has keys of its own, so people sign in here through that hub."""
+    node = hub_node.read()
+    return node if node is not None and hub_node_key.path().is_file() else None
+
+
+@router.get("/sign_in_method")
+def sign_in_method() -> dict:
+    """How people sign in on this server: with a password, or through the hub this server joined.
+
+    Through the hub, ``url`` is the hub's Open page for this node, where a person's browser starts the sign-in.
+    """
+    node = _joined_with_keys()
+    if node is None:
+        return {"method": "password"}
+    hub_url = node.hub_url.rstrip("/")
+    return {"method": "hub", "url": f"{hub_url}/open/{node.node_id}", "hub_url": hub_url}
+
+
+def _refused(detail: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED, detail=detail, headers={"WWW-Authenticate": "Bearer"}
+    )
+
+
+def _sentence(text: str) -> str:
+    return text.rstrip(".") + "."
+
+
+def _issuer_account(db: Session, issuer: str, subject_id: int) -> db_models.User | None:
+    """The local account of the issuer's person ``subject_id``; a mapping whose account is gone is dropped."""
+    mapping = (
+        db.query(db_models.IssuerAccount)
+        .filter(db_models.IssuerAccount.issuer == issuer, db_models.IssuerAccount.subject_id == subject_id)
+        .first()
+    )
+    if mapping is None:
+        return None
+    user = db.query(db_models.User).filter(db_models.User.id == mapping.user_id).first()
+    if user is None:
+        db.delete(mapping)
+        db.flush()
+    return user
+
+
+def _free_username(db: Session, wanted: str, hub_host: str) -> str | None:
+    for candidate in (wanted, f"{wanted}@{hub_host}"):
+        if candidate == sharing.INTERNAL_SERVICE_USERNAME:
+            continue
+        if db.query(db_models.User.id).filter(db_models.User.username == candidate).first() is None:
+            return candidate
+    return None
+
+
+def _new_issuer_account(db: Session, issuer: str, hub_url: str, person: dict) -> db_models.User:
+    """A local account for a person from the hub, named as on the hub unless a local account already holds that name.
+
+    Its password is a hash of random bytes nobody keeps, so the account signs in through the hub only.
+    """
+    hub_host = urlparse(hub_url).hostname or hub_url
+    username = _free_username(db, person["username"], hub_host)
+    if username is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"This server already has accounts named {person['username']} and {person['username']}@{hub_host}; "
+            "an administrator renames one of them before this person can sign in here.",
+        )
+    user = db_models.User(
+        username=username,
+        email=None,
+        full_name=person["full_name"],
+        hashed_password=get_password_hash(secrets.token_urlsafe(32)),
+        disabled=False,
+        is_admin=person["node_admin"],
+        must_change_password=False,
+    )
+    db.add(user)
+    db.flush()
+    db.add(db_models.IssuerAccount(issuer=issuer, subject_id=person["uid"], user_id=user.id))
+    return user
+
+
+@router.post("/hub/signin", response_model=Token)
+def sign_in_through_hub(token: str = Body(..., embed=True), db: Session = Depends(get_db)):
+    """Sign a person in with the one-time sign-in token the hub's Open page gave their browser.
+
+    The token is verified against the hub's keys as a ``signin`` token for this node, then traded at the hub for a
+    delegation signed with this node's own key. The person's local account is the one mapped to the hub's issuer and
+    their id there, made at their first sign-in; whether it administers this server follows ``node_admin`` at every
+    sign-in. The delegation is kept as the person's hub session, never in the database, and the answer is this core's
+    own token pair, as ``/auth/token`` answers. A token or an exchange the hub refuses is a 401 with one sentence.
+    """
+    if _joined_with_keys() is None:
+        raise _refused("This server does not sign people in through a hub.")
+    settings = hub_node.resolved()
+    try:
+        claims = hub_tokens.verify(token, scopes=("signin",))
+    except hub_tokens.HubTokenRefused as e:
+        raise _refused(_sentence(f"The hub's sign-in token was refused: {e.reason}")) from None
+    if claims is None or claims.user_id is None:
+        raise _refused("This is not a sign-in token from the hub.")
+    user = _issuer_account(db, settings.issuer, claims.user_id)
+    if user is not None and user.disabled:
+        raise _refused("This account is disabled on this server.")
+    try:
+        granted = delegation.exchange(settings.hub_url, settings.issuer, token)
+    except HubRefused as e:
+        raise _refused(_sentence(f"The hub refused this sign-in: {e.detail}")) from None
+    except HubUnreachable as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from None
+    except LookupError as e:
+        raise _refused(_sentence(f"This server cannot sign for itself at its hub: {e}")) from None
+    if granted.user["uid"] != claims.user_id:
+        raise _refused("The hub answered this sign-in for another person.")
+    if user is None:
+        user = _new_issuer_account(db, settings.issuer, settings.hub_url, granted.user)
+    user.is_admin = granted.user["node_admin"]
+    db.commit()
+    invalidate_user_cache(user.username)
+    hub_session.save_delegation(user.id, settings.hub_url, granted)
+    access_token = create_access_token(data={"sub": user.username})
+    refresh_token = create_refresh_token(data={"sub": user.username})
+    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
 
 @router.get("/users/me", response_model=User)
