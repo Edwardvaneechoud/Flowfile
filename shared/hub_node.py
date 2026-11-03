@@ -333,7 +333,7 @@ def _not_taken(reason: str) -> bool:
 
 
 def heartbeat(process: Literal["core", "worker"], http: "httpx.Client | None" = None) -> bool:
-    """Tell the hub this storage dir's node joined that it is up, as ``process``; whether the hub took the beat.
+    """Tell the hub this storage dir's node joined that the node is up, as ``process``; whether the hub took the beat.
 
     Posts ``{version, process}`` to the joined hub's ``/hub/nodes/heartbeat`` with a node assertion signed with this
     node's own key, its audience the joined issuer and that path. A beat the hub does not take, or one that cannot be
