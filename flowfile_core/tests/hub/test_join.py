@@ -83,8 +83,8 @@ def started_with(
     monkeypatch.setattr(main, "JOIN_TOKEN", token)
     monkeypatch.setattr(main, "JOIN_HUB_URL", hub_url)
     monkeypatch.setattr(main, "JOIN_NODE_NAME", name)
-    monkeypatch.setattr(main, "JOIN_CORE_URL", core_url)
-    monkeypatch.setattr(main, "JOIN_WORKER_URL", worker_url)
+    monkeypatch.setattr(settings, "JOIN_CORE_URL", core_url)
+    monkeypatch.setattr(settings, "JOIN_WORKER_URL", worker_url)
 
 
 def test_the_join_flags_are_read(monkeypatch, no_variables):
@@ -136,8 +136,8 @@ def test_a_core_given_no_addresses_gives_this_machines_on_its_two_ports(
 ):
     monkeypatch.setattr(hub_node.socket, "gethostname", lambda: "team-7.example.com")
     monkeypatch.setattr(hub_node.socket, "getfqdn", lambda: "team-7.example.com")
-    monkeypatch.setattr(main, "SERVER_PORT", 64100)
-    monkeypatch.setattr(main, "WORKER_PORT", 64101)
+    monkeypatch.setattr(settings, "SERVER_PORT", 64100)
+    monkeypatch.setattr(settings, "WORKER_PORT", 64101)
     started_with(monkeypatch, join_hub.url, join_hub.mint(), name=None, core_url=None, worker_url=None)
 
     main._join_hub(served_on)

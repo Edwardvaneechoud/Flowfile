@@ -35,14 +35,12 @@ from flowfile_core.ai.admin_routes import router as ai_admin_router
 from flowfile_core.artifacts import router as artifacts_router
 from flowfile_core.configs.access_log import install_access_log_redaction
 from flowfile_core.configs.settings import (
-    JOIN_CORE_URL,
     JOIN_HUB_URL,
     JOIN_NODE_NAME,
     JOIN_TOKEN,
-    JOIN_WORKER_URL,
     SERVER_HOST,
     SERVER_PORT,
-    WORKER_PORT,
+    join_addresses,
 )
 from flowfile_core.events import publish
 from flowfile_core.flowfile.execution import registry as compute_registry
@@ -335,20 +333,22 @@ def _join_hub(port: int | None = None) -> None:
     """Join the hub ``--join`` names for this core and its worker before serving on ``port``; with no token, nothing.
 
     One join registers the pair as one node: the name is ``--name``, else the machine's, and the two addresses are
-    ``--url`` and ``--worker-url``, else this machine's full name on core's port and on the worker's, plain ``http``.
-    The worker beside it reads the joined name from the storage dir they share. A core that joined already makes no
-    request (``shared.hub_node``). The token leaves this process's environment first, so no run or worker that core
-    starts later reads ``FLOWFILE_HUB_JOIN_TOKEN`` without the hub given as ``--hub``, or joins with it again.
+    the settings' ``join_addresses``: ``--url`` and ``--worker-url``, else this machine's full name on core's port and
+    on the worker's, plain ``http``. The worker beside it reads the joined name from the storage dir they share. A
+    core that joined already makes no request (``shared.hub_node``). The token leaves this process's environment
+    first, so no run or worker that core starts later reads ``FLOWFILE_HUB_JOIN_TOKEN`` without the hub given as
+    ``--hub``, or joins with it again.
     """
     if not JOIN_TOKEN:
         return
     os.environ.pop("FLOWFILE_HUB_JOIN_TOKEN", None)
+    core_url, worker_url = join_addresses(port)
     hub_node.join_at_start(
         JOIN_HUB_URL,
         JOIN_TOKEN,
         name=JOIN_NODE_NAME or hub_node.default_name(),
-        worker_url=JOIN_WORKER_URL or hub_node.default_url(WORKER_PORT, tls=False),
-        core_url=JOIN_CORE_URL or hub_node.default_url(port or SERVER_PORT, tls=False),
+        worker_url=worker_url,
+        core_url=core_url,
     )
 
 

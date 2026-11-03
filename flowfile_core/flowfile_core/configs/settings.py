@@ -9,6 +9,7 @@ from starlette.config import Config
 
 from flowfile_core.configs import exchange_config
 from flowfile_core.configs.utils import MutableBool
+from shared import hub_node
 from shared.storage_config import storage
 
 # Constants for server and worker configuration
@@ -254,6 +255,20 @@ JOIN_HUB_URL = args.hub
 JOIN_NODE_NAME = args.name
 JOIN_CORE_URL = args.url
 JOIN_WORKER_URL = args.worker_url
+
+
+def join_addresses(core_port: int | None = None) -> tuple[str, str]:
+    """The two addresses a join gives the hub for this node: core's and its worker's.
+
+    ``--url`` and ``--worker-url`` when given, else this machine's full name on core's port (``core_port``, the one
+    core serves on, else ``SERVER_PORT``) and on ``WORKER_PORT``, plain ``http``. Composed when called, never at
+    import, since the machine's full name can wait on a reverse lookup.
+    """
+    core_url = JOIN_CORE_URL or hub_node.default_url(core_port or SERVER_PORT, tls=False)
+    worker_url = JOIN_WORKER_URL or hub_node.default_url(WORKER_PORT, tls=False)
+    return core_url, worker_url
+
+
 WORKER_HOST = os.getenv("WORKER_HOST", "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1")
 
 config = Config(".env" if os.path.isfile(".env") else None)
