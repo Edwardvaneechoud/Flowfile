@@ -132,7 +132,7 @@ def test_a_join_sends_the_contract_body_and_keeps_the_answer_but_not_the_token(j
         )
     ]
     kept = json.loads(node_file.read_text(encoding="utf-8"))
-    assert set(kept) == {"hub_url", "issuer", "name", "node_id", "joined_at"}
+    assert set(kept) == {"hub_url", "issuer", "name", "node_id", "joined_at", "join_token_hash"}
     assert (kept["hub_url"], kept["issuer"], kept["name"], kept["node_id"]) == (
         join_hub.url,
         join_hub.url,
@@ -238,28 +238,58 @@ def test_a_node_that_waits_for_an_admin_is_told_so(join_hub, caplog):
     assert "an admin enables it on the hub's Compute page" in caplog.text
 
 
-def test_joining_at_start_with_a_file_makes_no_request(join_hub, node_file, caplog):
+def test_a_restart_with_the_same_join_token_makes_no_request(join_hub, node_file, caplog):
+    token = join_hub.mint()
+    first = hub_node.join_at_start(join_hub.url, token, name="worker-1", worker_url="http://w:1")
+
+    with caplog.at_level(logging.INFO, logger="flowfile.hub_node"):
+        node = hub_node.join_at_start(join_hub.url + "/", token, name="worker-1", worker_url="http://w:1")
+
+    assert len(join_hub.calls) == 1
+    assert node == first and node.join_token_hash == hub_node.token_hash(token)
+    assert f"Already joined {join_hub.url} as worker-1; the join token is not used" in caplog.text
+    assert token not in node_file.read_text()
+
+
+def test_a_new_join_token_joins_again_under_its_name(join_hub, node_file, caplog):
+    hub_node.join_at_start(join_hub.url, join_hub.mint(), name="worker-1", worker_url="http://w:1")
+
+    with caplog.at_level(logging.INFO, logger="flowfile.hub_node"):
+        node = hub_node.join_at_start(join_hub.url, join_hub.mint(), name="worker-2", worker_url="http://w:1")
+
+    assert len(join_hub.calls) == 2
+    assert node.name == "worker-2" and hub_node.read() == node
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert warnings == [
+        f"This node was worker-1 on {join_hub.url}; joining {join_hub.url} with the new join token replaces that"
+    ]
+
+
+def test_a_new_join_token_moves_a_node_from_another_hub(join_hub, node_file):
+    write_node(node_file)
+
+    node = hub_node.join_at_start(join_hub.url, join_hub.mint(), name="worker-1", worker_url="http://w:1")
+
+    assert len(join_hub.calls) == 1
+    assert node.hub_url == join_hub.url and hub_node.read() == node
+
+
+def test_a_refused_new_join_token_keeps_the_node_as_it_was(join_hub, node_file, caplog):
     kept = write_node(node_file, hub_url=join_hub.url)
 
     with caplog.at_level(logging.INFO, logger="flowfile.hub_node"):
-        node = hub_node.join_at_start(join_hub.url + "/", join_hub.mint(), name="worker-1", worker_url="http://w:1")
+        with pytest.raises(SystemExit) as exited:
+            hub_node.join_at_start(join_hub.url, join_hub.mint(expired=True), name="worker-2", worker_url="http://w:1")
 
-    assert join_hub.calls == []
-    assert node.name == kept["name"]
-    assert f"Already joined {join_hub.url} as team; the join token is not used" in caplog.text
+    assert exited.value.code == 2
+    assert f"Could not join {join_hub.url}: {EXPIRED}" in caplog.text
+    assert json.loads(node_file.read_text()) == kept
 
 
-def test_joining_at_start_with_a_file_from_another_hub_warns_and_makes_no_request(join_hub, node_file, caplog):
+def test_a_file_from_before_the_token_hash_still_reads(node_file):
     write_node(node_file)
 
-    with caplog.at_level(logging.INFO, logger="flowfile.hub_node"):
-        node = hub_node.join_at_start(join_hub.url, join_hub.mint(), name="worker-1", worker_url="http://w:1")
-
-    assert join_hub.calls == []
-    assert node.hub_url == HUB
-    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
-    assert len(warnings) == 1
-    assert HUB in warnings[0] and join_hub.url in warnings[0] and f"delete {node_file}" in warnings[0]
+    assert hub_node.read().join_token_hash == ""
 
 
 @pytest.mark.parametrize(

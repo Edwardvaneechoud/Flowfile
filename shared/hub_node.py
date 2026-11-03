@@ -8,10 +8,12 @@ spent by the join and written nowhere, and the hub's keys, the only thing a node
 
 ``shared.hub_tokens`` reads the node's settings through ``resolved()``: the environment first, field by field
 (``FLOWFILE_HUB_URL``, ``FLOWFILE_NODE_NAME``, ``FLOWFILE_HUB_ISSUER``), the file second, and the file only for the hub
-it names, so a node set up by hand behaves as before whatever the file says. A node joins once: while the file is
-readable a start makes no request, even with a join token on its command line. To join again, delete the file.
+it names, so a node set up by hand behaves as before whatever the file says. The file also keeps a short hash of the
+join token it was written with: a start with that same token makes no request, so a restart with an unchanged command
+is quiet, and a start with any other join token joins again and replaces the file.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -32,6 +34,7 @@ FILE_NAME = "hub_node.json"
 JOIN_PATH = "/hub/nodes/join"
 
 _FIELDS = {"hub_url": str, "issuer": str, "name": str, "node_id": int, "joined_at": str}
+_OPTIONAL_FIELDS = {"join_token_hash": str}
 _warned_unreadable = False
 
 
@@ -48,6 +51,8 @@ class HubNode:
     """What a node keeps after joining a hub: where the hub is, whose tokens to take, its own name and id there.
 
     ``joined_at`` is ISO-8601 in UTC. Whether the node is enabled is not kept: that changes on the hub.
+    ``join_token_hash`` tells the join token it was written with from another one; empty in a file from before it
+    was kept, or one written by hand.
     """
 
     hub_url: str
@@ -55,6 +60,7 @@ class HubNode:
     name: str
     node_id: int
     joined_at: str
+    join_token_hash: str = ""
 
 
 @dataclass(frozen=True)
@@ -94,7 +100,8 @@ def read() -> HubNode | None:
     except (OSError, ValueError):
         data = None
     if isinstance(data, dict) and all(_fits(data.get(field), kind) for field, kind in _FIELDS.items()):
-        return HubNode(**{field: data[field] for field in _FIELDS})
+        optional = {field: data[field] for field, kind in _OPTIONAL_FIELDS.items() if _fits(data.get(field), kind)}
+        return HubNode(**{field: data[field] for field in _FIELDS}, **optional)
     if not _warned_unreadable:
         logger.warning("%s is not a node's identity on a hub and is ignored", target)
         _warned_unreadable = True
@@ -156,6 +163,11 @@ def _is_joined(answer) -> bool:
     )
 
 
+def token_hash(token: str) -> str:
+    """The first 16 hex digits of the join token's SHA-256: enough to tell two tokens apart, nothing to join with."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+
+
 def _write(node: HubNode) -> None:
     target = path()
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -204,6 +216,7 @@ def _join(
         name=answer["name"],
         node_id=answer["node_id"],
         joined_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        join_token_hash=token_hash(token),
     )
     _write(node)
     return node, answer["enabled"]
@@ -228,25 +241,24 @@ def join(
 
 
 def join_at_start(hub_url: str, token: str, *, name: str, worker_url: str, core_url: str | None = None) -> HubNode:
-    """Join before serving, once: a node that joined already makes no request; a refused join exits with code 2.
+    """Join before serving; a refused join exits with code 2 and leaves the file as it was.
 
-    A file naming another hub than ``hub_url`` is kept and warned about, not replaced: the node stays on the hub it
-    joined until the file is deleted.
+    The join token this node joined with makes no request a second time, so a restart with the same command keeps
+    the node as it is. Any other join token joins ``hub_url`` and replaces the file, whichever hub and name it held:
+    a new token on the command line is the operator asking for a new join.
     """
     hub_url = hub_url.strip().rstrip("/")
     joined = read()
-    if joined is not None:
-        if joined.hub_url.rstrip("/") != hub_url:
-            logger.warning(
-                "This node joined %s already, not %s: the join token is not used; delete %s to join %s",
-                joined.hub_url,
-                hub_url,
-                path(),
-                hub_url,
-            )
-        else:
-            logger.info("Already joined %s as %s; the join token is not used", joined.hub_url, joined.name)
+    if joined is not None and joined.join_token_hash == token_hash(token):
+        logger.info("Already joined %s as %s; the join token is not used", joined.hub_url, joined.name)
         return joined
+    if joined is not None:
+        logger.warning(
+            "This node was %s on %s; joining %s with the new join token replaces that",
+            joined.name,
+            joined.hub_url,
+            hub_url,
+        )
     try:
         node, enabled = _join(hub_url, token, name=name, worker_url=worker_url, core_url=core_url)
     except JoinRefused as refused:
