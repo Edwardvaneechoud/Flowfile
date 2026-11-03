@@ -331,6 +331,15 @@ def test_a_string_that_is_no_jwt_is_not_a_sign_in_token(hub):
     assert (response.status_code, response.json()["detail"]) == (401, "This is not a sign-in token from the hub.")
 
 
+def test_a_sign_in_token_the_hub_signed_without_a_person_id_signs_nobody_in(hub, username):
+    token = hub.signer.token(scope="signin", sub=username, uid=None, aud=NODE, ttl=120, may_act={"sub": f"node:{NODE}"})
+
+    response = sign_in(token)
+
+    assert (response.status_code, response.json()["detail"]) == (401, "This is not a sign-in token from the hub.")
+    assert exchanges(hub) == [] and accounts_named(username) == 0
+
+
 def test_a_sign_in_token_is_no_users_token_on_any_other_route(hub, username):
     local = me(sign_in(hub.sign_in_token(NODE, uid=7, username=username)).json()["access_token"])
     token = hub.sign_in_token(NODE, uid=7, username=username)
