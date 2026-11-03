@@ -87,8 +87,10 @@ def refresh_access_token(
 
     For a person who signed in through the hub, the sign-in the token was issued for is refreshed at the hub first, so
     this server's session never outlives the hub's: once the hub no longer takes it, or it was replaced here by a later
-    sign-in or ended by a sign-out, the answer is a 401 and nothing is issued. On a server that joined its hub with keys
-    of its own, the session of any other account is not renewed: 403, as its password sign-in is.
+    sign-in or ended by a sign-out, the answer is a 401 and nothing is issued. The hub's answer then sets whether the
+    account administers this server, and its full name, so someone the hub no longer lets manage the server stops
+    administering it here at their next refresh. On a server that joined its hub with keys of its own, the session of
+    any other account is not renewed: 403, as its password sign-in is.
     """
     claims = decode_refresh_token(refresh_token)
     username, sid = claims["sub"], claims.get("sid")
@@ -111,7 +113,11 @@ def refresh_access_token(
     renewed = {"sub": user.username}
     mapping = db.query(db_models.IssuerAccount).filter(db_models.IssuerAccount.user_id == user.id).first()
     if mapping is not None:
-        _refresh_through_hub(user.id, mapping.issuer, sid)
+        person = _refresh_through_hub(user.id, mapping.issuer, sid).user
+        user.is_admin = person["node_admin"]
+        user.full_name = person["full_name"]
+        db.commit()
+        invalidate_user_cache(user.username)
         expires = HUB_ACCESS_TOKEN_EXPIRES
         renewed["sid"] = sid
     else:
@@ -138,9 +144,9 @@ def logout(current_user: User = Depends(get_current_active_user)) -> None:
     return None
 
 
-def _refresh_through_hub(user_id: int, issuer: str, sid: str | None) -> None:
-    """Refresh the sign-in through the hub ``sid`` names at the hub; a 401 when the hub no longer takes it or it is not
-    the one kept here for ``user_id``, a 502 when the hub does not answer.
+def _refresh_through_hub(user_id: int, issuer: str, sid: str | None) -> delegation.Delegation:
+    """Refresh the sign-in through the hub ``sid`` names at the hub and answer what the hub said; a 401 when the hub no
+    longer takes it or it is not the one kept here for ``user_id``, a 502 when the hub does not answer.
     """
     try:
         refreshed = hub_session.refresh_delegation(user_id, sid)
@@ -151,6 +157,7 @@ def _refresh_through_hub(user_id: int, issuer: str, sid: str | None) -> None:
     if refreshed is None:
         host = issuer_accounts.hub_host(hub_node.resolved().hub_url or issuer)
         raise _refused(f"Your sign-in through {host} has ended; sign in again")
+    return refreshed
 
 
 @router.get("/sign_in_method")

@@ -437,6 +437,20 @@ def test_a_refresh_of_cores_session_refreshes_the_sign_in_at_the_hub_first(hub, 
     assert len(refreshes(hub)) == 2
 
 
+def test_a_refresh_through_the_hub_applies_what_the_hub_now_says_of_the_person(hub, username):
+    answer = sign_in(hub.sign_in_token(NODE, uid=7, username=username, full_name="Ana Lima", node_admin=True)).json()
+    assert me(answer["access_token"])["is_admin"] is True
+    hub.people[7].update(node_admin=False, full_name="Ana Souza")
+
+    demoted = refresh(answer["refresh_token"]).json()
+
+    person = me(demoted["access_token"])
+    assert (person["is_admin"], person["full_name"]) == (False, "Ana Souza")
+    assert client.get("/auth/users", headers=bearer(answer["access_token"])).status_code == 403
+    hub.people[7]["node_admin"] = True
+    assert me(refresh(demoted["refresh_token"]).json()["access_token"])["is_admin"] is True
+
+
 @pytest.mark.parametrize(
     "end",
     [lambda hub: setattr(hub, "refuse_next_refresh", True), lambda hub: hub.refused_people.add(7)],
