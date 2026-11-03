@@ -301,6 +301,19 @@ def test_a_server_that_did_not_join_a_hub_with_keys_signs_nobody_in_through_one(
     assert exchanges(hub) == []
 
 
+def test_a_server_whose_keys_cannot_be_read_says_so_without_naming_its_storage_dir(hub, node_file, username, caplog):
+    token = hub.sign_in_token(NODE, uid=7, username=username)
+    key_file = node_file.with_name(hub_node_key.FILE_NAME)
+    key_file.write_text("not a node's keys", encoding="utf-8")
+
+    response = sign_in(token)
+
+    assert (response.status_code, response.json()["detail"]) == (401, "This server cannot sign for itself at its hub.")
+    assert str(node_file.parent) not in response.text
+    assert f"could not read this node's keys at {key_file}" in caplog.text
+    assert exchanges(hub) == [] and mapping(hub, 7) is None
+
+
 def test_a_string_that_is_no_jwt_is_not_a_sign_in_token(hub):
     response = sign_in("not-a-token")
 

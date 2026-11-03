@@ -18,6 +18,7 @@ from flowfile_core.auth.jwt import (
 )
 from flowfile_core.auth.models import ChangePassword, Token, User, UserCreate, UserUpdate
 from flowfile_core.auth.password import PASSWORD_REQUIREMENTS, get_password_hash, validate_password, verify_password
+from flowfile_core.configs import logger
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
 from flowfile_core.hub_client import delegation
@@ -200,7 +201,8 @@ def sign_in_through_hub(token: str = Body(..., embed=True), db: Session = Depend
     except HubUnreachable as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from None
     except LookupError as e:
-        raise _refused(_sentence(f"This server cannot sign for itself at its hub: {e}")) from None
+        logger.warning("A sign-in through the hub could not be traded: %s", e)
+        raise _refused("This server cannot sign for itself at its hub.") from None
     if granted.user["uid"] != claims.user_id:
         raise _refused("The hub answered this sign-in for another person.")
     if user is None:
