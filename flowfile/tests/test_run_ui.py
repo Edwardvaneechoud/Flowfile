@@ -1,5 +1,8 @@
 """``flowfile run ui`` serves where ``--host`` and ``--port`` say, takes the join flags, and serves only the editor.
 
+A host other machines reach is served only in a server mode, where everyone signs in; in the default mode it is
+refused before anything is served or joined.
+
 The command is parsed with ``start_server`` stubbed, and ``start_server`` runs with ``flowfile_core.main.run``
 stubbed and a bare app in place of core's, so no port is bound and no browser opens; every setting it changes is
 restored after the test.
@@ -93,12 +96,57 @@ def served(monkeypatch) -> dict:
     return seen
 
 
-def test_the_server_serves_on_any_host_and_port_and_marks_the_editor_and_worker_it_mounts(served, editor_files):
+@pytest.mark.parametrize("mode", ["hub", "docker"])
+def test_a_server_mode_serves_on_any_host_and_port_and_marks_the_editor_and_worker_it_mounts(
+    mode, served, editor_files, monkeypatch
+):
+    monkeypatch.setenv("FLOWFILE_MODE", mode)
+
     web.start_server(host="0.0.0.0", port=8080, open_browser=False)
 
     assert (served["host"], served["port"]) == ("0.0.0.0", 8080)
     assert settings.WORKER_URL == "http://127.0.0.1:8080/worker"
     assert (served["app"].state.editor_path, served["app"].state.worker_path) == ("/ui", "/worker")
+
+
+def test_run_ui_on_a_host_other_machines_reach_is_refused_in_the_default_mode(served, monkeypatch, capsys):
+    monkeypatch.delenv("FLOWFILE_MODE", raising=False)
+    argv = ["flowfile", "run", "ui", "--host", "0.0.0.0", "--no-browser", *JOIN_FLAGS]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    with pytest.raises(SystemExit) as exited:
+        main()
+
+    assert exited.value.code == 2
+    assert "host" not in served
+    assert not hasattr(served["app"].state, "worker_path")
+    err = capsys.readouterr().err
+    assert "Not serving on 0.0.0.0" in err
+    assert "FLOWFILE_MODE=hub" in err
+
+
+@pytest.mark.parametrize("mode", ["electron", "package"])
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.168.1.10"])
+def test_outside_a_server_mode_no_host_but_a_loopback_one_is_served(mode, host, served, monkeypatch):
+    monkeypatch.setenv("FLOWFILE_MODE", mode)
+    worker_url = settings.WORKER_URL
+
+    with pytest.raises(SystemExit) as exited:
+        web.start_server(host=host, port=8080, open_browser=False)
+
+    assert exited.value.code == 2
+    assert "host" not in served
+    assert settings.WORKER_URL == worker_url
+    assert not hasattr(served["app"].state, "worker_path")
+
+
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.2", "::1"])
+def test_the_default_mode_serves_a_loopback_host(host, served, monkeypatch):
+    monkeypatch.setenv("FLOWFILE_MODE", "electron")
+
+    web.start_server(host=host, port=8080, open_browser=False)
+
+    assert (served["host"], served["port"]) == (host, 8080)
 
 
 def test_a_server_without_the_editor_s_files_marks_no_editor(served, tmp_path, monkeypatch):

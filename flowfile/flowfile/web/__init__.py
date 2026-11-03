@@ -7,6 +7,7 @@ and includes worker functionality.
 
 import asyncio
 import os
+import sys
 import time
 import webbrowser
 from pathlib import Path
@@ -167,11 +168,28 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
     process as serving, so the worker's jobs run in its pool or a child, never in the serving process.
     ``FLOWFILE_WORKER_POOL_SIZE`` sizes the pool. ``host`` and ``port`` are where it serves; a server bound to
     every address (``0.0.0.0``) is reached from this machine on the loopback address.
+
+    A host other machines reach needs a server mode (``FLOWFILE_MODE`` ``hub`` or ``docker``), where everyone
+    signs in with a password: in the default mode the editor and its API sign in whoever reaches them as this
+    machine's administrator. Outside a server mode, any host but a loopback one exits with code 2 before anything is
+    served or joined.
     """
     if "FLOWFILE_MODE" not in os.environ:
         os.environ["FLOWFILE_MODE"] = "electron"
 
     from flowfile_core.configs import settings
+
+    if not settings.is_server_mode() and not settings.is_loopback_host(host):
+        print(
+            f"Not serving on {host}, which other machines reach: outside a server mode the editor serves this machine "
+            "only (--host 127.0.0.1), since by default whoever reaches it works as this machine's user without "
+            "signing in. To serve other machines, start it in a server mode, where everyone signs in: "
+            "FLOWFILE_MODE=hub (or docker) with JWT_SECRET_KEY, FLOWFILE_INTERNAL_TOKEN, FLOWFILE_MASTER_KEY, "
+            "FLOWFILE_ADMIN_USER and FLOWFILE_ADMIN_PASSWORD set",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
     from flowfile_core.main import app as core_app
     from flowfile_core.main import run
 

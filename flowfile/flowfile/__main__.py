@@ -435,7 +435,12 @@ def main():
     parser.add_argument(
         "file_path", nargs="?", help="Flow file path, project folder, version message, or file/dir to convert"
     )
-    parser.add_argument("--host", default="127.0.0.1", help="Host to bind the server to")
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host to bind the server to; for run ui, a host other machines reach needs a server mode "
+        "(FLOWFILE_MODE=hub or docker), where everyone signs in",
+    )
     parser.add_argument("--port", type=int, default=63578, help="Port to bind the server to")
     parser.add_argument("--no-browser", action="store_true", help="Don't open a browser window")
     parser.add_argument(
@@ -561,7 +566,8 @@ def main():
         print("  flowfile run worker  # Start only the worker service")
         print("")
         print("  # Options")
-        print("  flowfile run ui --host 0.0.0.0 --port 8080  # Custom host/port")
+        print("  flowfile run ui --port 8080  # Custom port")
+        print("  FLOWFILE_MODE=hub flowfile run ui --host 0.0.0.0  # Serve other machines; everyone signs in")
         print("  flowfile run ui --no-browser  # Don't open browser")
         print("")
         print("  # Python API usage examples")

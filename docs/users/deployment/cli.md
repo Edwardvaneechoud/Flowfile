@@ -27,11 +27,11 @@ This starts the core API with the worker embedded in the same process, its jobs 
 Flags:
 
 - `--no-browser` — start the services but don't open a browser tab.
-- `--host` and `--port` — where the UI is served, `127.0.0.1` and `63578` by default.
+- `--host` and `--port` — where the UI is served, `127.0.0.1` and `63578` by default. A host other machines reach needs a server mode (below).
 - `--join <token> --hub <url>` — join a hub as a node with an editor before serving, optionally with `--name`, `--url` and `--worker-url` ([Compute protocol](../../for-developers/compute-protocol.md)).
 
-!!! warning "Other machines reach the UI only when you bind it for them"
-    By default `run ui` binds `127.0.0.1`, which only this machine reaches. `--host 0.0.0.0` serves it to other machines too; in the default mode everyone who reaches it works as this machine's user without signing in, so do that only on a network you trust, or use the [Docker deployment](docker.md).
+!!! warning "Other machines reach the UI only in a server mode"
+    By default `run ui` binds `127.0.0.1`, which only this machine reaches, and in the default mode it refuses any other host: there everyone who reaches the UI works as this machine's user without signing in. To serve other machines, start it in a server mode, where everyone signs in with a password: set `FLOWFILE_MODE=hub` (or `docker`) with `JWT_SECRET_KEY`, `FLOWFILE_INTERNAL_TOKEN`, `FLOWFILE_MASTER_KEY`, `FLOWFILE_ADMIN_USER` and `FLOWFILE_ADMIN_PASSWORD`, then `flowfile run ui --host 0.0.0.0`. The admin signs in with that password and adds the other users. Or use the [Docker deployment](docker.md).
 
 ## Run a flow headlessly
 

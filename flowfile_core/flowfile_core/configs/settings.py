@@ -259,7 +259,8 @@ JOIN_CORE_URL = args.url
 JOIN_WORKER_URL = args.worker_url
 
 
-def _is_loopback(host: str) -> bool:
+def is_loopback_host(host: str) -> bool:
+    """Whether ``host``, a bind address, is one only this machine reaches: ``localhost`` or a loopback IP."""
     if host.lower() == "localhost":
         return True
     try:
@@ -289,7 +290,7 @@ def join_addresses(
     host = core_host or SERVER_HOST
     if JOIN_CORE_URL:
         core_url = JOIN_CORE_URL
-    elif _is_loopback(host):
+    elif is_loopback_host(host):
         core_url = f"http://[{host.strip('[]')}]:{port}" if ":" in host else f"http://{host}:{port}"
         logging.getLogger(__name__).warning(
             "Core serves on %s, which only this machine reaches, so the address it gives the hub is %s; to be "

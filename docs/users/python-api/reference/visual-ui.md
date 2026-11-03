@@ -155,7 +155,7 @@ stop_flowfile_server_process()
 
 ## Configuration
 
-The web UI runs on `127.0.0.1:63578`, the address the launcher starts it on and connects to; `start_web_ui(host=..., port=...)` and `flowfile run ui --host <host> --port <port>` serve it elsewhere, and no environment variable relocates it. The `FLOWFILE_MODULE_NAME` variable (default `flowfile`) selects which module the launcher runs.
+The web UI runs on `127.0.0.1:63578`, the address the launcher starts it on and connects to; `start_web_ui(host=..., port=...)` and `flowfile run ui --host <host> --port <port>` serve it elsewhere, and no environment variable relocates it. A host other machines reach is served only in a server mode (`FLOWFILE_MODE` `hub` or `docker`), where everyone signs in; in the default mode the server exits with code 2 for any host but a loopback one. The `FLOWFILE_MODULE_NAME` variable (default `flowfile`) selects which module the launcher runs.
 
 ### URLs and Endpoints
 
