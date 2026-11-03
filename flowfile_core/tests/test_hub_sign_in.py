@@ -336,11 +336,13 @@ def test_a_sign_in_token_is_no_users_token_on_any_other_route(hub, username):
 def test_deleting_an_account_drops_its_mapping_so_the_person_gets_a_new_one(hub, username):
     admin = sign_in(hub.sign_in_token(NODE, uid=1, username=f"{username}-admin", node_admin=True)).json()
     person = me(sign_in(hub.sign_in_token(NODE, uid=7, username=username)).json()["access_token"])
+    assert session.load(person["id"]) is not None and session.access_token(person["id"]) is not None
 
     deleted = client.delete(f"/auth/users/{person['id']}", headers=bearer(admin["access_token"]))
 
     assert deleted.status_code == 200, deleted.text
     assert mapping(hub, 7) is None
+    assert session.load(person["id"]) is None and session.access_token(person["id"]) is None
     again = me(sign_in(hub.sign_in_token(NODE, uid=7, username=username)).json()["access_token"])
     assert mapping(hub, 7) == again["id"]
 

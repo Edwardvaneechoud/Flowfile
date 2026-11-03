@@ -391,10 +391,11 @@ def delete_user(user_id: int, current_user: User = Depends(get_current_admin_use
     db.query(db_models.WorkspaceProject).filter(db_models.WorkspaceProject.owner_id == user_id).delete(
         synchronize_session=False
     )
-    # A hub person's mapping goes too: a reused rowid would otherwise sign them in as the next account.
+    # A hub person's mapping and hub session go too: a reused rowid would otherwise hand both to the next account.
     db.query(db_models.IssuerAccount).filter(db_models.IssuerAccount.user_id == user_id).delete(
         synchronize_session=False
     )
+    hub_session.clear(user_id)
 
     # Notification channels hold an encrypted webhook credential and rules keep alerting
     # after the owner is gone — a reused user rowid would inherit both. History rows go
