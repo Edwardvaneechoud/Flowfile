@@ -3,8 +3,8 @@
 Each function takes the hub's base URL and an optional ``http`` client, which tests replace with a
 ``httpx.MockTransport``. Sign-in and refresh use the auth routes the hub mounts from core (form fields, a token pair
 back), as do ``/catalog/namespaces`` and ``/catalog/tables``; ``/hub/info``, ``/hub/devices``, ``/hub/flows``,
-``/hub/compute-nodes``, ``/hub/node-tokens`` and ``/hub/vend`` are the hub's own. Requests log method, path and status
-only, never a body, a password or a token.
+``/hub/compute-nodes``, ``/hub/node-tokens``, ``/hub/vend`` and ``/hub/exchange-store`` are the hub's own. Requests
+log method, path and status only, never a body, a password or a token.
 """
 
 import threading
@@ -229,6 +229,28 @@ def vend(
         for credential in credentials
     ):
         raise HubRefused(200, f"{url} did not answer /hub/vend as a Flowfile hub does.")
+    return body
+
+
+def get_exchange_store(url: str, access_token: str, *, http: httpx.Client | None = None) -> dict | None:
+    """The exchange store the hub sets for its organisation, ``None`` when it sets none (the hub's 404).
+
+    Answers the hub's body: ``uri`` (``s3://`` without a trailing slash), ``connection`` (the name of the stored S3
+    connection that opens it), ``max_rows`` (``None`` for no limit), ``set_by`` and ``set_at``.
+    """
+    try:
+        body = _request("GET", url, "/hub/exchange-store", http, headers=_bearer(access_token))
+    except HubRefused as e:
+        if e.status == 404:
+            return None
+        raise
+    max_rows = body.get("max_rows")
+    if (
+        not all(isinstance(body.get(field), str) and body[field] for field in ("uri", "connection"))
+        or isinstance(max_rows, bool)
+        or not (max_rows is None or isinstance(max_rows, int))
+    ):
+        raise HubRefused(200, f"{url} did not answer /hub/exchange-store as a Flowfile hub does.")
     return body
 
 

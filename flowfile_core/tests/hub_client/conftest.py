@@ -3,8 +3,9 @@
 The fake answers the routes a desktop uses: ``/hub/info``, core's ``/auth/token`` and ``/auth/refresh`` (form
 fields, rotating refresh tokens), ``POST /hub/devices``, which upserts on the account and the device name as the
 hub does, ``GET /hub/compute-nodes`` (whatever ``nodes`` holds) and ``POST /hub/node-tokens``, which signs a ``run``
-token for an enabled node and refuses as the hub does. Its tokens are real JWTs with an ``exp`` claim, signed with
-a key only the fake knows. ``FakeHubWithCatalog`` adds the hub's catalog namespaces and tables, the credentials the
+token for an enabled node and refuses as the hub does; and the one a team node asks, ``GET /hub/exchange-store``
+(``exchange_store``, a 404 while it is ``None``). Its tokens are real JWTs with an ``exp`` claim, signed with a key
+only the fake knows. ``FakeHubWithCatalog`` adds the hub's catalog namespaces and tables, the credentials the
 hub vends to a run over them and the run reports it receives. ``serve_fake`` serves a fake over real HTTP on a
 loopback port, for tests in which nothing may stand between the client and the wire.
 """
@@ -60,6 +61,7 @@ class FakeHub:
         self.nodes_failure: int | None = None
         self.node_token_ttl = 3600
         self.minted: list[dict] = []
+        self.exchange_store: dict | None = None
         self._issued = 0
 
     def http(self) -> httpx.Client:
@@ -131,6 +133,12 @@ class FakeHub:
             return httpx.Response(200, json=self.nodes)
         if request.method == "POST" and path == "/hub/node-tokens":
             return self._mint(request)
+        if request.method == "GET" and path == "/hub/exchange-store":
+            if not request.headers.get("Authorization", "").startswith("Bearer "):
+                return httpx.Response(401, json={"detail": "Not authenticated"})
+            if self.exchange_store is None:
+                return httpx.Response(404, json={"detail": "no exchange store is set"})
+            return httpx.Response(200, json=self.exchange_store)
         return httpx.Response(404, json={"detail": "Not Found"})
 
     def _mint(self, request: httpx.Request) -> httpx.Response:

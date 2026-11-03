@@ -15,6 +15,7 @@ from dataclasses import replace
 
 import pytest
 
+from flowfile_core.configs.exchange_config import ExchangeConfig
 from flowfile_core.flowfile.execution import exchange, registry
 from flowfile_core.flowfile.execution.exchange import ExchangeRun
 from flowfile_core.flowfile.execution.placement import Refusal
@@ -263,6 +264,27 @@ def test_a_limit_that_is_not_a_whole_number_refuses_each_crossing_naming_it(prot
     for refusal in placement.refusals:
         assert "FLOWFILE_EXCHANGE_MAX_ROWS" in refusal.reason and "'ten'" in refusal.reason, refusal.reason
     assert edges == []
+
+
+def test_a_run_given_its_hubs_store_crosses_through_it_held_to_the_hubs_limit(protocol_on, declare, connection_name):
+    """Nothing set on the node: the store a team node's hub set for the run places it on more than one backend, its
+    edges are written under the hub's URI and the hub's row limit prices them; without it the run has one backend."""
+    declare(everything())
+    graph = chain(make_graph(8541), filter_on=LOCAL, user_id=1)
+    flow_starts = graph._flow_starts + graph.get_implicit_starter_nodes()
+    plan = compute_execution_plan(nodes=graph.nodes, flow_starts=flow_starts)
+    run = ExchangeRun(graph.flow_id, uuid.uuid4().hex, hub_store=ExchangeConfig(STORE, connection_name, max_rows=6))
+
+    placement, edges = graph._place_run(plan, run)
+
+    assert run.max_rows() == 6
+    assert placement.refusals == [Refusal(2, LOCAL, above(1, BACKEND_ID, 7, 4, 6), OWN_REMEDY)]
+    assert crossings(edges) == [(2, OUT, 3)]
+    assert edges[0].uri == f"{STORE}/8541/{run.run_id}/2-{OUT}-3.parquet"
+
+    placement, edges = graph._place_run(plan, ExchangeRun(graph.flow_id, uuid.uuid4().hex))
+
+    assert placement.boundaries == [] and placement.refusals == [] and edges == []
 
 
 def test_with_the_protocol_off_nothing_is_placed_or_priced(protocol_off, declare, store, monkeypatch):

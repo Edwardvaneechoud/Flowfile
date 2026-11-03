@@ -16,7 +16,8 @@ import polars as pl
 from polars.exceptions import PanicException
 from polars_expr_transformer import simple_function_to_expr as to_expr
 
-from flowfile_core.configs import logger, settings
+from flowfile_core.configs import exchange_config, logger, settings
+from flowfile_core.configs.exchange_config import ExchangeConfig
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.events import publish
@@ -261,6 +262,8 @@ class ExecutionMixin(GraphMixinBase):
     exchange_run: ExchangeRun | None = None
     # What the hub vended to the running run over its tables; None between runs and in a run with no hub table.
     hub_vend: vend.RunVend | None = None
+    # The exchange store a team node's hub set for the run about to start; None between runs and off a team node.
+    hub_exchange_store: ExchangeConfig | None = None
     # (run id, vend id) of the last run's vend, for its report; holds no credential.
     last_hub_vend: tuple[str, int] | None = None
 
@@ -452,7 +455,9 @@ class ExecutionMixin(GraphMixinBase):
         """
         if not claimed and not self.try_claim_run():
             raise Exception("Flow is already running")
-        exchange_run = self.exchange_run = ExchangeRun(self.flow_id, uuid.uuid4().hex)
+        exchange_run = self.exchange_run = ExchangeRun(
+            self.flow_id, uuid.uuid4().hex, hub_store=self.hub_exchange_store
+        )
         try:
             flow_node = self.get_node(node_id)
             self.latest_run_info = self.create_initial_run_information(1, "fetch_one")
@@ -1091,7 +1096,7 @@ class ExecutionMixin(GraphMixinBase):
         nodes = execution_plan.all_nodes
         run_backend_id = current_context(self).backend_id
         fallback_id = registry.fallback_backend_id()
-        if settings.get_exchange_uri():
+        if exchange_config.effective_store(hub=exchange_run.hub_store).uri:
             policy = MixedPlacementPolicy(run_backend_id, fallback_id=fallback_id)
         else:
             policy = SingleBackendPolicy(run_backend_id)
@@ -1139,7 +1144,7 @@ class ExecutionMixin(GraphMixinBase):
             source, target = self.get_node(source_id), self.get_node(target_id)
             try:
                 crossing = exchange_run.prefix()
-                max_rows = settings.get_exchange_max_rows() if crossing is not None else None
+                max_rows = exchange_run.max_rows() if crossing is not None else None
             except ValueError as e:
                 crossing_refusals.setdefault(target_id, Refusal(target_id, placement.assignment[target_id], str(e)))
                 continue
@@ -1524,7 +1529,9 @@ class ExecutionMixin(GraphMixinBase):
             raise Exception("Flow is already running")
         ambient = ambient_kernel_hold.set(kernel_hold)
         released = False
-        exchange_run = self.exchange_run = ExchangeRun(self.flow_id, uuid.uuid4().hex)
+        exchange_run = self.exchange_run = ExchangeRun(
+            self.flow_id, uuid.uuid4().hex, hub_store=self.hub_exchange_store
+        )
         try:
             with use_context(current_context(self)):
                 self.flow_logger.info("Starting to run flowfile flow...")

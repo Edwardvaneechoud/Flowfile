@@ -119,6 +119,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     list_db_tables,
 )
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
+from flowfile_core.hub.exchange_store import team_node_store
 from flowfile_core.hub.report import build_run_report, hub_target, post_run_report
 from flowfile_core.notebook.gate import require_kernel_sessions
 from flowfile_core.notebook.kernel_runner import close_flow_sessions, lineage_commits
@@ -495,16 +496,24 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None, 
     ``FLOWFILE_HUB_URL`` with ``hub_token`` (the bearer token of the request that started the run, passed on and
     never stored), or the user's hub session for a flow that came from that hub. A run of a flow with no
     registration is not reported.
+
+    On a team node the run takes the exchange store its hub sets, asked once with ``hub_token`` before the run
+    (``team_node_store``), and holds it until the run ends.
     """
     try:
         reg_id, flow_name, flow_path, flow_uuid, run_id, snapshot_yaml = _open_run_record(flow, user_id, node_ids)
         # A lineage run that writes nothing only looks at rows: change-feed cursors and Kafka offsets stay put.
         commit_sources = node_ids is None or lineage_commits(flow, node_ids)
+        flow.hub_exchange_store = team_node_store(hub_token)
     except BaseException:
+        flow.hub_exchange_store = None
         flow.release_run()
         raise
 
-    run_info = flow.run_graph(node_ids=node_ids, commit_sources=commit_sources, claimed=True)
+    try:
+        run_info = flow.run_graph(node_ids=node_ids, commit_sources=commit_sources, claimed=True)
+    finally:
+        flow.hub_exchange_store = None
     if run_info is None:
         logger.error(f"Flow '{flow_name}' returned no run_info - run tracking skipped")
         return

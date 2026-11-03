@@ -1,8 +1,9 @@
 """The exchange store: an object-storage prefix that a run's results cross between backends through.
 
 ``FLOWFILE_EXCHANGE_URI`` names its ``s3://`` root and ``FLOWFILE_EXCHANGE_CONNECTION`` the stored cloud connection
-that opens it. The connection is the operator's, never a node's user's, and reaches a backend as a ``CredentialRef``.
-A run writes under ``<uri>/<flow id>/<run id>/``, which ``run_graph`` removes when the run ends.
+that opens it, else the store saved from the Backends page, else, on a team node of a hub, the store its hub sets
+(``exchange_config.effective_store``). The connection is the operator's, never a node's user's, and reaches a backend
+as a ``CredentialRef``. A run writes under ``<uri>/<flow id>/<run id>/``, which ``run_graph`` removes when the run ends.
 """
 
 from __future__ import annotations
@@ -10,7 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-from flowfile_core.configs import settings
+from flowfile_core.configs import exchange_config
+from flowfile_core.configs.exchange_config import ExchangeConfig
 from flowfile_core.flowfile.execution.protocol import CredentialRef
 from shared.cloud_credential_provider import credential_ref_kwargs, resolve_credential_ref
 from shared.cloud_storage.storage_options import build_s3_client
@@ -24,8 +26,11 @@ class ExchangeStore:
     credential: CredentialRef
 
 
-def exchange_store() -> ExchangeStore | None:
+def exchange_store(hub: ExchangeConfig | None = None) -> ExchangeStore | None:
     """The exchange store as configured, opened by the operator's connection; ``None`` when no URI is set.
+
+    ``hub`` is the store this node's hub sets, which applies when neither the environment nor the saved store names
+    one; its connection is looked up by name here, as a local store's is.
 
     In multi-user mode the connection is the lowest-id one of that name an administrator owns, so no regular user's
     connection of the name can shadow it. In single-user mode it is the lowest-id one of that name. Its
@@ -35,10 +40,11 @@ def exchange_store() -> ExchangeStore | None:
         ValueError: The URI is set without a connection name, its scheme is not ``s3``, or no administrator has a
             cloud connection of that name.
     """
-    uri = settings.get_exchange_uri()
+    configured = exchange_config.effective_store(hub=hub)
+    uri = configured.uri
     if uri is None:
         return None
-    name = settings.get_exchange_connection()
+    name = configured.connection
     if name is None:
         raise ValueError(
             "FLOWFILE_EXCHANGE_URI is set but FLOWFILE_EXCHANGE_CONNECTION is not: name the stored cloud connection "
@@ -67,12 +73,14 @@ class ExchangeRun:
     """One run's prefix in the exchange store, ``<uri>/<flow id>/<run id>/``, and its removal when the run ends.
 
     The run looks the store up once, on the first ``prefix`` that finds one, and answers that store after; ``collect``
-    removes the run's prefix from it.
+    removes the run's prefix from it. ``hub_store`` is the store the node's hub set for this run, if any, which
+    applies, with its row limit, while neither the environment nor the saved store names one.
     """
 
-    def __init__(self, flow_id: int, run_id: str):
+    def __init__(self, flow_id: int, run_id: str, hub_store: ExchangeConfig | None = None):
         self.flow_id = flow_id
         self.run_id = run_id
+        self.hub_store = hub_store
         self._store: ExchangeStore | None = None
 
     def prefix(self) -> tuple[str, CredentialRef] | None:
@@ -82,10 +90,18 @@ class ExchangeRun:
             ValueError: The store is misconfigured, as ``exchange_store`` says.
         """
         if self._store is None:
-            self._store = exchange_store()
+            self._store = exchange_store() if self.hub_store is None else exchange_store(self.hub_store)
         if self._store is None:
             return None
         return self._prefix(self._store), self._store.credential
+
+    def max_rows(self) -> int | None:
+        """The most rows an input may cross with in this run; ``None`` for no limit.
+
+        Raises:
+            ValueError: ``FLOWFILE_EXCHANGE_MAX_ROWS`` is set to something other than a whole number.
+        """
+        return exchange_config.effective_max_rows(hub=self.hub_store)
 
     def collect(self) -> None:
         """Remove the run's prefix from its store and forget the store; without one, call nothing."""
