@@ -20,7 +20,13 @@ def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description="Flowfile Worker Server")
     parser.add_argument("--host", type=str, default=DEFAULT_SERVICE_HOST, help="Host to bind worker to")
-    parser.add_argument("--port", type=int, default=DEFAULT_SERVICE_PORT, help="Port to bind worker to")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help=f"Port to bind worker to ({DEFAULT_SERVICE_PORT} when not given; a worker joining a hub moves to a free "
+        "port when that one is in use)",
+    )
     parser.add_argument(
         "--core-host",
         type=str,
@@ -51,7 +57,7 @@ def parse_args():
     # Use known_args to handle PyInstaller's extra args
     args = parser.parse_known_args()[0]
 
-    if args.port < 1 or args.port > 65535:
+    if args.port is not None and (args.port < 1 or args.port > 65535):
         raise ValueError(f"Invalid port number: {args.port}. Port must be between 1 and 65535.")
 
     if args.core_port < 1 or args.core_port > 65535:
@@ -91,7 +97,8 @@ if _is_main_process():
     args = parse_args()
 
     SERVICE_HOST = args.host
-    SERVICE_PORT = args.port
+    SERVICE_PORT = DEFAULT_SERVICE_PORT if args.port is None else args.port
+    PORT_GIVEN = args.port is not None
     CORE_HOST = args.core_host
     CORE_PORT = args.core_port
     JOIN_TOKEN = args.join
@@ -102,6 +109,7 @@ else:
     # In spawned processes, use defaults from environment variables
     SERVICE_HOST = DEFAULT_SERVICE_HOST
     SERVICE_PORT = DEFAULT_SERVICE_PORT
+    PORT_GIVEN = False
     CORE_HOST = DEFAULT_CORE_HOST
     CORE_PORT = DEFAULT_CORE_PORT
     JOIN_TOKEN = None

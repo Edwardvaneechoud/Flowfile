@@ -2,7 +2,9 @@ import asyncio
 import ipaddress
 import os
 import signal
+import socket
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
@@ -10,7 +12,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from flowfile_worker import mp_context
+from flowfile_worker import NODE_STORAGE_DIR, mp_context
 from flowfile_worker.auth import carries_internal_token
 from flowfile_worker.configs import (
     FLOWFILE_CORE_URI,
@@ -18,6 +20,7 @@ from flowfile_worker.configs import (
     JOIN_TOKEN,
     NODE_NAME,
     NODE_URL,
+    PORT_GIVEN,
     SERVICE_HOST,
     SERVICE_PORT,
     logger,
@@ -145,38 +148,100 @@ def signal_handler(signum, frame):
         server_instance.should_exit = True
 
 
-def join_hub(port: int | None = None) -> None:
-    """Join the hub ``--join`` names, before the worker serves on ``port``; without a join token, nothing.
+def listen(host: str, port: int, *, given: bool = True) -> socket.socket:
+    """The socket the worker serves on, bound before it joins a hub: a worker that cannot serve never spends a token.
 
-    The worker asks for ``--name``, else the machine's name, and gives ``--url``, else this machine's full name and
-    the port, ``https`` when it serves TLS. A worker that joined already makes no request (``shared.hub_node``).
+    A port the operator ``given`` (``--port``, or ``run``'s), and any port of a worker without a join token: that port,
+    else exit code 1. A worker that already joined with this token: the port it joined with, which the hub has, else
+    exit code 1 saying so (``port`` when its file is from before the port was kept). A worker about to join: ``port``,
+    else the port it last joined with, else a free one (``hub_node.listen``), which the join then reports.
+    """
+    move, kept, hubs_port = False, None, False
+    if JOIN_TOKEN and not given:
+        joined = hub_node.already_joined(HUB_URL, JOIN_TOKEN)
+        if joined is None:
+            last = hub_node.read()
+            move, kept = True, last.worker_port if last else None
+        elif joined.worker_port:
+            port, hubs_port = joined.worker_port, True
+    try:
+        return hub_node.listen(host, port, move=move, kept=kept)
+    except hub_node.CannotServe as refused:
+        reason = refused.reason
+        if refused.in_use and hubs_port:
+            reason += "; the hub has this node at that port, so free it or join again with a new join token"
+        logger.error(reason)
+        raise SystemExit(1) from None
+
+
+def _worker_url(host: str, port: int, *, tls: bool) -> str:
+    url = hub_node.node_url(HUB_URL, host, port, tls=tls)
+    if hub_node.is_loopback_host(host):
+        logger.warning(
+            "This worker serves on %s, which only this machine reaches, so the address it gives the hub is %s; to be "
+            "reached from other machines, start it with --host 0.0.0.0",
+            host,
+            url,
+        )
+    return url
+
+
+def join_hub(port: int | None = None, host: str | None = None) -> None:
+    """Join the hub ``--join`` names, before the worker serves on ``host`` and ``port``; without a join token, nothing.
+
+    The worker asks for ``--name``, else the machine's name, and gives ``--url``, else the address the hub reaches it
+    at (``hub_node.node_url``: on every address, this machine's address towards the hub; on one address, that one,
+    loopback with a warning), ``https`` when it serves TLS, and the port it serves on. A worker that joined already
+    makes no request (``shared.hub_node``).
     """
     if not JOIN_TOKEN:
         return
+    port = port or SERVICE_PORT
     tls = bool(os.environ.get("FLOWFILE_WORKER_TLS_CERT"))
+    worker_url = NODE_URL or _worker_url(host or SERVICE_HOST, port, tls=tls)
+    if hub_node.already_joined(HUB_URL, JOIN_TOKEN) is None:
+        logger.info("Telling the hub this worker is at %s", worker_url)
     hub_node.join_at_start(
         HUB_URL,
         JOIN_TOKEN,
         name=NODE_NAME or hub_node.default_name(),
-        worker_url=NODE_URL or hub_node.default_url(port or SERVICE_PORT, tls=tls),
+        worker_url=worker_url,
+        worker_port=port,
     )
+
+
+def _home_relative(folder: Path) -> str:
+    try:
+        return f"~/{folder.relative_to(Path.home()).as_posix()}"
+    except ValueError:
+        return str(folder)
 
 
 def run(host: str = None, port: int = None):
     """Run the FastAPI app with graceful shutdown.
 
-    A worker started with a join token joins its hub first (``join_hub``), and one the hub refuses exits with code 2
-    before it serves. Serves TLS when ``FLOWFILE_WORKER_TLS_CERT`` and ``FLOWFILE_WORKER_TLS_KEY`` name a certificate
-    and its key.
+    The worker binds its socket first (``listen``), then a worker started with a join token joins its hub
+    (``join_hub``) with the port it serves on, and serves on that same socket: one that cannot bind exits with code 1
+    before any request to the hub, one the hub refuses with code 2 before it serves. Serves TLS when
+    ``FLOWFILE_WORKER_TLS_CERT`` and ``FLOWFILE_WORKER_TLS_KEY`` name a certificate and its key.
     """
     global server_instance
 
+    given = port is not None or PORT_GIVEN
     if host is None:
         host = SERVICE_HOST
     if port is None:
         port = SERVICE_PORT
 
-    join_hub(port)
+    if NODE_STORAGE_DIR is not None:
+        logger.info("Keeping this node's files in %s, apart from Flowfile desktop's", _home_relative(NODE_STORAGE_DIR))
+    sock = listen(host, port, given=given)
+    port = sock.getsockname()[1]
+    try:
+        join_hub(port, host)
+    except BaseException:
+        sock.close()
+        raise
 
     from connectorx import __version__ as connectorx_version
 
@@ -203,7 +268,7 @@ def run(host: str = None, port: int = None):
     logger.info("Server started")
 
     try:
-        server.run()
+        server.run(sockets=[sock])
     except KeyboardInterrupt:
         logger.info("Received interrupt signal, shutting down...")
     finally:
