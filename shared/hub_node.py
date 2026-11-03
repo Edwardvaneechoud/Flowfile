@@ -28,7 +28,9 @@ A node that joins beside Flowfile desktop keeps out of the desktop's way. Starte
 ``~/.flowfile``. It binds the socket it serves on before it joins (``listen``), so a node that cannot serve never spends
 its token, and when the default port is in use it takes the port it joined with, else a free one, and joins with that.
 Without an address of its own (``--url``) it gives the hub this machine's address on the interface that reaches the hub
-(``node_url``), not a name the hub may not resolve.
+(``node_url``), not a name the hub may not resolve. A core joins for itself and the worker beside it the same way, and
+keeps the port it gave for that worker (``beside_port``); the worker, started with the node's name and no join token,
+finds the core's folder by that name and serves on that port.
 """
 
 import errno
@@ -76,7 +78,8 @@ _ROUTE_PROBES = {socket.AF_INET: "192.0.2.1", socket.AF_INET6: "2001:db8::1"}
 _BACKLOG = 2048
 
 _FIELDS = {"hub_url": str, "issuer": str, "name": str, "node_id": int, "joined_at": str}
-_OPTIONAL_FIELDS = {"join_token_hash": str, "has_core": bool, "worker_port": int}
+_OPTIONAL_FIELDS = {"join_token_hash": str, "has_core": bool, "core_port": int, "worker_port": int}
+_PORT_FIELDS = ("core_port", "worker_port")
 _warned_unreadable = False
 _warned_beats: set[str] = set()
 _hub_without_beats = False
@@ -99,8 +102,9 @@ class HubNode:
     ``join_token_hash`` tells the join token it was written with from another one; empty in a file from before it
     was kept, or one written by hand. ``has_core`` is ``True`` when a core joined for itself and its worker, ``False``
     when a worker joined alone (and in a file from before it was kept): it decides which of the two beats.
-    ``worker_port`` is the port a worker that joined alone served on when it joined, the one the hub has; ``None``
-    when a core joined, and in a file from before it was kept.
+    ``core_port`` is the port a core that joined served on when it joined, and ``worker_port`` the port the worker
+    served on, or, for a core, the port it gave for the worker beside it: the ports the hub has. Each ``None`` where no
+    such port was given, and in a file from before it was kept.
     """
 
     hub_url: str
@@ -110,6 +114,7 @@ class HubNode:
     joined_at: str
     join_token_hash: str = ""
     has_core: bool = False
+    core_port: int | None = None
     worker_port: int | None = None
 
 
@@ -153,8 +158,9 @@ def read() -> HubNode | None:
         data = None
     if isinstance(data, dict) and all(_fits(data.get(field), kind) for field, kind in _FIELDS.items()):
         optional = {field: data[field] for field, kind in _OPTIONAL_FIELDS.items() if _fits(data.get(field), kind)}
-        if not 0 < optional.get("worker_port", 1) < 65536:
-            del optional["worker_port"]
+        for field in _PORT_FIELDS:
+            if not 0 < optional.get(field, 1) < 65536:
+                del optional[field]
         return HubNode(**{field: data[field] for field in _FIELDS}, **optional)
     if not _warned_unreadable:
         logger.warning("%s is not a node's identity on a hub and is ignored", target)
@@ -239,6 +245,7 @@ def _join(
     worker_url: str,
     core_url: str | None,
     ui_url: str | None = None,
+    core_port: int | None = None,
     worker_port: int | None = None,
     http: "httpx.Client | None" = None,
 ) -> tuple[HubNode, bool]:
@@ -284,6 +291,7 @@ def _join(
         joined_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         join_token_hash=token_hash(token),
         has_core=core_url is not None,
+        core_port=core_port,
         worker_port=worker_port,
     )
     _write(node)
@@ -298,6 +306,7 @@ def join(
     worker_url: str,
     core_url: str | None = None,
     ui_url: str | None = None,
+    core_port: int | None = None,
     worker_port: int | None = None,
     http: "httpx.Client | None" = None,
 ) -> HubNode:
@@ -308,7 +317,8 @@ def join(
     says nothing about an editor. The join also sends the public halves of this node's own keys, made at its first
     join and reused after; a storage dir that cannot keep them refuses the join before any request. The file is
     written whole or not at all, with the name and issuer the hub answered, ``has_core`` set when ``core_url`` is
-    given (a core joining for itself and its worker) and ``worker_port``, the port the worker serves on, when given.
+    given (a core joining for itself and its worker), and ``core_port`` and ``worker_port``, the ports core and the
+    worker serve on, when given.
     Logs the method, the path and the status, never the token or a body.
     """
     return _join(
@@ -318,6 +328,7 @@ def join(
         worker_url=worker_url,
         core_url=core_url,
         ui_url=ui_url,
+        core_port=core_port,
         worker_port=worker_port,
         http=http,
     )[0]
@@ -346,6 +357,7 @@ def join_at_start(
     worker_url: str,
     core_url: str | None = None,
     ui_url: str | None = None,
+    core_port: int | None = None,
     worker_port: int | None = None,
 ) -> HubNode:
     """Join before serving; a refused join exits with code 2 and leaves the file as it was.
@@ -381,7 +393,14 @@ def join_at_start(
         )
     try:
         node, enabled = _join(
-            hub_url, token, name=name, worker_url=worker_url, core_url=core_url, ui_url=ui_url, worker_port=worker_port
+            hub_url,
+            token,
+            name=name,
+            worker_url=worker_url,
+            core_url=core_url,
+            ui_url=ui_url,
+            core_port=core_port,
+            worker_port=worker_port,
         )
     except JoinRefused as refused:
         logger.error("Could not join %s: %s", hub_url, refused.reason)
@@ -519,7 +538,7 @@ def default_url(port: int, *, tls: bool) -> str:
     return f"{'https' if tls else 'http'}://{host}:{port}"
 
 
-def node_storage(token: str | None, name: str | None) -> Path | None:
+def node_storage(token: str | None, name: str | None, *, by_name: bool = False) -> Path | None:
     """Give a node that joins a hub a folder of its own, before anything in this process reads the storage dir.
 
     With a join token, no ``FLOWFILE_STORAGE_DIR`` and outside Docker (whose storage dir is the container's own), the
@@ -529,26 +548,51 @@ def node_storage(token: str | None, name: str | None) -> Path | None:
     starts uses them too. Returns the folder, or ``None`` when nothing changed. On a machine that runs Flowfile desktop
     this keeps the node out of the desktop's ``~/.flowfile``. ``name`` is the node's name on the hub, the machine's when
     ``None``; one a hub would refuse, which could also name a folder elsewhere, exits with code 2.
+
+    With ``by_name`` and no join token, a process given the ``name`` of a node that joined on this machine
+    (``~/.flowfile-node/<name>/hub_node.json`` exists) takes that node's folder the same way, so the worker beside a
+    core lands in the core's folder; without that file, or without a name, nothing changes.
     """
-    if not token or os.environ.get("FLOWFILE_STORAGE_DIR") or os.environ.get("FLOWFILE_MODE") == "docker":
+    if os.environ.get("FLOWFILE_STORAGE_DIR") or os.environ.get("FLOWFILE_MODE") == "docker":
         return None
-    name = name or default_name()
-    if not NAME_PATTERN.match(name):
-        logger.error(
-            "Cannot keep this node's files under ~/%s: %r is not a name a hub takes (letters, digits, '.', '_' and "
-            "'-', starting with a letter or digit); give one with --name",
-            NODE_FILES_DIR,
-            name,
-        )
-        raise SystemExit(2)
-    folder = Path.home() / NODE_FILES_DIR / name
-    folder.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    folder.mkdir(mode=0o700, exist_ok=True)
+    if not token:
+        if not (by_name and name and NAME_PATTERN.match(name)):
+            return None
+        folder = Path.home() / NODE_FILES_DIR / name
+        if not (folder / FILE_NAME).is_file():
+            return None
+    else:
+        name = name or default_name()
+        if not NAME_PATTERN.match(name):
+            logger.error(
+                "Cannot keep this node's files under ~/%s: %r is not a name a hub takes (letters, digits, '.', '_' "
+                "and '-', starting with a letter or digit); give one with --name",
+                NODE_FILES_DIR,
+                name,
+            )
+            raise SystemExit(2)
+        folder = Path.home() / NODE_FILES_DIR / name
+        folder.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        folder.mkdir(mode=0o700, exist_ok=True)
     os.environ["FLOWFILE_STORAGE_DIR"] = str(folder)
     for variable in ("SECURE_STORAGE_PATH", "FLOWFILE_SECURE_STORAGE_PATH"):
         if not os.environ.get(variable):
             os.environ[variable] = str(folder / "secure")
     return folder
+
+
+def home_relative(folder: Path) -> str:
+    """``folder`` written from ``~`` when it is under the home directory, as the start-up lines name it."""
+    try:
+        return f"~/{folder.relative_to(Path.home()).as_posix()}"
+    except ValueError:
+        return str(folder)
+
+
+def log_storage(folder: Path | None) -> None:
+    """Say at start where a node that joins keeps its files, when ``node_storage`` gave it ``folder``."""
+    if folder is not None:
+        logger.info("Keeping this node's files in %s, apart from Flowfile desktop's", home_relative(folder))
 
 
 class CannotServe(Exception):
@@ -614,6 +658,23 @@ def _shadowed(sock: socket.socket) -> bool:
         return False
 
 
+def _answers(host: str, port: int) -> bool:
+    """Whether a server answers on the loopback address ``host`` at ``port``, asked before binding it.
+
+    macOS and the BSDs let a socket bind one address of a port another socket holds on every address, and give it that
+    address's connections, so a core bound to 127.0.0.1 would take Flowfile desktop's own connections to its core.
+    """
+    try:
+        socket.create_connection((host.strip("[]"), port), timeout=1.0).close()
+    except OSError:
+        return False
+    return True
+
+
+def _held_elsewhere(host: str, port: int) -> bool:
+    return is_loopback_host(host) and _answers(host, port)
+
+
 def _holder(port: int) -> str | None:
     """The process listening on ``port``, as ``<name> (pid <pid>)``, when the OS says; ``None`` when it does not."""
     try:
@@ -652,18 +713,23 @@ def listen(host: str, port: int, *, move: bool = False, kept: int | None = None)
     node serves on ``port`` or not at all. With ``move``, a ``port`` in use gives way to ``kept``, the port the node
     last joined with, when it is free; else to the next free port above ``port`` within ``PORT_SEARCH``, ``HUB_PORT``
     left alone; else to one the OS assigns, and one line says so. When moving, a port that another socket holds on the
-    loopback address counts as in use for a node bound to every address (``_shadowed``).
+    loopback address counts as in use for a node bound to every address (``_shadowed``), and a port a server answers on
+    counts as in use for a node bound to loopback (``_answers``).
     """
-    try:
-        sock = _bind(host, port)
-    except OSError as exc:
-        if not (move and exc.errno == errno.EADDRINUSE):
-            raise _refusal(host, port, exc) from None
-    else:
+    sock = None
+    if not (move and _held_elsewhere(host, port)):
+        try:
+            sock = _bind(host, port)
+        except OSError as exc:
+            if not (move and exc.errno == errno.EADDRINUSE):
+                raise _refusal(host, port, exc) from None
+    if sock is not None:
         if not (move and _is_any_address(host) and _shadowed(sock)):
             return sock
         sock.close()
     for other in _other_ports(port, kept):
+        if other and _held_elsewhere(host, other):
+            continue
         try:
             sock = _bind(host, other)
         except OSError as exc:
@@ -676,6 +742,79 @@ def listen(host: str, port: int, *, move: bool = False, kept: int | None = None)
         logger.info("Port %s is in use; serving on %s", port, sock.getsockname()[1])
         return sock
     raise CannotServe(f"Cannot serve on {_host_port(host, port)} or any other port", in_use=True)
+
+
+def serving_socket(
+    process: Literal["core", "worker"],
+    host: str,
+    port: int,
+    *,
+    given: bool,
+    hub_url: str | None = None,
+    token: str | None = None,
+    found: bool = False,
+) -> socket.socket:
+    """The socket ``process`` serves on, bound before it joins a hub, so one that cannot serve never spends a token.
+
+    A port the operator ``given``, and any port of a process that neither joins nor was ``found`` by name: that port.
+    A process that already joined with ``token``: the port the file keeps for it (``core_port`` or ``worker_port``),
+    which the hub has, else ``port`` for a file from before it was kept. A worker ``found`` by its name beside its core
+    (``node_storage``): the ``worker_port`` that core's join kept, else ``port``. A process about to join: ``port``,
+    else the port it last joined with, else a free one (``listen``), which its join then reports. One that cannot bind
+    its port exits with code 1 and one line, which says so when the hub has the node at that port.
+    """
+    field = f"{process}_port"
+    move, kept, hubs_port = False, None, False
+    if token and not given:
+        joined = already_joined(hub_url or "", token)
+        if joined is None:
+            last = read()
+            move, kept = True, getattr(last, field) if last else None
+        elif getattr(joined, field):
+            port, hubs_port = getattr(joined, field), True
+    elif found and not given:
+        joined = read()
+        if joined is not None and getattr(joined, field):
+            port, hubs_port = getattr(joined, field), True
+    try:
+        return listen(host, port, move=move, kept=kept)
+    except CannotServe as refused:
+        reason = refused.reason
+        if refused.in_use and hubs_port:
+            reason += "; the hub has this node at that port, so free it or join again with a new join token"
+        logger.error(reason)
+        raise SystemExit(1) from None
+
+
+def _free(port: int) -> int | None:
+    """``port`` when no server holds it on any address, as the worker beside a core binds it; for 0, one the OS has."""
+    try:
+        sock = _bind("0.0.0.0", port)
+    except OSError:
+        return None
+    with sock:
+        if port and _shadowed(sock):
+            return None
+        return sock.getsockname()[1]
+
+
+def beside_port(port: int, *, kept: int | None = None) -> int:
+    """The port a core that joins a hub gives for the worker beside it, which that worker then serves on.
+
+    ``kept``, the port the node joined with before, whether a server answers there or not: that server is the worker
+    beside, serving already. Else ``port`` when no server holds it on any address; else the next free port above it
+    within ``PORT_SEARCH``, ``HUB_PORT`` left alone; else one the OS has free, and one line says so. The worker binds it
+    itself, later, so it is checked here by binding it and closing it again; ``port`` when even the OS has none.
+    """
+    if kept:
+        return kept
+    for other in (port, *_other_ports(port, None)):
+        free = _free(other)
+        if free is not None:
+            if free != port:
+                logger.info("Port %s is in use; the worker beside this core is to serve on %s", port, free)
+            return free
+    return port
 
 
 def is_loopback_host(host: str) -> bool:
