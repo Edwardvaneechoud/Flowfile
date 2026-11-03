@@ -1235,3 +1235,27 @@ def test_a_hub_that_answers_500_warns_once_and_is_asked_every_minute(hub_answeri
     assert stop.seen == [(60, 1), (60, 2), (60, 3)]
     assert len(beat_warnings(caplog)) == 1
     assert absent_lines(caplog) == []
+
+
+def test_a_shadow_check_with_descriptors_past_1024_still_answers():
+    """``select.select`` refuses a descriptor above 1023; a long-running process can hold one, so the check that a
+    port is shared on loopback waits through a selector instead."""
+    resource = pytest.importorskip("resource")
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if hard != resource.RLIM_INFINITY and hard < 1200:
+        pytest.skip("the descriptor limit stays below 1200")
+    resource.setrlimit(resource.RLIMIT_NOFILE, (max(soft, 1200), hard))
+    held = []
+    try:
+        while not held or held[-1] < 1100:
+            held.append(os.dup(0))
+        sock = hub_node._bind("0.0.0.0", 0)
+        try:
+            assert sock.fileno() > 1024
+            assert hub_node._shadowed(sock) is False
+        finally:
+            sock.close()
+    finally:
+        for fd in held:
+            os.close(fd)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))

@@ -40,7 +40,7 @@ import json
 import logging
 import os
 import re
-import select
+import selectors
 import socket
 import threading
 from dataclasses import asdict, dataclass
@@ -650,9 +650,9 @@ def _shadowed(sock: socket.socket) -> bool:
         probe = socket.create_connection((loopback, sock.getsockname()[1]), timeout=1.0)
     except OSError:
         return False
-    with probe:
-        ready, _, _ = select.select([sock], [], [], 0.2)
-        if not ready:
+    with probe, selectors.DefaultSelector() as waiting:
+        waiting.register(sock, selectors.EVENT_READ)
+        if not waiting.select(0.2):
             return True
         sock.accept()[0].close()
         return False
