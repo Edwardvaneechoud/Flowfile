@@ -155,7 +155,7 @@ stop_flowfile_server_process()
 
 ## Configuration
 
-The web UI is hard-locked to `127.0.0.1:63578` — `start_server` raises `NotImplementedError` for any other host or port, so there is no environment variable that relocates it. The `FLOWFILE_MODULE_NAME` variable (default `flowfile`) selects which module the launcher runs.
+The web UI runs on `127.0.0.1:63578`, the address the launcher starts it on and connects to; `start_web_ui(host=..., port=...)` and `flowfile run ui --host <host> --port <port>` serve it elsewhere, and no environment variable relocates it. The `FLOWFILE_MODULE_NAME` variable (default `flowfile`) selects which module the launcher runs.
 
 ### URLs and Endpoints
 

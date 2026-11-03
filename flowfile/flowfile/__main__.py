@@ -465,6 +465,26 @@ def main():
     parser.add_argument("--format", default="md", choices=["md", "json"], help="Format of the --inspect report")
     parser.add_argument("--csv", action="store_true", help="Convert to CSV instead of Parquet")
     parser.add_argument("--overwrite", action="store_true", help="Replace existing converted files or flows")
+    # Core's settings read these from this same command line; listed here so run ui and run core take them.
+    parser.add_argument(
+        "--join",
+        metavar="TOKEN",
+        help="A join token from the hub's Compute page; the server joins that hub for itself and its worker before "
+        "it serves (or FLOWFILE_HUB_JOIN_TOKEN)",
+    )
+    parser.add_argument("--hub", metavar="URL", help="The hub to join (or FLOWFILE_HUB_URL)")
+    parser.add_argument("--name", help="This node's name on the hub; the machine's name when not given")
+    parser.add_argument(
+        "--url",
+        metavar="URL",
+        help="This server's address as a browser and the hub reach it; else this machine's name, or the loopback "
+        "address for a loopback --host",
+    )
+    parser.add_argument(
+        "--worker-url",
+        metavar="URL",
+        help="The worker's address as desktops reach it; for run ui, the server's address with /worker",
+    )
 
     args = parser.parse_args()
 
@@ -473,7 +493,7 @@ def main():
             try:
                 from flowfile.web import start_server as start_web_ui
 
-                start_web_ui(open_browser=not args.no_browser)
+                start_web_ui(host=args.host, port=args.port, open_browser=not args.no_browser)
             except KeyboardInterrupt:
                 print("\nFlowFile service stopped.")
         elif args.component == "core":

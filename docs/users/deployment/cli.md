@@ -27,9 +27,11 @@ This starts the core API with the worker embedded in the same process, its jobs 
 Flags:
 
 - `--no-browser` — start the services but don't open a browser tab.
+- `--host` and `--port` — where the UI is served, `127.0.0.1` and `63578` by default.
+- `--join <token> --hub <url>` — join a hub as a node with an editor before serving, optionally with `--name`, `--url` and `--worker-url` ([Compute protocol](../../for-developers/compute-protocol.md)).
 
-!!! warning "The web UI is fixed to 127.0.0.1:63578"
-    `run ui` always binds the bundled UI to `127.0.0.1` on port `63578` — the server refuses to start on any other host or port. The `--host` and `--port` flags exist for `run core` and `run worker` (below); they do not move the bundled UI. To expose Flowfile on another address, run it behind a reverse proxy or use the [Docker deployment](docker.md).
+!!! warning "Other machines reach the UI only when you bind it for them"
+    By default `run ui` binds `127.0.0.1`, which only this machine reaches. `--host 0.0.0.0` serves it to other machines too; in the default mode everyone who reaches it works as this machine's user without signing in, so do that only on a network you trust, or use the [Docker deployment](docker.md).
 
 ## Run a flow headlessly
 
