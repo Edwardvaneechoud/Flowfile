@@ -10,6 +10,7 @@ import socket
 import subprocess
 import sys
 import time
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -84,6 +85,30 @@ def test_without_flags_or_variables_there_is_nothing_to_join(monkeypatch, no_var
     args = parse(monkeypatch)
 
     assert (args.join, args.hub, args.name, args.url) == (None, None, None, None)
+
+
+@pytest.mark.parametrize(
+    "flags,variable,host",
+    [
+        ((), None, "127.0.0.1"),
+        (("--hub", "http://h", "--join", "K7QX-M2PD"), None, "0.0.0.0"),
+        (("--hub", "http://h"), "K7QX-M2PD", "0.0.0.0"),
+        (("--hub", "http://h", "--join", "K7QX-M2PD", "--host", "127.0.0.1"), None, "127.0.0.1"),
+        (("--hub", "http://h", "--join", "K7QX-M2PD", "--host", "10.1.2.3"), None, "10.1.2.3"),
+        (("--name", "team-1"), None, "127.0.0.1"),
+    ],
+    ids=["no join token", "--join", "the variable", "--host wins", "an address given", "a name only"],
+)
+def test_a_join_token_binds_every_interface_unless_a_host_is_given(monkeypatch, no_variables, flags, variable, host):
+    if variable is not None:
+        monkeypatch.setenv("FLOWFILE_HUB_JOIN_TOKEN", variable)
+
+    assert parse(monkeypatch, *flags).host == host
+
+
+def test_an_empty_host_is_still_refused(monkeypatch, no_variables):
+    with pytest.raises(ValueError, match="Worker host cannot be empty"):
+        parse(monkeypatch, "--hub", "http://h", "--join", "K7QX-M2PD", "--host", "")
 
 
 def test_a_worker_joins_before_it_serves_and_a_restart_makes_no_request(monkeypatch, join_hub, node_file):
@@ -496,7 +521,7 @@ def test_a_worker_started_with_a_join_token_keeps_its_files_apart_from_the_deskt
     environment = {name: value for name, value in os.environ.items() if name not in (*STORAGE_VARIABLES, *VARIABLES)}
     environment.update(HOME=str(home), FLOWFILE_WORKER_POOL_SIZE="0")
     log = tmp_path / "worker.log"
-    flags = ["--host", "127.0.0.1", "--port", str(port), "--hub", join_hub.url, "--join", join_hub.mint()]
+    flags = ["--port", str(port), "--hub", join_hub.url, "--join", join_hub.mint(code=True)]
     with log.open("wb") as out:
         worker = subprocess.Popen(
             [*command, *flags, "--name", "card-node"], env=environment, cwd=tmp_path, stdout=out, stderr=out
@@ -510,8 +535,9 @@ def test_a_worker_started_with_a_join_token_keeps_its_files_apart_from_the_deskt
     output = log.read_text(encoding="utf-8")
     assert health["status"] == "ok"
     assert "Keeping this node's files in ~/.flowfile-node/card-node, apart from Flowfile desktop's" in output
-    joins = [body for path, body in join_hub.calls if path == hub_join.JOIN_PATH]
-    assert [body["worker_url"] for body in joins] == [f"http://127.0.0.1:{port}"]
+    (joined,) = [urlsplit(body["worker_url"]) for path, body in join_hub.calls if path == hub_join.JOIN_PATH]
+    assert f"Starting worker service on 0.0.0.0:{port}" in output
+    assert (joined.port, hub_node.is_loopback_host(joined.hostname)) == (port, False)
     kept = json.loads((folder / hub_node.FILE_NAME).read_text(encoding="utf-8"))
     assert (kept["name"], kept["worker_port"]) == ("card-node", port)
     assert (folder / "hub_node_key.json").is_file()

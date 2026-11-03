@@ -9,6 +9,7 @@ logger = logging.getLogger("FlowfileWorker")
 logger.setLevel(logging.INFO)
 
 DEFAULT_SERVICE_HOST = "127.0.0.1"
+JOINING_SERVICE_HOST = "0.0.0.0"
 DEFAULT_SERVICE_PORT = 63579
 # Check environment variable for core host (used in Docker mode)
 DEFAULT_CORE_HOST = os.environ.get("CORE_HOST", "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1")
@@ -19,7 +20,13 @@ TEST_MODE = True if "TEST_MODE" in os.environ else False
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description="Flowfile Worker Server")
-    parser.add_argument("--host", type=str, default=DEFAULT_SERVICE_HOST, help="Host to bind worker to")
+    parser.add_argument(
+        "--host",
+        type=str,
+        default=None,
+        help=f"Host to bind worker to ({DEFAULT_SERVICE_HOST} when not given; {JOINING_SERVICE_HOST}, every interface, "
+        "for a worker joining a hub)",
+    )
     parser.add_argument(
         "--port",
         type=int,
@@ -56,6 +63,10 @@ def parse_args():
 
     # Use known_args to handle PyInstaller's extra args
     args = parser.parse_known_args()[0]
+
+    # A worker joins a hub to be reached by it and by desktops, so a join token binds every interface by default.
+    if args.host is None:
+        args.host = JOINING_SERVICE_HOST if args.join else DEFAULT_SERVICE_HOST
 
     if args.port is not None and (args.port < 1 or args.port > 65535):
         raise ValueError(f"Invalid port number: {args.port}. Port must be between 1 and 65535.")

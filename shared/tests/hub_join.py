@@ -1,6 +1,7 @@
 """A hub that answers joins for the tests: ``POST /hub/nodes/join`` as the hub's contract has it, served from a thread.
 
-``mint()`` hands out an opaque join token; the join route checks a body as the hub's model does, the editor's
+``mint()`` hands out an opaque join token (``code=True``: a short code as a hub's Compute page shows one, ``K7QX-M2PD``,
+which a node posts as given); the join route checks a body as the hub's model does, the editor's
 ``ui_url`` included (a 422 in FastAPI's shape), refuses a token it did not mint, an expired one and a used one with
 the hub's sentences, and answers the others once. Given a ``HubSigner`` it also serves that signer's keys at
 ``/.well-known/jwks.json`` and names the signer's URL as the issuer, so one URL is the whole hub for a node that joins
@@ -16,6 +17,7 @@ the fixture into a test module: ``from shared.tests.hub_join import join_hub  # 
 
 import json
 import re
+import secrets
 import threading
 import time
 import uuid
@@ -41,6 +43,7 @@ DELEGATION_SECONDS = 12 * 3600
 ASSERTION_CLAIMS = ["iss", "sub", "aud", "iat", "exp", "jti"]
 NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"
 URL_PATTERN = r"^https?://"
+CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 NOT_VALID = "this join token is not valid"
 EXPIRED = "this join token has expired; create a new one on the hub's Compute page"
 USED = "this join token has been used; create a new one on the hub's Compute page"
@@ -169,9 +172,13 @@ class FakeJoinHub:
         """The ``iss`` the hub's tokens carry: the signer's URL when there is one, else this hub's own."""
         return self.signer.url if self.signer is not None else self.url
 
-    def mint(self, enable_on_join: bool = False, expired: bool = False) -> str:
-        """A join token this hub accepts once, unless it is minted ``expired``."""
-        token = f"join-{uuid.uuid4().hex}"
+    def mint(self, enable_on_join: bool = False, expired: bool = False, code: bool = False) -> str:
+        """A join token this hub accepts once, unless it is minted ``expired``; with ``code``, a short code."""
+        if code:
+            characters = "".join(secrets.choice(CODE_ALPHABET) for _ in range(8))
+            token = f"{characters[:4]}-{characters[4:]}"
+        else:
+            token = f"join-{uuid.uuid4().hex}"
         with self._lock:
             self._grants[token] = {"enable_on_join": enable_on_join, "expired": expired, "used": False}
         return token
