@@ -9,12 +9,25 @@
         <p class="login-subtitle">Sign in to continue</p>
       </div>
 
-      <form class="login-form" @submit.prevent="handleLogin">
-        <div v-if="error" class="error-message">
-          <i class="fa-solid fa-circle-exclamation"></i>
-          <span>{{ error }}</span>
-        </div>
+      <div v-if="error" class="error-message" data-testid="login-error">
+        <i class="fa-solid fa-circle-exclamation"></i>
+        <span>{{ error }}</span>
+      </div>
 
+      <a
+        v-if="signInMethod?.method === 'hub'"
+        :href="signInMethod.url"
+        class="btn btn-primary login-button"
+        data-testid="login-hub"
+      >
+        Sign in with {{ hubHost }}
+      </a>
+
+      <form
+        v-else-if="signInMethod?.method === 'password'"
+        class="login-form"
+        @submit.prevent="handleLogin"
+      >
         <div class="form-field">
           <label for="username" class="form-label">Username</label>
           <div class="input-wrapper">
@@ -75,9 +88,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "../../stores/auth-store";
+import authService, { type SignInMethod } from "../../services/auth.service";
 
 const router = useRouter();
 const authStore = useAuthStore();
@@ -86,7 +100,21 @@ const username = ref("");
 const password = ref("");
 const showPassword = ref(false);
 const isLoading = ref(false);
-const error = ref("");
+const error = ref(authService.takeHubSignInError() ?? "");
+const signInMethod = ref<SignInMethod | null>(null);
+
+const hubHost = computed(() => {
+  if (signInMethod.value?.method !== "hub") return "";
+  try {
+    return new URL(signInMethod.value.hub_url).hostname;
+  } catch {
+    return signInMethod.value.hub_url;
+  }
+});
+
+onMounted(async () => {
+  signInMethod.value = await authService.getSignInMethod();
+});
 
 const handleLogin = async () => {
   if (!username.value || !password.value) {
@@ -178,6 +206,7 @@ const handleLogin = async () => {
 }
 
 .error-message {
+  margin-bottom: var(--spacing-4);
   display: flex;
   align-items: center;
   gap: var(--spacing-2);
@@ -273,6 +302,8 @@ const handleLogin = async () => {
 
 .login-button {
   width: 100%;
+  box-sizing: border-box;
+  text-decoration: none;
   height: 44px;
   margin-top: var(--spacing-4);
   font-size: var(--font-size-base);
