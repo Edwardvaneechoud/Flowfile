@@ -306,16 +306,71 @@ def test_a_worker_without_a_join_token_serves_on_its_port_or_not_at_all(monkeypa
 
 
 @pytest.mark.skipif(os.name == "nt", reason="the home directory comes from HOME on POSIX only")
-def test_a_worker_with_a_folder_of_its_own_says_so_at_start(monkeypatch, tmp_path, serving, caplog):
+def test_a_worker_with_a_folder_of_its_own_says_so_at_start(
+    monkeypatch, tmp_path, join_hub, node_file, serving, caplog
+):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(main, "NODE_STORAGE_DIR", tmp_path / ".flowfile-node" / "card-node")
-    monkeypatch.setattr(main, "JOIN_TOKEN", None)
+    started_with(monkeypatch, join_hub.url, join_hub.mint(), url=None)
     default_port(monkeypatch, free_port())
 
     with caplog.at_level(logging.INFO):
         main.run(host="127.0.0.1")
 
     assert "Keeping this node's files in ~/.flowfile-node/card-node, apart from Flowfile desktop's" in caplog.text
+
+
+def found_beside_a_core(monkeypatch, node_file, *, worker_port: int | None) -> None:
+    """The worker started with ``--name team-1`` and no join token in the folder of core ``team-1`` that joined."""
+    node_file.parent.mkdir(parents=True, exist_ok=True)
+    kept = {"hub_url": "http://hub.example", "issuer": "http://hub.example", "name": "team-1", "node_id": 4}
+    kept.update(joined_at="2026-11-03T09:00:00+00:00", has_core=True, core_port=free_port())
+    if worker_port is not None:
+        kept["worker_port"] = worker_port
+    node_file.write_text(json.dumps(kept), encoding="utf-8")
+    monkeypatch.setattr(main, "NODE_STORAGE_DIR", node_file.parent)
+    monkeypatch.setattr(main, "JOIN_TOKEN", None)
+    monkeypatch.setattr(main, "HUB_URL", None)
+
+
+def test_the_worker_beside_a_core_serves_on_the_port_the_cores_join_gave_it_and_says_so(
+    monkeypatch, node_file, serving, caplog
+):
+    kept = free_port()
+    found_beside_a_core(monkeypatch, node_file, worker_port=kept)
+    default_port(monkeypatch, free_port())
+
+    with caplog.at_level(logging.INFO):
+        main.run(host="127.0.0.1")
+
+    assert served_port(serving) == kept
+    folder = hub_node.home_relative(node_file.parent)
+    assert f"Found node team-1 in {folder}; serving on {kept}, the port its join gave the hub" in caplog.text
+    assert "Keeping this node's files" not in caplog.text
+
+
+def test_the_worker_beside_a_core_whose_port_is_in_use_exits_1_saying_the_hub_has_it_there(
+    monkeypatch, node_file, held, serving, caplog
+):
+    found_beside_a_core(monkeypatch, node_file, worker_port=held())
+    default_port(monkeypatch, free_port())
+
+    with caplog.at_level(logging.ERROR), pytest.raises(SystemExit) as exited:
+        main.run(host="127.0.0.1")
+
+    assert exited.value.code == 1
+    assert "the hub has this node at that port, so free it or join again with a new join token" in caplog.text
+    assert serving == []
+
+
+def test_the_worker_beside_a_core_given_a_port_serves_there(monkeypatch, node_file, serving):
+    found_beside_a_core(monkeypatch, node_file, worker_port=free_port())
+    given = free_port()
+    default_port(monkeypatch, given, given=True)
+
+    main.run(host="127.0.0.1")
+
+    assert served_port(serving) == given
 
 
 def test_a_worker_whose_storage_dir_is_set_says_nothing_about_it(monkeypatch, serving, caplog):
@@ -463,3 +518,48 @@ def test_a_worker_started_with_a_join_token_keeps_its_files_apart_from_the_deskt
     assert sorted(path.name for path in home.iterdir()) == [".flowfile", ".flowfile-node"]
     assert sorted(path.name for path in desktop.iterdir()) == [hub_node.FILE_NAME]
     assert (desktop / hub_node.FILE_NAME).read_text(encoding="utf-8") == '{"name": "the desktop\'s node"}\n'
+
+
+def _start(command, flags, environment, cwd, log) -> subprocess.Popen:
+    with log.open("wb") as out:
+        return subprocess.Popen([*command, *flags], env=environment, cwd=cwd, stdout=out, stderr=out)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the home directory comes from HOME on POSIX only")
+@pytest.mark.parametrize("joined", [True, False], ids=["a core joined as that name", "no node of that name"])
+def test_a_worker_named_after_a_node_that_joined_here_finds_its_folder_and_port_and_else_stays_as_today(
+    tmp_path, joined
+):
+    home = tmp_path / "home"
+    desktop = home / ".flowfile"
+    desktop.mkdir(parents=True)
+    (desktop / hub_node.FILE_NAME).write_text('{"name": "the desktop\'s node"}\n', encoding="utf-8")
+    port, flags = free_port(), ["--host", "127.0.0.1", "--name", "card-node"]
+    folder = home / ".flowfile-node" / "card-node"
+    if joined:
+        folder.mkdir(parents=True)
+        kept = {"hub_url": "http://127.0.0.1:9", "issuer": "http://127.0.0.1:9", "name": "card-node", "node_id": 4}
+        kept.update(joined_at="2026-11-03T09:00:00+00:00", has_core=True, core_port=free_port(), worker_port=port)
+        (folder / hub_node.FILE_NAME).write_text(json.dumps(kept), encoding="utf-8")
+    else:
+        flags += ["--port", str(port)]
+    environment = {name: value for name, value in os.environ.items() if name not in (*STORAGE_VARIABLES, *VARIABLES)}
+    environment.update(HOME=str(home), FLOWFILE_WORKER_POOL_SIZE="0")
+    log = tmp_path / "worker.log"
+    worker = _start([sys.executable, "-m", "flowfile_worker"], flags, environment, tmp_path, log)
+    try:
+        health = _wait_for_health(worker, port, log)
+    finally:
+        _stop(worker)
+
+    output = log.read_text(encoding="utf-8")
+    found = f"Found node card-node in ~/.flowfile-node/card-node; serving on {port}, the port its join gave the hub"
+    assert health["status"] == "ok"
+    assert (found in output) is joined
+    assert "Keeping this node's files" not in output
+    if joined:
+        assert sorted(path.name for path in home.iterdir()) == [".flowfile", ".flowfile-node"]
+        assert sorted(path.name for path in desktop.iterdir()) == [hub_node.FILE_NAME]
+        assert (desktop / hub_node.FILE_NAME).read_text(encoding="utf-8") == '{"name": "the desktop\'s node"}\n'
+    else:
+        assert not (home / ".flowfile-node").exists()

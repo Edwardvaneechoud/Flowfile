@@ -4,7 +4,6 @@ import os
 import signal
 import socket
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
@@ -148,30 +147,24 @@ def signal_handler(signum, frame):
         server_instance.should_exit = True
 
 
+def _found_by_name() -> bool:
+    """Whether this worker took the folder of the node it is named after, with no join token: the one beside a core."""
+    return NODE_STORAGE_DIR is not None and not JOIN_TOKEN
+
+
 def listen(host: str, port: int, *, given: bool = True) -> socket.socket:
     """The socket the worker serves on, bound before it joins a hub: a worker that cannot serve never spends a token.
 
     A port the operator ``given`` (``--port``, or ``run``'s), and any port of a worker without a join token: that port,
     else exit code 1. A worker that already joined with this token: the port it joined with, which the hub has, else
     exit code 1 saying so (``port`` when its file is from before the port was kept). A worker about to join: ``port``,
-    else the port it last joined with, else a free one (``hub_node.listen``), which the join then reports.
+    else the port it last joined with, else a free one (``hub_node.listen``), which the join then reports. The worker
+    beside a core, found by its name: the port that core's join gave for it, else exit code 1 saying so
+    (``hub_node.serving_socket``).
     """
-    move, kept, hubs_port = False, None, False
-    if JOIN_TOKEN and not given:
-        joined = hub_node.already_joined(HUB_URL, JOIN_TOKEN)
-        if joined is None:
-            last = hub_node.read()
-            move, kept = True, last.worker_port if last else None
-        elif joined.worker_port:
-            port, hubs_port = joined.worker_port, True
-    try:
-        return hub_node.listen(host, port, move=move, kept=kept)
-    except hub_node.CannotServe as refused:
-        reason = refused.reason
-        if refused.in_use and hubs_port:
-            reason += "; the hub has this node at that port, so free it or join again with a new join token"
-        logger.error(reason)
-        raise SystemExit(1) from None
+    return hub_node.serving_socket(
+        "worker", host, port, given=given, hub_url=HUB_URL, token=JOIN_TOKEN, found=_found_by_name()
+    )
 
 
 def _worker_url(host: str, port: int, *, tls: bool) -> str:
@@ -210,11 +203,13 @@ def join_hub(port: int | None = None, host: str | None = None) -> None:
     )
 
 
-def _home_relative(folder: Path) -> str:
-    try:
-        return f"~/{folder.relative_to(Path.home()).as_posix()}"
-    except ValueError:
-        return str(folder)
+def _say_found(port: int) -> None:
+    joined = hub_node.read()
+    folder = hub_node.home_relative(NODE_STORAGE_DIR)
+    if joined is not None and joined.worker_port == port:
+        logger.info("Found node %s in %s; serving on %s, the port its join gave the hub", joined.name, folder, port)
+    else:
+        logger.info("Found node %s in %s; serving on %s", NODE_STORAGE_DIR.name, folder, port)
 
 
 def run(host: str = None, port: int = None):
@@ -222,8 +217,9 @@ def run(host: str = None, port: int = None):
 
     The worker binds its socket first (``listen``), then a worker started with a join token joins its hub
     (``join_hub``) with the port it serves on, and serves on that same socket: one that cannot bind exits with code 1
-    before any request to the hub, one the hub refuses with code 2 before it serves. Serves TLS when
-    ``FLOWFILE_WORKER_TLS_CERT`` and ``FLOWFILE_WORKER_TLS_KEY`` name a certificate and its key.
+    before any request to the hub, one the hub refuses with code 2 before it serves. The worker beside a core, started
+    with the node's name and no join token, serves from the core's folder on the port the core's join gave for it.
+    Serves TLS when ``FLOWFILE_WORKER_TLS_CERT`` and ``FLOWFILE_WORKER_TLS_KEY`` name a certificate and its key.
     """
     global server_instance
 
@@ -233,10 +229,12 @@ def run(host: str = None, port: int = None):
     if port is None:
         port = SERVICE_PORT
 
-    if NODE_STORAGE_DIR is not None:
-        logger.info("Keeping this node's files in %s, apart from Flowfile desktop's", _home_relative(NODE_STORAGE_DIR))
+    if not _found_by_name():
+        hub_node.log_storage(NODE_STORAGE_DIR)
     sock = listen(host, port, given=given)
     port = sock.getsockname()[1]
+    if _found_by_name():
+        _say_found(port)
     try:
         join_hub(port, host)
     except BaseException:

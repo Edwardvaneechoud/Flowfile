@@ -30,7 +30,7 @@ if _launched_as_worker():
     from flowfile_worker import configs as _configs
     from shared import hub_node as _hub_node
 
-    NODE_STORAGE_DIR = _hub_node.node_storage(_configs.JOIN_TOKEN, _configs.NODE_NAME)
+    NODE_STORAGE_DIR = _hub_node.node_storage(_configs.JOIN_TOKEN, _configs.NODE_NAME, by_name=True)
 
 from shared._version import get_version
 from shared.storage_config import storage
