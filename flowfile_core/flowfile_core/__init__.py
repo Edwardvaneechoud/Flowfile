@@ -21,7 +21,9 @@ def _starts_core() -> bool:
     """Whether this process serves core: core itself, or the ``flowfile`` command's ``run ui`` or ``run core``.
 
     Never a spawned child, which is handed its parent's command line. While ``python -m flowfile`` imports the package,
-    ``sys.argv[0]`` is ``-m`` and ``sys.orig_argv`` names the module.
+    ``sys.argv[0]`` is ``-m`` and ``sys.orig_argv`` names the module. The ``flowfile`` command takes its options
+    before, after or around its two words but never between them, so ``run`` next to ``ui`` or ``core`` anywhere on
+    its command line is that command.
     """
     if multiprocessing.current_process().name != "MainProcess" or not sys.argv:
         return False
@@ -31,7 +33,9 @@ def _starts_core() -> bool:
     program = os.path.splitext(os.path.basename(sys.argv[0]))[0]
     if sys.argv[0] == "-m" and "-m" in command:
         program = (command[command.index("-m") + 1 :] or [""])[0]
-    return program == "flowfile" and sys.argv[1:3] in (["run", "ui"], ["run", "core"])
+    words = sys.argv[1:]
+    pairs = (words[i : i + 2] for i in range(len(words)))
+    return program == "flowfile" and any(pair in (["run", "ui"], ["run", "core"]) for pair in pairs)
 
 
 # The storage dir is chosen before `shared.storage_config` reads it, for this process and the ones it starts.
