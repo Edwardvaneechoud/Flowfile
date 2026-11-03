@@ -37,6 +37,25 @@ class User(Base):
     must_change_password = Column(Boolean, default=True)
 
 
+class IssuerAccount(Base):
+    """The local account a person from a token issuer (a hub) signs in as on this server.
+
+    One row per person: ``issuer`` is the ``iss`` the issuer signs with, ``subject_id`` that person's user id there.
+    A person is found by the two together, never by username, so a local account that happens to share a hub user's
+    name is never taken over; each local account belongs to at most one such person.
+    """
+
+    __tablename__ = "issuer_accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    issuer = Column(String, nullable=False)
+    subject_id = Column(Integer, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("issuer", "subject_id", name="uq_issuer_account_subject"),)
+
+
 class Secret(Base):
     __tablename__ = "secrets"
 
