@@ -6,14 +6,15 @@ read and wrote. A report never carries a plan, a sample, a schema or a column va
 it does not know, so the shape built here is exact.
 
 Three kinds of core report. A server that joined its hub with keys of its own has people of its own, each signed in
-through the hub, and reports every run of such a person with their delegated access token, so the hub's ledger names
-the person who ran it; it names no run row and no table of its own, since the hub shares neither its database nor its
-catalog. A team node has ``FLOWFILE_HUB_URL`` and shares the hub's secret, so it reports every run with the bearer
-token of the request that started it. A desktop has neither; it has a hub session and flows that came from the hub,
-and reports a run of such a flow with a token minted from the session, so the organisation's ledger also sees the
-version that ran on the desktop. A desktop also reports a run that read or wrote the hub's tables, whatever flow it
-was: the hub vended that run a credential, so the run is the organisation's business too, and the report names the
-hub's tables by the hub's ids, the vend, and the run id the vend was made for.
+through the hub, and reports every run of such a person with their delegated access token, so the hub's ledger names the
+person who ran it; it names no run row and no table of its own, since the hub shares neither its database nor its
+catalog. A team node has ``FLOWFILE_HUB_URL`` (or joined without keys) and shares the hub's secret and catalog, so it
+reports every run with the bearer token of the request that started it, naming the tables of its catalog by their ids. A
+desktop has neither; it has a hub session and flows that came from the hub, and reports a run of such a flow with a
+token minted from the session, so the organisation's ledger also sees the version that ran on the desktop. A desktop
+also reports a run that read or wrote the hub's tables, whatever flow it was: the hub vended that run a credential, so
+the run is the organisation's business too, and the report names the hub's tables by the hub's ids, the vend, and the
+run id the vend was made for; never a table of the desktop's own catalog, whose ids are not the hub's.
 
 Only a core in server mode that did not join with keys names its own run row in the report, since such a core may
 share the hub's database and the hub then links the report to that row. A desktop reports its runs of a hub flow
@@ -38,6 +39,7 @@ from flowfile_core.hub_client import session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.output_model import RunInformation
+from shared import hub_node
 
 
 def hub_target(flow, request_token: str | None, user_id: int | None) -> tuple[str, str] | None:
@@ -129,21 +131,24 @@ def _hub_output_ids(writers: list) -> dict[tuple[int, str], int]:
 def build_run_report(flow, run_info: RunInformation, core_run_id: int, flow_uuid: str) -> dict:
     """The report of a finished run of ``flow``, for the run row ``core_run_id`` of the registration ``flow_uuid``.
 
-    ``core_run_id`` is sent when this core runs in server mode (``is_server_mode()``, read per call), where the hub
-    may share its database and link the report to the row; a desktop reports its runs of a hub flow without a run
-    id of its own, and the field is ``None``. A server joined with keys of its own (``joined_with_keys()``, read per
-    call) has a database and a catalog of its own: its report names no run row and only the tables on the hub.
-    ``inputs`` and ``outputs`` are the catalog tables of the catalog reader and writer nodes that ran and
-    succeeded, resolved to ids the way the nodes resolve them: a reader by its table id, else its table reference;
-    a writer by its ``namespace_full_name``, else its ``namespace_id``, and its table name. A table that no longer
-    resolves keeps its namespace and name with no table id; one whose namespace cannot be found is left out.
-    A table on the hub is named by the hub's ids: a reader's ``hub_namespace_id`` and ``hub_table_id``, a writer's
-    ``hub_namespace_id`` and the id the hub lists for the written name (``None`` when it lists none or does not
-    answer). ``flow_version`` is the hub version of the flow's ``hub_origin``, ``None`` for a flow that never met a
-    hub. A run that vended from the hub (``flow.last_hub_vend``) is reported under the vend's run id with its
-    ``vend_ids``; any other run gets a new run id and no vend.
+    ``core_run_id`` is sent when this core runs in server mode (``is_server_mode()``, read per call), where the hub may
+    share its database and link the report to the row; a desktop reports its runs of a hub flow without a run id of its
+    own, and the field is ``None``. A server joined with keys of its own (``joined_with_keys()``, read per call) has a
+    database and a catalog of its own: its report names no run row and only the tables on the hub. A desktop (no
+    ``FLOWFILE_HUB_URL`` and no ``hub_node.json``) names only the tables on the hub too, since its own catalog's ids
+    mean nothing there. ``inputs`` and ``outputs`` are the catalog tables of the catalog reader and writer nodes that
+    ran and succeeded, resolved to ids the way the nodes resolve them: a reader by its table id, else its table
+    reference; a writer by its ``namespace_full_name``, else its ``namespace_id``, and its table name. A table that no
+    longer resolves keeps its namespace and name with no table id; one whose namespace cannot be found is left out. A
+    table on the hub is named by the hub's ids: a reader's ``hub_namespace_id`` and ``hub_table_id``, a writer's
+    ``hub_namespace_id`` and the id the hub lists for the written name (``None`` when it lists none or does not answer).
+    ``flow_version`` is the hub version of the flow's ``hub_origin``, ``None`` for a flow that never met a hub. A run
+    that vended from the hub (``flow.last_hub_vend``) is reported under the vend's run id with its ``vend_ids``; any
+    other run gets a new run id and no vend.
     """
     own_people = issuer_accounts.joined_with_keys() is not None
+    # Only a team node's catalog is the hub's, so only there does a table of this core's own catalog mean anything.
+    hub_tables_only = own_people or not (FLOWFILE_HUB_URL or hub_node.read() is not None)
     nodes, readers, writers = [], [], []
     for result in run_info.node_step_result or []:
         node = flow.get_node(result.node_id)
@@ -164,10 +169,10 @@ def build_run_report(flow, run_info: RunInformation, core_run_id: int, flow_uuid
             continue
         given = node.setting_input
         if isinstance(given, input_schema.NodeCatalogReader):
-            if not own_people or given.hub_table_id is not None:
+            if not hub_tables_only or given.hub_table_id is not None:
                 readers.append(given)
         elif isinstance(given, input_schema.NodeCatalogWriter):
-            if not own_people or given.catalog_write_settings.hub_namespace_id is not None:
+            if not hub_tables_only or given.catalog_write_settings.hub_namespace_id is not None:
                 writers.append(given)
 
     inputs, outputs = [], []

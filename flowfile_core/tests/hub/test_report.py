@@ -143,6 +143,11 @@ def _assert_contract_shape(built: dict) -> None:
 
 
 class TestBuildRunReport:
+    @pytest.fixture(autouse=True)
+    def team_node(self, monkeypatch):
+        """A team node, whose catalog is the hub's: the tables of its own catalog are named by their ids."""
+        monkeypatch.setattr(report, "FLOWFILE_HUB_URL", HUB_URL)
+
     def test_a_run_reports_its_nodes_and_the_table_it_wrote_without_any_data(self):
         ns_id = create_test_namespace()
         graph = create_test_graph(flow_id=8101)
@@ -255,26 +260,32 @@ class TestBuildRunReport:
         _assert_contract_shape(built)
         assert built["core_run_id"] == expected
 
-    def test_a_desktop_report_differs_from_a_server_cores_only_in_the_run_row_id(self, monkeypatch):
+    def test_a_desktop_report_names_no_table_of_its_own_catalog(self, monkeypatch):
         ns_id = create_test_namespace()
+        seed = create_test_graph(flow_id=8108)
+        add_test_manual_input(seed, CATALOG_SAMPLE_DATA, node_id=1)
+        add_test_catalog_writer(seed, node_id=2, depending_on_id=1, table_name="hub_mine", namespace_id=ns_id)
+        run_test_graph(seed)
         graph = create_test_graph(flow_id=8107)
         graph.flow_settings.hub_origin = schemas.HubOrigin(hub_url=HUB_URL, flow_uuid=FLOW_UUID, version=6)
+        _add_reader(graph, 3, catalog_table_id=_table_ref(ns_id, "hub_mine")["table_id"])
         add_test_manual_input(graph, CATALOG_SAMPLE_DATA, node_id=1)
         add_test_catalog_writer(graph, node_id=2, depending_on_id=1, table_name="hub_both", namespace_id=ns_id)
         run_info = run_test_graph(graph)
 
         monkeypatch.setenv("FLOWFILE_MODE", "hub")
-        on_server = report.build_run_report(graph, run_info, core_run_id=46, flow_uuid=FLOW_UUID)
+        on_team_node = report.build_run_report(graph, run_info, core_run_id=46, flow_uuid=FLOW_UUID)
         monkeypatch.delenv("FLOWFILE_MODE")
+        monkeypatch.setattr(report, "FLOWFILE_HUB_URL", "")
         on_desktop = report.build_run_report(graph, run_info, core_run_id=46, flow_uuid=FLOW_UUID)
 
-        assert on_server["core_run_id"] == 46
+        assert on_team_node["core_run_id"] == 46
+        assert on_team_node["outputs"] == [_table_ref(ns_id, "hub_both")]
+        assert on_team_node["inputs"] == [_table_ref(ns_id, "hub_mine")]
         assert on_desktop["core_run_id"] is None
-        assert uuid.UUID(on_server["run_id"]) != uuid.UUID(on_desktop["run_id"])
-        same = REPORT_KEYS - {"run_id", "core_run_id"}
-        assert {k: on_desktop[k] for k in same} == {k: on_server[k] for k in same}
+        assert (on_desktop["inputs"], on_desktop["outputs"]) == ([], [])
         assert on_desktop["flow_version"] == 6
-        assert on_desktop["outputs"] == [_table_ref(ns_id, "hub_both")]
+        assert [node["node_id"] for node in on_desktop["nodes"]] == [node["node_id"] for node in on_team_node["nodes"]]
 
 
 class TestPostRunReport:
