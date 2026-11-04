@@ -58,11 +58,23 @@
             ref="picker"
             v-model="namespaceId"
             hub
+            catalogs-selectable
             data-testid="hub-publish-namespace"
           />
-          <p class="hub-dialog-hint">
+          <p v-if="namespaceId === null" class="hub-dialog-hint">
             With none picked, the flow goes to the hub's default namespace.
           </p>
+          <el-button
+            v-else
+            link
+            type="primary"
+            size="small"
+            class="hub-dialog-clear"
+            data-testid="hub-publish-default-namespace"
+            @click="namespaceId = null"
+          >
+            Use the hub's default namespace instead
+          </el-button>
         </div>
         <p v-else class="hub-dialog-hint">
           This flow is on the hub as version {{ hubOrigin.version }}; this publish becomes the next
@@ -298,7 +310,8 @@ async function openInstead() {
   line-height: var(--line-height-normal);
 }
 
-.form-group .hub-dialog-hint {
+.form-group .hub-dialog-hint,
+.form-group .hub-dialog-clear {
   margin-top: var(--spacing-2);
 }
 
