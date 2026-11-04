@@ -71,7 +71,6 @@
   line-height: var(--line-height-normal);
 }
 .compute-card__banner {
-  margin-bottom: var(--spacing-3);
   background: var(--color-danger-light);
   color: var(--color-danger-dark);
 }
