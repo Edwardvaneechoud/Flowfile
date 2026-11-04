@@ -70,6 +70,8 @@ const none: HubConnection = {
   syncError: null,
   nodeName: null,
   account: null,
+  joined: false,
+  organisationStorage: null,
 };
 
 const connected: HubConnection = {
@@ -206,6 +208,16 @@ describe("useHubConnection", () => {
 
     expect(mocks.listBackends).not.toHaveBeenCalled();
     expect(hub.nodes.value).toEqual([]);
+  });
+
+  it("lists no team nodes on a joined server, whose compute page shows the hub's servers", async () => {
+    mocks.get.mockResolvedValue({ ...connected, joined: true });
+    const hub = useHubConnection();
+
+    await hub.load();
+
+    expect(hub.state.value?.joined).toBe(true);
+    expect(mocks.listBackends).not.toHaveBeenCalled();
   });
 
   it("reads the team nodes from the backends after a connect and keeps the sync count", async () => {

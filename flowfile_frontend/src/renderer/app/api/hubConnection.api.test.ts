@@ -51,6 +51,8 @@ const connected = {
   syncError: null,
   nodeName: null,
   account: "Ana Lima",
+  joined: false,
+  organisationStorage: null,
 };
 
 describe("hubConnection.api", () => {
@@ -113,6 +115,17 @@ describe("hubConnection.api", () => {
     const result = await api.getHubConnection();
 
     expect(result.account).toBeNull();
+  });
+
+  it("maps a joined server and the organisation's storage its hub shows", async () => {
+    const { get, api } = await loadModule();
+    get.mockResolvedValueOnce({
+      data: { ...pyConnected, joined: true, organisation_storage: "s3://acme/flowfile" },
+    });
+
+    const result = await api.getHubConnection();
+
+    expect([result.joined, result.organisationStorage]).toEqual([true, "s3://acme/flowfile"]);
   });
 
   it("maps the node sync count a connect answers", async () => {

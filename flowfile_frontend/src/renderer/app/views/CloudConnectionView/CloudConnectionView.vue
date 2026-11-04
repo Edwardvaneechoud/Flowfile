@@ -17,6 +17,14 @@
         </button>
       </div>
       <div class="card-content">
+        <div v-if="hubStorage" class="info-box mb-3" data-testid="hub-organisation-storage">
+          <i class="fa-solid fa-tower-broadcast"></i>
+          <div>
+            <p><strong>Set by your hub</strong></p>
+            <p>{{ hubStorage }}</p>
+          </div>
+        </div>
+
         <!-- Info box about connections -->
         <div class="info-box mb-3">
           <i class="fa-solid fa-info-circle"></i>
@@ -163,6 +171,8 @@ import {
   FullCloudStorageConnection,
 } from "./CloudConnectionTypes";
 import CloudConnectionSettings from "./CloudConnectionSettings.vue";
+import { getHubConnection } from "../../api/hubConnection.api";
+import { organisationStorageLine } from "../../components/layout/Header/hubIdentity";
 
 // State
 const connectionInterfaces = ref<FullCloudStorageConnectionInterface[]>([]);
@@ -319,8 +329,19 @@ const handleCloseDeleteDialog = (done: () => void) => {
   done();
 };
 
+const hubStorage = ref<string | null>(null);
+
+const fetchHubStorage = async () => {
+  try {
+    hubStorage.value = organisationStorageLine(await getHubConnection());
+  } catch {
+    hubStorage.value = null;
+  }
+};
+
 onMounted(() => {
   fetchConnections();
+  void fetchHubStorage();
 });
 </script>
 

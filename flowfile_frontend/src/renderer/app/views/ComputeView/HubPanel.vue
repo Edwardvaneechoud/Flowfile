@@ -3,8 +3,11 @@
     <div class="mb-3">
       <h2 class="page-title">Hub</h2>
       <p class="page-description">
-        Connect this Flowfile to your organisation's hub. You sign in once with your hub account;
-        the password is sent to the hub and never kept here. Your local workspace stays as it is.
+        <template v-if="state?.joined">The hub this server belongs to.</template>
+        <template v-else>
+          Connect this Flowfile to your organisation's hub. You sign in once with your hub account;
+          the password is sent to the hub and never kept here. Your local workspace stays as it is.
+        </template>
       </p>
     </div>
 
@@ -25,7 +28,31 @@
 
       <p v-if="loading && !state" class="hub-card__loading">Loading…</p>
 
-      <template v-if="state?.connected">
+      <template v-if="state?.joined">
+        <div
+          class="hub-card__status"
+          :class="state.reachable ? 'hub-card__status--success' : 'hub-card__status--warning'"
+          data-testid="hub-joined"
+        >
+          <i
+            :class="
+              state.reachable ? 'fa-solid fa-circle-check' : 'fa-solid fa-triangle-exclamation'
+            "
+            aria-hidden="true"
+          ></i>
+          <div>
+            <strong>{{ belongsToLine(state) }}</strong>
+            <p v-if="state.account" data-testid="hub-account">Signed in as {{ state.account }}.</p>
+            <p v-if="!state.reachable">The hub is not answering: {{ state.error }}</p>
+          </div>
+        </div>
+        <p v-if="isAdmin" class="hub-nodes__hint" data-testid="hub-servers-link">
+          The hub's servers, with their state, are on
+          <router-link :to="{ query: { tab: 'backends' } }">Backends</router-link>.
+        </p>
+      </template>
+
+      <template v-else-if="state?.connected">
         <div
           class="hub-card__status"
           :class="state.reachable ? 'hub-card__status--success' : 'hub-card__status--warning'"
@@ -54,10 +81,7 @@
           data-testid="hub-static-warning"
         >
           <i class="fa-solid fa-triangle-exclamation"></i>
-          <span>
-            This hub runs in <code>static</code> vend mode, a development setup. Don't treat it as a
-            production hub.
-          </span>
+          <span>{{ STATIC_VEND_NOTE }}</span>
         </p>
 
         <dl class="hub-card__facts">
@@ -171,7 +195,7 @@
         </label>
       </div>
 
-      <template v-if="state" #footer>
+      <template v-if="state && !state.joined" #footer>
         <el-button
           v-if="state.connected"
           size="small"
@@ -206,6 +230,8 @@ import ComputeCard from "./ComputeCard.vue";
 import { teamNodeRows, useHubConnection } from "./useHubConnection";
 import { reachabilityStatus, type StatusSummary } from "../../components/settings/handshakeStatus";
 import { reachabilityNote } from "../../utils/executionLocation";
+import { useAuthStore } from "../../stores/auth-store";
+import { belongsToLine, STATIC_VEND_NOTE } from "../../components/layout/Header/hubIdentity";
 
 const {
   state,
@@ -223,6 +249,7 @@ const {
   checkNodes,
 } = useHubConnection();
 
+const isAdmin = computed(() => useAuthStore().isAdmin);
 const teamNodes = computed(() => teamNodeRows(state.value, nodes.value));
 
 const form = reactive({ hubUrl: "", username: "", password: "", deviceName: "" });
@@ -233,6 +260,7 @@ watch(state, (next) => {
 
 const summary = computed<StatusSummary | null>(() => {
   if (!state.value) return null;
+  if (state.value.joined) return { tone: "success", label: "Joined" };
   if (!state.value.connected) return { tone: "neutral", label: "Not connected" };
   if (!state.value.reachable) return { tone: "warning", label: "Hub not answering" };
   return { tone: "success", label: "Connected" };

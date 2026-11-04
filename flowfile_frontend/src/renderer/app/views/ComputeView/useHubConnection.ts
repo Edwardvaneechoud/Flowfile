@@ -117,7 +117,7 @@ export function useHubConnection() {
     try {
       state.value = await getHubConnection();
       loadError.value = "";
-      if (state.value.connected) await loadNodes();
+      if (state.value.connected && !state.value.joined) await loadNodes();
       else nodes.value = [];
     } catch (error) {
       loadError.value = detailOf(error, "Couldn't read the hub connection.");

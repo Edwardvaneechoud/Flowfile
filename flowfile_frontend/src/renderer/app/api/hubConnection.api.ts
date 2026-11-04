@@ -31,6 +31,10 @@ export interface HubConnection {
   nodeName: string | null;
   /** Who is signed in at the hub through this connection (full name, else username); null when not known. */
   account: string | null;
+  /** This server joined its hub with keys of its own: it belongs to that hub, named by `hubUrl`. */
+  joined: boolean;
+  /** On a joined server, the organisation's storage root as the hub shows it; null when not known. */
+  organisationStorage: string | null;
 }
 
 /** What a node sync left behind: every configured backend, and the hub nodes skipped for a hand-added row. */
@@ -64,6 +68,8 @@ interface PyHubConnection {
   sync_error?: string | null;
   node_name?: string | null;
   account?: string | null;
+  joined?: boolean;
+  organisation_storage?: string | null;
 }
 
 const fromPy = (raw: PyHubConnection): HubConnection => ({
@@ -84,6 +90,8 @@ const fromPy = (raw: PyHubConnection): HubConnection => ({
   syncError: raw.sync_error ?? null,
   nodeName: raw.node_name ?? null,
   account: raw.account ?? null,
+  joined: raw.joined ?? false,
+  organisationStorage: raw.organisation_storage ?? null,
 });
 
 export async function getHubConnection(): Promise<HubConnection> {

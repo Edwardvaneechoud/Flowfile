@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { HubConnection } from "../../../api/hubConnection.api";
-import { hubAddress, hubIdentity, hubIdentityTitle } from "./hubIdentity";
+import {
+  belongsToLine,
+  hubAddress,
+  hubIdentity,
+  hubIdentityTitle,
+  organisationStorageLine,
+} from "./hubIdentity";
 
 const none: HubConnection = {
   connected: false,
@@ -21,6 +27,8 @@ const none: HubConnection = {
   syncError: null,
   nodeName: null,
   account: null,
+  joined: false,
+  organisationStorage: null,
 };
 
 const joined: HubConnection = {
@@ -66,5 +74,35 @@ describe("the header's who and where", () => {
   it("keeps an address it cannot parse as given", () => {
     expect(hubAddress("not a url")).toBe("not a url");
     expect(hubAddress("http://127.0.0.1:63580")).toBe("127.0.0.1:63580");
+  });
+});
+
+describe("a joined server's hub, said in one line", () => {
+  const server: HubConnection = { ...joined, joined: true };
+
+  it("names the organisation's hub and its address", () => {
+    expect(belongsToLine(server)).toBe(
+      "This server belongs to Acme Data's hub at https://hub.acme.test:8443.",
+    );
+  });
+
+  it("names the hub by its address when it does not answer its name", () => {
+    expect(belongsToLine({ ...server, orgName: null })).toBe(
+      "This server belongs to the hub at https://hub.acme.test:8443.",
+    );
+  });
+
+  it("shows the organisation's storage read-only, set by the hub", () => {
+    expect(organisationStorageLine({ ...server, organisationStorage: "s3://acme/flowfile" })).toBe(
+      "The organisation's storage at s3://acme/flowfile; each run gets access from the hub.",
+    );
+  });
+
+  it("shows no storage row on a desktop or when the hub does not say", () => {
+    expect(organisationStorageLine(null)).toBeNull();
+    expect(
+      organisationStorageLine({ ...joined, organisationStorage: "s3://acme/flowfile" }),
+    ).toBeNull();
+    expect(organisationStorageLine(server)).toBeNull();
   });
 });
