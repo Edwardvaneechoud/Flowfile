@@ -2,7 +2,12 @@
   <div class="tree-node">
     <div
       class="tree-row"
-      :class="{ expanded, selected: node.level === 0 && node.id === selectedNamespaceId }"
+      :class="{
+        expanded,
+        selected: node.level === 0 && node.id === selectedNamespaceId,
+        unavailable: reason !== null,
+      }"
+      :title="reason ?? undefined"
       @click="onRowClick"
     >
       <i
@@ -76,9 +81,11 @@
       </div>
     </div>
 
+    <p v-if="reason !== null && node.level === 0" class="ns-unavailable">{{ reason }}</p>
+
     <div v-if="expanded" class="tree-children">
       <!-- Child namespaces (schemas) -->
-      <div v-for="child in node.children" :key="child.id" class="tree-child-wrapper">
+      <div v-for="child in shownChildren" :key="child.id" class="tree-child-wrapper">
         <CatalogTreeNode
           :node="child"
           :selected-flow-id="selectedFlowId"
@@ -346,6 +353,7 @@ import {
   normalizeQuery,
   nsKey,
   secKey,
+  shownNamespaces,
   subtreeLeafCount,
   subtreeMatches,
   visibleArtifacts as filterArtifacts,
@@ -359,7 +367,7 @@ import {
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import CatalogStorageBadge from "./CatalogStorageBadge.vue";
 import HubBadge from "./HubBadge.vue";
-import { isHubRow } from "./hubRows";
+import { isHubRow, unavailableReason } from "./hubRows";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 
 const { isMultiUser, isOwned, canManage } = useResourceSharing();
@@ -424,6 +432,8 @@ function containsTable(node: NamespaceTree, tableId: number): boolean {
 }
 
 const isHub = computed(() => isHubRow(props.node));
+// Why this Flowfile cannot use a hub catalog's tables; the row shows only under "Show unavailable".
+const reason = computed(() => unavailableReason(props.node));
 
 // A hub table is browsed only, so it gets no context menu.
 function onTableContextMenu(table: CatalogTable, event: MouseEvent) {
@@ -442,6 +452,7 @@ const filter = computed<TreeFilter>(() => ({
   showUnavailable: props.showUnavailable,
 }));
 
+const shownChildren = computed(() => shownNamespaces(props.node.children, filter.value));
 const visibleFlows = computed(() => filterFlows(props.node, filter.value));
 const visibleTables = computed(() => filterTables(props.node, filter.value));
 const visibleVisualizations = computed(() => filterVisualizations(props.node, filter.value));
@@ -581,6 +592,18 @@ const totalFlows = computed(() => {
 
 .tree-row.selected {
   background: var(--color-primary-light, rgba(59, 130, 246, 0.1));
+}
+
+.tree-row.unavailable {
+  opacity: 0.55;
+}
+
+.ns-unavailable {
+  margin: 0 0 var(--spacing-1);
+  padding: 0 var(--spacing-2) 0 calc(var(--spacing-2) + 22px);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  line-height: 1.4;
 }
 
 .chevron {

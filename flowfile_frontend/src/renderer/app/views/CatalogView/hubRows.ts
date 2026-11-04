@@ -16,6 +16,39 @@ export interface HubTableFact {
 
 export const isHubRow = (row: { source?: string | null }): boolean => row.source === "hub";
 
+interface PlacedRow {
+  place?: string | null;
+  offered?: boolean;
+  unavailable_reason?: string | null;
+}
+
+/** Whether the Catalog panel and the catalog pickers offer a row; core says no for a joined server's own. */
+export const isOffered = (row: PlacedRow): boolean => row.offered !== false;
+
+/** Why this Flowfile cannot use a hub catalog's tables, as core words it; null when it can. */
+export const unavailableReason = (row: PlacedRow): string | null => row.unavailable_reason ?? null;
+
+export interface PlaceGroup<T> {
+  place: string | null;
+  rows: T[];
+}
+
+/** Consecutive rows that live in one place; core lists this machine's catalogs first, then the hub's. */
+export function byPlace<T extends PlacedRow>(rows: T[]): PlaceGroup<T>[] {
+  const groups: PlaceGroup<T>[] = [];
+  for (const row of rows) {
+    const place = row.place ?? null;
+    const last = groups[groups.length - 1];
+    if (last && last.place === place) last.rows.push(row);
+    else groups.push({ place, rows: [row] });
+  }
+  return groups;
+}
+
+/** Headings only say something where catalogs of more than one place are shown side by side. */
+export const showsPlaces = (groups: PlaceGroup<unknown>[]): boolean =>
+  groups.length > 1 && groups.every((group) => group.place !== null);
+
 /** The rows that live in this Flowfile; a hub catalog drops out with everything under it. */
 export function withoutHubRows<T extends { source?: string | null }>(rows: T[]): T[] {
   return rows.filter((row) => !isHubRow(row));

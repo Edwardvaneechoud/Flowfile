@@ -79,15 +79,31 @@ const writer = (fields: Partial<CatalogWriteSettings> = {}): CatalogWriteSetting
 
 describe("namespace options", () => {
   it("lists the local schemas first, then the hub's, marked by source", () => {
+    const unplaced = { place: null, unavailableReason: null, writable: true };
     expect(namespaceOptions(tree)).toEqual([
-      { id: 2, label: "General / default", full: "General.default", source: "local", hubId: null },
-      { id: -20, label: "Finance / raw", full: "Finance.raw", source: "hub", hubId: 20 },
+      {
+        id: 2,
+        label: "General / default",
+        full: "General.default",
+        source: "local",
+        hubId: null,
+        ...unplaced,
+      },
+      {
+        id: -20,
+        label: "Finance / raw",
+        full: "Finance.raw",
+        source: "hub",
+        hubId: 20,
+        ...unplaced,
+      },
       {
         id: -21,
         label: "Finance / Local Flows",
         full: "Finance.Local Flows",
         source: "hub",
         hubId: 21,
+        ...unplaced,
       },
     ]);
   });

@@ -31,16 +31,42 @@
               clearable
               @change="handleNamespaceChange"
             >
-              <el-option
-                v-for="ns in catalogNamespaces"
-                :key="ns.id"
-                :label="ns.label"
-                :value="pickerRowId(ns)"
-              >
-                {{ ns.label }}
-                <HubBadge v-if="ns.source === 'hub'" kind="namespace" />
-              </el-option>
+              <template v-if="showsPlaces(namespaceGroups)">
+                <el-option-group
+                  v-for="group in namespaceGroups"
+                  :key="group.place ?? ''"
+                  :label="group.place ?? ''"
+                >
+                  <el-option
+                    v-for="ns in group.rows"
+                    :key="ns.id"
+                    :label="ns.label"
+                    :value="pickerRowId(ns)"
+                    :disabled="ns.unavailableReason !== null"
+                    :title="ns.unavailableReason ?? undefined"
+                  >
+                    {{ ns.label }}
+                    <HubBadge v-if="ns.source === 'hub'" kind="namespace" />
+                  </el-option>
+                </el-option-group>
+              </template>
+              <template v-else>
+                <el-option
+                  v-for="ns in shownNamespaceOptions"
+                  :key="ns.id"
+                  :label="ns.label"
+                  :value="pickerRowId(ns)"
+                  :disabled="ns.unavailableReason !== null"
+                  :title="ns.unavailableReason ?? undefined"
+                >
+                  {{ ns.label }}
+                  <HubBadge v-if="ns.source === 'hub'" kind="namespace" />
+                </el-option>
+              </template>
             </el-select>
+            <p v-if="selectedUnavailableReason" class="unavailable-reason">
+              {{ selectedUnavailableReason }}
+            </p>
           </div>
 
           <div class="catalog-field">
@@ -52,22 +78,50 @@
               filterable
               @change="handleTableChange"
             >
-              <el-option
-                v-for="table in filteredTables"
-                :key="table.id"
-                :label="tableOptionLabel(table)"
-                :value="pickerRowId(table)"
-              >
-                <i
-                  :class="
-                    table.table_type === 'virtual'
-                      ? 'fa-solid fa-bolt catalog-option-icon virtual-option-icon'
-                      : 'fa-solid fa-table catalog-option-icon'
-                  "
-                ></i>
-                {{ tableOptionLabel(table) }}
-                <HubBadge v-if="isHubRow(table)" kind="table" />
-              </el-option>
+              <template v-if="showsPlaces(tableGroups)">
+                <el-option-group
+                  v-for="group in tableGroups"
+                  :key="group.place ?? ''"
+                  :label="group.place ?? ''"
+                >
+                  <el-option
+                    v-for="table in group.rows"
+                    :key="table.id"
+                    :label="tableOptionLabel(table)"
+                    :value="pickerRowId(table)"
+                    :disabled="unusableNamespaces.has(table.namespace_id ?? 0)"
+                  >
+                    <i
+                      :class="
+                        table.table_type === 'virtual'
+                          ? 'fa-solid fa-bolt catalog-option-icon virtual-option-icon'
+                          : 'fa-solid fa-table catalog-option-icon'
+                      "
+                    ></i>
+                    {{ tableOptionLabel(table) }}
+                    <HubBadge v-if="isHubRow(table)" kind="table" />
+                  </el-option>
+                </el-option-group>
+              </template>
+              <template v-else>
+                <el-option
+                  v-for="table in filteredTables"
+                  :key="table.id"
+                  :label="tableOptionLabel(table)"
+                  :value="pickerRowId(table)"
+                  :disabled="unusableNamespaces.has(table.namespace_id ?? 0)"
+                >
+                  <i
+                    :class="
+                      table.table_type === 'virtual'
+                        ? 'fa-solid fa-bolt catalog-option-icon virtual-option-icon'
+                        : 'fa-solid fa-table catalog-option-icon'
+                    "
+                  ></i>
+                  {{ tableOptionLabel(table) }}
+                  <HubBadge v-if="isHubRow(table)" kind="table" />
+                </el-option>
+              </template>
             </el-select>
           </div>
 
@@ -230,15 +284,24 @@ import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { useResourceSharing } from "../../../../../composables/useResourceSharing";
 import { CatalogApi } from "../../../../../api/catalog.api";
 import HubBadge from "../../../../../views/CatalogView/HubBadge.vue";
-import { isHubRow, withoutHubRows } from "../../../../../views/CatalogView/hubRows";
+import {
+  isHubRow,
+  isOffered,
+  showsPlaces,
+  withoutHubRows,
+} from "../../../../../views/CatalogView/hubRows";
 import {
   isHubTarget,
   namespaceOptions,
+  pickable,
   pickerRowId,
+  placeGroups,
   readerNamespaceChoice,
   selectedNamespaceRow,
   selectedTableRow,
   tableChoice,
+  tablePlace,
+  unusableNamespaceIds,
   type NamespaceOption,
 } from "../catalogPick";
 import { ChangeFeedReadSection, CollapsibleSection, DateTimePicker } from "../../../../common";
@@ -330,10 +393,30 @@ const extensions = computed(() => [
   oneDark,
 ]);
 
+// A namespace or table this machine cannot use stays out of the lists unless the node already points at it.
+const unusableNamespaces = ref<Set<number>>(new Set());
+const shownNamespaceOptions = computed(() =>
+  pickable(catalogNamespaces.value, selectedNamespaceId.value),
+);
+const namespaceGroups = computed(() => placeGroups(shownNamespaceOptions.value, (ns) => ns.place));
+const selectedUnavailableReason = computed(
+  () =>
+    catalogNamespaces.value.find((ns) => pickerRowId(ns) === selectedNamespaceId.value)
+      ?.unavailableReason ?? null,
+);
+
 const filteredTables = computed(() => {
-  if (selectedNamespaceId.value == null) return allTables.value;
-  return allTables.value.filter((t) => t.namespace_id === selectedNamespaceId.value);
+  const usable = allTables.value.filter(
+    (t) =>
+      !unusableNamespaces.value.has(t.namespace_id ?? 0) ||
+      pickerRowId(t) === selectedTableId.value,
+  );
+  if (selectedNamespaceId.value == null) return usable;
+  return usable.filter((t) => t.namespace_id === selectedNamespaceId.value);
 });
+const tableGroups = computed(() =>
+  placeGroups(filteredTables.value, (t) => tablePlace(t, catalogNamespaces.value)),
+);
 
 // Whether the candidate list has any name collisions — used to force qualified
 // labels even when the user is browsing within a single namespace.
@@ -656,7 +739,8 @@ async function loadCatalogData() {
   try {
     const tree = await CatalogApi.getNamespaceTree();
     catalogNamespaces.value = namespaceOptions(tree, true);
-    allTables.value = collectTablesFromTree(tree).filter(
+    unusableNamespaces.value = unusableNamespaceIds(tree);
+    allTables.value = collectTablesFromTree(tree.filter(isOffered)).filter(
       (t) => t.file_exists || t.table_type === "virtual",
     );
   } catch {
@@ -757,6 +841,12 @@ defineExpose({
 </script>
 
 <style scoped>
+.unavailable-reason {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--el-color-danger);
+}
+
 .catalog-option-icon {
   margin-right: 6px;
   font-size: 12px;

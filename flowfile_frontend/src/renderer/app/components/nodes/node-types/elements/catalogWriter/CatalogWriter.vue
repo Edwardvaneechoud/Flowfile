@@ -26,16 +26,42 @@
             clearable
             @change="onNamespaceChange"
           >
-            <el-option
-              v-for="ns in catalogNamespaces"
-              :key="ns.id"
-              :label="ns.label"
-              :value="pickerRowId(ns)"
-            >
-              {{ ns.label }}
-              <HubBadge v-if="ns.source === 'hub'" kind="namespace" />
-            </el-option>
+            <template v-if="showsPlaces(namespaceGroups)">
+              <el-option-group
+                v-for="group in namespaceGroups"
+                :key="group.place ?? ''"
+                :label="group.place ?? ''"
+              >
+                <el-option
+                  v-for="ns in group.rows"
+                  :key="ns.id"
+                  :label="ns.label"
+                  :value="pickerRowId(ns)"
+                  :disabled="ns.unavailableReason !== null"
+                  :title="ns.unavailableReason ?? undefined"
+                >
+                  {{ ns.label }}
+                  <HubBadge v-if="ns.source === 'hub'" kind="namespace" />
+                </el-option>
+              </el-option-group>
+            </template>
+            <template v-else>
+              <el-option
+                v-for="ns in shownNamespaceOptions"
+                :key="ns.id"
+                :label="ns.label"
+                :value="pickerRowId(ns)"
+                :disabled="ns.unavailableReason !== null"
+                :title="ns.unavailableReason ?? undefined"
+              >
+                {{ ns.label }}
+                <HubBadge v-if="ns.source === 'hub'" kind="namespace" />
+              </el-option>
+            </template>
           </el-select>
+          <p v-if="selectedUnavailableReason" class="field-error">
+            {{ selectedUnavailableReason }}
+          </p>
         </div>
 
         <!-- Target table status: exists vs new -->
@@ -294,13 +320,16 @@ import { useWritableNamespaces } from "../../../../../composables/useWritableNam
 import { validateCatalogName } from "../../../../../composables/catalogNameValidation";
 import { CatalogApi } from "../../../../../api/catalog.api";
 import HubBadge from "../../../../../views/CatalogView/HubBadge.vue";
-import { isHubRow, withoutHubRows } from "../../../../../views/CatalogView/hubRows";
+import { isHubRow, showsPlaces, withoutHubRows } from "../../../../../views/CatalogView/hubRows";
 import {
   isHubTarget,
   namespaceChoice,
   namespaceOptions,
+  pickable,
   pickerRowId,
+  placeGroups,
   selectedNamespaceRow,
+  writerDefault,
   type NamespaceOption,
 } from "../catalogPick";
 import axios from "../../../../../services/axios.config";
@@ -368,6 +397,17 @@ const hubTarget = computed(
   () => !!nodeData.value && isHubTarget(nodeData.value.catalog_write_settings),
 );
 
+// A schema this machine cannot use stays out of the list unless the node already points at it.
+const shownNamespaceOptions = computed(() =>
+  pickable(catalogNamespaces.value, selectedNamespaceId.value),
+);
+const namespaceGroups = computed(() => placeGroups(shownNamespaceOptions.value, (ns) => ns.place));
+const selectedUnavailableReason = computed(
+  () =>
+    catalogNamespaces.value.find((ns) => pickerRowId(ns) === selectedNamespaceId.value)
+      ?.unavailableReason ?? null,
+);
+
 // Keep the portable name in sync with the numeric selection. ``namespace_full_name`` ("catalog.schema")
 // is what survives recreation on another machine; the id is install-local. A hub schema is its hub id only.
 async function onNamespaceChange(id: number | null) {
@@ -399,9 +439,26 @@ async function leaveLocalOnlyModes() {
 function reconcileNamespaceSelection() {
   const settings = nodeData.value?.catalog_write_settings;
   if (!settings) return;
+  preselectDefault();
   const match = selectedNamespaceRow(settings, allCatalogNamespaces.value);
   if (match?.source === "local" && settings.namespace_id == null) settings.namespace_id = match.id;
   selectedNamespaceId.value = match ? pickerRowId(match) : settings.namespace_id;
+}
+
+// A new writer with no target takes the writer's default: the hub's default schema where only a hub's are offered.
+function preselectDefault() {
+  const node = nodeData.value;
+  const settings = node?.catalog_write_settings;
+  if (!node || !settings || node.is_setup || allCatalogNamespaces.value.length === 0) return;
+  if (
+    settings.namespace_id != null ||
+    settings.namespace_full_name ||
+    settings.hub_namespace_id != null
+  ) {
+    return;
+  }
+  const preset = writerDefault(allCatalogNamespaces.value);
+  if (preset) Object.assign(settings, namespaceChoice(preset));
 }
 
 // A pre-configured target outside the writable list (manage-granted table in a

@@ -25,6 +25,14 @@ export interface CatalogNamespace {
 }
 
 export interface NamespaceTree extends CatalogNamespace {
+  // Where the catalog lives, in words ("On this computer", "On this server", the hub's name); set by core
+  // once a hub's catalogs are listed beside this machine's.
+  place?: string | null;
+  // False for this machine's catalogs on a server joined to a hub: the Catalog panel and the catalog
+  // reader's and writer's pickers leave them out. Absent from an older core, which means offered.
+  offered?: boolean;
+  // Why this Flowfile cannot use a hub catalog's tables, in the words a run over it is refused with.
+  unavailable_reason?: string | null;
   children: NamespaceTree[];
   flows: FlowRegistration[];
   artifacts: GlobalArtifact[];

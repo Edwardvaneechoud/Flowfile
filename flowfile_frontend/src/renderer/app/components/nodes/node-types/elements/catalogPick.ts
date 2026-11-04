@@ -2,7 +2,17 @@
 import { SYSTEM_NAMESPACE_NAMES } from "../../../../types/catalog.types";
 import type { CatalogTable, NamespaceTree } from "../../../../types/catalog.types";
 import type { CatalogWriteSettings, NodeCatalogReader } from "../../../../types/node.types";
-import { isHubRow } from "../../../../views/CatalogView/hubRows";
+import type { AccessInfo } from "../../../../types/sharing.types";
+import {
+  byPlace,
+  isHubRow,
+  isOffered,
+  unavailableReason,
+  type PlaceGroup,
+} from "../../../../views/CatalogView/hubRows";
+
+/** The schema a hub's organisation writes to by default. */
+export const HUB_DEFAULT_SCHEMA = "main.default";
 
 /** One schema in a picker. ``id`` is the tree's id (negative for a hub schema), ``hubId`` the hub's own. */
 export interface NamespaceOption {
@@ -11,7 +21,16 @@ export interface NamespaceOption {
   full: string;
   source: "local" | "hub";
   hubId: number | null;
+  /** Where the schema's catalog lives, as core words it; null when core does not say (no hub beside it). */
+  place: string | null;
+  /** Why this Flowfile cannot use the schema's tables, as core words it; null when it can. */
+  unavailableReason: string | null;
+  /** Whether the access the listing answers lets this person write here: none (unrestricted), owner or manage. */
+  writable: boolean;
 }
+
+const writableBy = (access: AccessInfo | null | undefined): boolean =>
+  !access || access.is_owner || access.access_level === "manage";
 
 export type ReaderTarget = Pick<
   NodeCatalogReader,
@@ -38,14 +57,17 @@ const isWriter = (settings: ReaderTarget | WriterTarget): settings is WriterTarg
 
 /**
  * One option per schema, the local catalogs first and the hub's after them. The system schemas under the local
- * ``General`` are left out unless ``includeSystemSchemas`` (the reader reads tables kept there).
+ * ``General`` are left out unless ``includeSystemSchemas`` (the reader reads tables kept there), and so is every
+ * catalog core does not offer (a joined server's own). A schema this machine cannot use is listed, marked with why,
+ * so a node saved on it still finds its row; ``pickable`` decides what a picker shows.
  */
 export function namespaceOptions(
   tree: NamespaceTree[],
   includeSystemSchemas = false,
 ): NamespaceOption[] {
   const options: NamespaceOption[] = [];
-  const ordered = [...tree.filter((c) => !isHubRow(c)), ...tree.filter(isHubRow)];
+  const offered = tree.filter(isOffered);
+  const ordered = [...offered.filter((c) => !isHubRow(c)), ...offered.filter(isHubRow)];
   for (const catalog of ordered) {
     const hub = isHubRow(catalog);
     for (const schema of catalog.children ?? []) {
@@ -63,10 +85,64 @@ export function namespaceOptions(
         full: `${catalog.name}.${schema.name}`,
         source: hub ? "hub" : "local",
         hubId: hub ? (schema.hub_id ?? null) : null,
+        place: catalog.place ?? null,
+        unavailableReason: unavailableReason(schema) ?? unavailableReason(catalog),
+        writable: writableBy(schema.access ?? catalog.access),
       });
     }
   }
   return options;
+}
+
+/** What a picker shows: the schemas this machine can use, and the one a saved node already points at. */
+export function pickable(options: NamespaceOption[], selectedId: number | null): NamespaceOption[] {
+  return options.filter((o) => o.unavailableReason === null || o.id === selectedId);
+}
+
+/** A picker's rows under the place each lives in, in the order given. */
+export function placeGroups<T>(rows: T[], placeOf: (row: T) => string | null): PlaceGroup<T>[] {
+  return byPlace(rows.map((row) => ({ row, place: placeOf(row) }))).map((group) => ({
+    place: group.place,
+    rows: group.rows.map((entry) => entry.row),
+  }));
+}
+
+/** A table's place: that of the options of its source, since one machine and one hub each have one. */
+export function tablePlace(table: CatalogTable, options: NamespaceOption[]): string | null {
+  const source = isHubRow(table) ? "hub" : "local";
+  return options.find((o) => o.source === source)?.place ?? null;
+}
+
+/** The tree ids of the namespaces whose tables this machine cannot use, catalogs and schemas alike. */
+export function unusableNamespaceIds(tree: NamespaceTree[]): Set<number> {
+  const ids = new Set<number>();
+  for (const catalog of tree) {
+    const catalogReason = unavailableReason(catalog);
+    for (const ns of [catalog, ...(catalog.children ?? [])]) {
+      if (catalogReason !== null || unavailableReason(ns) !== null) ids.add(ns.id);
+    }
+  }
+  return ids;
+}
+
+/**
+ * The hub's default schema: ``main.default`` when this machine can use it and the person may write it, else the
+ * first hub schema that holds for, else none.
+ */
+export function hubDefaultSchema(options: NamespaceOption[]): NamespaceOption | null {
+  const usable = options.filter(
+    (o) => o.source === "hub" && o.unavailableReason === null && o.writable,
+  );
+  return usable.find((o) => o.full === HUB_DEFAULT_SCHEMA) ?? usable[0] ?? null;
+}
+
+/**
+ * What a new writer preselects. Nothing while this machine's own schemas are offered (a desktop, as before); where
+ * only a hub's are (a server joined to it), the hub's default schema.
+ */
+export function writerDefault(options: NamespaceOption[]): NamespaceOption | null {
+  if (options.some((o) => o.source === "local")) return null;
+  return hubDefaultSchema(options);
 }
 
 /** The reader's fields for a picked table: a hub table by the hub's ids only, a local one as before. */

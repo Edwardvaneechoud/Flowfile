@@ -126,43 +126,50 @@
             </button>
           </div>
           <div v-else>
+            <p v-if="treeEmptyNote" class="search-empty">{{ treeEmptyNote }}</p>
             <p v-if="treeSearchFilter.query && searchMatchCount === 0" class="search-empty">
               No matches for "{{ searchQuery.trim() }}".
               <template v-if="hiddenUnavailableMatches > 0">
-                Tick "Show unavailable" — the only matches are items whose files are missing.
+                Tick "Show unavailable" — the only matches are missing or out of this Flowfile's
+                reach.
               </template>
             </p>
-            <CatalogTreeNode
-              v-for="node in catalogStore.tree"
-              :key="node.id"
-              :node="node"
-              :selected-flow-id="catalogStore.selectedFlowId"
-              :selected-artifact-id="catalogStore.selectedArtifactId"
-              :selected-table-id="catalogStore.selectedTableId"
-              :selected-namespace-id="catalogStore.selectedNamespaceId"
-              :search-query="searchQuery"
-              :show-unavailable="showUnavailable"
-              @select-flow="selectFlow($event)"
-              @select-artifact="selectArtifact($event)"
-              @select-table="selectTable($event)"
-              @select-namespace="selectNamespace($event)"
-              @table-context-menu="onTableContextMenu($event)"
-              @artifact-context-menu="onArtifactContextMenu($event)"
-              @flow-context-menu="onFlowContextMenu($event)"
-              @select-visualization="openVisualization($event)"
-              @select-notebook="openNotebook($event)"
-              @delete-notebook="handleDeleteNotebook($event)"
-              @toggle-favorite="catalogStore.toggleFavorite($event)"
-              @toggle-table-favorite="catalogStore.toggleTableFavorite($event)"
-              @register-flow="openRegisterFlow($event)"
-              @register-table="openRegisterTable($event)"
-              @create-schema="openCreateSchema($event)"
-              @delete-table="handleDeleteTable($event)"
-              @delete-flow="handleDeleteFlow($event)"
-              @namespace-share="openNamespaceShare($event)"
-              @cleanup-namespace="handleCleanupNamespace($event)"
-              @delete-namespace="handleDeleteSchema($event)"
-            />
+            <template v-for="group in treeGroups" :key="group.place ?? ''">
+              <div v-if="showsPlaces(treeGroups)" class="tree-place" data-testid="catalog-place">
+                {{ group.place }}
+              </div>
+              <CatalogTreeNode
+                v-for="node in group.rows"
+                :key="node.id"
+                :node="node"
+                :selected-flow-id="catalogStore.selectedFlowId"
+                :selected-artifact-id="catalogStore.selectedArtifactId"
+                :selected-table-id="catalogStore.selectedTableId"
+                :selected-namespace-id="catalogStore.selectedNamespaceId"
+                :search-query="searchQuery"
+                :show-unavailable="showUnavailable"
+                @select-flow="selectFlow($event)"
+                @select-artifact="selectArtifact($event)"
+                @select-table="selectTable($event)"
+                @select-namespace="selectNamespace($event)"
+                @table-context-menu="onTableContextMenu($event)"
+                @artifact-context-menu="onArtifactContextMenu($event)"
+                @flow-context-menu="onFlowContextMenu($event)"
+                @select-visualization="openVisualization($event)"
+                @select-notebook="openNotebook($event)"
+                @delete-notebook="handleDeleteNotebook($event)"
+                @toggle-favorite="catalogStore.toggleFavorite($event)"
+                @toggle-table-favorite="catalogStore.toggleTableFavorite($event)"
+                @register-flow="openRegisterFlow($event)"
+                @register-table="openRegisterTable($event)"
+                @create-schema="openCreateSchema($event)"
+                @delete-table="handleDeleteTable($event)"
+                @delete-flow="handleDeleteFlow($event)"
+                @namespace-share="openNamespaceShare($event)"
+                @cleanup-namespace="handleCleanupNamespace($event)"
+                @delete-namespace="handleDeleteSchema($event)"
+              />
+            </template>
           </div>
         </div>
       </div>
@@ -622,10 +629,10 @@ import VisualizationEditor from "./VisualizationEditor.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
-import { isHubRow, withoutHubRows } from "./hubRows";
+import { byPlace, isHubRow, isOffered, showsPlaces, withoutHubRows } from "./hubRows";
 import { useFlowOpener } from "../../composables/useFlowOpener";
 import { useRecentFlows } from "../../composables/useRecentFlows";
-import { countMatches, normalizeQuery } from "./catalogTreeFilter";
+import { countMatches, normalizeQuery, shownNamespaces } from "./catalogTreeFilter";
 import { apiErrorMessage, artifactRef, pageAfterDelete } from "./artifactVersions";
 import { useCatalogTreeExpansion } from "./useCatalogTreeExpansion";
 import { findNamespacePath } from "../../types";
@@ -729,6 +736,19 @@ watch(() => treeSearchFilter.value.query, resetSearchOverrides);
 const searchMatchCount = computed(() =>
   treeSearchFilter.value.query ? countMatches(catalogStore.tree, treeSearchFilter.value) : 0,
 );
+// The catalogs the tree shows, under the place each lives in; headings only where more than one place shows.
+const treeGroups = computed(() =>
+  byPlace(shownNamespaces(catalogStore.tree, treeSearchFilter.value)),
+);
+// Why the tree is empty though catalogs were listed: none offered here, or all out of this Flowfile's reach.
+const treeEmptyNote = computed(() => {
+  if (treeGroups.value.length > 0 || catalogStore.tree.length === 0) return null;
+  if (!catalogStore.tree.some(isOffered)) {
+    return "This server works in its hub's catalogs, and the hub lists none for you now.";
+  }
+  return 'The catalogs listed are out of this Flowfile\'s reach. Tick "Show unavailable" to see them.';
+});
+
 // Only nudge toward "Show unavailable" when it would actually reveal something.
 const hiddenUnavailableMatches = computed(() => {
   if (!treeSearchFilter.value.query || showUnavailable.value || searchMatchCount.value > 0) {
@@ -2909,6 +2929,20 @@ onUnmounted(() => {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
   line-height: 1.5;
+}
+
+.tree-place {
+  margin: var(--spacing-3) 0 var(--spacing-1);
+  padding: 0 var(--spacing-2);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.tree-place:first-of-type {
+  margin-top: 0;
 }
 
 .unavailable-toggle {
