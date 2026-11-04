@@ -608,38 +608,24 @@ def free_port() -> int:
         return sock.getsockname()[1]
 
 
-def test_a_node_listens_on_the_port_it_is_given():
+def test_a_node_that_joins_listens_on_the_port_it_is_given():
     port = free_port()
 
-    with hub_node.listen("127.0.0.1", port) as sock:
+    with hub_node.serving_socket("127.0.0.1", port) as sock:
         assert sock.getsockname() == ("127.0.0.1", port)
         socket.create_connection(("127.0.0.1", port), timeout=2).close()
 
 
-def test_a_port_in_use_is_refused_in_one_sentence_naming_the_address_and_the_reason(held):
-    port = held()
-
-    with pytest.raises(hub_node.CannotServe) as refused:
-        hub_node.listen("127.0.0.1", port)
-
-    assert refused.value.reason == f"Cannot serve on 127.0.0.1:{port}: {os.strerror(errno.EADDRINUSE)}"
-
-
-def test_an_address_this_machine_does_not_have_is_refused_with_the_os_reason():
+def test_an_address_this_machine_does_not_have_exits_1_with_the_os_reason(caplog):
     port = free_port()
 
-    with pytest.raises(hub_node.CannotServe) as refused:
-        hub_node.listen("192.0.2.1", port)
+    with caplog.at_level(logging.ERROR, logger="flowfile.hub_node"), pytest.raises(SystemExit) as exited:
+        hub_node.serving_socket("192.0.2.1", port)
 
-    assert refused.value.reason.startswith(f"Cannot serve on 192.0.2.1:{port}: ")
-    assert "in use" not in refused.value.reason
-
-
-def test_a_node_that_joins_serves_on_the_port_it_is_given():
-    port = free_port()
-
-    with hub_node.serving_socket("127.0.0.1", port) as sock:
-        assert sock.getsockname()[1] == port
+    assert exited.value.code == 1
+    (line,) = [record.getMessage() for record in caplog.records]
+    assert line.startswith(f"Cannot serve on 192.0.2.1:{port}: ")
+    assert "in use" not in line
 
 
 def test_a_node_whose_port_is_in_use_exits_1_with_the_sentence_before_any_request(join_hub, held, caplog):
@@ -649,7 +635,9 @@ def test_a_node_whose_port_is_in_use_exits_1_with_the_sentence_before_any_reques
         hub_node.serving_socket("127.0.0.1", port)
 
     assert exited.value.code == 1
-    assert f"Cannot serve on 127.0.0.1:{port}: {os.strerror(errno.EADDRINUSE)}" in caplog.text
+    assert [record.getMessage() for record in caplog.records] == [
+        f"Cannot serve on 127.0.0.1:{port}: {os.strerror(errno.EADDRINUSE)}"
+    ]
     assert join_hub.calls == []
 
 

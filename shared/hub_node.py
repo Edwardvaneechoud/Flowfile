@@ -26,10 +26,10 @@ One storage dir holds one node: every process reading it takes the name the late
 A node that joins beside Flowfile desktop keeps out of the desktop's way. Started with a join token and no
 ``FLOWFILE_STORAGE_DIR``, it keeps its files in ``~/.flowfile-node/<name>`` (``node_storage``), never in the desktop's
 ``~/.flowfile``. It serves on the port it is given, ``--port`` or the default, and binds that socket before it joins
-(``listen``): a node whose port is in use exits with code 1 saying so, before it spends its token. Without an address
-of its own (``--url``) it gives the hub this machine's address on the interface that reaches the hub (``node_url``),
-not a name the hub may not resolve. A core joins for itself and the worker beside it the same way; the worker, started
-with the node's name and no join token, finds the core's folder by that name.
+(``serving_socket``): a node whose port is in use exits with code 1 saying so, before it spends its token. Without an
+address of its own (``--url``) it gives the hub this machine's address on the interface that reaches the hub
+(``node_url``), not a name the hub may not resolve. A core joins for itself and the worker beside it the same way; the
+worker, started with the node's name and no join token, finds the core's folder by that name.
 """
 
 import hashlib
@@ -218,8 +218,7 @@ def _write(node: HubNode) -> None:
     target = path()
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(target.name + ".tmp")
-    kept = {field: value for field, value in asdict(node).items() if value is not None}
-    temporary.write_text(json.dumps(kept, indent=2) + "\n", encoding="utf-8")
+    temporary.write_text(json.dumps(asdict(node), indent=2) + "\n", encoding="utf-8")
     os.replace(temporary, target)
 
 
@@ -573,14 +572,6 @@ def log_storage(folder: Path | None) -> None:
         logger.info("Keeping this node's files in %s, apart from Flowfile desktop's", home_relative(folder))
 
 
-class CannotServe(Exception):
-    """A port a node cannot listen on: ``reason`` is the sentence to print."""
-
-    def __init__(self, reason: str):
-        super().__init__(reason)
-        self.reason = reason
-
-
 def _host_port(host: str, port: int) -> str:
     host = host.strip("[]")
     return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
@@ -615,26 +606,18 @@ def _is_any_address(host: str) -> bool:
         return False
 
 
-def listen(host: str, port: int) -> socket.socket:
-    """The socket a node serves on, bound and listening on ``host`` and ``port``; ``CannotServe`` when it cannot be.
+def serving_socket(host: str, port: int) -> socket.socket:
+    """The socket a node that joins a hub serves on, bound and listening on ``host`` and ``port`` before it joins, so
+    one that cannot serve never spends a token.
 
     The server is handed this socket, so nothing can take the port between this call and serving. The node serves on
-    ``port`` or not at all: the sentence names the address and the OS's reason, ``Cannot serve on 127.0.0.1:63578:
-    Address already in use``.
+    ``port`` or not at all: when it cannot be bound, one line names the address and the OS's reason, ``Cannot serve on
+    127.0.0.1:63578: Address already in use``, and the process exits with code 1.
     """
     try:
         return _bind(host, port)
     except OSError as exc:
-        raise CannotServe(f"Cannot serve on {_host_port(host, port)}: {exc.strerror or type(exc).__name__}") from None
-
-
-def serving_socket(host: str, port: int) -> socket.socket:
-    """The socket a node that joins a hub serves on, bound before it joins, so one that cannot serve never spends a
-    token: ``listen`` on the port the process was started with, else exit code 1 with its sentence."""
-    try:
-        return listen(host, port)
-    except CannotServe as refused:
-        logger.error(refused.reason)
+        logger.error("Cannot serve on %s: %s", _host_port(host, port), exc.strerror or type(exc).__name__)
         raise SystemExit(1) from None
 
 
