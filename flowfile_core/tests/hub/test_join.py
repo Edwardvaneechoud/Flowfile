@@ -38,7 +38,7 @@ join_hub = hub_join.join_hub
 hub = hub_client_fakes.hub
 store = hub_client_fakes.store
 
-VARIABLES = ("FLOWFILE_HUB_JOIN_TOKEN", "FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME", "FLOWFILE_HUB_ISSUER")
+VARIABLES = ("FLOWFILE_HUB_JOIN_TOKEN", "FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME")
 CONNECT = {"hub_url": HUB_URL, "username": "ana", "password": "s3cret", "device_name": "ana-laptop"}
 
 
@@ -66,7 +66,7 @@ def joined_as(node_file, name: str, hub_url: str = HUB_URL) -> None:
                 "issuer": hub_url,
                 "name": name,
                 "node_id": 1,
-                "joined_at": "2026-11-03T09:00:00+00:00",
+                "join_token_hash": "0" * 16,
             }
         ),
         encoding="utf-8",
@@ -149,7 +149,7 @@ def test_a_core_joins_for_itself_and_its_worker_and_a_restart_makes_no_request(m
         "http://team-1.example:63579",
     )
     kept = json.loads(node_file.read_text(encoding="utf-8"))
-    fields = ["has_core", "hub_url", "issuer", "join_token_hash", "joined_at", "name", "node_id"]
+    fields = ["has_core", "hub_url", "issuer", "join_token_hash", "name", "node_id"]
     assert sorted(kept) == fields
     assert (kept["name"], kept["has_core"]) == ("team-1", True)
 
@@ -455,7 +455,7 @@ def test_a_core_whose_port_is_in_use_exits_1_before_any_request_and_keeps_its_to
     assert f"Cannot serve on 127.0.0.1:{port}: {os.strerror(errno.EADDRINUSE)}" in caplog.text
     assert join_hub.calls == []
     assert serving == []
-    assert hub_node.join(join_hub.url, token, name="team-1", worker_url="http://w:1").name == "team-1"
+    assert hub_node.join(join_hub.url, token, name="team-1", worker_url="http://w:1")[0].name == "team-1"
 
 
 def test_a_core_joins_with_the_ports_it_was_started_with_and_serves_on_its_own(

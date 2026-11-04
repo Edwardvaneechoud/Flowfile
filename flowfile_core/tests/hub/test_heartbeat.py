@@ -5,7 +5,6 @@ from a thread. The interval is shortened here so a second beat comes within the 
 pinned in ``shared/tests/test_hub_node.py``. ``hub_node.json`` and the keys live under the test's ``tmp_path``.
 """
 
-import json
 import logging
 import time
 
@@ -22,7 +21,7 @@ from shared.tests.hub_join import HEARTBEAT_PATH, FakeJoinHub
 join_hub = hub_join.join_hub
 
 QUIET = 0.6
-VARIABLES = ("FLOWFILE_HUB_JOIN_TOKEN", "FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME", "FLOWFILE_HUB_ISSUER")
+VARIABLES = ("FLOWFILE_HUB_JOIN_TOKEN", "FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME")
 
 
 @pytest.fixture(autouse=True)
@@ -92,19 +91,6 @@ def test_a_core_the_hub_refuses_warns_once_while_it_keeps_beating(monkeypatch, j
     ]
     assert "eyJ" not in caplog.text
 
-
-def test_a_core_joined_without_keys_never_beats_and_says_so_once(join_hub, node_file, caplog):
-    node_file.parent.mkdir(parents=True)
-    node = {"hub_url": join_hub.url, "issuer": join_hub.url, "name": "team-1", "node_id": 1, "has_core": True}
-    node_file.write_text(json.dumps({**node, "joined_at": "2026-11-03T09:00:00+00:00"}), encoding="utf-8")
-
-    with TestClient(main.app):
-        time.sleep(QUIET)
-
-    assert join_hub.calls == []
-    [warning] = warnings_of(caplog)
-    assert warning.startswith(f"team-1 joined {join_hub.url} without keys of its own")
-    assert not node_file.with_name(hub_node_key.FILE_NAME).exists()
 
 
 def test_a_core_that_never_joined_a_hub_sends_nothing(join_hub, node_file, caplog):

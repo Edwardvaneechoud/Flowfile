@@ -72,7 +72,6 @@ def node_worker(hub_signer: hub_jwks.HubSigner) -> Iterator[str]:
         "FLOWFILE_NODE_NAME": NODE_NAME,
         "FLOWFILE_INTERNAL_TOKEN": secrets.token_urlsafe(24),
     }
-    env.pop("FLOWFILE_HUB_ISSUER", None)
     url = f"http://127.0.0.1:{port}"
     with tempfile.TemporaryFile(mode="w+") as output:
         proc = subprocess.Popen(

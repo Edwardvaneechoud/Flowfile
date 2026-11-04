@@ -33,13 +33,22 @@ def test_a_dispatch_token_is_no_scope_this_node_knows(hub_signer):
     assert refusal(hub_signer.token(scope="dispatch", sub="hub", uid=None)) == "unknown scope"
 
 
-def test_the_issuer_setting_names_the_iss_the_hub_signs_with(hub_signer, monkeypatch):
-    signed_for_another_name = hub_signer.token(iss="http://localhost:63580")
-    assert refusal(signed_for_another_name) == "wrong issuer"
+def joined_file(tmp_path, monkeypatch, hub_url: str, **fields) -> None:
+    """``hub_node.json`` under the test's storage dir, as a join of ``hub_url`` leaves it, with ``fields`` changed."""
+    node = {"hub_url": hub_url, "issuer": hub_url, "name": NODE_NAME, "node_id": 4, "join_token_hash": "0" * 16}
+    joined = tmp_path / "storage" / hub_node.FILE_NAME
+    joined.parent.mkdir()
+    joined.write_text(json.dumps({**node, **fields}), encoding="utf-8")
+    monkeypatch.setattr(hub_node, "path", lambda: joined)
 
-    monkeypatch.setenv("FLOWFILE_HUB_ISSUER", "http://localhost:63580")
 
-    assert verify(signed_for_another_name).scope == "run"
+def test_the_issuer_the_node_joined_with_names_the_iss_the_hub_signs_with(hub_signer, monkeypatch, tmp_path):
+    signed_for_another_address = hub_signer.token(iss="http://localhost:63580")
+    assert refusal(signed_for_another_address) == "wrong issuer"
+
+    joined_file(tmp_path, monkeypatch, hub_signer.url, issuer="http://localhost:63580")
+
+    assert verify(signed_for_another_address).scope == "run"
     assert refusal(hub_signer.token()) == "wrong issuer"
 
 
@@ -144,21 +153,7 @@ def test_the_key_client_follows_the_hub_url(hub_signer, monkeypatch):
 def test_a_joined_node_takes_tokens_for_its_name(hub_signer, monkeypatch, tmp_path):
     monkeypatch.delenv("FLOWFILE_NODE_NAME")
     monkeypatch.delenv("FLOWFILE_HUB_URL")
-    joined = tmp_path / "storage" / hub_node.FILE_NAME
-    joined.parent.mkdir()
-    joined.write_text(
-        json.dumps(
-            {
-                "hub_url": hub_signer.url,
-                "issuer": hub_signer.url,
-                "name": "joined-node",
-                "node_id": 4,
-                "joined_at": "2026-11-03T09:00:00+00:00",
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(hub_node, "path", lambda: joined)
+    joined_file(tmp_path, monkeypatch, hub_signer.url, name="joined-node")
 
     assert verify(hub_signer.token(aud="joined-node")).scope == "run"
     assert refusal(hub_signer.token(aud=NODE_NAME)) == "wrong audience"
@@ -170,8 +165,8 @@ def sign_in_token(hub_signer, **claims) -> str:
     return hub_signer.token(scope="signin", sub="ana", uid=7, ttl=120, **{**defaults, **claims})
 
 
-def test_a_sign_in_token_is_accepted_where_its_scope_is_named_with_the_persons_name(hub_signer):
-    claims = verify(sign_in_token(hub_signer, node_admin=True), scopes=("signin",))
+def test_a_sign_in_token_is_accepted_where_its_scope_is_named(hub_signer):
+    claims = verify(sign_in_token(hub_signer), scopes=("signin",))
 
     assert (claims.subject, claims.user_id, claims.scope) == ("ana", 7, "signin")
 

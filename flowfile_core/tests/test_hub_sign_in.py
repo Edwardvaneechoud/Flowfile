@@ -30,7 +30,7 @@ from shared.tests.hub_jwks import HubSigner
 client = TestClient(main.app)
 
 NODE = "team-1"
-VARIABLES = ("FLOWFILE_HUB_JOIN_TOKEN", "FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME", "FLOWFILE_HUB_ISSUER")
+VARIABLES = ("FLOWFILE_HUB_JOIN_TOKEN", "FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME")
 ENDED = "Your sign-in through 127.0.0.1 has ended; sign in again"
 THROUGH_THE_HUB = "This server signs people in through 127.0.0.1"
 

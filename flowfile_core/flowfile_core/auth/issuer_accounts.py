@@ -15,13 +15,13 @@ from sqlalchemy.orm import Session
 from flowfile_core.auth import sharing
 from flowfile_core.auth.password import get_password_hash
 from flowfile_core.database import models as db_models
-from shared import hub_node, hub_node_key
+from shared import hub_node
 
 
 def joined_with_keys() -> hub_node.HubNode | None:
-    """This storage dir's node when it joined a hub and has keys of its own, so people sign in here through that hub."""
-    node = hub_node.read()
-    return node if node is not None and hub_node_key.path().is_file() else None
+    """``hub_node.joined()``: this storage dir's node when it joined a hub with keys of its own, so people sign in here
+    through that hub. Core's name for it, which its routes, placement and vend read."""
+    return hub_node.joined()
 
 
 def hub_host(url: str) -> str:

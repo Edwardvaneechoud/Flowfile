@@ -30,7 +30,7 @@ hub_signer = hub_jwks.hub_signer
 
 client = TestClient(main.app)
 
-VARIABLES = ("FLOWFILE_HUB_JOIN_TOKEN", "FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME", "FLOWFILE_HUB_ISSUER")
+VARIABLES = ("FLOWFILE_HUB_JOIN_TOKEN", "FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME")
 
 
 @pytest.fixture
@@ -268,7 +268,7 @@ def test_a_port_in_use_exits_1_before_any_request_and_the_token_stays_unspent(
     assert f"Cannot serve on 127.0.0.1:{port}: {os.strerror(errno.EADDRINUSE)}" in caplog.text
     assert join_hub.calls == []
     assert serving == []
-    assert hub_node.join(join_hub.url, token, name="worker-1", worker_url="http://w:1").name == "worker-1"
+    assert hub_node.join(join_hub.url, token, name="worker-1", worker_url="http://w:1")[0].name == "worker-1"
 
 
 def test_the_port_the_worker_is_started_with_is_the_one_it_joins_with_and_serves_on(
@@ -319,7 +319,7 @@ def found_beside_a_core(monkeypatch, node_file) -> None:
     """The worker started with ``--name team-1`` and no join token in the folder of core ``team-1`` that joined."""
     node_file.parent.mkdir(parents=True, exist_ok=True)
     kept = {"hub_url": "http://hub.example", "issuer": "http://hub.example", "name": "team-1", "node_id": 4}
-    kept.update(joined_at="2026-11-03T09:00:00+00:00", has_core=True)
+    kept.update(join_token_hash="0" * 16, has_core=True)
     node_file.write_text(json.dumps(kept), encoding="utf-8")
     monkeypatch.setattr(main, "NODE_STORAGE_DIR", node_file.parent)
     monkeypatch.setattr(main, "JOIN_TOKEN", None)
@@ -508,7 +508,7 @@ def test_a_worker_named_after_a_node_that_joined_here_finds_its_folder_and_else_
     if joined:
         folder.mkdir(parents=True)
         kept = {"hub_url": "http://127.0.0.1:9", "issuer": "http://127.0.0.1:9", "name": "card-node", "node_id": 4}
-        kept.update(joined_at="2026-11-03T09:00:00+00:00", has_core=True)
+        kept.update(join_token_hash="0" * 16, has_core=True)
         (folder / hub_node.FILE_NAME).write_text(json.dumps(kept), encoding="utf-8")
     environment = {name: value for name, value in os.environ.items() if name not in (*STORAGE_VARIABLES, *VARIABLES)}
     environment.update(HOME=str(home), FLOWFILE_WORKER_POOL_SIZE="0")

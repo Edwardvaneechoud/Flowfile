@@ -3,25 +3,23 @@
 A worker, or a core, becomes a node on a hub by joining it once: it posts a single-use join token from the hub's
 Compute page and its own description (its name, the address desktops reach it at) to ``<hub>/hub/nodes/join``, and
 keeps what the hub answers in ``hub_node.json`` in the storage dir: the hub's URL, the issuer the hub signs with, the
-name the hub recorded and the node's id there, and when it joined. The file holds nothing secret. The join token is
-spent by the join and written nowhere, and the hub's keys, the only thing a node verifies with, stay public. The node's
-own keys are another file: at its first join it makes two key pairs, keeps them in ``hub_node_key.json`` beside this
-one (``shared.hub_node_key``) and sends the hub their public halves with every join.
+name the hub recorded and the node's id there. The file holds nothing secret. The join token is spent by the join and
+written nowhere, and the hub's keys, the only thing a node verifies with, stay public. The node's own keys are another
+file: at its first join it makes two key pairs, keeps them in ``hub_node_key.json`` beside this one
+(``shared.hub_node_key``) and sends the hub their public halves with every join. ``joined()`` is the one question
+"did this storage dir join a hub, with keys of its own": the file and the key file both there.
 
-A joined node with keys tells its hub it is up, since the hub may not reach it (behind a NAT, say) while it can always
-reach the hub: ``heartbeat`` posts one beat signed with the node's own key, and ``start_heartbeat`` beats at once and
-then every ``HEARTBEAT_SECONDS`` from a daemon thread. One process speaks for the node: core when one joined for itself
-and its worker (the file's ``has_core``), else the worker. A node without keys, joined by an older Flowfile or set up
-by hand, never beats. A hub that answers a beat 404 or 405 was built before it took heartbeats: that is said once, and
-the node asks it again every ``HEARTBEAT_ABSENT_SECONDS`` instead of every minute.
+A joined node tells its hub it is up, since the hub may not reach it (behind a NAT, say) while it can always reach the
+hub: ``heartbeat`` posts one beat signed with the node's own key, and ``start_heartbeat`` beats at once and then every
+``HEARTBEAT_SECONDS`` from a daemon thread. One process speaks for the node: core when one joined for itself and its
+worker (the file's ``has_core``), else the worker.
 
-``shared.hub_tokens`` reads the node's settings through ``resolved()``: the environment first, field by field
-(``FLOWFILE_HUB_URL``, ``FLOWFILE_NODE_NAME``, ``FLOWFILE_HUB_ISSUER``), the file second, and the file only for the hub
-it names, so a node set up by hand behaves as before whatever the file says. The file also keeps a short hash of the
-join token it was written with: a start with that same token makes no request, so a restart with an unchanged command
-is quiet, and a start with any other join token joins again and replaces the file. A file from before the hash was
-kept cannot tell its own token from a new one, so for its own hub it keeps the old rule: no request until it is deleted.
-One storage dir holds one node: every process reading it takes the name the latest join wrote.
+``shared.hub_tokens`` reads the node's settings through ``resolved()``: the environment first (``FLOWFILE_HUB_URL``,
+``FLOWFILE_NODE_NAME``), the file second, and the file only for the hub it names, so a node set up by hand behaves as
+before whatever the file says; the issuer to expect is the joined file's, else the hub's URL. The file also keeps a
+short hash of the join token it was written with: a start with that same token makes no request, so a restart with an
+unchanged command is quiet, and a start with any other join token joins again and replaces the file. One storage dir
+holds one node: every process reading it takes the name the latest join wrote.
 
 A node that joins beside Flowfile desktop keeps out of the desktop's way. Started with a join token and no
 ``FLOWFILE_STORAGE_DIR``, it keeps its files in ``~/.flowfile-node/<name>`` (``node_storage``), never in the desktop's
@@ -42,7 +40,6 @@ import signal
 import socket
 import threading
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlsplit
@@ -60,9 +57,6 @@ HEARTBEAT_PATH = "/hub/nodes/heartbeat"
 HEARTBEAT_SECONDS = 60
 """How often a joined node tells its hub it is up, in seconds; not a setting. The hub shows a node Online while its last
 beat is under three minutes old."""
-HEARTBEAT_ABSENT_SECONDS = 15 * 60
-"""How long a node waits after a beat its hub answered 404 or 405, a hub built before it took heartbeats; not a
-setting."""
 
 NODE_FILES_DIR = ".flowfile-node"
 """The folder under the home directory where a node that joins keeps its files when no storage dir is set."""
@@ -71,13 +65,11 @@ NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
 _ROUTE_PROBES = {socket.AF_INET: "192.0.2.1", socket.AF_INET6: "2001:db8::1"}
 _BACKLOG = 2048
 
-_FIELDS = {"hub_url": str, "issuer": str, "name": str, "node_id": int, "joined_at": str}
-_OPTIONAL_FIELDS = {"join_token_hash": str, "has_core": bool}
+_FIELDS = {"hub_url": str, "issuer": str, "name": str, "node_id": int, "join_token_hash": str}
+_OPTIONAL_FIELDS = {"has_core": bool}
 _warned_unreadable = False
 _warned_beats: set[str] = set()
-_hub_without_beats = False
 _removed = False
-_said_without_beats = False
 
 
 class JoinRefused(Exception):
@@ -92,18 +84,16 @@ class JoinRefused(Exception):
 class HubNode:
     """What a node keeps after joining a hub: where the hub is, whose tokens to take, its own name and id there.
 
-    ``joined_at`` is ISO-8601 in UTC. Whether the node is enabled is not kept: that changes on the hub.
-    ``join_token_hash`` tells the join token it was written with from another one; empty in a file from before it
-    was kept, or one written by hand. ``has_core`` is ``True`` when a core joined for itself and its worker, ``False``
-    when a worker joined alone (and in a file from before it was kept): it decides which of the two beats.
+    Whether the node is enabled is not kept: that changes on the hub. ``join_token_hash`` tells the join token it was
+    written with from another one. ``has_core`` is ``True`` when a core joined for itself and its worker, ``False``
+    when a worker joined alone: it decides which of the two beats.
     """
 
     hub_url: str
     issuer: str
     name: str
     node_id: int
-    joined_at: str
-    join_token_hash: str = ""
+    join_token_hash: str
     has_core: bool = False
 
 
@@ -154,23 +144,32 @@ def read() -> HubNode | None:
     return None
 
 
+def joined() -> HubNode | None:
+    """This storage dir's node when it joined a hub and has keys of its own (``hub_node_key.json`` beside the file);
+    ``None`` otherwise. Read from the files on every call."""
+    from shared import hub_node_key
+
+    node = read()
+    return node if node is not None and hub_node_key.path().is_file() else None
+
+
 def _env(name: str) -> str | None:
     return os.environ.get(name, "").strip() or None
 
 
 def resolved() -> NodeSettings:
-    """Each setting from its variable when set, else from the joined file; the issuer falls back to the hub's URL.
+    """Each setting from its variable when set, else from the joined file; the issuer is the file's, else the hub's URL.
 
     The file counts only while ``FLOWFILE_HUB_URL`` is unset or names the file's hub (a trailing ``/`` aside), so a
     file from another hub is never mixed with this one's URL.
     """
     env_url = (_env("FLOWFILE_HUB_URL") or "").rstrip("/") or None
-    joined = read()
-    if joined is not None and env_url is not None and joined.hub_url.rstrip("/") != env_url:
-        joined = None
-    hub_url = env_url or (joined.hub_url.rstrip("/") if joined else None)
-    name = _env("FLOWFILE_NODE_NAME") or (joined.name if joined else None)
-    issuer = _env("FLOWFILE_HUB_ISSUER") or (joined.issuer if joined else None) or hub_url
+    node = read()
+    if node is not None and env_url is not None and node.hub_url.rstrip("/") != env_url:
+        node = None
+    hub_url = env_url or (node.hub_url.rstrip("/") if node else None)
+    name = _env("FLOWFILE_NODE_NAME") or (node.name if node else None)
+    issuer = (node.issuer if node else None) or hub_url
     return NodeSettings(hub_url=hub_url, name=name, issuer=issuer)
 
 
@@ -222,17 +221,27 @@ def _write(node: HubNode) -> None:
     os.replace(temporary, target)
 
 
-def _join(
+def join(
     hub_url: str,
     token: str,
     *,
     name: str,
     worker_url: str,
-    core_url: str | None,
+    core_url: str | None = None,
     ui_url: str | None = None,
     http: "httpx.Client | None" = None,
 ) -> tuple[HubNode, bool]:
-    """``join``, and whether the hub enabled the node at once."""
+    """Join the hub at ``hub_url`` with a join token and keep its answer in the file: the node, and whether the hub
+    enabled it at once. ``JoinRefused`` when the hub says no.
+
+    ``name`` is the name this node asks for, ``worker_url`` the address desktops reach its worker at, ``core_url``
+    its core's, when it has one, and ``ui_url`` the browser editor's, when its core serves one; without it the join
+    says nothing about an editor. The join also sends the public halves of this node's own keys, made at its first
+    join and reused after; a storage dir that cannot keep them refuses the join before any request. The file is
+    written whole or not at all, with the name and issuer the hub answered and ``has_core`` set when ``core_url`` is
+    given (a core joining for itself and its worker).
+    Logs the method, the path and the status, never the token or a body.
+    """
     import httpx
 
     from shared import hub_node_key
@@ -271,7 +280,6 @@ def _join(
         issuer=answer["issuer"],
         name=answer["name"],
         node_id=answer["node_id"],
-        joined_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         join_token_hash=token_hash(token),
         has_core=core_url is not None,
     )
@@ -279,42 +287,10 @@ def _join(
     return node, answer["enabled"]
 
 
-def join(
-    hub_url: str,
-    token: str,
-    *,
-    name: str,
-    worker_url: str,
-    core_url: str | None = None,
-    ui_url: str | None = None,
-    http: "httpx.Client | None" = None,
-) -> HubNode:
-    """Join the hub at ``hub_url`` with a join token and keep its answer in the file; ``JoinRefused`` when it says no.
-
-    ``name`` is the name this node asks for, ``worker_url`` the address desktops reach its worker at, ``core_url``
-    its core's, when it has one, and ``ui_url`` the browser editor's, when its core serves one; without it the join
-    says nothing about an editor. The join also sends the public halves of this node's own keys, made at its first
-    join and reused after; a storage dir that cannot keep them refuses the join before any request. The file is
-    written whole or not at all, with the name and issuer the hub answered and ``has_core`` set when ``core_url`` is
-    given (a core joining for itself and its worker).
-    Logs the method, the path and the status, never the token or a body.
-    """
-    return _join(hub_url, token, name=name, worker_url=worker_url, core_url=core_url, ui_url=ui_url, http=http)[0]
-
-
-def already_joined(hub_url: str, token: str) -> HubNode | None:
-    """The node this storage dir joined, when a start with ``token`` for ``hub_url`` makes no request; else ``None``.
-
-    That is a file written with this same token, or one from before the token's hash was kept that names this hub.
-    """
-    joined = read()
-    if joined is None:
-        return None
-    if joined.join_token_hash == token_hash(token):
-        return joined
-    if not joined.join_token_hash and joined.hub_url.rstrip("/") == hub_url.strip().rstrip("/"):
-        return joined
-    return None
+def already_joined(token: str) -> HubNode | None:
+    """The node this storage dir joined with ``token``, so a start with it makes no request; else ``None``."""
+    node = read()
+    return node if node is not None and node.join_token_hash == token_hash(token) else None
 
 
 def join_at_start(
@@ -330,35 +306,25 @@ def join_at_start(
 
     The join token this node joined with makes no request a second time, so a restart with the same command keeps
     the node as it is. Any other join token joins ``hub_url`` and replaces the file, whichever hub and name it held:
-    a new token on the command line is the operator asking for a new join. A file without the token's hash, from
-    before it was kept, makes no request for its own hub, since its own spent token would be refused at every start.
+    a new token on the command line is the operator asking for a new join.
     """
     hub_url = hub_url.strip().rstrip("/")
-    joined = already_joined(hub_url, token)
-    if joined is not None and joined.join_token_hash:
-        logger.info("Already joined %s as %s; the join token is not used", joined.hub_url, joined.name)
-        return joined
-    if joined is not None:
-        logger.warning(
-            "Already joined %s as %s; the join token is not used, since %s cannot tell it from the one it joined "
-            "with. Delete that file to join with this token",
-            joined.hub_url,
-            joined.name,
-            path(),
-        )
-        return joined
-    joined = read()
-    if joined is not None:
+    node = already_joined(token)
+    if node is not None:
+        logger.info("Already joined %s as %s; the join token is not used", node.hub_url, node.name)
+        return node
+    node = read()
+    if node is not None:
         logger.warning(
             "This node was %s on %s; joining %s with the new join token replaces that, for every process using %s. "
             "A second node on this machine needs its own FLOWFILE_STORAGE_DIR",
-            joined.name,
-            joined.hub_url,
+            node.name,
+            node.hub_url,
             hub_url,
             path().parent,
         )
     try:
-        node, enabled = _join(hub_url, token, name=name, worker_url=worker_url, core_url=core_url, ui_url=ui_url)
+        node, enabled = join(hub_url, token, name=name, worker_url=worker_url, core_url=core_url, ui_url=ui_url)
     except JoinRefused as refused:
         logger.error("Could not join %s: %s", hub_url, refused.reason)
         raise SystemExit(2) from None
@@ -387,34 +353,21 @@ def _stop_this_process() -> None:
     os.kill(os.getpid(), signal.SIGTERM)
 
 
-def _without_beats(hub_url: str) -> bool:
-    global _hub_without_beats, _said_without_beats
-    _hub_without_beats = True
-    if not _said_without_beats:
-        _said_without_beats = True
-        minutes = HEARTBEAT_ABSENT_SECONDS // 60
-        logger.info("%s does not take heartbeats yet; this node asks again every %s minutes", hub_url, minutes)
-    return False
-
-
 def heartbeat(process: Literal["core", "worker"], http: "httpx.Client | None" = None) -> bool:
     """Tell the hub this storage dir's node joined that the node is up, as ``process``; whether the hub took the beat.
 
     Posts ``{version, process}`` to the joined hub's ``/hub/nodes/heartbeat`` with a node assertion signed with this
     node's own key, its audience the joined issuer and that path. A beat the hub does not take, or one that cannot be
     sent (no joined node, no keys, a hub that does not answer), logs one warning per distinct reason until a beat is
-    taken again, and never the assertion. Never makes keys. A 404 or 405 is a hub built before it took heartbeats,
-    not a refusal: said once per process at INFO, never warned, and the beat loop waits ``HEARTBEAT_ABSENT_SECONDS``
-    before it asks again. A 410 is a hub that removed this node: said once at ERROR with the hub's sentence, and the
-    beat loop stops the process (``_stop_this_process``).
+    taken again, and never the assertion. Never makes keys. A 410 is a hub that removed this node: said once at ERROR
+    with the hub's sentence, and the beat loop stops the process (``_stop_this_process``).
     """
-    global _hub_without_beats, _removed
+    global _removed
     import httpx
 
     from shared import hub_node_key
     from shared._version import get_version
 
-    _hub_without_beats = False
     _removed = False
     node = read()
     if node is None:
@@ -438,8 +391,6 @@ def heartbeat(process: Literal["core", "worker"], http: "httpx.Client | None" = 
     finally:
         if http is None:
             client.close()
-    if resp.status_code in (404, 405):
-        return _without_beats(node.hub_url)
     if resp.status_code == 410:
         return _removed_from_hub(node, resp)
     if resp.status_code != 204:
@@ -453,44 +404,30 @@ def _speaks_for(node: HubNode | None, process: str) -> bool:
 
 
 def _beat(process: Literal["core", "worker"], stop: threading.Event) -> None:
-    """Beat at once and every ``HEARTBEAT_SECONDS`` until ``stop`` is set, each time ``process`` speaks for the node;
-    after a beat the hub answered 404 or 405 the next one comes ``HEARTBEAT_ABSENT_SECONDS`` later."""
+    """Beat at once and every ``HEARTBEAT_SECONDS`` until ``stop`` is set, each time ``process`` speaks for the node."""
     while True:
-        absent = False
         if _speaks_for(read(), process):
             try:
                 heartbeat(process)
             except Exception as exc:
                 _not_taken(f"the beat failed ({type(exc).__name__})")
-            absent = _hub_without_beats
             if _removed:
                 _stop_this_process()
                 return
-        if stop.wait(HEARTBEAT_ABSENT_SECONDS if absent else HEARTBEAT_SECONDS):
+        if stop.wait(HEARTBEAT_SECONDS):
             return
 
 
 def start_heartbeat(process: Literal["core", "worker"]) -> threading.Event | None:
-    """Beat for this storage dir's node from a daemon thread, at start and every minute (every 15 minutes while the hub
-    answers that it takes no heartbeats); set the event to stop it.
+    """Beat for this storage dir's node from a daemon thread, at start and every minute; set the event to stop it.
 
-    ``None``, and no thread, when ``process`` does not speak for a node: no node joined a hub from this storage dir, it
-    has no keys of its own (joined by an older Flowfile, or set up by hand; said once), ``process`` is a worker beside a
-    core that joined for both, or a core on the storage dir of a worker that joined alone. The thread checks the file
-    before every beat, so a worker that beats alone goes quiet once a core joins beside it.
+    ``None``, and no thread, when ``process`` does not speak for a node: no node joined a hub from this storage dir with
+    keys of its own (``joined``), ``process`` is a worker beside a core that joined for both, or a core on the storage
+    dir of a worker that joined alone. The thread checks the file before every beat, so a worker that beats alone goes
+    quiet once a core joins beside it.
     """
-    from shared import hub_node_key
-
-    node = read()
+    node = joined()
     if not _speaks_for(node, process):
-        return None
-    if not hub_node_key.path().is_file():
-        logger.warning(
-            "%s joined %s without keys of its own, so it does not tell the hub it is up; join again with a new join "
-            "token to make them",
-            node.name,
-            node.hub_url,
-        )
         return None
     stop = threading.Event()
     threading.Thread(target=_beat, args=(process, stop), name="hub-heartbeat", daemon=True).start()

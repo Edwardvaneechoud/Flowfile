@@ -6,7 +6,6 @@ environment and signs the tokens a test sends, so every test runs the real verif
 PyJWT replaced. Import the fixture into a test module: ``from shared.tests.hub_jwks import hub_signer  # noqa: F401``.
 """
 
-import base64
 import json
 import os
 import threading
@@ -27,10 +26,6 @@ NODE_NAME = "team"
 JWKS_PATH = "/.well-known/jwks.json"
 
 
-def _b64url(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
-
-
 def seal(plaintext: str, enc_jwk: Mapping[str, str]) -> str:
     """``plaintext`` sealed to the node whose X25519 public JWK is ``enc_jwk``, as the hub's vend seals a JWS.
 
@@ -44,13 +39,24 @@ def seal(plaintext: str, enc_jwk: Mapping[str, str]) -> str:
         "alg": hub_sealed.ALG,
         "enc": hub_sealed.ENC,
         "kid": enc_jwk["kid"],
-        "epk": {"kty": "OKP", "crv": "X25519", "x": _b64url(epk)},
+        "epk": {"kty": "OKP", "crv": "X25519", "x": hub_node_key.b64url(epk)},
     }
-    protected = _b64url(json.dumps(header, separators=(",", ":")).encode("utf-8"))
+    protected = hub_node_key.b64url(json.dumps(header, separators=(",", ":")).encode("utf-8"))
     iv = os.urandom(12)
     key = hub_sealed._content_key(ephemeral.exchange(peer))
     sealed = AESGCM(key).encrypt(iv, plaintext.encode("utf-8"), protected.encode())
-    return ".".join((protected, "", _b64url(iv), _b64url(sealed[:-16]), _b64url(sealed[-16:])))
+    return ".".join(
+        (protected, "", hub_node_key.b64url(iv), hub_node_key.b64url(sealed[:-16]), hub_node_key.b64url(sealed[-16:]))
+    )
+
+
+def joined_file(signer: "HubSigner", name: str = NODE_NAME) -> None:
+    """``hub_node.json`` at ``hub_node.path()`` as a join of ``signer``'s hub as ``name`` leaves it: with the keys made
+    beside it (``hub_node_key.load_or_create``), this storage dir counts as joined with keys of its own."""
+    target = hub_node.path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    node = {"hub_url": signer.url, "issuer": signer.url, "name": name, "node_id": 4, "join_token_hash": "0" * 16}
+    target.write_text(json.dumps(node), encoding="utf-8")
 
 
 class SigningKey:
@@ -212,7 +218,6 @@ def hub_signer(monkeypatch, tmp_path):
     signer = HubSigner()
     monkeypatch.setenv("FLOWFILE_HUB_URL", signer.url)
     monkeypatch.setenv("FLOWFILE_NODE_NAME", NODE_NAME)
-    monkeypatch.delenv("FLOWFILE_HUB_ISSUER", raising=False)
     # No hub_node.json from this machine's storage dir: the tests set the node up through the variables alone.
     monkeypatch.setattr(hub_node, "path", lambda: tmp_path / hub_node.FILE_NAME)
     # A fresh key client per test: a reused port would otherwise serve the previous test's cached keys.

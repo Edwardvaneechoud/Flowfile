@@ -42,7 +42,7 @@ pytestmark = pytest.mark.usefixtures("protocol_on", "running_worker")
 
 JOINED = "joined"
 ROW_ID = f"worker:{JOINED}"
-HUB_VARIABLES = ("FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME", "FLOWFILE_HUB_ISSUER", "FLOWFILE_HUB_JOIN_TOKEN")
+HUB_VARIABLES = ("FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME", "FLOWFILE_HUB_JOIN_TOKEN")
 
 
 @pytest.fixture

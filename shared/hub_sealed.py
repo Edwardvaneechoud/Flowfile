@@ -215,14 +215,8 @@ def open_secret(value: str) -> str:
 
 
 def can_open() -> bool:
-    """Whether this process opens what a hub seals to its node: it has the hub's URL, its name there and its keys."""
-    node = hub_node.resolved()
-    if not node.hub_url or not node.name:
-        return False
-    try:
-        return hub_node_key.load() is not None
-    except (OSError, ValueError):
-        return False
+    """Whether this process opens what a hub seals to its node: this storage dir joined a hub with keys of its own."""
+    return hub_node.joined() is not None
 
 
 def sealed_storage_options(sealed: Mapping[str, str]) -> dict[str, str]:

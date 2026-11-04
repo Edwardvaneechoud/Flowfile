@@ -170,7 +170,7 @@ def join_hub(port: int | None = None, host: str | None = None) -> None:
     port = port or SERVICE_PORT
     tls = bool(os.environ.get("FLOWFILE_WORKER_TLS_CERT"))
     worker_url = NODE_URL or _worker_url(host or SERVICE_HOST, port, tls=tls)
-    if hub_node.already_joined(HUB_URL, JOIN_TOKEN) is None:
+    if hub_node.already_joined(JOIN_TOKEN) is None:
         logger.info("Telling the hub this worker is at %s", worker_url)
     hub_node.join_at_start(
         HUB_URL,

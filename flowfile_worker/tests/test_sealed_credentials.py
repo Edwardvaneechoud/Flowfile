@@ -51,7 +51,8 @@ requires_minio = pytest.mark.skipif(not _minio_available(), reason="MinIO is not
 
 @pytest.fixture
 def node(hub_signer):
-    """This worker's keys as node ``team``, made in the test's storage dir."""
+    """This worker's keys as node ``team``, made in the test's storage dir beside its joined file."""
+    hub_jwks.joined_file(hub_signer)
     return hub_node_key.load_or_create()
 
 

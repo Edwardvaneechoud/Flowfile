@@ -9,9 +9,9 @@ by core and the worker so one set of rules applies, and it holds no secret: the 
 The settings are read at call time, from the environment first and then from ``hub_node.json`` in the storage dir, the
 file a node writes when it joins a hub (``shared.hub_node``), field by field and the file only for the hub it names.
 ``FLOWFILE_HUB_URL`` is where the hub is reached and the keys are fetched; ``FLOWFILE_NODE_NAME`` is this node's name on
-the hub, the audience a token must name; ``FLOWFILE_HUB_ISSUER`` is the ``iss`` claim to expect, the URL when unset, for
-a node that reaches the hub by another address than the one the hub signs with. Hub tokens are accepted only when the
-node has a hub URL and a name; a URL without a name accepts none and says so once. Nothing runs at import.
+the hub, the audience a token must name; the ``iss`` claim to expect is the one the joined file keeps, else the URL.
+Hub tokens are accepted only when the node has a hub URL and a name; a URL without a name accepts none and says so
+once. Nothing runs at import.
 """
 
 import logging

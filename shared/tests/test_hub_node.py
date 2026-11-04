@@ -25,7 +25,7 @@ from shared.tests.hub_jwks import HubSigner
 join_hub = hub_join.join_hub
 
 HUB = "http://hub.example:63580"
-VARIABLES = ("FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME", "FLOWFILE_HUB_ISSUER")
+VARIABLES = ("FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME")
 
 
 @pytest.fixture(autouse=True)
@@ -35,8 +35,6 @@ def node_file(tmp_path, monkeypatch):
     monkeypatch.setattr(hub_node, "path", lambda: target)
     monkeypatch.setattr(hub_node, "_warned_unreadable", False)
     monkeypatch.setattr(hub_node, "_warned_beats", set())
-    monkeypatch.setattr(hub_node, "_hub_without_beats", False)
-    monkeypatch.setattr(hub_node, "_said_without_beats", False)
     for name in VARIABLES:
         monkeypatch.delenv(name, raising=False)
     return target
@@ -48,7 +46,7 @@ def write_node(target, drop: tuple[str, ...] = (), **fields) -> dict:
         "issuer": "http://localhost:63580",
         "name": "team",
         "node_id": 3,
-        "joined_at": "2026-11-03T09:00:00+00:00",
+        "join_token_hash": "0" * 16,
         **fields,
     }
     for field in drop:
@@ -59,7 +57,7 @@ def write_node(target, drop: tuple[str, ...] = (), **fields) -> dict:
 
 
 def join_with(hub: FakeJoinHub, token: str, name: str = "worker-1") -> HubNode:
-    return hub_node.join(hub.url, token, name=name, worker_url="http://worker-1.example:63579")
+    return hub_node.join(hub.url, token, name=name, worker_url="http://worker-1.example:63579")[0]
 
 
 def test_nothing_set_and_no_file_is_no_hub():
@@ -95,12 +93,11 @@ def test_a_file_from_another_hub_is_ignored(node_file, monkeypatch):
     )
 
 
-def test_the_name_and_issuer_variables_win_over_the_file(node_file, monkeypatch):
+def test_the_name_variable_wins_over_the_file_and_the_issuer_stays_the_files(node_file, monkeypatch):
     write_node(node_file)
     monkeypatch.setenv("FLOWFILE_NODE_NAME", "by-hand")
-    monkeypatch.setenv("FLOWFILE_HUB_ISSUER", "http://hub:63580")
 
-    assert hub_node.resolved() == NodeSettings(hub_url=HUB, name="by-hand", issuer="http://hub:63580")
+    assert hub_node.resolved() == NodeSettings(hub_url=HUB, name="by-hand", issuer="http://localhost:63580")
 
 
 def test_a_missing_file_is_none_and_says_nothing(caplog):
@@ -125,8 +122,14 @@ def test_a_file_that_is_not_json_is_none_and_warns_once_naming_it(node_file, cap
 
 @pytest.mark.parametrize(
     ("drop", "fields"),
-    [(("name",), {}), ((), {"node_id": "3"}), ((), {"node_id": True}), ((), {"hub_url": 7})],
-    ids=["no name", "node id as text", "node id as bool", "url as number"],
+    [
+        (("name",), {}),
+        (("join_token_hash",), {}),
+        ((), {"node_id": "3"}),
+        ((), {"node_id": True}),
+        ((), {"hub_url": 7}),
+    ],
+    ids=["no name", "no token hash", "node id as text", "node id as bool", "url as number"],
 )
 def test_a_file_missing_a_field_or_with_one_of_the_wrong_type_is_none(node_file, drop, fields):
     write_node(node_file, drop=drop, **fields)
@@ -152,14 +155,13 @@ def test_a_join_sends_the_contract_body_and_keeps_the_answer_but_not_the_token(j
         )
     ]
     kept = json.loads(node_file.read_text(encoding="utf-8"))
-    assert set(kept) == {"hub_url", "issuer", "name", "node_id", "joined_at", "join_token_hash", "has_core"}
+    assert set(kept) == {"hub_url", "issuer", "name", "node_id", "join_token_hash", "has_core"}
     assert (kept["hub_url"], kept["issuer"], kept["name"], kept["node_id"]) == (
         join_hub.url,
         join_hub.url,
         "worker-1",
         1,
     )
-    assert kept["joined_at"].endswith("+00:00")
     assert token not in node_file.read_text(encoding="utf-8")
     assert hub_node.read() == node
     assert not node_file.with_name(node_file.name + ".tmp").exists()
@@ -393,23 +395,6 @@ def test_a_refused_new_join_token_keeps_the_node_as_it_was(join_hub, node_file, 
     assert json.loads(node_file.read_text()) == kept
 
 
-def test_a_file_from_before_the_token_hash_still_reads(node_file):
-    write_node(node_file)
-
-    assert hub_node.read().join_token_hash == ""
-
-
-def test_a_file_from_before_the_token_hash_restarts_on_its_own_hub_without_a_request(join_hub, node_file, caplog):
-    write_node(node_file, hub_url=join_hub.url)
-
-    with caplog.at_level(logging.INFO, logger="flowfile.hub_node"):
-        node = hub_node.join_at_start(join_hub.url, join_hub.mint(), name="worker-2", worker_url="http://w:1")
-
-    assert join_hub.calls == []
-    assert node.name == "team"
-    assert "Delete that file to join with this token" in caplog.text and str(node_file) in caplog.text
-
-
 @pytest.mark.parametrize(
     ("refusal", "sentence"),
     [
@@ -461,15 +446,8 @@ def test_a_start_with_the_token_the_node_joined_with_is_already_joined(join_hub,
     token = join_hub.mint()
     join_with(join_hub, token)
 
-    assert hub_node.already_joined(join_hub.url + "/", token).name == "worker-1"
-    assert hub_node.already_joined(join_hub.url, join_hub.mint()) is None
-
-
-def test_a_file_from_before_the_token_hash_is_already_joined_for_its_own_hub_only(node_file):
-    write_node(node_file)
-
-    assert hub_node.already_joined(HUB, "any-token").name == "team"
-    assert hub_node.already_joined("http://other.example:63580", "any-token") is None
+    assert hub_node.already_joined(token).name == "worker-1"
+    assert hub_node.already_joined(join_hub.mint()) is None
 
 
 @pytest.fixture
@@ -708,7 +686,7 @@ def test_the_os_route_to_loopback_is_no_address_for_a_hub():
 def joined_with_keys(hub: FakeJoinHub, *, enabled: bool = True, core_url: str | None = None) -> HubNode:
     """``worker-1`` joined to ``hub`` with keys of its own, by a core for both when ``core_url`` is given."""
     token = hub.mint(enable_on_join=enabled)
-    return hub_node.join(hub.url, token, name="worker-1", worker_url="http://w:1", core_url=core_url)
+    return hub_node.join(hub.url, token, name="worker-1", worker_url="http://w:1", core_url=core_url)[0]
 
 
 def beat_warnings(caplog) -> list[str]:
@@ -848,18 +826,6 @@ def test_no_beat_starts_where_no_node_joined(node_file):
     assert hub_node.start_heartbeat("worker") is None
 
 
-def test_a_node_joined_without_keys_starts_no_beat_and_says_so_once(join_hub, node_file, caplog):
-    write_node(node_file, hub_url=join_hub.url, has_core=True)
-
-    assert hub_node.start_heartbeat("core") is None
-
-    [warning] = beat_warnings(caplog)
-    assert warning.startswith(f"team joined {join_hub.url} without keys of its own, so it does not tell the hub")
-    assert "join again with a new join token" in warning
-    assert join_hub.calls == []
-    assert not key_file_of(node_file).exists()
-
-
 @pytest.mark.parametrize(
     ("core_url", "process", "speaks"),
     [
@@ -943,7 +909,7 @@ def test_a_beat_that_fails_unexpectedly_warns_once_and_the_beats_go_on(join_hub,
 
 class HubAnswering(FakeJoinHub):
     """A hub whose heartbeat route answers each beat with the next of ``statuses``, the last one again once they run
-    out: 404 and 405 as a hub built before the route answers, 204 a beat checked as the contract says."""
+    out; 204 is a beat checked as the contract says."""
 
     def __init__(self, *statuses: int):
         super().__init__()
@@ -971,73 +937,17 @@ def hub_answering():
         hub.close()
 
 
-def absent_lines(caplog) -> list[str]:
-    return [
-        record.getMessage()
-        for record in caplog.records
-        if record.name == "flowfile.hub_node" and "does not take heartbeats" in record.getMessage()
-    ]
-
-
-@pytest.mark.parametrize("status", [404, 405])
-def test_a_hub_without_the_heartbeat_route_is_said_once_and_asked_every_fifteen_minutes(hub_answering, caplog, status):
+@pytest.mark.parametrize("status", [404, 405, 500])
+def test_a_hub_that_does_not_take_a_beat_is_warned_about_once_and_asked_every_minute(hub_answering, caplog, status):
     hub = hub_answering(status)
-    stop = Waits(hub, stop_at=4)
-    caplog.clear()
-
-    with caplog.at_level(logging.DEBUG):
-        hub_node._beat("worker", stop)
-
-    assert stop.seen == [(900, 1), (900, 2), (900, 3), (900, 4)]
-    [record] = [record for record in caplog.records if record.name == "flowfile.hub_node"]
-    assert record.levelno == logging.INFO
-    assert record.getMessage() == f"{hub.url} does not take heartbeats yet; this node asks again every 15 minutes"
-    assert hub_node.HEARTBEAT_ABSENT_SECONDS == 15 * 60
-
-
-def test_a_beat_answered_404_is_not_taken(hub_answering, caplog):
-    hub_answering(404)
-
-    assert hub_node.heartbeat("worker") is False
-    assert hub_node.heartbeat("worker") is False
-
-    assert beat_warnings(caplog) == []
-    assert len(absent_lines(caplog)) == 1
-
-
-def test_a_beat_taken_brings_back_the_minute_and_the_line_is_said_once_per_process(hub_answering, caplog):
-    hub = hub_answering(404, 204, 204, 404)
-    stop = Waits(hub, stop_at=4)
-
-    hub_node._beat("worker", stop)
-
-    assert stop.seen == [(900, 1), (60, 2), (60, 3), (900, 4)]
-    assert len(hub.beats) == 2
-    assert len(absent_lines(caplog)) == 1
-    assert beat_warnings(caplog) == []
-
-
-def test_another_answer_after_a_hub_without_the_route_warns_as_today_every_minute(hub_answering, caplog):
-    hub = hub_answering(404, 500)
-    stop = Waits(hub, stop_at=3)
-
-    hub_node._beat("worker", stop)
-
-    assert stop.seen == [(900, 1), (60, 2), (60, 3)]
-    assert beat_warnings(caplog) == [
-        f"The hub did not take this node's heartbeat: {hub.url} answered 500: Internal Server Error"
-    ]
-
-
-def test_a_hub_that_answers_500_warns_once_and_is_asked_every_minute(hub_answering, caplog):
-    hub = hub_answering(500)
     stop = Waits(hub, stop_at=3)
 
     hub_node._beat("worker", stop)
 
     assert stop.seen == [(60, 1), (60, 2), (60, 3)]
-    assert len(beat_warnings(caplog)) == 1
-    assert absent_lines(caplog) == []
+    assert beat_warnings(caplog) == [
+        f"The hub did not take this node's heartbeat: {hub.url} answered {status}: {HTTPStatus(status).phrase}"
+    ]
 
 
 def test_a_hub_that_removed_the_node_stops_the_process_and_beats_no_more(hub_answering, monkeypatch, caplog):
