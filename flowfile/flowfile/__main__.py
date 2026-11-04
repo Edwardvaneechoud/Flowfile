@@ -444,9 +444,8 @@ def main():
     parser.add_argument(
         "--port",
         type=int,
-        default=None,
-        help="Port to bind the server to (63578 when not given; for run ui and run core, a server joining a hub "
-        "exits when that port is in use)",
+        default=63578,
+        help="Port to bind the server to; for run ui and run core, a server joining a hub exits when it is in use",
     )
     parser.add_argument("--no-browser", action="store_true", help="Don't open a browser window")
     parser.add_argument(
@@ -509,17 +508,14 @@ def main():
                 print("\nFlowFile service stopped.")
         elif args.component == "core":
             # Only for direct core service usage
-            from flowfile_core.configs import settings
             from flowfile_core.main import run as run_core
 
-            # 63578 when no port is given, as before; a core that joins a hub picks its own
-            port = settings.DEFAULT_SERVER_PORT if args.port is None and not settings.JOIN_TOKEN else args.port
-            run_core(host=args.host, port=port)
+            run_core(host=args.host, port=args.port)
         elif args.component == "worker":
             # Only for direct worker service usage
             from flowfile_worker.main import run as run_worker
 
-            run_worker(host=args.host, port=63578 if args.port is None else args.port)
+            run_worker(host=args.host, port=args.port)
         elif args.component == "flow":
             if not args.file_path:
                 print("Error: 'flow' component requires a file path", file=sys.stderr)

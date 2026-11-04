@@ -38,9 +38,8 @@ def parse_args():
     parser.add_argument(
         "--port",
         type=int,
-        default=None,
-        help=f"Port to bind worker to ({DEFAULT_SERVICE_PORT} when not given; a worker joining a hub exits when that "
-        "port is in use)",
+        default=DEFAULT_SERVICE_PORT,
+        help="Port to bind worker to; a worker joining a hub exits when it is in use",
     )
     parser.add_argument(
         "--core-host",
@@ -82,7 +81,7 @@ def parse_args():
     if args.host is None:
         args.host = JOINING_SERVICE_HOST if args.join else DEFAULT_SERVICE_HOST
 
-    if args.port is not None and (args.port < 1 or args.port > 65535):
+    if args.port < 1 or args.port > 65535:
         raise ValueError(f"Invalid port number: {args.port}. Port must be between 1 and 65535.")
 
     if args.core_port < 1 or args.core_port > 65535:
@@ -122,7 +121,7 @@ if _is_main_process():
     args = parse_args()
 
     SERVICE_HOST = args.host
-    SERVICE_PORT = DEFAULT_SERVICE_PORT if args.port is None else args.port
+    SERVICE_PORT = args.port
     CORE_HOST = args.core_host
     CORE_PORT = args.core_port
     JOIN_TOKEN = args.join

@@ -71,15 +71,15 @@ def test_run_ui_without_flags_serves_this_machine_only(monkeypatch):
 
     main()
 
-    assert started == [{"host": "127.0.0.1", "port": None, "open_browser": False}]
+    assert started == [{"host": "127.0.0.1", "port": 63578, "open_browser": False}]
 
 
 @pytest.mark.parametrize(
     "flags,token,port",
-    [([], None, 63578), (["--port", "8080"], None, 8080), ([], "join-t", None), (["--port", "8080"], "join-t", 8080)],
+    [([], None, 63578), (["--port", "8080"], None, 8080), ([], "join-t", 63578), (["--port", "8080"], "join-t", 8080)],
     ids=["no port", "a port given", "joining", "joining on a port given"],
 )
-def test_run_core_serves_63578_unless_given_a_port_or_joining_a_hub(monkeypatch, flags, token, port):
+def test_run_core_serves_63578_unless_given_a_port_joining_a_hub_or_not(monkeypatch, flags, token, port):
     started = []
     monkeypatch.setattr(core_main, "run", lambda host, port: started.append((host, port)))
     monkeypatch.setattr(settings, "JOIN_TOKEN", token)
@@ -217,11 +217,10 @@ def free_port() -> int:
         return sock.getsockname()[1]
 
 
-def test_a_server_that_joins_binds_its_port_first_and_serves_there(served, joining, monkeypatch):
+def test_a_server_that_joins_binds_its_port_first_and_serves_there(served, joining):
     port = free_port()
-    monkeypatch.setattr(settings, "DEFAULT_SERVER_PORT", port)
 
-    web.start_server(open_browser=False)
+    web.start_server(port=port, open_browser=False)
 
     with served["sock"] as sock:
         assert sock.getsockname() == ("127.0.0.1", port)
@@ -229,16 +228,11 @@ def test_a_server_that_joins_binds_its_port_first_and_serves_there(served, joini
     assert settings.WORKER_URL == f"http://127.0.0.1:{port}/worker"
 
 
-@pytest.mark.parametrize("given_by", ["--port", "the default"])
-def test_a_server_that_joins_on_a_port_in_use_exits_1_before_serving(
-    served, joining, held, monkeypatch, caplog, given_by
-):
+def test_a_server_that_joins_on_a_port_in_use_exits_1_before_serving(served, joining, held, caplog):
     worker_url = settings.WORKER_URL
-    if given_by == "the default":
-        monkeypatch.setattr(settings, "DEFAULT_SERVER_PORT", held)
 
     with caplog.at_level(logging.ERROR, logger="flowfile.hub_node"), pytest.raises(SystemExit) as exited:
-        web.start_server(port=held if given_by == "--port" else None, open_browser=False)
+        web.start_server(port=held, open_browser=False)
 
     assert exited.value.code == 1
     assert f"Cannot serve on 127.0.0.1:{held}: {os.strerror(errno.EADDRINUSE)}" in caplog.text

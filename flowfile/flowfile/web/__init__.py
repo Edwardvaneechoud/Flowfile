@@ -159,14 +159,14 @@ def include_worker_routes(app: FastAPI):
         print("This is normal for lightweight deployments that don't need data processing.")
 
 
-def start_server(host="127.0.0.1", port=None, open_browser=True):
+def start_server(host="127.0.0.1", port=63578, open_browser=True):
     """
     Start the flowfile_core FastAPI app with the web UI routes and worker functionality.
     This function is a wrapper around flowfile_core.main.run().
 
     It sets single-file mode: flows compute on the worker embedded in this process. ``run`` marks the
     process as serving, so the worker's jobs run in its pool or a child, never in the serving process.
-    ``FLOWFILE_WORKER_POOL_SIZE`` sizes the pool. ``host`` and ``port`` (63578 when ``None``) are where it serves; a
+    ``FLOWFILE_WORKER_POOL_SIZE`` sizes the pool. ``host`` and ``port`` are where it serves; a
     server bound to every address (``0.0.0.0``) is reached from this machine on the loopback address. A server that
     joins a hub binds its socket first (core's ``listen``), so one whose port is in use exits with code 1 saying so
     before it joins.
@@ -195,8 +195,6 @@ def start_server(host="127.0.0.1", port=None, open_browser=True):
     from flowfile_core.main import app as core_app
     from flowfile_core.main import listen, run
 
-    if port is None:
-        port = settings.DEFAULT_SERVER_PORT
     sock = listen(host, port)
     local = "127.0.0.1" if host in ("0.0.0.0", "::") else host
     settings.OFFLOAD_TO_WORKER.value = True
