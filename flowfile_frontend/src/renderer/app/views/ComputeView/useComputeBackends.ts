@@ -103,9 +103,9 @@ export function skippedNotice(skipped: string[]): string {
 /**
  * The configured workers and the admin's actions on them; the caller loads, nothing polls. A load seeds the
  * verdicts from the listing, so one a run produced shows without pressing Handshake. A load `fromHub` is the one
- * Sync: it fills the rows from the hub's compute nodes, which core checks once behind its answer, so their verdicts
- * show on the next load as any worker's do; a server joined to its hub loads that way, so the hub's servers show
- * with no Sync step.
+ * Sync: it fills the rows from the hub's compute nodes, which core checks once before it answers, so the answer
+ * carries their verdicts as any worker's; a server joined to its hub loads that way, so the hub's servers show with
+ * no Sync step.
  */
 export function useComputeBackends() {
   const backends: Ref<ComputeBackend[]> = ref([]);

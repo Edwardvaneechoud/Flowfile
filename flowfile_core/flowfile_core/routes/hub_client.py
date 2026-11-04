@@ -19,10 +19,11 @@ hand under the same id is never touched. Disconnecting removes the caller's hub-
 node on the hub, named by ``FLOWFILE_NODE_NAME`` or by the hub it joined (``hub_node.json``), never writes a row for
 its own node: its worker is its built-in one.
 
-Right after a sync each row it wrote is checked once, in the background, as the Handshake button checks any worker
-(``handshake.verdict_for``): a node this machine cannot reach, or one that refuses it, gets the verdict the backends
-listing already carries for every worker, with the same reason, and the same hiding of the address from a
-non-administrator. A row whose verdict passed is not checked again until the hub moves its node.
+Each row a sync wrote is checked once as the Handshake button checks any worker (``handshake.verdict_for``): a node
+this machine cannot reach, or one that refuses it, gets the verdict the backends listing already carries for every
+worker, with the same reason, and the same hiding of the address from a non-administrator. ``/compute_nodes/sync``
+checks before it answers, so its answer carries the verdicts; a connect checks after its answer is sent. A row whose
+verdict passed is not checked again until the hub moves its node.
 """
 
 import os
@@ -305,21 +306,20 @@ def _sync_nodes(db: Session, user_id: int, hub_url: str, access_token: str) -> t
 
 
 @router.post("/compute_nodes/sync", summary="Fill the backends table from the hub's compute nodes")
-def sync_compute_nodes(
-    background: BackgroundTasks, current_user=Depends(get_current_admin_user), db: Session = Depends(get_db)
-) -> ComputeNodesSync:
-    """Read the hub's compute nodes now and make the backends table match them (``_sync_nodes``).
+def sync_compute_nodes(current_user=Depends(get_current_admin_user), db: Session = Depends(get_db)) -> ComputeNodesSync:
+    """Read the hub's compute nodes now and make the backends table match them (``_sync_nodes``), then check the
+    rows written (``_check_nodes``) so the answer carries their verdicts.
 
     Explicit, never on a timer: a desktop that wants the hub's newest list asks. 400 without a hub connection,
-    502 when the hub does not answer. The rows written are checked after the answer is sent (``_check_nodes``).
+    502 when the hub does not answer.
     """
     hub_url, token = _hub(current_user)
     try:
         synced, skipped = _sync_nodes(db, current_user.id, hub_url, token)
     except (HubUnreachable, HubRefused, HubVersionRefused) as e:
         raise _hub_error(e) from e
+    _check_nodes(synced)
     rows = db.query(ConfiguredBackend).order_by(ConfiguredBackend.id).all()
-    background.add_task(_check_nodes, synced)
     return ComputeNodesSync(backends=listed_backends(rows, current_user), skipped=skipped)
 
 

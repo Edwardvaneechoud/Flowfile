@@ -10,7 +10,7 @@ answered), an optional CA certificate PEM for a worker whose TLS certificate is 
 (the worker sees core's files, so core offers it ``file``). ``local`` and ``worker`` are built in and never rows.
 Core manages no worker itself; the Backends page or a deployment's control plane fills the table, and so does a hub
 this Flowfile is connected to (``/hub_client/compute_nodes/sync``): such a row carries ``source: "hub"`` in the
-listing, holds no token of its own, is checked once after the sync that wrote it, and is removed with the hub
+listing, holds no token of its own, is checked once by the sync that wrote it, and is removed with the hub
 connection rather than here (409). The registry makes a ``WorkerBackend`` from a row on its id's first lookup.
 
 The add route checks the token is a header value itself (``worker.is_header_value``), because a model validator's

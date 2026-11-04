@@ -1,9 +1,9 @@
-"""The handshake verdict of the hub's compute nodes: each row a sync writes is checked once, behind the sync's answer.
+"""The handshake verdict of the hub's compute nodes: each row a sync writes is checked once.
 
 A fake worker on a loopback port answers its capabilities to any token and counts its requests; a second URL is a
 loopback port nothing listens on. The fake hub (``conftest``) lists both as nodes and mints the tokens the check
-signs with. The check a sync queues runs in the request's background tasks, which the test client runs before it
-answers, so the listing right after a connect or a sync carries the verdict.
+signs with. A sync checks before it answers; the check a connect queues runs in the request's background tasks,
+which the test client runs before it answers, so the listing right after either carries the verdict.
 """
 
 import threading
@@ -126,26 +126,46 @@ def test_a_connect_checks_each_node_once_and_the_listing_carries_the_verdict(api
     assert closed in gpu["error"]
 
 
+def _synced(response) -> dict[str, dict]:
+    assert response.status_code == 200, response.text
+    return {row["id"]: row for row in response.json()["backends"]}
+
+
+def test_a_syncs_answer_carries_the_verdict_of_each_node_it_wrote(api, hub, worker):
+    closed = closed_url()
+    hub.nodes = [compute_node(1, "team", worker_url=worker.url), compute_node(2, "gpu", worker_url=closed)]
+    api.post("/hub_client/connection", json=CONNECT)
+    handshake.reset_handshake()
+    registry.forget("worker:team")
+    registry.forget("worker:gpu")
+
+    synced = _synced(api.post("/hub_client/compute_nodes/sync"))
+
+    assert synced["worker:team"]["verdict"]["ok"] is True
+    assert synced["worker:gpu"]["verdict"]["error_kind"] == "ComputeUnavailable"
+    assert closed in synced["worker:gpu"]["verdict"]["error"]
+    assert worker.hits == 2
+    assert {k: row["verdict"] for k, row in _listed(api).items()} == {k: row["verdict"] for k, row in synced.items()}
+
+
 def test_a_sync_keeps_a_passing_verdict_and_checks_a_node_the_hub_moved(api, hub, worker):
     hub.nodes = [compute_node(1, "team", worker_url=worker.url)]
     api.post("/hub_client/connection", json=CONNECT)
     assert _listed(api)["worker:team"]["verdict"]["ok"] is True
 
-    response = api.post("/hub_client/compute_nodes/sync")
+    synced = _synced(api.post("/hub_client/compute_nodes/sync"))
 
-    assert response.status_code == 200, response.text
     assert worker.hits == 1
-    assert _listed(api)["worker:team"]["verdict"]["ok"] is True
+    assert synced["worker:team"]["verdict"]["ok"] is True
 
     closed = closed_url()
     hub.nodes = [compute_node(1, "team", worker_url=closed)]
-    response = api.post("/hub_client/compute_nodes/sync")
+    team = _synced(api.post("/hub_client/compute_nodes/sync"))["worker:team"]["verdict"]
 
-    assert response.status_code == 200, response.text
-    team = _listed(api)["worker:team"]["verdict"]
     assert team["ok"] is False
     assert team["error_kind"] == "ComputeUnavailable"
     assert closed in team["error"]
+    assert _listed(api)["worker:team"]["verdict"] == team
     assert worker.hits == 1
 
 

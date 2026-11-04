@@ -92,7 +92,7 @@ export async function disconnectHub(): Promise<void> {
 
 /**
  * Reads the hub's compute nodes now and makes the backends table match them; core handshakes the rows it wrote
- * behind the answer, so their verdicts show on the next load.
+ * before it answers, so the answer carries their verdicts.
  */
 export async function syncHubComputeNodes(): Promise<HubComputeNodesSync> {
   const response = await axios.post<HubComputeNodesSync>(COMPUTE_NODES_SYNC_URL);
