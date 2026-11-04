@@ -26,32 +26,12 @@
             clearable
             @change="onNamespaceChange"
           >
-            <template v-if="showsPlaces(namespaceGroups)">
-              <el-option-group
-                v-for="group in namespaceGroups"
-                :key="group.place ?? ''"
-                :label="group.place ?? ''"
-              >
-                <el-option
-                  v-for="ns in group.rows"
-                  :key="ns.id"
-                  :label="ns.label"
-                  :value="pickerRowId(ns)"
-                  :disabled="writeBlock(ns) !== null"
-                  :title="writeBlock(ns) ?? undefined"
-                >
-                  {{ ns.label }}
-                  <HubBadge v-if="ns.source === 'hub'" kind="namespace" />
-                  <span v-if="ns.readOnly" class="option-note">{{ READ_ONLY }}</span>
-                </el-option>
-              </el-option-group>
-            </template>
-            <template v-else>
+            <el-option-group v-for="(group, i) in namespaceGroups" :key="i" :label="group.label">
               <el-option
-                v-for="ns in shownNamespaceOptions"
+                v-for="ns in group.rows"
                 :key="ns.id"
                 :label="ns.label"
-                :value="pickerRowId(ns)"
+                :value="ns.id"
                 :disabled="writeBlock(ns) !== null"
                 :title="writeBlock(ns) ?? undefined"
               >
@@ -59,7 +39,7 @@
                 <HubBadge v-if="ns.source === 'hub'" kind="namespace" />
                 <span v-if="ns.readOnly" class="option-note">{{ READ_ONLY }}</span>
               </el-option>
-            </template>
+            </el-option-group>
           </el-select>
           <p v-if="selectedUnavailableReason" class="field-error">
             {{ selectedUnavailableReason }}
@@ -322,15 +302,14 @@ import { useWritableNamespaces } from "../../../../../composables/useWritableNam
 import { validateCatalogName } from "../../../../../composables/catalogNameValidation";
 import { CatalogApi } from "../../../../../api/catalog.api";
 import HubBadge from "../../../../../views/CatalogView/HubBadge.vue";
-import { isHubRow, showsPlaces, withoutHubRows } from "../../../../../views/CatalogView/hubRows";
+import { isHubRow, withoutHubRows } from "../../../../../views/CatalogView/hubRows";
 import {
   READ_ONLY,
   isHubTarget,
   namespaceChoice,
   namespaceOptions,
+  optionGroups,
   pickable,
-  pickerRowId,
-  placeGroups,
   selectedNamespaceRow,
   writeBlock,
   writerDefault,
@@ -406,11 +385,9 @@ const hubTarget = computed(
 const shownNamespaceOptions = computed(() =>
   pickable(catalogNamespaces.value, selectedNamespaceId.value),
 );
-const namespaceGroups = computed(() => placeGroups(shownNamespaceOptions.value, (ns) => ns.place));
+const namespaceGroups = computed(() => optionGroups(shownNamespaceOptions.value, (ns) => ns.place));
 const selectedUnavailableReason = computed(() => {
-  const selected = catalogNamespaces.value.find(
-    (ns) => pickerRowId(ns) === selectedNamespaceId.value,
-  );
+  const selected = catalogNamespaces.value.find((ns) => ns.id === selectedNamespaceId.value);
   return selected ? writeBlock(selected) : null;
 });
 
@@ -419,7 +396,7 @@ const selectedUnavailableReason = computed(() => {
 async function onNamespaceChange(id: number | null) {
   const settings = nodeData.value?.catalog_write_settings;
   if (!settings) return;
-  const match = catalogNamespaces.value.find((ns) => pickerRowId(ns) === id) ?? null;
+  const match = catalogNamespaces.value.find((ns) => ns.id === id) ?? null;
   Object.assign(settings, namespaceChoice(match));
   if (match?.source === "hub") await leaveLocalOnlyModes();
 }
@@ -448,7 +425,7 @@ function reconcileNamespaceSelection() {
   preselectDefault();
   const match = selectedNamespaceRow(settings, allCatalogNamespaces.value);
   if (match?.source === "local" && settings.namespace_id == null) settings.namespace_id = match.id;
-  selectedNamespaceId.value = match ? pickerRowId(match) : settings.namespace_id;
+  selectedNamespaceId.value = match ? match.id : settings.namespace_id;
 }
 
 // A new writer with no target takes the writer's default: the hub's default schema where only a hub's are offered.

@@ -2,16 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import type { CatalogTable, NamespaceTree } from "../../../../types/catalog.types";
 import type { CatalogWriteSettings, NodeCatalogReader } from "../../../../types/node.types";
-import { showsPlaces } from "../../../../views/CatalogView/hubRows";
 import {
   READ_ONLY,
   hubDefaultSchema,
   isHubTarget,
   namespaceChoice,
   namespaceOptions,
+  optionGroups,
   pickable,
-  pickerRowId,
-  placeGroups,
   readerNamespaceChoice,
   selectedNamespaceRow,
   selectedTableRow,
@@ -223,7 +221,6 @@ describe("restoring a saved choice", () => {
     const saved = reader(tableChoice(hubSales));
     expect(selectedNamespaceRow(saved, options)?.id).toBe(-20);
     expect(selectedTableRow(saved, tables)).toBe(hubSales);
-    expect(pickerRowId(selectedTableRow(saved, tables)!)).toBe(-30);
   });
 
   it("finds a saved local reader by its local ids", () => {
@@ -323,19 +320,25 @@ describe("pickers by place and reach", () => {
 
   it("heads the options with the place each lives in where both places show", () => {
     const options = namespaceOptions(desktop);
-    const groups = placeGroups(pickable(options, null), (o) => o.place);
-    expect(groups.map((g) => [g.place, g.rows.map((o) => o.label)])).toEqual([
+    const groups = optionGroups(pickable(options, null), (o) => o.place);
+    expect(groups.map((g) => [g.label, g.rows.map((o) => o.label)])).toEqual([
       ["On this computer", ["General / default"]],
       ["Acme Data", ["main / default"]],
     ]);
-    expect(showsPlaces(groups)).toBe(true);
   });
 
-  it("offers a joined server's people the hub's catalogs only, with no headings", () => {
+  it("offers a joined server's people the hub's catalogs only, as one group with no heading", () => {
     const options = namespaceOptions(joined);
     expect(options.map((o) => o.label)).toEqual(["main / default", "scratch / notes"]);
-    const groups = placeGroups(pickable(options, null), (o) => o.place);
-    expect(showsPlaces(groups)).toBe(false);
+    const groups = optionGroups(pickable(options, null), (o) => o.place);
+    expect(groups.map((g) => [g.label, g.rows.map((o) => o.label)])).toEqual([
+      ["", ["main / default"]],
+    ]);
+  });
+
+  it("lists rows core names no place for as one group with no heading", () => {
+    const groups = optionGroups([localOrders, hubSales], () => null);
+    expect(groups).toEqual([{ label: "", rows: [localOrders, hubSales] }]);
   });
 
   it("keeps a schema this machine cannot use out of the list unless the node points at it", () => {

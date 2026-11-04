@@ -56,7 +56,7 @@ describe("LoginView", () => {
     await mount();
 
     const button = find("login-hub") as HTMLAnchorElement | null;
-    expect(text(button)).toBe("Sign in with hub.example.com");
+    expect(text(button)).toBe("Sign in with hub.example.com:8443");
     expect(button?.getAttribute("href")).toBe("https://hub.example.com:8443/open/12");
     expect(host.querySelector("form, input")).toBeNull();
     expect(find("login-error")).toBeNull();
@@ -73,7 +73,7 @@ describe("LoginView", () => {
   });
 
   it("shows the password form at once, before the server answers how it signs people in", async () => {
-    mocks.getSignInMethod.mockReturnValue(new Promise(() => {}));
+    mocks.getSignInMethod.mockReturnValue(new Promise(() => undefined));
 
     await mount();
 

@@ -7,8 +7,8 @@ import {
   byPlace,
   isHubRow,
   isOffered,
+  showsPlaces,
   unavailableReason,
-  type PlaceGroup,
 } from "../../../../views/CatalogView/hubRows";
 
 /** The schema a hub's organisation writes to by default. */
@@ -116,10 +116,22 @@ export function writeBlock(option: NamespaceOption): string | null {
   return option.unavailableReason ?? (option.readOnly ? READ_ONLY : null);
 }
 
-/** A picker's rows under the place each lives in, in the order given. */
-export function placeGroups<T>(rows: T[], placeOf: (row: T) => string | null): PlaceGroup<T>[] {
-  return byPlace(rows.map((row) => ({ row, place: placeOf(row) }))).map((group) => ({
-    place: group.place,
+/** One group of a picker's select: the rows of one place under its heading, blank where places are not shown. */
+export interface OptionGroup<T> {
+  label: string;
+  rows: T[];
+}
+
+/**
+ * A picker's rows under the place each lives in, in the order given, as the select's option groups. The headings
+ * say something only where catalogs of more than one place are listed side by side; otherwise they are blank, and
+ * the select shows the one group as a plain list.
+ */
+export function optionGroups<T>(rows: T[], placeOf: (row: T) => string | null): OptionGroup<T>[] {
+  const groups = byPlace(rows.map((row) => ({ row, place: placeOf(row) })));
+  const headed = showsPlaces(groups);
+  return groups.map((group) => ({
+    label: headed ? (group.place ?? "") : "",
     rows: group.rows.map((entry) => entry.row),
   }));
 }
@@ -250,6 +262,3 @@ export function selectedTableRow(
 export function isHubTarget(settings: ReaderTarget | WriterTarget): boolean {
   return isWriter(settings) ? settings.hub_namespace_id != null : settings.hub_table_id != null;
 }
-
-/** The value a picker's select binds for a row; negative for a hub row, never written to the settings. */
-export const pickerRowId = (row: { id: number }): number => row.id;

@@ -31,38 +31,19 @@
               clearable
               @change="handleNamespaceChange"
             >
-              <template v-if="showsPlaces(namespaceGroups)">
-                <el-option-group
-                  v-for="group in namespaceGroups"
-                  :key="group.place ?? ''"
-                  :label="group.place ?? ''"
-                >
-                  <el-option
-                    v-for="ns in group.rows"
-                    :key="ns.id"
-                    :label="ns.label"
-                    :value="pickerRowId(ns)"
-                    :disabled="ns.unavailableReason !== null"
-                    :title="ns.unavailableReason ?? undefined"
-                  >
-                    {{ ns.label }}
-                    <HubBadge v-if="ns.source === 'hub'" kind="namespace" />
-                  </el-option>
-                </el-option-group>
-              </template>
-              <template v-else>
+              <el-option-group v-for="(group, i) in namespaceGroups" :key="i" :label="group.label">
                 <el-option
-                  v-for="ns in shownNamespaceOptions"
+                  v-for="ns in group.rows"
                   :key="ns.id"
                   :label="ns.label"
-                  :value="pickerRowId(ns)"
+                  :value="ns.id"
                   :disabled="ns.unavailableReason !== null"
                   :title="ns.unavailableReason ?? undefined"
                 >
                   {{ ns.label }}
                   <HubBadge v-if="ns.source === 'hub'" kind="namespace" />
                 </el-option>
-              </template>
+              </el-option-group>
             </el-select>
             <p v-if="selectedUnavailableReason" class="unavailable-reason">
               {{ selectedUnavailableReason }}
@@ -78,37 +59,12 @@
               filterable
               @change="handleTableChange"
             >
-              <template v-if="showsPlaces(tableGroups)">
-                <el-option-group
-                  v-for="group in tableGroups"
-                  :key="group.place ?? ''"
-                  :label="group.place ?? ''"
-                >
-                  <el-option
-                    v-for="table in group.rows"
-                    :key="table.id"
-                    :label="tableOptionLabel(table)"
-                    :value="pickerRowId(table)"
-                    :disabled="unusableNamespaces.has(table.namespace_id ?? 0)"
-                  >
-                    <i
-                      :class="
-                        table.table_type === 'virtual'
-                          ? 'fa-solid fa-bolt catalog-option-icon virtual-option-icon'
-                          : 'fa-solid fa-table catalog-option-icon'
-                      "
-                    ></i>
-                    {{ tableOptionLabel(table) }}
-                    <HubBadge v-if="isHubRow(table)" kind="table" />
-                  </el-option>
-                </el-option-group>
-              </template>
-              <template v-else>
+              <el-option-group v-for="(group, i) in tableGroups" :key="i" :label="group.label">
                 <el-option
-                  v-for="table in filteredTables"
+                  v-for="table in group.rows"
                   :key="table.id"
                   :label="tableOptionLabel(table)"
-                  :value="pickerRowId(table)"
+                  :value="table.id"
                   :disabled="unusableNamespaces.has(table.namespace_id ?? 0)"
                 >
                   <i
@@ -121,7 +77,7 @@
                   {{ tableOptionLabel(table) }}
                   <HubBadge v-if="isHubRow(table)" kind="table" />
                 </el-option>
-              </template>
+              </el-option-group>
             </el-select>
           </div>
 
@@ -284,18 +240,12 @@ import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { useResourceSharing } from "../../../../../composables/useResourceSharing";
 import { CatalogApi } from "../../../../../api/catalog.api";
 import HubBadge from "../../../../../views/CatalogView/HubBadge.vue";
-import {
-  isHubRow,
-  isOffered,
-  showsPlaces,
-  withoutHubRows,
-} from "../../../../../views/CatalogView/hubRows";
+import { isHubRow, isOffered, withoutHubRows } from "../../../../../views/CatalogView/hubRows";
 import {
   isHubTarget,
   namespaceOptions,
+  optionGroups,
   pickable,
-  pickerRowId,
-  placeGroups,
   readerNamespaceChoice,
   selectedNamespaceRow,
   selectedTableRow,
@@ -398,24 +348,22 @@ const unusableNamespaces = ref<Set<number>>(new Set());
 const shownNamespaceOptions = computed(() =>
   pickable(catalogNamespaces.value, selectedNamespaceId.value),
 );
-const namespaceGroups = computed(() => placeGroups(shownNamespaceOptions.value, (ns) => ns.place));
+const namespaceGroups = computed(() => optionGroups(shownNamespaceOptions.value, (ns) => ns.place));
 const selectedUnavailableReason = computed(
   () =>
-    catalogNamespaces.value.find((ns) => pickerRowId(ns) === selectedNamespaceId.value)
-      ?.unavailableReason ?? null,
+    catalogNamespaces.value.find((ns) => ns.id === selectedNamespaceId.value)?.unavailableReason ??
+    null,
 );
 
 const filteredTables = computed(() => {
   const usable = allTables.value.filter(
-    (t) =>
-      !unusableNamespaces.value.has(t.namespace_id ?? 0) ||
-      pickerRowId(t) === selectedTableId.value,
+    (t) => !unusableNamespaces.value.has(t.namespace_id ?? 0) || t.id === selectedTableId.value,
   );
   if (selectedNamespaceId.value == null) return usable;
   return usable.filter((t) => t.namespace_id === selectedNamespaceId.value);
 });
 const tableGroups = computed(() =>
-  placeGroups(filteredTables.value, (t) => tablePlace(t, catalogNamespaces.value)),
+  optionGroups(filteredTables.value, (t) => tablePlace(t, catalogNamespaces.value)),
 );
 
 // Whether the candidate list has any name collisions — used to force qualified
@@ -675,7 +623,7 @@ function formatNumber(n: number | null): string {
 function handleNamespaceChange(id: number | null) {
   selectedTableId.value = null;
   if (nodeData.value) {
-    const option = catalogNamespaces.value.find((ns) => pickerRowId(ns) === id) ?? null;
+    const option = catalogNamespaces.value.find((ns) => ns.id === id) ?? null;
     Object.assign(nodeData.value, readerNamespaceChoice(option), tableChoice(null));
     nodeData.value.delta_version = null;
     nodeData.value.scd2_view = null;
@@ -693,7 +641,7 @@ async function handleTableChange(tableId: number | null) {
   // Cursors are per table, so a retarget always starts over.
   resetCdcSettings();
 
-  const table = allTables.value.find((t) => pickerRowId(t) === tableId);
+  const table = allTables.value.find((t) => t.id === tableId);
   if (table) {
     Object.assign(nodeData.value, tableChoice(table));
     selectedNamespaceId.value = table.namespace_id;
@@ -818,11 +766,9 @@ async function loadNodeData(nodeId: number) {
   if (!nodeData.value) return;
   // A row the tree no longer lists keeps the saved local id in view, as before.
   const namespaceRow = selectedNamespaceRow(nodeData.value, catalogNamespaces.value);
-  selectedNamespaceId.value = namespaceRow
-    ? pickerRowId(namespaceRow)
-    : nodeData.value.catalog_namespace_id;
+  selectedNamespaceId.value = namespaceRow ? namespaceRow.id : nodeData.value.catalog_namespace_id;
   const table = selectedTableRow(nodeData.value, allTables.value);
-  selectedTableId.value = table ? pickerRowId(table) : nodeData.value.catalog_table_id;
+  selectedTableId.value = table ? table.id : nodeData.value.catalog_table_id;
 
   if (mode.value === "table" && table) {
     selectedTableMeta.value = table;

@@ -20,7 +20,7 @@
         class="btn btn-primary login-button"
         data-testid="login-hub"
       >
-        Sign in with {{ hubHost }}
+        Sign in with {{ hubAddress(signInMethod.hub_url) }}
       </a>
 
       <form v-else class="login-form" @submit.prevent="handleLogin">
@@ -84,10 +84,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "../../stores/auth-store";
 import authService, { type SignInMethod } from "../../services/auth.service";
+import { hubAddress } from "../../components/layout/Header/hubIdentity";
 
 const router = useRouter();
 const authStore = useAuthStore();
@@ -99,15 +100,6 @@ const isLoading = ref(false);
 const error = ref(authService.takeHubSignInError() ?? "");
 // The password form until the server says it signs people in through a hub.
 const signInMethod = ref<SignInMethod>({ method: "password" });
-
-const hubHost = computed(() => {
-  if (signInMethod.value.method !== "hub") return "";
-  try {
-    return new URL(signInMethod.value.hub_url).hostname;
-  } catch {
-    return signInMethod.value.hub_url;
-  }
-});
 
 onMounted(async () => {
   signInMethod.value = await authService.getSignInMethod();
