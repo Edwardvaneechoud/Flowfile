@@ -10,9 +10,7 @@ import os
 DEFAULT_SERVER_HOST = "0.0.0.0"
 
 
-def parse_args():
-    """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description="Flowfile Backend Server")
+def _server_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--host", type=str, default=DEFAULT_SERVER_HOST, help="Host to bind to")
     parser.add_argument(
         "--port",
@@ -26,6 +24,9 @@ def parse_args():
         help="Port for the worker process (63579 when not given; a core joining a hub gives its worker a free port "
         "when that one is in use)",
     )
+
+
+def _join_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--join",
         type=str,
@@ -41,7 +42,29 @@ def parse_args():
     )
     parser.add_argument("--url", type=str, default=None, help="This core's address as a browser and the hub reach it")
     parser.add_argument("--worker-url", type=str, default=None, help="The worker's address as desktops reach it")
+
+
+def parse_args():
+    """Parse command line arguments.
+
+    Every process reads ``--host``, ``--port`` and ``--worker-port``, abbreviated or not, as it always has. Only one
+    that serves core (``flowfile_core._starts_core``) reads the join flags, by their full names only, and refuses
+    ``--join`` without ``--hub``: a program that imports Flowfile keeps its own command line, ``--join`` or ``--worker``
+    included.
+    """
+    import flowfile_core
+
+    serves = flowfile_core._starts_core()
+    parser = argparse.ArgumentParser(description="Flowfile Backend Server", add_help=not serves)
+    _server_flags(parser)
+    joining = argparse.Namespace(join=None, hub=None, name=None, url=None, worker_url=None)
+    if serves:
+        full = argparse.ArgumentParser(description="Flowfile Backend Server", parents=[parser], allow_abbrev=False)
+        _join_flags(full)
+        joining = full.parse_known_args()[0]
     args = parser.parse_known_args()[0]
+    for field in ("join", "hub", "name", "url", "worker_url"):
+        setattr(args, field, getattr(joining, field))
 
     if args.join and not args.hub:
         raise ValueError("--join needs --hub, the address of the hub to join")

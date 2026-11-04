@@ -18,8 +18,16 @@ TEST_MODE = True if "TEST_MODE" in os.environ else False
 
 
 def parse_args():
-    """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description="Flowfile Worker Server")
+    """Parse command line arguments.
+
+    Every main process reads the worker's own flags, abbreviated or not, as it always has. Only the worker itself
+    (``flowfile_worker._launched_as_worker``) reads the join flags, by their full names only, and refuses ``--join``
+    without ``--hub``: a program that imports Flowfile keeps its own command line, ``--join`` included.
+    """
+    import flowfile_worker
+
+    launched = flowfile_worker._launched_as_worker()
+    parser = argparse.ArgumentParser(description="Flowfile Worker Server", add_help=not launched)
     parser.add_argument(
         "--host",
         type=str,
@@ -46,23 +54,29 @@ def parse_args():
         default=DEFAULT_CORE_PORT,
         help="Port of the core service",
     )
-    parser.add_argument(
-        "--join",
-        type=str,
-        default=os.environ.get("FLOWFILE_HUB_JOIN_TOKEN") or None,
-        help="A join token from the hub's Compute page; the worker joins that hub before it serves",
-    )
-    parser.add_argument("--hub", type=str, default=os.environ.get("FLOWFILE_HUB_URL") or None, help="The hub to join")
-    parser.add_argument(
-        "--name",
-        type=str,
-        default=os.environ.get("FLOWFILE_NODE_NAME") or None,
-        help="This worker's name on the hub; the machine's name when not given",
-    )
-    parser.add_argument("--url", type=str, default=None, help="This worker's address as desktops reach it")
+    joining = argparse.Namespace(join=None, hub=None, name=None, url=None)
+    if launched:
+        full = argparse.ArgumentParser(description="Flowfile Worker Server", parents=[parser], allow_abbrev=False)
+        full.add_argument(
+            "--join",
+            type=str,
+            default=os.environ.get("FLOWFILE_HUB_JOIN_TOKEN") or None,
+            help="A join token from the hub's Compute page; the worker joins that hub before it serves",
+        )
+        full.add_argument("--hub", type=str, default=os.environ.get("FLOWFILE_HUB_URL") or None, help="The hub to join")
+        full.add_argument(
+            "--name",
+            type=str,
+            default=os.environ.get("FLOWFILE_NODE_NAME") or None,
+            help="This worker's name on the hub; the machine's name when not given",
+        )
+        full.add_argument("--url", type=str, default=None, help="This worker's address as desktops reach it")
+        joining = full.parse_known_args()[0]
 
     # Use known_args to handle PyInstaller's extra args
     args = parser.parse_known_args()[0]
+    for field in ("join", "hub", "name", "url"):
+        setattr(args, field, getattr(joining, field))
 
     # A worker joins a hub to be reached by it and by desktops, so a join token binds every interface by default.
     if args.host is None:

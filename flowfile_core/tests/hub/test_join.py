@@ -76,6 +76,7 @@ def joined_as(node_file, name: str, hub_url: str = HUB_URL) -> None:
 def parse(monkeypatch, *flags) -> tuple:
     """``--join``, ``--hub``, ``--name``, ``--url`` and ``--worker-url`` as core reads them from ``flags``."""
     monkeypatch.setattr(sys, "argv", ["flowfile_core", *flags])
+    monkeypatch.setattr(flowfile_core, "_starts_core", lambda: True)
     args = settings.parse_args()
     return args.join, args.hub, args.name, args.url, args.worker_url
 
@@ -101,6 +102,22 @@ def test_the_join_flags_are_read(monkeypatch, no_variables):
     flags = ("--join", "t", "--hub", "http://h", "--name", "n", "--url", "http://c:1", "--worker-url", "http://w:2")
 
     assert parse(monkeypatch, *flags) == ("t", "http://h", "n", "http://c:1", "http://w:2")
+
+
+def test_a_program_importing_flowfile_keeps_its_own_join_and_worker_flags(monkeypatch, no_variables):
+    monkeypatch.setattr(sys, "argv", ["etl.py", "--join", "x", "--worker", "5"])
+    monkeypatch.setattr(flowfile_core, "_starts_core", lambda: False)
+
+    args = settings.parse_args()
+
+    assert (args.join, args.hub, args.worker_port) == (None, None, 5)
+
+
+def test_core_reads_the_join_flags_by_their_full_names_only(monkeypatch, no_variables):
+    assert parse(monkeypatch, "--joi", "t", "--hu", "http://h")[:2] == (None, None)
+    assert settings.parse_args().worker_port is None
+    assert parse(monkeypatch, "--worker", "5", "--worker-url", "http://w:2")[4] == "http://w:2"
+    assert settings.parse_args().worker_port == 5
 
 
 def test_join_without_a_hub_is_refused_naming_the_flag(monkeypatch, no_variables):
@@ -281,8 +298,7 @@ def test_a_core_given_the_token_as_a_variable_starts_no_run_that_reads_it_withou
     monkeypatch.setenv("FLOWFILE_HUB_JOIN_TOKEN", token)
     started_with(monkeypatch, join_hub.url, token)
     monkeypatch.setattr(sys, "argv", ["flowfile", "run", "flow", "f.yaml", "--run-id", "1"])
-    with pytest.raises(ValueError, match="--join needs --hub"):
-        settings.parse_args()
+    assert settings.parse_args().join is None
 
     main._join_hub()
 
