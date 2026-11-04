@@ -60,6 +60,12 @@ The worker reaches the catalog database and every database, Kafka broker, REST e
 - **One master key.** The worker decrypts a stored connection's secrets when the node runs. With another key, a cloud read fails with *Core and the worker must share the same master key.*
 - **The host's own identity.** `aws-cli`, `iam_role`, `env_vars` and `managed_identity` connections store no credentials and authenticate as the host that runs the node. On a remote worker that is the worker host's AWS profile or role, environment or managed identity, not core's.
 
+### A server joined to a hub with keys of its own
+
+A server that joined its hub with `--hub <hub> --join <token>` has its own master key and catalog database, so it shares neither with the core that sends it work. What the hub vends for a run (a hub table's storage, the organisation's exchange store) reaches it sealed instead: core asks the hub's vend with `targets`, the hub servers the run's steps use, and the hub answers each credential with no options and one token per server, sealed to that server's own key from its join and signed with the hub's key. Core hands the whole map on unopened, and the server that runs the step opens its own token and checks it against the hub's published keys, its audience (`node:<name>`), its issuer and its expiry. Such a server declares `credential_resolution: vended`; a backend that does not is refused before the run with `the hub seals that credential to the server that runs it, and this backend cannot open one`. A run that sends a step to a backend that is none of the hub's servers is refused with `backend "<id>" is not one of the hub's servers`.
+
+Only what the hub vends travels this way. A database, Kafka or REST connection stored on the core still carries its secret as ciphertext under core's master key, which such a server cannot decrypt.
+
 ## Storage a remote worker can use
 
 | Storage | Reads | Writes |
@@ -159,6 +165,8 @@ A store core cannot use (a URI without a connection, a scheme other than `s3`, o
     A core that stops in the middle of a run leaves that run's prefix in the bucket, and so does a removal that fails, which is a warning in the flow log. Expire objects under the URI's prefix after longer than the longest run takes, a day for example.
 
 Core and every worker open the store at its connection's endpoint, so that endpoint must lead to the store from each of them; see [The worker's environment](#the-workers-environment).
+
+On a server joined to its hub with keys of its own the store is the one the hub sets, shown on the card as **Set by your hub** and read-only: each run that crosses has the hub vend the store's prefix sealed to every server it uses ([above](#a-server-joined-to-a-hub-with-keys-of-its-own)), so no connection is stored on the server. When the hub sets no store, a node set to another backend is refused before the run, as without one.
 
 ## A Polars cluster as a backend
 
