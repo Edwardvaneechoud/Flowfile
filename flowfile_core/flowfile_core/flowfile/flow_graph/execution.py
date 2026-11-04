@@ -16,6 +16,7 @@ import polars as pl
 from polars.exceptions import PanicException
 from polars_expr_transformer import simple_function_to_expr as to_expr
 
+from flowfile_core.auth import issuer_accounts
 from flowfile_core.configs import exchange_config, logger, settings
 from flowfile_core.configs.exchange_config import ExchangeConfig
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
@@ -38,6 +39,7 @@ from flowfile_core.flowfile.execution.placement import (
     hub_table_namespace,
     place,
     remedy_for,
+    unmoved_without_store,
 )
 from flowfile_core.flowfile.execution.protocol import CredentialRef, ResultRef
 from flowfile_core.flowfile.flow_data_engine.bounded import DEFERRED_HINTS, head_rows
@@ -1079,7 +1081,9 @@ class ExecutionMixin(GraphMixinBase):
         """Place the nodes ``execution_plan`` runs and resolve its crossings; ``(None, [])`` with the protocol flag off.
 
         With an exchange store (``FLOWFILE_EXCHANGE_URI``) the policy is ``MixedPlacementPolicy``, falling back to
-        ``registry.fallback_backend_id``; without one it is ``SingleBackendPolicy`` on the run's backend. Each backend
+        ``registry.fallback_backend_id``; without one it is ``SingleBackendPolicy`` on the run's backend, and on a server
+        joined to its hub with keys of its own a node whose own Compute backend names another backend is refused
+        (``unmoved_without_store``) rather than run on the run's backend. Each backend
         named is read through its handshake verdict (``handshake.verdict_for``), except ``local`` in a process that
         serves, which runs no node and is never asked. A backend refused whole, a ``VersionMismatch`` or an id the
         registry does not know refuses every node assigned to it. Any other ``ComputeError`` keeps the backend's nodes
@@ -1193,6 +1197,11 @@ class ExecutionMixin(GraphMixinBase):
                     for refusal in placement.refusals
                 ],
             )
+        if isinstance(policy, SingleBackendPolicy) and issuer_accounts.joined_with_keys() is not None:
+            refused_ids = {refusal.node_id for refusal in placement.refusals}
+            unmoved = [r for r in unmoved_without_store(nodes, policy) if r.node_id not in refused_ids]
+            if unmoved:
+                placement = replace(placement, refusals=[*placement.refusals, *unmoved])
         return placement, edges
 
     def preview_placement(self) -> Placement | None:

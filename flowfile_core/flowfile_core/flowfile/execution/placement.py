@@ -165,6 +165,27 @@ _FLOW_SETTING = "the flow's Execution location under Flow Settings"
 _NODE_SETTING = "its Compute backend under General Settings"
 
 
+def unmoved_without_store(nodes: list[FlowNode], policy: SingleBackendPolicy) -> list[Refusal]:
+    """The nodes whose own Compute backend names one other than the run's, refused since no store carries their data.
+
+    Without an exchange store a node's own setting is not read and the node runs on the run's backend. On a server
+    joined to its hub with keys of its own that would put a node on another server than the one it was set to, so
+    the caller refuses it before the run instead, with one sentence that says what to change (``remedy`` ``None``).
+    A node type pinned to a backend is never refused here.
+    """
+    refusals = []
+    for node in nodes:
+        location = getattr(node.setting_input, "execution_location", "auto")
+        if node.node_type in _PINNED_BACKENDS or location in ("auto", policy.backend_id):
+            continue
+        reason = (
+            "no exchange store can carry its data between backends on this server, so set "
+            f'{_FLOW_SETTING} to "{location}" to run the whole flow there, or {_NODE_SETTING} to Auto'
+        )
+        refusals.append(Refusal(node.node_id, location, reason))
+    return refusals
+
+
 def remedy_for(node: FlowNode, policy: PlacementPolicy, *, fallback_id: str | None = None) -> str | None:
     """The settings that move ``node`` to another backend under ``policy``, named as the designer shows them.
 
