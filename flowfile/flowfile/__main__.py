@@ -446,7 +446,7 @@ def main():
         type=int,
         default=None,
         help="Port to bind the server to (63578 when not given; for run ui and run core, a server joining a hub "
-        "moves to a free port when that one is in use)",
+        "exits when that port is in use)",
     )
     parser.add_argument("--no-browser", action="store_true", help="Don't open a browser window")
     parser.add_argument(

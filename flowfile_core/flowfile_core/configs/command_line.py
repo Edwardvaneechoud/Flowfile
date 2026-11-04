@@ -15,14 +15,12 @@ def _server_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--port",
         type=int,
-        help="Port to bind to (63578 when not given; a core joining a hub moves to a free port when that one is "
-        "in use)",
+        help="Port to bind to (63578 when not given; a core joining a hub exits when that port is in use)",
     )
     parser.add_argument(
         "--worker-port",
         type=int,
-        help="Port for the worker process (63579 when not given; a core joining a hub gives its worker a free port "
-        "when that one is in use)",
+        help="Port for the worker process (63579 when not given)",
     )
 
 

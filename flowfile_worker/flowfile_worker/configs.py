@@ -39,8 +39,8 @@ def parse_args():
         "--port",
         type=int,
         default=None,
-        help=f"Port to bind worker to ({DEFAULT_SERVICE_PORT} when not given; a worker joining a hub moves to a free "
-        "port when that one is in use)",
+        help=f"Port to bind worker to ({DEFAULT_SERVICE_PORT} when not given; a worker joining a hub exits when that "
+        "port is in use)",
     )
     parser.add_argument(
         "--core-host",
