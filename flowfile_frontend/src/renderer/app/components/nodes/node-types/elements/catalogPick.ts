@@ -14,6 +14,9 @@ import {
 /** The schema a hub's organisation writes to by default. */
 export const HUB_DEFAULT_SCHEMA = "main.default";
 
+/** Why the writer offers a schema the person may only read, greyed. */
+export const READ_ONLY = "You can read this but not write to it";
+
 /** One schema in a picker. ``id`` is the tree's id (negative for a hub schema), ``hubId`` the hub's own. */
 export interface NamespaceOption {
   id: number;
@@ -25,12 +28,20 @@ export interface NamespaceOption {
   place: string | null;
   /** Why this Flowfile cannot use the schema's tables, as core words it; null when it can. */
   unavailableReason: string | null;
-  /** Whether the access the listing answers lets this person write here: none (unrestricted), owner or manage. */
+  /**
+   * Whether the access the listing answers lets this person write here: owner or manage, or for a local schema no
+   * access at all (unrestricted). A hub schema the hub stamped nothing on is not counted: the hub decides at run.
+   */
   writable: boolean;
+  /** Whether the listing says this person may read here and not write: a ``use`` grant. */
+  readOnly: boolean;
 }
 
-const writableBy = (access: AccessInfo | null | undefined): boolean =>
-  !access || access.is_owner || access.access_level === "manage";
+const writableBy = (access: AccessInfo | null | undefined, hub: boolean): boolean =>
+  access ? access.is_owner || access.access_level === "manage" : !hub;
+
+const readOnlyBy = (access: AccessInfo | null | undefined): boolean =>
+  !!access && !access.is_owner && access.access_level === "use";
 
 export type ReaderTarget = Pick<
   NodeCatalogReader,
@@ -87,7 +98,8 @@ export function namespaceOptions(
         hubId: hub ? (schema.hub_id ?? null) : null,
         place: catalog.place ?? null,
         unavailableReason: unavailableReason(schema) ?? unavailableReason(catalog),
-        writable: writableBy(schema.access ?? catalog.access),
+        writable: writableBy(schema.access ?? catalog.access, hub),
+        readOnly: readOnlyBy(schema.access ?? catalog.access),
       });
     }
   }
@@ -97,6 +109,11 @@ export function namespaceOptions(
 /** What a picker shows: the schemas this machine can use, and the one a saved node already points at. */
 export function pickable(options: NamespaceOption[], selectedId: number | null): NamespaceOption[] {
   return options.filter((o) => o.unavailableReason === null || o.id === selectedId);
+}
+
+/** Why the writer cannot write into a schema it lists, greyed: out of this machine's reach, or read only; else null. */
+export function writeBlock(option: NamespaceOption): string | null {
+  return option.unavailableReason ?? (option.readOnly ? READ_ONLY : null);
 }
 
 /** A picker's rows under the place each lives in, in the order given. */

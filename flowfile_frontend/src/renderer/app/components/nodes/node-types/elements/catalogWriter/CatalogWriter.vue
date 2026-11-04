@@ -37,11 +37,12 @@
                   :key="ns.id"
                   :label="ns.label"
                   :value="pickerRowId(ns)"
-                  :disabled="ns.unavailableReason !== null"
-                  :title="ns.unavailableReason ?? undefined"
+                  :disabled="writeBlock(ns) !== null"
+                  :title="writeBlock(ns) ?? undefined"
                 >
                   {{ ns.label }}
                   <HubBadge v-if="ns.source === 'hub'" kind="namespace" />
+                  <span v-if="ns.readOnly" class="option-note">{{ READ_ONLY }}</span>
                 </el-option>
               </el-option-group>
             </template>
@@ -51,11 +52,12 @@
                 :key="ns.id"
                 :label="ns.label"
                 :value="pickerRowId(ns)"
-                :disabled="ns.unavailableReason !== null"
-                :title="ns.unavailableReason ?? undefined"
+                :disabled="writeBlock(ns) !== null"
+                :title="writeBlock(ns) ?? undefined"
               >
                 {{ ns.label }}
                 <HubBadge v-if="ns.source === 'hub'" kind="namespace" />
+                <span v-if="ns.readOnly" class="option-note">{{ READ_ONLY }}</span>
               </el-option>
             </template>
           </el-select>
@@ -322,6 +324,7 @@ import { CatalogApi } from "../../../../../api/catalog.api";
 import HubBadge from "../../../../../views/CatalogView/HubBadge.vue";
 import { isHubRow, showsPlaces, withoutHubRows } from "../../../../../views/CatalogView/hubRows";
 import {
+  READ_ONLY,
   isHubTarget,
   namespaceChoice,
   namespaceOptions,
@@ -329,6 +332,7 @@ import {
   pickerRowId,
   placeGroups,
   selectedNamespaceRow,
+  writeBlock,
   writerDefault,
   type NamespaceOption,
 } from "../catalogPick";
@@ -397,16 +401,18 @@ const hubTarget = computed(
   () => !!nodeData.value && isHubTarget(nodeData.value.catalog_write_settings),
 );
 
-// A schema this machine cannot use stays out of the list unless the node already points at it.
+// A schema this machine cannot use stays out of the list unless the node already points at it; one the
+// person may only read is listed greyed.
 const shownNamespaceOptions = computed(() =>
   pickable(catalogNamespaces.value, selectedNamespaceId.value),
 );
 const namespaceGroups = computed(() => placeGroups(shownNamespaceOptions.value, (ns) => ns.place));
-const selectedUnavailableReason = computed(
-  () =>
-    catalogNamespaces.value.find((ns) => pickerRowId(ns) === selectedNamespaceId.value)
-      ?.unavailableReason ?? null,
-);
+const selectedUnavailableReason = computed(() => {
+  const selected = catalogNamespaces.value.find(
+    (ns) => pickerRowId(ns) === selectedNamespaceId.value,
+  );
+  return selected ? writeBlock(selected) : null;
+});
 
 // Keep the portable name in sync with the numeric selection. ``namespace_full_name`` ("catalog.schema")
 // is what survives recreation on another machine; the id is install-local. A hub schema is its hub id only.
@@ -908,6 +914,11 @@ defineExpose({
   margin: 0;
   font-size: 11px;
   color: var(--el-color-danger);
+}
+
+.option-note {
+  margin-left: 8px;
+  font-size: 11px;
 }
 
 .writer-tabs {

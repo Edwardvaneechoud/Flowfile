@@ -4,6 +4,7 @@ import type { CatalogTable, NamespaceTree } from "../../../../types/catalog.type
 import type { CatalogWriteSettings, NodeCatalogReader } from "../../../../types/node.types";
 import { showsPlaces } from "../../../../views/CatalogView/hubRows";
 import {
+  READ_ONLY,
   hubDefaultSchema,
   isHubTarget,
   namespaceChoice,
@@ -17,6 +18,7 @@ import {
   tableChoice,
   tablePlace,
   unusableNamespaceIds,
+  writeBlock,
   writerDefault,
 } from "./catalogPick";
 
@@ -86,7 +88,7 @@ const writer = (fields: Partial<CatalogWriteSettings> = {}): CatalogWriteSetting
 
 describe("namespace options", () => {
   it("lists the local schemas first, then the hub's, marked by source", () => {
-    const unplaced = { place: null, unavailableReason: null, writable: true };
+    const unplaced = { place: null, unavailableReason: null, readOnly: false };
     expect(namespaceOptions(tree)).toEqual([
       {
         id: 2,
@@ -95,6 +97,7 @@ describe("namespace options", () => {
         source: "local",
         hubId: null,
         ...unplaced,
+        writable: true,
       },
       {
         id: -20,
@@ -103,6 +106,7 @@ describe("namespace options", () => {
         source: "hub",
         hubId: 20,
         ...unplaced,
+        writable: false,
       },
       {
         id: -21,
@@ -111,6 +115,7 @@ describe("namespace options", () => {
         source: "hub",
         hubId: 21,
         ...unplaced,
+        writable: false,
       },
     ]);
   });
@@ -275,6 +280,8 @@ describe("pickers by place and reach", () => {
     "The hub keeps the tables of scratch.notes on its own disk; this Flowfile cannot read them. " +
     "Pick a catalog on the organisation's storage, or ask the hub's admin to put this one there.";
   const USE = { is_owner: false, access_level: "use" as const, shared_by: "bob" };
+  const MANAGE = { is_owner: false, access_level: "manage" as const, shared_by: "bob" };
+  const OWNER = { is_owner: true, access_level: "owner" as const, shared_by: null };
   const hubCatalog = (id: number, name: string, schemas: Partial<NamespaceTree>[], fields = {}) =>
     ns({
       id: -id,
@@ -295,7 +302,13 @@ describe("pickers by place and reach", () => {
       children: [ns({ id: 2, name: "default", parent_id: 1, place: "On this computer" })],
     }),
     hubCatalog(10, "main", [
-      { id: -11, name: "default", hub_id: 11, tables: [table({ id: -40, source: "hub" })] },
+      {
+        id: -11,
+        name: "default",
+        hub_id: 11,
+        access: MANAGE,
+        tables: [table({ id: -40, source: "hub" })],
+      },
     ]),
     hubCatalog(
       20,
@@ -372,10 +385,35 @@ describe("pickers by place and reach", () => {
         hubCatalog(10, "main", [{ id: -11, name: "default", hub_id: 11, access: USE }]),
         hubCatalog(50, "team", [
           { id: -51, name: "raw", hub_id: 51, access: USE },
-          { id: -52, name: "curated", hub_id: 52 },
+          { id: -52, name: "curated", hub_id: 52, access: MANAGE },
         ]),
       ];
       expect(hubDefaultSchema(namespaceOptions(tree))?.full).toBe("team.curated");
+    });
+
+    it("greys a schema the person may only read, says why, and lists it", () => {
+      const tree = [
+        hubCatalog(10, "main", [
+          { id: -11, name: "default", hub_id: 11, access: USE },
+          { id: -12, name: "team", hub_id: 12, access: MANAGE },
+        ]),
+      ];
+      const options = namespaceOptions(tree);
+      expect(options.map((o) => [o.full, o.readOnly, writeBlock(o)])).toEqual([
+        ["main.default", true, READ_ONLY],
+        ["main.team", false, null],
+      ]);
+      expect(pickable(options, null).map((o) => o.full)).toEqual(["main.default", "main.team"]);
+      expect(writerDefault(options)?.full).toBe("main.team");
+    });
+
+    it("names this machine's reach before read-only when both hold", () => {
+      const tree = [
+        hubCatalog(20, "scratch", [{ id: -21, name: "notes", hub_id: 21, access: USE }], {
+          unavailable_reason: "on its own disk",
+        }),
+      ];
+      expect(writeBlock(namespaceOptions(tree)[0])).toBe("on its own disk");
     });
 
     it("takes a catalog's grant for its schemas, and is nothing when no hub schema may be written", () => {
@@ -384,6 +422,24 @@ describe("pickers by place and reach", () => {
       ];
       expect(namespaceOptions(tree)[0].writable).toBe(false);
       expect(hubDefaultSchema(namespaceOptions(tree))).toBeNull();
+    });
+
+    it("never counts a hub schema the hub stamped nothing on, nor preselects it", () => {
+      const tree = [hubCatalog(10, "main", [{ id: -11, name: "default", hub_id: 11 }])];
+      const [option] = namespaceOptions(tree);
+      expect([option.writable, option.readOnly]).toEqual([false, false]);
+      expect(writerDefault(namespaceOptions(tree))).toBeNull();
+    });
+
+    it("counts a hub schema the person owns as theirs to write", () => {
+      const tree = [
+        hubCatalog(10, "main", [{ id: -11, name: "default", hub_id: 11 }], { access: OWNER }),
+      ];
+      expect(writerDefault(namespaceOptions(tree))?.full).toBe("main.default");
+    });
+
+    it("still counts a local schema with no access as writable, as an unrestricted desktop has it", () => {
+      expect(namespaceOptions(tree)[0]).toMatchObject({ source: "local", writable: true });
     });
 
     it("writes the hub's id only when chosen", () => {
