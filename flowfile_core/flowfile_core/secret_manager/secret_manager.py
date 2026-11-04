@@ -123,6 +123,24 @@ def decrypt_secret(encrypted_value: str, user_id: int | None = None) -> SecretSt
     return _decrypt_with_master_key(encrypted_value)
 
 
+def granted_secret(db: Session, user_id: int, secret_name: str) -> db_models.Secret | None:
+    """The granted secret named *secret_name* a run of *user_id* resolves when they own none of that name.
+
+    A group's own secret (owned by an ``owner`` of a group the caller is in) beats one shared into the
+    group from elsewhere; the lowest id wins among equals. The ciphertext stays keyed to its owner via
+    the embedded user id, so both core and the worker decrypt it without re-encryption.
+    """
+    granted_ids = sharing.granted_resource_ids(db, user_id, "secret")
+    if not granted_ids:
+        return None
+    return (
+        db.query(db_models.Secret)
+        .filter(db_models.Secret.name == secret_name, db_models.Secret.id.in_(granted_ids))
+        .order_by(sharing.group_owned_first(user_id, db_models.Secret.user_id), db_models.Secret.id.asc())
+        .first()
+    )
+
+
 def get_encrypted_secret(current_user_id: int, secret_name: str) -> str | None:
     with get_db_context() as db:
         user_id = current_user_id
@@ -136,20 +154,8 @@ def get_encrypted_secret(current_user_id: int, secret_name: str) -> str | None:
         )
         if db_secret:
             return db_secret.encrypted_value
-        # Group-shared fallback (lowest id wins on name collisions). The ciphertext
-        # stays keyed to its owner via the embedded user id, so both core and the
-        # worker decrypt it without re-encryption.
-        granted_ids = sharing.granted_resource_ids(db, user_id, "secret")
-        if granted_ids:
-            shared_secret = (
-                db.query(db_models.Secret)
-                .filter(db_models.Secret.name == secret_name, db_models.Secret.id.in_(granted_ids))
-                .order_by(db_models.Secret.id.asc())
-                .first()
-            )
-            if shared_secret:
-                return shared_secret.encrypted_value
-        return None
+        shared_secret = granted_secret(db, user_id, secret_name)
+        return shared_secret.encrypted_value if shared_secret else None
 
 
 def store_secret(db: Session, secret: SecretInput, user_id: int) -> db_models.Secret:

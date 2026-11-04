@@ -15,7 +15,7 @@ False (electron/desktop mode).
 import os
 from dataclasses import dataclass
 
-from sqlalchemy import event, or_
+from sqlalchemy import case, event, or_, select
 from sqlalchemy.orm import Session
 
 from flowfile_core.database import models as db_models
@@ -128,6 +128,18 @@ def manageable_group_ids(db: Session, user_id: int) -> list[int]:
         db_models.UserGroupMembership.role.in_((ROLE_OWNER, ROLE_MANAGER)),
     )
     return [r[0] for r in rows]
+
+
+def group_owned_first(user_id: int, owner_col):
+    """Order criterion that puts rows owned by an ``owner`` of one of *user_id*'s groups first.
+
+    Such a row is the group's own, so among same-named granted resources it beats one shared into
+    the group from elsewhere. A SQL subquery, so a lookup gains no extra round trip.
+    """
+    member = db_models.UserGroupMembership
+    caller_groups = select(member.group_id).where(member.user_id == user_id)
+    group_owners = select(member.user_id).where(member.role == ROLE_OWNER, member.group_id.in_(caller_groups))
+    return case((owner_col.in_(group_owners), 0), else_=1)
 
 
 def group_role(db: Session, group_id: int, user_id: int) -> str | None:

@@ -125,3 +125,57 @@ def test_shared_secret_not_deletable_by_grantee(users, client_for, team):
 
     assert bob.delete("/secrets/secrets/keep_me").status_code == 404
     assert alice.get("/secrets/secrets/keep_me").status_code == 200
+
+
+def test_group_own_secret_beats_older_one_shared_into_the_group(users, client_for, team, group_factory, grant_factory):
+    """alice owns bob's group; carol, owner of a group bob is not in, shares an older secret into it."""
+    alice = client_for("alice")
+    carol = client_for("carol")
+    bob = client_for("bob")
+    group_factory("secrets-carol-only", users["admin"].id, {users["carol"].id: "owner"})
+    older = _create_secret(carol, "team_db", "shared-in-value")
+    own = _create_secret(alice, "team_db", "group-own-value")
+    assert older["id"] < own["id"]
+    grant_factory("secret", older["id"], team, granted_by=users["carol"].id)
+    _share_secret(alice, own["id"], team)
+
+    ciphertext = get_encrypted_secret(current_user_id=users["bob"].id, secret_name="team_db")
+    assert decrypt_secret(ciphertext).get_secret_value() == "group-own-value"
+    # The by-name route names the same row the lookup resolves.
+    assert bob.get("/secrets/secrets/team_db").json()["id"] == own["id"]
+
+    # The caller's own secret still beats both.
+    mine = _create_secret(bob, "team_db", "bob-value")
+    ciphertext = get_encrypted_secret(current_user_id=users["bob"].id, secret_name="team_db")
+    assert decrypt_secret(ciphertext).get_secret_value() == "bob-value"
+    assert bob.get("/secrets/secrets/team_db").json()["id"] == mine["id"]
+
+
+def test_secrets_shared_in_from_elsewhere_lowest_id_wins(users, client_for, team, grant_factory):
+    """Neither secret is the group's own (carol and admin own no group of bob's): the older wins."""
+    carol = client_for("carol")
+    admin = client_for("admin")
+    bob = client_for("bob")
+    first = _create_secret(carol, "elsewhere", "first-value")
+    second = _create_secret(admin, "elsewhere", "second-value")
+    assert first["id"] < second["id"]
+    grant_factory("secret", second["id"], team, granted_by=users["admin"].id)
+    grant_factory("secret", first["id"], team, granted_by=users["carol"].id)
+
+    ciphertext = get_encrypted_secret(current_user_id=users["bob"].id, secret_name="elsewhere")
+    assert decrypt_secret(ciphertext).get_secret_value() == "first-value"
+    assert bob.get("/secrets/secrets/elsewhere").json()["id"] == first["id"]
+
+
+def test_sharing_off_resolves_own_only(users, client_for, team, monkeypatch):
+    """A desktop (electron) ignores grants: own secrets resolve lowest id first, granted ones not at all."""
+    alice = client_for("alice")
+    shared = _create_secret(alice, "desk_only", "alice-value")
+    _share_secret(alice, shared["id"], team)
+    alices = get_encrypted_secret(current_user_id=users["alice"].id, secret_name="desk_only")
+    assert get_encrypted_secret(current_user_id=users["bob"].id, secret_name="desk_only") == alices
+    # Electron reads its master key elsewhere, so compare ciphertext rather than decrypt.
+    monkeypatch.setenv("FLOWFILE_MODE", "electron")
+
+    assert get_encrypted_secret(current_user_id=users["bob"].id, secret_name="desk_only") is None
+    assert get_encrypted_secret(current_user_id=users["alice"].id, secret_name="desk_only") == alices
