@@ -1,4 +1,4 @@
-import { ref } from "vue";
+import { onScopeDispose, ref } from "vue";
 import type { Ref } from "vue";
 import {
   addComputeBackend,
@@ -9,7 +9,9 @@ import {
   type ComputeBackendInput,
   type HandshakeVerdict,
 } from "../../api/computeBackends.api";
+import { syncHubComputeNodes } from "../../api/hubConnection.api";
 import { detailOf } from "../../utils/apiDetail";
+import { REREAD_DELAY_MS } from "./useHubConnection";
 import {
   handshakeStatus,
   type StatusSummary,
@@ -95,20 +97,47 @@ export function workersSummary(
 
 /**
  * The configured workers and the admin's actions on them; the caller loads, nothing polls. A load seeds the
- * verdicts from the listing, so one a run produced shows without pressing Handshake.
+ * verdicts from the listing, so one a run produced shows without pressing Handshake. On a server joined to a hub a
+ * load `fromHub` reads the hub's servers first (the node sync), so they show with no Sync step, and reads the rows
+ * once more `REREAD_DELAY_MS` later for the reachability check core runs behind its answer.
  */
 export function useComputeBackends() {
   const backends: Ref<ComputeBackend[]> = ref([]);
   const loading = ref(false);
   const loadError = ref("");
+  const hubNotice = ref("");
   const adding = ref(false);
   const busy: Ref<Record<string, boolean>> = ref({});
   const verdicts: Ref<Record<string, HandshakeVerdict>> = ref({});
+  let rereadTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const load = async () => {
+  const cancelReread = () => {
+    if (rereadTimer !== null) clearTimeout(rereadTimer);
+    rereadTimer = null;
+  };
+  onScopeDispose(cancelReread, true);
+
+  const fromHubOrList = async (fromHub: boolean): Promise<ComputeBackend[]> => {
+    if (!fromHub) return listComputeBackends();
+    try {
+      const synced = await syncHubComputeNodes();
+      hubNotice.value = "";
+      cancelReread();
+      rereadTimer = setTimeout(() => {
+        rereadTimer = null;
+        void load();
+      }, REREAD_DELAY_MS);
+      return synced.backends;
+    } catch (error) {
+      hubNotice.value = detailOf(error, "Couldn't read the hub's servers.");
+      return listComputeBackends();
+    }
+  };
+
+  const load = async (fromHub = false) => {
     loading.value = true;
     try {
-      backends.value = await listComputeBackends();
+      backends.value = await fromHubOrList(fromHub);
       for (const backend of backends.value) {
         if (backend.verdict) verdicts.value[backend.id] = backend.verdict;
       }
@@ -160,5 +189,17 @@ export function useComputeBackends() {
     }
   };
 
-  return { backends, loading, loadError, adding, busy, verdicts, load, add, remove, handshake };
+  return {
+    backends,
+    loading,
+    loadError,
+    hubNotice,
+    adding,
+    busy,
+    verdicts,
+    load,
+    add,
+    remove,
+    handshake,
+  };
 }

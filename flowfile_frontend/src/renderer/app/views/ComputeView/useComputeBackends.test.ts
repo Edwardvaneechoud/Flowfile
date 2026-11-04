@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { deferred, httpError } from "../../__fixtures__/promises";
 import { capabilities, verdict } from "../../api/__fixtures__/computeBackends";
 import type {
@@ -12,6 +12,11 @@ const mocks = vi.hoisted(() => ({
   add: vi.fn(),
   remove: vi.fn(),
   handshake: vi.fn(),
+  sync: vi.fn(),
+}));
+
+vi.mock("../../api/hubConnection.api", () => ({
+  syncHubComputeNodes: mocks.sync,
 }));
 
 vi.mock("../../api/computeBackends.api", () => ({
@@ -21,6 +26,7 @@ vi.mock("../../api/computeBackends.api", () => ({
   handshakeComputeBackend: mocks.handshake,
 }));
 
+import { REREAD_DELAY_MS } from "./useHubConnection";
 import {
   backendInputFrom,
   emptyBackendForm,
@@ -67,6 +73,7 @@ beforeEach(() => {
     rows = rows.filter((row) => row.id !== id);
   });
   mocks.handshake.mockReset();
+  mocks.sync.mockReset();
 });
 
 const checked = verdict();
@@ -438,5 +445,53 @@ describe("workersSummary", () => {
       tone: "neutral",
       label: "2 not checked",
     });
+  });
+});
+
+describe("load from the hub, on a joined server", () => {
+  const hubRow: ComputeBackend = { ...teamRow(), id: "worker:gpu", source: "hub" };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("shows the hub's servers with no Sync step, then reads them once more for their reachability", async () => {
+    mocks.sync.mockResolvedValue({ backends: [hubRow], skipped: [] });
+    rows = [{ ...hubRow, reachable: true }];
+    const page = useComputeBackends();
+
+    await page.load(true);
+
+    expect(mocks.sync).toHaveBeenCalledTimes(1);
+    expect(mocks.list).not.toHaveBeenCalled();
+    expect(page.backends.value).toEqual([hubRow]);
+
+    await vi.advanceTimersByTimeAsync(REREAD_DELAY_MS);
+
+    expect(mocks.sync).toHaveBeenCalledTimes(1);
+    expect(page.backends.value[0].reachable).toBe(true);
+  });
+
+  it("lists the rows it has and says why when the hub's servers cannot be read", async () => {
+    mocks.sync.mockRejectedValue(httpError(502, "The hub is not answering"));
+    rows = [teamRow()];
+    const page = useComputeBackends();
+
+    await page.load(true);
+
+    expect(page.backends.value).toEqual([teamRow()]);
+    expect(page.hubNotice.value).toBe("The hub is not answering");
+  });
+
+  it("asks no hub off a joined server", async () => {
+    const page = useComputeBackends();
+
+    await page.load();
+
+    expect(mocks.sync).not.toHaveBeenCalled();
   });
 });

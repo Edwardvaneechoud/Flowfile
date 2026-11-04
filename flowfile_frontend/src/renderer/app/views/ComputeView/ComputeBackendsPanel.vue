@@ -48,7 +48,9 @@
         >
           <template #description>
             Workers on other hosts that a flow or node can pick by id. Each keeps its own warm pool,
-            set on that worker.
+            set on that worker.<template v-if="joined">
+              Your hub's servers show here as the hub lists them.</template
+            >
           </template>
           <template #meta="{ open }">
             <span
@@ -66,6 +68,9 @@
             <i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i
             ><span>{{ loadError }}</span>
           </div>
+          <p v-if="hubNotice" class="backends-loading" data-testid="backends-hub-notice">
+            {{ hubNotice }}
+          </p>
           <p v-if="loading && !backends.length" class="backends-loading">Loading workers…</p>
           <ul v-if="backends.length" class="backends-list" aria-label="Configured workers">
             <li
@@ -89,6 +94,12 @@
                 <div class="backend-worker__identity">
                   <h4 class="backend-worker__name">
                     <code>{{ backend.id }}</code>
+                    <span
+                      v-if="fromHub(backend)"
+                      class="compute-chip compute-chip--neutral"
+                      :data-testid="`backend-from-hub-${backend.id}`"
+                      >From your hub</span
+                    >
                   </h4>
                   <div class="backends-url">{{ backend.url }}</div>
                   <div
@@ -121,6 +132,7 @@
                     <i class="fa-solid fa-rotate" aria-hidden="true"></i> Handshake
                   </el-button>
                   <el-button
+                    v-if="!fromHub(backend)"
                     size="small"
                     type="danger"
                     plain
@@ -300,6 +312,8 @@
 import { computed, reactive, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useAuthStore } from "../../stores/auth-store";
+import authService from "../../services/auth.service";
+import type { ComputeBackend } from "../../api/computeBackends.api";
 import { NO_AUTOFILL } from "../../utils/noAutofill";
 import BackendHandshakeStatus from "../../components/settings/BackendHandshakeStatus.vue";
 import WorkerPoolCard from "../../components/settings/WorkerPoolCard.vue";
@@ -322,8 +336,23 @@ import {
 
 const isAdmin = computed(() => useAuthStore().isAdmin);
 
-const { backends, loading, loadError, adding, busy, verdicts, load, add, remove, handshake } =
-  useComputeBackends();
+const {
+  backends,
+  loading,
+  loadError,
+  hubNotice,
+  adding,
+  busy,
+  verdicts,
+  load,
+  add,
+  remove,
+  handshake,
+} = useComputeBackends();
+
+const joined = ref(false);
+// On a joined server the hub's rows come back with every load, so they carry no Remove.
+const fromHub = (backend: ComputeBackend) => joined.value && backend.source === "hub";
 
 const poolSummary = ref<StatusSummary | null>(null);
 const summary = computed(() => workersSummary(backends.value, verdicts.value));
@@ -397,7 +426,8 @@ watch(
   isAdmin,
   async (allowed) => {
     if (!allowed) return;
-    await load();
+    joined.value = (await authService.getSignInMethod()).method === "hub";
+    await load(joined.value);
     if (!backends.value.length && !loadError.value) addOpen.value = true;
   },
   { immediate: true },
