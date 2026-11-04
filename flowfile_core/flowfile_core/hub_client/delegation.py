@@ -31,16 +31,15 @@ class Delegation:
     """The hub's answer to a sign-in or a refresh: the two tokens, how long each lives, and who the person is.
 
     ``expires_in`` and ``refresh_expires_in`` are seconds from the answer; ``user`` is the hub's ``uid``,
-    ``username``, ``full_name`` and ``node_admin``. Neither token is part of its ``repr``.
+    ``username``, ``full_name`` and ``node_admin``. Neither token is part of its ``repr``. The answer's
+    ``token_type`` is checked to be there, as an OAuth token answer must have one, and the access token is sent as a
+    bearer whatever it says.
     """
 
     access_token: str = field(repr=False)
-    issued_token_type: str
-    token_type: str
     expires_in: int
     refresh_token: str = field(repr=False)
     refresh_expires_in: int
-    scope: str
     user: dict
 
 
@@ -67,12 +66,9 @@ def _delegation(body, hub_url: str) -> Delegation:
         raise HubRefused(200, f"{hub_url} did not answer {TOKEN_PATH} as a Flowfile hub does.")
     return Delegation(
         access_token=body["access_token"],
-        issued_token_type=str(body.get("issued_token_type") or ""),
-        token_type=body["token_type"],
         expires_in=body["expires_in"],
         refresh_token=body["refresh_token"],
         refresh_expires_in=body["refresh_expires_in"],
-        scope=str(body.get("scope") or ""),
         user={name: user[name] for name in ("uid", "username", "full_name", "node_admin")},
     )
 

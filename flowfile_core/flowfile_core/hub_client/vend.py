@@ -44,19 +44,17 @@ class HubCredential:
     """One credential the hub vended to a run, for the tables under ``base_uri``.
 
     ``storage_options`` are what Polars and deltalake take, secrets included; ``repr`` never shows them. A vend with
-    targets leaves them empty and maps each target node to a token sealed to it in ``sealed``.
+    targets leaves them empty and maps each target node to a token sealed to it in ``sealed``. The hub's answer also
+    carries the credential's expiry and the prefixes it may read and write; the hub enforces those, so nothing here
+    keeps them.
     """
 
     base_uri: str
     storage_options: dict[str, str]
-    expires_at: str
-    mode: str
-    read_prefixes: tuple[str, ...]
-    write_prefixes: tuple[str, ...]
     sealed: dict[str, str] = field(default_factory=dict)
 
     def __repr__(self) -> str:
-        return f"HubCredential(base_uri={self.base_uri!r}, mode={self.mode!r})"
+        return f"HubCredential(base_uri={self.base_uri!r}, sealed={bool(self.sealed)!r})"
 
     def covers(self, uri: str) -> bool:
         base = self.base_uri.rstrip("/")
@@ -244,10 +242,6 @@ def request(
         HubCredential(
             base_uri=credential["base_uri"].rstrip("/"),
             storage_options=dict(credential["storage_options"]),
-            expires_at=str(credential.get("expires_at")),
-            mode=str(credential.get("mode")),
-            read_prefixes=tuple(credential.get("read_prefixes") or ()),
-            write_prefixes=tuple(credential.get("write_prefixes") or ()),
             sealed=dict(credential.get("sealed") or {}) if targets else {},
         )
         for credential in answer["credentials"]

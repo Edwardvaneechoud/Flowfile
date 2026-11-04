@@ -66,8 +66,7 @@ def test_a_run_asks_the_hub_once_naming_the_run_and_its_namespaces(connected, ca
     assert run_vend.bases == {catalog["raw"]: "s3://acme/sales", catalog["curated"]: "s3://acme/sales"}
     assert run_vend.names == {catalog["raw"]: "sales.raw", catalog["curated"]: "sales.curated"}
     [credential] = run_vend.credentials
-    assert credential.base_uri == "s3://acme/sales" and credential.mode == "static"
-    assert credential.write_prefixes == ("s3://acme/sales",)
+    assert credential.base_uri == "s3://acme/sales" and credential.sealed == {}
     assert run_vend.for_namespace(catalog["curated"]) is credential
     assert run_vend.for_uri("s3://acme/sales/orders_1a2b3c4d") is credential
     with pytest.raises(LookupError):
@@ -215,7 +214,7 @@ def test_a_credential_for_other_storage_is_refused_by_scheme():
     run_vend = vend.RunVend(
         run_id="run-abc",
         vend_id=7,
-        credentials=(vend.HubCredential("az://lake/data", {"account_key": "k"}, "soon", "static", (), ()),),
+        credentials=(vend.HubCredential("az://lake/data", {"account_key": "k"}),),
         bases={3: "az://lake/data"},
         names={3: "lake.landing"},
     )
@@ -229,4 +228,4 @@ def test_no_repr_shows_a_secret(connected, catalog):
 
     for shown in (repr(run_vend), repr(run_vend.credentials[0]), str(run_vend)):
         assert not any(secret in shown for secret in (*SECRETS, "AKIAHUBVENDED"))
-    assert repr(run_vend.credentials[0]) == "HubCredential(base_uri='s3://acme/sales', mode='static')"
+    assert repr(run_vend.credentials[0]) == "HubCredential(base_uri='s3://acme/sales', sealed=False)"

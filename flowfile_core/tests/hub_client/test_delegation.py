@@ -77,8 +77,7 @@ def test_a_sign_in_token_is_traded_for_a_delegation_with_an_assertion_the_hub_ve
     answer = delegation.exchange(hub.url, hub.issuer, token)
 
     assert answer.access_token.startswith("hub-access-") and answer.refresh_token in hub.live_refresh_tokens()
-    assert (answer.token_type, answer.expires_in, answer.scope) == ("Bearer", ACCESS_SECONDS, "workspace")
-    assert answer.issued_token_type == "urn:ietf:params:oauth:token-type:access_token"
+    assert answer.expires_in == ACCESS_SECONDS
     assert DELEGATION_SECONDS - 5 <= answer.refresh_expires_in <= DELEGATION_SECONDS
     assert answer.user == {"uid": 7, "username": "ana", "full_name": "Ana Lima", "node_admin": True}
     [taken] = hub.token_requests
