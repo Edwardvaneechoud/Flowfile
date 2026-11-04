@@ -19,9 +19,8 @@ def v1_headers(token: str) -> dict:
 
 
 @pytest.mark.worker
-@pytest.mark.parametrize("scope", ["run", "dispatch"])
-def test_a_hub_token_for_this_node_reaches_v1(hub_signer, scope):
-    response = client.get("/v1/capabilities", headers=v1_headers(hub_signer.token(scope=scope)))
+def test_a_run_token_for_this_node_reaches_v1(hub_signer):
+    response = client.get("/v1/capabilities", headers=v1_headers(hub_signer.token(scope="run")))
 
     assert response.status_code == 200
     assert response.json()["protocol_version"] == PROTOCOL_VERSION
@@ -40,8 +39,9 @@ def test_the_internal_token_still_works_beside_hub_tokens(hub_signer):
         (lambda hub: hub.token(ttl=-120), "expired"),
         (lambda hub: hub.token(aud="another-node"), "wrong audience"),
         (lambda hub: hub.token(scope="admin"), "unknown scope"),
+        (lambda hub: hub.token(scope="dispatch", sub="hub", uid=None), "unknown scope"),
     ],
-    ids=["expired", "other node", "other scope"],
+    ids=["expired", "other node", "other scope", "dispatch"],
 )
 def test_a_refused_hub_token_is_401_naming_the_reason_and_not_the_token(hub_signer, make_token, reason):
     token = make_token(hub_signer)

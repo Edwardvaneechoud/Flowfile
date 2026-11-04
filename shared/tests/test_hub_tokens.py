@@ -29,10 +29,8 @@ def test_a_run_token_for_this_node_is_accepted_with_its_claims(hub_signer):
     assert (claims.subject, claims.user_id, claims.scope) == ("ana", 7, "run")
 
 
-def test_a_dispatch_token_from_the_hub_itself_is_accepted_without_a_user(hub_signer):
-    claims = verify(hub_signer.token(scope="dispatch", sub="hub", uid=None))
-
-    assert (claims.subject, claims.user_id, claims.scope) == ("hub", None, "dispatch")
+def test_a_dispatch_token_is_no_scope_this_node_knows(hub_signer):
+    assert refusal(hub_signer.token(scope="dispatch", sub="hub", uid=None)) == "unknown scope"
 
 
 def test_the_issuer_setting_names_the_iss_the_hub_signs_with(hub_signer, monkeypatch):
@@ -182,11 +180,10 @@ def test_a_sign_in_token_is_refused_by_every_caller_that_names_no_scope(hub_sign
     assert refusal(sign_in_token(hub_signer)) == "a signin token is not accepted here"
 
 
-def test_a_run_or_dispatch_token_is_refused_where_only_a_sign_in_is_taken(hub_signer):
-    for scope in ("run", "dispatch"):
-        with pytest.raises(HubTokenRefused) as refused:
-            verify(hub_signer.token(scope=scope), scopes=("signin",))
-        assert refused.value.reason == f"a {scope} token is not accepted here"
+def test_a_run_token_is_refused_where_only_a_sign_in_is_taken(hub_signer):
+    with pytest.raises(HubTokenRefused) as refused:
+        verify(hub_signer.token(scope="run"), scopes=("signin",))
+    assert refused.value.reason == "a run token is not accepted here"
 
 
 def test_an_unknown_scope_is_refused_whatever_scopes_the_caller_names(hub_signer):

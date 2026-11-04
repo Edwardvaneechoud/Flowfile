@@ -38,7 +38,7 @@ def carries_internal_token(request: Request) -> bool:
 
 
 def caller_is_trusted(connection: HTTPConnection) -> bool:
-    """Whether the request or socket carries the internal token or a hub token for this node (either scope)."""
+    """Whether the request or socket carries the internal token or a hub ``run`` token for this node."""
     try:
         return _trusted(connection.headers.get(INTERNAL_TOKEN_HEADER, ""))
     except HubTokenRefused:

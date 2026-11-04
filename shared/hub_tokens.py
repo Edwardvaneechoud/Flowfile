@@ -24,9 +24,9 @@ from shared import hub_node
 
 logger = logging.getLogger("flowfile.hub_tokens")
 
-SCOPES = ("run", "dispatch", "signin")
-"""What a hub token is for: ``run`` sends work to this node as a user, ``dispatch`` starts a run as the hub itself,
-``signin`` signs a person in on this node once, and is taken only by the route that does that."""
+SCOPES = ("run", "signin")
+"""What a hub token is for: ``run`` sends work to this node's worker as a user; ``signin`` signs a person in on this
+node's core once, and is taken only by the route that does that."""
 ALGORITHMS = ["ES256", "RS256"]
 LEEWAY_SECONDS = 30
 REQUIRED_CLAIMS = ["exp", "iat", "sub", "aud", "scope", "jti"]
@@ -129,7 +129,7 @@ def decode(token: str, jwks_url: str, audience: str, issuer: str, required: list
         raise HubTokenRefused(f"invalid: {exc}") from None
 
 
-def verify(token: str, scopes: tuple[str, ...] = ("run", "dispatch")) -> HubClaims | None:
+def verify(token: str, scopes: tuple[str, ...] = ("run",)) -> HubClaims | None:
     """The claims of ``token`` when it is a hub token this node accepts for one of ``scopes``.
 
     ``None`` when ``token`` is not a JWT (fewer than two dots), decided before the node's settings are read, or when
