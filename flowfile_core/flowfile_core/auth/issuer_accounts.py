@@ -80,3 +80,18 @@ def new_issuer_account(db: Session, issuer: str, hub_url: str, person: dict) -> 
     db.flush()
     db.add(db_models.IssuerAccount(issuer=issuer, subject_id=person["uid"], user_id=user.id))
     return user
+
+
+def subject_id(db: Session, user_id: int) -> int | None:
+    """The id on this node's hub of the person whose local account is ``user_id``; ``None`` for an account of the
+    server's own, or one mapped to another issuer. The move of a joined server's secrets to the hub names each owner
+    by it."""
+    issuer = hub_node.resolved().issuer
+    if issuer is None:
+        return None
+    mapping = (
+        db.query(db_models.IssuerAccount)
+        .filter(db_models.IssuerAccount.issuer == issuer, db_models.IssuerAccount.user_id == user_id)
+        .first()
+    )
+    return None if mapping is None else mapping.subject_id
