@@ -61,7 +61,7 @@ A cloud connection that authenticates as the server itself (AWS CLI, IAM Role, M
 When you ask for a resource by name (a secret in a flow, a connection, a catalog table), Flowfile resolves it **own-first, then group-granted**:
 
 1. If you own a resource with that name, you get yours.
-2. Otherwise, if a group you belong to has been granted access to a resource with that name, you get that one (lowest id wins on a name collision; for a secret, one owned by an owner of one of your groups comes before one shared into the group from elsewhere).
+2. Otherwise, if a group you belong to has been granted access to a resource with that name, you get that one (lowest id wins on a name collision; for a secret, one whose owner is an owner of the group it is shared with comes before one shared into the group from elsewhere).
 
 Your own resources always shadow shared ones with the same name, so a shared resource can never silently override something you own. Global admins bypass these checks and can reach everything.
 

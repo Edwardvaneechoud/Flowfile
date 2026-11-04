@@ -16,7 +16,7 @@ import os
 from dataclasses import dataclass
 
 from sqlalchemy import case, event, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from flowfile_core.database import models as db_models
 from flowfile_core.schemas.sharing_schema import AccessInfo
@@ -130,16 +130,25 @@ def manageable_group_ids(db: Session, user_id: int) -> list[int]:
     return [r[0] for r in rows]
 
 
-def group_owned_first(user_id: int, owner_col):
-    """Order criterion that puts rows owned by an ``owner`` of one of *user_id*'s groups first.
+def group_owned_first(user_id: int, resource_type: str, id_col, owner_col):
+    """Order criterion that puts a granted row first when it is the own of a group it is granted to.
 
-    Such a row is the group's own, so among same-named granted resources it beats one shared into
-    the group from elsewhere. A SQL subquery, so a lookup gains no extra round trip.
+    A row ranks as the group's own only when it is granted to a group *user_id* is in and its owner
+    holds ``owner`` of that same group; owning some other group of the caller's does not count, so an
+    admin who owns a wide group cannot shadow a team's secret by sharing an older one into the team.
+    Among same-named granted resources such a row beats one shared into the group from elsewhere.
+    A correlated EXISTS in the same statement, so a lookup gains no extra round trip.
     """
-    member = db_models.UserGroupMembership
-    caller_groups = select(member.group_id).where(member.user_id == user_id)
-    group_owners = select(member.user_id).where(member.role == ROLE_OWNER, member.group_id.in_(caller_groups))
-    return case((owner_col.in_(group_owners), 0), else_=1)
+    grant = db_models.ResourceGrant
+    caller = aliased(db_models.UserGroupMembership)
+    owner = aliased(db_models.UserGroupMembership)
+    own_grant = (
+        select(grant.id)
+        .join(caller, (caller.group_id == grant.group_id) & (caller.user_id == user_id))
+        .join(owner, (owner.group_id == grant.group_id) & (owner.role == ROLE_OWNER))
+        .where(grant.resource_type == resource_type, grant.resource_id == id_col, owner.user_id == owner_col)
+    )
+    return case((own_grant.exists(), 0), else_=1)
 
 
 def group_role(db: Session, group_id: int, user_id: int) -> str | None:

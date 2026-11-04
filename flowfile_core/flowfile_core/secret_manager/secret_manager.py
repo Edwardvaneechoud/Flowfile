@@ -126,9 +126,9 @@ def decrypt_secret(encrypted_value: str, user_id: int | None = None) -> SecretSt
 def granted_secret(db: Session, user_id: int, secret_name: str) -> db_models.Secret | None:
     """The granted secret named *secret_name* a run of *user_id* resolves when they own none of that name.
 
-    A group's own secret (owned by an ``owner`` of a group the caller is in) beats one shared into the
-    group from elsewhere; the lowest id wins among equals. The ciphertext stays keyed to its owner via
-    the embedded user id, so both core and the worker decrypt it without re-encryption.
+    A group's own secret (granted to a group the caller is in by an ``owner`` of that same group) beats
+    one shared into the group from elsewhere; the lowest id wins among equals. The ciphertext stays keyed
+    to its owner via the embedded user id, so both core and the worker decrypt it without re-encryption.
     """
     granted_ids = sharing.granted_resource_ids(db, user_id, "secret")
     if not granted_ids:
@@ -136,7 +136,10 @@ def granted_secret(db: Session, user_id: int, secret_name: str) -> db_models.Sec
     return (
         db.query(db_models.Secret)
         .filter(db_models.Secret.name == secret_name, db_models.Secret.id.in_(granted_ids))
-        .order_by(sharing.group_owned_first(user_id, db_models.Secret.user_id), db_models.Secret.id.asc())
+        .order_by(
+            sharing.group_owned_first(user_id, "secret", db_models.Secret.id, db_models.Secret.user_id),
+            db_models.Secret.id.asc(),
+        )
         .first()
     )
 

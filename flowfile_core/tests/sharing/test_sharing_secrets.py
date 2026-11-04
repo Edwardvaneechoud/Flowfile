@@ -151,6 +151,62 @@ def test_group_own_secret_beats_older_one_shared_into_the_group(users, client_fo
     assert bob.get("/secrets/secrets/team_db").json()["id"] == mine["id"]
 
 
+def test_team_own_secret_beats_first_admins_older_one_shared_with_everyone(
+    users, client_for, team, group_factory, grant_factory
+):
+    """The hub after TS17: carol stands in for the organisation's principal owning Everyone, the first admin
+    a plain member there; alice is the team's principal. The admin also owns a group bob is in, which
+    must not make the admin's secret count as Everyone's own."""
+    admin = client_for("admin")
+    alice = client_for("alice")
+    bob = client_for("bob")
+    everyone = group_factory(
+        "secrets-everyone",
+        users["admin"].id,
+        {
+            users["carol"].id: "owner",
+            users["admin"].id: "member",
+            users["alice"].id: "member",
+            users["bob"].id: "member",
+        },
+    )
+    group_factory("secrets-admin-made", users["admin"].id, {users["admin"].id: "owner", users["bob"].id: "member"})
+    older = _create_secret(admin, "warehouse", "admin-personal-value")
+    own = _create_secret(alice, "warehouse", "team-own-value")
+    assert older["id"] < own["id"]
+    grant_factory("secret", older["id"], everyone, granted_by=users["admin"].id)
+    _share_secret(alice, own["id"], team)
+
+    ciphertext = get_encrypted_secret(current_user_id=users["bob"].id, secret_name="warehouse")
+    assert decrypt_secret(ciphertext).get_secret_value() == "team-own-value"
+    assert bob.get("/secrets/secrets/warehouse").json()["id"] == own["id"]
+
+    mine = _create_secret(bob, "warehouse", "bob-value")
+    ciphertext = get_encrypted_secret(current_user_id=users["bob"].id, secret_name="warehouse")
+    assert decrypt_secret(ciphertext).get_secret_value() == "bob-value"
+    assert bob.get("/secrets/secrets/warehouse").json()["id"] == mine["id"]
+
+
+def test_secret_granted_to_another_group_than_its_owner_owns_ranks_as_shared(
+    users, client_for, team, group_factory, grant_factory
+):
+    """carol owns group B and bob is in both B and alice's group A: carol's older secret granted to A is
+    shared into A, not A's own, so A's own secret wins."""
+    carol = client_for("carol")
+    alice = client_for("alice")
+    bob = client_for("bob")
+    group_factory("secrets-group-b", users["admin"].id, {users["carol"].id: "owner", users["bob"].id: "member"})
+    older = _create_secret(carol, "cross_group", "b-owner-value")
+    own = _create_secret(alice, "cross_group", "a-own-value")
+    assert older["id"] < own["id"]
+    grant_factory("secret", older["id"], team, granted_by=users["carol"].id)
+    _share_secret(alice, own["id"], team)
+
+    ciphertext = get_encrypted_secret(current_user_id=users["bob"].id, secret_name="cross_group")
+    assert decrypt_secret(ciphertext).get_secret_value() == "a-own-value"
+    assert bob.get("/secrets/secrets/cross_group").json()["id"] == own["id"]
+
+
 def test_secrets_shared_in_from_elsewhere_lowest_id_wins(users, client_for, team, grant_factory):
     """Neither secret is the group's own (carol and admin own no group of bob's): the older wins."""
     carol = client_for("carol")
