@@ -120,8 +120,8 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     list_db_tables,
 )
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
-from flowfile_core.hub.exchange_store import joined_server_store
-from flowfile_core.hub.report import build_run_report, hub_target, post_run_report
+from flowfile_core.hub_client.exchange_store import joined_server_store
+from flowfile_core.hub_client.report import build_run_report, hub_target, post_run_report
 from flowfile_core.notebook.gate import require_kernel_sessions
 from flowfile_core.notebook.kernel_runner import close_flow_sessions, lineage_commits
 from flowfile_core.notebook.push import NotebookPushRequest, needs_confirmation, node_id_ceiling, plan_push

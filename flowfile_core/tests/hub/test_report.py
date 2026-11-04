@@ -14,7 +14,7 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CatalogTable, FlowRegistration, FlowRun
 from flowfile_core.flowfile.catalog_helpers import auto_register_flow
 from flowfile_core.flowfile.flow_graph import add_connection
-from flowfile_core.hub import report
+from flowfile_core.hub_client import report
 from flowfile_core.hub_client import client as hub_client
 from flowfile_core.hub_client import session
 from flowfile_core.routes import routes

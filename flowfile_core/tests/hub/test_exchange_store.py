@@ -15,7 +15,7 @@ from flowfile_core.configs.exchange_config import ExchangeConfig
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import FlowRun
 from flowfile_core.flowfile.execution.exchange import ExchangeRun
-from flowfile_core.hub import exchange_store as hub_exchange_store
+from flowfile_core.hub_client import exchange_store as hub_exchange_store
 from flowfile_core.hub_client.client import HubRefused
 from flowfile_core.routes import routes
 from shared import hub_node
@@ -48,7 +48,7 @@ def no_env(monkeypatch):
 @pytest.fixture
 def joined_with_keys(tmp_path, monkeypatch, join_hub):
     """This storage dir joined ``join_hub`` with keys of its own, as a server whose people sign in through its hub."""
-    for name in ("FLOWFILE_HUB_JOIN_TOKEN", "FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME", "FLOWFILE_HUB_ISSUER"):
+    for name in ("FLOWFILE_HUB_JOIN_TOKEN", "FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(hub_node, "path", lambda: tmp_path / "storage" / hub_node.FILE_NAME)
     hub_node.join(

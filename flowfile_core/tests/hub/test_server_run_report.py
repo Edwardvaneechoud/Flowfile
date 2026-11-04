@@ -22,7 +22,7 @@ from flowfile_core import main
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import FlowRun
-from flowfile_core.hub import report
+from flowfile_core.hub_client import report
 from flowfile_core.routes import routes
 from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_core.schemas.output_model import NodeResult, RunInformation

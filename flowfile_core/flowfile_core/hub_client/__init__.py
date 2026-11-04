@@ -5,7 +5,8 @@ this machine as a device, and keeps the hub's refresh token in the local secure 
 its place. ``client`` speaks the hub's HTTP contract; ``session`` keeps the stored connection and the access tokens
 minted from it; ``node_tokens`` keeps the short-lived tokens the hub signs for its compute nodes. On a server that
 joined a hub, ``delegation`` trades a person's sign-in through the hub for the tokens the server acts for them with,
-kept in the same per-user ``session`` store.
+kept in the same per-user ``session`` store. What core sends a hub lives here too: ``report`` the record of a finished
+run, ``exchange_store`` the ask for the store a joined server's hub sets.
 """
 
 HUB_CONTRACT_VERSION = "0.1.0"

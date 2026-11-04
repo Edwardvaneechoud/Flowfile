@@ -20,7 +20,7 @@ from flowfile_core.auth.jwt import get_current_admin_user
 from flowfile_core.auth.models import User
 from flowfile_core.configs import exchange_config
 from flowfile_core.configs.exchange_config import ExchangeConfig
-from flowfile_core.hub.exchange_store import joined_server_store
+from flowfile_core.hub_client.exchange_store import joined_server_store
 
 router = APIRouter()
 
