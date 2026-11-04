@@ -1,10 +1,12 @@
 """A worker that is a node on a hub takes the hub's tokens in ``X-Flowfile-Internal``, beside the internal token."""
 
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from flowfile_worker import main
+from flowfile_worker import auth, main
 from shared.compute_protocol import PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER
 from shared.tests.hub_jwks import hub_signer  # noqa: F401
 from tests.conftest import INTERNAL_AUTH_HEADERS, V1_HEADERS
@@ -81,3 +83,24 @@ def test_the_submit_socket_takes_a_hub_token_and_closes_on_a_refused_one(hub_sig
         with client.websocket_connect("/ws/submit", headers={"X-Flowfile-Internal": hub_signer.token(ttl=-120)}):
             pass
     assert closed.value.code == 1008
+
+
+@pytest.mark.worker
+@pytest.mark.parametrize("path,headers", [("/ws/submit", {}), ("/v1/ws/submit", V1_HEADERS)], ids=["ws", "v1"])
+def test_a_submit_socket_verifies_a_hub_token_off_the_event_loop(hub_signer, monkeypatch, path, headers):
+    on_loop = []
+    real = auth.hub_tokens.verify
+
+    def verify(token, *args, **kwargs):
+        try:
+            asyncio.get_running_loop()
+            on_loop.append(True)
+        except RuntimeError:
+            on_loop.append(False)
+        return real(token, *args, **kwargs)
+
+    monkeypatch.setattr(auth.hub_tokens, "verify", verify)
+    with client.websocket_connect(path, headers={**headers, "X-Flowfile-Internal": hub_signer.token()}):
+        pass
+
+    assert on_loop and not any(on_loop)

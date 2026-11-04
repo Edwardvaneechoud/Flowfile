@@ -62,5 +62,8 @@ async def verify_internal_token(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Invalid or missing internal token")
 
 
-def websocket_authorized(websocket: WebSocket) -> bool:
-    return caller_is_trusted(websocket)
+async def websocket_authorized(websocket: WebSocket) -> bool:
+    """Whether the socket may connect: the internal token at once, a hub token on a pool thread, as for a request."""
+    if _header_matches(websocket.headers.get(INTERNAL_TOKEN_HEADER, "")):
+        return True
+    return await run_in_threadpool(caller_is_trusted, websocket)
