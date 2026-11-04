@@ -2,15 +2,22 @@ import { describe, expect, it } from "vitest";
 
 import type { CatalogTable, NamespaceTree } from "../../../../types/catalog.types";
 import type { CatalogWriteSettings, NodeCatalogReader } from "../../../../types/node.types";
+import { showsPlaces } from "../../../../views/CatalogView/hubRows";
 import {
+  hubDefaultSchema,
   isHubTarget,
   namespaceChoice,
   namespaceOptions,
+  pickable,
   pickerRowId,
+  placeGroups,
   readerNamespaceChoice,
   selectedNamespaceRow,
   selectedTableRow,
   tableChoice,
+  tablePlace,
+  unusableNamespaceIds,
+  writerDefault,
 } from "./catalogPick";
 
 const table = (fields: Partial<CatalogTable>): CatalogTable =>
@@ -260,5 +267,132 @@ describe("hub targets", () => {
     expect(isHubTarget(writer({ hub_namespace_id: 20 }))).toBe(true);
     expect(isHubTarget(writer({ namespace_id: 2 }))).toBe(false);
     expect(isHubTarget(writer())).toBe(false);
+  });
+});
+
+describe("pickers by place and reach", () => {
+  const ON_ITS_OWN_DISK =
+    "The hub keeps the tables of scratch.notes on its own disk; this Flowfile cannot read them. " +
+    "Pick a catalog on the organisation's storage, or ask the hub's admin to put this one there.";
+  const USE = { is_owner: false, access_level: "use" as const, shared_by: "bob" };
+  const hubCatalog = (id: number, name: string, schemas: Partial<NamespaceTree>[], fields = {}) =>
+    ns({
+      id: -id,
+      name,
+      source: "hub",
+      hub_id: id,
+      place: "Acme Data",
+      ...fields,
+      children: schemas.map((schema) =>
+        ns({ parent_id: -id, source: "hub", place: "Acme Data", ...schema }),
+      ),
+    });
+  const desktop: NamespaceTree[] = [
+    ns({
+      id: 1,
+      name: "General",
+      place: "On this computer",
+      children: [ns({ id: 2, name: "default", parent_id: 1, place: "On this computer" })],
+    }),
+    hubCatalog(10, "main", [
+      { id: -11, name: "default", hub_id: 11, tables: [table({ id: -40, source: "hub" })] },
+    ]),
+    hubCatalog(
+      20,
+      "scratch",
+      [{ id: -21, name: "notes", hub_id: 21, unavailable_reason: ON_ITS_OWN_DISK }],
+      { unavailable_reason: "The hub keeps the tables of scratch on its own disk" },
+    ),
+  ];
+  const joined: NamespaceTree[] = desktop.map((catalog) =>
+    catalog.source === "hub" ? catalog : { ...catalog, offered: false, place: "On this server" },
+  );
+
+  it("heads the options with the place each lives in where both places show", () => {
+    const options = namespaceOptions(desktop);
+    const groups = placeGroups(pickable(options, null), (o) => o.place);
+    expect(groups.map((g) => [g.place, g.rows.map((o) => o.label)])).toEqual([
+      ["On this computer", ["General / default"]],
+      ["Acme Data", ["main / default"]],
+    ]);
+    expect(showsPlaces(groups)).toBe(true);
+  });
+
+  it("offers a joined server's people the hub's catalogs only, with no headings", () => {
+    const options = namespaceOptions(joined);
+    expect(options.map((o) => o.label)).toEqual(["main / default", "scratch / notes"]);
+    const groups = placeGroups(pickable(options, null), (o) => o.place);
+    expect(showsPlaces(groups)).toBe(false);
+  });
+
+  it("keeps a schema this machine cannot use out of the list unless the node points at it", () => {
+    const options = namespaceOptions(desktop);
+    const notes = options.find((o) => o.full === "scratch.notes")!;
+    expect(notes.unavailableReason).toBe(ON_ITS_OWN_DISK);
+    expect(pickable(options, null).map((o) => o.full)).toEqual(["General.default", "main.default"]);
+    expect(pickable(options, notes.id).map((o) => o.full)).toEqual([
+      "General.default",
+      "main.default",
+      "scratch.notes",
+    ]);
+  });
+
+  it("takes a schema's reason from its catalog when the schema has none of its own", () => {
+    const tree = [
+      hubCatalog(30, "lake", [{ id: -31, name: "landing" }], { unavailable_reason: "az" }),
+    ];
+    expect(namespaceOptions(tree)[0].unavailableReason).toBe("az");
+    expect([...unusableNamespaceIds(tree)].sort((a, b) => a - b)).toEqual([-31, -30]);
+  });
+
+  it("names each table's place by its source", () => {
+    const options = namespaceOptions(desktop);
+    expect(tablePlace(table({ id: 4 }), options)).toBe("On this computer");
+    expect(tablePlace(table({ id: -40, source: "hub" }), options)).toBe("Acme Data");
+  });
+
+  describe("the writer's default", () => {
+    it("is nothing on a desktop, whose own catalogs are offered", () => {
+      expect(writerDefault(namespaceOptions(desktop))).toBeNull();
+    });
+
+    it("is the hub's main.default on a joined server", () => {
+      expect(writerDefault(namespaceOptions(joined))?.full).toBe("main.default");
+    });
+
+    it("never preselects a schema this machine cannot use", () => {
+      const unreachable = joined.map((catalog) =>
+        catalog.name === "main" ? { ...catalog, unavailable_reason: "on its own disk" } : catalog,
+      );
+      expect(writerDefault(namespaceOptions(unreachable))).toBeNull();
+    });
+
+    it("is the first usable hub schema the person may write when main.default is not one", () => {
+      const tree = [
+        hubCatalog(10, "main", [{ id: -11, name: "default", hub_id: 11, access: USE }]),
+        hubCatalog(50, "team", [
+          { id: -51, name: "raw", hub_id: 51, access: USE },
+          { id: -52, name: "curated", hub_id: 52 },
+        ]),
+      ];
+      expect(hubDefaultSchema(namespaceOptions(tree))?.full).toBe("team.curated");
+    });
+
+    it("takes a catalog's grant for its schemas, and is nothing when no hub schema may be written", () => {
+      const tree = [
+        hubCatalog(10, "main", [{ id: -11, name: "default", hub_id: 11 }], { access: USE }),
+      ];
+      expect(namespaceOptions(tree)[0].writable).toBe(false);
+      expect(hubDefaultSchema(namespaceOptions(tree))).toBeNull();
+    });
+
+    it("writes the hub's id only when chosen", () => {
+      const preset = writerDefault(namespaceOptions(joined));
+      expect(namespaceChoice(preset)).toEqual({
+        namespace_id: null,
+        namespace_full_name: null,
+        hub_namespace_id: 11,
+      });
+    });
   });
 });

@@ -5,9 +5,11 @@ import { describe, it, expect } from "vitest";
 import {
   countMatches,
   groupArtifacts,
+  namespaceShown,
   normalizeQuery,
   nsKey,
   secKey,
+  shownNamespaces,
   subtreeLeafCount,
   subtreeMatches,
   visibleFlows,
@@ -216,5 +218,80 @@ describe("hub rows", () => {
     expect(subtreeMatches(hubCatalog, filter("orders"))).toBe(true);
     expect(subtreeLeafCount(hubCatalog, filter("orders"))).toBe(1);
     expect(countMatches([local, hubCatalog], filter("orders"))).toBe(1);
+  });
+});
+
+describe("place and reach", () => {
+  const ON_ITS_OWN_DISK =
+    "The hub keeps the tables of scratch on its own disk; this Flowfile cannot read them. " +
+    "Pick a catalog on the organisation's storage, or ask the hub's admin to put this one there.";
+  const scratch = node({
+    id: -5,
+    name: "scratch",
+    level: 0,
+    source: "hub",
+    unavailable_reason: ON_ITS_OWN_DISK,
+    children: [
+      node({
+        id: -6,
+        name: "notes",
+        level: 1,
+        source: "hub",
+        unavailable_reason: ON_ITS_OWN_DISK,
+        tables: [table("memo")],
+      }),
+    ],
+  });
+  const main = node({
+    id: -7,
+    name: "main",
+    level: 0,
+    source: "hub",
+    children: [
+      node({ id: -8, name: "default", level: 1, source: "hub", tables: [table("orders")] }),
+    ],
+  });
+  const own = node({
+    id: 1,
+    name: "General",
+    level: 0,
+    offered: false,
+    children: [node({ id: 2, name: "default", level: 1, offered: false, flows: [flow("draft")] })],
+  });
+
+  it("shows a hub catalog this Flowfile cannot use only under Show unavailable", () => {
+    expect(namespaceShown(scratch, filter(""))).toBe(false);
+    expect(namespaceShown(scratch, filter("", true))).toBe(true);
+    expect(shownNamespaces([main, scratch], filter("")).map((n) => n.name)).toEqual(["main"]);
+    expect(shownNamespaces([main, scratch], filter("", true)).map((n) => n.name)).toEqual([
+      "main",
+      "scratch",
+    ]);
+  });
+
+  it("never shows a catalog core does not offer, flows and all", () => {
+    expect(namespaceShown(own, filter("", true))).toBe(false);
+    expect(shownNamespaces([own, main], filter("", true)).map((n) => n.name)).toEqual(["main"]);
+    expect(countMatches([own], filter("draft", true))).toBe(0);
+  });
+
+  it("lets a search reach an unusable catalog only under Show unavailable", () => {
+    expect(countMatches([main, scratch], filter("memo"))).toBe(0);
+    expect(countMatches([main, scratch], filter("memo", true))).toBe(1);
+    expect(subtreeMatches(scratch, filter("memo"))).toBe(false);
+  });
+
+  it("counts no leaves under a schema that is not shown", () => {
+    const mixed = node({
+      id: -9,
+      name: "mixed",
+      level: 0,
+      children: [
+        node({ id: -10, name: "ok", level: 1, tables: [table("a")] }),
+        node({ id: -11, name: "far", level: 1, unavailable_reason: "x", tables: [table("b")] }),
+      ],
+    });
+    expect(subtreeLeafCount(mixed, filter(""))).toBe(1);
+    expect(subtreeLeafCount(mixed, filter("", true))).toBe(2);
   });
 });

@@ -7,8 +7,12 @@ import {
   HUB_NAMESPACE_TITLE,
   HUB_PREVIEW_NOTE,
   HUB_TABLE_TITLE,
+  byPlace,
   hubTableFacts,
   isHubRow,
+  isOffered,
+  showsPlaces,
+  unavailableReason,
   withoutHubRows,
 } from "./hubRows";
 import type { CatalogTable } from "../../types";
@@ -80,6 +84,47 @@ describe("strings", () => {
     expect(HUB_MANAGED_NOTE).toBe("This catalog is managed on the hub.");
     expect(HUB_PREVIEW_NOTE).toBe(
       "Preview isn't available for tables on the hub. Read it with a catalog reader node.",
+    );
+  });
+});
+
+describe("place", () => {
+  const rows = [
+    { id: 1, place: "On this computer" },
+    { id: 2, place: "On this computer" },
+    { id: -3, place: "Acme Data" },
+    { id: -4, place: "Acme Data" },
+  ];
+
+  it("groups the rows of one place together, this machine's first as core lists them", () => {
+    const groups = byPlace(rows);
+    expect(groups.map((g) => [g.place, g.rows.map((r) => r.id)])).toEqual([
+      ["On this computer", [1, 2]],
+      ["Acme Data", [-3, -4]],
+    ]);
+    expect(showsPlaces(groups)).toBe(true);
+  });
+
+  it("shows no headings where one place shows, or where core names no place", () => {
+    expect(showsPlaces(byPlace(rows.slice(2)))).toBe(false);
+    expect(
+      showsPlaces(
+        byPlace([
+          { id: 1, place: null },
+          { id: 2, place: null },
+        ]),
+      ),
+    ).toBe(false);
+    expect(byPlace([])).toEqual([]);
+  });
+
+  it("reads offered and the reason as core says them, an older core's rows offered and usable", () => {
+    expect(isOffered({})).toBe(true);
+    expect(isOffered({ offered: true })).toBe(true);
+    expect(isOffered({ offered: false })).toBe(false);
+    expect(unavailableReason({})).toBeNull();
+    expect(unavailableReason({ unavailable_reason: "on the hub's disk" })).toBe(
+      "on the hub's disk",
     );
   });
 });
