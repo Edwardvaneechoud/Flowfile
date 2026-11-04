@@ -101,13 +101,13 @@ def test_a_token_whose_ciphertext_changed_does_not_decrypt(hub_signer, node):
 @pytest.mark.parametrize(
     ("claims", "reason"),
     [
-        ({"node": "other"}, "for another node than team"),
-        ({"iss": "https://elsewhere.example"}, "another issuer"),
+        ({"node": "other"}, "wrong audience"),
+        ({"iss": "https://elsewhere.example"}, "wrong issuer"),
         ({"ttl": -120}, "expired"),
-        ({"drop": ("vend_id",)}, "no claim vend_id"),
-        ({"drop": ("storage_options",)}, "no claim storage_options"),
+        ({"drop": ("vend_id",)}, "missing claim vend_id"),
+        ({"drop": ("storage_options",)}, "missing claim storage_options"),
         ({"storage_options": {"aws_access_key_id": 7}}, "malformed"),
-        ({"key": SigningKey(kid="unknown")}, "does not publish the key"),
+        ({"key": SigningKey(kid="unknown")}, "unknown key"),
     ],
     ids=["audience", "issuer", "expired", "vend_id", "options", "malformed", "unknown key"],
 )
@@ -121,7 +121,7 @@ def test_a_token_whose_signed_claims_do_not_hold_is_refused(hub_signer, node, cl
 def test_a_signature_by_a_key_of_the_same_kid_that_is_not_the_hubs_is_refused(hub_signer, node):
     forged = SigningKey(kid=hub_signer.key.kid)
 
-    with pytest.raises(SealedCredentialRefused, match="signature does not hold"):
+    with pytest.raises(SealedCredentialRefused, match="bad signature"):
         hub_sealed.open_token(sealed_for(hub_signer, node, key=forged))
 
 
@@ -208,9 +208,9 @@ def test_a_sealed_secret_is_not_a_storage_credential_and_a_storage_token_is_not_
     secret = secret_for(hub_signer, node)
     storage = sealed_for(hub_signer, node)
 
-    with pytest.raises(SealedCredentialRefused, match="no claim base_uri"):
+    with pytest.raises(SealedCredentialRefused, match="missing claim base_uri"):
         hub_sealed.open_token(secret)
-    with pytest.raises(SealedCredentialRefused, match="it has no claim name"):
+    with pytest.raises(SealedCredentialRefused, match="missing claim name"):
         hub_sealed.open_secret(hub_sealed.sealed_secret("warehouse_pw", {NODE_NAME: storage}))
     with pytest.raises(SealedCredentialRefused, match="holds a storage credential, not a secret"):
         hub_sealed.open_secret(hub_sealed.sealed_secret("x", {NODE_NAME: secret_for(hub_signer, node, kind="storage")}))
@@ -219,11 +219,11 @@ def test_a_sealed_secret_is_not_a_storage_credential_and_a_storage_token_is_not_
 @pytest.mark.parametrize(
     ("claims", "reason"),
     [
-        ({"node": "other"}, "for another node than team"),
-        ({"iss": "https://elsewhere.example"}, "another issuer"),
+        ({"node": "other"}, "wrong audience"),
+        ({"iss": "https://elsewhere.example"}, "wrong issuer"),
         ({"ttl": -120}, "expired"),
         ({"name": "another"}, 'does not hold the secret "warehouse_pw"'),
-        ({"drop": ("value",)}, "no claim value"),
+        ({"drop": ("value",)}, "missing claim value"),
     ],
     ids=["audience", "issuer", "expired", "other name", "no value"],
 )

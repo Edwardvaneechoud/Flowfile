@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, x25519
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from shared import hub_node, hub_sealed, hub_tokens
+from shared import hub_node, hub_node_key, hub_sealed, hub_tokens
 
 NODE_NAME = "team"
 JWKS_PATH = "/.well-known/jwks.json"
@@ -37,7 +37,7 @@ def seal(plaintext: str, enc_jwk: Mapping[str, str]) -> str:
     The hub's half of ``shared.hub_sealed``: a compact JWE, ``ECDH-ES`` with an ephemeral X25519 ``epk`` and
     ``A256GCM``, the content key derived as the node derives it (``hub_sealed._content_key``).
     """
-    peer = x25519.X25519PublicKey.from_public_bytes(hub_sealed._unb64url(enc_jwk["x"]))
+    peer = x25519.X25519PublicKey.from_public_bytes(hub_node_key.unb64url(enc_jwk["x"]))
     ephemeral = x25519.X25519PrivateKey.generate()
     epk = ephemeral.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
     header = {

@@ -38,11 +38,13 @@ def path() -> Path:
     return hub_node.path().with_name(FILE_NAME)
 
 
-def _b64url(data: bytes) -> str:
+def b64url(data: bytes) -> str:
+    """``data`` as JOSE writes bytes: base64url without padding."""
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
 
-def _unb64url(text: str) -> bytes:
+def unb64url(text: str) -> bytes:
+    """The bytes of the unpadded base64url ``text``; ``ValueError`` when it is not one."""
     return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
 
 
@@ -79,7 +81,7 @@ class NodeKeys:
                 "use": "sig",
                 "alg": "ES256",
             },
-            "enc": {"kty": "OKP", "crv": "X25519", "x": _b64url(raw), "kid": self.enc_kid, "use": "enc"},
+            "enc": {"kty": "OKP", "crv": "X25519", "x": b64url(raw), "kid": self.enc_kid, "use": "enc"},
         }
 
     def agree(self, peer: bytes) -> bytes:
@@ -112,7 +114,7 @@ def _read(target: Path) -> NodeKeys:
         raise ValueError(f"{target} does not hold a node's keys")
     try:
         sig = serialization.load_pem_private_key(data["sig"].encode("utf-8"), password=None)
-        enc = x25519.X25519PrivateKey.from_private_bytes(_unb64url(data["enc"]))
+        enc = x25519.X25519PrivateKey.from_private_bytes(unb64url(data["enc"]))
     except (TypeError, UnsupportedAlgorithm):
         raise ValueError(f"{target} does not hold a node's keys") from None
     if not (isinstance(sig, ec.EllipticCurvePrivateKey) and isinstance(sig.curve, ec.SECP256R1)):
@@ -167,5 +169,5 @@ def load_or_create() -> NodeKeys:
         serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
     ).decode("ascii")
     raw = enc.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())
-    _write(target, json.dumps({"sig": pem, "enc": _b64url(raw)}, indent=2) + "\n")
+    _write(target, json.dumps({"sig": pem, "enc": b64url(raw)}, indent=2) + "\n")
     return NodeKeys(sig, enc)

@@ -9,18 +9,17 @@ header as the AAD; RFC 7518 §4.6), whose plaintext is a JWS the hub signed with
 ``kind``) with ``base_uri`` and ``storage_options``, ``"secret"`` with a secret's ``name`` and ``value``.
 
 A run carries the vend's whole map of node name to token, ``sealed``; whichever process opens it takes this node's
-entry, decrypts it with ``hub_node_key``'s ``enc`` key and verifies the JWS against the hub's JWKS (the key client
-``shared.hub_tokens`` keeps), its audience, issuer and expiry. Core hands the map on and opens only its own node's
-entry. ``SealedCredentialProvider`` is a Polars ``credential_provider`` holding only the map, so a plan carries no
-secret; ``sealed_scan_kwargs`` gives a scan built here its plain options beside it, ``sealed_storage_options`` the
-whole options for work that runs here, and ``scan_delta_sealed`` reads a Delta table as a Python IO source, for a plan
-built where the options are not known. A secret travels as ``sealed_secret``'s string in place of a ``$ffsec$``
-ciphertext, and ``open_secret`` gives its value where the step runs. Nothing runs at import.
+entry, decrypts it with ``hub_node_key``'s ``enc`` key and verifies the JWS as ``shared.hub_tokens.decode`` verifies
+any token the hub signs: against the hub's JWKS, its audience, issuer and expiry. Core hands the map on and opens only
+its own node's entry. ``SealedCredentialProvider`` is a Polars ``credential_provider`` holding only the map, so a plan
+carries no secret; ``sealed_scan_kwargs`` gives a scan built here its plain options beside it,
+``sealed_storage_options`` the whole options for work that runs here, and ``scan_delta_sealed`` reads a Delta table as
+a Python IO source, for a plan built where the options are not known. A secret travels as ``sealed_secret``'s string in
+place of a ``$ffsec$`` ciphertext, and ``open_secret`` gives its value where the step runs. Nothing runs at import.
 """
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import struct
@@ -28,7 +27,6 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-import jwt
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -74,14 +72,6 @@ class OpenedCredential:
         return f"OpenedCredential(base_uri={self.base_uri!r}, vend_id={self.vend_id!r})"
 
 
-def _b64url(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
-
-
-def _unb64url(text: str) -> bytes:
-    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
-
-
 def _content_key(shared_secret: bytes) -> bytes:
     """The A256GCM key ECDH-ES derives from ``shared_secret``: Concat KDF over SHA-256, RFC 7518 §4.6.2.
 
@@ -103,10 +93,10 @@ def _decrypt(token: str, keys: hub_node_key.NodeKeys) -> str:
         raise SealedCredentialRefused("it is not a sealed token")
     protected, encrypted_key, iv, ciphertext, tag = parts
     try:
-        header = json.loads(_unb64url(protected))
+        header = json.loads(hub_node_key.unb64url(protected))
         epk = header["epk"]
-        peer = _unb64url(epk["x"])
-        iv_bytes, sealed = _unb64url(iv), _unb64url(ciphertext) + _unb64url(tag)
+        peer = hub_node_key.unb64url(epk["x"])
+        iv_bytes, sealed = hub_node_key.unb64url(iv), hub_node_key.unb64url(ciphertext) + hub_node_key.unb64url(tag)
     except (ValueError, TypeError, KeyError):
         raise SealedCredentialRefused("its header does not read") from None
     if header.get("alg") != ALG or header.get("enc") != ENC or encrypted_key:
@@ -134,30 +124,11 @@ def _claims(token: str, required: list[str]) -> dict[str, Any]:
         raise SealedCredentialRefused("this server has not joined a hub with keys of its own")
     signed = _decrypt(token, keys)
     try:
-        key = hub_tokens._jwks_client(node.hub_url + hub_tokens.JWKS_PATH).get_signing_key_from_jwt(signed)
-        claims = jwt.decode(
-            signed,
-            key,
-            algorithms=hub_tokens.ALGORITHMS,
-            audience=f"node:{node.name}",
-            issuer=node.issuer,
-            leeway=hub_tokens.LEEWAY_SECONDS,
-            options={"require": required},
+        claims = hub_tokens.decode(
+            signed, node.hub_url + hub_tokens.JWKS_PATH, f"node:{node.name}", node.issuer, required
         )
-    except jwt.ExpiredSignatureError:
-        raise SealedCredentialRefused("it has expired") from None
-    except jwt.InvalidAudienceError:
-        raise SealedCredentialRefused(f"it is for another node than {node.name}") from None
-    except jwt.InvalidIssuerError:
-        raise SealedCredentialRefused("another issuer than this node's hub signed it") from None
-    except jwt.MissingRequiredClaimError as exc:
-        raise SealedCredentialRefused(f"it has no claim {exc.claim}") from None
-    except jwt.PyJWKClientConnectionError:
-        raise SealedCredentialRefused("the hub's keys could not be read") from None
-    except jwt.PyJWKClientError:
-        raise SealedCredentialRefused("the hub does not publish the key that signed it") from None
-    except jwt.PyJWTError as exc:
-        raise SealedCredentialRefused(f"its signature does not hold ({type(exc).__name__})") from None
+    except hub_tokens.HubTokenRefused as refused:
+        raise SealedCredentialRefused(refused.reason) from None
     if not isinstance(claims["vend_id"], int):
         raise SealedCredentialRefused("its claims are malformed")
     return claims
@@ -213,7 +184,7 @@ def sealed_secret(name: str, sealed: Mapping[str, str]) -> str:
     """The secret ``name`` a vend sealed to each node of ``sealed``, as a string that takes a ``$ffsec$`` ciphertext's
     place in what a step carries: ``SEALED_SECRET_PREFIX`` and the name and map as base64url JSON, nothing in clear."""
     body = json.dumps({"name": name, "sealed": dict(sealed)}, separators=(",", ":")).encode("utf-8")
-    return SEALED_SECRET_PREFIX + _b64url(body)
+    return SEALED_SECRET_PREFIX + hub_node_key.b64url(body)
 
 
 def is_sealed_secret(value: object) -> bool:
@@ -229,7 +200,7 @@ def open_secret(value: str) -> str:
             open or verify (``open_token``'s reasons), or it holds another kind or another secret than it names.
     """
     try:
-        body = json.loads(_unb64url(value.removeprefix(SEALED_SECRET_PREFIX)))
+        body = json.loads(hub_node_key.unb64url(value.removeprefix(SEALED_SECRET_PREFIX)))
         name, sealed = body["name"], body["sealed"]
     except (ValueError, TypeError, KeyError):
         raise SealedCredentialRefused("it is not a sealed secret") from None
