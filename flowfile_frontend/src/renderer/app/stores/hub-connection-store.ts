@@ -26,7 +26,7 @@ export const useHubConnectionStore = defineStore("hub-connection", () => {
   /** This server joined its hub with keys of its own; it shows the hub's servers with no connect step. */
   const joined = computed(() => connection.value?.joined ?? false);
 
-  const load = async () => {
+  const read = async () => {
     loading.value = true;
     try {
       connection.value = await getHubConnection();
@@ -36,6 +36,15 @@ export const useHubConnectionStore = defineStore("hub-connection", () => {
     } finally {
       loading.value = false;
     }
+  };
+
+  let inFlight: Promise<void> | null = null;
+  /** Reads the connection from core; readers that mount together share the one request under way. */
+  const load = (): Promise<void> => {
+    inFlight ??= read().finally(() => {
+      inFlight = null;
+    });
+    return inFlight;
   };
 
   /** Signs in at the hub; a refused connect leaves the state as it was and throws the route's words. */

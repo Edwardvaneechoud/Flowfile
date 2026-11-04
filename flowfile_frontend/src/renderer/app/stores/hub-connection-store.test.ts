@@ -64,6 +64,16 @@ describe("the hub connection store", () => {
     expect(hub.loading).toBe(false);
   });
 
+  it("answers readers that load together from one request, and asks again for a later load", async () => {
+    const hub = useHubConnectionStore();
+
+    await Promise.all([hub.load(), hub.load(), hub.load()]);
+    expect(mocks.get).toHaveBeenCalledTimes(1);
+
+    await hub.load();
+    expect(mocks.get).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps the route's words when loading fails", async () => {
     mocks.get.mockRejectedValue(httpError(500, "The secure store could not be read"));
     const hub = useHubConnectionStore();

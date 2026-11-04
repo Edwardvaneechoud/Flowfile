@@ -149,7 +149,7 @@
               </li>
             </ul>
           </div>
-          <div class="catalog-flows-pane versions-pane">
+          <div class="catalog-flows-pane">
             <label class="pane-label">Version</label>
             <div v-if="loadingHubVersions" class="flows-status">Loading versions...</div>
             <div v-else-if="!selectedHubFlow" class="flows-status">Select a flow.</div>
@@ -196,7 +196,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed } from "vue";
+import { ref, watch, computed, onMounted } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import FileBrowser from "../../../components/common/FileBrowser/fileBrowser.vue";
 import { FLOWFILE_EXTENSIONS } from "../../../components/common/FileBrowser/constants";
@@ -374,6 +374,8 @@ const loadingHubFlows = ref(false);
 const loadingHubVersions = ref(false);
 const hubBusy = ref(false);
 const hubError = ref("");
+
+onMounted(() => void hub.load());
 
 const canOpenHubFlow = computed(
   () => !!selectedHubFlow.value && hubVersions.value.length > 0 && !hubBusy.value,

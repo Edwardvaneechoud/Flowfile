@@ -47,7 +47,7 @@
               Save As…
             </el-dropdown-item>
             <el-dropdown-item
-              v-if="hubConnected"
+              v-if="hub.connected"
               divided
               data-testid="publish-to-hub"
               @click="openHubPublishDialog"
@@ -355,9 +355,6 @@ const modalVisibleForCreate = ref(false);
 const modalVisibleForAlteryx = ref(false);
 const modalVisibleForSettings = ref(false);
 const modalVisibleForHubPublish = ref(false);
-
-// "Publish to hub…" shows only while this Flowfile is connected to a hub; Open has a Hub tab then.
-const hubConnected = computed(() => hub.connected);
 
 const openHubPublishDialog = () => {
   modalVisibleForHubPublish.value = true;

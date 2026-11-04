@@ -110,7 +110,7 @@
                   <h4 class="backend-worker__name">
                     <code>{{ backend.id }}</code>
                     <span
-                      v-if="hub.joined && backend.source === 'hub'"
+                      v-if="fromHub(backend)"
                       class="compute-chip compute-chip--neutral"
                       :data-testid="`backend-from-hub-${backend.id}`"
                       >From your hub</span
@@ -147,7 +147,7 @@
                     <i class="fa-solid fa-rotate" aria-hidden="true"></i> Handshake
                   </el-button>
                   <el-button
-                    v-if="!(hub.joined && backend.source === 'hub')"
+                    v-if="!fromHub(backend)"
                     size="small"
                     type="danger"
                     plain
@@ -328,6 +328,7 @@ import { computed, reactive, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useAuthStore } from "../../stores/auth-store";
 import { useHubConnectionStore } from "../../stores/hub-connection-store";
+import type { ComputeBackend } from "../../api/computeBackends.api";
 import { NO_AUTOFILL } from "../../utils/noAutofill";
 import BackendHandshakeStatus from "../../components/settings/BackendHandshakeStatus.vue";
 import WorkerPoolCard from "../../components/settings/WorkerPoolCard.vue";
@@ -349,8 +350,9 @@ import {
 } from "./useComputeBackends";
 
 const isAdmin = computed(() => useAuthStore().isAdmin);
-// On a joined server the hub's rows come back with every load, so they carry no Remove.
 const hub = useHubConnectionStore();
+// On a joined server the hub's rows come back with every load, so they carry no Remove.
+const fromHub = (backend: ComputeBackend) => hub.joined && backend.source === "hub";
 
 const {
   backends,
