@@ -492,9 +492,10 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None, 
     completed but won't appear in the run history. Failures are logged at ERROR level so they're
     visible in logs.
 
-    A run whose record was written is then reported to the hub ``hub_target`` names, if any: a team node's
+    A run whose record was written is then reported to the hub ``hub_target`` names, if any: on a server joined
+    with keys of its own, the hub the user signed in through, with their delegated access token; a team node's
     ``FLOWFILE_HUB_URL`` with ``hub_token`` (the bearer token of the request that started the run, passed on and
-    never stored), or the user's hub session for a flow that came from that hub. A run of a flow with no
+    never stored); or the user's hub session for a flow that came from that hub. A run of a flow with no
     registration is not reported.
 
     On a team node the run takes the exchange store its hub sets, asked once with ``hub_token`` before the run
