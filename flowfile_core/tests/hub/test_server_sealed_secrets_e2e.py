@@ -14,20 +14,13 @@ back to this server, and no request or socket frame core sent that server carrie
 import uuid
 
 import pytest
-from pydantic import SecretStr
 
-from flowfile_core.auth.models import SecretInput
-from flowfile_core.database import models as db_models
-from flowfile_core.database.connection import get_db_context
-from flowfile_core.hub_client import vend
 from flowfile_core.schemas import input_schema, transform_schema
-from flowfile_core.secret_manager.secret_manager import store_secret
 from test_utils.postgres import fixtures as pg_fixtures
 from tests import test_hub_sign_in
 from tests.flowfile.execution.graph_helpers import add_promise, connect
 from tests.hub import test_server_sealed_e2e as sealed_e2e
-from tests.hub.test_server_run_report import client, open_flow  # noqa: F401
-from tests.test_hub_sign_in import bearer
+from tests.hub.test_server_run_report import open_flow  # noqa: F401
 
 node_file = test_hub_sign_in.node_file
 username = test_hub_sign_in.username
@@ -109,23 +102,3 @@ def test_a_database_read_on_the_compute_only_server_signs_in_with_the_password_t
         route for route, body in sent if PASSWORD.encode() in body or b"$ffsec$" in body or sealed_e2e.SECRET in body
     ]
     assert any("/v1/ops/database_read" in route for route, _ in sent)
-
-
-def test_a_password_only_on_this_server_stops_the_run_before_it_starts(hub, store, person, open_flow, secret_name):
-    person_id, access_token = person
-    with get_db_context() as db:
-        store_secret(db, SecretInput(name=secret_name, value=SecretStr(PASSWORD)), person_id)
-    try:
-        flow = open_flow(person_id, "password_only_here")
-        add_reader(flow, person_id, secret_name)
-
-        ran = client.post("/flow/run/", params={"flow_id": flow.flow_id}, headers=bearer(access_token))
-
-        assert ran.status_code == 200, ran.text
-        errors = [result.error for result in flow.get_run_info().node_step_result if not result.success]
-        assert errors and set(errors) == {vend.ONLY_HERE.format(name=secret_name)}
-        assert hub.catalog.registered == []
-    finally:
-        with get_db_context() as db:
-            db.query(db_models.Secret).filter(db_models.Secret.name == secret_name).delete()
-            db.commit()

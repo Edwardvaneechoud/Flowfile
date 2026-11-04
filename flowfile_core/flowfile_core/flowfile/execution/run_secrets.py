@@ -112,20 +112,17 @@ def _custom_node_secret_names(node: FlowNode) -> list[str]:
     return [c.value for c in schema.get_all_components().values() if isinstance(c, SecretSelector) and c.value]
 
 
-def names_for(node: FlowNode) -> dict[str, bool]:
-    """The secret names ``node``'s settings use, each with whether it exists on this server for the node's user.
+def names_for(node: FlowNode) -> list[str]:
+    """The secret names ``node``'s settings use, each once.
 
     A database reader's or writer's password, a Kafka source's stored secrets, a REST source's auth secret and a custom
-    node's selected secrets; any other node names none. A stored connection's secrets exist here by definition.
+    node's selected secrets; any other node names none.
     """
-    from flowfile_core.secret_manager.secret_manager import stored_encrypted_secret
-
     settings = node.setting_input
     user_id = getattr(settings, "user_id", None)
     if user_id is None:
-        return {}
-    stored: list[str] = []
-    named: list[str] = []
+        return []
+    names: list[str] = []
     if isinstance(settings, input_schema.NodeDatabaseReader | input_schema.NodeDatabaseWriter):
         database = (
             settings.database_settings
@@ -134,16 +131,13 @@ def names_for(node: FlowNode) -> dict[str, bool]:
         )
         name = database_secret_name(database, user_id)
         if name is not None:
-            (named if database.connection_mode == "inline" else stored).append(name)
+            names.append(name)
     elif isinstance(settings, input_schema.NodeKafkaSource):
-        stored.extend(kafka_secret_names(settings.kafka_settings, user_id).values())
+        names.extend(kafka_secret_names(settings.kafka_settings, user_id).values())
     elif isinstance(settings, input_schema.NodeRestApiReader):
         auth = settings.rest_api_settings.auth
         if auth.auth_type != "none" and auth.secret_name:
-            named.append(auth.secret_name)
+            names.append(auth.secret_name)
     elif isinstance(settings, input_schema.UserDefinedNode):
-        named.extend(_custom_node_secret_names(node))
-    names = dict.fromkeys(stored, True)
-    for name in named:
-        names.setdefault(name, stored_encrypted_secret(current_user_id=user_id, secret_name=name) is not None)
-    return names
+        names.extend(_custom_node_secret_names(node))
+    return list(dict.fromkeys(names))

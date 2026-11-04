@@ -17,8 +17,7 @@ use (``secrets``), and the hub answers each sealed the same way: a step carries 
 of its ``$ffsec$`` ciphertext, and the server that runs it opens them.
 """
 
-import re
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
 import polars as pl
@@ -36,10 +35,6 @@ from shared import hub_sealed
 from shared.cloud_storage.storage_options import ALLOW_INVALID_CERTIFICATES
 
 REFUSED = "The hub did not give this run access to its tables"
-ONLY_HERE = (
-    'Secret "{name}" is only on this server, and the step that uses it runs on another server of the hub: add the '
-    "secret on the hub, or have it shared with you there, and run the flow again"
-)
 _S3_FIELDS = ("aws_access_key_id", "aws_region", "endpoint_url")
 _S3_SECRETS = ("aws_secret_access_key", "aws_session_token")
 
@@ -197,7 +192,6 @@ def request(
     targets: Iterable[str] = (),
     exchange: bool = False,
     secrets: Iterable[str] = (),
-    local_secrets: Collection[str] = (),
 ) -> RunVend:
     """Ask the hub, through ``user_id``'s hub session, for the credentials of a run over its tables.
 
@@ -210,8 +204,7 @@ def request(
 
     Raises:
         LookupError: A sentence for the user: not connected to the hub, a namespace the hub keeps on its own disk or
-            on other storage, the hub's refusal with its reason, or a hub that does not answer. A secret the hub
-            refuses that is among ``local_secrets``, the names that exist on this server, is ``ONLY_HERE``.
+            on other storage, the hub's refusal with its reason, or a hub that does not answer.
     """
     secrets = tuple(dict.fromkeys(secrets))
     try:
@@ -242,9 +235,6 @@ def request(
     except HubRefused as e:
         if e.status == 401:
             raise LookupError(catalog.NOT_CONNECTED) from e
-        only_here = [name for name in secrets if name in local_secrets and _names(e.detail, name)]
-        if e.status == 403 and only_here:
-            raise LookupError(ONLY_HERE.format(name=only_here[0])) from e
         raise LookupError(refusal_sentence(e.detail, e.status)) from e
     except HubVersionRefused as e:
         raise LookupError(refusal_sentence(e.detail, 426)) from e
@@ -271,11 +261,6 @@ def request(
         targets=targets,
         secrets={secret["name"]: dict(secret["sealed"]) for secret in answer.get("secrets", []) if secrets},
     )
-
-
-def _names(sentence: str, name: str) -> bool:
-    """Whether the hub's ``sentence`` names the secret ``name`` as a word of its own."""
-    return re.search(rf"(?<![\w.-]){re.escape(name)}(?![\w-]|\.\w)", sentence) is not None
 
 
 def node_name(backend_id: str) -> str | None:

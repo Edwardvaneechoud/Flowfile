@@ -158,7 +158,7 @@ class SecretNode(CustomNodeBase):
         return inputs[0]
 
 
-def test_each_kind_names_its_secrets_and_whether_this_server_has_them(user_id, local_secret, stored_connections):
+def test_each_kind_names_its_secrets(user_id, local_secret, stored_connections):
     database, kafka, kafka_id = stored_connections
     add_to_custom_node_store(SecretNode)
     reference = input_schema.NodeDatabaseReader(
@@ -179,13 +179,13 @@ def test_each_kind_names_its_secrets_and_whether_this_server_has_them(user_id, l
         flow_id=1, node_id=5, user_id=user_id, settings={"config": {"api_key": "hub_api_key"}}, is_user_defined=True
     )
 
-    assert run_secrets.names_for(Step(inline_reader(user_id, local_secret))) == {local_secret: True}
-    assert run_secrets.names_for(Step(inline_reader(user_id, "on_the_hub"))) == {"on_the_hub": False}
-    assert run_secrets.names_for(Step(reference)) == {database: True}
-    assert run_secrets.names_for(Step(source)) == dict.fromkeys(kafka_names(kafka), True)
-    assert run_secrets.names_for(Step(rest_reader(user_id, local_secret))) == {local_secret: True}
-    assert run_secrets.names_for(Step(custom, SecretNode().item)) == {"hub_api_key": False}
-    assert run_secrets.names_for(Step(input_schema.NodeRecordCount(flow_id=1, node_id=6, user_id=user_id))) == {}
+    assert run_secrets.names_for(Step(inline_reader(user_id, local_secret))) == [local_secret]
+    assert run_secrets.names_for(Step(inline_reader(user_id, "on_the_hub"))) == ["on_the_hub"]
+    assert run_secrets.names_for(Step(reference)) == [database]
+    assert run_secrets.names_for(Step(source)) == list(kafka_names(kafka))
+    assert run_secrets.names_for(Step(rest_reader(user_id, local_secret))) == [local_secret]
+    assert run_secrets.names_for(Step(custom, SecretNode().item)) == ["hub_api_key"]
+    assert run_secrets.names_for(Step(input_schema.NodeRecordCount(flow_id=1, node_id=6, user_id=user_id))) == []
 
 
 def test_the_vend_asks_the_names_and_each_target_opens_its_own_secret(hub, signer, node_keys, monkeypatch):
@@ -213,15 +213,11 @@ def test_names_without_targets_are_the_hubs_422(hub):
         vend.request(1, "run-n", set(), set(), secrets=["warehouse"])
 
 
-def test_a_name_the_hub_refuses_ends_the_vend_with_its_sentence_or_this_servers_when_it_is_only_here(hub):
-    with pytest.raises(LookupError) as on_neither:
+def test_a_name_the_hub_refuses_ends_the_vend_with_its_sentence(hub):
+    with pytest.raises(LookupError) as refused:
         vend.request(1, "run-r", set(), set(), targets=["worker"], secrets=["nowhere"])
-    with pytest.raises(LookupError) as only_here:
-        vend.request(1, "run-r", set(), set(), targets=["worker"], secrets=["mine"], local_secrets={"mine"})
 
-    assert str(on_neither.value).startswith("You have no secret named nowhere on the hub")
-    assert str(only_here.value) == vend.ONLY_HERE.format(name="mine")
-    assert 'Secret "mine" is only on this server' in str(only_here.value) and "on the hub" in str(only_here.value)
+    assert str(refused.value).startswith("You have no secret named nowhere on the hub")
 
 
 def test_a_hub_that_answers_names_without_their_secrets_is_refused(hub, monkeypatch):

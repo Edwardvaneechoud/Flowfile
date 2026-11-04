@@ -1717,17 +1717,17 @@ class ExecutionMixin(GraphMixinBase):
             targets.append(name)
         return tuple(dict.fromkeys(targets)), bool(exchange), sealed_nodes
 
-    def _secret_steps(self, nodes: list[FlowNode], exchange_run: ExchangeRun) -> dict[FlowNode, dict[str, bool]]:
+    def _secret_steps(self, nodes: list[FlowNode], exchange_run: ExchangeRun) -> dict[FlowNode, list[str]]:
         """The run's steps that the policy places on a server of the hub and that name secrets, with their names.
 
         Only on a server joined to its hub with keys of its own: another server of the hub has a master key of its
-        own, so the names are asked of the hub. Each name says whether it exists on this server too
-        (``run_secrets.names_for``). A step whose names cannot be read names none and fails as it runs.
+        own, so the names are asked of the hub (``run_secrets.names_for``). A step whose names cannot be read names
+        none and fails as it runs.
         """
         if issuer_accounts.joined_with_keys() is None:
             return {}
         policy = self._run_policy(exchange_run)
-        steps: dict[FlowNode, dict[str, bool]] = {}
+        steps: dict[FlowNode, list[str]] = {}
         for node in nodes:
             backend_id = policy.backend_for(node)
             if not backend_id.startswith(registry.CONFIGURED_WORKER_PREFIX) or vend.node_name(backend_id) is None:
@@ -1774,7 +1774,7 @@ class ExecutionMixin(GraphMixinBase):
         user_id = user_ids[0] if user_ids else exchange_run.hub_store.vended_for
         readers = {hub[node.node_id][0] for node in hub_nodes if not hub[node.node_id][1]}
         writers = {hub[node.node_id][0] for node in hub_nodes if hub[node.node_id][1]}
-        names = {name: local for step in secret_steps.values() for name, local in step.items()}
+        names = {name for step in secret_steps.values() for name in step}
         try:
             self.hub_vend = vend.request(
                 user_id,
@@ -1784,7 +1784,6 @@ class ExecutionMixin(GraphMixinBase):
                 targets=targets,
                 exchange=exchange,
                 secrets=sorted(names),
-                local_secrets={name for name, local in names.items() if local},
             )
             if exchange:
                 exchange_run.sealed = self.hub_vend.sealed_credential(exchange_run.hub_store.uri)

@@ -32,6 +32,8 @@ IMPORT_PATH = "/hub/nodes/secrets/import"
 NOT_SIGNED_IN = "Your secrets are on the hub, and your sign-in through it has ended; sign in again"
 HELD_HERE = "a connection or setting on this server holds it, so it stays here with it"
 NO_OWNER = "its owner has no account on the hub"
+NO_SUCH = "You have no secret named {name} on the hub"
+"""How the hub's 403 to a vend begins for a name the person reaches no secret of."""
 NOT_YET = "it has not moved to the hub yet; this server moves it when it starts and reaches the hub"
 _reasons: dict[int, str] = {}
 
@@ -122,7 +124,7 @@ def sealed_here(user_id: int, name: str, run_id: str | None = None) -> str | Non
     try:
         answer = client.vend(hub_url, token, run_id or lookup_run_id(), [], [], targets=[here], secrets=[name])
     except HubRefused as e:
-        if e.status == 403 and vend._names(e.detail, name):
+        if e.status == 403 and e.detail.startswith(NO_SUCH.format(name=name)):
             return None
         if e.status == 401:
             raise LookupError(NOT_SIGNED_IN) from e

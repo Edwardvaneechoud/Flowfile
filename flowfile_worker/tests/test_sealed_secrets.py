@@ -107,13 +107,6 @@ def test_a_secret_sealed_to_another_server_or_under_another_name_is_refused(hub_
         secrets.decrypt_secret(hub_sealed.sealed_secret("other", {NODE_NAME: token}))
 
 
-def test_a_joined_server_refuses_another_servers_ciphertext_with_one_sentence(hub_signer, node):
-    with pytest.raises(CredentialResolutionError) as refused:
-        secrets.decrypt_secret(other_servers_ciphertext("s3cr3t"))
-
-    assert str(refused.value) == secrets.ENCRYPTED_ELSEWHERE
-
-
 def test_a_server_that_never_joined_a_hub_fails_another_servers_ciphertext_as_before(hub_signer):
     assert not hub_sealed.can_open()
     with pytest.raises(InvalidToken):
