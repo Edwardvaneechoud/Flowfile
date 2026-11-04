@@ -168,12 +168,13 @@ _NODE_SETTING = "its Compute backend under General Settings"
 
 
 def unmoved_without_store(nodes: list[FlowNode], policy: SingleBackendPolicy) -> list[Refusal]:
-    """The nodes whose own Compute backend names one other than the run's, refused since no store carries their data.
+    """The nodes whose own Compute backend names one other than the run's, as refusals: no store carries their data.
 
-    Without an exchange store a node's own setting is not read and the node runs on the run's backend. On a server
-    joined to its hub with keys of its own that would put a node on another server than the one it was set to, so
-    the caller refuses it before the run instead, with one sentence that says what to change (``remedy`` ``None``).
-    A node type pinned to a backend is never refused here.
+    Without an exchange store a node's own setting is not read and the node runs on the run's backend. The caller
+    decides which of these to refuse before the run, with one sentence that says what to change (``remedy``
+    ``None``): the graph refuses those set to one of the hub's servers, where running on the run's backend would put
+    the node on another server than the one it was set to; the run route reads the list to know whether a store
+    could matter at all. A node type pinned to a backend is never listed.
     """
     refusals = []
     for node in nodes:

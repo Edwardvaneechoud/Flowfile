@@ -1106,11 +1106,13 @@ class ExecutionMixin(GraphMixinBase):
         """Place the nodes ``execution_plan`` runs and resolve its crossings; ``(None, [])`` with the protocol flag off.
 
         With an exchange store (``FLOWFILE_EXCHANGE_URI``) the policy is ``MixedPlacementPolicy``, falling back to
-        ``registry.fallback_backend_id``; without one it is ``SingleBackendPolicy`` on the run's backend, and on a
-        server joined to its hub with keys of its own a node whose own Compute backend names another backend is
-        refused (``unmoved_without_store``) rather than run on the run's backend. On such a server, under either policy,
-        a node placed on another server of the hub whose stored connection holds this server's secret is refused too
-        (``held_on_this_server``); a node refused already keeps its first refusal. Each backend named is read through
+        ``registry.fallback_backend_id``; without one it is ``SingleBackendPolicy`` on the run's backend, and a node
+        whose own Compute backend names one of the hub's servers (``vend.node_name``: a row filled from the hub, or
+        this server once joined with keys of its own) is refused (``unmoved_without_store``) rather than run on the
+        run's backend, on a joined server and a desktop connected to the hub alike. On a server joined with keys of its
+        own, under either policy, a node placed on another server of the hub whose stored connection holds this
+        server's secret is refused too (``held_on_this_server``); a node refused already keeps its first refusal. Each
+        backend named is read through
         its handshake verdict (``handshake.verdict_for``), except ``local`` in a process that serves, which runs no
         node and is never asked. On a joined server the hub's servers named are first moved to the addresses the hub
         lists now (``node_addresses.refresh``). A backend refused whole, a ``VersionMismatch`` or an id the registry
@@ -1227,17 +1229,19 @@ class ExecutionMixin(GraphMixinBase):
                     for refusal in placement.refusals
                 ],
             )
+        late = []
+        if isinstance(policy, SingleBackendPolicy):
+            late += [r for r in unmoved_without_store(nodes, policy) if vend.node_name(r.backend_id) is not None]
         if issuer_accounts.joined_with_keys() is not None:
-            late = unmoved_without_store(nodes, policy) if isinstance(policy, SingleBackendPolicy) else []
             late += held_on_this_server(nodes, placement.assignment)
-            refused_ids = {refusal.node_id for refusal in placement.refusals}
-            added = []
-            for refusal in late:
-                if refusal.node_id not in refused_ids:
-                    refused_ids.add(refusal.node_id)
-                    added.append(refusal)
-            if added:
-                placement = replace(placement, refusals=[*placement.refusals, *added])
+        refused_ids = {refusal.node_id for refusal in placement.refusals}
+        added = []
+        for refusal in late:
+            if refusal.node_id not in refused_ids:
+                refused_ids.add(refusal.node_id)
+                added.append(refusal)
+        if added:
+            placement = replace(placement, refusals=[*placement.refusals, *added])
         return placement, edges
 
     def preview_placement(self) -> Placement | None:
