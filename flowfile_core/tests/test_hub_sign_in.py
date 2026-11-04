@@ -356,10 +356,7 @@ def test_a_sign_in_token_is_no_users_token_on_any_other_route(hub, username):
 
     for path in ("/auth/users/me", "/auth/users"):
         response = client.get(path, headers=bearer(token))
-        assert (response.status_code, response.json()["detail"]) == (
-            401,
-            "Hub token refused: a signin token is not accepted here",
-        )
+        assert (response.status_code, response.json()["detail"]) == (401, "Could not validate credentials")
     assert local["username"] == username and len(exchanges(hub)) == 1
 
 

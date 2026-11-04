@@ -14,13 +14,11 @@ from fastapi.security import OAuth2PasswordBearer
 from jwt import PyJWTError as JWTError
 from sqlalchemy.orm import Session
 
-from flowfile_core.auth import issuer_accounts
 from flowfile_core.auth.models import TokenData, User
 from flowfile_core.auth.secrets import get_password, set_password
 from flowfile_core.configs.settings import ACCESS_TOKEN_EXPIRE_MINUTES
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
-from shared import hub_node, hub_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -262,94 +260,8 @@ def _resolve_token_user(db: Session, username: str, credentials_exception: HTTPE
     return user.model_copy()
 
 
-def _decode_core_token(token: str) -> dict | None:
-    """The payload of a token core signed itself, ``None`` for anything else."""
-    try:
-        return jwt.decode(token, get_jwt_secret(), algorithms=[ALGORITHM])
-    except JWTError:
-        return None
-
-
-def _hub_claims(token: str) -> hub_tokens.HubClaims | None:
-    """The claims of a token from the configured issuer; ``None`` when it is none, 401 with the reason when refused."""
-    try:
-        return hub_tokens.verify(token)
-    except hub_tokens.HubTokenRefused as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Hub token refused: {exc.reason}",
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from None
-
-
-def _refuse_hub_tokens(token: str = Depends(oauth2_scheme)) -> None:
-    """Refuse a token from the configured issuer with 403, whoever it names; anything else passes through untouched.
-
-    Listed before ``get_current_user`` in a dependency so it runs first: a ``dispatch`` token, which that dependency
-    would refuse as no user, is told the same thing as a ``run`` token here.
-    """
-    if token and _decode_core_token(token) is None and _hub_claims(token) is not None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin routes take no hub token")
-
-
-def _resolve_hub_user(db: Session, claims: hub_tokens.HubClaims, credentials_exception: HTTPException) -> User:
-    """The user a ``run`` token names; which rule finds them depends on whether this server has people of its own.
-
-    On a server that joined its hub with keys of its own (``issuer_accounts.joined_with_keys``, the rule the hub
-    sign-in and ``/auth/sign_in_method`` follow), the person is the account ``issuer_accounts`` maps to the hub's issuer
-    and the token's ``uid``, never a local id or a username, so a token without ``uid`` is refused. A person not mapped
-    yet gets their account as at a first sign-in, but never as an administrator and with no full name, since a ``run``
-    token carries neither; a mapped account keeps its ``is_admin``, which only a sign-in changes.
-
-    Anywhere else (a node set up by hand, or joined without keys) the node shares the hub's user table, so the id the
-    hub put in the token is this core's id too, and the username in ``sub`` is the fallback. A ``dispatch`` token is the
-    hub acting as itself and names no user, so it is refused here.
-    """
-    if claims.scope == "dispatch":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="dispatch tokens are not user tokens",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    if issuer_accounts.joined_with_keys() is not None:
-        row = _issuer_account_for(db, claims)
-    else:
-        row = None
-        if claims.user_id is not None:
-            row = db.query(db_models.User).filter(db_models.User.id == claims.user_id).first()
-        if row is None:
-            row = db.query(db_models.User).filter(db_models.User.username == claims.subject).first()
-    if row is None:
-        raise credentials_exception
-    user = _user_from_row(row)
-    if user.disabled:
-        raise HTTPException(status_code=400, detail="Inactive user")
-    return user
-
-
-def _issuer_account_for(db: Session, claims: hub_tokens.HubClaims) -> db_models.User:
-    """The account mapped to the person a ``run`` token names, made at their first token and never an administrator."""
-    if claims.user_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Hub token refused: missing claim uid",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    settings = hub_node.resolved()
-    row = issuer_accounts.issuer_account(db, settings.issuer, claims.user_id)
-    if row is None:
-        person = {"uid": claims.user_id, "username": claims.subject, "full_name": None, "node_admin": False}
-        row = issuer_accounts.new_issuer_account(db, settings.issuer, settings.hub_url, person)
-        db.commit()
-    return row
-
-
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    """Sync on purpose: a pool wait must land on the threadpool, not the event loop.
-
-    Core's own token is tried first; what it does not sign may be a token from the configured issuer
-    (``shared.hub_tokens``), which is the user it names. Without that configuration nothing else is accepted.
-    """
+    """Sync on purpose: a pool wait must land on the threadpool, not the event loop."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -359,19 +271,17 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     if not token:
         raise credentials_exception
 
-    payload = _decode_core_token(token)
-    if payload is None:
-        claims = _hub_claims(token)
-        if claims is None:
+    try:
+        payload = jwt.decode(token, get_jwt_secret(), algorithms=[ALGORITHM])
+        # Reject refresh tokens used as access tokens
+        if payload.get("type") == "refresh":
             raise credentials_exception
-        return _resolve_hub_user(db, claims, credentials_exception)
-    # Reject refresh tokens used as access tokens
-    if payload.get("type") == "refresh":
-        raise credentials_exception
-    username: str = payload.get("sub")
-    if username is None:
-        raise credentials_exception
-    token_data = TokenData(username=username)
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        token_data = TokenData(username=username)
+    except JWTError:
+        raise credentials_exception from None
 
     return _resolve_token_user(db, token_data.username, credentials_exception)
 
@@ -424,13 +334,8 @@ def decode_refresh_token(token: str) -> dict:
         raise credentials_exception from None
 
 
-async def get_current_admin_user(
-    _no_hub_token: None = Depends(_refuse_hub_tokens), current_user: User = Depends(get_current_user)
-):
-    """Dependency that requires the current user to be an admin, signed in with a session of this core.
-
-    A token from the configured issuer is refused whoever it names: administration needs a session here.
-    """
+async def get_current_admin_user(current_user: User = Depends(get_current_user)):
+    """Dependency that requires the current user to be an admin"""
     if not current_user.is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required")
     return current_user
