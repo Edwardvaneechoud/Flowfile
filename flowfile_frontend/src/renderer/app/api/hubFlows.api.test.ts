@@ -9,7 +9,6 @@ vi.mock("../services/axios.config", () => ({
 import {
   listHubFlowVersions,
   listHubFlows,
-  listHubNamespaces,
   openFromHub,
   publishCheck,
   publishToHub,
@@ -24,7 +23,6 @@ const pyVersion = {
   message: "theirs",
 };
 const version = {
-  flowUuid: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
   version: 2,
   authorId: 7,
   publishedAt: "2026-11-01T12:01:00Z",
@@ -37,29 +35,7 @@ beforeEach(() => {
 });
 
 describe("listing", () => {
-  it("gets the hub's namespaces without a trailing slash and maps snake_case to camelCase", async () => {
-    mocks.get.mockResolvedValue({
-      data: [{ id: 2, name: "sales", parent_id: 1, level: 1, description: null, owner_id: 1 }],
-    });
-
-    const result = await listHubNamespaces();
-
-    expect(mocks.get).toHaveBeenCalledWith("/hub_client/namespaces");
-    expect(result).toEqual([{ id: 2, name: "sales", parentId: 1, level: 1, description: null }]);
-  });
-
-  it("asks for a namespace's children through parent_id", async () => {
-    mocks.get.mockResolvedValue({
-      data: [{ id: 2, name: "sales", parent_id: 1, level: 1, description: null, owner_id: 1 }],
-    });
-
-    const result = await listHubNamespaces(1);
-
-    expect(mocks.get).toHaveBeenCalledWith("/hub_client/namespaces", { params: { parent_id: 1 } });
-    expect(result).toEqual([{ id: 2, name: "sales", parentId: 1, level: 1, description: null }]);
-  });
-
-  it("narrows the flows to a namespace through the query and sends none without one", async () => {
+  it("narrows the flows to a namespace through the query and sends none without one, keeping what the dialog shows", async () => {
     mocks.get.mockResolvedValue({
       data: [
         {
@@ -80,16 +56,7 @@ describe("listing", () => {
       params: { namespace_id: 2 },
     });
     expect(mocks.get).toHaveBeenNthCalledWith(2, "/hub_client/flows", { params: undefined });
-    expect(result).toEqual([
-      {
-        registrationId: 3,
-        flowUuid: "u",
-        name: "orders",
-        namespaceId: 2,
-        ownerId: 1,
-        latestVersion: null,
-      },
-    ]);
+    expect(result).toEqual([{ flowUuid: "u", name: "orders", latestVersion: null }]);
   });
 
   it("lists a flow's versions under its uuid", async () => {
@@ -113,9 +80,7 @@ describe("publishCheck", () => {
     expect(mocks.get).toHaveBeenCalledWith("/hub_client/publish_check", {
       params: { flow_id: 42 },
     });
-    expect(result).toEqual([
-      { nodeId: 2, nodeType: "read", label: "sales.csv (csv)", path: "/data/sales.csv" },
-    ]);
+    expect(result).toEqual([{ label: "sales.csv (csv)", path: "/data/sales.csv" }]);
   });
 });
 
@@ -138,7 +103,7 @@ describe("publishToHub", () => {
       message: "again",
       overwrite_version: 2,
     });
-    expect(result).toEqual({ flowUuid: "u", version: 3, name: "Sales report", namespaceId: 2 });
+    expect(result).toEqual({ version: 3, name: "Sales report" });
   });
 
   it("sends nulls for what was not given, so a first publish has no base", async () => {
@@ -170,11 +135,7 @@ describe("openFromHub", () => {
       version: 2,
       replace: true,
     });
-    expect(result).toEqual({
-      flowPath: "/flows/hub/orders_aaaaaaaa.yaml",
-      flowUuid: "u",
-      version: 2,
-    });
+    expect(result).toEqual({ flowPath: "/flows/hub/orders_aaaaaaaa.yaml" });
   });
 });
 

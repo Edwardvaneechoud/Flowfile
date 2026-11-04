@@ -4,26 +4,14 @@ import axios from "../services/axios.config";
 
 const BASE = "/hub_client";
 
-export interface HubNamespace {
-  id: number;
-  name: string;
-  parentId: number | null;
-  level: number;
-  description: string | null;
-}
-
 export interface HubFlow {
-  registrationId: number;
   flowUuid: string;
   name: string;
-  namespaceId: number | null;
-  ownerId: number;
   /** The newest version published through the hub; null when the flow has none yet. */
   latestVersion: number | null;
 }
 
 export interface HubFlowVersion {
-  flowUuid: string;
   version: number;
   authorId: number;
   publishedAt: string;
@@ -32,8 +20,6 @@ export interface HubFlowVersion {
 
 /** A node whose settings name a path on this machine, which other users of the hub will not have. */
 export interface LocalPathUse {
-  nodeId: number;
-  nodeType: string;
   label: string;
   path: string;
 }
@@ -48,10 +34,8 @@ export interface HubPublishInput {
 }
 
 export interface HubPublishResult {
-  flowUuid: string;
   version: number;
   name: string;
-  namespaceId: number | null;
 }
 
 export interface HubOpenInput {
@@ -63,8 +47,6 @@ export interface HubOpenInput {
 
 export interface HubOpenResult {
   flowPath: string;
-  flowUuid: string;
-  version: number;
 }
 
 /** A refusal of publish or open, branched on its `kind`. */
@@ -79,25 +61,14 @@ export type HubRefusal =
   | { kind: "other_hub"; hubUrl: string }
   | { kind: "local_copy_exists"; flowPath: string };
 
-interface PyNamespace {
-  id: number;
-  name: string;
-  parent_id: number | null;
-  level: number;
-  description: string | null;
-}
-
+// Core answers more on each (ids of registrations, owners, authors' uuids); the editor reads these.
 interface PyFlow {
-  registration_id: number;
   flow_uuid: string;
   name: string;
-  namespace_id: number | null;
-  owner_id: number;
   latest_version: number | null;
 }
 
 interface PyVersion {
-  flow_uuid: string;
   version: number;
   author_id: number;
   published_at: string;
@@ -105,61 +76,34 @@ interface PyVersion {
 }
 
 interface PyLocalPathUse {
-  node_id: number;
-  node_type: string;
   label: string;
   path: string;
 }
 
 interface PyPublishOut {
-  flow_uuid: string;
   version: number;
   name: string;
-  namespace_id: number | null;
 }
 
 interface PyOpenOut {
   flow_path: string;
-  flow_uuid: string;
-  version: number;
 }
 
-const namespaceFromPy = (raw: PyNamespace): HubNamespace => ({
-  id: raw.id,
-  name: raw.name,
-  parentId: raw.parent_id,
-  level: raw.level,
-  description: raw.description,
-});
-
 const flowFromPy = (raw: PyFlow): HubFlow => ({
-  registrationId: raw.registration_id,
   flowUuid: raw.flow_uuid,
   name: raw.name,
-  namespaceId: raw.namespace_id,
-  ownerId: raw.owner_id,
   latestVersion: raw.latest_version,
 });
 
 const versionFromPy = (raw: PyVersion | null | undefined): HubFlowVersion | null =>
   raw
     ? {
-        flowUuid: raw.flow_uuid,
         version: raw.version,
         authorId: raw.author_id,
         publishedAt: raw.published_at,
         message: raw.message,
       }
     : null;
-
-/** The hub's root namespaces, or the children of `parentId`: one level of the tree per call. */
-export async function listHubNamespaces(parentId?: number | null): Promise<HubNamespace[]> {
-  const response =
-    parentId == null
-      ? await axios.get<PyNamespace[]>(`${BASE}/namespaces`)
-      : await axios.get<PyNamespace[]>(`${BASE}/namespaces`, { params: { parent_id: parentId } });
-  return response.data.map(namespaceFromPy);
-}
 
 export async function listHubFlows(namespaceId?: number | null): Promise<HubFlow[]> {
   const params = namespaceId == null ? undefined : { namespace_id: namespaceId };
@@ -177,12 +121,7 @@ export async function publishCheck(flowId: number): Promise<LocalPathUse[]> {
   const response = await axios.get<PyLocalPathUse[]>(`${BASE}/publish_check`, {
     params: { flow_id: flowId },
   });
-  return response.data.map((raw) => ({
-    nodeId: raw.node_id,
-    nodeType: raw.node_type,
-    label: raw.label,
-    path: raw.path,
-  }));
+  return response.data.map((raw) => ({ label: raw.label, path: raw.path }));
 }
 
 export async function publishToHub(input: HubPublishInput): Promise<HubPublishResult> {
@@ -192,12 +131,7 @@ export async function publishToHub(input: HubPublishInput): Promise<HubPublishRe
     message: input.message ?? null,
     overwrite_version: input.overwriteVersion ?? null,
   });
-  return {
-    flowUuid: response.data.flow_uuid,
-    version: response.data.version,
-    name: response.data.name,
-    namespaceId: response.data.namespace_id,
-  };
+  return { version: response.data.version, name: response.data.name };
 }
 
 export async function openFromHub(input: HubOpenInput): Promise<HubOpenResult> {
@@ -206,11 +140,7 @@ export async function openFromHub(input: HubOpenInput): Promise<HubOpenResult> {
     version: input.version ?? null,
     replace: input.replace ?? false,
   });
-  return {
-    flowPath: response.data.flow_path,
-    flowUuid: response.data.flow_uuid,
-    version: response.data.version,
-  };
+  return { flowPath: response.data.flow_path };
 }
 
 /** The structured refusal in a failed publish or open, null for any other error. */

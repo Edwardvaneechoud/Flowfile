@@ -18,7 +18,7 @@
       <aside class="open-dialog-sidebar">
         <button
           class="sidebar-btn"
-          :class="{ active: openMode === 'file' }"
+          :class="{ active: shownMode === 'file' }"
           @click="openMode = 'file'"
         >
           <i class="fa-solid fa-folder"></i>
@@ -26,28 +26,38 @@
         </button>
         <button
           class="sidebar-btn"
-          :class="{ active: openMode === 'catalog' }"
+          :class="{ active: shownMode === 'catalog' }"
           @click="openMode = 'catalog'"
         >
           <i class="fa-solid fa-book"></i>
           <span>Catalog</span>
         </button>
+        <button
+          v-if="hub.connected"
+          class="sidebar-btn"
+          :class="{ active: shownMode === 'hub' }"
+          data-testid="open-hub-tab"
+          @click="openMode = 'hub'"
+        >
+          <i class="fa-solid fa-building"></i>
+          <span>Hub</span>
+        </button>
       </aside>
 
       <section class="open-dialog-main">
         <!-- File System tab -->
-        <div v-show="openMode === 'file'" class="open-panel">
+        <div v-show="shownMode === 'file'" class="open-panel">
           <file-browser
             :allowed-file-types="FLOWFILE_EXTENSIONS"
             mode="open"
             context="flows"
-            :is-visible="isVisible && openMode === 'file'"
+            :is-visible="isVisible && shownMode === 'file'"
             @file-selected="handleFileSelected"
           />
         </div>
 
         <!-- Catalog tab -->
-        <div v-show="openMode === 'catalog'" class="open-panel catalog-panel">
+        <div v-show="shownMode === 'catalog'" class="open-panel catalog-panel">
           <div class="catalog-tree-pane">
             <label class="pane-label">Namespace</label>
             <catalog-namespace-picker ref="namespacePicker" v-model="selectedNamespaceId" />
@@ -92,6 +102,94 @@
             </div>
           </div>
         </div>
+
+        <!-- Hub tab: the hub's namespaces from the one catalog tree, a flow's versions beside its flows -->
+        <div
+          v-if="hub.connected"
+          v-show="shownMode === 'hub'"
+          class="open-panel catalog-panel"
+          data-testid="open-hub-panel"
+        >
+          <div class="catalog-tree-pane">
+            <label class="pane-label">Namespace</label>
+            <!-- Mounted per open, so the hub's namespaces are read afresh each time. -->
+            <catalog-namespace-picker
+              v-if="isVisible"
+              ref="hubPicker"
+              hub
+              :model-value="hubNamespaceId"
+              @update:model-value="selectHubNamespace"
+            />
+          </div>
+          <div class="catalog-flows-pane">
+            <label class="pane-label">Flows</label>
+            <div v-if="loadingHubFlows" class="flows-status">Loading flows...</div>
+            <div v-else-if="hubNamespaceId === null" class="flows-status">
+              Select a namespace to browse flows.
+            </div>
+            <div v-else-if="hubFlows.length === 0" class="flows-status">
+              No flows in this namespace.
+            </div>
+            <ul v-else class="flows-list" data-testid="hub-open-flows">
+              <li
+                v-for="flow in hubFlows"
+                :key="flow.flowUuid"
+                class="flow-row"
+                :class="{ selected: selectedHubFlow?.flowUuid === flow.flowUuid }"
+                @click="selectHubFlow(flow)"
+                @dblclick="openHubFlow()"
+              >
+                <div class="flow-name">
+                  <span class="material-icons flow-icon">description</span>
+                  <span>{{ flow.name }}</span>
+                </div>
+                <div class="flow-meta">
+                  <span class="flow-last-run">{{ latestVersionLabel(flow.latestVersion) }}</span>
+                </div>
+              </li>
+            </ul>
+          </div>
+          <div class="catalog-flows-pane versions-pane">
+            <label class="pane-label">Version</label>
+            <div v-if="loadingHubVersions" class="flows-status">Loading versions...</div>
+            <div v-else-if="!selectedHubFlow" class="flows-status">Select a flow.</div>
+            <div v-else-if="hubVersions.length === 0" class="flows-status">
+              This flow has no published version yet.
+            </div>
+            <ul v-else class="flows-list" data-testid="hub-open-versions">
+              <li
+                v-for="version in hubVersions"
+                :key="version.version"
+                class="flow-row"
+                :class="{ selected: selectedHubVersion === version.version }"
+                @click="selectedHubVersion = version.version"
+                @dblclick="openHubFlow()"
+              >
+                <div class="flow-name">
+                  <span>v{{ version.version }}</span>
+                </div>
+                <div class="flow-meta">
+                  <span>{{ authorLabel(version) }}</span>
+                  <span class="flow-last-run">{{ publishedAt(version) }}</span>
+                </div>
+                <div v-if="version.message" class="flow-message">{{ version.message }}</div>
+              </li>
+            </ul>
+            <p v-if="hubError" class="hub-error" data-testid="hub-open-error">{{ hubError }}</p>
+            <div class="catalog-actions">
+              <el-button :disabled="hubBusy" @click="isVisible = false">Cancel</el-button>
+              <el-button
+                type="primary"
+                :loading="hubBusy"
+                :disabled="!canOpenHubFlow"
+                data-testid="hub-open"
+                @click="openHubFlow()"
+              >
+                Open
+              </el-button>
+            </div>
+          </div>
+        </div>
       </section>
     </div>
   </el-dialog>
@@ -99,13 +197,24 @@
 
 <script setup lang="ts">
 import { ref, watch, computed } from "vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import FileBrowser from "../../../components/common/FileBrowser/fileBrowser.vue";
 import { FLOWFILE_EXTENSIONS } from "../../../components/common/FileBrowser/constants";
 import type { FileInfo } from "../../../types";
 import CatalogNamespacePicker from "./CatalogNamespacePicker.vue";
 import { CatalogApi } from "../../../api";
 import type { FlowRegistration } from "../../../types";
+import {
+  listHubFlowVersions,
+  listHubFlows,
+  openFromHub,
+  refusalOf,
+  type HubFlow,
+  type HubFlowVersion,
+} from "../../../api/hubFlows.api";
+import { useHubConnectionStore } from "../../../stores/hub-connection-store";
+import { detailOf } from "../../../utils/apiDetail";
+import { authorLabel, latestVersionLabel, refusalMessage } from "../hubFlows";
 
 const props = defineProps({
   visible: {
@@ -123,14 +232,17 @@ const emit = defineEmits<{
   (e: "open-cancelled"): void;
 }>();
 
+type OpenMode = "file" | "catalog" | "hub";
+
 // Persist the last-used source (file vs catalog) and namespace so the dialog
 // reopens where the user left off, instead of always defaulting to the local
 // file system.
 const OPEN_MODE_STORAGE_KEY = "openDialog_mode";
 const NAMESPACE_STORAGE_KEY = "openDialog_namespaceId";
 
-function loadOpenMode(): "file" | "catalog" {
-  return localStorage.getItem(OPEN_MODE_STORAGE_KEY) === "catalog" ? "catalog" : "file";
+function loadOpenMode(): OpenMode {
+  const stored = localStorage.getItem(OPEN_MODE_STORAGE_KEY);
+  return stored === "catalog" || stored === "hub" ? stored : "file";
 }
 
 function loadNamespaceId(): number | null {
@@ -140,8 +252,13 @@ function loadNamespaceId(): number | null {
   return Number.isNaN(n) ? null : n;
 }
 
+const hub = useHubConnectionStore();
 const isVisible = ref(props.visible);
-const openMode = ref<"file" | "catalog">(loadOpenMode());
+const openMode = ref<OpenMode>(loadOpenMode());
+// The Hub tab is only there while connected; a remembered Hub tab shows the file system until then.
+const shownMode = computed<OpenMode>(() =>
+  openMode.value === "hub" && !hub.connected ? "file" : openMode.value,
+);
 const namespacePicker = ref<InstanceType<typeof CatalogNamespacePicker> | null>(null);
 
 // Catalog tab state
@@ -163,6 +280,7 @@ watch(
   () => props.visible,
   (v) => {
     isVisible.value = v;
+    if (v) resetHub();
   },
 );
 
@@ -202,7 +320,7 @@ watch(selectedNamespaceId, async (nsId) => {
 // When the dialog is re-opened, refresh the flow list so the user sees the
 // latest registrations (e.g. flows saved during this session).
 watch(isVisible, async (v) => {
-  if (v && openMode.value === "catalog" && selectedNamespaceId.value !== null) {
+  if (v && shownMode.value === "catalog" && selectedNamespaceId.value !== null) {
     const nsId = selectedNamespaceId.value;
     loadingFlows.value = true;
     try {
@@ -243,6 +361,106 @@ function formatLastRun(flow: FlowRegistration): string {
   const status = flow.last_run_success === true ? "✔" : flow.last_run_success === false ? "✖" : "…";
   const when = new Date(flow.last_run_at).toLocaleString();
   return `${when} · ${status}`;
+}
+
+// Hub tab state: a namespace of the hub, its flows, the picked flow's versions, newest first and preselected.
+const hubPicker = ref<InstanceType<typeof CatalogNamespacePicker> | null>(null);
+const hubNamespaceId = ref<number | null>(null);
+const hubFlows = ref<HubFlow[]>([]);
+const hubVersions = ref<HubFlowVersion[]>([]);
+const selectedHubFlow = ref<HubFlow | null>(null);
+const selectedHubVersion = ref<number | null>(null);
+const loadingHubFlows = ref(false);
+const loadingHubVersions = ref(false);
+const hubBusy = ref(false);
+const hubError = ref("");
+
+const canOpenHubFlow = computed(
+  () => !!selectedHubFlow.value && hubVersions.value.length > 0 && !hubBusy.value,
+);
+
+const publishedAt = (version: HubFlowVersion) => new Date(version.publishedAt).toLocaleString();
+
+function resetHub() {
+  hubError.value = "";
+  hubFlows.value = [];
+  hubVersions.value = [];
+  hubNamespaceId.value = null;
+  selectedHubFlow.value = null;
+  selectedHubVersion.value = null;
+}
+
+async function selectHubNamespace(id: number | null) {
+  hubNamespaceId.value = id;
+  hubError.value = "";
+  selectedHubFlow.value = null;
+  hubVersions.value = [];
+  const hubId = hubPicker.value?.hubIdOf(id) ?? null;
+  if (hubId === null) {
+    hubFlows.value = [];
+    return;
+  }
+  loadingHubFlows.value = true;
+  try {
+    hubFlows.value = await listHubFlows(hubId);
+  } catch (err) {
+    hubFlows.value = [];
+    hubError.value = detailOf(err, "Couldn't list the hub's flows.");
+  } finally {
+    loadingHubFlows.value = false;
+  }
+}
+
+async function selectHubFlow(flow: HubFlow) {
+  selectedHubFlow.value = flow;
+  selectedHubVersion.value = null;
+  hubVersions.value = [];
+  hubError.value = "";
+  loadingHubVersions.value = true;
+  try {
+    hubVersions.value = await listHubFlowVersions(flow.flowUuid);
+    selectedHubVersion.value = hubVersions.value[0]?.version ?? null;
+  } catch (err) {
+    hubError.value = detailOf(err, "Couldn't list the flow's versions.");
+  } finally {
+    loadingHubVersions.value = false;
+  }
+}
+
+async function openHubFlow(replace = false) {
+  if (!selectedHubFlow.value || selectedHubVersion.value === null) return;
+  hubBusy.value = true;
+  hubError.value = "";
+  const flowUuid = selectedHubFlow.value.flowUuid;
+  const version = selectedHubVersion.value;
+  try {
+    const opened = await openFromHub({ flowUuid, version, replace });
+    emit("open-flow", { message: "Flow opened from hub", flowPath: opened.flowPath });
+    isVisible.value = false;
+  } catch (err) {
+    const refusal = refusalOf(err);
+    if (refusal?.kind === "local_copy_exists" && !replace) {
+      hubBusy.value = false;
+      await confirmReplace(refusal.flowPath, version);
+      return;
+    }
+    hubError.value = refusal ? refusalMessage(refusal) : detailOf(err, "Couldn't open the flow.");
+  } finally {
+    hubBusy.value = false;
+  }
+}
+
+async function confirmReplace(flowPath: string, version: number) {
+  try {
+    await ElMessageBox.confirm(
+      `A local copy of this flow exists at ${flowPath}. Replace it with v${version} from the hub? Edits you have not published are lost.`,
+      "Replace the local copy?",
+      { type: "warning", confirmButtonText: "Replace", cancelButtonText: "Cancel" },
+    );
+  } catch {
+    return;
+  }
+  await openHubFlow(true);
 }
 
 defineExpose({
@@ -422,6 +640,22 @@ defineExpose({
 
 .flow-last-run {
   flex-shrink: 0;
+}
+
+.flow-message {
+  font-size: var(--font-size-xs, 11px);
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.hub-error {
+  margin: 0;
+  padding: var(--spacing-3);
+  border-radius: var(--border-radius-md);
+  background: var(--color-danger-light);
+  color: var(--color-danger-dark);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
 }
 
 .catalog-actions {

@@ -13,7 +13,6 @@ import {
 } from "./hubFlows";
 
 const base: HubFlowVersion = {
-  flowUuid: "u",
   version: 1,
   authorId: 1,
   publishedAt: "2026-11-01T12:00:00Z",
@@ -29,8 +28,8 @@ describe("publish dialog words", () => {
   it("warns once per node with a local path, naming the node and the path", () => {
     expect(
       warningLines([
-        { nodeId: 2, nodeType: "read", label: "sales.csv (csv)", path: "/data/sales.csv" },
-        { nodeId: 5, nodeType: "output", label: "out (csv)", path: "/out/out.csv" },
+        { label: "sales.csv (csv)", path: "/data/sales.csv" },
+        { label: "out (csv)", path: "/out/out.csv" },
       ]),
     ).toEqual([
       "Uses a local file path: sales.csv (csv) (/data/sales.csv)",

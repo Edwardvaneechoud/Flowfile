@@ -54,11 +54,15 @@
       <template v-else>
         <div v-if="!hubOrigin" class="form-group">
           <label>Namespace</label>
-          <HubNamespaceTree
+          <catalog-namespace-picker
+            ref="picker"
             v-model="namespaceId"
-            none-label="The hub's default namespace"
+            hub
             data-testid="hub-publish-namespace"
           />
+          <p class="hub-dialog-hint">
+            With none picked, the flow goes to the hub's default namespace.
+          </p>
         </div>
         <p v-else class="hub-dialog-hint">
           This flow is on the hub as version {{ hubOrigin.version }}; this publish becomes the next
@@ -153,7 +157,7 @@ import {
   versionFacts,
   warningLines,
 } from "../hubFlows";
-import HubNamespaceTree from "./HubNamespaceTree.vue";
+import CatalogNamespacePicker from "./CatalogNamespacePicker.vue";
 
 const props = defineProps<{
   visible: boolean;
@@ -174,6 +178,7 @@ interface Conflict {
 }
 
 const isVisible = ref(props.visible);
+const picker = ref<InstanceType<typeof CatalogNamespacePicker> | null>(null);
 const loading = ref(false);
 const busy = ref(false);
 const error = ref("");
@@ -218,7 +223,7 @@ async function publish(overwriteVersion?: number) {
   try {
     const published = await publishToHub({
       flowId: props.flowId,
-      namespaceId: props.hubOrigin ? null : namespaceId.value,
+      namespaceId: props.hubOrigin ? null : picker.value?.hubIdOf(namespaceId.value),
       message: message.value.trim() || undefined,
       overwriteVersion,
     });
@@ -268,4 +273,134 @@ async function openInstead() {
 }
 </script>
 
-<style scoped src="./hubDialogs.css"></style>
+<style scoped>
+.hub-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+  padding: var(--spacing-2) var(--spacing-1);
+  font-family: var(--font-family-base);
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: var(--spacing-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.hub-dialog-status,
+.hub-dialog-hint {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-normal);
+}
+
+.form-group .hub-dialog-hint {
+  margin-top: var(--spacing-2);
+}
+
+.hub-dialog-success,
+.hub-dialog-conflict,
+.hub-dialog-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-2);
+  margin: 0;
+  padding: var(--spacing-3);
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
+.hub-dialog-success {
+  background: var(--color-success-light);
+  color: var(--color-success-dark);
+}
+
+.hub-dialog-conflict {
+  background: var(--color-warning-light);
+  color: var(--color-warning-dark);
+}
+
+.hub-dialog-error {
+  margin-top: var(--spacing-3);
+  background: var(--color-danger-light);
+  color: var(--color-danger-dark);
+}
+
+.hub-dialog-success .material-icons,
+.hub-dialog-conflict .material-icons,
+.hub-dialog-warnings .material-icons {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.hub-dialog-warnings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+}
+
+.hub-dialog-warnings li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  border-radius: var(--border-radius-md);
+  background: var(--color-warning-light);
+  color: var(--color-warning-dark);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.hub-version-compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--spacing-3);
+}
+
+.hub-version-card {
+  padding: var(--spacing-3);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-secondary);
+}
+
+.hub-version-card h4 {
+  margin: 0 0 var(--spacing-2);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold, 600);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
+}
+
+.hub-version-card dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--spacing-1) var(--spacing-3);
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+.hub-version-card dt {
+  color: var(--color-text-secondary);
+}
+
+.hub-version-card dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-2);
+}
+</style>
