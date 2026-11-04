@@ -162,32 +162,6 @@ def _hub_name(hub_url: str) -> str:
         return hub_url
 
 
-ORGANISATION_MAIN = "main"
-_MAIN_SUFFIX = "/catalogs/main"
-
-
-def organisation_storage(user_id: int) -> str | None:
-    """The organisation's storage root as ``user_id``'s hub shows it, read from the hub's root catalogs.
-
-    Use for the organisation puts the catalog ``main`` on ``<root>/catalogs/main``, so ``main``'s S3 root names the
-    organisation's storage without a hub route of its own. ``None`` without a hub session, when the hub does not
-    answer, or when it lists no such ``main`` for the person (the storage is not set, or main is elsewhere).
-    """
-    try:
-        hub_url, access_token = signed_in(user_id)
-        roots = client.list_namespaces(hub_url, access_token)
-    except (LookupError, HubUnreachable, HubRefused, HubVersionRefused) as e:
-        logger.debug("No organisation storage read from the hub: %s", e)
-        return None
-    for root in roots:
-        if not isinstance(root, dict) or root.get("name") != ORGANISATION_MAIN or root.get("parent_id") is not None:
-            continue
-        uri = (root.get("storage_uri") or "").rstrip("/")
-        if uri.endswith(_MAIN_SUFFIX) and scheme(uri) == "s3":
-            return uri[: -len(_MAIN_SUFFIX)]
-    return None
-
-
 def signed_in(user_id: int) -> tuple[str, str]:
     """The hub URL of ``user_id``'s hub session and an access token from it.
 
