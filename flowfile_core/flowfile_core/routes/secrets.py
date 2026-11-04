@@ -4,18 +4,25 @@ Manages CRUD (Create, Read, Update, Delete) operations for secrets.
 This router provides secure endpoints for creating, retrieving, and deleting
 sensitive credentials for the authenticated user. Secrets are encrypted before
 being stored and are associated with the user's ID.
+
+On a server joined to its hub with keys of its own, every secret lives on the hub:
+each route forwards to the hub's own with the person's delegated token, and nothing
+is written to this server's database (``hub_client.secrets``).
 """
 
 import os
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
+from pydantic import BaseModel, SecretStr
 from sqlalchemy.orm import Session
 
-from flowfile_core.auth import sharing
+from flowfile_core.auth import issuer_accounts, sharing
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.auth.models import Secret, SecretInput
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
+from flowfile_core.hub_client import secrets as hub_secrets
+from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.schemas.sharing_schema import AccessInfo
 from flowfile_core.secret_manager.secret_manager import delete_secret as delete_secret_action
 from flowfile_core.secret_manager.secret_manager import store_secret
@@ -23,6 +30,30 @@ from flowfile_core.secret_manager.secret_manager import store_secret
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 _OWNER_ACCESS = AccessInfo(is_owner=True, access_level="owner")
+_PASSED_ON = (400, 404, 409, 422)
+
+
+class KeptSecret(BaseModel):
+    """A secret that stayed in this server's database, and why it did not move to the hub."""
+
+    name: str
+    reason: str
+
+
+def _on_hub() -> bool:
+    return issuer_accounts.joined_with_keys() is not None
+
+
+def _through_hub(call, *args):
+    """``call(*args)`` against the hub; its refusal as this route's answer, with the hub's own sentence."""
+    try:
+        return call(*args)
+    except LookupError as e:
+        raise HTTPException(status_code=401, detail=str(e)) from None
+    except HubRefused as e:
+        raise HTTPException(status_code=e.status if e.status in _PASSED_ON else 502, detail=e.detail) from None
+    except (HubUnreachable, HubVersionRefused) as e:
+        raise HTTPException(status_code=502, detail=str(e)) from None
 
 
 def _project_sync_secret(user_id: int) -> None:
@@ -54,6 +85,8 @@ def get_secrets(current_user=Depends(get_current_active_user), db: Session = Dep
     Returns:
         A list of `Secret` objects, each containing the name and encrypted value.
     """
+    if _on_hub():
+        return _through_hub(hub_secrets.listed, current_user.id)
     user_id = current_user.id
 
     db_secrets = db.query(db_models.Secret).filter(db_models.Secret.user_id == user_id).all()
@@ -94,6 +127,8 @@ def create_secret(
     Returns:
         A `Secret` object containing the name and the *encrypted* value.
     """
+    if _on_hub():
+        return _through_hub(hub_secrets.create, current_user.id, secret.name, secret.value.get_secret_value())
     user_id = 1 if os.environ.get("FLOWFILE_MODE") == "electron" else current_user.id
 
     existing_secret = (
@@ -136,6 +171,8 @@ def get_secret(
     Returns:
         A `Secret` object containing the name and encrypted value.
     """
+    if _on_hub():
+        return _through_hub(hub_secrets.found, current_user.id, secret_name)
     user_id = 1 if os.environ.get("FLOWFILE_MODE") == "electron" else current_user.id
 
     db_secret = (
@@ -177,7 +214,35 @@ def delete_secret(
     Returns:
         An empty response with a 204 No Content status code upon success.
     """
+    if _on_hub():
+        _through_hub(hub_secrets.remove, current_user.id, secret_name)
+        return None
     user_id = 1 if os.environ.get("FLOWFILE_MODE") == "electron" else current_user.id
     delete_secret_action(db, secret_name, user_id)
     _project_sync_secret(user_id)
     return None
+
+
+@router.put("/secrets/{secret_name}", response_model=Secret)
+def change_secret(
+    secret_name: str, value: SecretStr = Body(..., embed=True), current_user=Depends(get_current_active_user)
+) -> Secret:
+    """Gives the caller's own secret on the hub a new value, keeping it and its shares there.
+
+    Only on a server joined to its hub with keys of its own; anywhere else this route
+    does not exist (405), as before.
+    """
+    if not _on_hub():
+        raise HTTPException(status_code=405, detail="Method Not Allowed")
+    return _through_hub(hub_secrets.change, current_user.id, secret_name, value.get_secret_value())
+
+
+@router.get("/kept", response_model=list[KeptSecret])
+def kept_secrets(current_user=Depends(get_current_active_user)) -> list[KeptSecret]:
+    """The caller's secrets that stayed in this server's database when the rest moved to the hub, each with why.
+
+    Only on a server joined to its hub with keys of its own; anywhere else 404, as before.
+    """
+    if not _on_hub():
+        raise HTTPException(status_code=404, detail="Not Found")
+    return [KeptSecret(name=kept.name, reason=kept.reason) for kept in hub_secrets.kept(current_user.id)]

@@ -33,3 +33,11 @@ export interface SecretValueResponse {
   name: string;
   value: string;
 }
+
+/**
+ * A secret that stayed in a server's own database when the rest moved to its hub, and why.
+ */
+export interface KeptSecret {
+  name: string;
+  reason: string;
+}
