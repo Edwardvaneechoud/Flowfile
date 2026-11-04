@@ -14,6 +14,7 @@ import yaml
 from fastapi.testclient import TestClient
 
 from flowfile_core import flow_file_handler, main
+from flowfile_core.auth.jwt import invalidate_user_cache
 from flowfile_core.auth.password import get_password_hash
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
@@ -202,6 +203,8 @@ def user_id(api) -> int:
 def shared_core(store, hub, monkeypatch):
     """A multi-user core with two regular users, each signed in and connected to the fake hub.
 
+    Only an administrator connects a server to a hub, so each is one while connecting and a regular user after.
+
     Yields ``{"owner": (user_id, client), "stranger": (user_id, client)}``; the users and the flows registered
     under them are removed afterwards.
     """
@@ -222,7 +225,7 @@ def shared_core(store, hub, monkeypatch):
                 full_name=username,
                 hashed_password=get_password_hash(password),
                 disabled=False,
-                is_admin=False,
+                is_admin=True,
                 must_change_password=False,
             )
             db.add(user)
@@ -237,6 +240,11 @@ def shared_core(store, hub, monkeypatch):
         c.headers["Authorization"] = f"Bearer {token.json()['access_token']}"
         assert c.post("/hub_client/connection", json={**CONNECT, "device_name": username}).status_code == 200
         clients[key] = (uid, c)
+    with get_db_context() as db:
+        for uid, _ in clients.values():
+            db.get(db_models.User, uid).is_admin = False
+        db.commit()
+    invalidate_user_cache()
     hub.calls.clear()
     yield clients
     ids = [uid for uid, _ in clients.values()]
