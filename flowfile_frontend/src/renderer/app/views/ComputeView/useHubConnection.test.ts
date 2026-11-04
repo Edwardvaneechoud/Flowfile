@@ -69,6 +69,7 @@ const none: HubConnection = {
   nodesSynced: null,
   syncError: null,
   nodeName: null,
+  account: null,
 };
 
 const connected: HubConnection = {

@@ -50,6 +50,18 @@ def _expiry(token: str) -> float | None:
     return float(exp) if isinstance(exp, int | float) else None
 
 
+def account(stored: dict) -> str | None:
+    """The hub username a desktop's connection ``stored`` signs in as: its refresh token's ``sub``, read unverified as
+    its expiry is. ``None`` for a sign-in through the hub, whose tokens are opaque, or a token without one."""
+    if stored.get("kind") == "delegation":
+        return None
+    try:
+        sub = jwt.decode(stored.get("refresh_token") or "", options={"verify_signature": False}).get("sub")
+    except jwt.PyJWTError:
+        return None
+    return sub if isinstance(sub, str) and sub else None
+
+
 def load(user_id: int) -> dict | None:
     """The stored connection of ``user_id``, ``None`` when there is none."""
     raw = secrets.get_password(SERVICE, _key(user_id))

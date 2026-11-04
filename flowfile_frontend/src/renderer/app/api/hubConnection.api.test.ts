@@ -30,6 +30,7 @@ const pyConnected = {
   vend_mode: "static",
   reachable: true,
   error: null,
+  account: "Ana Lima",
 };
 
 const connected = {
@@ -49,6 +50,7 @@ const connected = {
   nodesSynced: null,
   syncError: null,
   nodeName: null,
+  account: "Ana Lima",
 };
 
 describe("hubConnection.api", () => {
@@ -102,6 +104,15 @@ describe("hubConnection.api", () => {
     const result = await api.getHubConnection();
 
     expect(result.nodeName).toBe("team-local");
+  });
+
+  it("reads no account from a core that does not answer one", async () => {
+    const { get, api } = await loadModule();
+    get.mockResolvedValueOnce({ data: { ...pyConnected, account: undefined } });
+
+    const result = await api.getHubConnection();
+
+    expect(result.account).toBeNull();
   });
 
   it("maps the node sync count a connect answers", async () => {

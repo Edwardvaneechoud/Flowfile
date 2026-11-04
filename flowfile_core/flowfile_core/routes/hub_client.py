@@ -88,6 +88,10 @@ class HubConnection(BaseModel):
     """This core's own name as a node on the hub (``FLOWFILE_NODE_NAME``, or the name it joined with), connected or
     not; ``None`` when it is not one. A sync never lists that node as a backend: its worker is the one beside this
     core."""
+    account: str | None = None
+    """Who is signed in at the hub through this connection: on a server that signs people in through its hub, the
+    person's full name, else their username (their account here mirrors the hub's); on a desktop, the hub username it
+    connected with. ``None`` when not connected or not known."""
 
 
 class HubConnectRequest(BaseModel):
@@ -119,7 +123,18 @@ def _own_node_name() -> str | None:
     return hub_node.resolved().name
 
 
-def _connection(stored: dict | None, info: dict | None = None, error: str | None = None) -> HubConnection:
+def _account(stored: dict | None, current_user) -> str | None:
+    """Who ``stored`` signs in as at the hub; see ``HubConnection.account``."""
+    if stored is None:
+        return None
+    if stored.get("kind") == "delegation":
+        return current_user.full_name or current_user.username
+    return session.account(stored)
+
+
+def _connection(
+    stored: dict | None, info: dict | None = None, error: str | None = None, account: str | None = None
+) -> HubConnection:
     expires = stored.get("refresh_expires_at") if stored else None
     return HubConnection(
         connected=stored is not None,
@@ -136,6 +151,7 @@ def _connection(stored: dict | None, info: dict | None = None, error: str | None
         reachable=info is not None,
         error=error,
         node_name=_own_node_name(),
+        account=account,
     )
 
 
@@ -151,7 +167,8 @@ def _http_error(e: Exception) -> HTTPException:
 
 @router.get("/connection", summary="This user's hub connection")
 def get_connection(current_user=Depends(get_current_active_user)) -> HubConnection:
-    """The stored connection, with the hub's organisation and versions read live from ``/hub/info``.
+    """The stored connection, with the hub's organisation and versions read live from ``/hub/info`` and who it signs
+    in as (``account``).
 
     A hub that does not answer leaves the hub fields empty, ``reachable`` false and ``error`` set; the
     connection itself is still reported. Not connected, ``device_name`` is the name a new connection would use.
@@ -159,11 +176,12 @@ def get_connection(current_user=Depends(get_current_active_user)) -> HubConnecti
     stored = session.load(current_user.id)
     if stored is None:
         return _connection(None)
+    account = _account(stored, current_user)
     try:
         info = client.get_info(stored["hub_url"])
     except (HubUnreachable, HubRefused, HubVersionRefused) as e:
-        return _connection(stored, error=str(e))
-    return _connection(stored, info)
+        return _connection(stored, error=str(e), account=account)
+    return _connection(stored, info, account=account)
 
 
 @router.post("/connection", summary="Connect to a hub")
@@ -197,7 +215,8 @@ def connect(
             "device_name": device["name"],
         },
     )
-    connection = _connection(session.load(current_user.id), info)
+    stored = session.load(current_user.id)
+    connection = _connection(stored, info, account=_account(stored, current_user))
     try:
         synced, _ = _sync_nodes(db, current_user.id, request.hub_url, tokens["access_token"])
     except (HubUnreachable, HubRefused, HubVersionRefused) as e:

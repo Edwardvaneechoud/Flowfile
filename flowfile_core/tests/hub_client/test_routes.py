@@ -85,6 +85,7 @@ def test_not_connected_reports_the_hostname_as_the_default_device_name(api, hub)
     assert body["contract_version"] == HUB_CONTRACT_VERSION
     assert body["reachable"] is False
     assert body["node_name"] is None
+    assert body["account"] is None
     assert hub.calls == []
 
 
@@ -107,6 +108,7 @@ def test_connecting_stores_the_refresh_token_and_device_and_never_the_password(a
     assert body["org_name"] == INFO["org_name"]
     assert body["vend_mode"] == "static"
     assert body["expires_at"] is not None
+    assert body["account"] == "ana"
     assert "s3cret" not in response.text
     assert hub.calls == [
         ("GET", "/hub/info"),
@@ -136,6 +138,7 @@ def test_status_after_connecting_reports_the_hub_live(api, hub):
     assert body["vend_mode"] == "static"
     assert body["device_id"] == 1
     assert body["error"] is None
+    assert body["account"] == "ana"
 
 
 def test_a_hub_that_stopped_answering_still_reports_the_connection(api, hub):
@@ -147,6 +150,7 @@ def test_a_hub_that_stopped_answering_still_reports_the_connection(api, hub):
     assert body["connected"] is True
     assert body["reachable"] is False
     assert body["error"]
+    assert body["account"] == "ana"
     assert body["org_name"] is None and body["hub_version"] is None and body["vend_mode"] is None
 
 

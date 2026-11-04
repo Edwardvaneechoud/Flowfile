@@ -29,6 +29,8 @@ export interface HubConnection {
   syncError: string | null;
   /** This core's own name as a node on the hub, connected or not; a sync never lists that node as a backend. */
   nodeName: string | null;
+  /** Who is signed in at the hub through this connection (full name, else username); null when not known. */
+  account: string | null;
 }
 
 /** What a node sync left behind: every configured backend, and the hub nodes skipped for a hand-added row. */
@@ -61,6 +63,7 @@ interface PyHubConnection {
   nodes_synced?: number | null;
   sync_error?: string | null;
   node_name?: string | null;
+  account?: string | null;
 }
 
 const fromPy = (raw: PyHubConnection): HubConnection => ({
@@ -80,6 +83,7 @@ const fromPy = (raw: PyHubConnection): HubConnection => ({
   nodesSynced: raw.nodes_synced ?? null,
   syncError: raw.sync_error ?? null,
   nodeName: raw.node_name ?? null,
+  account: raw.account ?? null,
 });
 
 export async function getHubConnection(): Promise<HubConnection> {
