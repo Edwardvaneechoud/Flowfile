@@ -15,8 +15,7 @@ entry. ``SealedCredentialProvider`` is a Polars ``credential_provider`` holding 
 secret; ``sealed_scan_kwargs`` gives a scan built here its plain options beside it, ``sealed_storage_options`` the
 whole options for work that runs here, and ``scan_delta_sealed`` reads a Delta table as a Python IO source, for a plan
 built where the options are not known. A secret travels as ``sealed_secret``'s string in place of a ``$ffsec$``
-ciphertext, and ``open_secret`` gives its value where the step runs. ``seal`` is the hub's half, for tests and test
-hubs. Nothing runs at import.
+ciphertext, and ``open_secret`` gives its value where the step runs. Nothing runs at import.
 """
 
 from __future__ import annotations
@@ -31,8 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 import jwt
 from cryptography.exceptions import InvalidTag
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import x25519
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.concatkdf import ConcatKDFHash
 
@@ -96,18 +94,6 @@ def _content_key(shared_secret: bytes) -> bytes:
 
     other_info = counted(ENC.encode("ascii")) + counted(b"") + counted(b"") + struct.pack(">I", KEY_BITS)
     return ConcatKDFHash(algorithm=hashes.SHA256(), length=KEY_BITS // 8, otherinfo=other_info).derive(shared_secret)
-
-
-def seal(plaintext: str, enc_jwk: Mapping[str, str]) -> str:
-    """``plaintext`` sealed to the node whose X25519 public JWK is ``enc_jwk``, as the hub's vend seals a JWS."""
-    peer = x25519.X25519PublicKey.from_public_bytes(_unb64url(enc_jwk["x"]))
-    ephemeral = x25519.X25519PrivateKey.generate()
-    epk = ephemeral.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-    header = {"alg": ALG, "enc": ENC, "kid": enc_jwk["kid"], "epk": {"kty": "OKP", "crv": "X25519", "x": _b64url(epk)}}
-    protected = _b64url(json.dumps(header, separators=(",", ":")).encode("utf-8"))
-    iv = os.urandom(12)
-    sealed = AESGCM(_content_key(ephemeral.exchange(peer))).encrypt(iv, plaintext.encode("utf-8"), protected.encode())
-    return ".".join((protected, "", _b64url(iv), _b64url(sealed[:-16]), _b64url(sealed[-16:])))
 
 
 def _decrypt(token: str, keys: hub_node_key.NodeKeys) -> str:

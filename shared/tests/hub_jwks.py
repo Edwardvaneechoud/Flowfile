@@ -6,20 +6,51 @@ environment and signs the tokens a test sends, so every test runs the real verif
 PyJWT replaced. Import the fixture into a test module: ``from shared.tests.hub_jwks import hub_signer  # noqa: F401``.
 """
 
+import base64
 import json
+import os
 import threading
 import time
 import uuid
+from collections.abc import Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec, x25519
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from shared import hub_node, hub_tokens
+from shared import hub_node, hub_sealed, hub_tokens
 
 NODE_NAME = "team"
 JWKS_PATH = "/.well-known/jwks.json"
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def seal(plaintext: str, enc_jwk: Mapping[str, str]) -> str:
+    """``plaintext`` sealed to the node whose X25519 public JWK is ``enc_jwk``, as the hub's vend seals a JWS.
+
+    The hub's half of ``shared.hub_sealed``: a compact JWE, ``ECDH-ES`` with an ephemeral X25519 ``epk`` and
+    ``A256GCM``, the content key derived as the node derives it (``hub_sealed._content_key``).
+    """
+    peer = x25519.X25519PublicKey.from_public_bytes(hub_sealed._unb64url(enc_jwk["x"]))
+    ephemeral = x25519.X25519PrivateKey.generate()
+    epk = ephemeral.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    header = {
+        "alg": hub_sealed.ALG,
+        "enc": hub_sealed.ENC,
+        "kid": enc_jwk["kid"],
+        "epk": {"kty": "OKP", "crv": "X25519", "x": _b64url(epk)},
+    }
+    protected = _b64url(json.dumps(header, separators=(",", ":")).encode("utf-8"))
+    iv = os.urandom(12)
+    key = hub_sealed._content_key(ephemeral.exchange(peer))
+    sealed = AESGCM(key).encrypt(iv, plaintext.encode("utf-8"), protected.encode())
+    return ".".join((protected, "", _b64url(iv), _b64url(sealed[:-16]), _b64url(sealed[-16:])))
 
 
 class SigningKey:
@@ -116,7 +147,7 @@ class HubSigner:
         """A credential as the hub's vend seals it to the node ``node`` whose X25519 public JWK is ``enc_jwk``.
 
         The JWS is signed with ``key`` (the served key by default, header ``alg`` and ``kid`` only) and sealed with
-        ``shared.hub_sealed.seal``; ``drop`` leaves claims out, ``extra`` adds or overrides them.
+        ``seal``; ``drop`` leaves claims out, ``extra`` adds or overrides them.
         """
         now = int(time.time())
         claims = {
@@ -163,8 +194,6 @@ class HubSigner:
         return self._seal(claims, enc_jwk, key, drop, extra)
 
     def _seal(self, claims: dict, enc_jwk: dict, key: SigningKey | None, drop: tuple[str, ...], extra: dict) -> str:
-        from shared.hub_sealed import seal
-
         claims.update(extra)
         for name in drop:
             claims.pop(name, None)
