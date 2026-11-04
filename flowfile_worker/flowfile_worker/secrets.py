@@ -8,7 +8,7 @@ import logging
 import os
 from pathlib import Path
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from pydantic import SecretStr
@@ -22,6 +22,11 @@ KEY_DERIVATION_VERSION = b"flowfile-secrets-v1"
 
 # Encrypted secret format: $ffsec$1${user_id}${fernet_token}
 SECRET_FORMAT_PREFIX = "$ffsec$1$"
+
+ENCRYPTED_ELSEWHERE = (
+    "This server joined its hub with keys of its own, so it opens only the secrets the hub seals to it, and this "
+    "step carries one another server encrypted: keep the secret on the hub, shared with whoever runs the flow"
+)
 
 
 class SecureStorage:
@@ -179,16 +184,39 @@ def decrypt_secret(encrypted_value: str) -> SecretStr:
     """
     Decrypt an encrypted value.
 
-    Supports both new format (with embedded user_id) and legacy format.
+    Supports both new format (with embedded user_id) and legacy format, and a secret a hub sealed to this server.
     - New format: $ffsec$1${user_id}${fernet_token} - user_id extracted automatically
     - Legacy format: raw Fernet token - uses master key directly
+    - Sealed: ``shared.hub_sealed.sealed_secret``'s string, opened with this server's own key
+
+    A server joined to its hub with keys of its own has a master key of its own, so a ciphertext core encrypted does
+    not decrypt here; it is refused with ``ENCRYPTED_ELSEWHERE`` instead of the decrypt error.
 
     Args:
         encrypted_value: The encrypted value as a string
 
     Returns:
         SecretStr: The decrypted value as a SecretStr
+
+    Raises:
+        CredentialResolutionError: A sealed secret this server cannot open, or a ciphertext of another server's on a
+            server joined with keys of its own.
     """
+    from shared import hub_sealed
+
+    if hub_sealed.is_sealed_secret(encrypted_value):
+        return SecretStr(hub_sealed.open_secret(encrypted_value))
+    try:
+        return _decrypt_with_master_key(encrypted_value)
+    except InvalidToken:
+        if hub_sealed.can_open():
+            from shared.cloud_credential_provider import CredentialResolutionError
+
+            raise CredentialResolutionError(ENCRYPTED_ELSEWHERE) from None
+        raise
+
+
+def _decrypt_with_master_key(encrypted_value: str) -> SecretStr:
     if encrypted_value.startswith(SECRET_FORMAT_PREFIX):
         # Parse: $ffsec$1${user_id}${fernet_token}
         remainder = encrypted_value[len(SECRET_FORMAT_PREFIX) :]

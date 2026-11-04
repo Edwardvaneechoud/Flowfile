@@ -118,8 +118,6 @@ class HubSigner:
         The JWS is signed with ``key`` (the served key by default, header ``alg`` and ``kid`` only) and sealed with
         ``shared.hub_sealed.seal``; ``drop`` leaves claims out, ``extra`` adds or overrides them.
         """
-        from shared.hub_sealed import seal
-
         now = int(time.time())
         claims = {
             "iss": iss if iss is not None else self.url,
@@ -128,9 +126,45 @@ class HubSigner:
             "vend_id": vend_id,
             "iat": now,
             "exp": now + ttl,
+            "kind": "storage",
             "base_uri": base_uri,
             "storage_options": storage_options or {},
         }
+        return self._seal(claims, enc_jwk, key, drop, extra)
+
+    def sealed_secret(
+        self,
+        enc_jwk: dict,
+        *,
+        name: str,
+        value: str,
+        node: str = NODE_NAME,
+        run_id: str = "run-1",
+        vend_id: int = 1,
+        ttl: int = 900,
+        iss: str | None = None,
+        key: SigningKey | None = None,
+        drop: tuple[str, ...] = (),
+        **extra,
+    ) -> str:
+        """The secret ``name`` with ``value`` as the hub's vend seals it to the node ``node``, ``kind`` ``"secret"``."""
+        now = int(time.time())
+        claims = {
+            "iss": iss if iss is not None else self.url,
+            "aud": f"node:{node}",
+            "run_id": run_id,
+            "vend_id": vend_id,
+            "iat": now,
+            "exp": now + ttl,
+            "kind": "secret",
+            "name": name,
+            "value": value,
+        }
+        return self._seal(claims, enc_jwk, key, drop, extra)
+
+    def _seal(self, claims: dict, enc_jwk: dict, key: SigningKey | None, drop: tuple[str, ...], extra: dict) -> str:
+        from shared.hub_sealed import seal
+
         claims.update(extra)
         for name in drop:
             claims.pop(name, None)

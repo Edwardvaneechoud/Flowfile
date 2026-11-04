@@ -5,7 +5,8 @@ encrypted (``$ffsec$``) or a connection core stored names nothing there. A vend 
 seals each credential to each node that runs a step with it: a JWE compact token to the node's ``enc`` key (``alg``
 ECDH-ES with an ephemeral X25519 ``epk``, Concat KDF with empty ``apu`` and ``apv``, ``enc`` A256GCM, the protected
 header as the AAD; RFC 7518 §4.6), whose plaintext is a JWS the hub signed with its node-token key, with the claims
-``iss``, ``aud`` (``node:<name>``), ``run_id``, ``vend_id``, ``iat``, ``exp``, ``base_uri`` and ``storage_options``.
+``iss``, ``aud`` (``node:<name>``), ``run_id``, ``vend_id``, ``iat``, ``exp`` and ``kind``: ``"storage"`` (or no
+``kind``) with ``base_uri`` and ``storage_options``, ``"secret"`` with a secret's ``name`` and ``value``.
 
 A run carries the vend's whole map of node name to token, ``sealed``; whichever process opens it takes this node's
 entry, decrypts it with ``hub_node_key``'s ``enc`` key and verifies the JWS against the hub's JWKS (the key client
@@ -13,7 +14,9 @@ entry, decrypts it with ``hub_node_key``'s ``enc`` key and verifies the JWS agai
 entry. ``SealedCredentialProvider`` is a Polars ``credential_provider`` holding only the map, so a plan carries no
 secret; ``sealed_scan_kwargs`` gives a scan built here its plain options beside it, ``sealed_storage_options`` the
 whole options for work that runs here, and ``scan_delta_sealed`` reads a Delta table as a Python IO source, for a plan
-built where the options are not known. ``seal`` is the hub's half, for tests and test hubs. Nothing runs at import.
+built where the options are not known. A secret travels as ``sealed_secret``'s string in place of a ``$ffsec$``
+ciphertext, and ``open_secret`` gives its value where the step runs. ``seal`` is the hub's half, for tests and test
+hubs. Nothing runs at import.
 """
 
 from __future__ import annotations
@@ -42,7 +45,10 @@ if TYPE_CHECKING:
 ALG = "ECDH-ES"
 ENC = "A256GCM"
 KEY_BITS = 256
-REQUIRED_CLAIMS = ["iss", "aud", "iat", "exp", "run_id", "vend_id", "base_uri", "storage_options"]
+SIGNED_CLAIMS = ["iss", "aud", "iat", "exp", "run_id", "vend_id"]
+REQUIRED_CLAIMS = [*SIGNED_CLAIMS, "base_uri", "storage_options"]
+SECRET_CLAIMS = [*SIGNED_CLAIMS, "kind", "name", "value"]
+SEALED_SECRET_PREFIX = "$ffseal$1$"
 
 
 class SealedCredentialRefused(CredentialResolutionError):
@@ -131,13 +137,8 @@ def _decrypt(token: str, keys: hub_node_key.NodeKeys) -> str:
         raise SealedCredentialRefused("it does not decrypt with this node's key") from None
 
 
-def open_token(token: str) -> OpenedCredential:
-    """The credential in ``token``, sealed to this node: decrypted with its key and verified against its hub's keys.
-
-    Raises:
-        SealedCredentialRefused: This node is not on a hub with keys of its own, or the token does not decrypt, its
-            signature, audience (``node:<name>``), issuer or expiry does not hold, or a claim is missing or malformed.
-    """
+def _claims(token: str, required: list[str]) -> dict[str, Any]:
+    """The claims of ``token``, sealed to this node: decrypted with its key and verified against its hub's keys."""
     node = hub_node.resolved()
     try:
         keys = hub_node_key.load()
@@ -155,7 +156,7 @@ def open_token(token: str) -> OpenedCredential:
             audience=f"node:{node.name}",
             issuer=node.issuer,
             leeway=hub_tokens.LEEWAY_SECONDS,
-            options={"require": REQUIRED_CLAIMS},
+            options={"require": required},
         )
     except jwt.ExpiredSignatureError:
         raise SealedCredentialRefused("it has expired") from None
@@ -171,12 +172,28 @@ def open_token(token: str) -> OpenedCredential:
         raise SealedCredentialRefused("the hub does not publish the key that signed it") from None
     except jwt.PyJWTError as exc:
         raise SealedCredentialRefused(f"its signature does not hold ({type(exc).__name__})") from None
+    if not isinstance(claims["vend_id"], int):
+        raise SealedCredentialRefused("its claims are malformed")
+    return claims
+
+
+def open_token(token: str) -> OpenedCredential:
+    """The storage credential in ``token``, sealed to this node: decrypted with its key and verified against its hub's
+    keys. A token with no ``kind`` is a storage credential, as the hub sealed them before it sealed secrets.
+
+    Raises:
+        SealedCredentialRefused: This node is not on a hub with keys of its own, or the token does not decrypt, its
+            signature, audience (``node:<name>``), issuer or expiry does not hold, it holds a secret, or a claim is
+            missing or malformed.
+    """
+    claims = _claims(token, REQUIRED_CLAIMS)
+    if claims.get("kind", "storage") != "storage":
+        raise SealedCredentialRefused("it holds a secret, not a storage credential")
     options = claims["storage_options"]
     if not (
         isinstance(options, dict)
         and all(isinstance(name, str) and isinstance(value, str) for name, value in options.items())
         and isinstance(claims["base_uri"], str)
-        and isinstance(claims["vend_id"], int)
     ):
         raise SealedCredentialRefused("its claims are malformed")
     return OpenedCredential(
@@ -188,18 +205,56 @@ def open_token(token: str) -> OpenedCredential:
     )
 
 
+def _this_nodes_entry(sealed: Mapping[str, str]) -> str:
+    name = hub_node.resolved().name
+    token = sealed.get(name) if name else None
+    if token is None:
+        names = ", ".join(sorted(sealed)) or "no server"
+        raise SealedCredentialRefused(f"the hub sealed it to {names}, not to this server ({name or 'no name'})")
+    return token
+
+
 def open_sealed(sealed: Mapping[str, str]) -> OpenedCredential:
     """This node's entry of a vend's ``sealed`` map, opened (``open_token``).
 
     Raises:
         SealedCredentialRefused: The map has no entry for this node's name, or ``open_token`` refuses it.
     """
-    name = hub_node.resolved().name
-    token = sealed.get(name) if name else None
-    if token is None:
-        names = ", ".join(sorted(sealed)) or "no server"
-        raise SealedCredentialRefused(f"the hub sealed it to {names}, not to this server ({name or 'no name'})")
-    return open_token(token)
+    return open_token(_this_nodes_entry(sealed))
+
+
+def sealed_secret(name: str, sealed: Mapping[str, str]) -> str:
+    """The secret ``name`` a vend sealed to each node of ``sealed``, as a string that takes a ``$ffsec$`` ciphertext's
+    place in what a step carries: ``SEALED_SECRET_PREFIX`` and the name and map as base64url JSON, nothing in clear."""
+    body = json.dumps({"name": name, "sealed": dict(sealed)}, separators=(",", ":")).encode("utf-8")
+    return SEALED_SECRET_PREFIX + _b64url(body)
+
+
+def is_sealed_secret(value: object) -> bool:
+    """Whether ``value`` is a ``sealed_secret`` string."""
+    return isinstance(value, str) and value.startswith(SEALED_SECRET_PREFIX)
+
+
+def open_secret(value: str) -> str:
+    """The value of the ``sealed_secret`` string ``value``: this node's entry opened with its key and verified.
+
+    Raises:
+        SealedCredentialRefused: The string does not read, the map has no entry for this node, the token does not
+            open or verify (``open_token``'s reasons), or it holds another kind or another secret than it names.
+    """
+    try:
+        body = json.loads(_unb64url(value.removeprefix(SEALED_SECRET_PREFIX)))
+        name, sealed = body["name"], body["sealed"]
+    except (ValueError, TypeError, KeyError):
+        raise SealedCredentialRefused("it is not a sealed secret") from None
+    if not isinstance(name, str) or not isinstance(sealed, dict):
+        raise SealedCredentialRefused("it is not a sealed secret")
+    claims = _claims(_this_nodes_entry(sealed), SECRET_CLAIMS)
+    if claims["kind"] != "secret":
+        raise SealedCredentialRefused(f"it holds a {claims['kind']} credential, not a secret")
+    if claims["name"] != name or not isinstance(claims["value"], str):
+        raise SealedCredentialRefused(f'it does not hold the secret "{name}"')
+    return claims["value"]
 
 
 def can_open() -> bool:

@@ -184,3 +184,58 @@ def test_a_sealed_delta_scan_names_the_table_and_the_map_and_no_secret(hub_signe
     assert frame.collect_schema() == pl.Schema({"id": pl.Int64, "country": pl.String})
     plan = frame.filter(pl.col("id") > 1).serialize()
     assert b"vended-secret" not in plan and b"AKIAVENDED" not in plan
+
+
+def test_a_storage_token_without_a_kind_still_opens_as_storage(hub_signer, node):
+    token = hub_signer.sealed(node.public_jwks()["enc"], storage_options=dict(OPTIONS), drop=("kind",))
+
+    assert hub_sealed.open_token(token).storage_options == OPTIONS
+
+
+def secret_for(signer: HubSigner, keys, name: str = "warehouse_pw", value: str = "s3cr3t", **claims) -> str:
+    return signer.sealed_secret(keys.public_jwks()["enc"], name=name, value=value, **claims)
+
+
+def test_a_sealed_secret_opens_to_its_value_on_the_node_it_was_sealed_to(hub_signer, node):
+    value = hub_sealed.sealed_secret("warehouse_pw", {NODE_NAME: secret_for(hub_signer, node), "core": "a.b.c.d.e"})
+
+    assert hub_sealed.is_sealed_secret(value) and not hub_sealed.is_sealed_secret("$ffsec$1$1$abc")
+    assert "s3cr3t" not in value and "warehouse_pw" not in value
+    assert hub_sealed.open_secret(value) == "s3cr3t"
+
+
+def test_a_sealed_secret_is_not_a_storage_credential_and_a_storage_token_is_not_a_secret(hub_signer, node):
+    secret = secret_for(hub_signer, node)
+    storage = sealed_for(hub_signer, node)
+
+    with pytest.raises(SealedCredentialRefused, match="no claim base_uri"):
+        hub_sealed.open_token(secret)
+    with pytest.raises(SealedCredentialRefused, match="it has no claim name"):
+        hub_sealed.open_secret(hub_sealed.sealed_secret("warehouse_pw", {NODE_NAME: storage}))
+    with pytest.raises(SealedCredentialRefused, match="holds a storage credential, not a secret"):
+        hub_sealed.open_secret(hub_sealed.sealed_secret("x", {NODE_NAME: secret_for(hub_signer, node, kind="storage")}))
+
+
+@pytest.mark.parametrize(
+    ("claims", "reason"),
+    [
+        ({"node": "other"}, "for another node than team"),
+        ({"iss": "https://elsewhere.example"}, "another issuer"),
+        ({"ttl": -120}, "expired"),
+        ({"name": "another"}, 'does not hold the secret "warehouse_pw"'),
+        ({"drop": ("value",)}, "no claim value"),
+    ],
+    ids=["audience", "issuer", "expired", "other name", "no value"],
+)
+def test_a_sealed_secret_whose_claims_do_not_hold_is_refused(hub_signer, node, claims, reason):
+    value = hub_sealed.sealed_secret("warehouse_pw", {NODE_NAME: secret_for(hub_signer, node, **claims)})
+
+    with pytest.raises(SealedCredentialRefused, match=reason):
+        hub_sealed.open_secret(value)
+
+
+def test_a_sealed_secret_for_other_nodes_or_garbled_names_why(hub_signer, node):
+    with pytest.raises(SealedCredentialRefused, match=r"sealed it to worker, not to this server \(team\)"):
+        hub_sealed.open_secret(hub_sealed.sealed_secret("pw", {"worker": secret_for(hub_signer, node)}))
+    with pytest.raises(SealedCredentialRefused, match="not a sealed secret"):
+        hub_sealed.open_secret(hub_sealed.SEALED_SECRET_PREFIX + "not-json")
