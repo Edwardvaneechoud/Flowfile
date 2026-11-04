@@ -18,7 +18,7 @@ from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
 from flowfile_core.schemas.sharing_schema import AccessInfo
 from flowfile_core.secret_manager.secret_manager import delete_secret as delete_secret_action
-from flowfile_core.secret_manager.secret_manager import granted_secret, store_secret
+from flowfile_core.secret_manager.secret_manager import store_secret
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
@@ -154,12 +154,11 @@ def get_secret(
             access=_OWNER_ACCESS,
         )
 
-    # Shared-only match: metadata without the value, the row get_encrypted_secret resolves.
-    winner = granted_secret(db, user_id, secret_name)
-    if winner is not None:
-        shared = next((row for row in _shared_secret_rows(db, user_id) if row.id == winner.id), None)
-        if shared is not None:
-            return shared
+    # Shared-only match: metadata without the value (mirrors get_encrypted_secret's
+    # own-shadows-shared, lowest-id-wins resolution).
+    shared = [row for row in _shared_secret_rows(db, user_id) if row.name == secret_name]
+    if shared:
+        return shared[0]
 
     raise HTTPException(status_code=404, detail="Secret not found")
 

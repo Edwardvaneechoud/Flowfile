@@ -15,8 +15,8 @@ False (electron/desktop mode).
 import os
 from dataclasses import dataclass
 
-from sqlalchemy import case, event, or_, select
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy import event, or_
+from sqlalchemy.orm import Session
 
 from flowfile_core.database import models as db_models
 from flowfile_core.schemas.sharing_schema import AccessInfo
@@ -128,27 +128,6 @@ def manageable_group_ids(db: Session, user_id: int) -> list[int]:
         db_models.UserGroupMembership.role.in_((ROLE_OWNER, ROLE_MANAGER)),
     )
     return [r[0] for r in rows]
-
-
-def group_owned_first(user_id: int, resource_type: str, id_col, owner_col):
-    """Order criterion that puts a granted row first when it is the own of a group it is granted to.
-
-    A row ranks as the group's own only when it is granted to a group *user_id* is in and its owner
-    holds ``owner`` of that same group; owning some other group of the caller's does not count, so an
-    admin who owns a wide group cannot shadow a team's secret by sharing an older one into the team.
-    Among same-named granted resources such a row beats one shared into the group from elsewhere.
-    A correlated EXISTS in the same statement, so a lookup gains no extra round trip.
-    """
-    grant = db_models.ResourceGrant
-    caller = aliased(db_models.UserGroupMembership)
-    owner = aliased(db_models.UserGroupMembership)
-    own_grant = (
-        select(grant.id)
-        .join(caller, (caller.group_id == grant.group_id) & (caller.user_id == user_id))
-        .join(owner, (owner.group_id == grant.group_id) & (owner.role == ROLE_OWNER))
-        .where(grant.resource_type == resource_type, grant.resource_id == id_col, owner.user_id == owner_col)
-    )
-    return case((own_grant.exists(), 0), else_=1)
 
 
 def group_role(db: Session, group_id: int, user_id: int) -> str | None:
