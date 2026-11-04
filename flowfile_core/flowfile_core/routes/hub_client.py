@@ -123,15 +123,6 @@ def _hostname() -> str:
     return socket.gethostname()
 
 
-def _own_node_name() -> str | None:
-    """The name this core carries as a node on the hub; ``None`` when it is not one.
-
-    ``FLOWFILE_NODE_NAME`` first, then the name it joined the hub with (``shared.hub_node.resolved``), so a core named
-    by hand and one that joined are both their own node.
-    """
-    return hub_node.resolved().name
-
-
 def _account(stored: dict | None, current_user) -> str | None:
     """Who ``stored`` signs in as at the hub; see ``HubConnection.account``."""
     if stored is None:
@@ -159,7 +150,7 @@ def _connection(
         vend_mode=info["vend_mode"] if info else None,
         reachable=info is not None,
         error=error,
-        node_name=_own_node_name(),
+        node_name=hub_node.resolved().name,
         account=account,
     )
 
@@ -283,11 +274,12 @@ def _sync_nodes(db: Session, user_id: int, hub_url: str, access_token: str) -> t
     node's id on the hub and ``hub_user_id`` the caller, whose hub session mints the tokens the backend signs with.
     A hub-filled row whose node is gone, disabled or renamed is removed; a row added by hand is never touched and its
     node is reported as skipped. A row written or updated is forgotten in the registry, so its next use reads it.
-    The node this core is itself (``_own_node_name``) is neither written nor counted nor skipped, and a row an
-    earlier sync wrote for it goes. The hub's errors propagate; nothing is committed then.
+    The node this core is itself (``FLOWFILE_NODE_NAME``, or the name it joined with: ``hub_node.resolved``) is
+    neither written nor counted nor skipped, and a row an earlier sync wrote for it goes. The hub's errors propagate;
+    nothing is committed then.
     """
     nodes = client.list_compute_nodes(hub_url, access_token)
-    own = _own_node_name()
+    own = hub_node.resolved().name
     wanted = {
         registry.CONFIGURED_WORKER_PREFIX + node["name"]: node
         for node in nodes
