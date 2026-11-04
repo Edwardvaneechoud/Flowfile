@@ -260,7 +260,8 @@ class WorkerBackend(_WorkerReferences):
     - ``backend_id``: the id it answers to, ``"worker"`` built in or ``worker:<name>`` configured. Its refs and
       handles carry it, and it refuses those of any other id.
     - ``token``: the worker's own token, sent as ``X-Flowfile-Internal`` by ``capabilities``, every ``/v1`` request
-      and the ``/v1`` submit socket. ``None`` signs with the process's internal token, as the task routes always do.
+      and the ``/v1`` submit socket, and by every task-route call and legacy socket to ``url`` while this backend owns
+      it (``handshake.owner``). ``None`` signs with the process's internal token.
       A token that is no header value (``is_header_value``) fails each call as a ``TaskFailed`` naming
       ``TOKEN_RULE`` before any client is handed it, so no message or log line carries it.
     - ``ca_cert``: the PEM of the CA to verify an ``https://`` worker against (``trust_ca``). ``None`` uses the public
@@ -881,7 +882,7 @@ class WorkerBackend(_WorkerReferences):
         verdict = cached_verdict(self)
         if verdict is not None and (verdict is self._socket_refused_under or not _takes_submit_socket(verdict)):
             return None
-        token = self._internal_token()
+        token = self.signing_token()
         try:
             ws = connect(
                 _get_ws_url(self.url) + "/v1/ws/submit",
@@ -922,8 +923,13 @@ class WorkerBackend(_WorkerReferences):
             raise _v1_error(frame["status_code"], frame["detail"])
         return wire.SubmitResult.model_validate(frame["result"])
 
-    def _internal_token(self) -> str:
-        """The token this backend signs the worker's ``/v1`` calls with: its own, else the process's internal token.
+    @property
+    def request_auth(self) -> requests.auth.AuthBase | None:
+        """What a session call signed as this backend carries: its own token's signer, ``None`` for the process's."""
+        return self._auth
+
+    def signing_token(self) -> str:
+        """The token this backend signs the worker's calls with: its own, else the process's internal token.
 
         Raises:
             TaskFailed: Its own token is no header value (``_sendable_token``).

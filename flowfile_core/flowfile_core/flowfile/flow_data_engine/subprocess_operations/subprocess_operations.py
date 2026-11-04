@@ -30,6 +30,7 @@ from flowfile_core.flowfile.execution.errors import ComputeError, ComputeUnavail
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.handshake import (
     ensure_handshake,
     fetch_worker_capabilities,
+    owner,
     reset_handshake,
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
@@ -89,11 +90,18 @@ class _WorkerSession(requests.Session):
     ``ComputeUnavailable``. A call that cannot reach the worker re-arms the check of the backends on its URL, since the
     worker that comes back there may be another one. ``gated=False`` skips the gate, neither passing nor re-arming it,
     for the reads of a worker's versions themselves (``GET /capabilities``).
+
+    A call that brings no ``auth`` of its own is signed as the backend that owns ``worker_url`` (``handshake.owner``):
+    with that backend's token when it has one, such as the run token a hub mints for its node, else with the process's
+    internal token. So every task-route call to a worker (a submit, a status poll, a fetch, a cancel, a clear)
+    carries the token the backend's handshake and ``/v1`` calls carry.
     """
 
     def request(
         self, method, path, *args, worker_url: str, backend_id: str | None = None, gated: bool = True, **kwargs
     ):
+        if kwargs.get("auth") is None:
+            kwargs["auth"] = signer_for(worker_url)
         if gated:
             ensure_handshake(worker_url, backend_id=backend_id)
         try:
@@ -102,6 +110,23 @@ class _WorkerSession(requests.Session):
             if gated:
                 reset_handshake(worker_url)
             raise
+
+
+def signer_for(worker_url: str) -> requests.auth.AuthBase | None:
+    """What a call to ``worker_url`` that names no backend signs with: the owning backend's own token, else ``None``,
+    the session's internal token."""
+    backend = owner(worker_url)
+    return backend.request_auth if backend is not None else None
+
+
+def signing_token(worker_url: str) -> str:
+    """The token a socket to ``worker_url`` that names no backend carries: the owning backend's, else the internal one.
+
+    Raises:
+        TaskFailed: The owning backend's token is no header value (``TOKEN_RULE``).
+    """
+    backend = owner(worker_url)
+    return backend.signing_token() if backend is not None else get_internal_token()
 
 
 class _TrustedCa(HTTPAdapter):
