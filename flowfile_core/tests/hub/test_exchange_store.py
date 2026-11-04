@@ -306,3 +306,83 @@ def test_a_run_that_raises_leaves_no_hub_store_on_the_flow(team_node, run_rows, 
 
     assert held == [FROM_HUB]
     assert graph.hub_exchange_store is None
+
+
+store = hub_client_fakes.store
+
+
+@pytest.fixture
+def signed_in(store, hub):
+    """User 1 has a hub session on the fake hub, which sets ``HUB_STORE``."""
+    from flowfile_core.hub_client import client, session
+
+    hub.exchange_store = dict(HUB_STORE)
+    tokens = client.sign_in(HUB_URL, "ana", "s3cret")
+    session.save(1, {"hub_url": HUB_URL, "refresh_token": tokens["refresh_token"], "device_id": 1})
+    hub.calls.clear()
+    return hub
+
+
+def test_a_server_joined_with_its_keys_takes_its_hubs_store_through_the_persons_hub_session(
+    signed_in, joined_with_keys
+):
+    taken = hub_exchange_store.joined_server_store(1)
+
+    assert taken == ExchangeConfig(uri=HUB_STORE["uri"], connection="org exchange", max_rows=50000, vended_for=1)
+    assert ("GET", "/hub/exchange-store") in signed_in.calls
+
+
+def test_a_joined_server_asks_nothing_for_no_user_or_a_person_without_a_hub_session(signed_in, joined_with_keys):
+    assert hub_exchange_store.joined_server_store(None) is None
+    assert hub_exchange_store.joined_server_store(2) is None
+    assert ("GET", "/hub/exchange-store") not in signed_in.calls
+
+
+def test_a_server_not_joined_with_keys_takes_no_store_this_way(signed_in):
+    assert hub_exchange_store.joined_server_store(1) is None
+    assert signed_in.calls == []
+
+
+def test_the_hubs_store_on_a_joined_server_is_opened_by_what_the_hub_vends_the_run():
+    from flowfile_core.flowfile.execution.exchange import NOT_VENDED
+    from flowfile_core.flowfile.execution.protocol import SealedCredential
+
+    hub_store = ExchangeConfig(uri="s3://org-bucket/exchange/", connection="org exchange", vended_for=1)
+    run = ExchangeRun(7, "r1", hub_store=hub_store)
+
+    assert run.vended()
+    with pytest.raises(ValueError, match=re.escape(NOT_VENDED)):
+        run.prefix()
+    run.sealed = SealedCredential(base_uri="s3://org-bucket/exchange", sealed={"team-1": "t", "worker": "u"})
+    assert run.prefix() == ("s3://org-bucket/exchange/7/r1/", run.sealed)
+    assert run.max_rows() is None
+
+
+def test_a_store_saved_on_a_joined_server_wins_over_the_vended_one(monkeypatch, tmp_path):
+    monkeypatch.setattr(exchange_config, "_settings_file", lambda: tmp_path / "exchange_store.yaml")
+    exchange_config.save(ExchangeConfig(uri="s3://own-bucket/x", connection="own"))
+    run = ExchangeRun(7, "r1", hub_store=ExchangeConfig(uri="s3://org-bucket/exchange", vended_for=1))
+
+    assert not run.vended()
+
+
+def test_a_joined_servers_run_asks_for_the_store_only_for_a_flow_with_a_node_set_elsewhere(signed_in, joined_with_keys):
+    graph = create_test_graph(flow_id=8401, execution_location="local")
+    add_test_manual_input(graph, [{"id": 1}], node_id=1)
+
+    assert routes._joined_server_store(graph, 1) is None
+    assert signed_in.calls == []
+
+    graph.get_node(1).setting_input.execution_location = "worker:elsewhere"
+    assert routes._joined_server_store(graph, 1).vended_for == 1
+
+
+def test_the_exchange_card_shows_a_joined_servers_hub_store_as_vended(signed_in, joined_with_keys):
+    from types import SimpleNamespace
+
+    from flowfile_core.routes import system_exchange
+
+    state = system_exchange._state(system_exchange._hub_store(None, SimpleNamespace(id=1)))
+
+    assert (state.source, state.vended, state.uri) == ("hub", True, HUB_STORE["uri"])
+    assert system_exchange._state(None).vended is False

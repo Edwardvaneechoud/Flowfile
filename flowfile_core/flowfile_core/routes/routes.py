@@ -91,6 +91,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 from flowfile_core.flowfile.execution import registry as compute_registry
 from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.execution.payloads import FileWritePayload, RestApiReadPayload, op_payload
+from flowfile_core.flowfile.execution.placement import SingleBackendPolicy, unmoved_without_store
 from flowfile_core.flowfile.execution.protocol import OperationKind
 from flowfile_core.flowfile.extensions import (
     get_formula_chain_check,
@@ -119,7 +120,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     list_db_tables,
 )
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
-from flowfile_core.hub.exchange_store import team_node_store
+from flowfile_core.hub.exchange_store import joined_server_store, team_node_store
 from flowfile_core.hub.report import build_run_report, hub_target, post_run_report
 from flowfile_core.notebook.gate import require_kernel_sessions
 from flowfile_core.notebook.kernel_runner import close_flow_sessions, lineage_commits
@@ -480,6 +481,17 @@ def _open_run_record(flow, user_id: int | None, node_ids: set[int] | None) -> tu
     return reg_id, flow_name, flow_path, flow_uuid, run_id, snapshot_yaml
 
 
+def _joined_server_store(flow, user_id: int | None):
+    """The hub's exchange store for a run of ``flow`` on a server joined with keys of its own, when one could apply.
+
+    A flow whose nodes all run on the run's backend crosses nothing, so the hub is not asked for it.
+    """
+    run_backend_id = current_context(flow).backend_id
+    if not unmoved_without_store(flow.nodes, SingleBackendPolicy(run_backend_id)):
+        return None
+    return joined_server_store(user_id)
+
+
 def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None, hub_token: str | None = None):
     """Run a flow (only ``node_ids`` when given) and persist the run record to the database.
 
@@ -499,13 +511,15 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None, 
     registration is not reported.
 
     On a team node the run takes the exchange store its hub sets, asked once with ``hub_token`` before the run
-    (``team_node_store``), and holds it until the run ends.
+    (``team_node_store``), and holds it until the run ends. On a server joined with keys of its own it is asked with
+    the user's hub session, and only for a flow with a node set to another backend than the run's, the one case a
+    store changes (``_joined_server_store``).
     """
     try:
         reg_id, flow_name, flow_path, flow_uuid, run_id, snapshot_yaml = _open_run_record(flow, user_id, node_ids)
         # A lineage run that writes nothing only looks at rows: change-feed cursors and Kafka offsets stay put.
         commit_sources = node_ids is None or lineage_commits(flow, node_ids)
-        flow.hub_exchange_store = team_node_store(hub_token)
+        flow.hub_exchange_store = team_node_store(hub_token) or _joined_server_store(flow, user_id)
     except BaseException:
         flow.hub_exchange_store = None
         flow.release_run()

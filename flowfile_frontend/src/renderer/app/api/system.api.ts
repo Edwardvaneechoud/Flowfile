@@ -175,6 +175,8 @@ export interface ExchangeStoreState {
   saved: ExchangeStoreSaved;
   /** What this node's hub sets; it applies while nothing is saved here. */
   hub: ExchangeStoreSaved | null;
+  /** The hub's store is opened by what the hub seals to each server a run uses (a server joined with its own keys). */
+  vended: boolean;
   connections: string[];
 }
 
@@ -199,6 +201,7 @@ interface PyExchangeStoreState {
   env_override: boolean;
   saved: PyExchangeStoreSaved;
   hub?: PyExchangeStoreSaved | null;
+  vended?: boolean;
   connections: string[];
 }
 
@@ -213,6 +216,7 @@ const fromPyExchangeStore = (raw: PyExchangeStoreState): ExchangeStoreState => (
   hub: raw.hub
     ? { uri: raw.hub.uri, connection: raw.hub.connection, maxRows: raw.hub.max_rows }
     : null,
+  vended: raw.vended ?? false,
   connections: raw.connections,
 });
 

@@ -44,6 +44,7 @@ const none: ExchangeStoreState = {
   envOverride: false,
   saved: { uri: null, connection: null, maxRows: null },
   hub: null,
+  vended: false,
   connections: ["exchange"],
 };
 
@@ -131,6 +132,20 @@ describe("ExchangeStoreCard", () => {
     expect(find("exchange-store-save")).toBeNull();
     expect(find("exchange-store-clear")).toBeNull();
     expect(find("exchange-store-hub")).toBeNull();
+    expect(await summary()).toBe("Set by your hub");
+  });
+
+  it("on a joined server says the hub seals the store's credential, read-only and with no connection", async () => {
+    await mount({ ...fromHub, vended: true });
+
+    const status = text(find("exchange-store-status"));
+    expect(status).toContain("Set by your hub");
+    expect(text(find("exchange-store-vended"))).toBe(
+      "Results cross through s3://org-bucket/exchange with a credential your hub seals to each server a run uses, at most 5000 rows per input.",
+    );
+    expect(status).not.toContain("org-exchange");
+    expect(host.querySelector("input, select")).toBeNull();
+    expect(find("exchange-store-save")).toBeNull();
     expect(await summary()).toBe("Set by your hub");
   });
 

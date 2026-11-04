@@ -65,7 +65,13 @@
                 ? "Row limit needs attention"
                 : "Exchange store configured"
           }}</strong>
-          <p>
+          <p v-if="state.vended" data-testid="exchange-store-vended">
+            Results cross through <code>{{ state.uri }}</code> with a credential your hub seals to
+            each server a run uses<template v-if="state.maxRows !== null"
+              >, at most {{ state.maxRows }} rows per input</template
+            >.
+          </p>
+          <p v-else>
             Results cross through <code>{{ state.uri }}</code> with the connection
             <code>{{ state.connection }}</code
             ><template v-if="state.maxRows !== null"
