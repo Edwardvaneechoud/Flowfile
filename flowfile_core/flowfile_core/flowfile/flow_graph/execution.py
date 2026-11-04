@@ -76,7 +76,7 @@ from flowfile_core.flowfile.util.skip_rules import (
     parameter_gate_is_open,
     uses_any_rule,
 )
-from flowfile_core.hub_client import vend
+from flowfile_core.hub_client import node_addresses, vend
 from flowfile_core.kernel.execution import (
     KernelHold,
 )
@@ -1081,13 +1081,14 @@ class ExecutionMixin(GraphMixinBase):
         """Place the nodes ``execution_plan`` runs and resolve its crossings; ``(None, [])`` with the protocol flag off.
 
         With an exchange store (``FLOWFILE_EXCHANGE_URI``) the policy is ``MixedPlacementPolicy``, falling back to
-        ``registry.fallback_backend_id``; without one it is ``SingleBackendPolicy`` on the run's backend, and on a server
-        joined to its hub with keys of its own a node whose own Compute backend names another backend is refused
-        (``unmoved_without_store``) rather than run on the run's backend. Each backend
-        named is read through its handshake verdict (``handshake.verdict_for``), except ``local`` in a process that
-        serves, which runs no node and is never asked. A backend refused whole, a ``VersionMismatch`` or an id the
-        registry does not know refuses every node assigned to it. Any other ``ComputeError`` keeps the backend's nodes
-        on it unchecked, and each fails with that error when it runs (``Placement.unreachable``).
+        ``registry.fallback_backend_id``; without one it is ``SingleBackendPolicy`` on the run's backend, and on a
+        server joined to its hub with keys of its own a node whose own Compute backend names another backend is
+        refused (``unmoved_without_store``) rather than run on the run's backend. Each backend named is read through
+        its handshake verdict (``handshake.verdict_for``), except ``local`` in a process that serves, which runs no
+        node and is never asked. On a joined server the hub's servers named are first moved to the addresses the hub
+        lists now (``node_addresses.refresh``). A backend refused whole, a ``VersionMismatch`` or an id the registry
+        does not know refuses every node assigned to it. Any other ``ComputeError`` keeps the
+        backend's nodes on it unchecked, and each fails with that error when it runs (``Placement.unreachable``).
 
         Each boundary becomes one ``BoundaryEdge`` per output the importing node reads, written to
         ``<prefix><from>-<handle>-<to>.parquet`` under the run's exchange prefix. The importing node is refused, once,
@@ -1111,6 +1112,7 @@ class ExecutionMixin(GraphMixinBase):
         named = dict.fromkeys(policy.backend_for(node) for node in nodes)
         if isinstance(policy, MixedPlacementPolicy) and nodes:
             named.setdefault(fallback_id)
+        node_addresses.refresh(named)
         for backend_id in named:
             if backend_id == registry.LOCAL_BACKEND_ID and registry.serving():
                 continue
