@@ -86,6 +86,7 @@ def test_not_connected_reports_the_hostname_as_the_default_device_name(api, hub)
     assert body["reachable"] is False
     assert body["node_name"] is None
     assert body["account"] is None
+    assert (body["joined"], body["organisation_storage"]) == (False, None)
     assert hub.calls == []
 
 
@@ -109,6 +110,7 @@ def test_connecting_stores_the_refresh_token_and_device_and_never_the_password(a
     assert body["vend_mode"] == "static"
     assert body["expires_at"] is not None
     assert body["account"] == "ana"
+    assert (body["joined"], body["organisation_storage"]) == (False, None)
     assert "s3cret" not in response.text
     assert hub.calls == [
         ("GET", "/hub/info"),

@@ -35,6 +35,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
+from flowfile_core.auth import issuer_accounts
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.exceptions import FlowExistsError, NamespaceNotFoundError, NotAuthorizedError
@@ -52,6 +53,7 @@ from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.hub_client import HUB_CONTRACT_VERSION, client, reachability, session
+from flowfile_core.hub_client import catalog as hub_catalog
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.routes.compute_backends import ComputeBackendOut, listed_backends
 from flowfile_core.routes.routes import get_flow_or_404
@@ -92,6 +94,12 @@ class HubConnection(BaseModel):
     """Who is signed in at the hub through this connection: on a server that signs people in through its hub, the
     person's full name, else their username (their account here mirrors the hub's); on a desktop, the hub username it
     connected with. ``None`` when not connected or not known."""
+    joined: bool = False
+    """Whether this server joined its hub with keys of its own (``issuer_accounts.joined_with_keys``): it belongs to
+    that hub, whose URL ``hub_url`` names even for a person with no hub session here."""
+    organisation_storage: str | None = None
+    """On a joined server, the organisation's storage root as the hub shows it (``hub_catalog.organisation_storage``);
+    ``None`` elsewhere, or when the person's hub does not show it."""
 
 
 class HubConnectRequest(BaseModel):
@@ -171,17 +179,25 @@ def get_connection(current_user=Depends(get_current_active_user)) -> HubConnecti
     in as (``account``).
 
     A hub that does not answer leaves the hub fields empty, ``reachable`` false and ``error`` set; the
-    connection itself is still reported. Not connected, ``device_name`` is the name a new connection would use.
+    connection itself is still reported. Not connected, ``device_name`` is the name a new connection would use. On a
+    server joined with keys of its own the answer is ``joined``, names the hub it joined whether or not the person has
+    a hub session, and carries the organisation's storage root the person's hub shows.
     """
     stored = session.load(current_user.id)
-    if stored is None:
+    node = issuer_accounts.joined_with_keys()
+    if stored is None and node is None:
         return _connection(None)
+    hub_url = stored["hub_url"] if stored else node.hub_url.rstrip("/")
     account = _account(stored, current_user)
     try:
-        info = client.get_info(stored["hub_url"])
+        connection = _connection(stored, client.get_info(hub_url), account=account)
     except (HubUnreachable, HubRefused, HubVersionRefused) as e:
-        return _connection(stored, error=str(e), account=account)
-    return _connection(stored, info, account=account)
+        connection = _connection(stored, error=str(e), account=account)
+    if node is not None:
+        connection.hub_url, connection.joined = hub_url, True
+        if stored is not None:
+            connection.organisation_storage = hub_catalog.organisation_storage(current_user.id)
+    return connection
 
 
 @router.post("/connection", summary="Connect to a hub")
