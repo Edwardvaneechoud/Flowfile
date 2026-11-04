@@ -65,6 +65,20 @@ def test_join_without_a_hub_is_refused_naming_the_flag(monkeypatch, no_variables
         parse(monkeypatch, "--join", "t")
 
 
+def test_a_program_importing_flowfile_keeps_its_own_join_flags(monkeypatch, no_variables):
+    monkeypatch.setattr(sys, "argv", ["etl.py", "--join", "t", "--name", "n"])
+
+    args = configs.parse_args()
+
+    assert (args.join, args.hub, args.name, args.host) == (None, None, None, "127.0.0.1")
+
+
+def test_the_worker_reads_the_join_flags_by_their_full_names_only(monkeypatch, no_variables):
+    args = parse(monkeypatch, "--joi", "t", "--hu", "http://h")
+
+    assert (args.join, args.hub) == (None, None)
+
+
 def test_the_join_flags_are_read(monkeypatch, no_variables):
     args = parse(monkeypatch, "--join", "t", "--hub", "http://h", "--name", "n", "--url", "http://w:1")
 
@@ -318,16 +332,17 @@ def test_a_new_token_prefers_the_port_the_node_last_joined_with(monkeypatch, joi
     assert join_hub.calls[-1][1]["worker_url"] == f"http://127.0.0.1:{kept}"
 
 
-def test_a_worker_without_a_join_token_serves_on_its_port_or_not_at_all(monkeypatch, join_hub, held, serving):
+@pytest.mark.parametrize("host", ["127.0.0.1", "::"])
+def test_a_worker_without_a_join_token_leaves_binding_its_port_to_uvicorn(monkeypatch, join_hub, held, serving, host):
     port = held()
     started_with(monkeypatch, join_hub.url, None)
     default_port(monkeypatch, port)
 
-    with pytest.raises(SystemExit) as exited:
-        main.run(host="127.0.0.1")
+    main.run(host=host)
 
-    assert exited.value.code == 1
-    assert serving == []
+    ((config, sockets),) = serving
+    assert (config.host, config.port, sockets) == (host, port, None)
+    assert join_hub.calls == []
 
 
 @pytest.mark.skipif(os.name == "nt", reason="the home directory comes from HOME on POSIX only")

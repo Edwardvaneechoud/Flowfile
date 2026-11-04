@@ -215,10 +215,11 @@ def _say_found(port: int) -> None:
 def run(host: str = None, port: int = None):
     """Run the FastAPI app with graceful shutdown.
 
-    The worker binds its socket first (``listen``), then a worker started with a join token joins its hub
-    (``join_hub``) with the port it serves on, and serves on that same socket: one that cannot bind exits with code 1
-    before any request to the hub, one the hub refuses with code 2 before it serves. The worker beside a core, started
-    with the node's name and no join token, serves from the core's folder on the port the core's join gave for it.
+    Without a join token uvicorn binds the port, as it always has. A worker started with a join token binds its socket
+    first (``listen``), then joins its hub (``join_hub``) with the port it serves on, and serves on that same socket:
+    one that cannot bind exits with code 1 before any request to the hub, one the hub refuses with code 2 before it
+    serves. The worker beside a core, started with the node's name and no join token, binds the same way and serves
+    from the core's folder on the port the core's join gave for it.
     Serves TLS when ``FLOWFILE_WORKER_TLS_CERT`` and ``FLOWFILE_WORKER_TLS_KEY`` name a certificate and its key.
     """
     global server_instance
@@ -229,17 +230,19 @@ def run(host: str = None, port: int = None):
     if port is None:
         port = SERVICE_PORT
 
-    if not _found_by_name():
-        hub_node.log_storage(NODE_STORAGE_DIR)
-    sock = listen(host, port, given=given)
-    port = sock.getsockname()[1]
-    if _found_by_name():
-        _say_found(port)
-    try:
-        join_hub(port, host)
-    except BaseException:
-        sock.close()
-        raise
+    sock = None
+    if JOIN_TOKEN or _found_by_name():
+        if not _found_by_name():
+            hub_node.log_storage(NODE_STORAGE_DIR)
+        sock = listen(host, port, given=given)
+        port = sock.getsockname()[1]
+        if _found_by_name():
+            _say_found(port)
+        try:
+            join_hub(port, host)
+        except BaseException:
+            sock.close()
+            raise
 
     from connectorx import __version__ as connectorx_version
 
@@ -266,7 +269,7 @@ def run(host: str = None, port: int = None):
     logger.info("Server started")
 
     try:
-        server.run(sockets=[sock])
+        server.run(sockets=[sock] if sock is not None else None)
     except KeyboardInterrupt:
         logger.info("Received interrupt signal, shutting down...")
     finally:
