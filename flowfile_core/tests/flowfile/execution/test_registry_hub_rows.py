@@ -41,7 +41,7 @@ def connected(hub, store):
     hub.nodes = [TEAM]
     tokens = client.sign_in(HUB_URL, "ana", "s3cret")
     session.save(
-        USER_ID, {"hub_url": HUB_URL, "refresh_token": tokens["refresh_token"], "device_id": 1, "device_name": "laptop"}
+        USER_ID, {"hub_url": HUB_URL, "refresh_token": tokens["refresh_token"], "device_name": "laptop"}
     )
     hub.calls.clear()
     return hub

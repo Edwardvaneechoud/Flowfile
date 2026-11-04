@@ -16,14 +16,12 @@ const loadModule = async () => {
   };
 };
 
-// Core answers more (device id, versions, the connect's sync count); the editor reads these.
+// Core answers more (the connect's sync count); the editor reads these.
 const pyConnected = {
   connected: true,
   hub_url: "https://hub.example.test",
-  device_id: 3,
   device_name: "ana-laptop",
   expires_at: "2026-11-08T12:00:00Z",
-  client_version: "0.24.0",
   org_name: "Acme Data",
   hub_version: "0.3.0",
   reachable: true,
@@ -119,8 +117,6 @@ describe("hubConnection.api", () => {
           shares_core_disk: false,
           verdict: null,
           source: "hub",
-          reachable: null,
-          reason: null,
         },
       ],
       skipped: ["worker:gpu"],
@@ -131,28 +127,6 @@ describe("hubConnection.api", () => {
 
     expect(post).toHaveBeenCalledWith("/hub_client/compute_nodes/sync");
     expect(result).toEqual(answer);
-  });
-
-  it("posts /hub_client/compute_nodes/check and returns the checked rows", async () => {
-    const { post, api } = await loadModule();
-    const rows = [
-      {
-        id: "worker:team",
-        url: "https://team-worker.example.test:63579",
-        shares_core_disk: false,
-        verdict: null,
-        source: "hub",
-        reachable: false,
-        reason:
-          "can't reach https://team-worker.example.test:63579 from this computer: name not known",
-      },
-    ];
-    post.mockResolvedValueOnce({ data: rows });
-
-    const result = await api.checkHubComputeNodes();
-
-    expect(post).toHaveBeenCalledWith("/hub_client/compute_nodes/check");
-    expect(result).toEqual(rows);
   });
 
   it("deletes /hub_client/connection to disconnect", async () => {

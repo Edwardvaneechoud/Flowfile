@@ -1,7 +1,7 @@
 """The stored hub connection of each local user, and the access tokens minted from it.
 
 A connection is one JSON string in the secure store (service ``flowfile_hub``, key ``session:<user_id>``) holding
-``hub_url``, ``refresh_token``, ``refresh_expires_at``, ``device_id`` and ``device_name``. It is not a ``Secret`` row,
+``hub_url``, ``refresh_token``, ``refresh_expires_at`` and ``device_name``. It is not a ``Secret`` row,
 so it never shows in the Secrets page and no node can reference it. No password is ever part of it. Access tokens
 live only in this process's memory; each refresh rotates the refresh token and the new one is stored straight away.
 The node tokens minted through a connection (``node_tokens``) go with it when it is replaced or cleared.
@@ -83,7 +83,6 @@ def save(user_id: int, session: dict) -> None:
         "hub_url": session["hub_url"],
         "refresh_token": session["refresh_token"],
         "refresh_expires_at": _expiry(session["refresh_token"]),
-        "device_id": session.get("device_id"),
         "device_name": session.get("device_name"),
     }
     with _lock:

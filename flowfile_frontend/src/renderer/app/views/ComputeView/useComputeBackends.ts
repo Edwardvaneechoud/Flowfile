@@ -9,7 +9,7 @@ import {
   type ComputeBackendInput,
   type HandshakeVerdict,
 } from "../../api/computeBackends.api";
-import { checkHubComputeNodes, syncHubComputeNodes } from "../../api/hubConnection.api";
+import { syncHubComputeNodes } from "../../api/hubConnection.api";
 import { detailOf } from "../../utils/apiDetail";
 import {
   handshakeStatus,
@@ -94,11 +94,6 @@ export function workersSummary(
   return { tone: parts[0].tone, label: parts.map((part) => part.label).join(" · ") };
 }
 
-/** The synced rows with each hub row replaced by its checked one, so the list carries the check's outcome. */
-export function withChecked(rows: ComputeBackend[], checked: ComputeBackend[]): ComputeBackend[] {
-  return rows.map((row) => checked.find((hubRow) => hubRow.id === row.id) ?? row);
-}
-
 /** The line a sync leaves when it kept a worker added here under a name the hub also uses. */
 export function skippedNotice(skipped: string[]): string {
   if (!skipped.length) return "";
@@ -108,8 +103,9 @@ export function skippedNotice(skipped: string[]): string {
 /**
  * The configured workers and the admin's actions on them; the caller loads, nothing polls. A load seeds the
  * verdicts from the listing, so one a run produced shows without pressing Handshake. A load `fromHub` is the one
- * Sync: it fills the rows from the hub's compute nodes and then checks once, in the request, which of them this
- * computer reaches; a server joined to its hub loads that way, so the hub's servers show with no Sync step.
+ * Sync: it fills the rows from the hub's compute nodes, which core checks once behind its answer, so their verdicts
+ * show on the next load as any worker's do; a server joined to its hub loads that way, so the hub's servers show
+ * with no Sync step.
  */
 export function useComputeBackends() {
   const backends: Ref<ComputeBackend[]> = ref([]);
@@ -124,9 +120,8 @@ export function useComputeBackends() {
     if (!fromHub) return listComputeBackends();
     try {
       const synced = await syncHubComputeNodes();
-      const checked = await checkHubComputeNodes();
       hubNotice.value = skippedNotice(synced.skipped);
-      return withChecked(synced.backends, checked);
+      return synced.backends;
     } catch (error) {
       hubNotice.value = detailOf(error, "Couldn't read the hub's servers.");
       return listComputeBackends();

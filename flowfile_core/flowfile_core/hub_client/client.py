@@ -120,10 +120,10 @@ def _require(body: dict, fields: tuple[str, ...], url: str, path: str) -> dict:
 
 
 def get_info(url: str, *, http: httpx.Client | None = None) -> dict:
-    """The hub's ``org_name``, ``hub_version``, ``core_version`` and ``vend_mode``, and ``organisation_storage`` from
-    a hub that sends it; needs no sign-in."""
+    """The hub's ``org_name`` and ``hub_version``, and whatever else it sends (``organisation_storage`` from a hub that
+    has one); needs no sign-in."""
     body = _request("GET", url, "/hub/info", http)
-    return _require(body, ("org_name", "hub_version", "core_version", "vend_mode"), url, "/hub/info")
+    return _require(body, ("org_name", "hub_version"), url, "/hub/info")
 
 
 def sign_in(url: str, username: str, password: str, *, http: httpx.Client | None = None) -> dict:

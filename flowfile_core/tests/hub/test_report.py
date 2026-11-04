@@ -115,7 +115,7 @@ def desktop(monkeypatch, tmp_path):
         tokens = hub_client.sign_in(hub_url, "ana", "s3cret")
         session.save(
             user_id,
-            {"hub_url": hub_url, "refresh_token": tokens["refresh_token"], "device_id": 1, "device_name": "laptop"},
+            {"hub_url": hub_url, "refresh_token": tokens["refresh_token"], "device_name": "laptop"},
         )
         fake.calls.clear()
 

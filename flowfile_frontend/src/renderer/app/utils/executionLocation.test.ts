@@ -9,7 +9,6 @@ import {
   executionLocationOptions,
   nodeExecutionLocationLabel,
   nodeExecutionLocationOptions,
-  reachabilityNote,
   unreachableNote,
   verdictSummary,
   type BackendRow,
@@ -19,8 +18,6 @@ const row = (id: string, overrides: Partial<BackendRow> = {}): BackendRow => ({
   id,
   verdict: null,
   source: "local",
-  reachable: null,
-  reason: null,
   ...overrides,
 });
 
@@ -122,52 +119,48 @@ describe("the verdict beside a configured backend's id", () => {
   });
 });
 
-describe("a hub node's reachability in the picker", () => {
+describe("a hub node this server cannot reach, in the picker", () => {
+  const unreachable = verdict({
+    ok: false,
+    backend: null,
+    offered: null,
+    error: "Could not reach the worker at https://team-worker.example.test:63579: no route",
+    error_kind: "ComputeUnavailable",
+  });
+  const refused = verdict({
+    ok: false,
+    offered: null,
+    error:
+      'Backend "worker:team" does not match core (polars_version: core 1.43.2, backend 1.39.3)',
+    error_kind: "VersionMismatch",
+  });
   const label = (listed: BackendRow[]) =>
     executionLocationOptions("auto", listed)[1].label.replace("worker:team · ", "");
 
-  it("uses the reachability word while the node has no verdict yet", () => {
-    expect(label([hubRow()])).toBe("Not checked");
-    expect(label([hubRow({ reachable: true })])).toBe("Reachable");
-    expect(label([hubRow({ reachable: false, reason: "can't reach it" })])).toBe("Unreachable");
-    expect(nodeExecutionLocationOptions("auto", [hubRow({ reachable: true })])[2].label).toBe(
-      "worker:team · Reachable",
-    );
-  });
-
-  it("gives way to the verdict's word once the node has one", () => {
-    expect(label([hubRow({ reachable: true, verdict: verdict({}) })])).toBe("Compatible");
-    expect(label([hubRow({ reachable: false, verdict: verdict({ ok: false }) })])).toBe(
-      "Not accepted",
-    );
-  });
-
-  it("keeps Not checked for a worker added here, whatever its fields say", () => {
-    expect(label([row("worker:team", { reachable: true })])).toBe("Not checked");
-  });
-
-  it("notes why a hub node is unreachable, and nothing otherwise", () => {
-    const reason =
-      "can't reach https://team-worker.example.test:63579 from this computer: no route";
-    expect(unreachableNote(hubRow({ reachable: false, reason }))).toBe(reason);
-    expect(unreachableNote(hubRow({ reachable: false, reason: null }))).toBe("");
-    expect(unreachableNote(hubRow({ reachable: true }))).toBe("");
+  it("notes why the node is unreachable from its verdict, and nothing for any other verdict", () => {
+    expect(unreachableNote(hubRow({ verdict: unreachable }))).toBe(unreachable.error);
+    expect(unreachableNote(hubRow({ verdict: refused }))).toBe("");
+    expect(unreachableNote(hubRow({ verdict: verdict({}) }))).toBe("");
     expect(unreachableNote(hubRow())).toBe("");
-    expect(unreachableNote(row("worker:own", { reachable: false, reason: "x" }))).toBe("");
     expect(unreachableNote(undefined)).toBe("");
   });
 
-  it("notes what the check said about a hub node whether it was reached or refused", () => {
-    const refusal = "401 Unauthorized: the node does not trust this hub's tokens";
-    const unreachable =
-      "can't reach https://team-worker.example.test:63579 from this computer: no route";
-    expect(reachabilityNote(hubRow({ reachable: true, reason: refusal }))).toBe(refusal);
-    expect(reachabilityNote(hubRow({ reachable: false, reason: unreachable }))).toBe(unreachable);
-    expect(reachabilityNote(hubRow({ reachable: true }))).toBe("");
-    expect(reachabilityNote(hubRow())).toBe("");
-    expect(reachabilityNote(row("worker:own", { reachable: true, reason: "x" }))).toBe("");
-    expect(reachabilityNote(undefined)).toBe("");
-    expect(unreachableNote(hubRow({ reachable: true, reason: refusal }))).toBe("");
+  it("gives a non-administrator the verdict's word, which names no address", () => {
+    const hidden = { ...unreachable, error: "unreachable" };
+    expect(unreachableNote(hubRow({ verdict: hidden }))).toBe("unreachable");
+  });
+
+  it("notes nothing under a worker added here, whose verdict shows as a handshake", () => {
+    expect(unreachableNote(row("worker:own", { verdict: unreachable }))).toBe("");
+  });
+
+  it("labels the node by its verdict's word, as any worker", () => {
+    expect(label([hubRow()])).toBe("Not checked");
+    expect(label([hubRow({ verdict: unreachable })])).toBe("Handshake failed");
+    expect(label([hubRow({ verdict: verdict({}) })])).toBe("Compatible");
+    expect(nodeExecutionLocationOptions("auto", [hubRow({ verdict: refused })])[2].label).toBe(
+      "worker:team · Not accepted",
+    );
   });
 });
 

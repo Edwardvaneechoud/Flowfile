@@ -10,8 +10,8 @@ answered), an optional CA certificate PEM for a worker whose TLS certificate is 
 (the worker sees core's files, so core offers it ``file``). ``local`` and ``worker`` are built in and never rows.
 Core manages no worker itself; the Backends page or a deployment's control plane fills the table, and so does a hub
 this Flowfile is connected to (``/hub_client/compute_nodes/sync``): such a row carries ``source: "hub"`` in the
-listing, holds no token of its own, and is removed with the hub connection rather than here (409). The registry makes
-a ``WorkerBackend`` from a row on its id's first lookup.
+listing, holds no token of its own, is checked once after the sync that wrote it, and is removed with the hub
+connection rather than here (409). The registry makes a ``WorkerBackend`` from a row on its id's first lookup.
 
 The add route checks the token is a header value itself (``worker.is_header_value``), because a model validator's
 422 would echo the input. A CA certificate ``ssl`` cannot load as PEM, or one given with an ``http://`` URL, is a
@@ -38,7 +38,6 @@ from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.worker import TOKEN_RULE, is_header_value
 from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
-from flowfile_core.hub_client import reachability
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared.compute_protocol import Capabilities, local_capabilities
 
@@ -66,20 +65,13 @@ class ComputeBackendInput(BaseModel):
 class ComputeBackendOut(BaseModel):
     """One configured worker as the routes answer it, never its token: its URL is ``None`` to a non-administrator,
     its verdict is the last handshake verdict in this process (``None`` until it was checked), and its source says
-    who filled the row: ``local`` for one added here, ``hub`` for one filled from the connected hub's nodes.
-
-    ``reachable`` and ``reason`` are a hub-filled row's last reachability check in this process
-    (``hub_client.reachability``): whether this machine reached the node's worker, with the refusal or the error as the
-    reason; ``None`` until checked, and always ``None`` for a row added here, which is never checked.
-    """
+    who filled the row: ``local`` for one added here, ``hub`` for one filled from the connected hub's nodes."""
 
     id: str
     url: str | None
     shares_core_disk: bool = False
     verdict: handshake.Verdict | None = None
     source: Literal["local", "hub"] = "local"
-    reachable: bool | None = None
-    reason: str | None = None
 
 
 _REFUSAL_REASONS = {"ComputeUnavailable": "unreachable", "VersionMismatch": "version mismatch"}
@@ -119,42 +111,23 @@ def _configured(db: Session, backend_id: str) -> ConfiguredBackend:
     return row
 
 
-def _reachability(row: ConfiguredBackend, current_user: User) -> tuple[bool | None, str | None]:
-    """A hub-filled row's last reachability outcome as *current_user* may read it; ``(None, None)`` for a local row.
-
-    An unreachable node's reason names the worker's URL, so a non-administrator gets it without the address, in line
-    with the URL the listing hides from them.
-    """
-    if row.hub_node_id is None:
-        return None, None
-    reachable, reason = reachability.of(row.id)
-    if reachable is False and not current_user.is_admin:
-        return reachable, reachability.UNREACHABLE_WITHOUT_ADDRESS
-    return reachable, reason
-
-
 def listed_backends(rows: list[ConfiguredBackend], current_user: User) -> list[ComputeBackendOut]:
-    """*rows* as ``GET /compute_backends`` answers them to *current_user*: the URLs, and the verdicts and the
-    reasons whole, to an administrator only (``_without_addresses``, ``_reachability``)."""
-    listed = []
-    for row in rows:
-        reachable, reason = _reachability(row, current_user)
-        listed.append(
-            ComputeBackendOut(
-                id=row.id,
-                url=row.url if current_user.is_admin else None,
-                shares_core_disk=bool(row.shares_core_disk),
-                verdict=(
-                    handshake.last_verdict(row.id)
-                    if current_user.is_admin
-                    else _without_addresses(handshake.last_verdict(row.id))
-                ),
-                source="hub" if row.hub_node_id is not None else "local",
-                reachable=reachable,
-                reason=reason,
-            )
+    """*rows* as ``GET /compute_backends`` answers them to *current_user*: the URLs, and the verdicts whole, to an
+    administrator only (``_without_addresses``)."""
+    return [
+        ComputeBackendOut(
+            id=row.id,
+            url=row.url if current_user.is_admin else None,
+            shares_core_disk=bool(row.shares_core_disk),
+            verdict=(
+                handshake.last_verdict(row.id)
+                if current_user.is_admin
+                else _without_addresses(handshake.last_verdict(row.id))
+            ),
+            source="hub" if row.hub_node_id is not None else "local",
         )
-    return listed
+        for row in rows
+    ]
 
 
 @router.get("", response_model=list[ComputeBackendOut])

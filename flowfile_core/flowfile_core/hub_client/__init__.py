@@ -8,6 +8,3 @@ joined a hub, ``delegation`` trades a person's sign-in through the hub for the t
 kept in the same per-user ``session`` store. What core sends a hub lives here too: ``report`` the record of a finished
 run, ``exchange_store`` the ask for the store a joined server's hub sets.
 """
-
-HUB_CONTRACT_VERSION = "0.1.0"
-"""The version of the hub's contract this client was written against."""

@@ -27,5 +27,6 @@ export const verdict = (overrides: Partial<HandshakeVerdict> = {}): HandshakeVer
   differences: [],
   absent: {},
   error: null,
+  error_kind: null,
   ...overrides,
 });

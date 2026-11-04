@@ -2,9 +2,10 @@
 
 import type { ComputeBackend, HandshakeVerdict } from "../api/computeBackends.api";
 import type { ExecutionLocation } from "../types";
-import { reachabilityStatus } from "../components/settings/handshakeStatus";
 
-export type BackendRow = Pick<ComputeBackend, "id" | "verdict" | "source" | "reachable" | "reason">;
+export type BackendRow = Pick<ComputeBackend, "id" | "verdict" | "source">;
+
+const UNREACHABLE = "ComputeUnavailable";
 
 export interface ExecutionLocationOption {
   key: ExecutionLocation;
@@ -37,26 +38,12 @@ export function verdictSummary(verdict: HandshakeVerdict | null): string {
 }
 
 /**
- * The word beside a backend's id in a picker: its verdict's summary, or for a hub node without a verdict yet the
- * reachability word ("Reachable", "Unreachable", "Not checked") in place of "Not checked".
+ * Why a hub node could not be reached from this server, as its verdict says it, for the line under a picker; "" for
+ * any other row or verdict. A non-administrator's verdict says "unreachable", the address kept from them.
  */
-export function backendSummary(row: BackendRow): string {
-  if (!row.verdict) return reachabilityStatus(row)?.label ?? verdictSummary(null);
-  return verdictSummary(row.verdict);
-}
-
-/**
- * What the last check said about a hub node, reachable or not: why it could not be reached, or the refusal its
- * worker answered with. The line under its URL on the Hub tab and in the Backends list; "" otherwise.
- */
-export function reachabilityNote(row: BackendRow | undefined): string {
-  if (!row || row.source !== "hub") return "";
-  return row.reason ?? "";
-}
-
-/** The reason a hub node could not be reached from this computer, for the line under a picker; "" otherwise. */
 export function unreachableNote(row: BackendRow | undefined): string {
-  return row?.reachable === false ? reachabilityNote(row) : "";
+  if (row?.source !== "hub" || row.verdict?.error_kind !== UNREACHABLE) return "";
+  return row.verdict.error ?? "";
 }
 
 function withVerdicts(
@@ -67,7 +54,7 @@ function withVerdicts(
   const byId = new Map(rows.map((row) => [row.id, row]));
   return keys.map((key) => {
     const row = byId.get(key);
-    return { key, label: row ? `${label(key)} · ${backendSummary(row)}` : label(key) };
+    return { key, label: row ? `${label(key)} · ${verdictSummary(row.verdict)}` : label(key) };
   });
 }
 

@@ -117,20 +117,7 @@
                     >
                   </h4>
                   <div class="backends-url">{{ backend.url }}</div>
-                  <div
-                    v-if="reachabilityNote(backend)"
-                    class="backends-reason"
-                    :data-testid="`backend-reason-${backend.id}`"
-                  >
-                    {{ reachabilityNote(backend) }}
-                  </div>
                 </div>
-                <span
-                  v-if="reachabilityStatus(backend)"
-                  :class="['compute-chip', `compute-chip--${reachabilityStatus(backend)?.tone}`]"
-                  :data-testid="`backend-reachability-${backend.id}`"
-                  >{{ reachabilityStatus(backend)?.label }}</span
-                >
                 <span
                   v-if="!openRows[backend.id]"
                   :class="['compute-chip', `compute-chip--${rowStatus(backend.id).tone}`]"
@@ -332,12 +319,7 @@ import type { ComputeBackend } from "../../api/computeBackends.api";
 import { NO_AUTOFILL } from "../../utils/noAutofill";
 import BackendHandshakeStatus from "../../components/settings/BackendHandshakeStatus.vue";
 import WorkerPoolCard from "../../components/settings/WorkerPoolCard.vue";
-import {
-  handshakeStatus,
-  reachabilityStatus,
-  type StatusSummary,
-} from "../../components/settings/handshakeStatus";
-import { reachabilityNote } from "../../utils/executionLocation";
+import { handshakeStatus, type StatusSummary } from "../../components/settings/handshakeStatus";
 import ComputeCard from "./ComputeCard.vue";
 import ExchangeStoreCard from "./ExchangeStoreCard.vue";
 import {
@@ -621,12 +603,6 @@ watch(
   font-family: var(--font-family-mono);
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
-  overflow-wrap: anywhere;
-}
-.backends-reason {
-  margin-top: var(--spacing-1);
-  font-size: var(--font-size-sm);
-  color: var(--color-danger-dark);
   overflow-wrap: anywhere;
 }
 .backends-actions {

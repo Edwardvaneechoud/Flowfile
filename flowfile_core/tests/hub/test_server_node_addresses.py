@@ -90,7 +90,7 @@ def hub(serve_fake, store):  # noqa: F811
     old = closed_url()
     fake.nodes = [compute_node(NODE_ID, "team", worker_url=old)]
     tokens = client.sign_in(fake.url, "ana", "s3cret")
-    stored = {"hub_url": fake.url, "refresh_token": tokens["refresh_token"], "device_id": 1, "device_name": "core-1"}
+    stored = {"hub_url": fake.url, "refresh_token": tokens["refresh_token"], "device_name": "core-1"}
     session.save(USER_ID, stored)
     with get_db_context() as db:
         db.add(ConfiguredBackend(id=BACKEND_ID, url=old, hub_node_id=NODE_ID, hub_user_id=USER_ID))

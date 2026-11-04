@@ -23,6 +23,19 @@ def test_get_info_reads_the_hub_without_signing_in():
     assert "Authorization" not in seen[0].headers
 
 
+def test_get_info_needs_only_the_organisation_and_the_hubs_version():
+    info = {"org_name": "Acme Data", "hub_version": "0.3.0"}
+    handler = lambda request: httpx.Response(200, json=info)  # noqa: E731
+
+    assert client.get_info(HUB_URL, http=_mk(handler)) == info
+
+
+def test_get_info_refuses_an_answer_without_the_hubs_version():
+    handler = lambda request: httpx.Response(200, json={"org_name": "Acme Data"})  # noqa: E731
+    with pytest.raises(client.HubRefused):
+        client.get_info(HUB_URL, http=_mk(handler))
+
+
 def test_sign_in_posts_the_form_and_answers_the_token_pair():
     hub = FakeHub()
     tokens = client.sign_in(HUB_URL, "ana", "s3cret", http=hub.http())

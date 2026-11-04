@@ -20,7 +20,7 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
-from flowfile_core.hub_client import client, reachability, session
+from flowfile_core.hub_client import client, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 
 
@@ -77,4 +77,3 @@ def refresh(backend_ids: Iterable[str]) -> None:
     for backend_id, old_url in moved:
         handshake.reset_handshake(old_url)
         registry.forget(backend_id)
-        reachability.forget(backend_id)

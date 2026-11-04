@@ -61,7 +61,7 @@ def hub(monkeypatch) -> FakeHubWithCatalog:
 @pytest.fixture
 def connected(store, hub) -> FakeHubWithCatalog:
     tokens = client.sign_in(HUB_URL, "ana", "s3cret")
-    session.save(1, {"hub_url": HUB_URL, "refresh_token": tokens["refresh_token"], "device_id": 1})
+    session.save(1, {"hub_url": HUB_URL, "refresh_token": tokens["refresh_token"]})
     hub.calls.clear()
     return hub
 

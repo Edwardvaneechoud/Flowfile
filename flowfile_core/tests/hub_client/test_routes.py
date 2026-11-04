@@ -16,7 +16,8 @@ from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
-from flowfile_core.hub_client import HUB_CONTRACT_VERSION, node_tokens, reachability, session
+from flowfile_core.hub_client import node_tokens, session
+from flowfile_core.routes import hub_client as hub_routes
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 from shared._version import get_version
 from tests.hub_client.conftest import HUB_URL, INFO, compute_node
@@ -31,12 +32,11 @@ OLD = compute_node(3, "old", enabled=False)
 def no_configured_backends(monkeypatch):
     """Every backends row a test left is removed when it ends, the registry forgets it and no node token stays.
 
-    The reachability check a sync queues is stood down here: the nodes' worker URLs are names nothing resolves, and
-    ``test_reachability.py`` checks real workers.
+    The check a sync queues is stood down here: the nodes' worker URLs are names nothing resolves, and
+    ``test_node_verdicts.py`` checks real workers.
     """
     monkeypatch.setattr(node_tokens, "_tokens", {})
-    monkeypatch.setattr(reachability, "_outcomes", {})
-    monkeypatch.setattr(reachability, "check_all", lambda backend_ids: None)
+    monkeypatch.setattr(hub_routes, "_check_nodes", lambda backend_ids: None)
     yield
     with get_db_context() as db:
         for row in db.query(ConfiguredBackend).all():
@@ -82,9 +82,8 @@ def test_every_route_requires_the_local_sign_in(store, method, kwargs):
         ("POST", "/hub_client/connection", {"json": CONNECT}),
         ("DELETE", "/hub_client/connection", {}),
         ("POST", "/hub_client/compute_nodes/sync", {}),
-        ("POST", "/hub_client/compute_nodes/check", {}),
     ],
-    ids=["connect", "disconnect", "sync", "check"],
+    ids=["connect", "disconnect", "sync"],
 )
 def test_on_a_server_with_users_only_an_administrator_connects_or_fills_the_backends(
     store, hub, non_admin_client, method, path, kwargs
@@ -102,21 +101,10 @@ def test_not_connected_reports_the_hostname_as_the_default_device_name(api, hub)
     assert body["connected"] is False
     assert body["hub_url"] is None
     assert body["device_name"] == socket.gethostname()
-    assert body["client_version"] == get_version()
-    assert body["contract_version"] == HUB_CONTRACT_VERSION
     assert body["reachable"] is False
-    assert body["node_name"] is None
     assert body["account"] is None
     assert (body["joined"], body["organisation_storage"]) == (False, None)
     assert hub.calls == []
-
-
-def test_the_connection_names_the_node_this_core_is_connected_or_not(api, hub, monkeypatch):
-    monkeypatch.setenv("FLOWFILE_NODE_NAME", "team-local")
-
-    assert api.get("/hub_client/connection").json()["node_name"] == "team-local"
-    assert api.post("/hub_client/connection", json=CONNECT).json()["node_name"] == "team-local"
-    assert api.get("/hub_client/connection").json()["node_name"] == "team-local"
 
 
 def test_connecting_stores_the_refresh_token_and_device_and_never_the_password(api, hub):
@@ -128,7 +116,6 @@ def test_connecting_stores_the_refresh_token_and_device_and_never_the_password(a
     assert body["hub_url"] == HUB_URL
     assert body["device_name"] == "ana-laptop"
     assert body["org_name"] == INFO["org_name"]
-    assert body["vend_mode"] == "static"
     assert body["expires_at"] is not None
     assert body["account"] == "ana"
     assert (body["joined"], body["organisation_storage"]) == (False, None)
@@ -144,7 +131,7 @@ def test_connecting_stores_the_refresh_token_and_device_and_never_the_password(a
     assert "s3cret" not in raw
     stored = json.loads(raw)
     assert stored["refresh_token"] in hub.live_refresh
-    assert stored["device_id"] == hub.devices[("ana", "ana-laptop")]
+    assert set(stored) == {"hub_url", "refresh_token", "refresh_expires_at", "device_name"}
 
 
 def test_status_after_connecting_reports_the_hub_live(api, hub):
@@ -157,9 +144,6 @@ def test_status_after_connecting_reports_the_hub_live(api, hub):
     assert body["reachable"] is True
     assert body["org_name"] == "Acme Renamed"
     assert body["hub_version"] == INFO["hub_version"]
-    assert body["core_version"] == INFO["core_version"]
-    assert body["vend_mode"] == "static"
-    assert body["device_id"] == 1
     assert body["error"] is None
     assert body["account"] == "ana"
 
@@ -174,7 +158,7 @@ def test_a_hub_that_stopped_answering_still_reports_the_connection(api, hub):
     assert body["reachable"] is False
     assert body["error"]
     assert body["account"] == "ana"
-    assert body["org_name"] is None and body["hub_version"] is None and body["vend_mode"] is None
+    assert body["org_name"] is None and body["hub_version"] is None
 
 
 def test_without_a_device_name_the_hostname_is_registered(api, hub):
@@ -185,13 +169,11 @@ def test_without_a_device_name_the_hostname_is_registered(api, hub):
 
 
 def test_two_device_names_under_one_user_are_two_registrations(api, hub):
-    first = api.post("/hub_client/connection", json=CONNECT).json()
-    second = api.post("/hub_client/connection", json={**CONNECT, "device_name": "ana-desktop"}).json()
-    again = api.post("/hub_client/connection", json=CONNECT).json()
+    api.post("/hub_client/connection", json=CONNECT)
+    api.post("/hub_client/connection", json={**CONNECT, "device_name": "ana-desktop"})
+    api.post("/hub_client/connection", json=CONNECT)
 
-    assert len(hub.devices) == 2
-    assert first["device_id"] != second["device_id"]
-    assert again["device_id"] == first["device_id"]
+    assert set(hub.devices) == {("ana", "ana-laptop"), ("ana", "ana-desktop")}
 
 
 def test_a_version_refusal_answers_426_with_the_hubs_text_and_stores_nothing(api, hub):

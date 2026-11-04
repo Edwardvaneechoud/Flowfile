@@ -15,7 +15,7 @@ USER_ID = 41
 def _connect(hub) -> dict:
     tokens = client.sign_in(HUB_URL, "ana", "s3cret")
     session.save(
-        USER_ID, {"hub_url": HUB_URL, "refresh_token": tokens["refresh_token"], "device_id": 1, "device_name": "laptop"}
+        USER_ID, {"hub_url": HUB_URL, "refresh_token": tokens["refresh_token"], "device_name": "laptop"}
     )
     return tokens
 
@@ -27,7 +27,7 @@ def _raw(user_id: int = USER_ID) -> dict:
 def test_save_stores_one_json_string_under_the_users_key(store, hub):
     tokens = _connect(hub)
     stored = _raw()
-    assert set(stored) == {"hub_url", "refresh_token", "refresh_expires_at", "device_id", "device_name"}
+    assert set(stored) == {"hub_url", "refresh_token", "refresh_expires_at", "device_name"}
     assert stored["refresh_token"] == tokens["refresh_token"]
     exp = jwt.decode(tokens["refresh_token"], options={"verify_signature": False})["exp"]
     assert stored["refresh_expires_at"] == exp

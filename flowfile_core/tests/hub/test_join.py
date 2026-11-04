@@ -28,7 +28,8 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
-from flowfile_core.hub_client import node_tokens, reachability
+from flowfile_core.hub_client import node_tokens
+from flowfile_core.routes import hub_client as hub_routes
 from shared import hub_node
 from shared.tests import hub_join
 from tests.hub_client import conftest as hub_client_fakes
@@ -341,10 +342,9 @@ def api(store) -> TestClient:
 
 @pytest.fixture
 def no_configured_backends(monkeypatch):
-    """No node token or reachability check outlives the test, and every backends row it left is removed."""
+    """No node token or queued node check outlives the test, and every backends row it left is removed."""
     monkeypatch.setattr(node_tokens, "_tokens", {})
-    monkeypatch.setattr(reachability, "_outcomes", {})
-    monkeypatch.setattr(reachability, "check_all", lambda backend_ids: None)
+    monkeypatch.setattr(hub_routes, "_check_nodes", lambda backend_ids: None)
     yield
     with get_db_context() as db:
         for row in db.query(ConfiguredBackend).all():
@@ -375,7 +375,6 @@ def test_a_joined_core_never_lists_its_own_node_and_drops_a_row_written_before(
     assert _row_ids() == ["worker:gpu"]
     reconnected = api.post("/hub_client/connection", json=CONNECT)
     assert reconnected.json()["nodes_synced"] == 1
-    assert reconnected.json()["node_name"] == "team-local"
     assert _row_ids() == ["worker:gpu"]
 
 

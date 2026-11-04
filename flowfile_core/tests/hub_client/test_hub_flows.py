@@ -44,7 +44,6 @@ class FakeHubWithFlows(FakeHub):
         self.flows: dict[str, dict] = {}
         self.versions: dict[str, list[dict]] = {}
         self.publishes: list[tuple[str, dict]] = []
-        self.namespace_parents: list[int | None] = []
         self._registrations = 0
 
     def seed(self, flow_uuid: str, name: str, definition: dict, namespace_id: int = 2, author_id: int = 7) -> dict:
@@ -85,7 +84,6 @@ class FakeHubWithFlows(FakeHub):
             if path == "/catalog/namespaces":
                 parent = request.url.params.get("parent_id")
                 parent_id = None if parent is None else int(parent)
-                self.namespace_parents.append(parent_id)
                 return self._json(200, [ns for ns in NAMESPACES if ns["parent_id"] == parent_id])
             if path == "/hub/flows":
                 namespace = request.url.params.get("namespace_id")
@@ -320,7 +318,6 @@ def _saved_origin(path: Path) -> dict | None:
 def test_every_flow_route_needs_a_hub_connection_and_never_answers_401(api, hub, user_id):
     own_flow = _new_flow(user_id, None)
     for method, path, kwargs in (
-        ("GET", "/hub_client/namespaces", {}),
         ("GET", "/hub_client/flows", {}),
         ("GET", "/hub_client/flows/3f7b4b8e-1b2a-4c3d-9e8f-0a1b2c3d4e5f/versions", {}),
         ("POST", "/hub_client/publish", {"json": {"flow_id": own_flow.flow_id}}),
@@ -332,24 +329,17 @@ def test_every_flow_route_needs_a_hub_connection_and_never_answers_401(api, hub,
     assert hub.calls == []
 
 
-def test_namespaces_flows_and_versions_are_passed_through_from_the_hub(connected, hub):
+def test_flows_and_versions_are_passed_through_from_the_hub(connected, hub):
     hub.seed("11111111-2222-4333-8444-555555555555", "orders", {"flowfile_name": "orders"}, namespace_id=2)
     hub.seed("66666666-7777-4888-9999-000000000000", "hr", {"flowfile_name": "hr"}, namespace_id=1)
 
-    assert connected.get("/hub_client/namespaces").json() == NAMESPACES[:1]
-    assert connected.get("/hub_client/namespaces", params={"parent_id": 1}).json() == NAMESPACES[1:]
-    assert connected.get("/hub_client/namespaces", params={"parent_id": 2}).json() == []
-    assert hub.namespace_parents == [None, 1, 2]
     flows = connected.get("/hub_client/flows", params={"namespace_id": 2}).json()
     assert [f["name"] for f in flows] == ["orders"]
     assert flows[0]["latest_version"] == 1
     versions = connected.get("/hub_client/flows/11111111-2222-4333-8444-555555555555/versions").json()
     assert [v["version"] for v in versions] == [1]
     assert "definition" not in versions[0]
-    assert hub.calls[-5:] == [
-        ("GET", "/catalog/namespaces"),
-        ("GET", "/catalog/namespaces"),
-        ("GET", "/catalog/namespaces"),
+    assert hub.calls[-2:] == [
         ("GET", "/hub/flows"),
         ("GET", "/hub/flows/11111111-2222-4333-8444-555555555555/versions"),
     ]

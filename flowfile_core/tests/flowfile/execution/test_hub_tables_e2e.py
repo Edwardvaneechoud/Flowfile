@@ -108,7 +108,7 @@ def hub(serve_fake, store, monkeypatch) -> Iterator[HubCatalog]:
         sales, "orders", file_path=f"{storage_uri}/orders", is_remote_storage=True, schema_columns=columns
     )
     tokens = client.sign_in(url, "ana", "s3cret")
-    session.save(1, {"hub_url": url, "refresh_token": tokens["refresh_token"], "device_id": 1, "device_name": "e2e"})
+    session.save(1, {"hub_url": url, "refresh_token": tokens["refresh_token"], "device_name": "e2e"})
     fake.calls.clear()
     try:
         yield HubCatalog(fake, url, storage_uri, sales, orders)

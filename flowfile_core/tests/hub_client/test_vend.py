@@ -50,7 +50,7 @@ def catalog(hub) -> dict:
 @pytest.fixture
 def connected(store, hub):
     tokens = client.sign_in(HUB_URL, "ana", "s3cret")
-    session.save(USER, {"hub_url": HUB_URL, "refresh_token": tokens["refresh_token"], "device_id": 1})
+    session.save(USER, {"hub_url": HUB_URL, "refresh_token": tokens["refresh_token"]})
     hub.calls.clear()
     return hub
 
@@ -77,7 +77,7 @@ def test_a_run_asks_the_hub_once_naming_the_run_and_its_namespaces(connected, ca
 def test_without_a_hub_session_the_run_is_told_to_connect_again_and_the_hub_vends_nothing(store, hub, catalog, state):
     if state == "expired session":
         tokens = client.sign_in(HUB_URL, "ana", "s3cret")
-        session.save(USER, {"hub_url": HUB_URL, "refresh_token": tokens["refresh_token"], "device_id": 1})
+        session.save(USER, {"hub_url": HUB_URL, "refresh_token": tokens["refresh_token"]})
         hub.live_refresh.clear()
     hub.calls.clear()
 

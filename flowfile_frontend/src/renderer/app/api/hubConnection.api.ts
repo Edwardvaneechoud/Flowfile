@@ -5,7 +5,6 @@ import type { ComputeBackend } from "./computeBackends.api";
 
 const CONNECTION_URL = "/hub_client/connection";
 const COMPUTE_NODES_SYNC_URL = "/hub_client/compute_nodes/sync";
-const COMPUTE_NODES_CHECK_URL = "/hub_client/compute_nodes/check";
 
 export interface HubConnection {
   connected: boolean;
@@ -74,7 +73,7 @@ export async function getHubConnection(): Promise<HubConnection> {
 
 /**
  * Signs in to the hub once and registers this device; the password goes to the hub and is not kept. Core then
- * fills the backends table from the hub's compute nodes and checks each once, behind its answer.
+ * fills the backends table from the hub's compute nodes and handshakes each once, behind its answer.
  */
 export async function connectHub(input: HubConnectInput): Promise<HubConnection> {
   const response = await axios.post<PyHubConnection>(CONNECTION_URL, {
@@ -91,14 +90,11 @@ export async function disconnectHub(): Promise<void> {
   await axios.delete(CONNECTION_URL);
 }
 
-/** Reads the hub's compute nodes now and makes the backends table match them. */
+/**
+ * Reads the hub's compute nodes now and makes the backends table match them; core handshakes the rows it wrote
+ * behind the answer, so their verdicts show on the next load.
+ */
 export async function syncHubComputeNodes(): Promise<HubComputeNodesSync> {
   const response = await axios.post<HubComputeNodesSync>(COMPUTE_NODES_SYNC_URL);
-  return response.data;
-}
-
-/** Checks now whether this computer reaches each of the hub's nodes; the hub rows with the outcome filled. */
-export async function checkHubComputeNodes(): Promise<ComputeBackend[]> {
-  const response = await axios.post<ComputeBackend[]>(COMPUTE_NODES_CHECK_URL);
   return response.data;
 }
