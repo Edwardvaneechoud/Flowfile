@@ -9,7 +9,9 @@ for the S3 store's presigned URLs. A node its backend falls short for is a ``Ref
 Stored connections are compared only on a backend whose ``credential_resolution`` is ``ambient``, one that reaches
 storage with its own identity and holds no catalog. A Run Flow node is placed with the flow it runs, and each node of
 that flow refused there refuses it. Needs are read from a resolved copy of the settings
-(``parameter_resolver.resolved_settings``), so a path on ``${dir}`` is placed by where ``dir`` points.
+(``parameter_resolver.resolved_settings``), so a path on ``${dir}`` is placed by where ``dir`` points. On a server
+joined to its hub with keys of its own, a step on another server of the hub whose stored connection holds this
+server's secret is refused (``held_on_this_server``).
 
 ``SingleBackendPolicy`` puts a whole run on one backend, except the node types pinned to a backend of their own.
 ``MixedPlacementPolicy`` puts each node on the backend its own ``execution_location`` names. Edges between two backends
@@ -29,7 +31,7 @@ from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.storage_backend import CatalogStorageTarget, locate_for_namespace
 from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.flowfile.database_connection_manager import db_connections
+from flowfile_core.flowfile.database_connection_manager import db_connections, ga_connections
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_node.requirements import NodeRequirements, requirements_for
 from flowfile_core.flowfile.param_types import coerce_param_value, stringify_param_value
@@ -184,6 +186,83 @@ def unmoved_without_store(nodes: list[FlowNode], policy: SingleBackendPolicy) ->
         )
         refusals.append(Refusal(node.node_id, location, reason))
     return refusals
+
+
+_SECRET_COLUMNS = (
+    "aws_secret_access_key_id",
+    "aws_session_token_id",
+    "azure_account_key_id",
+    "azure_client_secret_id",
+    "azure_sas_token_id",
+    "gcs_service_account_key_id",
+)
+"""The columns of a stored cloud storage connection that point at a secret it holds."""
+
+
+def held_on_this_server(nodes: list[FlowNode], assignment: Mapping[int, str]) -> list[Refusal]:
+    """The steps ``assignment`` puts on a server of the hub that use a stored connection holding this server's secret.
+
+    On a server joined to its hub with keys of its own, a stored cloud storage, Kafka or Google Analytics connection
+    keeps its secret in this server's database under this server's master key, and a step carries it as that
+    ciphertext or as a reference to the connection, which no other server of the hub opens. The caller refuses such a
+    step before the run with one sentence (``remedy`` ``None``), rather than let it fail there with a bare
+    ``InvalidToken``. A step on this server's own worker, a connection that holds no secret (``env_vars``, an
+    ``aws-cli`` profile) and a step whose settings cannot be resolved are never refused here. Nothing is decrypted.
+    """
+    from flowfile_core.hub_client import vend
+
+    refusals = []
+    for node in nodes:
+        backend_id = assignment.get(node.node_id)
+        if backend_id is None or not backend_id.startswith(registry.CONFIGURED_WORKER_PREFIX):
+            continue
+        held = _connection_holding_a_secret(node)
+        server = vend.node_name(backend_id) if held is not None else None
+        if server is None:
+            continue
+        kind, name = held
+        reason = (
+            f'node {node.node_id} uses the {kind} connection "{name}", whose secret this server keeps and the hub\'s '
+            f'server "{server}" cannot open, so the step can run on this server, or the connection must be on the hub'
+        )
+        refusals.append(Refusal(node.node_id, backend_id, reason))
+    return refusals
+
+
+def _connection_holding_a_secret(node: FlowNode) -> tuple[str, str] | None:
+    """The kind and name of the stored connection ``node`` uses that holds a secret; ``None`` when it uses none.
+
+    Each connection is looked up for the node's user, own first, else granted, as the run resolves it.
+    """
+    try:
+        settings = resolved_settings(node)
+    except ValueError:
+        return None
+    user_id = getattr(settings, "user_id", None)
+    if user_id is None:
+        return None
+    with get_db_context() as db:
+        if isinstance(settings, input_schema.NodeCloudStorageReader | input_schema.NodeCloudStorageWriter):
+            name = settings.cloud_storage_settings.connection_name
+            row = db_connections.get_cloud_connection(db, name, user_id) if name else None
+            if row is not None and any(getattr(row, column) is not None for column in _SECRET_COLUMNS):
+                return "cloud storage", row.connection_name
+        elif isinstance(settings, input_schema.NodeKafkaSource):
+            # Function-local: the Kafka client library loads only for a Kafka step.
+            from flowfile_core.kafka.connection_manager import get_kafka_connection, get_kafka_connection_by_name
+
+            kafka = settings.kafka_settings
+            row = get_kafka_connection(db, kafka.kafka_connection_id, user_id) if kafka.kafka_connection_id else None
+            if row is None and kafka.kafka_connection_name:
+                row = get_kafka_connection_by_name(db, kafka.kafka_connection_name, user_id)
+            if row is not None and (row.sasl_password_id is not None or row.ssl_key_id is not None):
+                return "Kafka", row.connection_name
+        elif isinstance(settings, input_schema.NodeGoogleAnalyticsReader):
+            name = settings.google_analytics_settings.ga_connection_name
+            row = ga_connections.get_ga_connection(db, name, user_id) if name else None
+            if row is not None and row.credential_secret_id is not None:
+                return "Google Analytics", row.connection_name
+    return None
 
 
 def unsealed_for(backend_id: str, capabilities: Capabilities, targets: tuple[str, ...]) -> str | None:

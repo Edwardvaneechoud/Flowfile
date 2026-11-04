@@ -36,6 +36,7 @@ from flowfile_core.flowfile.execution.placement import (
     Placement,
     Refusal,
     SingleBackendPolicy,
+    held_on_this_server,
     hub_table_namespace,
     place,
     remedy_for,
@@ -1107,7 +1108,9 @@ class ExecutionMixin(GraphMixinBase):
         With an exchange store (``FLOWFILE_EXCHANGE_URI``) the policy is ``MixedPlacementPolicy``, falling back to
         ``registry.fallback_backend_id``; without one it is ``SingleBackendPolicy`` on the run's backend, and on a
         server joined to its hub with keys of its own a node whose own Compute backend names another backend is
-        refused (``unmoved_without_store``) rather than run on the run's backend. Each backend named is read through
+        refused (``unmoved_without_store``) rather than run on the run's backend. On such a server, under either policy,
+        a node placed on another server of the hub whose stored connection holds this server's secret is refused too
+        (``held_on_this_server``); a node refused already keeps its first refusal. Each backend named is read through
         its handshake verdict (``handshake.verdict_for``), except ``local`` in a process that serves, which runs no
         node and is never asked. On a joined server the hub's servers named are first moved to the addresses the hub
         lists now (``node_addresses.refresh``). A backend refused whole, a ``VersionMismatch`` or an id the registry
@@ -1224,11 +1227,17 @@ class ExecutionMixin(GraphMixinBase):
                     for refusal in placement.refusals
                 ],
             )
-        if isinstance(policy, SingleBackendPolicy) and issuer_accounts.joined_with_keys() is not None:
+        if issuer_accounts.joined_with_keys() is not None:
+            late = unmoved_without_store(nodes, policy) if isinstance(policy, SingleBackendPolicy) else []
+            late += held_on_this_server(nodes, placement.assignment)
             refused_ids = {refusal.node_id for refusal in placement.refusals}
-            unmoved = [r for r in unmoved_without_store(nodes, policy) if r.node_id not in refused_ids]
-            if unmoved:
-                placement = replace(placement, refusals=[*placement.refusals, *unmoved])
+            added = []
+            for refusal in late:
+                if refusal.node_id not in refused_ids:
+                    refused_ids.add(refusal.node_id)
+                    added.append(refusal)
+            if added:
+                placement = replace(placement, refusals=[*placement.refusals, *added])
         return placement, edges
 
     def preview_placement(self) -> Placement | None:
@@ -1722,7 +1731,8 @@ class ExecutionMixin(GraphMixinBase):
 
         Only on a server joined to its hub with keys of its own: another server of the hub has a master key of its
         own, so the names are asked of the hub (``run_secrets.names_for``). A step whose names cannot be read names
-        none and fails as it runs.
+        none and fails as it runs. A step whose stored connection holds this server's secret asks nothing, since
+        placement refuses it (``held_on_this_server``) with its own sentence before any vend would.
         """
         if issuer_accounts.joined_with_keys() is None:
             return {}
@@ -1731,6 +1741,8 @@ class ExecutionMixin(GraphMixinBase):
         for node in nodes:
             backend_id = policy.backend_for(node)
             if not backend_id.startswith(registry.CONFIGURED_WORKER_PREFIX) or vend.node_name(backend_id) is None:
+                continue
+            if held_on_this_server([node], {node.node_id: backend_id}):
                 continue
             try:
                 names = run_secrets.names_for(node)
