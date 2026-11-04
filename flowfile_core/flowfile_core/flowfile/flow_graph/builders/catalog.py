@@ -38,6 +38,7 @@ from flowfile_core.flowfile.flow_graph.catalog_write import (
     _handle_virtual_table_write,
     _scd2_row_filter,
     _scd2_system_column_dtypes,
+    refuse_without_hub_catalog,
 )
 from flowfile_core.flowfile.flow_graph.history import with_history_capture
 from flowfile_core.flowfile.flow_node.flow_node import (
@@ -426,6 +427,7 @@ class CatalogBuildersMixin(GraphMixinBase):
             settings = node_catalog_writer.catalog_write_settings
             if not settings.table_name:
                 raise ValueError("Catalog writer requires a table name")
+            refuse_without_hub_catalog(settings)
             if settings.write_mode == "virtual":
                 return _handle_virtual_table_write(self, node_catalog_writer, df)
             return _handle_physical_table_write(self, node_catalog_writer, df)

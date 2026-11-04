@@ -1659,7 +1659,9 @@ class ExecutionMixin(GraphMixinBase):
             )
             node_result.finish(success=False, error=sentence)
             self.latest_run_info.node_step_result.append(node_result)
-        self.flow_logger.error(f"{len(nodes)} node(s) on hub tables cannot run: {sentence}; no node was started")
+        self.flow_logger.error(
+            f"{len(nodes)} node(s) on hub tables cannot run: {sentence.rstrip('.')}; no node was started"
+        )
 
     def _end_hub_vend(self, exchange_run: ExchangeRun) -> None:
         """Forget what the hub vended to the run: ``hub_vend``, and every node result that embeds its credential.

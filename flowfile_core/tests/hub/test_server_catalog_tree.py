@@ -14,8 +14,10 @@ from fastapi.testclient import TestClient
 from flowfile_core import main
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.init_db import create_default_catalog_namespace
+from flowfile_core.flowfile.flow_graph.catalog_write import NO_HUB_CATALOG, refuse_without_hub_catalog
 from flowfile_core.hub_client import catalog as hub_catalog
 from flowfile_core.schemas import input_schema
 from tests import test_hub_sign_in
@@ -134,3 +136,68 @@ def test_a_run_writing_to_a_hub_catalog_on_its_own_disk_is_refused_with_the_tree
         2: notes_row["unavailable_reason"]
     }
     assert hub.catalog.vend_calls == []
+
+
+OWNER = {"is_owner": True, "access_level": "owner", "shared_by": None}
+USE = {"is_owner": False, "access_level": "use", "shared_by": "admin"}
+
+
+def test_the_hubs_catalogs_a_person_owns_read_as_theirs_where_the_hub_said_nothing(hub, username):
+    """The hub stamps no access for an admin it does not restrict; the rows they own say they may write them."""
+    main_catalog = hub.catalog.seed_catalog("main", storage_uri="s3://acme/main", owner_id=test_server_run_report.UID)
+    hub.catalog.seed_schema(main_catalog, "default", owner_id=test_server_run_report.UID)
+    hub.catalog.seed_schema(main_catalog, "shared", owner_id=test_server_run_report.UID, access=USE)
+    team = hub.catalog.seed_catalog("team", storage_uri="s3://acme/team")
+    hub.catalog.seed_schema(team, "raw")
+    _, access_token = sign_in(hub, username)
+
+    tree = client.get("/catalog/namespaces/tree", headers=bearer(access_token)).json()
+
+    access = {
+        (root["name"], row["name"]): row["access"]
+        for root in tree
+        if root["source"] == "hub"
+        for row in (root, *root["children"])
+    }
+    assert access == {
+        ("main", "main"): OWNER,
+        ("main", "default"): OWNER,
+        ("main", "shared"): USE,
+        ("team", "team"): None,
+        ("team", "raw"): None,
+    }
+
+
+def test_a_writer_naming_no_catalog_on_a_joined_server_is_refused_and_writes_nothing_here(
+    hub, organisation, username, open_flow
+):
+    person, access_token = sign_in(hub, username)
+    flow = open_flow(person, "into_no_catalog")
+    add_test_manual_input(flow, CATALOG_SAMPLE_DATA, node_id=1)
+    add_promise(flow, 2, "catalog_writer")
+    flow.add_catalog_writer(
+        input_schema.NodeCatalogWriter(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            user_id=person,
+            catalog_write_settings=input_schema.CatalogWriteSettings(table_name="memo", write_mode="overwrite"),
+        )
+    )
+    connect(flow, 1, 2)
+
+    ran = client.post("/flow/run/", params={"flow_id": flow.flow_id}, headers=bearer(access_token))
+
+    assert ran.status_code == 200, ran.text
+    run_info = flow.get_run_info()
+    assert run_info.success is False
+    errors = {result.node_id: result.error for result in run_info.node_step_result}
+    assert errors[2] == NO_HUB_CATALOG
+    with get_db_context() as db:
+        assert db.query(db_models.CatalogTable).filter(db_models.CatalogTable.name == "memo").count() == 0
+    assert hub.catalog.vend_calls == []
+
+
+def test_off_a_joined_server_a_writer_naming_no_catalog_is_not_refused(node_file):
+    assert refuse_without_hub_catalog(input_schema.CatalogWriteSettings(table_name="memo")) is None
+

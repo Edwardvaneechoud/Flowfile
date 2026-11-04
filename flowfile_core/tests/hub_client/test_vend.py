@@ -101,6 +101,41 @@ def test_a_hub_refusal_is_a_sentence_carrying_the_hub_s_reason(connected, catalo
     )
 
 
+def test_a_hub_that_says_what_to_do_is_heard_in_its_own_sentence_alone(connected, catalog):
+    connected.says_sentences = True
+
+    with pytest.raises(LookupError) as refused:
+        vend.request(USER, "run-abc", set(), {catalog["raw"]})
+
+    assert str(refused.value) == (
+        "You can read sales.raw but not write to it; ask an admin or your team's manager for write access"
+    )
+
+
+def test_a_read_the_hub_refuses_in_a_sentence_is_that_sentence(connected, catalog):
+    connected.says_sentences = True
+    connected.grants.pop(catalog["raw"])
+
+    with pytest.raises(LookupError) as refused:
+        vend.request(USER, "run-abc", {catalog["raw"]}, set())
+
+    assert str(refused.value) == "You cannot read sales.raw; ask an admin or your team's manager to share it"
+
+
+@pytest.mark.parametrize(
+    "detail,status,expected",
+    [
+        ("no manage grant on namespace 6", 403, f"{vend.REFUSED}: no manage grant on namespace 6"),
+        ("You can read main.default but not write to it", 403, "You can read main.default but not write to it"),
+        ("The hub answered 403.", 403, f"{vend.REFUSED}: The hub answered 403."),
+        ("This hub needs Flowfile 0.30 or later.", 426, "This hub needs Flowfile 0.30 or later."),
+    ],
+    ids=["bare reason", "sentence", "no text", "version sentence"],
+)
+def test_the_prefix_stays_only_before_a_refusal_that_carries_no_sentence(detail, status, expected):
+    assert vend.refusal_sentence(detail, status) == expected
+
+
 def test_a_hub_that_vends_nothing_says_why(connected, catalog):
     connected.vend_failure = 501
 

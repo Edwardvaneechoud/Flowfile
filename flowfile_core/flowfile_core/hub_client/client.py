@@ -64,13 +64,18 @@ def _raw_detail(resp: httpx.Response):
         return None
 
 
+def answered(status: int) -> str:
+    """What a refusal says when the hub gave no text of its own."""
+    return f"The hub answered {status}."
+
+
 def _detail(resp: httpx.Response) -> str:
     detail = _raw_detail(resp)
     if isinstance(detail, str) and detail:
         return detail
     if isinstance(detail, dict) and isinstance(detail.get("message"), str):
         return detail["message"]
-    return f"The hub answered {resp.status_code}."
+    return answered(resp.status_code)
 
 
 def _send(method: str, url: str, path: str, http: httpx.Client | None, **kwargs):

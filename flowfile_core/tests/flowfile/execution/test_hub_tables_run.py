@@ -219,6 +219,19 @@ def test_a_run_the_hub_refuses_ends_with_the_hub_s_reason(connected, operations)
     assert len(connected.vend_calls) == 1 and operations == []
 
 
+def test_a_run_the_hub_refuses_in_a_sentence_of_its_own_ends_with_that_sentence_alone(connected, operations):
+    connected.says_sentences = True
+    graph = make_graph(8730, execution_location="local")
+    add_manual_input(graph, 1, [{"id": 1}])
+    add_hub_writer(graph, 2, 1, connected.ids["raw"], "orders_copy")
+
+    run_info = graph.run_graph()
+
+    sentence = "You can read sales.raw but not write to it; ask an admin or your team's manager for write access"
+    assert_ended_before_any_node(run_info, graph, {2: sentence})
+    assert len(connected.vend_calls) == 1 and operations == []
+
+
 def test_a_run_reading_and_writing_hub_tables_vends_once_and_keeps_nothing(
     connected, scans, operations, monkeypatch, flag
 ):

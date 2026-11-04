@@ -195,7 +195,9 @@ class FakeHubWithCatalog(FakeHub):
     row of ``tables`` (404 for another id) and ``POST /catalog/tables/from-data`` appends one (409 on a name taken in
     the namespace), each body kept in ``registered``. A vend checks ``grants`` (``"use"`` or ``"manage"`` per
     namespace id) and answers one static credential per root ``storage_uri``, its options ``vend_options`` of that
-    root; each body is kept in ``vend_calls``. ``vend_failure`` set answers that status instead. ``POST /hub/runs``
+    root; each body is kept in ``vend_calls``. ``vend_failure`` set answers that status instead. With ``says_sentences``
+    a refused grant is answered as a hub that says what to do does (team-spaces TS10), naming the schema; otherwise
+    as core's bare reason. ``POST /hub/runs``
     keeps each run report in ``reports`` and answers 201.
     """
 
@@ -210,6 +212,7 @@ class FakeHubWithCatalog(FakeHub):
         self.registered: list[dict] = []
         self.reports: list[dict] = []
         self.vend_failure: int | None = None
+        self.says_sentences = False
         self._vends = 0
 
     def seed_catalog(self, name: str, **fields) -> dict:
@@ -241,10 +244,9 @@ class FakeHubWithCatalog(FakeHub):
             name=name,
             parent_id=parent_id,
             level=level,
-            owner_id=1,
             created_at=_STAMP,
             updated_at=_STAMP,
-            **fields,
+            **{"owner_id": 1, **fields},
         ).model_dump(mode="json", exclude=_LOCAL_ONLY)
         self.namespaces.append(row)
         return row
@@ -255,15 +257,29 @@ class FakeHubWithCatalog(FakeHub):
             namespace = next(ns for ns in self.namespaces if ns["id"] == namespace["parent_id"])
         return namespace
 
+    def _full_name(self, namespace_id: int) -> str:
+        namespace = next(ns for ns in self.namespaces if ns["id"] == namespace_id)
+        root = self._root(namespace_id)
+        return namespace["name"] if root is namespace else f"{root['name']}.{namespace['name']}"
+
     def _vend(self, body: dict) -> httpx.Response:
         self.vend_calls.append(body)
         if self.vend_failure is not None:
             return httpx.Response(self.vend_failure, json={"detail": "vending is not configured on this hub"})
         for ns in body["read_namespace_ids"]:
             if self.grants.get(ns) not in ("use", "manage"):
+                if self.says_sentences:
+                    sentence = f"You cannot read {self._full_name(ns)}; ask an admin or your team's manager to share it"
+                    return httpx.Response(403, json={"detail": sentence})
                 return httpx.Response(403, json={"detail": f"no use grant on namespace {ns}"})
         for ns in body["write_namespace_ids"]:
             if self.grants.get(ns) != "manage":
+                if self.says_sentences:
+                    sentence = (
+                        f"You can read {self._full_name(ns)} but not write to it; "
+                        "ask an admin or your team's manager for write access"
+                    )
+                    return httpx.Response(403, json={"detail": sentence})
                 return httpx.Response(403, json={"detail": f"no manage grant on namespace {ns}"})
         by_base: dict[str, dict] = {}
         for ns, write in [(n, False) for n in body["read_namespace_ids"]] + [

@@ -10,7 +10,8 @@ Each row also says where it lives and whether this Flowfile can use it (``merged
 name as their ``place`` and, for a catalog on the hub's own disk or on storage other than S3, the sentence a run over
 it would be refused with as their ``unavailable_reason``; this machine's rows carry ``On this computer`` or ``On this
 server`` beside them. On a server that joined its hub with keys of its own, this machine's rows are not ``offered``:
-the people there work in the hub's catalogs.
+the people there work in the hub's catalogs. There a hub row the person owns says so in its ``access`` when the hub
+left it unsaid, as it does for an admin it does not restrict, so the writer can tell what the person may write.
 
 A run that reads or writes the hub's tables finds their namespaces and tables here too (``locate``, ``table``), each
 lookup a fresh request through the user's hub session.
@@ -23,10 +24,12 @@ from pydantic import ValidationError
 from flowfile_core.auth import issuer_accounts
 from flowfile_core.configs import logger
 from flowfile_core.configs.settings import is_server_mode
+from flowfile_core.database.connection import get_db_context
 from flowfile_core.hub_client import client, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.hub_client.node_tokens import RECONNECT
 from flowfile_core.schemas.catalog_schema import CatalogTableOut, NamespaceTree
+from flowfile_core.schemas.sharing_schema import AccessInfo
 
 HUB = "hub"
 LOCAL = "local"
@@ -106,14 +109,37 @@ def merged(user_id: int, local: list[NamespaceTree]) -> list[NamespaceTree]:
     machine's rows says where it lives, ``On this computer``, or ``On this server`` in server mode. On a server that
     joined its hub with keys of its own (``issuer_accounts.joined_with_keys``) this machine's rows are marked not
     ``offered``, whatever the hub answers: the Catalog panel and the catalog reader's and writer's pickers show only
-    the hub's catalogs there, while the flow pickers still find the server's own.
+    the hub's catalogs there, while the flow pickers still find the server's own. There the hub's rows the person owns
+    carry an owner's ``access`` where the hub sent none (``_owned``).
     """
     hub = tree(user_id)
     joined = issuer_accounts.joined_with_keys() is not None
     if not hub and not joined:
         return local
+    if hub and joined:
+        with get_db_context() as db:
+            subject = issuer_accounts.subject_id(db, user_id)
+        if subject is not None:
+            hub = [_owned(node, subject) for node in hub]
     place = ON_THIS_SERVER if is_server_mode() else ON_THIS_COMPUTER
     return [_marked(node, place=place, offered=not joined) for node in local] + hub
+
+
+_OWNER = AccessInfo(is_owner=True, access_level="owner")
+
+
+def _owned(node: NamespaceTree, subject: int) -> NamespaceTree:
+    """``node`` and every namespace under it, each one the hub's person ``subject`` owns stamped as theirs where the
+    hub left ``access`` unsaid.
+
+    The hub stamps no access for a person it does not restrict (its admin), so without this their own catalogs would
+    read as neither writable nor read-only. The hub's vend lets an owner write, so the stamp says no more than it does.
+    """
+    children = [_owned(child, subject) for child in node.children]
+    update: dict = {"children": children}
+    if node.access is None and node.owner_id == subject:
+        update["access"] = _OWNER
+    return node.model_copy(update=update)
 
 
 def _marked(node: NamespaceTree, **fields) -> NamespaceTree:

@@ -112,6 +112,18 @@ class RunVend:
         return connection.get_worker_interface(user_id)
 
 
+def refusal_sentence(detail: str, status: int) -> str:
+    """The run's error for a vend the hub refused with ``detail`` (its HTTP ``status``).
+
+    A hub that says what to do answers a sentence of its own, capitalised as one ("You can read main.default but not
+    write to it; ask an admin or your team's manager for write access"), and the run's error is that sentence alone. A
+    bare reason ("no manage grant on namespace 6"), or no text at all, reads after ``REFUSED``.
+    """
+    if detail[:1].isupper() and detail != client.answered(status):
+        return detail
+    return f"{REFUSED}: {detail}"
+
+
 def request(user_id: int, run_id: str, readers: set[int], writers: set[int]) -> RunVend:
     """Ask the hub, through ``user_id``'s hub session, for the credentials of a run over its tables.
 
@@ -141,9 +153,9 @@ def request(user_id: int, run_id: str, readers: set[int], writers: set[int]) -> 
     except HubRefused as e:
         if e.status == 401:
             raise LookupError(catalog.NOT_CONNECTED) from e
-        raise LookupError(f"{REFUSED}: {e.detail}") from e
+        raise LookupError(refusal_sentence(e.detail, e.status)) from e
     except HubVersionRefused as e:
-        raise LookupError(f"{REFUSED}: {e.detail}") from e
+        raise LookupError(refusal_sentence(e.detail, 426)) from e
     except HubUnreachable as e:
         raise LookupError(str(e)) from e
     credentials = tuple(
