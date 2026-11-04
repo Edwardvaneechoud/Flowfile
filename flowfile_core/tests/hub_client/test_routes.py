@@ -76,6 +76,27 @@ def test_every_route_requires_the_local_sign_in(store, method, kwargs):
     assert response.status_code == 401
 
 
+@pytest.mark.parametrize(
+    "method,path,kwargs",
+    [
+        ("POST", "/hub_client/connection", {"json": CONNECT}),
+        ("DELETE", "/hub_client/connection", {}),
+        ("POST", "/hub_client/compute_nodes/sync", {}),
+        ("POST", "/hub_client/compute_nodes/check", {}),
+    ],
+    ids=["connect", "disconnect", "sync", "check"],
+)
+def test_on_a_server_with_users_only_an_administrator_connects_or_fills_the_backends(
+    store, hub, non_admin_client, method, path, kwargs
+):
+    response = non_admin_client.request(method, path, **kwargs)
+
+    assert response.status_code == 403
+    assert hub.calls == []
+    assert _rows() == {}
+    assert non_admin_client.get("/hub_client/connection").json()["connected"] is False
+
+
 def test_not_connected_reports_the_hostname_as_the_default_device_name(api, hub):
     body = api.get("/hub_client/connection").json()
     assert body["connected"] is False

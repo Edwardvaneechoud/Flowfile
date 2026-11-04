@@ -1,6 +1,8 @@
 """Connect this Flowfile to a hub, see the connection, and disconnect; publish a flow to it and open one from it.
 
-Every route is behind the local sign-in and works on the caller's own connection. No hub state ever answers 401,
+Every route is behind the local sign-in and works on the caller's own connection. Connecting, disconnecting and the
+node sync and check write the backends table every user of this core shares, so they need an administrator, as the
+backends routes do (on the desktop, its one user is one). No hub state ever answers 401,
 which the frontend reads as an expired local session: refused credentials answer 400, a hub that cannot be reached
 502, a hub that does not support this version 426 with the hub's own text, and a URL that is not ``http(s)://`` 422.
 The password is sent to the hub once, on connect, and is never stored, logged or answered.
@@ -36,7 +38,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth import issuer_accounts
-from flowfile_core.auth.jwt import get_current_active_user
+from flowfile_core.auth.jwt import get_current_active_user, get_current_admin_user
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.exceptions import FlowExistsError, NamespaceNotFoundError, NotAuthorizedError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
@@ -204,7 +206,7 @@ def get_connection(current_user=Depends(get_current_active_user)) -> HubConnecti
 def connect(
     request: HubConnectRequest,
     background: BackgroundTasks,
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_current_admin_user),
     db: Session = Depends(get_db),
 ) -> HubConnection:
     """Read the hub's info, sign in with the hub account, register this machine as a device, then store the session.
@@ -244,7 +246,7 @@ def connect(
 
 
 @router.delete("/connection", summary="Disconnect from the hub")
-def disconnect(current_user=Depends(get_current_active_user), db: Session = Depends(get_db)) -> dict:
+def disconnect(current_user=Depends(get_current_admin_user), db: Session = Depends(get_db)) -> dict:
     """Forget the hub session on this machine, the node tokens minted through it and the backends rows it filled.
 
     The hub keeps the device; nothing is sent to it. A row an administrator added by hand stays.
@@ -317,7 +319,7 @@ def _sync_nodes(db: Session, user_id: int, hub_url: str, access_token: str) -> t
 
 @router.post("/compute_nodes/sync", summary="Fill the backends table from the hub's compute nodes")
 def sync_compute_nodes(
-    background: BackgroundTasks, current_user=Depends(get_current_active_user), db: Session = Depends(get_db)
+    background: BackgroundTasks, current_user=Depends(get_current_admin_user), db: Session = Depends(get_db)
 ) -> ComputeNodesSync:
     """Read the hub's compute nodes now and make the backends table match them (``_sync_nodes``).
 
@@ -336,7 +338,7 @@ def sync_compute_nodes(
 
 @router.post("/compute_nodes/check", summary="Check now whether this machine reaches the hub's compute nodes")
 def check_compute_nodes(
-    current_user=Depends(get_current_active_user), db: Session = Depends(get_db)
+    current_user=Depends(get_current_admin_user), db: Session = Depends(get_db)
 ) -> list[ComputeBackendOut]:
     """Check the caller's hub-filled rows now, in the request, and answer them as ``GET /compute_backends`` does.
 

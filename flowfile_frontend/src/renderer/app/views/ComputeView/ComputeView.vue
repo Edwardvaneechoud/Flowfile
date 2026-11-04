@@ -10,7 +10,7 @@
     <div class="compute-content">
       <KernelManagerView v-if="activeTab === 'kernels'" />
       <ComputeBackendsPanel v-else-if="activeTab === 'backends'" />
-      <HubPanel v-else-if="activeTab === 'hub'" />
+      <HubPanel v-else-if="activeTab === 'hub' && authStore.isAdmin" />
       <PrivacyPanel v-else-if="activeTab === 'privacy'" />
       <BackupsPanel v-else-if="activeTab === 'backups'" />
     </div>

@@ -65,6 +65,7 @@ export const computeTabs: ComputeTabDef[] = [
     icon: "fa-solid fa-tower-broadcast",
     sidebarKey: "menu.computeHub",
     group: "preferences",
+    requiresAdmin: true,
   },
   {
     key: "privacy",
