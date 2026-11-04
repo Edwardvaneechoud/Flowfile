@@ -120,7 +120,9 @@ describe("HubPanel", () => {
     expect(text(status)).toContain(
       "Connected to https://hub.acme.test:8443 as the device ana-laptop.",
     );
-    const facts = [...host.querySelectorAll(".hub-card__facts dt, .hub-card__facts dd")].map(text);
+    const facts = Array.from(host.querySelectorAll(".hub-card__facts dt, .hub-card__facts dd")).map(
+      text,
+    );
     expect(facts.slice(0, 6)).toEqual([
       "Account",
       "Ana Lima",
