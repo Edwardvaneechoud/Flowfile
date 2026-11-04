@@ -221,6 +221,14 @@ def forget(backend_id: str) -> None:
         _hub_rows.pop(backend_id, None)
 
 
+def hub_server(backend_id: str | None) -> str | None:
+    """The hub's name of the server ``backend_id`` was made from, when this process made it from a hub-filled row."""
+    with _lock:
+        if backend_id is None or backend_id not in _hub_rows:
+            return None
+    return backend_id.removeprefix(CONFIGURED_WORKER_PREFIX)
+
+
 def default_backend_id() -> str:
     """The id of the default backend, the one a ``"remote"`` flow and a call without a graph use.
 

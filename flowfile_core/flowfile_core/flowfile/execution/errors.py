@@ -1,4 +1,5 @@
 _ADVICE = "Start it, or check the Backends page."
+_HUB_ADVICE = "Start it, or check its address on the hub's Compute page."
 
 
 class ComputeError(Exception):
@@ -18,10 +19,19 @@ class ComputeUnavailable(ComputeError):
     def __str__(self) -> str:
         """The message, plus a hint to start the backend when the connection was refused (POSIX or Windows wording).
 
-        The hint is added once, so an error rebuilt from a run report row's text keeps the one it has.
+        A server filled from a hub (``registry.hub_server``) is named by its name on the hub, and the hint, given for
+        any failure to reach it, points at its address on the hub's Compute page, where the hub keeps it. The hint is
+        added once, so an error rebuilt from a run report row's text keeps the one it has.
         """
+        from flowfile_core.flowfile.execution import registry
+
         message = super().__str__()
-        if "refused" not in message.lower() or message.endswith(_ADVICE):
+        if message.endswith((_ADVICE, _HUB_ADVICE)):
+            return message
+        server = registry.hub_server(self.backend_id)
+        if server is not None:
+            return f'{message}. Is the hub\'s server "{server}" running? {_HUB_ADVICE}'
+        if "refused" not in message.lower():
             return message
         if self.backend_id is None:
             return f"{message}. Is the compute backend running? {_ADVICE}"
