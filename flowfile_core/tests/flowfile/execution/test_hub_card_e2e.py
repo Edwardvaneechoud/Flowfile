@@ -1,18 +1,17 @@
 """The worker's command a hub's Compute page prints joins and serves as pasted, beside Flowfile desktop, end to end.
 
 The card's command is ``flowfile_worker --hub <hub> --join <code>``, the code a short one such as ``K7QX-M2PD``: no
-host, no name, no address and no variable; the hub's install script adds ``--port`` with a port of this machine's that
-is free, since the desktop's worker holds the default one. Here it runs as ``python -m flowfile_worker`` in the
+host, no name, no address and no variable; the hub's install script adds ``--port`` with a free port of this machine's,
+since beside Flowfile desktop the default one is the desktop's. Here it runs as ``python -m flowfile_worker`` in the
 environment of an operator's shell (no ``FLOWFILE_*`` variable, ``HOME`` a folder of the test's own holding a desktop's
-``~/.flowfile`` with its own ``hub_node.json``), against a fake hub on this machine, with the worker's default port held
-on loopback as a desktop's worker holds it. With a join token and no ``--host`` the worker listens on every interface;
+``~/.flowfile`` with its own ``hub_node.json``), against a fake hub on this machine; the desktop's own ports are never
+bound or called. With a join token and no ``--host`` the worker listens on every interface;
 it serves on the port it is given, tells the hub this machine's address and that port in one join, answers ``GET
 /health`` there, keeps its files in ``~/.flowfile-node/<machine name>`` and leaves the desktop's file as it was; a
 restart with the same command does not join again and serves on the same port. A port the operator gives that is taken
 stops the worker before it spends its token.
 """
 
-import errno
 import ipaddress
 import json
 import os
@@ -20,7 +19,6 @@ import socket
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import ANY
 from urllib.parse import urlsplit
@@ -28,7 +26,6 @@ from urllib.parse import urlsplit
 import pytest
 import requests
 
-from flowfile_worker.configs import DEFAULT_SERVICE_PORT
 from shared import hub_node
 from shared.tests.hub_join import HEARTBEAT_PATH, JOIN_PATH, FakeJoinHub
 from tests.conftest import _free_port
@@ -108,30 +105,7 @@ def home(tmp_path) -> Path:
     return home
 
 
-@pytest.fixture
-def desktop_port() -> Iterator[None]:
-    """The worker's default port held on loopback, as Flowfile desktop's worker holds it.
-
-    When something holds the port already (the desktop itself, on this machine), that is the same situation.
-    """
-    sock = socket.socket()
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    try:
-        sock.bind(("127.0.0.1", DEFAULT_SERVICE_PORT))
-        sock.listen()
-    except OSError as exc:
-        sock.close()
-        if exc.errno != errno.EADDRINUSE:
-            raise
-        yield
-        return
-    try:
-        yield
-    finally:
-        sock.close()
-
-
-def test_the_cards_command_beside_a_desktop_joins_once_and_serves_on_a_port_of_its_own(fake_hub, home, desktop_port):
+def test_the_cards_command_beside_a_desktop_joins_once_and_serves_on_a_port_of_its_own(fake_hub, home):
     token, name, port = fake_hub.mint(code=True), hub_node.default_name(), _free_port()
     folder = home / hub_node.NODE_FILES_DIR / name
     first = start(home, home.parent / "first.log", *card(fake_hub.url, token, port))
