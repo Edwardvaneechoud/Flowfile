@@ -1,5 +1,4 @@
-"""The /system/exchange_store admin routes and the settings behind them: a saved store, the environment winning, and
-on a team node the store its hub sets while nothing is saved."""
+"""The /system/exchange_store admin routes and the settings behind them: a saved store and the environment winning."""
 
 from __future__ import annotations
 
@@ -12,15 +11,7 @@ from flowfile_core.configs import exchange_config, settings
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.db_connections import store_cloud_connection
 from flowfile_core.flowfile.execution import exchange
-from flowfile_core.hub import exchange_store as hub_exchange_store
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
-from tests.flowfile.execution import test_exchange_store as exchange_tests
-from tests.hub_client import conftest as hub_client_fakes
-from tests.hub_client.conftest import HUB_URL
-
-hub = hub_client_fakes.hub
-multi_user = exchange_tests.multi_user
-users = exchange_tests.users
 
 ENV_VARS = ("FLOWFILE_EXCHANGE_URI", "FLOWFILE_EXCHANGE_CONNECTION", "FLOWFILE_EXCHANGE_MAX_ROWS")
 
@@ -173,73 +164,3 @@ def test_an_unreadable_file_is_no_store(no_env):
 
     assert exchange_config.saved() == exchange_config.ExchangeConfig()
 
-
-HUB_STORE = {
-    "uri": "s3://org-bucket/exchange",
-    "connection": "org exchange",
-    "max_rows": 50000,
-    "set_by": 1,
-    "set_at": "2026-11-03T09:00:00Z",
-}
-FROM_HUB = {"uri": "s3://org-bucket/exchange", "connection": "org exchange", "max_rows": 50000}
-BEARER = {"Authorization": "Bearer t"}
-
-
-@pytest.fixture
-def team_node(monkeypatch, no_env, multi_user, hub):
-    """This core as a team node of the fake hub, which sets ``HUB_STORE``; nothing is saved here."""
-    monkeypatch.setenv("JWT_SECRET_KEY", "a secret of the test's own")
-    monkeypatch.setattr(settings, "FLOWFILE_HUB_URL", HUB_URL)
-    monkeypatch.setattr(hub_exchange_store, "_warned", set())
-    hub.exchange_store = dict(HUB_STORE)
-    return hub
-
-
-def test_a_team_node_with_nothing_saved_uses_the_store_its_hub_sets(admin_client, team_node):
-    answer = admin_client.get("/system/exchange_store", headers=BEARER)
-
-    assert answer.status_code == 200, answer.text
-    state = answer.json()
-    assert state["source"] == "hub" and state["env_override"] is False
-    assert {key: state[key] for key in FROM_HUB} == FROM_HUB
-    assert state["hub"] == FROM_HUB
-    assert state["saved"] == {"uri": None, "connection": None, "max_rows": None}
-    assert team_node.calls == [("GET", "/hub/exchange-store")]
-
-
-def test_a_store_saved_on_the_team_node_wins_and_clearing_it_hands_back_the_hubs(admin_client, team_node, users):
-    name = f"node exchange {uuid.uuid4().hex[:6]}"
-    exchange_tests._store_minio_connection(name, users["admin"])
-    body = {"uri": "s3://node-bucket/x", "connection": name, "max_rows": 7}
-
-    saved = admin_client.post("/system/exchange_store", json=body, headers=BEARER)
-
-    assert saved.status_code == 200, saved.text
-    state = saved.json()
-    assert state["source"] == "saved"
-    assert (state["uri"], state["connection"], state["max_rows"]) == ("s3://node-bucket/x", name, 7)
-    assert state["hub"] == FROM_HUB
-    assert admin_client.get("/system/exchange_store", headers=BEARER).json()["source"] == "saved"
-
-    cleared = admin_client.post("/system/exchange_store", json={"uri": ""}, headers=BEARER).json()
-
-    assert cleared["source"] == "hub" and {key: cleared[key] for key in FROM_HUB} == FROM_HUB
-    assert cleared["saved"] == {"uri": None, "connection": None, "max_rows": None}
-
-
-def test_a_team_node_whose_hub_sets_no_store_has_none(admin_client, team_node):
-    team_node.exchange_store = None
-
-    state = admin_client.get("/system/exchange_store", headers=BEARER).json()
-
-    assert state["source"] == "none" and state["uri"] is None and state["hub"] is None
-    assert team_node.calls == [("GET", "/hub/exchange-store")]
-
-
-def test_a_desktop_asks_no_hub(admin_client, team_node, monkeypatch):
-    monkeypatch.setenv("FLOWFILE_MODE", "electron")
-
-    state = admin_client.get("/system/exchange_store", headers=BEARER).json()
-
-    assert state["source"] == "none" and state["hub"] is None
-    assert team_node.calls == []

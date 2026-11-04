@@ -189,7 +189,7 @@ def test_run_request_claims_the_run_and_rewrites_its_log_before_it_answers(own_f
 
     seen: dict[str, object] = {}
 
-    def run_and_track(flow, user_id, node_ids=None, hub_token=None):
+    def run_and_track(flow, user_id, node_ids=None):
         seen["running"] = flow.flow_settings.is_running
         seen["log"] = _flow_log_text(own_flow)
         flow.release_run()
@@ -268,7 +268,7 @@ def test_a_run_whose_answer_cannot_be_sent_still_runs_and_releases_the_claim(own
 
     seen: dict[str, object] = {}
 
-    def run_and_track(flow, user_id, node_ids=None, hub_token=None):
+    def run_and_track(flow, user_id, node_ids=None):
         seen["running"] = flow.flow_settings.is_running
         flow.release_run()
 

@@ -20,12 +20,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
-from flowfile_core.auth.jwt import (
-    get_current_active_user,
-    get_user_or_hub_dispatch,
-    get_user_or_internal_service,
-    require_user_internal_service_or_hub_dispatch,
-)
+from flowfile_core.auth.jwt import get_current_active_user, get_user_or_internal_service
 from flowfile_core.catalog import (
     KEEP_PREDICTION,
     AmbiguousTableError,
@@ -155,9 +150,8 @@ from shared.storage_config import storage
 router = APIRouter(
     prefix="/catalog",
     tags=["catalog"],
-    # JWT, the kernel's X-Internal-Token or a hub's dispatch token (run_flow_now alone takes that one); a JWT-only
-    # endpoint re-checks with get_current_active_user.
-    dependencies=[Depends(require_user_internal_service_or_hub_dispatch)],
+    # JWT or the kernel's X-Internal-Token; a JWT-only endpoint re-checks with get_current_active_user.
+    dependencies=[Depends(get_user_or_internal_service)],
 )
 
 
@@ -172,14 +166,6 @@ def get_catalog_service(
     """
     repo = SQLAlchemyCatalogRepository(db)
     return CatalogService(repo, access=AccessResolver(db, current_user))
-
-
-def get_run_now_catalog_service(
-    db: Session = Depends(get_db),
-    current_user=Depends(get_user_or_hub_dispatch),
-) -> CatalogService:
-    """``get_catalog_service`` for ``run_flow_now``, whose caller may be a hub's ``dispatch`` token."""
-    return CatalogService(SQLAlchemyCatalogRepository(db), access=AccessResolver(db, current_user))
 
 
 # Exception → HTTP mapping
@@ -1585,10 +1571,10 @@ def delete_schedule(
 @handle_catalog_exceptions()
 def run_flow_now(
     flow_id: int,
-    current_user=Depends(get_user_or_hub_dispatch),
-    service: CatalogService = Depends(get_run_now_catalog_service),
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
 ):
-    """Trigger a registered flow immediately without a schedule; a hub's ``dispatch`` token runs it as the service."""
+    """Trigger a registered flow immediately without needing a schedule."""
     return service.run_flow_now(registration_id=flow_id, user_id=current_user.id)
 
 

@@ -19,7 +19,6 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
-from flowfile_core.configs import settings
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import FlowRun
@@ -153,8 +152,6 @@ def hub_url(request, hub, monkeypatch) -> str:
     value = hub.url if request.param else ""
     if request.param:
         monkeypatch.setenv("FLOWFILE_HUB_URL", value)
-    monkeypatch.setattr(report, "FLOWFILE_HUB_URL", value)
-    monkeypatch.setattr(settings, "FLOWFILE_HUB_URL", value)
     return value
 
 
@@ -211,7 +208,8 @@ def test_every_run_of_a_person_signed_in_through_the_hub_is_reported_once_with_t
     assert hub.sent_with("POST", "/hub/runs") == [delegated]
     [posted] = hub.catalog.reports
     uuid.UUID(posted["run_id"])
-    assert (posted["flow_uuid"], posted["success"], posted["core_run_id"]) == (run.flow_uuid, True, None)
+    assert (posted["flow_uuid"], posted["success"]) == (run.flow_uuid, True)
+    assert "core_run_id" not in posted
     assert (posted["inputs"], posted["outputs"], posted["vend_ids"]) == ([], [], [])
     assert [node["node_type"] for node in posted["nodes"]] == ["manual_input"]
     assert not hub.asked_for_exchange_store()
@@ -225,14 +223,14 @@ def test_a_run_of_an_account_that_did_not_sign_in_through_the_hub_is_not_reporte
     add_test_manual_input(flow, CATALOG_SAMPLE_DATA, node_id=1)
 
     assert flow.try_claim_run()
-    routes._run_and_track(flow, user_id=account, hub_token="a token this server signed")
+    routes._run_and_track(flow, user_id=account)
 
     assert run_of(flow).success is True
     assert hub.received == [] and hub.catalog.reports == []
     assert not hub.asked_for_exchange_store()
 
 
-def test_a_joined_servers_report_names_only_the_hubs_tables_and_no_run_row_of_its_own(hub, hub_url):
+def test_a_report_names_only_the_hubs_tables_with_the_servers_keys_or_without(hub, hub_url):
     namespace_id = create_test_namespace()
     graph = create_test_graph(flow_id=8131)
     add_test_manual_input(graph, CATALOG_SAMPLE_DATA, node_id=1)
@@ -263,17 +261,16 @@ def test_a_joined_servers_report_names_only_the_hubs_tables_and_no_run_row_of_it
     )
     hub_table = {"namespace_id": 31, "table_id": 301, "table_name": "orders"}
 
-    joined = report.build_run_report(graph, finished, core_run_id=47, flow_uuid=str(uuid.uuid4()))
+    joined = report.build_run_report(graph, finished, flow_uuid=str(uuid.uuid4()))
 
-    assert joined["core_run_id"] is None
+    assert "core_run_id" not in joined
     assert (joined["inputs"], joined["outputs"]) == ([hub_table], [])
 
     hub_node_key.path().unlink()
-    without_keys = report.build_run_report(graph, finished, core_run_id=47, flow_uuid=str(uuid.uuid4()))
+    without_keys = report.build_run_report(graph, finished, flow_uuid=str(uuid.uuid4()))
 
-    assert without_keys["core_run_id"] == 47
-    assert without_keys["inputs"] == [hub_table]
-    assert without_keys["outputs"] == [{"namespace_id": namespace_id, "table_id": None, "table_name": "server_people"}]
+    assert "core_run_id" not in without_keys
+    assert (without_keys["inputs"], without_keys["outputs"]) == ([hub_table], [])
 
 
 @pytest.fixture
@@ -380,7 +377,7 @@ def test_a_person_reads_and_writes_the_hubs_tables_on_its_storage_and_the_run_is
     assert hub.sent_with("POST", "/hub/runs") == [delegated]
     [posted] = hub.catalog.reports
     assert (posted["run_id"], posted["vend_ids"]) == (vend["run_id"], [hub.catalog._vends])
-    assert (posted["flow_uuid"], posted["core_run_id"], posted["success"]) == (run_of(flow).flow_uuid, None, True)
+    assert (posted["flow_uuid"], posted["success"]) == (run_of(flow).flow_uuid, True)
     assert posted["inputs"] == [{"namespace_id": sales["id"], "table_id": orders["id"], "table_name": "orders"}]
     assert posted["outputs"] == [{"namespace_id": sales["id"], "table_id": new_table["id"], "table_name": "orders_eu"}]
     assert {token for _, _, token in hub.received} == {delegated}

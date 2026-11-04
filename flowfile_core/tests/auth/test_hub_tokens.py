@@ -1,7 +1,7 @@
-"""A core that is a node on a hub serves the hub's ``run`` tokens as their user and starts runs for ``dispatch`` tokens.
+"""A core that is a node on a hub serves the hub's ``run`` tokens as their user and refuses its ``dispatch`` tokens.
 
 Every test runs the real verifier against a JWKS this process serves (``shared.tests.hub_jwks``). The core is in docker
-mode with its own JWT secret, as a team node is; with ``FLOWFILE_HUB_URL`` unset the same tokens are just wrong tokens.
+mode with its own JWT secret, as a node is; with ``FLOWFILE_HUB_URL`` unset the same tokens are just wrong tokens.
 """
 
 import pytest
@@ -134,8 +134,7 @@ def test_an_admin_route_refuses_a_dispatch_token(team_node):
     assert response.json()["detail"] == "Admin routes take no hub token"
 
 
-def test_a_dispatch_token_starts_a_run_owned_by_the_service_identity(team_node, registration, no_spawn, monkeypatch):
-    monkeypatch.setenv("FLOWFILE_INTERNAL_SERVICE_USER_ID", "1")
+def test_a_dispatch_token_starts_no_run(team_node, registration, no_spawn):
     _namespace_id, registration_id = registration
 
     response = client.post(
@@ -143,17 +142,12 @@ def test_a_dispatch_token_starts_a_run_owned_by_the_service_identity(team_node, 
         headers=bearer(team_node.token(scope="dispatch", sub="hub", uid=None)),
     )
 
-    assert response.status_code == 200, response.text
-    run_id = response.json()["id"]
-    assert no_spawn == [(response.json()["flow_path"], run_id)]
-    with get_db_context() as db:
-        run = db.get(db_models.FlowRun, run_id)
-        assert run.user_id == 1
-        assert run.run_type == "manual"
-        assert run.registration_id == registration_id
+    assert response.status_code == 401
+    assert response.json()["detail"] == "dispatch tokens are not user tokens"
+    assert no_spawn == []
 
 
-def test_a_dispatch_token_reaches_no_other_catalog_route(team_node, user):
+def test_a_dispatch_token_reaches_no_catalog_route(team_node, user):
     headers = bearer(team_node.token(scope="dispatch", sub="hub", uid=None))
 
     assert client.get("/catalog/namespaces", headers=headers).status_code == 401
@@ -166,31 +160,6 @@ def test_a_run_token_reads_the_catalog_as_its_user(team_node, user):
     response = client.get("/catalog/namespaces", headers=bearer(team_node.token(sub="hub_ana", uid=user)))
 
     assert response.status_code == 200, response.text
-
-
-def test_a_run_token_cannot_start_a_run(team_node, user, registration, no_spawn):
-    _namespace_id, registration_id = registration
-
-    response = client.post(
-        f"/catalog/flows/{registration_id}/run", headers=bearer(team_node.token(sub="hub_ana", uid=user))
-    )
-
-    assert response.status_code == 403
-    assert response.json()["detail"] == "run tokens cannot start a run"
-    assert no_spawn == []
-
-
-def test_an_expired_dispatch_token_starts_nothing(team_node, registration, no_spawn):
-    _namespace_id, registration_id = registration
-
-    response = client.post(
-        f"/catalog/flows/{registration_id}/run",
-        headers=bearer(team_node.token(scope="dispatch", sub="hub", uid=None, ttl=-120)),
-    )
-
-    assert response.status_code == 401
-    assert "expired" in response.json()["detail"]
-    assert no_spawn == []
 
 
 def test_without_a_hub_url_every_hub_token_is_a_wrong_token(team_node, user, registration, no_spawn, monkeypatch):

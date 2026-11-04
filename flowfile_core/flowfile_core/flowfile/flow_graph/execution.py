@@ -283,7 +283,7 @@ class ExecutionMixin(GraphMixinBase):
     exchange_run: ExchangeRun | None = None
     # What the hub vended to the running run over its tables; None between runs and in a run with no hub table.
     hub_vend: vend.RunVend | None = None
-    # The exchange store a team node's hub set for the run about to start; None between runs and off a team node.
+    # The exchange store a joined server's hub set for the run about to start; None between runs and elsewhere.
     hub_exchange_store: ExchangeConfig | None = None
     # (run id, vend id) of the last run's vend, for its report; holds no credential.
     last_hub_vend: tuple[str, int] | None = None

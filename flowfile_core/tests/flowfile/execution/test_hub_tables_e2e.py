@@ -24,7 +24,6 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CatalogTable, FlowRun
 from flowfile_core.flowfile.execution.backends.embedded import EmbeddedWorkerBackend
 from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
-from flowfile_core.hub import report
 from flowfile_core.hub_client import client, session
 from flowfile_core.hub_client.catalog import NOT_CONNECTED
 from flowfile_core.routes import routes
@@ -93,7 +92,6 @@ def hub(serve_fake, store, monkeypatch) -> Iterator[HubCatalog]:
     User 1 is connected to it as the Hub tab connects; the session lives in the test's own secure store. The
     catalog's objects are removed from MinIO afterwards.
     """
-    monkeypatch.setattr(report, "FLOWFILE_HUB_URL", "")
     catalog_cleanup()
     fake = FakeHubWithCatalog()
     url = serve_fake(fake)
@@ -200,7 +198,7 @@ def build_flow(hub: HubCatalog, location: str, flow_path: Path):
 def run(graph):
     """Run ``graph`` as the designer's run route does, its completion hook included; the run's information."""
     assert graph.try_claim_run()
-    routes._run_and_track(graph, user_id=1, node_ids=None, hub_token=None)
+    routes._run_and_track(graph, user_id=1, node_ids=None)
     return graph.get_run_info()
 
 
@@ -249,7 +247,7 @@ def test_a_desktop_reads_and_writes_hub_tables_with_one_vend_and_one_report(hub,
         assert posted["outputs"] == [
             {"namespace_id": hub.sales["id"], "table_id": new_table["id"], "table_name": "orders_eu"}
         ]
-        assert (posted["flow_version"], posted["core_run_id"], posted["success"]) == (None, None, True)
+        assert (posted["flow_version"], posted["success"]) == (None, True)
 
         with get_db_context() as db:
             assert db.query(CatalogTable).filter_by(name="orders_eu").count() == 0

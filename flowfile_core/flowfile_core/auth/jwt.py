@@ -436,53 +436,6 @@ async def get_current_admin_user(
     return current_user
 
 
-def _internal_service_user() -> User:
-    """The identity that owns work the system does itself; its id is ``FLOWFILE_INTERNAL_SERVICE_USER_ID`` (1)."""
-    service_user_id = int(os.environ.get("FLOWFILE_INTERNAL_SERVICE_USER_ID", "1"))
-    return User(
-        username="_internal_service",
-        id=service_user_id,
-        disabled=False,
-        is_admin=False,
-        must_change_password=False,
-    )
-
-
-def get_user_or_hub_dispatch(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
-    """Who may start a run now: the signed-in user, or the service identity for a hub's ``dispatch`` token.
-
-    A hub that starts a run on this node does so with a ``dispatch`` token, which names no user, so the run is owned by
-    the service identity as a kernel's work is. A ``run`` token is a user's token for sending work to this node and
-    starts no run here: 403.
-    """
-    if token and _decode_core_token(token) is None:
-        claims = _hub_claims(token)
-        if claims is not None:
-            if claims.scope == "dispatch":
-                return _internal_service_user()
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="run tokens cannot start a run")
-    return get_current_active_user(get_current_user(token=token, db=db))
-
-
-def require_user_internal_service_or_hub_dispatch(
-    token: str = Depends(oauth2_scheme),
-    x_internal_token: str | None = Header(None, alias="X-Internal-Token"),
-    x_kernel_id: str | None = Header(None, alias="X-Kernel-Id"),
-    db: Session = Depends(get_db),
-) -> None:
-    """The catalog router's gate: what ``get_user_or_internal_service`` admits, and a hub's ``dispatch`` token.
-
-    A router dependency runs before a route's own, so without this a ``dispatch`` token would be refused before
-    ``run_flow_now`` could take it. Every route still resolves its caller itself, and only ``run_flow_now`` does so
-    through ``get_user_or_hub_dispatch``; everywhere else the ``dispatch`` token is refused as it is on any user route.
-    """
-    if token and _decode_core_token(token) is None:
-        claims = _hub_claims(token)
-        if claims is not None and claims.scope == "dispatch":
-            return
-    get_user_or_internal_service(token=token, x_internal_token=x_internal_token, x_kernel_id=x_kernel_id, db=db)
-
-
 def get_user_or_internal_service(
     token: str = Depends(oauth2_scheme),
     x_internal_token: str | None = Header(None, alias="X-Internal-Token"),
@@ -530,8 +483,17 @@ def get_user_or_internal_service(
                                 must_change_password=owner.must_change_password,
                             )
 
-                # Fall through to the synthetic service user (id from FLOWFILE_INTERNAL_SERVICE_USER_ID, default 1).
-                return _internal_service_user()
+                # Fall through to synthetic service user. ID is configurable
+                # via FLOWFILE_INTERNAL_SERVICE_USER_ID; default 1 (typically
+                # the first/admin user).
+                service_user_id = int(os.environ.get("FLOWFILE_INTERNAL_SERVICE_USER_ID", "1"))
+                return User(
+                    username="_internal_service",
+                    id=service_user_id,
+                    disabled=False,
+                    is_admin=False,
+                    must_change_password=False,
+                )
         except ValueError:
             # Token not configured or invalid user ID - fall through to JWT auth
             pass

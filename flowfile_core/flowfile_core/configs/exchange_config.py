@@ -2,8 +2,9 @@
 
 With ``FLOWFILE_EXCHANGE_URI`` set, it and ``FLOWFILE_EXCHANGE_CONNECTION`` replace the saved URI and connection.
 ``FLOWFILE_EXCHANGE_MAX_ROWS``, when set, replaces the saved row limit. The file, ``exchange_store.yaml`` under core's
-internal storage, is read per call, so a save takes effect on the next run with no restart. A team node of a hub
-takes the store its hub sets when neither the environment nor the file names one (``hub.exchange_store``).
+internal storage, is read per call, so a save takes effect on the next run with no restart. A server joined to its hub
+with keys of its own takes the store its hub sets when neither the environment nor the file names one
+(``hub.exchange_store``).
 ``settings.get_exchange_*`` read through ``effective_store`` and ``effective_max_rows``.
 """
 
@@ -95,7 +96,7 @@ def save(config: ExchangeConfig) -> None:
 def effective_store(stored: ExchangeConfig | None = None, hub: ExchangeConfig | None = None) -> ExchangeConfig:
     """The store's URI and connection a run uses, with no row limit; never raises, so a bad limit stops no run.
 
-    The environment where it pins, else the saved store when it has a URI, else ``hub``, the store this node's hub
+    The environment where it pins, else the saved store when it has a URI, else ``hub``, the store this server's hub
     sets, when there is one.
     """
     if env_pins_store():

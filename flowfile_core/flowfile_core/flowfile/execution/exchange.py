@@ -1,11 +1,11 @@
 """The exchange store: an object-storage prefix that a run's results cross between backends through.
 
 ``FLOWFILE_EXCHANGE_URI`` names its ``s3://`` root and ``FLOWFILE_EXCHANGE_CONNECTION`` the stored cloud connection
-that opens it, else the store saved from the Backends page, else, on a team node of a hub, the store its hub sets
-(``exchange_config.effective_store``). The connection is the operator's, never a node's user's, and reaches a backend
-as a ``CredentialRef``. On a server joined to its hub with keys of its own the hub's store is opened instead by what
-the hub vends the run sealed to each server its steps run on (``ExchangeRun.sealed``), a ``SealedCredential`` each
-backend sends whole. A run writes under ``<uri>/<flow id>/<run id>/``, which ``run_graph`` removes when the run ends.
+that opens it, else the store saved from the Backends page (``exchange_config.effective_store``). The connection is the
+operator's, never a node's user's, and reaches a backend as a ``CredentialRef``. On a server joined to its hub with keys
+of its own, while neither names a store, the hub's store is opened by what the hub vends the run sealed to each server
+its steps run on (``ExchangeRun.sealed``), a ``SealedCredential`` each backend sends whole. A run writes under
+``<uri>/<flow id>/<run id>/``, which ``run_graph`` removes when the run ends.
 """
 
 from __future__ import annotations
@@ -30,11 +30,8 @@ class ExchangeStore:
     credential: Credential
 
 
-def exchange_store(hub: ExchangeConfig | None = None) -> ExchangeStore | None:
+def exchange_store() -> ExchangeStore | None:
     """The exchange store as configured, opened by the operator's connection; ``None`` when no URI is set.
-
-    ``hub`` is the store this node's hub sets, which applies when neither the environment nor the saved store names
-    one; its connection is looked up by name here, as a local store's is.
 
     In multi-user mode the connection is the lowest-id one of that name an administrator owns, so no regular user's
     connection of the name can shadow it. In single-user mode it is the lowest-id one of that name. Its
@@ -44,7 +41,7 @@ def exchange_store(hub: ExchangeConfig | None = None) -> ExchangeStore | None:
         ValueError: The URI is set without a connection name, its scheme is not ``s3``, or no administrator has a
             cloud connection of that name.
     """
-    configured = exchange_config.effective_store(hub=hub)
+    configured = exchange_config.effective_store()
     uri = configured.uri
     if uri is None:
         return None
@@ -77,7 +74,7 @@ class ExchangeRun:
     """One run's prefix in the exchange store, ``<uri>/<flow id>/<run id>/``, and its removal when the run ends.
 
     The run looks the store up once, on the first ``prefix`` that finds one, and answers that store after; ``collect``
-    removes the run's prefix from it. ``hub_store`` is the store the node's hub set for this run, if any, which
+    removes the run's prefix from it. ``hub_store`` is the store a joined server's hub set for this run, if any, which
     applies, with its row limit, while neither the environment nor the saved store names one.
     """
 
@@ -106,7 +103,7 @@ class ExchangeRun:
                 raise ValueError(NOT_VENDED)
             self._store = ExchangeStore(uri=self.hub_store.uri.rstrip("/"), credential=self.sealed)
         if self._store is None:
-            self._store = exchange_store() if self.hub_store is None else exchange_store(self.hub_store)
+            self._store = exchange_store()
         if self._store is None:
             return None
         return self._prefix(self._store), self._store.credential

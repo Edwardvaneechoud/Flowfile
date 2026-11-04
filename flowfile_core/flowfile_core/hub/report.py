@@ -5,20 +5,16 @@ outcome and timing of every node, the row counts core already knows and the cata
 read and wrote. A report never carries a plan, a sample, a schema or a column value, and the hub refuses any field
 it does not know, so the shape built here is exact.
 
-Three kinds of core report. A server that joined its hub with keys of its own has people of its own, each signed in
+Two kinds of core report. A server that joined its hub with keys of its own has people of its own, each signed in
 through the hub, and reports every run of such a person with their delegated access token, so the hub's ledger names the
-person who ran it; it names no run row and no table of its own, since the hub shares neither its database nor its
-catalog. A team node has ``FLOWFILE_HUB_URL`` (or joined without keys) and shares the hub's secret and catalog, so it
-reports every run with the bearer token of the request that started it, naming the tables of its catalog by their ids. A
-desktop has neither; it has a hub session and flows that came from the hub, and reports a run of such a flow with a
-token minted from the session, so the organisation's ledger also sees the version that ran on the desktop. A desktop
-also reports a run that read or wrote the hub's tables, whatever flow it was: the hub vended that run a credential, so
-the run is the organisation's business too, and the report names the hub's tables by the hub's ids, the vend, and the
-run id the vend was made for; never a table of the desktop's own catalog, whose ids are not the hub's.
+person who ran it. A desktop, or any core not joined with keys, has a hub session and flows that came from the hub,
+and reports a run of such a flow with a token minted from the session, so the organisation's ledger also sees the
+version that ran on the desktop. It also reports a run that read or wrote the hub's tables, whatever flow it was: the
+hub vended that run a credential, so the run is the organisation's business too, and the report names the vend and the
+run id the vend was made for.
 
-Only a core in server mode that did not join with keys names its own run row in the report, since such a core may
-share the hub's database and the hub then links the report to that row. A desktop reports its runs of a hub flow
-without a run id of its own, and the hub writes the run row itself.
+Neither shares the hub's database or catalog, so a report names no run row of this core and no table of its own
+catalog, whose ids are not the hub's: only the hub's tables, by the hub's ids. The hub writes its run row itself.
 """
 
 import uuid
@@ -27,45 +23,31 @@ from datetime import datetime, timezone
 import httpx
 
 from flowfile_core.auth import issuer_accounts
-from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
-from flowfile_core.catalog.exceptions import CatalogError
 from flowfile_core.configs import logger
-from flowfile_core.configs.settings import FLOWFILE_HUB_URL, is_server_mode
-from flowfile_core.database.connection import get_db_context
-from flowfile_core.flowfile.flow_graph.catalog_resolution import _effective_namespace_id
 from flowfile_core.hub_client import catalog as hub_catalog
 from flowfile_core.hub_client import client as hub_client
 from flowfile_core.hub_client import session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.output_model import RunInformation
-from shared import hub_node
 
 
-def hub_target(flow, request_token: str | None, user_id: int | None) -> tuple[str, str] | None:
+def hub_target(flow, user_id: int | None) -> tuple[str, str] | None:
     """Where a run of ``flow`` is reported: ``(hub_url, bearer_token)``, or ``None`` when it is not.
 
-    While this storage dir's node is joined with keys of its own (``issuer_accounts.joined_with_keys()``), whether or
-    not ``FLOWFILE_HUB_URL`` is set, every run of a person signed in through the hub (``user_id`` has a session of
-    ``kind: "delegation"``) goes to that session's hub with the person's delegated access token; ``request_token`` is
-    this core's own and never sent. A person with no such session (an account from before the join) is not reported.
-    Otherwise, with ``FLOWFILE_HUB_URL`` set this core is a team node: the run goes there with ``request_token``, the
-    bearer token of the request that started it, and a run with no token is not reported. Without the setting this
-    core is a desktop: the run is reported only when ``user_id`` has a hub session and either ``flow`` carries a
+    While this storage dir's node is joined with keys of its own (``issuer_accounts.joined_with_keys()``), every run of
+    a person signed in through the hub (``user_id`` has a session of ``kind: "delegation"``) goes to that session's hub
+    with the person's delegated access token. A person with no such session (an account from before the join) is not
+    reported. Anywhere else the run is reported only when ``user_id`` has a hub session and either ``flow`` carries a
     ``hub_origin`` on that same hub or the run vended a credential from it (``flow.last_hub_vend``), with an access
-    token minted from the session. A refresh the hub does not grant is one warning; every other reason not to report
-    is said at debug level.
+    token minted from the session. The token of the request that started the run is this core's own and never sent. A
+    refresh the hub does not grant is one warning; every other reason not to report is said at debug level.
     """
     if issuer_accounts.joined_with_keys() is not None:
         return _delegated_target(user_id)
-    if FLOWFILE_HUB_URL:
-        if request_token:
-            return FLOWFILE_HUB_URL, request_token
-        logger.debug("Run not reported to the hub: the request that started it carried no token")
-        return None
     stored = session.load(user_id) if user_id is not None else None
     if stored is None:
-        logger.debug("Run not reported to a hub: no FLOWFILE_HUB_URL and no hub session for this user")
+        logger.debug("Run not reported to a hub: no hub session for this user")
         return None
     origin = getattr(flow.flow_settings, "hub_origin", None)
     hub_url = stored["hub_url"]
@@ -128,27 +110,16 @@ def _hub_output_ids(writers: list) -> dict[tuple[int, str], int]:
     return {(row.get("namespace_id"), row["name"]): row["id"] for row in rows}
 
 
-def build_run_report(flow, run_info: RunInformation, core_run_id: int, flow_uuid: str) -> dict:
-    """The report of a finished run of ``flow``, for the run row ``core_run_id`` of the registration ``flow_uuid``.
+def build_run_report(flow, run_info: RunInformation, flow_uuid: str) -> dict:
+    """The report of a finished run of ``flow``, a run of the registration ``flow_uuid``.
 
-    ``core_run_id`` is sent when this core runs in server mode (``is_server_mode()``, read per call), where the hub may
-    share its database and link the report to the row; a desktop reports its runs of a hub flow without a run id of its
-    own, and the field is ``None``. A server joined with keys of its own (``joined_with_keys()``, read per call) has a
-    database and a catalog of its own: its report names no run row and only the tables on the hub. A desktop (no
-    ``FLOWFILE_HUB_URL`` and no ``hub_node.json``) names only the tables on the hub too, since its own catalog's ids
-    mean nothing there. ``inputs`` and ``outputs`` are the catalog tables of the catalog reader and writer nodes that
-    ran and succeeded, resolved to ids the way the nodes resolve them: a reader by its table id, else its table
-    reference; a writer by its ``namespace_full_name``, else its ``namespace_id``, and its table name. A table that no
-    longer resolves keeps its namespace and name with no table id; one whose namespace cannot be found is left out. A
-    table on the hub is named by the hub's ids: a reader's ``hub_namespace_id`` and ``hub_table_id``, a writer's
+    ``inputs`` and ``outputs`` are the hub's tables that the catalog reader and writer nodes that ran and succeeded read
+    and wrote, named by the hub's ids: a reader's ``hub_namespace_id`` and ``hub_table_id``, a writer's
     ``hub_namespace_id`` and the id the hub lists for the written name (``None`` when it lists none or does not answer).
-    ``flow_version`` is the hub version of the flow's ``hub_origin``, ``None`` for a flow that never met a hub. A run
-    that vended from the hub (``flow.last_hub_vend``) is reported under the vend's run id with its ``vend_ids``; any
-    other run gets a new run id and no vend.
+    A table of this core's own catalog is never named. ``flow_version`` is the hub version of the flow's
+    ``hub_origin``, ``None`` for a flow that never met a hub. A run that vended from the hub (``flow.last_hub_vend``) is
+    reported under the vend's run id with its ``vend_ids``; any other run gets a new run id and no vend.
     """
-    own_people = issuer_accounts.joined_with_keys() is not None
-    # Only a team node's catalog is the hub's, so only there does a table of this core's own catalog mean anything.
-    hub_tables_only = own_people or not (FLOWFILE_HUB_URL or hub_node.read() is not None)
     nodes, readers, writers = [], [], []
     for result in run_info.node_step_result or []:
         node = flow.get_node(result.node_id)
@@ -169,73 +140,33 @@ def build_run_report(flow, run_info: RunInformation, core_run_id: int, flow_uuid
             continue
         given = node.setting_input
         if isinstance(given, input_schema.NodeCatalogReader):
-            if not hub_tables_only or given.hub_table_id is not None:
+            if given.hub_table_id is not None:
                 readers.append(given)
         elif isinstance(given, input_schema.NodeCatalogWriter):
-            if not hub_tables_only or given.catalog_write_settings.hub_namespace_id is not None:
+            if given.catalog_write_settings.hub_namespace_id is not None:
                 writers.append(given)
 
     inputs, outputs = [], []
-    hub_ids = _hub_output_ids([w for w in writers if w.catalog_write_settings.hub_namespace_id is not None])
-    if readers or writers:
-        with get_db_context() as db:
-            repo = SQLAlchemyCatalogRepository(db)
-            service = CatalogService(repo)
-            for reader in readers:
-                if reader.hub_table_id is not None:
-                    ref = {
-                        "namespace_id": reader.hub_namespace_id,
-                        "table_id": reader.hub_table_id,
-                        "table_name": reader.catalog_table_name,
-                    }
-                    if ref not in inputs:
-                        inputs.append(ref)
-                    continue
-                table = None
-                reference = reader.catalog_full_table_name or reader.catalog_table_name
-                if reader.catalog_table_id:
-                    table = repo.get_table(reader.catalog_table_id)
-                elif reference:
-                    try:
-                        table = service.resolve_table(reference, default_namespace_id=reader.catalog_namespace_id)
-                    except CatalogError:
-                        table = None
-                if table is not None and table.namespace_id is not None:
-                    ref = {"namespace_id": table.namespace_id, "table_id": table.id, "table_name": table.name}
-                elif reader.catalog_namespace_id is not None and reader.catalog_table_name:
-                    ref = {
-                        "namespace_id": reader.catalog_namespace_id,
-                        "table_id": None,
-                        "table_name": reader.catalog_table_name,
-                    }
-                else:
-                    continue
-                if ref not in inputs:
-                    inputs.append(ref)
-            for writer in writers:
-                settings = writer.catalog_write_settings
-                if settings.hub_namespace_id is not None:
-                    if not settings.table_name:
-                        continue
-                    ref = {
-                        "namespace_id": settings.hub_namespace_id,
-                        "table_id": hub_ids.get((settings.hub_namespace_id, settings.table_name)),
-                        "table_name": settings.table_name,
-                    }
-                    if ref not in outputs:
-                        outputs.append(ref)
-                    continue
-                namespace_id = _effective_namespace_id(service, settings)
-                if namespace_id is None or not settings.table_name:
-                    continue
-                table = repo.get_table_by_name(settings.table_name, namespace_id)
-                ref = {
-                    "namespace_id": namespace_id,
-                    "table_id": table.id if table is not None else None,
-                    "table_name": settings.table_name,
-                }
-                if ref not in outputs:
-                    outputs.append(ref)
+    for reader in readers:
+        ref = {
+            "namespace_id": reader.hub_namespace_id,
+            "table_id": reader.hub_table_id,
+            "table_name": reader.catalog_table_name,
+        }
+        if ref not in inputs:
+            inputs.append(ref)
+    hub_ids = _hub_output_ids(writers)
+    for writer in writers:
+        settings = writer.catalog_write_settings
+        if not settings.table_name:
+            continue
+        ref = {
+            "namespace_id": settings.hub_namespace_id,
+            "table_id": hub_ids.get((settings.hub_namespace_id, settings.table_name)),
+            "table_name": settings.table_name,
+        }
+        if ref not in outputs:
+            outputs.append(ref)
 
     origin = getattr(flow.flow_settings, "hub_origin", None)
     vend = getattr(flow, "last_hub_vend", None)
@@ -253,7 +184,6 @@ def build_run_report(flow, run_info: RunInformation, core_run_id: int, flow_uuid
         "inputs": inputs,
         "outputs": outputs,
         "vend_ids": [vend[1]] if vend is not None else [],
-        "core_run_id": core_run_id if is_server_mode() and not own_people else None,
     }
 
 
@@ -269,4 +199,4 @@ def post_run_report(hub_url: str, token: str, report: dict) -> None:
             response = client.post(url, json=report, headers={"Authorization": f"Bearer {token}"})
             response.raise_for_status()
     except Exception as exc:
-        logger.warning(f"Could not report run {report.get('core_run_id')} to the hub at {url}: {exc}")
+        logger.warning(f"Could not report run {report.get('run_id')} to the hub at {url}: {exc}")

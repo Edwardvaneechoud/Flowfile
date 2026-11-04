@@ -32,7 +32,7 @@ from starlette.background import BackgroundTask
 from flowfile_core import change_feed, events, flow_file_handler
 
 # Core modules
-from flowfile_core.auth.jwt import get_current_active_user, oauth2_scheme
+from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
 from flowfile_core.catalog.access import AccessResolver
 from flowfile_core.catalog.exceptions import (
@@ -120,7 +120,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     list_db_tables,
 )
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
-from flowfile_core.hub.exchange_store import joined_server_store, team_node_store
+from flowfile_core.hub.exchange_store import joined_server_store
 from flowfile_core.hub.report import build_run_report, hub_target, post_run_report
 from flowfile_core.notebook.gate import require_kernel_sessions
 from flowfile_core.notebook.kernel_runner import close_flow_sessions, lineage_commits
@@ -492,7 +492,7 @@ def _joined_server_store(flow, user_id: int | None):
     return joined_server_store(user_id)
 
 
-def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None, hub_token: str | None = None):
+def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
     """Run a flow (only ``node_ids`` when given) and persist the run record to the database.
 
     Uses a two-phase pattern:
@@ -505,21 +505,18 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None, 
     visible in logs.
 
     A run whose record was written is then reported to the hub ``hub_target`` names, if any: on a server joined
-    with keys of its own, the hub the user signed in through, with their delegated access token; a team node's
-    ``FLOWFILE_HUB_URL`` with ``hub_token`` (the bearer token of the request that started the run, passed on and
-    never stored); or the user's hub session for a flow that came from that hub. A run of a flow with no
-    registration is not reported.
+    with keys of its own, the hub the user signed in through, with their delegated access token; elsewhere the user's
+    hub session for a flow that came from that hub. A run of a flow with no registration is not reported.
 
-    On a team node the run takes the exchange store its hub sets, asked once with ``hub_token`` before the run
-    (``team_node_store``), and holds it until the run ends. On a server joined with keys of its own it is asked with
-    the user's hub session, and only for a flow with a node set to another backend than the run's, the one case a
-    store changes (``_joined_server_store``).
+    On a server joined with keys of its own the run takes the exchange store its hub sets, asked once before the run
+    with the user's hub session and only for a flow with a node set to another backend than the run's, the one case a
+    store changes (``_joined_server_store``), and holds it until the run ends.
     """
     try:
         reg_id, flow_name, flow_path, flow_uuid, run_id, snapshot_yaml = _open_run_record(flow, user_id, node_ids)
         # A lineage run that writes nothing only looks at rows: change-feed cursors and Kafka offsets stay put.
         commit_sources = node_ids is None or lineage_commits(flow, node_ids)
-        flow.hub_exchange_store = team_node_store(hub_token) or _joined_server_store(flow, user_id)
+        flow.hub_exchange_store = _joined_server_store(flow, user_id)
     except BaseException:
         flow.hub_exchange_store = None
         flow.release_run()
@@ -588,14 +585,14 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None, 
 
     if core_run_id is None:
         return
-    target = hub_target(flow, hub_token, user_id)
+    target = hub_target(flow, user_id)
     if target is None:
         return
     if not flow_uuid:
         logger.debug(f"Run {core_run_id} of flow '{flow_name}' not reported to the hub: no registration")
         return
     try:
-        report = build_run_report(flow, run_info, core_run_id, flow_uuid)
+        report = build_run_report(flow, run_info, flow_uuid)
     except Exception as exc:
         logger.warning(f"Could not build the hub report for run {core_run_id} of flow '{flow_name}': {exc}")
         return
@@ -603,9 +600,7 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None, 
     post_run_report(hub_url, token, report)
 
 
-async def _start_run(
-    flow, flow_id: int, user_id, background_tasks: BackgroundTasks, node_ids=None, hub_token: str | None = None
-) -> None:
+async def _start_run(flow, flow_id: int, user_id, background_tasks: BackgroundTasks, node_ids=None) -> None:
     """Claim the run under the flow's run lock and queue it; 422 when it is already running.
 
     The claim lands before the response (``try_claim_run`` waits on the edit lock, hence the thread), so
@@ -616,15 +611,12 @@ async def _start_run(
     async with get_flow_run_lock(flow_id):
         if not await asyncio.to_thread(flow.try_claim_run):
             raise HTTPException(422, "Flow is already running")
-        background_tasks.add_task(_run_and_track, flow, user_id, node_ids, hub_token)
+        background_tasks.add_task(_run_and_track, flow, user_id, node_ids)
 
 
 @router.post("/flow/run/", tags=["editor"])
 async def run_flow(
-    flow_id: int,
-    background_tasks: BackgroundTasks,
-    current_user=Depends(get_current_active_user),
-    token: str | None = Depends(oauth2_scheme),
+    flow_id: int, background_tasks: BackgroundTasks, current_user=Depends(get_current_active_user)
 ) -> JSONResponse:
     """Executes a flow in a background task.
 
@@ -641,7 +633,7 @@ async def run_flow(
         flow_id, current_user, detail=f"Flow {flow_id} is no longer in memory. Reload the flow and try again."
     )
     user_id = current_user.id if current_user else None
-    await _start_run(flow, flow_id, user_id, background_tasks, hub_token=token)
+    await _start_run(flow, flow_id, user_id, background_tasks)
     return RunStartedResponse(content={"message": "Data started", "flow_id": flow_id}, status_code=status.HTTP_200_OK)
 
 
