@@ -118,7 +118,7 @@ def names_for(node: FlowNode) -> dict[str, bool]:
     A database reader's or writer's password, a Kafka source's stored secrets, a REST source's auth secret and a custom
     node's selected secrets; any other node names none. A stored connection's secrets exist here by definition.
     """
-    from flowfile_core.secret_manager.secret_manager import get_encrypted_secret
+    from flowfile_core.secret_manager.secret_manager import stored_encrypted_secret
 
     settings = node.setting_input
     user_id = getattr(settings, "user_id", None)
@@ -145,5 +145,5 @@ def names_for(node: FlowNode) -> dict[str, bool]:
         named.extend(_custom_node_secret_names(node))
     names = dict.fromkeys(stored, True)
     for name in named:
-        names.setdefault(name, get_encrypted_secret(current_user_id=user_id, secret_name=name) is not None)
+        names.setdefault(name, stored_encrypted_secret(current_user_id=user_id, secret_name=name) is not None)
     return names

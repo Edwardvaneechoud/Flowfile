@@ -102,7 +102,7 @@ def test_a_database_read_on_the_compute_only_server_signs_in_with_the_password_t
     assert (1, 2) in [tuple(boundary) for boundary in run_info.boundaries]
     assert flow.get_node(2).results.result_ref.backend_id == "local"
     assert flow.get_node(2).get_resulting_data().count() > 0
-    [asked] = hub.catalog.vend_calls
+    [asked] = [body for body in hub.catalog.vend_calls if not body["run_id"].startswith("core-lookup-")]
     assert asked["secrets"] == [secret_name]
     assert set(asked["targets"]) == {sealed_e2e.SERVER, test_hub_sign_in.NODE}
     assert sent and not [
