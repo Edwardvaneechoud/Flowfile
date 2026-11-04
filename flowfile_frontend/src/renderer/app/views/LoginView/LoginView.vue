@@ -19,6 +19,7 @@
         :href="signInMethod.url"
         class="btn btn-primary login-button"
         data-testid="login-hub"
+        @click.prevent="startHubSignIn"
       >
         Sign in with {{ hubAddress(signInMethod.hub_url) }}
       </a>
@@ -85,12 +86,13 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "../../stores/auth-store";
 import authService, { type SignInMethod } from "../../services/auth.service";
 import { hubAddress } from "../../components/layout/Header/hubIdentity";
 
 const router = useRouter();
+const route = useRoute();
 const authStore = useAuthStore();
 
 const username = ref("");
@@ -101,8 +103,14 @@ const error = ref(authService.takeHubSignInError() ?? "");
 // The password form until the server says it signs people in through a hub.
 const signInMethod = ref<SignInMethod>({ method: "password" });
 
+const startHubSignIn = () => {
+  if (signInMethod.value.method === "hub") authService.startHubSignIn(signInMethod.value.url);
+};
+
+// `#/login?hub_signin=1` is the sign-in start the hub's Continue page sends people to.
 onMounted(async () => {
   signInMethod.value = await authService.getSignInMethod();
+  if (route.query.hub_signin === "1") startHubSignIn();
 });
 
 const handleLogin = async () => {

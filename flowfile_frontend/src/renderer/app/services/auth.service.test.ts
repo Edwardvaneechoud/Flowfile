@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
-// A hub's sign-in token in the URL fragment (`#signin=<token>`) on the web build; `#token=<jwt>` signs nobody in.
+// A hub's sign-in token in the URL fragment (`#signin=<token>&state=<state>`) on the web build, taken only with the
+// state this tab made when it started the sign-in; `#token=<jwt>` signs nobody in.
 import axios, { AxiosError, type AxiosAdapter, type InternalAxiosRequestConfig } from "axios";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRouter, createWebHashHistory, type RouterHistory } from "vue-router";
@@ -59,6 +60,7 @@ const startApp = async () => {
 describe("auth service: a token in the URL fragment", () => {
   beforeEach(() => {
     vi.stubGlobal("localStorage", fakeLocalStorage());
+    vi.stubGlobal("sessionStorage", fakeLocalStorage());
     openAt("");
   });
 
@@ -139,12 +141,30 @@ function fakeServer(answer: (config: InternalAxiosRequestConfig) => Answer) {
 
 const inFifteenMinutes = () => Math.floor(Date.now() / 1000) + 900;
 
+const OPEN = "https://hub.example.com:8443/open/12";
+
+/** Start a sign-in through the hub as the sign-in page does, and answer the state the hub will carry back. */
+const startSignIn = async (): Promise<string> => {
+  const url = new URL((await load()).hubSignInUrl(OPEN));
+  return url.searchParams.get("state") ?? "";
+};
+
+const storeSession = (username: string) => {
+  const token = jwt({ sub: username, exp: inAnHour() });
+  localStorage.setItem("auth_token", token);
+  localStorage.setItem("auth_token_expiration", String(Date.now() + 3_600_000));
+  localStorage.setItem("auth_username", username);
+  localStorage.setItem("auth_refresh_token", `${username}-refresh`);
+  return token;
+};
+
 describe("auth service: sign-in through the hub", () => {
   const original = axios.defaults.adapter;
   let history: RouterHistory | undefined;
 
   beforeEach(() => {
     vi.stubGlobal("localStorage", fakeLocalStorage());
+    vi.stubGlobal("sessionStorage", fakeLocalStorage());
     openAt("");
   });
 
@@ -164,7 +184,7 @@ describe("auth service: sign-in through the hub", () => {
       data: { access_token: access, refresh_token: "core-refresh", token_type: "bearer" },
     }));
     axios.defaults.adapter = server.adapter;
-    openAt("#signin=one-time-token");
+    openAt(`#signin=one-time-token&state=${await startSignIn()}`);
 
     const app = await startApp();
     history = app.history;
@@ -197,7 +217,7 @@ describe("auth service: sign-in through the hub", () => {
     const sentence = "The hub refused this sign-in: this sign-in token was already used.";
     const server = fakeServer(() => ({ status: 401, data: { detail: sentence } }));
     axios.defaults.adapter = server.adapter;
-    openAt("#signin=spent-token");
+    openAt(`#signin=spent-token&state=${await startSignIn()}`);
 
     const authService = await load();
 
@@ -209,6 +229,89 @@ describe("auth service: sign-in through the hub", () => {
     expect(window.location.hash).toBe("");
     expect(authService.takeHubSignInError()).toBe(sentence);
     expect(authService.takeHubSignInError()).toBeNull();
+  });
+
+  it("sends the browser to the hub's Open page with a new one-time state each time", async () => {
+    const authService = await load();
+
+    const first = new URL(authService.hubSignInUrl(OPEN));
+    const second = new URL(authService.hubSignInUrl(OPEN));
+
+    expect(first.origin + first.pathname).toBe(OPEN);
+    expect([...first.searchParams.keys()]).toEqual(["state"]);
+    expect(first.searchParams.get("state")).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(second.searchParams.get("state")).not.toBe(first.searchParams.get("state"));
+  });
+
+  it.each([
+    ["without a state", (token: string) => `#signin=${token}`],
+    ["with an empty state", (token: string) => `#signin=${token}&state=`],
+    ["with another state", (token: string) => `#signin=${token}&state=not-the-one`],
+  ])("signs nobody in and nobody out for a sign-in token %s", async (_case, fragment) => {
+    const server = fakeServer(() => ({ status: 200, data: {} }));
+    axios.defaults.adapter = server.adapter;
+    await startSignIn();
+    const earlier = storeSession("alice");
+    openAt(fragment("mallory-token"));
+
+    const authService = await load();
+
+    expect(await authService.initialize()).toBe(true);
+    expect(server.requests).toHaveLength(0);
+    expect(localStorage.getItem("auth_token")).toBe(earlier);
+    expect(localStorage.getItem("auth_username")).toBe("alice");
+    expect(localStorage.getItem("auth_refresh_token")).toBe("alice-refresh");
+    expect(window.location.hash).toBe("");
+    expect(authService.takeHubSignInError()).toBeNull();
+  });
+
+  it("signs nobody in for a sign-in token when this tab started no sign-in", async () => {
+    const server = fakeServer(() => ({ status: 200, data: {} }));
+    axios.defaults.adapter = server.adapter;
+    openAt("#signin=mallory-token&state=guessed");
+
+    const authService = await load();
+
+    expect(await authService.initialize()).toBe(false);
+    expect(server.requests).toHaveLength(0);
+    expect(authService.requiresLogin()).toBe(true);
+    expect(authService.takeHubSignInError()).toBeNull();
+  });
+
+  it("takes a state once", async () => {
+    const access = jwt({ sub: "ana@hub.example.com", exp: inFifteenMinutes(), type: "access" });
+    const server = fakeServer(() => ({
+      status: 200,
+      data: { access_token: access, refresh_token: "core-refresh", token_type: "bearer" },
+    }));
+    axios.defaults.adapter = server.adapter;
+    const state = await startSignIn();
+    openAt(`#signin=ana-token&state=${state}`);
+    expect(await (await load()).initialize()).toBe(true);
+    expect(server.requests).toHaveLength(1);
+
+    const earlier = storeSession("alice");
+    openAt(`#signin=mallory-token&state=${state}`);
+    const authService = await load();
+
+    expect(await authService.initialize()).toBe(true);
+    expect(server.requests).toHaveLength(1);
+    expect(localStorage.getItem("auth_token")).toBe(earlier);
+    expect(localStorage.getItem("auth_username")).toBe("alice");
+  });
+
+  it("spends the state on a sign-in token that did not carry it", async () => {
+    const server = fakeServer(() => ({ status: 200, data: {} }));
+    axios.defaults.adapter = server.adapter;
+    const state = await startSignIn();
+    openAt("#signin=mallory-token&state=not-the-one");
+    await (await load()).initialize();
+
+    openAt(`#signin=late-token&state=${state}`);
+    const authService = await load();
+
+    expect(await authService.initialize()).toBe(false);
+    expect(server.requests).toHaveLength(0);
   });
 
   it("tells the server of a sign-out before it clears the session", async () => {

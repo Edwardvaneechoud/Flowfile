@@ -29,6 +29,18 @@ export type SignInMethod = { method: "password" } | { method: "hub"; url: string
 const HUB_SIGN_IN_FAILED =
   "Signing in through the hub did not work. Open this server from the hub again.";
 
+// This tab's one-time state for the sign-in through the hub it started.
+const HUB_SIGN_IN_STATE = "hub_signin_state";
+
+/** 32 random bytes as base64url; `getRandomValues` works on a plain-http server too. */
+function newSignInState(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
 /** The server's own sentence for a refused request, or `fallback` when it sent none. */
 function refusalSentence(error: unknown, fallback: string): string {
   const detail = axios.isAxiosError(error) ? error.response?.data?.detail : undefined;
@@ -151,21 +163,48 @@ class AuthService {
   }
 
   /**
-   * Keep a hub's one-time sign-in token, `#signin=<token>`, in memory only and
-   * remove it from the URL; a fragment never reaches a server or its access logs.
-   * `initialize` trades it for a session.
+   * Keep a hub's one-time sign-in token, `#signin=<token>&state=<state>`, in memory
+   * only and remove it from the URL; a fragment never reaches a server or its access
+   * logs. `initialize` trades it for a session.
+   *
+   * The token is kept only when its state is the one this tab made when it started
+   * the sign-in (`hubSignInUrl`), and that state is spent by any `#signin=` that
+   * arrives. A token without it, or with another, is dropped and changes nothing:
+   * a link carrying someone's sign-in token signs nobody in and nobody out.
    *
    * This runs when the service is constructed, at module load. The router imports
    * this module, so the fragment is read and removed before its hash history is
    * created; that history would otherwise keep it as the initial route.
    */
   private takeTokenFromFragment(): void {
-    const signInToken = new URLSearchParams(window.location.hash.slice(1)).get("signin");
+    const fragment = new URLSearchParams(window.location.hash.slice(1));
+    const signInToken = fragment.get("signin");
     if (signInToken === null) return;
 
     const { pathname, search } = window.location;
     window.history.replaceState(window.history.state, "", pathname + search);
-    if (signInToken) this.hubSignInToken = signInToken;
+    const expected = sessionStorage.getItem(HUB_SIGN_IN_STATE);
+    sessionStorage.removeItem(HUB_SIGN_IN_STATE);
+    if (signInToken && expected && fragment.get("state") === expected) {
+      this.hubSignInToken = signInToken;
+    }
+  }
+
+  /**
+   * The hub's Open page for this server, `openUrl`, with a new one-time `state` that
+   * this tab keeps in sessionStorage; the hub carries it back beside the sign-in token.
+   */
+  hubSignInUrl(openUrl: string): string {
+    const state = newSignInState();
+    sessionStorage.setItem(HUB_SIGN_IN_STATE, state);
+    const url = new URL(openUrl, window.location.href);
+    url.searchParams.set("state", state);
+    return url.toString();
+  }
+
+  /** Start a sign-in through the hub: send this tab to the hub's Open page with a new state. */
+  startHubSignIn(openUrl: string): void {
+    window.location.assign(this.hubSignInUrl(openUrl));
   }
 
   /**

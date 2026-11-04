@@ -6,13 +6,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getSignInMethod: vi.fn(),
   takeHubSignInError: vi.fn(),
+  startHubSignIn: vi.fn(),
+  query: {} as Record<string, string>,
 }));
 
 vi.mock("../../services/auth.service", () => ({ default: mocks }));
 vi.mock("../../stores/auth-store", () => ({
   useAuthStore: () => ({ login: vi.fn(), authError: null }),
 }));
-vi.mock("vue-router", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock("vue-router", () => ({
+  useRouter: () => ({ push: vi.fn() }),
+  useRoute: () => ({ query: mocks.query }),
+}));
 
 import LoginView from "./LoginView.vue";
 
@@ -41,6 +46,8 @@ const throughHub = {
 beforeEach(() => {
   mocks.getSignInMethod.mockReset();
   mocks.takeHubSignInError.mockReset().mockReturnValue(null);
+  mocks.startHubSignIn.mockReset();
+  mocks.query = {};
 });
 
 afterEach(() => {
@@ -60,6 +67,38 @@ describe("LoginView", () => {
     expect(button?.getAttribute("href")).toBe("https://hub.example.com:8443/open/12");
     expect(host.querySelector("form, input")).toBeNull();
     expect(find("login-error")).toBeNull();
+  });
+
+  it("starts the sign-in through the hub from the button, which keeps a state for its return", async () => {
+    mocks.getSignInMethod.mockResolvedValue(throughHub);
+    await mount();
+    expect(mocks.startHubSignIn).not.toHaveBeenCalled();
+
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    find("login-hub")?.dispatchEvent(click);
+
+    expect(click.defaultPrevented).toBe(true);
+    expect(mocks.startHubSignIn).toHaveBeenCalledWith("https://hub.example.com:8443/open/12");
+  });
+
+  it("starts the sign-in through the hub at once at the sign-in start, `#/login?hub_signin=1`", async () => {
+    mocks.query = { hub_signin: "1" };
+    mocks.getSignInMethod.mockResolvedValue(throughHub);
+
+    await mount();
+
+    expect(mocks.startHubSignIn).toHaveBeenCalledTimes(1);
+    expect(mocks.startHubSignIn).toHaveBeenCalledWith("https://hub.example.com:8443/open/12");
+  });
+
+  it("asks for a password at the sign-in start on a server that joined no hub", async () => {
+    mocks.query = { hub_signin: "1" };
+    mocks.getSignInMethod.mockResolvedValue({ method: "password" });
+
+    await mount();
+
+    expect(mocks.startHubSignIn).not.toHaveBeenCalled();
+    expect(host.querySelector("form #username")).not.toBeNull();
   });
 
   it("asks for a username and password on a server that signs people in itself", async () => {
