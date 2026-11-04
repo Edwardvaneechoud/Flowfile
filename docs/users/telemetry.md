@@ -12,6 +12,7 @@ Flowfile can send anonymous usage statistics. The maintainers use them to see ho
 - **Settings → Preferences → Privacy** changes the answer at any time.
 - `FLOWFILE_TELEMETRY=0` disables it for a whole deployment, regardless of consent. `docker-compose.yml` sets this by default.
 - In multi-user Docker deployments consent is one setting, controlled by an administrator.
+- A server joined to a hub asks no one: the hub's admin decides. It sends nothing unless it is started with `FLOWFILE_TELEMETRY=1`.
 - [Flowfile Lite](deployment/lite.md) has no telemetry.
 
 ## What is sent
@@ -109,7 +110,7 @@ install_id: 3f6b1c2e-8a94-4c50-9d0e-2f7a61b8c4d1
 
 | Variable | Effect |
 |---|---|
-| `FLOWFILE_TELEMETRY` | `0`/`false`/`no`/`off` disables telemetry. Other values have no effect. |
+| `FLOWFILE_TELEMETRY` | `0`/`false`/`no`/`off` disables telemetry. On a server joined to a hub, `1`/`true`/`yes`/`on` turns it on and anything else leaves it off; elsewhere other values have no effect. |
 | `FLOWFILE_TELEMETRY_ENDPOINT` | Send to a different collector URL. Empty means the default. |
 | `TESTING` | `True` disables telemetry. |
 

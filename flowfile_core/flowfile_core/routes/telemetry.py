@@ -5,7 +5,10 @@ a trailing slash would 307 and drop the POST body in Docker).
 
 ``can_manage`` is the only mode-dependent bit: on a single-user desktop or pip
 install anyone may flip the toggle, while in a shared Docker deployment the
-choice belongs to an admin. A non-manager POST is 403 and never 401 — the axios
+choice belongs to an admin. On a server joined to a hub (``hub_decides``) it
+belongs to no one there: the server's environment says, as the hub's admin set
+it, ``consent`` answers that decision, so nobody is asked, and every consent
+POST is 403 with a sentence saying so. A non-manager POST is 403 and never 401 — the axios
 interceptor logs the user out on 401. A consent write that does not stick
 (read-only storage) is 503 ``TELEMETRY_PERSIST_FAILED`` rather than a 200 the
 renderer would toast as success.
@@ -21,6 +24,7 @@ import os
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from flowfile_core import telemetry as core_telemetry
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.events import publish
 from shared import telemetry
@@ -42,6 +46,7 @@ class TelemetryStatusOut(BaseModel):
     env_kill_switch: bool
     endpoint_configured: bool
     can_manage: bool
+    hub_decides: bool = False
 
 
 def _can_manage(current_user) -> bool:
@@ -52,7 +57,11 @@ def _can_manage(current_user) -> bool:
 
 
 def _status(current_user) -> TelemetryStatusOut:
-    return TelemetryStatusOut(**telemetry.get_status().as_dict(), can_manage=_can_manage(current_user))
+    status = telemetry.get_status().as_dict()
+    decided = core_telemetry.hub_decision()
+    if decided is not None:
+        return TelemetryStatusOut(**{**status, "consent": decided}, can_manage=False, hub_decides=True)
+    return TelemetryStatusOut(**status, can_manage=_can_manage(current_user))
 
 
 @router.get("/status", response_model=TelemetryStatusOut)
@@ -75,6 +84,11 @@ def set_telemetry_consent(
     install id is unchanged, so it would only duplicate), and neither does a
     revoke or a grant that failed to persist.
     """
+    if core_telemetry.hub_decision() is not None:
+        raise HTTPException(
+            status_code=403,
+            detail={"error_code": "TELEMETRY_HUB_DECIDES", "message": core_telemetry.HUB_DECIDES},
+        )
     if not _can_manage(current_user):
         raise HTTPException(
             status_code=403,

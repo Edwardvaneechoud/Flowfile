@@ -141,14 +141,48 @@ _launch_published = False
 _route_once_seen: set[tuple[str, str, str]] = set()
 
 
+HUB_DECIDES = "This server is joined to a hub; the hub's admin decides whether it sends anonymous usage data."
+
+
+def hub_decision() -> bool | None:
+    """Whether a server joined to a hub with keys of its own sends telemetry; ``None`` anywhere else.
+
+    The people on such a server did not install it, so none of them is asked: telemetry is off there unless the
+    server's environment turns it on (``FLOWFILE_TELEMETRY`` set to a true value), which is the hub admin's to set
+    where the server runs. Elsewhere the stored consent decides, as always.
+    """
+    from flowfile_core.auth import issuer_accounts
+
+    if issuer_accounts.joined_with_keys() is None:
+        return None
+    return _client.env_grants()
+
+
+def _allowed() -> bool:
+    """Whether an event may reach the client: anywhere but a joined server yes, there as ``hub_decision`` says.
+
+    A joined server whose environment turns telemetry on has its consent stored once, which mints the install id
+    every event carries; one whose environment does not sends nothing, whatever an earlier visitor chose.
+    """
+    try:
+        decided = hub_decision()
+        if decided and _client.is_available() and _client.consent() is not True:
+            _client.set_consent(True)
+        return decided is not False
+    except Exception:
+        return False
+
+
 def emit(event: str, props: dict[str, Any] | None = None) -> None:
     """Queue one event. Never blocks, never raises."""
-    _client.emit(event, props)
+    if _allowed():
+        _client.emit(event, props)
 
 
 def emit_once(event: str, props: dict[str, Any] | None = None) -> None:
     """Like :func:`emit`, but at most once per process."""
-    _client.emit_once(event, props)
+    if _allowed():
+        _client.emit_once(event, props)
 
 
 def classify_error(name: str | None) -> str:

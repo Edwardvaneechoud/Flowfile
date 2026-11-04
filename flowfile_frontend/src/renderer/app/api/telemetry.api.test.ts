@@ -42,6 +42,7 @@ describe("telemetry.api", () => {
       envKillSwitch: false,
       endpointConfigured: true,
       canManage: true,
+      hubDecides: false,
     });
   });
 
@@ -60,7 +61,19 @@ describe("telemetry.api", () => {
       envKillSwitch: true,
       endpointConfigured: true,
       canManage: false,
+      hubDecides: false,
     });
+  });
+
+  it("maps a joined server's answer that the hub's admin decides", async () => {
+    const { get, api } = await loadModule();
+    get.mockResolvedValueOnce({
+      data: { ...pyStatus, consent: false, can_manage: false, hub_decides: true },
+    });
+
+    const result = await api.getTelemetryStatus();
+
+    expect(result).toMatchObject({ consent: false, canManage: false, hubDecides: true });
   });
 
   it("propagates rejections so the settings card can toast", async () => {

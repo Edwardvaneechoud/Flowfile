@@ -26,6 +26,7 @@ const status = (overrides: Partial<TelemetryStatus> = {}): TelemetryStatus => ({
   envKillSwitch: false,
   endpointConfigured: true,
   canManage: true,
+  hubDecides: false,
   ...overrides,
 });
 

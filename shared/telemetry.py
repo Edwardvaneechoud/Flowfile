@@ -42,6 +42,7 @@ ENV_KILL_SWITCH = "FLOWFILE_TELEMETRY"
 ENV_ENDPOINT = "FLOWFILE_TELEMETRY_ENDPOINT"
 DEFAULT_ENDPOINT = "https://events.flowfile.app/events"
 FALSY = ("false", "0", "no", "off")
+TRUTHY = ("true", "1", "yes", "on")
 KNOWN_MODES = ("electron", "docker", "package")
 
 QUEUE_MAXSIZE = 256
@@ -256,6 +257,13 @@ def _kill_switch_engaged() -> bool:
     if raw is None:
         return False
     return raw.strip().lower() in FALSY
+
+
+def env_grants() -> bool:
+    """An explicitly true ``FLOWFILE_TELEMETRY``. It grants nothing where people are asked; a server whose people are
+    not asked (one joined to a hub) sends telemetry only with it."""
+    raw = os.environ.get(ENV_KILL_SWITCH)
+    return raw is not None and raw.strip().lower() in TRUTHY
 
 
 def _testing_disabled() -> bool:

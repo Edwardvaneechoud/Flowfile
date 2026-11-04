@@ -11,6 +11,8 @@ export interface TelemetryStatus {
   envKillSwitch: boolean;
   endpointConfigured: boolean;
   canManage: boolean;
+  /** A server joined to a hub: its environment decides, as the hub's admin set it, and nobody here is asked. */
+  hubDecides: boolean;
 }
 
 interface PyTelemetryStatus {
@@ -19,6 +21,7 @@ interface PyTelemetryStatus {
   env_kill_switch: boolean;
   endpoint_configured: boolean;
   can_manage: boolean;
+  hub_decides?: boolean;
 }
 
 const fromPy = (raw: PyTelemetryStatus): TelemetryStatus => ({
@@ -27,6 +30,7 @@ const fromPy = (raw: PyTelemetryStatus): TelemetryStatus => ({
   envKillSwitch: raw.env_kill_switch,
   endpointConfigured: raw.endpoint_configured,
   canManage: raw.can_manage,
+  hubDecides: raw.hub_decides ?? false,
 });
 
 export async function getTelemetryStatus(): Promise<TelemetryStatus> {
