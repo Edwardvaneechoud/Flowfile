@@ -72,6 +72,16 @@ describe("LoginView", () => {
     expect(find("login-hub")).toBeNull();
   });
 
+  it("shows the password form at once, before the server answers how it signs people in", async () => {
+    mocks.getSignInMethod.mockReturnValue(new Promise(() => {}));
+
+    await mount();
+
+    expect(host.querySelector("form #username")).not.toBeNull();
+    expect(host.querySelector("form input[type=password]")).not.toBeNull();
+    expect(find("login-hub")).toBeNull();
+  });
+
   it("shows the server's sentence for a sign-in through the hub it refused", async () => {
     const sentence = "The hub refused this sign-in: this sign-in token was already used.";
     mocks.takeHubSignInError.mockReturnValue(sentence);

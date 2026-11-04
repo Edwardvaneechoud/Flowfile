@@ -15,7 +15,7 @@
       </div>
 
       <a
-        v-if="signInMethod?.method === 'hub'"
+        v-if="signInMethod.method === 'hub'"
         :href="signInMethod.url"
         class="btn btn-primary login-button"
         data-testid="login-hub"
@@ -23,11 +23,7 @@
         Sign in with {{ hubHost }}
       </a>
 
-      <form
-        v-else-if="signInMethod?.method === 'password'"
-        class="login-form"
-        @submit.prevent="handleLogin"
-      >
+      <form v-else class="login-form" @submit.prevent="handleLogin">
         <div class="form-field">
           <label for="username" class="form-label">Username</label>
           <div class="input-wrapper">
@@ -101,10 +97,11 @@ const password = ref("");
 const showPassword = ref(false);
 const isLoading = ref(false);
 const error = ref(authService.takeHubSignInError() ?? "");
-const signInMethod = ref<SignInMethod | null>(null);
+// The password form until the server says it signs people in through a hub.
+const signInMethod = ref<SignInMethod>({ method: "password" });
 
 const hubHost = computed(() => {
-  if (signInMethod.value?.method !== "hub") return "";
+  if (signInMethod.value.method !== "hub") return "";
   try {
     return new URL(signInMethod.value.hub_url).hostname;
   } catch {
