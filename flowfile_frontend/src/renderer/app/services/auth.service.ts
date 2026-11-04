@@ -151,34 +151,21 @@ class AuthService {
   }
 
   /**
-   * Adopt a session handed over as `#token=<jwt>` by a server that already signed
-   * the person in; a fragment never reaches a server or its access logs. The
-   * signature is not checked here: the backend verifies the token on every request.
-   * A hub's one-time sign-in token, `#signin=<token>`, is only kept in memory here;
+   * Keep a hub's one-time sign-in token, `#signin=<token>`, in memory only and
+   * remove it from the URL; a fragment never reaches a server or its access logs.
    * `initialize` trades it for a session.
    *
    * This runs when the service is constructed, at module load. The router imports
    * this module, so the fragment is read and removed before its hash history is
-   * created; that history would otherwise rewrite `#token=<jwt>` to `#/token=<jwt>`
-   * and keep it as the initial route.
+   * created; that history would otherwise keep it as the initial route.
    */
   private takeTokenFromFragment(): void {
-    const fragment = new URLSearchParams(window.location.hash.slice(1));
-    const token = fragment.get("token");
-    const signInToken = fragment.get("signin");
-    if (token === null && signInToken === null) return;
+    const signInToken = new URLSearchParams(window.location.hash.slice(1)).get("signin");
+    if (signInToken === null) return;
 
     const { pathname, search } = window.location;
     window.history.replaceState(window.history.state, "", pathname + search);
-
     if (signInToken) this.hubSignInToken = signInToken;
-    if (token === null) return;
-
-    const claims = decodeTokenClaims(token);
-    if (!claims) return;
-    // A refresh token left from an earlier sign-in would renew a different session.
-    localStorage.removeItem("auth_refresh_token");
-    this.setToken(token, claims.exp * 1000, claims.sub);
   }
 
   /**

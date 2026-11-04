@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// A session handed over in the URL fragment (`#token=<jwt>` or a hub's `#signin=<token>`) on the web build.
+// A hub's sign-in token in the URL fragment (`#signin=<token>`) on the web build; `#token=<jwt>` signs nobody in.
 import axios, { AxiosError, type AxiosAdapter, type InternalAxiosRequestConfig } from "axios";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRouter, createWebHashHistory, type RouterHistory } from "vue-router";
@@ -56,7 +56,7 @@ const startApp = async () => {
   return { authService, history, router };
 };
 
-describe("auth service: token in the URL fragment", () => {
+describe("auth service: a token in the URL fragment", () => {
   beforeEach(() => {
     vi.stubGlobal("localStorage", fakeLocalStorage());
     openAt("");
@@ -67,37 +67,32 @@ describe("auth service: token in the URL fragment", () => {
     openAt("");
   });
 
-  it("stores the session from the token's claims and removes the fragment", async () => {
-    const exp = inAnHour();
-    const token = jwt({ sub: "zoë", exp, type: "access" });
+  it("is no sign-in: a link carrying `#token=<jwt>` signs nobody in", async () => {
+    const token = jwt({ sub: "mallory", exp: inAnHour(), type: "access" });
     openAt(`#token=${token}`);
 
     const authService = await load();
 
-    expect(await authService.initialize()).toBe(true);
-    expect(authService.isAuthenticated()).toBe(true);
-    expect(await authService.getToken()).toBe(token);
-    expect(localStorage.getItem("auth_token")).toBe(token);
-    expect(localStorage.getItem("auth_token_expiration")).toBe(String(exp * 1000));
-    expect(localStorage.getItem("auth_username")).toBe("zoë");
-    expect(window.location.hash).toBe("");
-    expect(window.location.pathname).toBe("/editor");
+    expect(await authService.initialize()).toBe(false);
+    expect(authService.requiresLogin()).toBe(true);
+    expect(localStorage.getItem("auth_token")).toBeNull();
+    expect(localStorage.getItem("auth_username")).toBeNull();
   });
 
-  it("replaces a stored session and drops its refresh token", async () => {
-    localStorage.setItem("auth_token", "earlier");
+  it("leaves a stored session as it is", async () => {
+    const earlier = jwt({ sub: "alice", exp: inAnHour() });
+    localStorage.setItem("auth_token", earlier);
     localStorage.setItem("auth_token_expiration", String(Date.now() + 3_600_000));
-    localStorage.setItem("auth_username", "someone-else");
-    localStorage.setItem("auth_refresh_token", "earlier-refresh");
-    const token = jwt({ sub: "alice", exp: inAnHour() });
-    openAt(`#token=${token}`);
+    localStorage.setItem("auth_username", "alice");
+    localStorage.setItem("auth_refresh_token", "alice-refresh");
+    openAt(`#token=${jwt({ sub: "mallory", exp: inAnHour() })}`);
 
     const authService = await load();
 
     expect(await authService.initialize()).toBe(true);
-    expect(localStorage.getItem("auth_token")).toBe(token);
+    expect(localStorage.getItem("auth_token")).toBe(earlier);
     expect(localStorage.getItem("auth_username")).toBe("alice");
-    expect(localStorage.getItem("auth_refresh_token")).toBeNull();
+    expect(localStorage.getItem("auth_refresh_token")).toBe("alice-refresh");
   });
 
   it("changes nothing without a fragment", async () => {
@@ -108,84 +103,13 @@ describe("auth service: token in the URL fragment", () => {
     expect(localStorage.getItem("auth_token")).toBeNull();
   });
 
-  it("reads only the token key from the fragment", async () => {
+  it("leaves a route in the fragment alone", async () => {
     openAt("#/designer");
 
     const authService = await load();
 
     expect(await authService.initialize()).toBe(false);
     expect(window.location.hash).toBe("#/designer");
-  });
-
-  it.each([
-    ["not a JWT", "abc"],
-    ["a payload that is not JSON", `x.${base64url("not json")}.sig`],
-    ["no subject", jwt({ exp: inAnHour() })],
-    ["no expiry", jwt({ sub: "alice" })],
-    ["an expired token", jwt({ sub: "alice", exp: Math.floor(Date.now() / 1000) - 60 })],
-    ["an empty token", ""],
-  ])("ignores %s and leaves the sign-in page to show", async (_label, token) => {
-    openAt(`#token=${token}`);
-
-    const authService = await load();
-
-    expect(await authService.initialize()).toBe(false);
-    expect(authService.requiresLogin()).toBe(true);
-    expect(localStorage.getItem("auth_token")).toBeNull();
-    expect(localStorage.getItem("auth_username")).toBeNull();
-    expect(window.location.hash).toBe("");
-  });
-});
-
-describe("auth service: token in the URL fragment, with the hash router", () => {
-  let history: RouterHistory | undefined;
-
-  beforeEach(() => {
-    vi.stubGlobal("localStorage", fakeLocalStorage());
-    openAt("");
-  });
-
-  afterEach(() => {
-    history?.destroy();
-    history = undefined;
-    vi.unstubAllGlobals();
-    openAt("");
-  });
-
-  it("signs in on a fresh load and leaves no token in the route or history", async () => {
-    const token = jwt({ sub: "alice", exp: inAnHour() });
-    openAt(`#token=${token}`);
-
-    const app = await startApp();
-    history = app.history;
-
-    expect(await app.authService.initialize()).toBe(true);
-    expect(localStorage.getItem("auth_token")).toBe(token);
-    expect(localStorage.getItem("auth_username")).toBe("alice");
-    expect(app.history.location).toBe("/");
-    expect(window.location.hash).toBe("#/");
-    expect(JSON.stringify(window.history.state)).not.toContain(token);
-
-    await app.router.push(app.history.location);
-    expect(app.router.currentRoute.value.fullPath).toBe("/designer");
-    expect(app.router.currentRoute.value.redirectedFrom?.fullPath).toBe("/");
-    expect(window.location.href).not.toContain(token);
-  });
-
-  it("ignores a malformed token and leaves no trace of it", async () => {
-    openAt("#token=not-a-jwt");
-
-    const app = await startApp();
-    history = app.history;
-
-    expect(await app.authService.initialize()).toBe(false);
-    expect(app.authService.requiresLogin()).toBe(true);
-    expect(localStorage.getItem("auth_token")).toBeNull();
-    expect(app.history.location).toBe("/");
-
-    await app.router.push(app.history.location);
-    expect(app.router.currentRoute.value.redirectedFrom?.fullPath).toBe("/");
-    expect(window.location.href).not.toContain("not-a-jwt");
   });
 });
 
