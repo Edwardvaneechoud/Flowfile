@@ -44,7 +44,6 @@ const connected = {
   orgName: "Acme Data",
   hubVersion: "0.3.0",
   coreVersion: "0.24.0",
-  vendMode: "static",
   reachable: true,
   error: null,
   nodesSynced: null,

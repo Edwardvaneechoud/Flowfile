@@ -51,7 +51,3 @@ export function organisationStorageLine(connection: HubConnection | null): strin
   if (!connection?.joined || !connection.organisationStorage) return null;
   return `The organisation's storage at ${connection.organisationStorage}; each run gets access from the hub.`;
 }
-
-/** A desktop's note on a hub in static vend mode, said plainly. */
-export const STATIC_VEND_NOTE =
-  "This hub gives each run its storage's own keys (static vend mode), not short-lived ones.";

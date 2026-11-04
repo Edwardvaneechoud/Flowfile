@@ -20,7 +20,6 @@ const none: HubConnection = {
   orgName: null,
   hubVersion: null,
   coreVersion: null,
-  vendMode: null,
   reachable: false,
   error: null,
   nodesSynced: null,

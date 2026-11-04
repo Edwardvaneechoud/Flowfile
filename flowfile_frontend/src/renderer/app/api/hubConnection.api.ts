@@ -20,7 +20,6 @@ export interface HubConnection {
   orgName: string | null;
   hubVersion: string | null;
   coreVersion: string | null;
-  vendMode: string | null;
   reachable: boolean;
   error: string | null;
   /** After a connect: how many of the hub's compute nodes now fill the backends table; null otherwise. */
@@ -83,7 +82,6 @@ const fromPy = (raw: PyHubConnection): HubConnection => ({
   orgName: raw.org_name,
   hubVersion: raw.hub_version,
   coreVersion: raw.core_version,
-  vendMode: raw.vend_mode,
   reachable: raw.reachable,
   error: raw.error,
   nodesSynced: raw.nodes_synced ?? null,

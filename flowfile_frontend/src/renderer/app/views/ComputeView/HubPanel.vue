@@ -75,22 +75,11 @@
           </div>
         </div>
 
-        <p
-          v-if="state.vendMode === 'static'"
-          class="hub-card__warning"
-          data-testid="hub-static-warning"
-        >
-          <i class="fa-solid fa-triangle-exclamation"></i>
-          <span>{{ STATIC_VEND_NOTE }}</span>
-        </p>
-
         <dl class="hub-card__facts">
           <dt>Organisation</dt>
           <dd>{{ state.orgName ?? "—" }}</dd>
           <dt>Hub version</dt>
           <dd>{{ state.hubVersion ?? "—" }}</dd>
-          <dt>Vend mode</dt>
-          <dd>{{ state.vendMode ?? "—" }}</dd>
           <dt>Device</dt>
           <dd>{{ state.deviceName }}</dd>
           <dt>Session expires</dt>
@@ -231,7 +220,7 @@ import { teamNodeRows, useHubConnection } from "./useHubConnection";
 import { reachabilityStatus, type StatusSummary } from "../../components/settings/handshakeStatus";
 import { reachabilityNote } from "../../utils/executionLocation";
 import { useAuthStore } from "../../stores/auth-store";
-import { belongsToLine, STATIC_VEND_NOTE } from "../../components/layout/Header/hubIdentity";
+import { belongsToLine } from "../../components/layout/Header/hubIdentity";
 
 const {
   state,
@@ -328,8 +317,7 @@ onMounted(() => {
   margin: 0 auto;
   padding: var(--spacing-5);
 }
-.hub-card__banner,
-.hub-card__warning {
+.hub-card__banner {
   display: flex;
   align-items: flex-start;
   gap: var(--spacing-2);
@@ -343,13 +331,7 @@ onMounted(() => {
   background: var(--color-danger-light);
   color: var(--color-danger-dark);
 }
-.hub-card__warning {
-  margin: var(--spacing-3) 0 0;
-  background: var(--color-warning-light);
-  color: var(--color-warning-dark);
-}
 .hub-card__banner i,
-.hub-card__warning i,
 .hub-card__status > i {
   margin-top: 3px;
   flex-shrink: 0;

@@ -63,7 +63,6 @@ const none: HubConnection = {
   orgName: null,
   hubVersion: null,
   coreVersion: null,
-  vendMode: null,
   reachable: false,
   error: null,
   nodesSynced: null,
@@ -83,7 +82,6 @@ const connected: HubConnection = {
   orgName: "Acme Data",
   hubVersion: "0.3.0",
   coreVersion: "0.24.0",
-  vendMode: "sts",
   reachable: true,
 };
 
