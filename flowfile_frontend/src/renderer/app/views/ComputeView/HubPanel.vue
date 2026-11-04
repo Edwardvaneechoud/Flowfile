@@ -28,7 +28,7 @@
 
       <p v-if="hub.loading && !state" class="compute-card__loading">Loading…</p>
 
-      <template v-if="state?.connected">
+      <template v-if="state && (state.connected || state.joined)">
         <div
           class="compute-card__status"
           :class="
@@ -209,6 +209,9 @@ onMounted(() => {
 
 <style scoped src="./computeSettings.css"></style>
 <style scoped>
+.compute-card__banner {
+  margin-bottom: var(--spacing-3);
+}
 .hub-container {
   max-width: 1320px;
   margin: 0 auto;
