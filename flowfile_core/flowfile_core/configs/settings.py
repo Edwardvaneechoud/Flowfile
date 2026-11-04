@@ -1,5 +1,4 @@
 # flowfile_core/flowfile_core/configs/settings.py
-import ipaddress
 import logging
 import os
 import platform
@@ -225,16 +224,6 @@ JOIN_CORE_URL = args.url
 JOIN_WORKER_URL = args.worker_url
 
 
-def is_loopback_host(host: str) -> bool:
-    """Whether ``host``, a bind address, is one only this machine reaches: ``localhost`` or a loopback IP."""
-    if host.lower() == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host.strip("[]")).is_loopback
-    except ValueError:
-        return False
-
-
 def join_addresses(
     core_port: int | None = None,
     core_host: str | None = None,
@@ -260,7 +249,7 @@ def join_addresses(
         core_url = JOIN_CORE_URL
     else:
         core_url = hub_node.node_url(hub_url, host, port, tls=False)
-        if is_loopback_host(host):
+        if hub_node.is_loopback_host(host):
             logging.getLogger(__name__).warning(
                 "Core serves on %s, which only this machine reaches, so the address it gives the hub is %s; to be "
                 "reached from other machines, start it with --host 0.0.0.0 and --url <its address as they reach it>",

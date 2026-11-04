@@ -180,8 +180,9 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
         os.environ["FLOWFILE_MODE"] = "electron"
 
     from flowfile_core.configs import settings
+    from shared import hub_node
 
-    if not settings.is_server_mode() and not settings.is_loopback_host(host):
+    if not settings.is_server_mode() and not hub_node.is_loopback_host(host):
         print(
             f"Not serving on {host}, which other machines reach: outside a server mode the editor serves this machine "
             "only (--host 127.0.0.1), since by default whoever reaches it works as this machine's user without "
