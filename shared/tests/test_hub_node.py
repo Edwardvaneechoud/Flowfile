@@ -4,6 +4,7 @@ folder, port and address a node that joins takes, and the heartbeat that tells t
 import json
 import logging
 import os
+import signal
 import socket
 import stat
 import threading
@@ -1259,3 +1260,41 @@ def test_a_shadow_check_with_descriptors_past_1024_still_answers():
         for fd in held:
             os.close(fd)
         resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+
+
+def test_a_hub_that_removed_the_node_stops_the_process_and_beats_no_more(hub_answering, monkeypatch, caplog):
+    hub = hub_answering(410)
+    stopped: list[int] = []
+    monkeypatch.setattr(hub_node, "_stop_this_process", lambda: stopped.append(1))
+    stop = Waits(hub, stop_at=4)
+
+    with caplog.at_level(logging.DEBUG):
+        hub_node._beat("worker", stop)
+
+    assert stopped == [1]
+    assert stop.seen == []
+    [record] = [r for r in caplog.records if r.name == "flowfile.hub_node" and r.levelno == logging.ERROR]
+    assert record.getMessage().endswith("; this node stops and stays stopped")
+    assert beat_warnings(caplog) == []
+
+
+def test_a_hub_that_answers_503_keeps_the_node_beating(hub_answering, monkeypatch):
+    hub = hub_answering(503)
+    stopped: list[int] = []
+    monkeypatch.setattr(hub_node, "_stop_this_process", lambda: stopped.append(1))
+    stop = Waits(hub, stop_at=3)
+
+    hub_node._beat("worker", stop)
+
+    assert stopped == []
+    assert [timeout for timeout, _ in stop.seen] == [60, 60, 60]
+
+
+def test_stopping_the_process_sends_it_sigterm(monkeypatch):
+    sent: list[tuple[int, int]] = []
+    monkeypatch.setattr(hub_node.os, "kill", lambda pid, sig: sent.append((pid, sig)))
+
+    hub_node._stop_this_process()
+
+    assert sent == [(os.getpid(), signal.SIGTERM)]
+

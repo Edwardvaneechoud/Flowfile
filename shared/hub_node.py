@@ -41,6 +41,7 @@ import logging
 import os
 import re
 import selectors
+import signal
 import socket
 import threading
 from dataclasses import asdict, dataclass
@@ -83,6 +84,7 @@ _PORT_FIELDS = ("core_port", "worker_port")
 _warned_unreadable = False
 _warned_beats: set[str] = set()
 _hub_without_beats = False
+_removed = False
 _said_without_beats = False
 
 
@@ -417,6 +419,19 @@ def _not_taken(reason: str) -> bool:
     return False
 
 
+def _removed_from_hub(node: HubNode, resp: "httpx.Response") -> bool:
+    global _removed
+    _removed = True
+    logger.error("%s; this node stops and stays stopped", _detail(resp) or f"{node.hub_url} removed this node")
+    return False
+
+
+def _stop_this_process() -> None:
+    """Stop the process this node runs in as an operator's SIGTERM does: uvicorn shuts it down cleanly and it exits 0,
+    and the join script's service restarts a node only after a failure, so a removed node stays stopped."""
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
 def _without_beats(hub_url: str) -> bool:
     global _hub_without_beats, _said_without_beats
     _hub_without_beats = True
@@ -435,15 +450,17 @@ def heartbeat(process: Literal["core", "worker"], http: "httpx.Client | None" = 
     sent (no joined node, no keys, a hub that does not answer), logs one warning per distinct reason until a beat is
     taken again, and never the assertion. Never makes keys. A 404 or 405 is a hub built before it took heartbeats,
     not a refusal: said once per process at INFO, never warned, and the beat loop waits ``HEARTBEAT_ABSENT_SECONDS``
-    before it asks again.
+    before it asks again. A 410 is a hub that removed this node: said once at ERROR with the hub's sentence, and the
+    beat loop stops the process (``_stop_this_process``).
     """
-    global _hub_without_beats
+    global _hub_without_beats, _removed
     import httpx
 
     from shared import hub_node_key
     from shared._version import get_version
 
     _hub_without_beats = False
+    _removed = False
     node = read()
     if node is None:
         return _not_taken(f"no node has joined a hub from {path().parent}")
@@ -468,6 +485,8 @@ def heartbeat(process: Literal["core", "worker"], http: "httpx.Client | None" = 
             client.close()
     if resp.status_code in (404, 405):
         return _without_beats(node.hub_url)
+    if resp.status_code == 410:
+        return _removed_from_hub(node, resp)
     if resp.status_code != 204:
         return _not_taken(f"{node.hub_url} answered {resp.status_code}: {_detail(resp) or resp.reason_phrase}")
     _warned_beats.clear()
@@ -489,6 +508,9 @@ def _beat(process: Literal["core", "worker"], stop: threading.Event) -> None:
             except Exception as exc:
                 _not_taken(f"the beat failed ({type(exc).__name__})")
             absent = _hub_without_beats
+            if _removed:
+                _stop_this_process()
+                return
         if stop.wait(HEARTBEAT_ABSENT_SECONDS if absent else HEARTBEAT_SECONDS):
             return
 
