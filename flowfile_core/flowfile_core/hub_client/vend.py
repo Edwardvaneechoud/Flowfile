@@ -12,10 +12,13 @@ must be opened there instead: a run that places such a step on a server of the h
 names of the servers its steps run on (``node_name``), and the hub answers each credential with no options and a map
 of node name to a token sealed to that node (``shared.hub_sealed``). Core hands the map on unopened: a read's plan
 scans through a Python source that opens it where the plan runs, a write's connection carries it, and the exchange
-store's crossings send it (``SealedCredential``).
+store's crossings send it (``SealedCredential``). Such a vend also names the secrets the run's steps on those servers
+use (``secrets``), and the hub answers each sealed the same way: a step carries ``sealed_secrets``' strings in place
+of its ``$ffsec$`` ciphertext, and the server that runs it opens them.
 """
 
-from collections.abc import Iterable, Mapping
+import re
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 
 import polars as pl
@@ -33,6 +36,10 @@ from shared import hub_sealed
 from shared.cloud_storage.storage_options import ALLOW_INVALID_CERTIFICATES
 
 REFUSED = "The hub did not give this run access to its tables"
+ONLY_HERE = (
+    'Secret "{name}" is only on this server, and the step that uses it runs on another server of the hub: add the '
+    "secret on the hub, or have it shared with you there, and run the flow again"
+)
 _S3_FIELDS = ("aws_access_key_id", "aws_region", "endpoint_url")
 _S3_SECRETS = ("aws_secret_access_key", "aws_session_token")
 
@@ -67,7 +74,7 @@ class RunVend:
 
     ``bases`` is the storage root of each hub namespace id the run names, ``names`` its ``catalog.schema`` name.
     ``targets`` are the hub servers the vend was sealed to; empty for a vend the run's own worker opens with core's
-    master key.
+    master key. ``secrets`` maps each secret name the run asked for to its map of node name to sealed token.
     """
 
     run_id: str
@@ -76,6 +83,11 @@ class RunVend:
     bases: dict[int, str]
     names: dict[int, str]
     targets: tuple[str, ...] = ()
+    secrets: dict[str, dict[str, str]] = field(default_factory=dict, repr=False)
+
+    def sealed_secrets(self, names: Iterable[str]) -> dict[str, str]:
+        """Each of ``names`` the hub sealed to this run, as the string a step carries in place of its ciphertext."""
+        return {name: hub_sealed.sealed_secret(name, self.secrets[name]) for name in names if name in self.secrets}
 
     @property
     def sealed(self) -> bool:
@@ -184,6 +196,8 @@ def request(
     *,
     targets: Iterable[str] = (),
     exchange: bool = False,
+    secrets: Iterable[str] = (),
+    local_secrets: Collection[str] = (),
 ) -> RunVend:
     """Ask the hub, through ``user_id``'s hub session, for the credentials of a run over its tables.
 
@@ -191,12 +205,15 @@ def request(
     walk of the hub's catalogs; one on the hub's own disk, or on storage other than S3, is refused before the vend
     with the sentence the catalog tree marks it with (``catalog.unreachable``), which says what to do. A run with no
     namespace walks nothing. ``exchange`` also asks for the organisation's exchange store; ``targets``, the hub names
-    of the servers the run's steps use, has the hub seal every credential to each of them.
+    of the servers the run's steps use, has the hub seal every credential to each of them, and ``secrets``, the names
+    of the secrets the run's steps on those servers use, each such secret too.
 
     Raises:
         LookupError: A sentence for the user: not connected to the hub, a namespace the hub keeps on its own disk or
-            on other storage, the hub's refusal with its reason, or a hub that does not answer.
+            on other storage, the hub's refusal with its reason, or a hub that does not answer. A secret the hub
+            refuses that is among ``local_secrets``, the names that exist on this server, is ``ONLY_HERE``.
     """
+    secrets = tuple(dict.fromkeys(secrets))
     try:
         hub_url, access_token = catalog.signed_in(user_id)
         found = catalog.namespaces(hub_url, access_token) if readers | writers else {}
@@ -213,11 +230,21 @@ def request(
             bases[namespace_id] = namespace.storage_uri.rstrip("/")
         targets = tuple(dict.fromkeys(targets))
         answer = client.vend(
-            hub_url, access_token, run_id, sorted(readers), sorted(writers), targets=targets, exchange=exchange
+            hub_url,
+            access_token,
+            run_id,
+            sorted(readers),
+            sorted(writers),
+            targets=targets,
+            exchange=exchange,
+            secrets=secrets,
         )
     except HubRefused as e:
         if e.status == 401:
             raise LookupError(catalog.NOT_CONNECTED) from e
+        only_here = [name for name in secrets if name in local_secrets and _names(e.detail, name)]
+        if e.status == 403 and only_here:
+            raise LookupError(ONLY_HERE.format(name=only_here[0])) from e
         raise LookupError(refusal_sentence(e.detail, e.status)) from e
     except HubVersionRefused as e:
         raise LookupError(refusal_sentence(e.detail, 426)) from e
@@ -236,8 +263,19 @@ def request(
         for credential in answer["credentials"]
     )
     return RunVend(
-        run_id=run_id, vend_id=answer["vend_id"], credentials=credentials, bases=bases, names=names, targets=targets
+        run_id=run_id,
+        vend_id=answer["vend_id"],
+        credentials=credentials,
+        bases=bases,
+        names=names,
+        targets=targets,
+        secrets={secret["name"]: dict(secret["sealed"]) for secret in answer.get("secrets", []) if secrets},
     )
+
+
+def _names(sentence: str, name: str) -> bool:
+    """Whether the hub's ``sentence`` names the secret ``name`` as a word of its own."""
+    return re.search(rf"(?<![\w.-]){re.escape(name)}(?![\w-]|\.\w)", sentence) is not None
 
 
 def node_name(backend_id: str) -> str | None:

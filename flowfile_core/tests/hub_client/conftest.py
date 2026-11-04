@@ -371,7 +371,9 @@ class SealingHubCatalog(FakeHubWithCatalog):
     ``exchange`` adds a credential for ``exchange_store``'s URI, its options ``vend_options`` of that URI (a 422 with
     no store). With ``targets`` each credential's ``storage_options`` is empty and its ``sealed`` maps every target to
     a token ``signer`` signs and seals to that node's ``enc`` key in ``enc_keys`` (a node with none is the hub's 422,
-    one in ``refused_nodes`` its 403), with ``issuer`` as ``iss``; without targets ``sealed`` is empty.
+    one in ``refused_nodes`` its 403), with ``issuer`` as ``iss``; without targets ``sealed`` is empty. Storage tokens
+    carry ``kind: "storage"``. ``secrets`` names (TS18) are answered from ``secret_values``, each sealed to every target
+    with ``kind: "secret"``; names without targets are the hub's 422 and a name it does not hold its 403 sentence.
     """
 
     def __init__(self, signer, issuer: str):
@@ -380,9 +382,23 @@ class SealingHubCatalog(FakeHubWithCatalog):
         self.issuer = issuer
         self.enc_keys: dict[str, dict] = {}
         self.refused_nodes: set[str] = set()
+        self.secret_values: dict[str, str] = {}
 
     def _vend(self, body: dict) -> httpx.Response:
         targets = body.get("targets") or []
+        names = body.get("secrets") or []
+        if names and not targets:
+            return httpx.Response(
+                422, json={"detail": "A secret is vended only sealed to the servers named in targets"}
+            )
+        for name in names:
+            if name not in self.secret_values:
+                sentence = (
+                    f'You have no secret "{name}" on the hub; add it under Storage and connections → Secrets, '
+                    "or in a team's Secrets"
+                )
+                self.vend_calls.append(body)
+                return httpx.Response(403, json={"detail": sentence})
         for name in targets:
             if name in self.refused_nodes:
                 return httpx.Response(403, json={"detail": f"You may not run on the server {name}"})
@@ -428,6 +444,25 @@ class SealingHubCatalog(FakeHubWithCatalog):
             }
             if targets:
                 credential["storage_options"] = {}
+        if names:
+            answer["secrets"] = [
+                {
+                    "name": name,
+                    "sealed": {
+                        node: self.signer.sealed_secret(
+                            self.enc_keys[node],
+                            node=node,
+                            iss=self.issuer,
+                            name=name,
+                            value=self.secret_values[name],
+                            run_id=body["run_id"],
+                            vend_id=answer["vend_id"],
+                        )
+                        for node in targets
+                    },
+                }
+                for name in names
+            ]
         return httpx.Response(200, json=answer)
 
 

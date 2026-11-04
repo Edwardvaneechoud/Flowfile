@@ -26,7 +26,7 @@ from flowfile_core.flowfile.catalog_cdc import (
     read_cursor,
     resolve_consumer_key,
 )
-from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution import registry, run_secrets
 from flowfile_core.flowfile.execution.context import ExecutionContext, current_context, use_context
 from flowfile_core.flowfile.execution.errors import ComputeError, VersionMismatch
 from flowfile_core.flowfile.execution.exchange import ExchangeRun
@@ -287,6 +287,8 @@ class ExecutionMixin(GraphMixinBase):
     hub_exchange_store: ExchangeConfig | None = None
     # (run id, vend id) of the last run's vend, for its report; holds no credential.
     last_hub_vend: tuple[str, int] | None = None
+    # Node id -> the secret names the running run's vend sealed for that step; None between runs.
+    sealed_secret_steps: dict[int | str, tuple[str, ...]] | None = None
 
     @property
     def last_closed_gate_handles(self) -> Mapping[str | int, frozenset[str]]:
@@ -709,6 +711,9 @@ class ExecutionMixin(GraphMixinBase):
             run_context = current_context(self)
             if backend_id is not None and backend_id != run_context.backend_id:
                 params_scope.enter_context(use_context(replace(run_context, backend_id=backend_id)))
+            sealed_names = (self.sealed_secret_steps or {}).get(node.node_id)
+            if sealed_names and self.hub_vend is not None:
+                params_scope.enter_context(run_secrets.use_sealed(self.hub_vend.sealed_secrets(sealed_names)))
             node._boundary_inputs = {(edge.source.node_id, edge.handle): edge for edge in edges}
             params_scope.callback(_release_boundary_inputs, node, edges)
             try:
@@ -1660,7 +1665,11 @@ class ExecutionMixin(GraphMixinBase):
         return SingleBackendPolicy(run_backend_id)
 
     def _seal_targets(
-        self, nodes: list[FlowNode], hub_nodes: list[FlowNode], exchange_run: ExchangeRun
+        self,
+        nodes: list[FlowNode],
+        hub_nodes: list[FlowNode],
+        exchange_run: ExchangeRun,
+        secret_nodes: Collection[FlowNode] = (),
     ) -> tuple[tuple[str, ...], bool, list[FlowNode]]:
         """The hub servers a vend for this run is sealed to, whether it asks for the exchange store, and its nodes.
 
@@ -1668,8 +1677,10 @@ class ExecutionMixin(GraphMixinBase):
         key nor its database. A node on a hub table that the run's policy places on a hub-filled ``worker:<name>`` row
         seals the vend to every hub-table node's server; a run whose store is the hub's (``ExchangeRun.vended``) and
         whose nodes go to more than one backend asks for the store too, sealed to every backend it names, the fallback
-        and this server, which removes the run's prefix. Otherwise ``((), False, [])``: today's vend, which the run's
-        own worker opens with the master key it shares with core. The nodes are those whose credential is sealed.
+        and this server, which removes the run's prefix. ``secret_nodes``, the steps on hub servers that name secrets
+        (``_secret_steps``), seal the vend as a hub-table node there does. Otherwise ``((), False, [])``: today's vend,
+        which the run's own worker opens with the master key it shares with core. The nodes are those whose credential
+        is sealed.
 
         Raises:
             LookupError: A backend to seal to is no server of the hub; the sentence names it.
@@ -1677,6 +1688,7 @@ class ExecutionMixin(GraphMixinBase):
         if issuer_accounts.joined_with_keys() is None:
             return (), False, []
         policy = self._run_policy(exchange_run)
+        hub_nodes = hub_nodes + [node for node in secret_nodes if node not in hub_nodes]
         hub_backends = {policy.backend_for(node) for node in hub_nodes}
         run_backends = dict.fromkeys(policy.backend_for(node) for node in nodes)
         exchange = (
@@ -1705,6 +1717,30 @@ class ExecutionMixin(GraphMixinBase):
             targets.append(name)
         return tuple(dict.fromkeys(targets)), bool(exchange), sealed_nodes
 
+    def _secret_steps(self, nodes: list[FlowNode], exchange_run: ExchangeRun) -> dict[FlowNode, dict[str, bool]]:
+        """The run's steps that the policy places on a server of the hub and that name secrets, with their names.
+
+        Only on a server joined to its hub with keys of its own: another server of the hub has a master key of its
+        own, so the names are asked of the hub. Each name says whether it exists on this server too
+        (``run_secrets.names_for``). A step whose names cannot be read names none and fails as it runs.
+        """
+        if issuer_accounts.joined_with_keys() is None:
+            return {}
+        policy = self._run_policy(exchange_run)
+        steps: dict[FlowNode, dict[str, bool]] = {}
+        for node in nodes:
+            backend_id = policy.backend_for(node)
+            if not backend_id.startswith(registry.CONFIGURED_WORKER_PREFIX) or vend.node_name(backend_id) is None:
+                continue
+            try:
+                names = run_secrets.names_for(node)
+            except Exception as e:
+                logger.debug(f"Could not read the secret names of node {node.node_id}: {e}")
+                continue
+            if names:
+                steps[node] = names
+        return steps
+
     def _vend_hub_tables(self, nodes: list[FlowNode], exchange_run: ExchangeRun) -> tuple[list[FlowNode], str] | None:
         """Ask the hub once for the credentials of the run's nodes on hub tables, held as ``hub_vend`` for the run.
 
@@ -1713,30 +1749,42 @@ class ExecutionMixin(GraphMixinBase):
         nodes' own; nodes of two users ask as the first, which the flow log says; a run with only crossings asks as
         the user whose hub session found the store. On a server joined with keys of its own the vend is sealed to the
         hub servers the run's steps use (``_seal_targets``), and the exchange store's credential is the run's
-        ``exchange_run.sealed``. Answers the nodes and the sentence when the hub cannot be asked or refuses, else
-        ``None``.
+        ``exchange_run.sealed``. The secrets the steps on those servers name are asked by name in the same vend and
+        held in ``sealed_secret_steps``. Answers the nodes and the sentence when the hub cannot be asked or refuses,
+        else ``None``.
         """
         self.last_hub_vend = None
+        self.sealed_secret_steps = None
         hub = {node.node_id: hub_table_namespace(node.setting_input) for node in nodes}
         hub_nodes = [node for node in nodes if hub[node.node_id] is not None]
+        secret_steps = self._secret_steps(nodes, exchange_run)
         try:
-            targets, exchange, sealed_nodes = self._seal_targets(nodes, hub_nodes, exchange_run)
+            targets, exchange, sealed_nodes = self._seal_targets(nodes, hub_nodes, exchange_run, secret_steps)
         except LookupError as e:
-            return hub_nodes or nodes, str(e)
-        if not hub_nodes and not exchange:
+            return hub_nodes or list(secret_steps) or nodes, str(e)
+        if not hub_nodes and not exchange and not secret_steps:
             return None
-        user_ids = list(dict.fromkeys(node.setting_input.user_id for node in hub_nodes))
+        asking = hub_nodes + [node for node in secret_steps if node not in hub_nodes]
+        user_ids = list(dict.fromkeys(node.setting_input.user_id for node in asking))
         if len(user_ids) > 1:
             self.flow_logger.warning(
-                f"The nodes on hub tables belong to users {', '.join(map(str, user_ids))}; "
+                f"The nodes the hub vends to belong to users {', '.join(map(str, user_ids))}; "
                 f"the hub is asked as user {user_ids[0]}"
             )
         user_id = user_ids[0] if user_ids else exchange_run.hub_store.vended_for
         readers = {hub[node.node_id][0] for node in hub_nodes if not hub[node.node_id][1]}
         writers = {hub[node.node_id][0] for node in hub_nodes if hub[node.node_id][1]}
+        names = {name: local for step in secret_steps.values() for name, local in step.items()}
         try:
             self.hub_vend = vend.request(
-                user_id, exchange_run.run_id, readers, writers, targets=targets, exchange=exchange
+                user_id,
+                exchange_run.run_id,
+                readers,
+                writers,
+                targets=targets,
+                exchange=exchange,
+                secrets=sorted(names),
+                local_secrets={name for name, local in names.items() if local},
             )
             if exchange:
                 exchange_run.sealed = self.hub_vend.sealed_credential(exchange_run.hub_store.uri)
@@ -1744,11 +1792,12 @@ class ExecutionMixin(GraphMixinBase):
             return sealed_nodes or hub_nodes, str(e)
         if targets:
             self.flow_logger.info(f"The hub sealed this run's credentials to {', '.join(targets)}")
+        self.sealed_secret_steps = {node.node_id: tuple(step) for node, step in secret_steps.items()} or None
         self.last_hub_vend = (exchange_run.run_id, self.hub_vend.vend_id)
         return None
 
     def _record_hub_refusal(self, nodes: list[FlowNode], sentence: str) -> None:
-        """Record each node on a hub table as a failed result, ``sentence`` its error, of a run that starts no node."""
+        """Record each node the hub vends to as a failed result, ``sentence`` its error, in a run that starts none."""
         for node in nodes:
             self.flow_logger.get_node_logger(node.node_id).error(sentence)
             node_result = NodeResult(
@@ -1760,7 +1809,7 @@ class ExecutionMixin(GraphMixinBase):
             node_result.finish(success=False, error=sentence)
             self.latest_run_info.node_step_result.append(node_result)
         self.flow_logger.error(
-            f"{len(nodes)} node(s) on hub tables cannot run: {sentence.rstrip('.')}; no node was started"
+            f"{len(nodes)} node(s) the hub vends to cannot run: {sentence.rstrip('.')}; no node was started"
         )
 
     def _end_hub_vend(self, exchange_run: ExchangeRun) -> None:
@@ -1776,6 +1825,7 @@ class ExecutionMixin(GraphMixinBase):
         if run_vend is None or run_vend.run_id != exchange_run.run_id:
             return
         self.hub_vend = None
+        self.sealed_secret_steps = None
         seen: set[int] = set()
         stack = [node for node in self.nodes if (hub := hub_table_namespace(node.setting_input)) and not hub[1]]
         while stack:

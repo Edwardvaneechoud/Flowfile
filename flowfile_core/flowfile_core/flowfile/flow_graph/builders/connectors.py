@@ -14,7 +14,7 @@ from flowfile_core.flowfile.database_connection_manager.ga_connections import (
     get_encrypted_credential,
     get_ga_connection,
 )
-from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution import registry, run_secrets
 from flowfile_core.flowfile.execution.context import current_context
 from flowfile_core.flowfile.execution.payloads import (
     DatabaseReadPayload,
@@ -111,6 +111,29 @@ def _resolve_database_credentials(
         return ref_settings, encrypted_password, ref_settings
 
 
+def _step_database_credentials(database_settings, user_id: int, resolved) -> tuple:
+    """The connection and password a database step carries: ``resolved()``'s, the password sealed by the hub when the
+    step runs on another server of the hub (``run_secrets``), so an inline password need not exist on this server."""
+    if run_secrets.active():
+        sealed = run_secrets.sealed(run_secrets.database_secret_name(database_settings, user_id))
+        if sealed is not None and database_settings.connection_mode == "inline":
+            return database_settings.database_connection, sealed
+        if sealed is not None:
+            return resolved()[0], sealed
+    database_connection, encrypted_password, _ = resolved()
+    return database_connection, encrypted_password
+
+
+def _step_kafka_settings(read_settings: KafkaReadSettings, kafka_settings, user_id: int) -> KafkaReadSettings:
+    """The read settings a Kafka step carries: its connection's secrets sealed by the hub when the step runs on another
+    server of the hub (``run_secrets``); the offsets are committed here with ``read_settings`` as they are."""
+    if not run_secrets.active():
+        return read_settings
+    names = run_secrets.kafka_secret_names(kafka_settings, user_id)
+    sealed = {field: run_secrets.sealed(name) for field, name in names.items() if run_secrets.sealed(name)}
+    return read_settings.model_copy(update=sealed) if sealed else read_settings
+
+
 class ConnectorBuildersMixin(GraphMixinBase):
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_database_writer(self, node_database_writer: input_schema.NodeDatabaseWriter):
@@ -124,8 +147,10 @@ class ConnectorBuildersMixin(GraphMixinBase):
         database_settings: input_schema.DatabaseWriteSettings = node_database_writer.database_write_settings
 
         def _func(df: FlowDataEngine):
-            database_connection, encrypted_password, _ = _resolve_database_credentials(
-                database_settings, node_database_writer.user_id
+            database_connection, encrypted_password = _step_database_credentials(
+                database_settings,
+                node_database_writer.user_id,
+                lambda: _resolve_database_credentials(database_settings, node_database_writer.user_id),
             )
             df.lazy = True
             table_name = (
@@ -185,7 +210,9 @@ class ConnectorBuildersMixin(GraphMixinBase):
                 return _creds["v"]
 
         def _func():
-            database_connection, encrypted_password, _ = _get_creds()
+            database_connection, encrypted_password = _step_database_credentials(
+                database_settings, node_database_reader.user_id, _get_creds
+            )
             backend = current_context(self).backend
             read = DatabaseReadPayload(
                 flow_id=node_database_reader.flow_id,
@@ -320,7 +347,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
             read = KafkaReadPayload(
                 flow_id=node_kafka_source.flow_id,
                 node_id=node_kafka_source.node_id,
-                settings=kafka_read_settings,
+                settings=_step_kafka_settings(kafka_read_settings, kafka_settings, node_kafka_source.user_id),
                 read_kafka_source=root().read_kafka_source,
             )
             result = node.run_op(backend, OperationKind.kafka_read, op_payload(read), job_id=read.job_id)
@@ -521,7 +548,9 @@ class ConnectorBuildersMixin(GraphMixinBase):
         def _resolve_secret_encrypted() -> str | None:
             if _inline_encrypted is not None:
                 return _inline_encrypted
-            return resolve_auth_secret_encrypted(auth, node_rest_api_reader.user_id)
+            return run_secrets.in_place_of(
+                auth.secret_name, resolve_auth_secret_encrypted(auth, node_rest_api_reader.user_id)
+            )
 
         def _func() -> FlowDataEngine:
             backend = current_context(self).backend

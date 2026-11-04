@@ -463,6 +463,10 @@ def _own_reasons(
         unsealed = unsealed_for(backend_id, capabilities, flow.hub_vend.targets)
         if unsealed is not None:
             reasons.append(f"it {'writes' if hub[1] else 'reads'} a table on the hub, but {unsealed}")
+    if node.node_id in (getattr(flow, "sealed_secret_steps", None) or {}) and flow.hub_vend is not None:
+        unsealed = unsealed_for(backend_id, capabilities, flow.hub_vend.targets)
+        if unsealed is not None:
+            reasons.append(f"it uses secrets the hub sealed to the server that runs it, but {unsealed}")
     if isinstance(node.setting_input, input_schema.NodeRunFlow):
         reasons += _child_refusals(flow, node, backend_id, backends, policy, absent, log)
     return reasons

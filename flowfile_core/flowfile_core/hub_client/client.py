@@ -207,6 +207,7 @@ def vend(
     *,
     targets: list[str] | tuple[str, ...] = (),
     exchange: bool = False,
+    secrets: list[str] | tuple[str, ...] = (),
     http: httpx.Client | None = None,
 ) -> dict:
     """A credential for each storage root the namespaces live under, for the run ``run_id``; the hub records the vend.
@@ -217,7 +218,8 @@ def vend(
     the organisation's exchange store prefix too. With ``targets``, hub node names, each credential's
     ``storage_options`` is empty and its ``sealed`` maps every target to a token only that node opens; a node the
     caller may not run on, or that is disabled, is the hub's 403, one unknown, removed or without keys its 422. Without
-    targets the body is the one an older hub takes.
+    targets the body is the one an older hub takes. ``secrets``, secret names, needs ``targets``: the answer's
+    ``secrets`` holds each name with its ``sealed`` map, and a name the caller cannot reach is the hub's 403.
     """
     request = {
         "run_id": run_id,
@@ -228,6 +230,8 @@ def vend(
         request["exchange"] = True
     if targets:
         request["targets"] = list(targets)
+    if secrets:
+        request["secrets"] = list(secrets)
     body = _request("POST", url, "/hub/vend", http, json=request, headers=_bearer(access_token))
     _require(body, ("vend_id",), url, "/hub/vend")
     credentials = body.get("credentials")
@@ -238,6 +242,18 @@ def vend(
         and isinstance(credential.get("sealed", {}), dict)
         and (not targets or set(targets) <= set(credential.get("sealed") or {}))
         for credential in credentials
+    ):
+        raise HubRefused(200, f"{url} did not answer /hub/vend as a Flowfile hub does.")
+    answered = body.get("secrets", [])
+    if secrets and not (
+        isinstance(answered, list)
+        and all(
+            isinstance(secret, dict)
+            and isinstance(secret.get("sealed"), dict)
+            and set(targets) <= set(secret["sealed"])
+            for secret in answered
+        )
+        and set(secrets) <= {secret.get("name") for secret in answered}
     ):
         raise HubRefused(200, f"{url} did not answer /hub/vend as a Flowfile hub does.")
     return body
