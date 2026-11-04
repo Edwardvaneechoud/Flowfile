@@ -22,11 +22,17 @@ MAX_ROWS_VAR = "FLOWFILE_EXCHANGE_MAX_ROWS"
 
 @dataclass(frozen=True)
 class ExchangeConfig:
-    """Where results cross between backends (``uri``), the stored S3 connection that opens it, and the row limit."""
+    """Where results cross between backends (``uri``), the stored S3 connection that opens it, and the row limit.
+
+    ``vended_for`` is set only on the store a server joined to its hub with keys of its own takes from that hub: the
+    connection is named in the hub's database, not here, so the store is opened by what the hub vends each run through
+    that user's hub session.
+    """
 
     uri: str | None = None
     connection: str | None = None
     max_rows: int | None = None
+    vended_for: int | None = None
 
 
 def _settings_file() -> Path:

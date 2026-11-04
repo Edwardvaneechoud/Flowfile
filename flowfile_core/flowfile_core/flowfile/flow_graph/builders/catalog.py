@@ -26,6 +26,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
 )
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_graph._base import GraphMixinBase
 from flowfile_core.flowfile.flow_graph.catalog_resolution import (
     _CDF_COLUMN_DTYPES,
@@ -181,7 +182,8 @@ class CatalogBuildersMixin(GraphMixinBase):
 
         The table is looked up on the hub once here, and its columns are the node's predicted schema; a hub that does
         not answer leaves its message on the node, and the table is looked up again when the run reads it. The scan
-        carries the run's credential encrypted (``RunVend.scan_kwargs``), so outside a run it cannot read.
+        carries the run's credential encrypted, or a vend sealed to the servers the run uses (``RunVend.scan_delta``),
+        so outside a run it cannot read.
         """
         user_id = node_catalog_reader.user_id
         hub_table_id = node_catalog_reader.hub_table_id
@@ -196,8 +198,11 @@ class CatalogBuildersMixin(GraphMixinBase):
         def _func() -> FlowDataEngine:
             if self.hub_vend is None:
                 raise ValueError("Run the flow to read a table on the hub")
-            file_path = (designed or _hub_reader_table(user_id, hub_table_id))["file_path"]
-            lf = pl.scan_delta(file_path, **self.hub_vend.scan_kwargs(file_path, user_id))
+            table = designed or _hub_reader_table(user_id, hub_table_id)
+            columns = {
+                column["name"]: cast_str_to_polars_type(column["dtype"]) for column in table.get("schema_columns") or ()
+            }
+            lf = self.hub_vend.scan_delta(table["file_path"], user_id, columns)
             backend = current_context(self).backend if FLOWFILE_COMPUTE_PROTOCOL else None
             return _filtered_frame(lf, row_filter, backend)
 

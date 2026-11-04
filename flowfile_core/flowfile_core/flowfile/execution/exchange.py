@@ -3,7 +3,9 @@
 ``FLOWFILE_EXCHANGE_URI`` names its ``s3://`` root and ``FLOWFILE_EXCHANGE_CONNECTION`` the stored cloud connection
 that opens it, else the store saved from the Backends page, else, on a team node of a hub, the store its hub sets
 (``exchange_config.effective_store``). The connection is the operator's, never a node's user's, and reaches a backend
-as a ``CredentialRef``. A run writes under ``<uri>/<flow id>/<run id>/``, which ``run_graph`` removes when the run ends.
+as a ``CredentialRef``. On a server joined to its hub with keys of its own the hub's store is opened instead by what
+the hub vends the run sealed to each server its steps run on (``ExchangeRun.sealed``), a ``SealedCredential`` each
+backend sends whole. A run writes under ``<uri>/<flow id>/<run id>/``, which ``run_graph`` removes when the run ends.
 """
 
 from __future__ import annotations
@@ -13,17 +15,19 @@ from urllib.parse import urlsplit
 
 from flowfile_core.configs import exchange_config
 from flowfile_core.configs.exchange_config import ExchangeConfig
-from flowfile_core.flowfile.execution.protocol import CredentialRef
+from flowfile_core.flowfile.execution.protocol import Credential, CredentialRef, SealedCredential
 from shared.cloud_credential_provider import credential_ref_kwargs, resolve_credential_ref
 from shared.cloud_storage.storage_options import build_s3_client
+
+NOT_VENDED = "the hub vended this run no credential for its exchange store; run the flow again"
 
 
 @dataclass(frozen=True)
 class ExchangeStore:
-    """The exchange store's root URI, without a trailing slash, and the reference to the connection that opens it."""
+    """The exchange store's root URI, without a trailing slash, and the credential that opens it."""
 
     uri: str
-    credential: CredentialRef
+    credential: Credential
 
 
 def exchange_store(hub: ExchangeConfig | None = None) -> ExchangeStore | None:
@@ -81,14 +85,26 @@ class ExchangeRun:
         self.flow_id = flow_id
         self.run_id = run_id
         self.hub_store = hub_store
+        self.sealed: SealedCredential | None = None
         self._store: ExchangeStore | None = None
 
-    def prefix(self) -> tuple[str, CredentialRef] | None:
-        """The run's prefix and the reference that opens it; ``None`` when no store is configured.
+    def vended(self) -> bool:
+        """Whether the run's store is the one a joined server's hub sets, opened by what the hub vends this run."""
+        if self.hub_store is None or self.hub_store.vended_for is None:
+            return False
+        return exchange_config.effective_store(hub=self.hub_store).uri == self.hub_store.uri
+
+    def prefix(self) -> tuple[str, Credential] | None:
+        """The run's prefix and the credential that opens it; ``None`` when no store is configured.
 
         Raises:
-            ValueError: The store is misconfigured, as ``exchange_store`` says.
+            ValueError: The store is misconfigured, as ``exchange_store`` says, or it is the hub's on a joined server
+                and the hub vended this run no credential for it (``NOT_VENDED``).
         """
+        if self._store is None and self.vended():
+            if self.sealed is None:
+                raise ValueError(NOT_VENDED)
+            self._store = ExchangeStore(uri=self.hub_store.uri.rstrip("/"), credential=self.sealed)
         if self._store is None:
             self._store = exchange_store() if self.hub_store is None else exchange_store(self.hub_store)
         if self._store is None:
@@ -116,16 +132,24 @@ class ExchangeRun:
 def remove_prefix(store: ExchangeStore, prefix: str) -> None:
     """Delete every object under *prefix*, an ``s3://`` URI in *store*, resolving its connection as core does.
 
-    Each listed page is deleted in one request, so an empty prefix costs only the listing. Path-style addressing
-    applies only to a connection with its own endpoint (MinIO and other S3-compatible stores).
+    A sealed credential is opened with this server's own entry of the map: the vend always seals the exchange to the
+    server core runs on, which removes the run's prefix. Each listed page is deleted in one request, so an empty prefix
+    costs only the listing. Path-style addressing applies only to a connection with its own endpoint (MinIO and other
+    S3-compatible stores).
 
     Raises:
         OSError: The store refused to delete an object; the message names how many and the first reason.
+        CredentialResolutionError: A sealed credential this server cannot open.
     """
-    connection_id, user_id = store.credential.connection_id, store.credential.user_id
-    options = credential_ref_kwargs(connection_id, user_id).get("storage_options", {})
-    keys, _ = resolve_credential_ref(connection_id, user_id)
-    client = build_s3_client({**options, **keys}, path_style=True)
+    if isinstance(store.credential, SealedCredential):
+        from shared.hub_sealed import sealed_storage_options
+
+        client = build_s3_client(sealed_storage_options(store.credential.sealed), path_style=True)
+    else:
+        connection_id, user_id = store.credential.connection_id, store.credential.user_id
+        options = credential_ref_kwargs(connection_id, user_id).get("storage_options", {})
+        keys, _ = resolve_credential_ref(connection_id, user_id)
+        client = build_s3_client({**options, **keys}, path_style=True)
     bucket, _, key_prefix = prefix.removeprefix("s3://").partition("/")
     for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=key_prefix):
         objects = [{"Key": item["Key"]} for item in page.get("Contents", [])]

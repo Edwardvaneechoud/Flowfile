@@ -6,7 +6,8 @@ hub does, ``GET /hub/compute-nodes`` (whatever ``nodes`` holds) and ``POST /hub/
 token for an enabled node and refuses as the hub does; and the one a team node asks, ``GET /hub/exchange-store``
 (``exchange_store``, a 404 while it is ``None``). Its tokens are real JWTs with an ``exp`` claim, signed with a key
 only the fake knows. ``FakeHubWithCatalog`` adds the hub's catalog namespaces and tables, the credentials the
-hub vends to a run over them and the run reports it receives. ``serve_fake`` serves a fake over real HTTP on a
+hub vends to a run over them and the run reports it receives; ``SealingHubCatalog`` seals what it vends to the nodes a
+run names. ``serve_fake`` serves a fake over real HTTP on a
 loopback port, for tests in which nothing may stand between the client and the wire.
 """
 
@@ -362,6 +363,72 @@ class FakeHubWithCatalog(FakeHub):
         return httpx.Response(
             200, json=[t for t in self.tables if namespace is None or t["namespace_id"] == int(namespace)]
         )
+
+
+class SealingHubCatalog(FakeHubWithCatalog):
+    """``FakeHubWithCatalog`` whose vend takes ``exchange`` and ``targets`` as the hub's contract has them.
+
+    ``exchange`` adds a credential for ``exchange_store``'s URI, its options ``vend_options`` of that URI (a 422 with
+    no store). With ``targets`` each credential's ``storage_options`` is empty and its ``sealed`` maps every target to
+    a token ``signer`` signs and seals to that node's ``enc`` key in ``enc_keys`` (a node with none is the hub's 422,
+    one in ``refused_nodes`` its 403), with ``issuer`` as ``iss``; without targets ``sealed`` is empty.
+    """
+
+    def __init__(self, signer, issuer: str):
+        super().__init__()
+        self.signer = signer
+        self.issuer = issuer
+        self.enc_keys: dict[str, dict] = {}
+        self.refused_nodes: set[str] = set()
+
+    def _vend(self, body: dict) -> httpx.Response:
+        targets = body.get("targets") or []
+        for name in targets:
+            if name in self.refused_nodes:
+                return httpx.Response(403, json={"detail": f"You may not run on the server {name}"})
+            if name not in self.enc_keys:
+                return httpx.Response(422, json={"detail": f"The server {name} has no keys on this hub"})
+        if body["read_namespace_ids"] or body["write_namespace_ids"]:
+            response = super()._vend(body)
+            if response.status_code != 200:
+                return response
+            answer = response.json()
+        else:
+            self.vend_calls.append(body)
+            self._vends += 1
+            answer = {"vend_id": self._vends, "credentials": []}
+        if body.get("exchange"):
+            if self.exchange_store is None:
+                return httpx.Response(422, json={"detail": "The organisation has no exchange store"})
+            uri = self.exchange_store["uri"]
+            expires = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+            answer["credentials"].append(
+                {
+                    "base_uri": uri,
+                    "storage_options": dict(self.vend_options.get(uri, {})),
+                    "expires_at": expires,
+                    "mode": "static",
+                    "read_prefixes": [uri],
+                    "write_prefixes": [uri],
+                }
+            )
+        for credential in answer["credentials"]:
+            options = credential["storage_options"]
+            credential["sealed"] = {
+                name: self.signer.sealed(
+                    self.enc_keys[name],
+                    node=name,
+                    iss=self.issuer,
+                    base_uri=credential["base_uri"],
+                    storage_options=options,
+                    run_id=body["run_id"],
+                    vend_id=answer["vend_id"],
+                )
+                for name in targets
+            }
+            if targets:
+                credential["storage_options"] = {}
+        return httpx.Response(200, json=answer)
 
 
 _HOP_HEADERS = {"content-length", "transfer-encoding", "connection", "content-encoding"}

@@ -205,32 +205,38 @@ def vend(
     read_namespace_ids: list[int],
     write_namespace_ids: list[int],
     *,
+    targets: list[str] | tuple[str, ...] = (),
+    exchange: bool = False,
     http: httpx.Client | None = None,
 ) -> dict:
     """A credential for each storage root the namespaces live under, for the run ``run_id``; the hub records the vend.
 
     Answers ``vend_id`` and ``credentials``, each with ``base_uri``, ``storage_options``, ``expires_at``, ``mode``,
     ``read_prefixes`` and ``write_prefixes``. A namespace the account may not use (read) or manage (write) is the
-    hub's 403, one on the hub's own disk its 422, a hub whose vending is not configured its 501.
+    hub's 403, one on the hub's own disk its 422, a hub whose vending is not configured its 501. ``exchange`` asks for
+    the organisation's exchange store prefix too. With ``targets``, hub node names, each credential's
+    ``storage_options`` is empty and its ``sealed`` maps every target to a token only that node opens; a node the
+    caller may not run on, or that is disabled, is the hub's 403, one unknown, removed or without keys its 422. Without
+    targets the body is the one an older hub takes.
     """
-    body = _request(
-        "POST",
-        url,
-        "/hub/vend",
-        http,
-        json={
-            "run_id": run_id,
-            "read_namespace_ids": list(read_namespace_ids),
-            "write_namespace_ids": list(write_namespace_ids),
-        },
-        headers=_bearer(access_token),
-    )
+    request = {
+        "run_id": run_id,
+        "read_namespace_ids": list(read_namespace_ids),
+        "write_namespace_ids": list(write_namespace_ids),
+    }
+    if exchange:
+        request["exchange"] = True
+    if targets:
+        request["targets"] = list(targets)
+    body = _request("POST", url, "/hub/vend", http, json=request, headers=_bearer(access_token))
     _require(body, ("vend_id",), url, "/hub/vend")
     credentials = body.get("credentials")
     if not isinstance(credentials, list) or not all(
         isinstance(credential, dict)
         and isinstance(credential.get("base_uri"), str)
         and isinstance(credential.get("storage_options"), dict)
+        and isinstance(credential.get("sealed", {}), dict)
+        and (not targets or set(targets) <= set(credential.get("sealed") or {}))
         for credential in credentials
     ):
         raise HubRefused(200, f"{url} did not answer /hub/vend as a Flowfile hub does.")

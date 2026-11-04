@@ -186,6 +186,25 @@ def unmoved_without_store(nodes: list[FlowNode], policy: SingleBackendPolicy) ->
     return refusals
 
 
+def unsealed_for(backend_id: str, capabilities: Capabilities, targets: tuple[str, ...]) -> str | None:
+    """Why ``backend_id`` cannot open what the hub sealed to the run's ``targets``; ``None`` when it can.
+
+    A backend opens a sealed credential only when it declares ``credential_resolution: vended`` and its server is among
+    the targets the vend was sealed to; core never opens one for another server.
+    """
+    from flowfile_core.hub_client import vend
+
+    if capabilities.credential_resolution != "vended":
+        return (
+            "the hub seals that credential to the server that runs it, and this backend cannot open one: update "
+            "Flowfile on it and join it to the hub with keys of its own"
+        )
+    name = vend.node_name(backend_id)
+    if name not in targets:
+        return f"the hub sealed this run's credentials to {', '.join(targets)}, not to this backend's server"
+    return None
+
+
 def remedy_for(node: FlowNode, policy: PlacementPolicy, *, fallback_id: str | None = None) -> str | None:
     """The settings that move ``node`` to another backend under ``policy``, named as the designer shows them.
 
@@ -432,14 +451,18 @@ def _own_reasons(
     capabilities = backends[backend_id]
     absent_here = (absent or {}).get(backend_id, {})
     reasons = _unmet(needs.requirements, capabilities, needs.namespace, needs.artifact_scheme, absent_here)
+    hub = hub_table_namespace(node.setting_input)
     if capabilities.credential_resolution == "ambient":
         reasons += _unresolvable_connections(node, needs.requirements.credentials, needs.namespace_id)
-        hub = hub_table_namespace(node.setting_input)
         if hub is not None and flow.hub_vend is not None:
             reasons.append(
                 f"it {'writes' if hub[1] else 'reads'} a table on the hub with a credential the hub vends to this run, "
                 "which this backend cannot take"
             )
+    elif hub is not None and flow.hub_vend is not None and flow.hub_vend.sealed:
+        unsealed = unsealed_for(backend_id, capabilities, flow.hub_vend.targets)
+        if unsealed is not None:
+            reasons.append(f"it {'writes' if hub[1] else 'reads'} a table on the hub, but {unsealed}")
     if isinstance(node.setting_input, input_schema.NodeRunFlow):
         reasons += _child_refusals(flow, node, backend_id, backends, policy, absent, log)
     return reasons

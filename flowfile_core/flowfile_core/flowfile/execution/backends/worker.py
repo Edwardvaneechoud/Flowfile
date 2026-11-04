@@ -77,7 +77,7 @@ from flowfile_core.flowfile.execution.payloads import (
     unpack,
 )
 from flowfile_core.flowfile.execution.protocol import (
-    CredentialRef,
+    Credential,
     JobHandle,
     JobStatus,
     OperationKind,
@@ -85,6 +85,7 @@ from flowfile_core.flowfile.execution.protocol import (
     OpResult,
     ResultRef,
     Schema,
+    SealedCredential,
     SubmitHints,
     SubmitResult,
     worker_stores,
@@ -158,7 +159,7 @@ from flowfile_core.schemas.input_schema import ReceivedTable
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from shared import compute_protocol as wire
-from shared.cloud_credential_provider import credential_ref_kwargs
+from shared.cloud_credential_provider import credential_body_kwargs
 from shared.compute_protocol import PROTOCOL_VERSION, Capabilities
 from shared.google_analytics.models import GoogleAnalyticsFilter, GoogleAnalyticsOrderBy, GoogleAnalyticsReadSettings
 from shared.kafka.models import KafkaReadSettings
@@ -615,7 +616,7 @@ class WorkerBackend(_WorkerReferences):
             return held.sample_file if held is not None else None
         return self._file(ref)
 
-    def export(self, ref: ResultRef, uri: str, credential: CredentialRef | None) -> str:
+    def export(self, ref: ResultRef, uri: str, credential: Credential | None) -> str:
         """Write ``ref``'s rows to ``uri`` as parquet where they are held, and return ``uri``.
 
         A result is exported over the routes that minted it, whatever the flag says: a ``/v1`` result by a worker child
@@ -674,7 +675,7 @@ class WorkerBackend(_WorkerReferences):
         uri: str,
         schema: Schema | None,
         row_count: int | None,
-        credential: CredentialRef | None,
+        credential: Credential | None,
         kind: Literal["table", "blob"] = "table",
     ) -> ResultRef:
         """Hold a scan of the parquet at ``uri`` as a deferred result with the caller's ``schema`` and ``row_count``.
@@ -1630,23 +1631,26 @@ def _delta_job(
     return write, operation, {**destination, **{name: getattr(write, name) for name in fields}}
 
 
-def _credential_kwargs(credential: CredentialRef | None) -> dict[str, Any]:
+def _credential_kwargs(credential: Credential | None) -> dict[str, Any]:
     """What a scan of a URI takes for ``credential``: its provider and its connection's plain options.
 
     Only runs with ``FLOWFILE_COMPUTE_PROTOCOL`` off; removed with the flag.
 
     The provider carries the stored connection's id and user only, and resolves it where the plan runs. The options
     (``credential_ref_kwargs``, no secret among them) carry the endpoint and region, so an S3-compatible store is
-    reached.
+    reached. A sealed credential is opened here, which only this server's own entry of the map allows.
     """
+    return credential_body_kwargs(_wire_credential(credential))
+
+
+def _wire_credential(credential: Credential | None) -> dict[str, Any] | None:
+    """A credential as the export and import bodies and the export task carry it: the connection's id and its user's,
+    or a sealed vend's whole map of node name to token, of which the node that runs it opens its own entry."""
     if credential is None:
-        return {}
-    return credential_ref_kwargs(credential.connection_id, credential.user_id)
-
-
-def _wire_credential(credential: CredentialRef | None) -> dict[str, int] | None:
-    """A credential as the export and import bodies and the export task carry it: the connection's id and its user's."""
-    return None if credential is None else asdict(credential)
+        return None
+    if isinstance(credential, SealedCredential):
+        return {"sealed": dict(credential.sealed)}
+    return asdict(credential)
 
 
 def _wire_columns(schema: Schema) -> list[dict[str, str]]:

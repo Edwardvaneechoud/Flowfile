@@ -40,8 +40,9 @@ from flowfile_core.flowfile.execution.placement import (
     place,
     remedy_for,
     unmoved_without_store,
+    unsealed_for,
 )
-from flowfile_core.flowfile.execution.protocol import CredentialRef, ResultRef
+from flowfile_core.flowfile.execution.protocol import Credential, ResultRef, SealedCredential
 from flowfile_core.flowfile.flow_data_engine.bounded import DEFERRED_HINTS, head_rows
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
@@ -170,7 +171,7 @@ class BoundaryEdge:
     source_backend_id: str
     target_backend_id: str
     uri: str
-    credential: CredentialRef
+    credential: Credential
     node_logger: NodeLogger
     ref: ResultRef | None = None
 
@@ -245,6 +246,24 @@ class BoundaryEdge:
         ref, self.ref = self.ref, None
         if ref is not None:
             registry.backend(self.target_backend_id).release(ref)
+
+
+def _unsealed_crossing(
+    credential: Credential, assignment: Mapping[int, str], ends: tuple[int, int], declared: Mapping[str, Capabilities]
+) -> str | None:
+    """Why a crossing with ``credential`` cannot run between the backends of its two ``ends``; ``None`` when it can.
+
+    Only a sealed credential is checked: each end's backend must open what the hub sealed to the run's servers.
+    """
+    if not isinstance(credential, SealedCredential):
+        return None
+    for node_id in ends:
+        backend_id = assignment[node_id]
+        if backend_id in declared:
+            reason = unsealed_for(backend_id, declared[backend_id], tuple(credential.sealed))
+            if reason is not None:
+                return f'on backend "{backend_id}" {reason}'
+    return None
 
 
 def _release_boundary_inputs(node: FlowNode, edges: Sequence[BoundaryEdge]) -> None:
@@ -1099,12 +1118,8 @@ class ExecutionMixin(GraphMixinBase):
         if not settings.FLOWFILE_COMPUTE_PROTOCOL:
             return None, []
         nodes = execution_plan.all_nodes
-        run_backend_id = current_context(self).backend_id
         fallback_id = registry.fallback_backend_id()
-        if exchange_config.effective_store(hub=exchange_run.hub_store).uri:
-            policy = MixedPlacementPolicy(run_backend_id, fallback_id=fallback_id)
-        else:
-            policy = SingleBackendPolicy(run_backend_id)
+        policy = self._run_policy(exchange_run)
         declared: dict[str, Capabilities] = {}
         absent: dict[str, dict[str, str]] = {}
         refused: dict[str, str] = {}
@@ -1157,6 +1172,11 @@ class ExecutionMixin(GraphMixinBase):
             if crossing is None:
                 continue
             prefix, credential = crossing
+            unsealed = _unsealed_crossing(credential, placement.assignment, (source_id, target_id), declared)
+            if unsealed is not None:
+                reason = f"its input from node {source_id} crosses through the hub's exchange store, but {unsealed}"
+                crossing_refusals.setdefault(target_id, Refusal(target_id, placement.assignment[target_id], reason))
+                continue
             handles = dict.fromkeys(handle for node, handle in target._slot_input_pairs() if node is source)
             for handle in handles:
                 edge = BoundaryEdge(
@@ -1567,7 +1587,7 @@ class ExecutionMixin(GraphMixinBase):
                     closed_gate_handles=closed_gate_handles,
                 )
 
-                hub_refusal = self._vend_hub_tables(run_nodes, exchange_run.run_id)
+                hub_refusal = self._vend_hub_tables(run_nodes, exchange_run)
                 placement, edges = (None, []) if hub_refusal else self._place_run(execution_plan, exchange_run)
                 if hub_refusal:
                     self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")
@@ -1631,17 +1651,79 @@ class ExecutionMixin(GraphMixinBase):
                 self.release_run()
             self._end_exchange_run(exchange_run)
 
-    def _vend_hub_tables(self, nodes: list[FlowNode], run_id: str) -> tuple[list[FlowNode], str] | None:
+    def _run_policy(self, exchange_run: ExchangeRun) -> MixedPlacementPolicy | SingleBackendPolicy:
+        """The run's placement policy: mixed, falling back to ``registry.fallback_backend_id``, while an exchange store
+        is in use (``FLOWFILE_EXCHANGE_URI``, the saved one or the hub's), else the run's backend for every node."""
+        run_backend_id = current_context(self).backend_id
+        if exchange_config.effective_store(hub=exchange_run.hub_store).uri:
+            return MixedPlacementPolicy(run_backend_id, fallback_id=registry.fallback_backend_id())
+        return SingleBackendPolicy(run_backend_id)
+
+    def _seal_targets(
+        self, nodes: list[FlowNode], hub_nodes: list[FlowNode], exchange_run: ExchangeRun
+    ) -> tuple[tuple[str, ...], bool, list[FlowNode]]:
+        """The hub servers a vend for this run is sealed to, whether it asks for the exchange store, and its nodes.
+
+        Only on a server joined to its hub with keys of its own, where a server of the hub shares neither its master
+        key nor its database. A node on a hub table that the run's policy places on a hub-filled ``worker:<name>`` row
+        seals the vend to every hub-table node's server; a run whose store is the hub's (``ExchangeRun.vended``) and
+        whose nodes go to more than one backend asks for the store too, sealed to every backend it names, the fallback
+        and this server, which removes the run's prefix. Otherwise ``((), False, [])``: today's vend, which the run's
+        own worker opens with the master key it shares with core. The nodes are those whose credential is sealed.
+
+        Raises:
+            LookupError: A backend to seal to is no server of the hub; the sentence names it.
+        """
+        if issuer_accounts.joined_with_keys() is None:
+            return (), False, []
+        policy = self._run_policy(exchange_run)
+        hub_backends = {policy.backend_for(node) for node in hub_nodes}
+        run_backends = dict.fromkeys(policy.backend_for(node) for node in nodes)
+        exchange = (
+            settings.FLOWFILE_COMPUTE_PROTOCOL
+            and exchange_run.vended()
+            and isinstance(policy, MixedPlacementPolicy)
+            and len(run_backends) > 1
+        )
+        on_hub_server = any(backend.startswith(registry.CONFIGURED_WORKER_PREFIX) for backend in hub_backends)
+        if not exchange and not on_hub_server:
+            return (), False, []
+        backends = dict.fromkeys(policy.backend_for(node) for node in hub_nodes)
+        sealed_nodes = list(hub_nodes)
+        if exchange:
+            backends.update(run_backends)
+            backends.update(dict.fromkeys(b for b in (policy.fallback_id, registry.WORKER_BACKEND_ID) if b))
+            sealed_nodes = list(nodes)
+        targets = []
+        for backend_id in backends:
+            name = vend.node_name(backend_id)
+            if name is None:
+                raise LookupError(
+                    f'The hub seals this run\'s credentials to the servers it runs on, and backend "{backend_id}" is '
+                    "not one of the hub's servers; run the flow on a server of the hub"
+                )
+            targets.append(name)
+        return tuple(dict.fromkeys(targets)), bool(exchange), sealed_nodes
+
+    def _vend_hub_tables(self, nodes: list[FlowNode], exchange_run: ExchangeRun) -> tuple[list[FlowNode], str] | None:
         """Ask the hub once for the credentials of the run's nodes on hub tables, held as ``hub_vend`` for the run.
 
         ``last_hub_vend`` is the run's ``(run_id, vend_id)``, ``None`` when nothing was vended. A run with no node on a
-        hub table asks nothing. The user is the hub nodes' own; nodes of two users ask as the first, which the flow log
-        says. Answers the hub nodes and the sentence when the hub cannot be asked or refuses, else ``None``.
+        hub table, and no crossing through its hub's store on a joined server, asks nothing. The user is the hub
+        nodes' own; nodes of two users ask as the first, which the flow log says; a run with only crossings asks as
+        the user whose hub session found the store. On a server joined with keys of its own the vend is sealed to the
+        hub servers the run's steps use (``_seal_targets``), and the exchange store's credential is the run's
+        ``exchange_run.sealed``. Answers the nodes and the sentence when the hub cannot be asked or refuses, else
+        ``None``.
         """
         self.last_hub_vend = None
         hub = {node.node_id: hub_table_namespace(node.setting_input) for node in nodes}
         hub_nodes = [node for node in nodes if hub[node.node_id] is not None]
-        if not hub_nodes:
+        try:
+            targets, exchange, sealed_nodes = self._seal_targets(nodes, hub_nodes, exchange_run)
+        except LookupError as e:
+            return hub_nodes or nodes, str(e)
+        if not hub_nodes and not exchange:
             return None
         user_ids = list(dict.fromkeys(node.setting_input.user_id for node in hub_nodes))
         if len(user_ids) > 1:
@@ -1649,13 +1731,20 @@ class ExecutionMixin(GraphMixinBase):
                 f"The nodes on hub tables belong to users {', '.join(map(str, user_ids))}; "
                 f"the hub is asked as user {user_ids[0]}"
             )
+        user_id = user_ids[0] if user_ids else exchange_run.hub_store.vended_for
         readers = {hub[node.node_id][0] for node in hub_nodes if not hub[node.node_id][1]}
         writers = {hub[node.node_id][0] for node in hub_nodes if hub[node.node_id][1]}
         try:
-            self.hub_vend = vend.request(user_ids[0], run_id, readers, writers)
+            self.hub_vend = vend.request(
+                user_id, exchange_run.run_id, readers, writers, targets=targets, exchange=exchange
+            )
+            if exchange:
+                exchange_run.sealed = self.hub_vend.sealed_credential(exchange_run.hub_store.uri)
         except LookupError as e:
-            return hub_nodes, str(e)
-        self.last_hub_vend = (run_id, self.hub_vend.vend_id)
+            return sealed_nodes or hub_nodes, str(e)
+        if targets:
+            self.flow_logger.info(f"The hub sealed this run's credentials to {', '.join(targets)}")
+        self.last_hub_vend = (exchange_run.run_id, self.hub_vend.vend_id)
         return None
 
     def _record_hub_refusal(self, nodes: list[FlowNode], sentence: str) -> None:

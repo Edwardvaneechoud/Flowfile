@@ -145,6 +145,25 @@ class CredentialRef:
     user_id: int
 
 
+@dataclass(frozen=True, repr=False)
+class SealedCredential:
+    """What a hub vended to a run for the storage under ``base_uri``, sealed to each node that runs a step with it.
+
+    ``sealed`` maps a hub node's name to a token only that node opens (``shared.hub_sealed``); a backend sends the whole
+    map and the node it reaches opens its own entry, so core never holds the storage options.
+    """
+
+    base_uri: str
+    sealed: dict[str, str]
+
+    def __repr__(self) -> str:
+        return f"SealedCredential({self.base_uri!r}, nodes={sorted(self.sealed)!r})"
+
+
+Credential: TypeAlias = CredentialRef | SealedCredential
+"""A credential an export, an import or the exchange store crosses with: a stored connection or a sealed vend."""
+
+
 class OperationKind(enum.Enum):
     """The operations a backend runs whole rather than as a Polars plan.
 
@@ -247,7 +266,7 @@ class ComputeBackend(Protocol):
         """
         ...
 
-    def export(self, ref: ResultRef, uri: str, credential: CredentialRef | None) -> str:
+    def export(self, ref: ResultRef, uri: str, credential: Credential | None) -> str:
         """Write ``ref`` to ``uri``, through ``credential`` when the target needs one, and return the URI written.
 
         A table is written as parquet. A blob's bytes are copied as they are to a ``file://`` URI or ``PUT`` to a
@@ -260,7 +279,7 @@ class ComputeBackend(Protocol):
         uri: str,
         schema: Schema | None,
         row_count: int | None,
-        credential: CredentialRef | None,
+        credential: Credential | None,
         kind: Literal["table", "blob"] = "table",
     ) -> ResultRef:
         """A reference on this backend to the data at ``uri``, which has ``schema`` and ``row_count`` rows.
