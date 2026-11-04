@@ -39,15 +39,3 @@ export function hubIdentityTitle(identity: HubIdentity): string {
     : `Connected to ${identity.where}`;
   return `${signedIn}. Open the hub.`;
 }
-
-/** The one line a joined server's Hub card says: which organisation's hub it belongs to, and where. */
-export function belongsToLine(connection: HubConnection): string {
-  const hub = connection.orgName ? `${connection.orgName}'s hub` : "the hub";
-  return `This server belongs to ${hub} at ${connection.hubUrl ?? "an unknown address"}.`;
-}
-
-/** The read-only row a joined server's cloud connections page shows; null elsewhere or when the hub does not say. */
-export function organisationStorageLine(connection: HubConnection | null): string | null {
-  if (!connection?.joined || !connection.organisationStorage) return null;
-  return `The organisation's storage at ${connection.organisationStorage}; each run gets access from the hub.`;
-}

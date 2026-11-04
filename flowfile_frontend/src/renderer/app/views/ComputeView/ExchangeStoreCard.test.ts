@@ -127,7 +127,7 @@ describe("ExchangeStoreCard", () => {
     expect(status).toContain(
       "Results cross through s3://org-bucket/exchange with the connection org-exchange, at most 5000 rows per input.",
     );
-    expect(find("exchange-store-status")?.className).toContain("exchange-card__status--success");
+    expect(find("exchange-store-status")?.className).toContain("compute-card__status--success");
     expect(host.querySelector("input, select")).toBeNull();
     expect(find("exchange-store-save")).toBeNull();
     expect(find("exchange-store-clear")).toBeNull();
@@ -165,7 +165,7 @@ describe("ExchangeStoreCard", () => {
     await mount({ ...fromHub, maxRows: null, maxRowsError: detail });
 
     expect(text(find("exchange-store-status"))).toContain("Set by your hub");
-    expect(find("exchange-store-status")?.className).toContain("exchange-card__status--warning");
+    expect(find("exchange-store-status")?.className).toContain("compute-card__status--warning");
     expect(text(find("exchange-store-max-rows-error"))).toContain(detail);
     expect(host.querySelector("input, select")).toBeNull();
     expect(await summary()).toBe("Row limit needs attention");

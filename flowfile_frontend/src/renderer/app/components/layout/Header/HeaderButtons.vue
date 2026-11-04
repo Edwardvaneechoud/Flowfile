@@ -36,12 +36,7 @@
           </p>
         </div>
       </el-popover>
-      <el-dropdown
-        trigger="click"
-        placement="bottom-end"
-        :hide-on-click="true"
-        @visible-change="onActionMenuToggle"
-      >
+      <el-dropdown trigger="click" placement="bottom-end" :hide-on-click="true">
         <button class="action-btn action-btn--split-caret" aria-label="More save options">
           <span class="material-icons btn-icon">arrow_drop_down</span>
         </button>
@@ -99,13 +94,7 @@
           </p>
         </div>
       </el-popover>
-      <el-dropdown
-        v-if="hubConnected"
-        trigger="click"
-        placement="bottom-end"
-        :hide-on-click="true"
-        @visible-change="onActionMenuToggle"
-      >
+      <el-dropdown v-if="hubConnected" trigger="click" placement="bottom-end" :hide-on-click="true">
         <button class="action-btn action-btn--split-caret" aria-label="More open options">
           <span class="material-icons btn-icon">arrow_drop_down</span>
         </button>
@@ -371,7 +360,7 @@ import {
   type BackendRow,
 } from "../../../utils/executionLocation";
 import { listComputeBackends } from "../../../api/computeBackends.api";
-import { getHubConnection } from "../../../api/hubConnection.api";
+import { useHubConnectionStore } from "../../../stores/hub-connection-store";
 import BackendHandshakeStatus from "../../settings/BackendHandshakeStatus.vue";
 
 const nodeStore = useNodeStore();
@@ -380,6 +369,7 @@ const editorStore = useEditorStore();
 const tutorialStore = useTutorialStore();
 const projectStore = useProjectStore();
 const catalogStore = useCatalogStore();
+const hub = useHubConnectionStore();
 const { recordFlow, recordFlowFromSettings, reconcileWithCatalog, removeFlow } = useRecentFlows();
 
 const modalVisibleForOpen = ref(false);
@@ -391,18 +381,7 @@ const modalVisibleForHubPublish = ref(false);
 const modalVisibleForHubOpen = ref(false);
 
 // "Publish to hub…" and "Open from hub…" show only while this Flowfile is connected to a hub.
-// Re-read when a menu opens, so connecting under Compute → Hub shows them without a reload.
-const hubConnected = ref(false);
-const loadHubConnection = async () => {
-  try {
-    hubConnected.value = (await getHubConnection()).connected;
-  } catch {
-    hubConnected.value = false;
-  }
-};
-const onActionMenuToggle = (open: boolean) => {
-  if (open) void loadHubConnection();
-};
+const hubConnected = computed(() => hub.connected);
 
 const openHubPublishDialog = () => {
   modalVisibleForHubPublish.value = true;
@@ -725,7 +704,7 @@ defineExpose({
 });
 
 onMounted(async () => {
-  void loadHubConnection();
+  void hub.load();
   if (nodeStore.flow_id && nodeStore.flow_id > 0) {
     await loadFlowSettings();
   }

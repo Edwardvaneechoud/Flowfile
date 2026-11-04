@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { deferred, httpError } from "../../__fixtures__/promises";
 import { capabilities, verdict } from "../../api/__fixtures__/computeBackends";
 import type {
@@ -13,10 +13,12 @@ const mocks = vi.hoisted(() => ({
   remove: vi.fn(),
   handshake: vi.fn(),
   sync: vi.fn(),
+  check: vi.fn(),
 }));
 
 vi.mock("../../api/hubConnection.api", () => ({
   syncHubComputeNodes: mocks.sync,
+  checkHubComputeNodes: mocks.check,
 }));
 
 vi.mock("../../api/computeBackends.api", () => ({
@@ -26,13 +28,14 @@ vi.mock("../../api/computeBackends.api", () => ({
   handshakeComputeBackend: mocks.handshake,
 }));
 
-import { REREAD_DELAY_MS } from "./useHubConnection";
 import {
   backendInputFrom,
   emptyBackendForm,
   plainHttpOffLoopback,
   serverFilesLabel,
+  skippedNotice,
   useComputeBackends,
+  withChecked,
   workersSummary,
 } from "./useComputeBackends";
 
@@ -74,6 +77,7 @@ beforeEach(() => {
   });
   mocks.handshake.mockReset();
   mocks.sync.mockReset();
+  mocks.check.mockReset().mockResolvedValue([]);
 });
 
 const checked = verdict();
@@ -448,32 +452,35 @@ describe("workersSummary", () => {
   });
 });
 
-describe("load from the hub, on a joined server", () => {
+describe("the one Sync: the hub's nodes, then one check", () => {
   const hubRow: ComputeBackend = { ...teamRow(), id: "worker:gpu", source: "hub" };
+  const checkedRow: ComputeBackend = { ...hubRow, reachable: true };
 
-  beforeEach(() => {
-    vi.useFakeTimers();
+  it("replaces each synced hub row with its checked one and leaves the rows added here alone", () => {
+    expect(withChecked([teamRow(), hubRow], [checkedRow])).toEqual([teamRow(), checkedRow]);
+    expect(withChecked([hubRow], [])).toEqual([hubRow]);
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
+  it("names the worker added here that a sync kept, and says nothing when none was", () => {
+    expect(skippedNotice([])).toBe("");
+    expect(skippedNotice(["worker:own"])).toBe(
+      "Kept the worker added here under worker:own; the hub's node of that name is not listed.",
+    );
   });
 
-  it("shows the hub's servers with no Sync step, then reads them once more for their reachability", async () => {
-    mocks.sync.mockResolvedValue({ backends: [hubRow], skipped: [] });
-    rows = [{ ...hubRow, reachable: true }];
+  it("fills the rows from the hub and shows them with the check's outcome, no list in between", async () => {
+    mocks.sync.mockResolvedValue({ backends: [teamRow(), hubRow], skipped: [] });
+    mocks.check.mockResolvedValue([checkedRow]);
     const page = useComputeBackends();
 
     await page.load(true);
 
     expect(mocks.sync).toHaveBeenCalledTimes(1);
+    expect(mocks.check).toHaveBeenCalledTimes(1);
     expect(mocks.list).not.toHaveBeenCalled();
-    expect(page.backends.value).toEqual([hubRow]);
-
-    await vi.advanceTimersByTimeAsync(REREAD_DELAY_MS);
-
-    expect(mocks.sync).toHaveBeenCalledTimes(1);
-    expect(page.backends.value[0].reachable).toBe(true);
+    expect(page.backends.value).toEqual([teamRow(), checkedRow]);
+    expect(page.hubNotice.value).toBe("");
+    expect(page.loading.value).toBe(false);
   });
 
   it("lists the rows it has and says why when the hub's servers cannot be read", async () => {
@@ -485,13 +492,27 @@ describe("load from the hub, on a joined server", () => {
 
     expect(page.backends.value).toEqual([teamRow()]);
     expect(page.hubNotice.value).toBe("The hub is not answering");
+    expect(mocks.check).not.toHaveBeenCalled();
   });
 
-  it("asks no hub off a joined server", async () => {
+  it("keeps the synced rows when the check is refused, and says why", async () => {
+    mocks.sync.mockResolvedValue({ backends: [hubRow], skipped: [] });
+    mocks.check.mockRejectedValue(httpError(400, "Connect to a hub first (Compute → Hub)."));
+    rows = [hubRow];
+    const page = useComputeBackends();
+
+    await page.load(true);
+
+    expect(page.backends.value).toEqual([hubRow]);
+    expect(page.hubNotice.value).toBe("Connect to a hub first (Compute → Hub).");
+  });
+
+  it("asks no hub for a plain load", async () => {
     const page = useComputeBackends();
 
     await page.load();
 
     expect(mocks.sync).not.toHaveBeenCalled();
+    expect(mocks.check).not.toHaveBeenCalled();
   });
 });

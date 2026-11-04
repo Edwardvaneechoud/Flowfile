@@ -21,18 +21,20 @@
         >
       </template>
 
-      <div v-if="loadError" class="hub-card__banner">
+      <div v-if="hub.loadError" class="compute-card__banner">
         <i class="fa-solid fa-circle-exclamation"></i>
-        <span>{{ loadError }}</span>
+        <span>{{ hub.loadError }}</span>
       </div>
 
-      <p v-if="loading && !state" class="hub-card__loading">Loading…</p>
+      <p v-if="hub.loading && !state" class="compute-card__loading">Loading…</p>
 
-      <template v-if="state?.joined">
+      <template v-if="state?.connected">
         <div
-          class="hub-card__status"
-          :class="state.reachable ? 'hub-card__status--success' : 'hub-card__status--warning'"
-          data-testid="hub-joined"
+          class="compute-card__status"
+          :class="
+            state.reachable ? 'compute-card__status--success' : 'compute-card__status--warning'
+          "
+          :data-testid="state.joined ? 'hub-joined' : 'hub-status'"
         >
           <i
             :class="
@@ -41,113 +43,43 @@
             aria-hidden="true"
           ></i>
           <div>
-            <strong>{{ belongsToLine(state) }}</strong>
-            <p v-if="state.account" data-testid="hub-account">Signed in as {{ state.account }}.</p>
-            <p v-if="!state.reachable">The hub is not answering: {{ state.error }}</p>
-          </div>
-        </div>
-        <p v-if="isAdmin" class="hub-nodes__hint" data-testid="hub-servers-link">
-          The hub's servers, with their state, are on
-          <router-link :to="{ query: { tab: 'backends' } }">Backends</router-link>.
-        </p>
-      </template>
-
-      <template v-else-if="state?.connected">
-        <div
-          class="hub-card__status"
-          :class="state.reachable ? 'hub-card__status--success' : 'hub-card__status--warning'"
-          data-testid="hub-status"
-        >
-          <i
-            :class="
-              state.reachable ? 'fa-solid fa-circle-check' : 'fa-solid fa-triangle-exclamation'
-            "
-            aria-hidden="true"
-          ></i>
-          <div>
-            <strong>{{ state.orgName ?? state.hubUrl }}</strong>
-            <p>
-              Connected to <code>{{ state.hubUrl }}</code> as the device
-              <code>{{ state.deviceName }}</code
-              >.
-            </p>
+            <template v-if="state.joined">
+              <strong
+                >This server belongs to
+                {{ state.orgName ? `${state.orgName}'s hub` : "the hub" }} at
+                {{ state.hubUrl ?? "an unknown address" }}.</strong
+              >
+              <p v-if="state.account" data-testid="hub-account">
+                Signed in as {{ state.account }}.
+              </p>
+            </template>
+            <template v-else>
+              <strong>{{ state.orgName ?? state.hubUrl }}</strong>
+              <p>
+                Connected to <code>{{ state.hubUrl }}</code> as the device
+                <code>{{ state.deviceName }}</code
+                >.
+              </p>
+            </template>
             <p v-if="!state.reachable">The hub is not answering: {{ state.error }}</p>
           </div>
         </div>
 
-        <dl class="hub-card__facts">
+        <dl v-if="!state.joined" class="hub-card__facts">
+          <dt>Account</dt>
+          <dd>{{ state.account ?? "—" }}</dd>
           <dt>Organisation</dt>
           <dd>{{ state.orgName ?? "—" }}</dd>
           <dt>Hub version</dt>
           <dd>{{ state.hubVersion ?? "—" }}</dd>
-          <dt>Device</dt>
-          <dd>{{ state.deviceName }}</dd>
           <dt>Session expires</dt>
           <dd>{{ expiresLabel }}</dd>
         </dl>
 
-        <section class="hub-nodes" aria-labelledby="hub-nodes-title">
-          <div class="hub-nodes__header">
-            <h3 id="hub-nodes-title" class="hub-nodes__title">Team nodes</h3>
-            <div class="hub-nodes__actions">
-              <el-button
-                size="small"
-                plain
-                :loading="syncing"
-                data-testid="hub-sync-nodes"
-                @click="onSyncNodes"
-              >
-                <i class="fa-solid fa-rotate" aria-hidden="true"></i> Sync nodes
-              </el-button>
-              <el-button
-                size="small"
-                plain
-                :loading="checking"
-                data-testid="hub-check-nodes"
-                @click="onCheckNodes"
-              >
-                <i class="fa-solid fa-satellite-dish" aria-hidden="true"></i> Check
-              </el-button>
-            </div>
-          </div>
-          <p class="hub-nodes__hint">
-            The hub's compute nodes, listed as workers a flow or node can pick. The first use asks
-            the hub for a token that lasts an hour; nothing is stored here. After a sync each node
-            is checked once from this computer; Check asks again.
-          </p>
-          <p v-if="syncNotice" class="hub-nodes__notice" data-testid="hub-sync-notice">
-            {{ syncNotice }}
-          </p>
-          <ul v-if="teamNodes.length" class="hub-nodes__list" aria-label="Team nodes">
-            <li
-              v-for="row in teamNodes"
-              :key="row.key"
-              class="hub-node"
-              :data-testid="`hub-node-${row.key}`"
-            >
-              <div class="hub-node__identity">
-                <code>{{ row.name }}</code>
-                <span v-if="row.label" class="hub-node__label">{{ row.label }}</span>
-                <span v-if="row.backend" class="hub-node__url">{{ row.backend.url ?? "—" }}</span>
-                <span
-                  v-if="row.backend && reachabilityNote(row.backend)"
-                  class="hub-node__reason"
-                  :data-testid="`hub-node-reason-${row.key}`"
-                  >{{ reachabilityNote(row.backend) }}</span
-                >
-              </div>
-              <span
-                v-if="row.backend && reachabilityStatus(row.backend)"
-                :class="['compute-chip', `compute-chip--${reachabilityStatus(row.backend)?.tone}`]"
-                :data-testid="`hub-node-reachability-${row.key}`"
-                >{{ reachabilityStatus(row.backend)?.label }}</span
-              >
-            </li>
-          </ul>
-          <p v-else class="hub-nodes__empty" data-testid="hub-nodes-empty">
-            No team nodes yet. Sync to read the hub's list.
-          </p>
-        </section>
+        <p class="compute-field__hint hub-card__hint" data-testid="hub-servers-link">
+          The hub's servers, with whether this computer reaches them, are on
+          <router-link :to="{ query: { tab: 'backends' } }">Backends</router-link>.
+        </p>
       </template>
 
       <div v-else-if="state" class="hub-card__fields">
@@ -189,7 +121,7 @@
           v-if="state.connected"
           size="small"
           plain
-          :loading="busy"
+          :loading="hub.busy"
           data-testid="hub-disconnect"
           @click="onDisconnect"
         >
@@ -199,7 +131,7 @@
           v-else
           type="primary"
           size="small"
-          :loading="busy"
+          :loading="hub.busy"
           :disabled="!canConnect"
           data-testid="hub-connect"
           @click="onConnect"
@@ -216,30 +148,11 @@ import { computed, onMounted, reactive, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { NO_AUTOFILL } from "../../utils/noAutofill";
 import ComputeCard from "./ComputeCard.vue";
-import { teamNodeRows, useHubConnection } from "./useHubConnection";
-import { reachabilityStatus, type StatusSummary } from "../../components/settings/handshakeStatus";
-import { reachabilityNote } from "../../utils/executionLocation";
-import { useAuthStore } from "../../stores/auth-store";
-import { belongsToLine } from "../../components/layout/Header/hubIdentity";
+import { useHubConnectionStore } from "../../stores/hub-connection-store";
+import type { StatusSummary } from "../../components/settings/handshakeStatus";
 
-const {
-  state,
-  loading,
-  loadError,
-  busy,
-  nodes,
-  syncing,
-  checking,
-  syncNotice,
-  load,
-  connect,
-  disconnect,
-  syncNodes,
-  checkNodes,
-} = useHubConnection();
-
-const isAdmin = computed(() => useAuthStore().isAdmin);
-const teamNodes = computed(() => teamNodeRows(state.value, nodes.value));
+const hub = useHubConnectionStore();
+const state = computed(() => hub.connection);
 
 const form = reactive({ hubUrl: "", username: "", password: "", deviceName: "" });
 
@@ -266,7 +179,7 @@ const canConnect = computed(
 const onConnect = async () => {
   if (!canConnect.value) return;
   try {
-    const next = await connect({
+    const next = await hub.connect({
       hubUrl: form.hubUrl.trim(),
       username: form.username.trim(),
       password: form.password,
@@ -282,31 +195,15 @@ const onConnect = async () => {
 
 const onDisconnect = async () => {
   try {
-    await disconnect();
+    await hub.disconnect();
     ElMessage.success("Disconnected from the hub.");
   } catch (error) {
     ElMessage.error((error as Error).message);
   }
 };
 
-const onSyncNodes = async () => {
-  try {
-    await syncNodes();
-  } catch (error) {
-    ElMessage.error((error as Error).message);
-  }
-};
-
-const onCheckNodes = async () => {
-  try {
-    await checkNodes();
-  } catch (error) {
-    ElMessage.error((error as Error).message);
-  }
-};
-
 onMounted(() => {
-  void load();
+  void hub.load();
 });
 </script>
 
@@ -316,59 +213,6 @@ onMounted(() => {
   max-width: 1320px;
   margin: 0 auto;
   padding: var(--spacing-5);
-}
-.hub-card__banner {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--spacing-2);
-  padding: var(--spacing-3);
-  border-radius: var(--border-radius-md);
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-normal);
-}
-.hub-card__banner {
-  margin-bottom: var(--spacing-3);
-  background: var(--color-danger-light);
-  color: var(--color-danger-dark);
-}
-.hub-card__banner i,
-.hub-card__status > i {
-  margin-top: 3px;
-  flex-shrink: 0;
-}
-.hub-card__loading {
-  margin: 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-}
-.hub-card__status {
-  display: flex;
-  gap: var(--spacing-3);
-  padding: var(--spacing-3) var(--spacing-4);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-secondary);
-  font-size: var(--font-size-sm);
-}
-.hub-card__status > div {
-  min-width: 0;
-}
-.hub-card__status strong {
-  font-weight: var(--font-weight-medium);
-}
-.hub-card__status p {
-  color: var(--color-text-secondary);
-  margin: var(--spacing-1) 0 0;
-  line-height: var(--line-height-normal);
-  overflow-wrap: anywhere;
-}
-.hub-card__status--success {
-  color: var(--color-success-dark);
-  border-left: 3px solid var(--color-success);
-}
-.hub-card__status--warning {
-  color: var(--color-warning-dark);
-  border-left: 3px solid var(--color-warning);
 }
 .hub-card__facts {
   display: grid;
@@ -384,75 +228,8 @@ onMounted(() => {
   margin: 0;
   overflow-wrap: anywhere;
 }
-.hub-nodes {
-  margin-top: var(--spacing-5);
-  padding-top: var(--spacing-4);
-  border-top: 1px solid var(--color-border-light);
-}
-.hub-nodes__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--spacing-3);
-}
-.hub-nodes__title {
-  margin: 0;
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-medium);
-}
-.hub-nodes__actions {
-  display: flex;
-  gap: var(--spacing-2);
-}
-.hub-nodes__actions .el-button + .el-button {
-  margin-left: 0;
-}
-.hub-nodes__hint,
-.hub-nodes__empty {
-  margin: var(--spacing-2) 0 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-  line-height: var(--line-height-normal);
-}
-.hub-nodes__notice {
-  margin: var(--spacing-2) 0 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
-}
-.hub-nodes__list {
-  list-style: none;
-  margin: var(--spacing-3) 0 0;
-  padding: 0;
-  display: grid;
-  gap: var(--spacing-2);
-}
-.hub-node {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--spacing-3);
-  padding: var(--spacing-2) var(--spacing-3);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-secondary);
-  font-size: var(--font-size-sm);
-}
-.hub-node__identity {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-1);
-  min-width: 0;
-}
-.hub-node__url {
-  color: var(--color-text-secondary);
-  overflow-wrap: anywhere;
-}
-.hub-node__label {
-  color: var(--color-text-secondary);
-}
-.hub-node__reason {
-  color: var(--color-danger-dark);
-  overflow-wrap: anywhere;
+.hub-card__hint {
+  margin: var(--spacing-4) 0 0;
 }
 .hub-card__fields {
   display: grid;

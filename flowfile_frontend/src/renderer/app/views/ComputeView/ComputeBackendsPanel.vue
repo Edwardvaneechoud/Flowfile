@@ -48,7 +48,7 @@
         >
           <template #description>
             Workers on other hosts that a flow or node can pick by id. Each keeps its own warm pool,
-            set on that worker.<template v-if="joined">
+            set on that worker.<template v-if="hub.connected">
               Your hub's servers show here as the hub lists them.</template
             >
           </template>
@@ -67,6 +67,21 @@
           <div v-if="loadError" class="backends-banner" role="alert">
             <i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i
             ><span>{{ loadError }}</span>
+          </div>
+          <div v-if="hub.connected" class="backends-hub" data-testid="backends-hub">
+            <p class="compute-field__hint">
+              Sync reads the hub's compute nodes again and checks once, from this computer, which of
+              them it reaches.
+            </p>
+            <el-button
+              size="small"
+              plain
+              :loading="loading"
+              data-testid="backends-sync-hub"
+              @click="onSync"
+            >
+              <i class="fa-solid fa-rotate" aria-hidden="true"></i> Sync
+            </el-button>
           </div>
           <p v-if="hubNotice" class="backends-loading" data-testid="backends-hub-notice">
             {{ hubNotice }}
@@ -95,7 +110,7 @@
                   <h4 class="backend-worker__name">
                     <code>{{ backend.id }}</code>
                     <span
-                      v-if="fromHub(backend)"
+                      v-if="hub.joined && backend.source === 'hub'"
                       class="compute-chip compute-chip--neutral"
                       :data-testid="`backend-from-hub-${backend.id}`"
                       >From your hub</span
@@ -132,7 +147,7 @@
                     <i class="fa-solid fa-rotate" aria-hidden="true"></i> Handshake
                   </el-button>
                   <el-button
-                    v-if="!fromHub(backend)"
+                    v-if="!(hub.joined && backend.source === 'hub')"
                     size="small"
                     type="danger"
                     plain
@@ -312,8 +327,7 @@
 import { computed, reactive, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useAuthStore } from "../../stores/auth-store";
-import authService from "../../services/auth.service";
-import type { ComputeBackend } from "../../api/computeBackends.api";
+import { useHubConnectionStore } from "../../stores/hub-connection-store";
 import { NO_AUTOFILL } from "../../utils/noAutofill";
 import BackendHandshakeStatus from "../../components/settings/BackendHandshakeStatus.vue";
 import WorkerPoolCard from "../../components/settings/WorkerPoolCard.vue";
@@ -335,6 +349,8 @@ import {
 } from "./useComputeBackends";
 
 const isAdmin = computed(() => useAuthStore().isAdmin);
+// On a joined server the hub's rows come back with every load, so they carry no Remove.
+const hub = useHubConnectionStore();
 
 const {
   backends,
@@ -349,10 +365,6 @@ const {
   remove,
   handshake,
 } = useComputeBackends();
-
-const joined = ref(false);
-// On a joined server the hub's rows come back with every load, so they carry no Remove.
-const fromHub = (backend: ComputeBackend) => joined.value && backend.source === "hub";
 
 const poolSummary = ref<StatusSummary | null>(null);
 const summary = computed(() => workersSummary(backends.value, verdicts.value));
@@ -422,12 +434,14 @@ const onHandshake = async (id: string) => {
   }
 };
 
+const onSync = () => load(true);
+
 watch(
   isAdmin,
   async (allowed) => {
     if (!allowed) return;
-    joined.value = (await authService.getSignInMethod()).method === "hub";
-    await load(joined.value);
+    await hub.load();
+    await load(hub.joined);
     if (!backends.value.length && !loadError.value) addOpen.value = true;
   },
   { immediate: true },
@@ -507,6 +521,16 @@ watch(
 }
 .backends-loading {
   color: var(--color-text-secondary);
+  margin: 0;
+}
+.backends-hub {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-3);
+  margin-bottom: var(--spacing-3);
+}
+.backends-hub > p {
   margin: 0;
 }
 .backends-list {

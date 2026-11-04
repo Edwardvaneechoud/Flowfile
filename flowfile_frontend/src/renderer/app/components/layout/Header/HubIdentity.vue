@@ -17,23 +17,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
-import { getHubConnection, type HubConnection } from "../../../api/hubConnection.api";
+import { computed, onMounted } from "vue";
 import { desktop } from "../../../../lib/desktop";
+import { useHubConnectionStore } from "../../../stores/hub-connection-store";
 import { hubIdentity, hubIdentityTitle } from "./hubIdentity";
 
-const connection = ref<HubConnection | null>(null);
-const identity = computed(() => hubIdentity(connection.value));
+const hub = useHubConnectionStore();
+const identity = computed(() => hubIdentity(hub.connection));
 const title = computed(() => (identity.value ? hubIdentityTitle(identity.value) : ""));
 
-onMounted(async () => {
-  try {
-    connection.value = await getHubConnection();
-  } catch {
-    // No hub connection to read: the header says nothing about one.
-    connection.value = null;
-  }
-});
+onMounted(() => void hub.load());
 
 const openHub = () => {
   if (identity.value) void desktop.openExternal(identity.value.url);

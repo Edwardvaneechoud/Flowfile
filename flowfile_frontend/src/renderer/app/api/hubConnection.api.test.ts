@@ -16,6 +16,7 @@ const loadModule = async () => {
   };
 };
 
+// Core answers more (device id, versions, the connect's sync count); the editor reads these.
 const pyConnected = {
   connected: true,
   hub_url: "https://hub.example.test",
@@ -23,11 +24,8 @@ const pyConnected = {
   device_name: "ana-laptop",
   expires_at: "2026-11-08T12:00:00Z",
   client_version: "0.24.0",
-  contract_version: "0.1.0",
   org_name: "Acme Data",
   hub_version: "0.3.0",
-  core_version: "0.24.0",
-  vend_mode: "static",
   reachable: true,
   error: null,
   account: "Ana Lima",
@@ -36,19 +34,12 @@ const pyConnected = {
 const connected = {
   connected: true,
   hubUrl: "https://hub.example.test",
-  deviceId: 3,
   deviceName: "ana-laptop",
   expiresAt: "2026-11-08T12:00:00Z",
-  clientVersion: "0.24.0",
-  contractVersion: "0.1.0",
   orgName: "Acme Data",
   hubVersion: "0.3.0",
-  coreVersion: "0.24.0",
   reachable: true,
   error: null,
-  nodesSynced: null,
-  syncError: null,
-  nodeName: null,
   account: "Ana Lima",
   joined: false,
   organisationStorage: null,
@@ -98,15 +89,6 @@ describe("hubConnection.api", () => {
     expect(post.mock.calls[0][1].device_name).toBeNull();
   });
 
-  it("maps the node name a core that is itself a node answers", async () => {
-    const { get, api } = await loadModule();
-    get.mockResolvedValueOnce({ data: { ...pyConnected, node_name: "team-local" } });
-
-    const result = await api.getHubConnection();
-
-    expect(result.nodeName).toBe("team-local");
-  });
-
   it("reads no account from a core that does not answer one", async () => {
     const { get, api } = await loadModule();
     get.mockResolvedValueOnce({ data: { ...pyConnected, account: undefined } });
@@ -125,20 +107,6 @@ describe("hubConnection.api", () => {
     const result = await api.getHubConnection();
 
     expect([result.joined, result.organisationStorage]).toEqual([true, "s3://acme/flowfile"]);
-  });
-
-  it("maps the node sync count a connect answers", async () => {
-    const { post, api } = await loadModule();
-    post.mockResolvedValueOnce({ data: { ...pyConnected, nodes_synced: 2, sync_error: null } });
-
-    const result = await api.connectHub({
-      hubUrl: "https://hub.example.test",
-      username: "ana",
-      password: "x",
-    });
-
-    expect(result.nodesSynced).toBe(2);
-    expect(result.syncError).toBeNull();
   });
 
   it("posts /hub_client/compute_nodes/sync and returns the rows and the skipped ids", async () => {

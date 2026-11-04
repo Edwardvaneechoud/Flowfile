@@ -17,11 +17,18 @@
         </button>
       </div>
       <div class="card-content">
-        <div v-if="hubStorage" class="info-box mb-3" data-testid="hub-organisation-storage">
+        <div
+          v-if="hub.joined && hub.connection?.organisationStorage"
+          class="info-box mb-3"
+          data-testid="hub-organisation-storage"
+        >
           <i class="fa-solid fa-tower-broadcast"></i>
           <div>
             <p><strong>Set by your hub</strong></p>
-            <p>{{ hubStorage }}</p>
+            <p>
+              The organisation's storage at {{ hub.connection.organisationStorage }}; each run gets
+              access from the hub.
+            </p>
           </div>
         </div>
 
@@ -171,8 +178,7 @@ import {
   FullCloudStorageConnection,
 } from "./CloudConnectionTypes";
 import CloudConnectionSettings from "./CloudConnectionSettings.vue";
-import { getHubConnection } from "../../api/hubConnection.api";
-import { organisationStorageLine } from "../../components/layout/Header/hubIdentity";
+import { useHubConnectionStore } from "../../stores/hub-connection-store";
 
 // State
 const connectionInterfaces = ref<FullCloudStorageConnectionInterface[]>([]);
@@ -329,19 +335,12 @@ const handleCloseDeleteDialog = (done: () => void) => {
   done();
 };
 
-const hubStorage = ref<string | null>(null);
-
-const fetchHubStorage = async () => {
-  try {
-    hubStorage.value = organisationStorageLine(await getHubConnection());
-  } catch {
-    hubStorage.value = null;
-  }
-};
+// A joined server shows the organisation's storage read-only, set by the hub.
+const hub = useHubConnectionStore();
 
 onMounted(() => {
   fetchConnections();
-  void fetchHubStorage();
+  void hub.load();
 });
 </script>
 

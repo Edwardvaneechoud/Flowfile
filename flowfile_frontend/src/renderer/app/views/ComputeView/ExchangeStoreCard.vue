@@ -18,17 +18,17 @@
         >{{ statusSummary.label }}</span
       >
     </template>
-    <div v-if="loadError" class="exchange-card__banner">
+    <div v-if="loadError" class="compute-card__banner">
       <i class="fa-solid fa-circle-exclamation"></i>
       <span>{{ loadError }}</span>
     </div>
 
-    <p v-if="loading && !state" class="exchange-card__loading">Loading…</p>
+    <p v-if="loading && !state" class="compute-card__loading">Loading…</p>
 
     <div
       v-if="state"
-      class="exchange-card__status"
-      :class="`exchange-card__status--${statusTone}`"
+      class="compute-card__status"
+      :class="`compute-card__status--${statusTone}`"
       data-testid="exchange-store-status"
     >
       <i
@@ -93,7 +93,7 @@
 
     <p
       v-if="state?.source === 'hub' && state.maxRowsError"
-      class="exchange-card__warning"
+      class="compute-card__warning"
       data-testid="exchange-store-max-rows-error"
     >
       <i class="fa-solid fa-triangle-exclamation"></i>
@@ -103,7 +103,7 @@
       >
     </p>
 
-    <p v-if="state?.envOverride" class="exchange-card__warning" data-testid="exchange-store-env">
+    <p v-if="state?.envOverride" class="compute-card__warning" data-testid="exchange-store-env">
       <i class="fa-solid fa-triangle-exclamation"></i>
       <span>
         <code>FLOWFILE_EXCHANGE_URI</code> is set in the environment and overrides what is saved
@@ -258,70 +258,8 @@ onMounted(() => {
 
 <style scoped src="./computeSettings.css"></style>
 <style scoped>
-.exchange-card__banner,
-.exchange-card__warning {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--spacing-2);
-  padding: var(--spacing-3);
-  border-radius: var(--border-radius-md);
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-normal);
-}
-.exchange-card__banner {
-  background: var(--color-danger-light);
-  color: var(--color-danger-dark);
-}
-.exchange-card__warning {
-  margin: var(--spacing-3) 0 0;
-  background: var(--color-warning-light);
-  color: var(--color-warning-dark);
-}
-.exchange-card__banner i,
-.exchange-card__warning i,
-.exchange-card__status > i {
-  margin-top: 3px;
-  flex-shrink: 0;
-}
 .exchange-card__hub {
   margin: var(--spacing-2) 0 0;
-}
-.exchange-card__loading {
-  margin: 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-}
-.exchange-card__status {
-  display: flex;
-  gap: var(--spacing-3);
-  padding: var(--spacing-3) var(--spacing-4);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-secondary);
-  font-size: var(--font-size-sm);
-}
-.exchange-card__status > div {
-  min-width: 0;
-}
-.exchange-card__status strong {
-  font-weight: var(--font-weight-medium);
-}
-.exchange-card__status p {
-  color: var(--color-text-secondary);
-  margin: var(--spacing-1) 0 0;
-  line-height: var(--line-height-normal);
-  overflow-wrap: anywhere;
-}
-.exchange-card__status--neutral {
-  color: var(--color-text-secondary);
-}
-.exchange-card__status--success {
-  color: var(--color-success-dark);
-  border-left: 3px solid var(--color-success);
-}
-.exchange-card__status--warning {
-  color: var(--color-warning-dark);
-  border-left: 3px solid var(--color-warning);
 }
 .exchange-card__fields {
   display: grid;
