@@ -25,7 +25,7 @@ Standalone FastAPI compute service that offloads heavy Polars/data work from `fl
 - `flowfile_worker/models.py` — Pydantic request/response + `Status`, `OperationType` literal, `Base64Bytes` JSON-safe bytes type; re-exports `RawLogInput` from `log_models`.
 - `flowfile_worker/log_models.py` — `RawLogInput` as a plain dataclass. Deliberately pydantic-free: `flow_logger` is on every spawned child's import path, so taking it from `models` would drag pydantic + the external-source models into every task.
 - `flowfile_worker/configs.py` — host/port arg parsing, `FLOWFILE_CORE_URI`, `TEST_MODE`, logger.
-- `flowfile_worker/secrets.py` — independent Fernet/HKDF secret derivation (mirrors core).
+- `flowfile_worker/secrets.py` — independent Fernet/HKDF secret derivation (mirrors core); `decrypt_secret` also opens a secret a hub sealed to this node (`shared.hub_sealed.open_secret`), and on a node joined with keys of its own refuses a ciphertext it cannot decrypt with `ENCRYPTED_ELSEWHERE`.
 - `flowfile_worker/utils.py` — `collect_lazy_frame*` helpers; importing it registers the worker's decryptor for cloud credentials embedded in core-built plans (`shared.cloud_credential_provider.register_secret_decryptor`). `funcs.py` and `custom_node_runner.py` import it at module top, so every plan-running child has it.
 - `flowfile_worker/catalog_reader.py` — the only two catalog-open primitives (`open_catalog_table`, `open_virtual_result`); polars-at-top, children-only.
 - `flowfile_worker/viz_sessions.py` / `viz_session_worker.py` — `VizSessionRegistry` + spawned-child entrypoint for long-lived Graphic Walker (`polars_gw`) viz LazyFrames.

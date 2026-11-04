@@ -373,7 +373,8 @@ class SealingHubCatalog(FakeHubWithCatalog):
     a token ``signer`` signs and seals to that node's ``enc`` key in ``enc_keys`` (a node with none is the hub's 422,
     one in ``refused_nodes`` its 403), with ``issuer`` as ``iss``; without targets ``sealed`` is empty. Storage tokens
     carry ``kind: "storage"``. ``secrets`` names (TS18) are answered from ``secret_values``, each sealed to every target
-    with ``kind: "secret"``; names without targets are the hub's 422 and a name it does not hold its 403 sentence.
+    with ``kind: "secret"`` (``[]`` when none is asked); names without targets are the hub's 422 and a name it does not
+    hold its 403 sentence, worded as TS18's hub words them.
     """
 
     def __init__(self, signer, issuer: str):
@@ -389,12 +390,15 @@ class SealingHubCatalog(FakeHubWithCatalog):
         names = body.get("secrets") or []
         if names and not targets:
             return httpx.Response(
-                422, json={"detail": "A secret is vended only sealed to the servers named in targets"}
+                422,
+                json={
+                    "detail": "Secrets are vended only sealed to the servers that run the step; name them in targets"
+                },
             )
         for name in names:
             if name not in self.secret_values:
                 sentence = (
-                    f'You have no secret "{name}" on the hub; add it under Storage and connections → Secrets, '
+                    f"You have no secret named {name} on the hub; add it in Storage and connections → Secrets, "
                     "or in a team's Secrets"
                 )
                 self.vend_calls.append(body)
@@ -444,6 +448,7 @@ class SealingHubCatalog(FakeHubWithCatalog):
             }
             if targets:
                 credential["storage_options"] = {}
+        answer["secrets"] = []
         if names:
             answer["secrets"] = [
                 {

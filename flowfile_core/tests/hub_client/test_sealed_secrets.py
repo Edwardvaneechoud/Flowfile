@@ -203,9 +203,14 @@ def test_the_vend_asks_the_names_and_each_target_opens_its_own_secret(hub, signe
 
 
 def test_a_vend_without_names_asks_none(hub):
-    vend.request(1, "run-a", set(), set(), targets=["worker"])
+    run_vend = vend.request(1, "run-a", set(), set(), targets=["worker"])
 
-    assert "secrets" not in hub.vend_calls[0]
+    assert "secrets" not in hub.vend_calls[0] and run_vend.secrets == {}
+
+
+def test_names_without_targets_are_the_hubs_422(hub):
+    with pytest.raises(LookupError, match="Secrets are vended only sealed to the servers that run the step"):
+        vend.request(1, "run-n", set(), set(), secrets=["warehouse"])
 
 
 def test_a_name_the_hub_refuses_ends_the_vend_with_its_sentence_or_this_servers_when_it_is_only_here(hub):
@@ -214,7 +219,7 @@ def test_a_name_the_hub_refuses_ends_the_vend_with_its_sentence_or_this_servers_
     with pytest.raises(LookupError) as only_here:
         vend.request(1, "run-r", set(), set(), targets=["worker"], secrets=["mine"], local_secrets={"mine"})
 
-    assert str(on_neither.value).startswith('You have no secret "nowhere" on the hub')
+    assert str(on_neither.value).startswith("You have no secret named nowhere on the hub")
     assert str(only_here.value) == vend.ONLY_HERE.format(name="mine")
     assert 'Secret "mine" is only on this server' in str(only_here.value) and "on the hub" in str(only_here.value)
 
