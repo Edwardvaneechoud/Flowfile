@@ -22,12 +22,15 @@ from flowfile_core.hub import exchange_store as hub_exchange_store
 from flowfile_core.hub.exchange_store import team_node_store
 from flowfile_core.hub_client.client import HubRefused
 from flowfile_core.routes import routes
+from shared import hub_node
+from shared.tests import hub_join
 from tests.flowfile.conftest import add_test_manual_input, create_test_graph
 from tests.flowfile.execution import test_exchange_store as exchange_tests
 from tests.hub_client import conftest as hub_client_fakes
 from tests.hub_client.conftest import HUB_URL
 
 hub = hub_client_fakes.hub
+join_hub = hub_join.join_hub
 multi_user = exchange_tests.multi_user
 users = exchange_tests.users
 
@@ -98,6 +101,29 @@ def test_a_core_without_a_hub_url_asks_nothing(team_node, monkeypatch):
     monkeypatch.setattr(settings, "FLOWFILE_HUB_URL", "")
 
     assert team_node_store("t") is None
+    assert team_node.calls == []
+
+
+@pytest.fixture
+def joined_with_keys(tmp_path, monkeypatch, join_hub):
+    """This storage dir joined ``join_hub`` with keys of its own, as a server whose people sign in through its hub."""
+    for name in ("FLOWFILE_HUB_JOIN_TOKEN", "FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME", "FLOWFILE_HUB_ISSUER"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(hub_node, "path", lambda: tmp_path / "storage" / hub_node.FILE_NAME)
+    hub_node.join(
+        join_hub.url,
+        join_hub.mint(enable_on_join=True),
+        name="team-1",
+        worker_url="http://team-1.example:63579",
+        core_url="http://team-1.example:63578",
+    )
+
+
+@pytest.mark.parametrize("hub_url", [HUB_URL, ""], ids=["hub-url-set", "hub-url-unset"])
+def test_a_server_joined_with_its_keys_asks_its_hub_for_no_store(team_node, joined_with_keys, monkeypatch, hub_url):
+    monkeypatch.setattr(settings, "FLOWFILE_HUB_URL", hub_url)
+
+    assert team_node_store("a token this server signed") is None
     assert team_node.calls == []
 
 
