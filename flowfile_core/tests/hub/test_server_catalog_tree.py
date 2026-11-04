@@ -142,11 +142,14 @@ OWNER = {"is_owner": True, "access_level": "owner", "shared_by": None}
 USE = {"is_owner": False, "access_level": "use", "shared_by": "admin"}
 
 
-def test_the_hubs_catalogs_a_person_owns_read_as_theirs_where_the_hub_said_nothing(hub, username):
-    """The hub stamps no access for an admin it does not restrict; the rows they own say they may write them."""
-    main_catalog = hub.catalog.seed_catalog("main", storage_uri="s3://acme/main", owner_id=test_server_run_report.UID)
-    hub.catalog.seed_schema(main_catalog, "default", owner_id=test_server_run_report.UID)
+def test_the_hubs_catalogs_carry_the_access_the_hub_sent_and_nothing_stamped_here(hub, username):
+    """The hub says ``owner`` on a row the person owns; a row it sent no access for stays without, owned or not."""
+    main_catalog = hub.catalog.seed_catalog(
+        "main", storage_uri="s3://acme/main", owner_id=test_server_run_report.UID, access=OWNER
+    )
+    hub.catalog.seed_schema(main_catalog, "default", owner_id=test_server_run_report.UID, access=OWNER)
     hub.catalog.seed_schema(main_catalog, "shared", owner_id=test_server_run_report.UID, access=USE)
+    hub.catalog.seed_schema(main_catalog, "unsaid", owner_id=test_server_run_report.UID)
     team = hub.catalog.seed_catalog("team", storage_uri="s3://acme/team")
     hub.catalog.seed_schema(team, "raw")
     _, access_token = sign_in(hub, username)
@@ -163,6 +166,7 @@ def test_the_hubs_catalogs_a_person_owns_read_as_theirs_where_the_hub_said_nothi
         ("main", "main"): OWNER,
         ("main", "default"): OWNER,
         ("main", "shared"): USE,
+        ("main", "unsaid"): None,
         ("team", "team"): None,
         ("team", "raw"): None,
     }
@@ -200,4 +204,3 @@ def test_a_writer_naming_no_catalog_on_a_joined_server_is_refused_and_writes_not
 
 def test_off_a_joined_server_a_writer_naming_no_catalog_is_not_refused(node_file):
     assert refuse_without_hub_catalog(input_schema.CatalogWriteSettings(table_name="memo")) is None
-
