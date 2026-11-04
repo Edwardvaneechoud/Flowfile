@@ -1,7 +1,9 @@
 """The hub's catalogs and tables in core's catalog tree, beside the local ones, and the node fields naming a hub table.
 
 A connected user's ``GET /catalog/namespaces/tree`` answers the local catalogs first and then the hub's, each hub row
-marked ``source: "hub"`` with the negative of the hub's id as its ``id``. Every other catalog route stays local.
+marked ``source: "hub"`` with the negative of the hub's id as its ``id``. Beside the hub's, every row says where it
+lives (``place``), and a hub catalog this Flowfile cannot use says why (``unavailable_reason``). Every other catalog
+route stays local.
 """
 
 import logging
@@ -17,13 +19,22 @@ from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.configs import logger as core_logger
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.hub_client import catalog as hub_catalog
 from flowfile_core.hub_client import client, session
 from flowfile_core.schemas import input_schema
-from tests.hub_client.conftest import HUB_URL, FakeHubWithCatalog
+from tests.hub_client.conftest import HUB_URL, INFO, FakeHubWithCatalog
 
 CONNECT = {"hub_url": HUB_URL, "username": "ana", "password": "s3cret", "device_name": "ana-laptop"}
 SHARED = {"is_owner": False, "access_level": "use", "shared_by": "bob"}
 READ_AS_IT_IS = "A table on the hub is read as it is now: no version, history view, SQL or change feed"
+ON_ITS_OWN_DISK = (
+    "The hub keeps the tables of {} on its own disk; this Flowfile cannot read them. "
+    "Pick a catalog on the organisation's storage, or ask the hub's admin to put this one there."
+)
+ON_AZURE = (
+    "Flowfile reads and writes hub tables on S3 storage; this catalog is on az:// storage. "
+    "Pick a catalog on the organisation's S3 storage, or ask the hub's admin to put this one there."
+)
 
 
 @pytest.fixture
@@ -69,10 +80,24 @@ def warnings():
     core_logger.removeHandler(capture)
 
 
-def _local_tree(user_id: int) -> list[dict]:
+def _local_tree(user_id: int, place: str | None = None) -> list[dict]:
+    """The service's own tree; with ``place``, every namespace row in it said to live there."""
     with get_db_context() as db:
         tree = CatalogService(SQLAlchemyCatalogRepository(db)).get_namespace_tree(user_id=user_id)
-        return [node.model_dump(mode="json") for node in tree]
+        rows = [node.model_dump(mode="json") for node in tree]
+    if place is not None:
+        _set_place(rows, place)
+    return rows
+
+
+def _set_place(rows: list[dict], place: str) -> None:
+    for row in rows:
+        row["place"] = place
+        _set_place(row["children"], place)
+
+
+def _namespace_rows(rows: list[dict]) -> list[dict]:
+    return [row for root in rows for row in (root, *root["children"])]
 
 
 def _seed(hub: FakeHubWithCatalog) -> dict:
@@ -107,10 +132,11 @@ def test_connected_lists_the_hub_catalogs_after_the_local_ones(connected, hub, u
     resp = connected.get("/catalog/namespaces/tree")
     assert resp.status_code == 200
     tree = resp.json()
-    local = _local_tree(user_id)
+    local = _local_tree(user_id, place="On this computer")
     assert local, "the local catalog has its seeded General catalog"
     assert tree[: len(local)] == local
     assert all(node["source"] == "local" and node["hub_id"] is None for node in local)
+    assert all(row["offered"] and row["unavailable_reason"] is None for row in _namespace_rows(local))
 
     hub_rows = tree[len(local) :]
     assert [node["name"] for node in hub_rows] == ["sales", "finance"]
@@ -143,6 +169,9 @@ def test_connected_lists_the_hub_catalogs_after_the_local_ones(connected, hub, u
     for ns in namespaces:
         assert ns["flows"] == [] and ns["notebooks"] == []
         assert ns["artifacts"] == [] and ns["visualizations"] == []
+        assert ns["place"] == INFO["org_name"] and ns["offered"] is True
+    assert [ns["unavailable_reason"] for ns in (sales, raw, curated)] == [None, None, None]
+    assert finance["unavailable_reason"] == ON_ITS_OWN_DISK.format("finance")
 
     assert hub.catalog_calls == [
         ("/catalog/namespaces", ""),
@@ -151,6 +180,59 @@ def test_connected_lists_the_hub_catalogs_after_the_local_ones(connected, hub, u
         ("/catalog/tables", ""),
     ]
     assert not any(path.startswith("/hub/flows") for _, path in hub.calls)
+
+
+def test_a_hub_catalog_this_flowfile_cannot_use_says_why_on_each_of_its_rows(connected, hub):
+    lake = hub.seed_catalog("lake", storage_uri="az://lake/data", storage_connection_name="acme-adls")
+    landing = hub.seed_schema(lake, "landing")
+    hub.seed_table(landing, "events")
+    scratch = hub.seed_catalog("scratch")
+    hub.seed_schema(scratch, "notes")
+    main = hub.seed_catalog("main", storage_uri="s3://acme/main")
+    hub.seed_schema(main, "default")
+    hub.seed_catalog("bare", storage_uri="/srv/hub/catalogs/bare")
+
+    tree = connected.get("/catalog/namespaces/tree").json()
+
+    reasons = {
+        ".".join(filter(None, (root["name"], schema and schema["name"]))): (schema or root)["unavailable_reason"]
+        for root in tree
+        if root["source"] == "hub"
+        for schema in (None, *root["children"])
+    }
+    assert reasons == {
+        "lake": ON_AZURE,
+        "lake.landing": ON_AZURE,
+        "scratch": ON_ITS_OWN_DISK.format("scratch"),
+        "scratch.notes": ON_ITS_OWN_DISK.format("scratch.notes"),
+        "main": None,
+        "main.default": None,
+        "bare": ON_ITS_OWN_DISK.format("bare"),
+    }
+    [lake_row] = [root for root in tree if root["name"] == "lake"]
+    assert [t["name"] for t in lake_row["children"][0]["tables"]] == ["events"]
+
+
+def test_a_hub_that_does_not_say_its_name_is_named_by_its_url(connected, hub):
+    hub.seed_schema(hub.seed_catalog("main", storage_uri="s3://acme/main"), "default")
+    hub.info = {**INFO, "org_name": ""}
+
+    tree = connected.get("/catalog/namespaces/tree").json()
+
+    assert {row["place"] for row in _namespace_rows(tree) if row["source"] == "hub"} == {HUB_URL}
+    assert {row["place"] for row in _namespace_rows(tree) if row["source"] == "local"} == {"On this computer"}
+
+
+def test_a_server_says_its_own_catalogs_are_on_this_server(connected, hub, user_id, monkeypatch):
+    hub.seed_schema(hub.seed_catalog("main", storage_uri="s3://acme/main"), "default")
+    monkeypatch.setenv("FLOWFILE_MODE", "docker")
+    with get_db_context() as db:
+        local = CatalogService(SQLAlchemyCatalogRepository(db)).get_namespace_tree(user_id=user_id)
+
+    rows = [node.model_dump(mode="json") for node in hub_catalog.merged(user_id, local)]
+
+    assert {row["place"] for row in _namespace_rows(rows) if row["source"] == "local"} == {"On this server"}
+    assert all(row["offered"] for row in _namespace_rows(rows))
 
 
 def test_a_hub_that_is_down_leaves_its_catalogs_out_with_one_warning(connected, hub, user_id, warnings):

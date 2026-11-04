@@ -6,6 +6,12 @@ autoincrements, so the two never meet) and the hub's own id as ``hub_id``. The h
 nothing is kept; a hub that does not answer, or no longer accepts the session, leaves its catalogs out of the tree
 with one warning in the log.
 
+Each row also says where it lives and whether this Flowfile can use it (``merged``): the hub's rows carry the hub's
+name as their ``place`` and, for a catalog on the hub's own disk or on storage other than S3, the sentence a run over
+it would be refused with as their ``unavailable_reason``; this machine's rows carry ``On this computer`` or ``On this
+server`` beside them. On a server that joined its hub with keys of its own, this machine's rows are not ``offered``:
+the people there work in the hub's catalogs.
+
 A run that reads or writes the hub's tables finds their namespaces and tables here too (``locate``, ``table``), each
 lookup a fresh request through the user's hub session.
 """
@@ -14,7 +20,9 @@ from dataclasses import dataclass
 
 from pydantic import ValidationError
 
+from flowfile_core.auth import issuer_accounts
 from flowfile_core.configs import logger
+from flowfile_core.configs.settings import is_server_mode
 from flowfile_core.hub_client import client, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.hub_client.node_tokens import RECONNECT
@@ -38,6 +46,9 @@ _NAMESPACE_FIELDS = (
 NOT_CONNECTED = (
     f"This flow uses tables on the hub, but this Flowfile is not connected to it; {RECONNECT} (Compute → Hub)"
 )
+ON_THIS_COMPUTER = "On this computer"
+ON_THIS_SERVER = "On this server"
+_WHAT_TO_DO = "Pick a catalog on the organisation's storage, or ask the hub's admin to put this one there."
 
 
 @dataclass(frozen=True)
@@ -57,6 +68,60 @@ def row_id(hub_id: int) -> int:
     return -hub_id
 
 
+def scheme(uri: str) -> str:
+    """The scheme of a storage URI, ``file`` for a path without one."""
+    return uri.split("://", 1)[0] if "://" in uri else "file"
+
+
+def on_own_disk(full_name: str) -> str:
+    """Why a run cannot use the tables of the hub namespace ``full_name``, which the hub keeps on its own disk."""
+    return f"The hub keeps the tables of {full_name} on its own disk; this Flowfile cannot read them. {_WHAT_TO_DO}"
+
+
+def other_scheme(found: str) -> str:
+    """Why a run cannot use the tables of a hub catalog on ``found://`` storage: only S3 is read and written."""
+    return (
+        f"Flowfile reads and writes hub tables on S3 storage; this catalog is on {found}:// storage. "
+        "Pick a catalog on the organisation's S3 storage, or ask the hub's admin to put this one there."
+    )
+
+
+def unreachable(storage_uri: str | None, full_name: str) -> str | None:
+    """Why this Flowfile cannot use the tables of the hub namespace ``full_name`` under ``storage_uri``; ``None`` if
+    it can. No storage, or a path on the hub's filesystem, is the hub's own disk; any scheme but S3 is storage this
+    Flowfile does not write. The tree marks such a catalog with it and a run over it is refused with it, before
+    anything is vended."""
+    found = None if storage_uri is None else scheme(storage_uri)
+    if found in (None, "file"):
+        return on_own_disk(full_name)
+    if found != "s3":
+        return other_scheme(found)
+    return None
+
+
+def merged(user_id: int, local: list[NamespaceTree]) -> list[NamespaceTree]:
+    """The catalog tree ``user_id`` reads: this machine's catalogs ``local`` first, then those of their hub.
+
+    Not connected to a hub, ``local`` is answered as it is. With the hub's catalogs beside them, each of this
+    machine's rows says where it lives, ``On this computer``, or ``On this server`` in server mode. On a server that
+    joined its hub with keys of its own (``issuer_accounts.joined_with_keys``) this machine's rows are marked not
+    ``offered``, whatever the hub answers: the Catalog panel and the catalog reader's and writer's pickers show only
+    the hub's catalogs there, while the flow pickers still find the server's own.
+    """
+    hub = tree(user_id)
+    joined = issuer_accounts.joined_with_keys() is not None
+    if not hub and not joined:
+        return local
+    place = ON_THIS_SERVER if is_server_mode() else ON_THIS_COMPUTER
+    return [_marked(node, place=place, offered=not joined) for node in local] + hub
+
+
+def _marked(node: NamespaceTree, **fields) -> NamespaceTree:
+    """``node`` and every namespace under it with ``fields`` set."""
+    children = [_marked(child, **fields) for child in node.children]
+    return node.model_copy(update={**fields, "children": children})
+
+
 def tree(user_id: int) -> list[NamespaceTree]:
     """The hub's catalogs, their schemas and their tables, for ``user_id``'s hub connection; ``[]`` without one.
 
@@ -64,6 +129,10 @@ def tree(user_id: int) -> list[NamespaceTree]:
     no deeper), and every table the account can see in one request, grouped under their namespaces. The hub's
     order is kept. A hub that cannot be reached, refuses (an expired session included) or refuses this client's
     version answers ``[]`` after one warning naming the hub and the reason.
+
+    Every namespace row carries the hub's name as its ``place`` (its organisation from ``/hub/info``, else its URL,
+    as the hub connection names it) and, when this Flowfile cannot use the catalog's tables, the reason as its
+    ``unavailable_reason``: with the catalog's name on the catalog's row and ``catalog.schema`` on each schema's.
     """
     stored = session.load(user_id)
     if stored is None:
@@ -73,10 +142,23 @@ def tree(user_id: int) -> list[NamespaceTree]:
         access_token = session.access_token(user_id)
         if access_token is None:
             return []
-        return _walk(hub_url, access_token)
+        walked = _walk(hub_url, access_token)
     except (HubUnreachable, HubRefused, HubVersionRefused) as e:
         logger.warning("Leaving the catalogs of the hub at %s out of the catalog tree: %s", hub_url, e)
         return []
+    if not walked:
+        return []
+    place = _hub_name(hub_url)
+    return [_marked(node, place=place) for node in walked]
+
+
+def _hub_name(hub_url: str) -> str:
+    """The hub's organisation as ``/hub/info`` names it, else its URL."""
+    try:
+        return client.get_info(hub_url)["org_name"]
+    except (HubUnreachable, HubRefused, HubVersionRefused) as e:
+        logger.debug("Naming the hub at %s by its URL: %s", hub_url, e)
+        return hub_url
 
 
 def signed_in(user_id: int) -> tuple[str, str]:
@@ -161,15 +243,15 @@ def _walk(hub_url: str, access_token: str) -> list[NamespaceTree]:
         if table.get("namespace_id") is not None:
             row = _table(hub_url, table)
             tables.setdefault(row.hub_namespace_id, []).append(row)
-    return [
-        _namespace(
-            hub_url,
-            root,
-            tables,
-            [_namespace(hub_url, schema, tables) for schema in children[root["id"]]],
-        )
-        for root in roots
-    ]
+    walked = []
+    for root in roots:
+        storage_uri = root.get("storage_uri") or None
+        schemas = [
+            _namespace(hub_url, schema, tables, unreachable(storage_uri, f"{root['name']}.{schema['name']}"))
+            for schema in children[root["id"]]
+        ]
+        walked.append(_namespace(hub_url, root, tables, unreachable(storage_uri, root["name"]), schemas))
+    return walked
 
 
 def _namespaces(hub_url: str, rows: list) -> list[dict]:
@@ -181,7 +263,11 @@ def _namespaces(hub_url: str, rows: list) -> list[dict]:
 
 
 def _namespace(
-    hub_url: str, namespace: dict, tables: dict[int, list[CatalogTableOut]], children: list | None = None
+    hub_url: str,
+    namespace: dict,
+    tables: dict[int, list[CatalogTableOut]],
+    unavailable_reason: str | None,
+    children: list | None = None,
 ) -> NamespaceTree:
     try:
         return NamespaceTree(
@@ -190,6 +276,7 @@ def _namespace(
             source=HUB,
             hub_id=namespace["id"],
             **{field: namespace.get(field) for field in _NAMESPACE_FIELDS},
+            unavailable_reason=unavailable_reason,
             children=children or [],
             tables=tables.get(namespace["id"], []),
         )

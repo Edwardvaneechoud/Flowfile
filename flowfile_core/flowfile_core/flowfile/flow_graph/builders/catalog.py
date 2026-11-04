@@ -78,7 +78,7 @@ def _hub_reader_table(user_id: int | None, hub_table_id: int) -> dict:
         raise ValueError("A virtual table on the hub cannot be read from this Flowfile")
     if not table.get("file_path") or not _is_cloud_uri(table["file_path"]):
         namespace = hub_catalog.locate(user_id, table["namespace_id"]).full_name
-        raise ValueError(f"The hub keeps the tables of {namespace} on its own disk; this Flowfile cannot read them")
+        raise ValueError(hub_catalog.on_own_disk(namespace))
     return table
 
 

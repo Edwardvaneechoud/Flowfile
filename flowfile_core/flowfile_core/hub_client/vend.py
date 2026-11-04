@@ -26,18 +26,6 @@ _S3_FIELDS = ("aws_access_key_id", "aws_region", "endpoint_url")
 _S3_SECRETS = ("aws_secret_access_key", "aws_session_token")
 
 
-def _scheme(uri: str) -> str:
-    return uri.split("://", 1)[0] if "://" in uri else "file"
-
-
-def _on_own_disk(full_name: str) -> str:
-    return f"The hub keeps the tables of {full_name} on its own disk; this Flowfile cannot read them"
-
-
-def _other_scheme(scheme: str) -> str:
-    return f"Flowfile reads and writes hub tables on S3 storage; this catalog is on {scheme}:// storage"
-
-
 @dataclass(frozen=True)
 class HubCredential:
     """One credential the hub vended to a run, for the tables under ``base_uri``.
@@ -108,9 +96,9 @@ class RunVend:
             ValueError: The credential is for storage other than S3.
         """
         credential = self.for_uri(uri)
-        scheme = _scheme(credential.base_uri)
+        scheme = catalog.scheme(credential.base_uri)
         if scheme != "s3":
-            raise ValueError(_other_scheme(scheme))
+            raise ValueError(catalog.other_scheme(scheme))
         options = credential.storage_options
         fields: dict = {name: options[name] for name in _S3_FIELDS if options.get(name)}
         fields.update({name: SecretStr(options[name]) for name in _S3_SECRETS if options.get(name)})
@@ -128,7 +116,8 @@ def request(user_id: int, run_id: str, readers: set[int], writers: set[int]) -> 
     """Ask the hub, through ``user_id``'s hub session, for the credentials of a run over its tables.
 
     ``readers`` and ``writers`` are the hub namespace ids the run reads and writes. Every namespace is found in one
-    walk of the hub's catalogs; one on the hub's own disk, or on storage other than S3, is refused before the vend.
+    walk of the hub's catalogs; one on the hub's own disk, or on storage other than S3, is refused before the vend
+    with the sentence the catalog tree marks it with (``catalog.unreachable``), which says what to do.
 
     Raises:
         LookupError: A sentence for the user: not connected to the hub, a namespace the hub keeps on its own disk or
@@ -143,10 +132,9 @@ def request(user_id: int, run_id: str, readers: set[int], writers: set[int]) -> 
             namespace = found.get(namespace_id)
             if namespace is None:
                 raise LookupError(f"{REFUSED}: the hub lists no catalog namespace {namespace_id} for this account")
-            if namespace.storage_uri is None:
-                raise LookupError(_on_own_disk(namespace.full_name))
-            if _scheme(namespace.storage_uri) != "s3":
-                raise LookupError(_other_scheme(_scheme(namespace.storage_uri)))
+            refusal = catalog.unreachable(namespace.storage_uri, namespace.full_name)
+            if refusal is not None:
+                raise LookupError(refusal)
             names[namespace_id] = namespace.full_name
             bases[namespace_id] = namespace.storage_uri.rstrip("/")
         answer = client.vend(hub_url, access_token, run_id, sorted(readers), sorted(writers))

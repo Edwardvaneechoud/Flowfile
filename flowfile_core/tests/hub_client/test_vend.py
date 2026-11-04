@@ -117,9 +117,9 @@ def test_a_namespace_on_the_hub_s_own_disk_is_refused_before_the_vend(connected,
     with pytest.raises(LookupError) as refused:
         vend.request(USER, "run-abc", {catalog["raw"], catalog["notes"]}, set())
 
-    assert (
-        str(refused.value)
-        == "The hub keeps the tables of scratch.notes on its own disk; this Flowfile cannot read them"
+    assert str(refused.value) == (
+        "The hub keeps the tables of scratch.notes on its own disk; this Flowfile cannot read them. "
+        "Pick a catalog on the organisation's storage, or ask the hub's admin to put this one there."
     )
     assert connected.vend_calls == []
 
@@ -128,7 +128,10 @@ def test_a_namespace_on_storage_other_than_s3_is_refused_before_the_vend(connect
     with pytest.raises(LookupError) as refused:
         vend.request(USER, "run-abc", set(), {catalog["landing"]})
 
-    assert str(refused.value) == "Flowfile reads and writes hub tables on S3 storage; this catalog is on az:// storage"
+    assert str(refused.value) == (
+        "Flowfile reads and writes hub tables on S3 storage; this catalog is on az:// storage. "
+        "Pick a catalog on the organisation's S3 storage, or ask the hub's admin to put this one there."
+    )
     assert connected.vend_calls == []
 
 

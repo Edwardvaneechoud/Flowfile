@@ -410,9 +410,11 @@ def get_namespace_tree(
     """Return the full catalog tree with flows nested under schemas.
 
     The local catalogs come first; a user connected to a hub gets the hub's catalogs and tables after them, each
-    row marked ``source: "hub"`` with the negative of the hub's id as its ``id``.
+    row marked ``source: "hub"`` with the negative of the hub's id as its ``id``. Beside the hub's, every row says
+    where it lives (``place``), a hub catalog this Flowfile cannot use says why (``unavailable_reason``), and on a
+    server joined to its hub with keys of its own the server's own rows are not ``offered`` (``hub_catalog.merged``).
     """
-    return service.get_namespace_tree(user_id=current_user.id) + hub_catalog.tree(current_user.id)
+    return hub_catalog.merged(current_user.id, service.get_namespace_tree(user_id=current_user.id))
 
 
 # Default namespace helper
@@ -1712,7 +1714,7 @@ def get_catalog_overview(
     user_id = current_user.id
     return CatalogOverview(
         stats=service.get_catalog_stats(user_id=user_id),
-        tree=service.get_namespace_tree(user_id=user_id) + hub_catalog.tree(user_id),
+        tree=hub_catalog.merged(user_id, service.get_namespace_tree(user_id=user_id)),
         flows=service.list_flows(user_id=user_id),
         tables=service.list_tables(user_id=user_id),
         favorites=service.list_favorites(user_id=user_id),

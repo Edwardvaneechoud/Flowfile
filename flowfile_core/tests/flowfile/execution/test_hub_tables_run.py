@@ -197,7 +197,10 @@ def test_a_run_writing_to_a_namespace_on_the_hub_s_disk_ends_with_its_sentence(c
 
     run_info = graph.run_graph()
 
-    sentence = "The hub keeps the tables of scratch.notes on its own disk; this Flowfile cannot read them"
+    sentence = (
+        "The hub keeps the tables of scratch.notes on its own disk; this Flowfile cannot read them. "
+        "Pick a catalog on the organisation's storage, or ask the hub's admin to put this one there."
+    )
     assert_ended_before_any_node(run_info, graph, {2: sentence})
     assert connected.vend_calls == [] and operations == []
 
