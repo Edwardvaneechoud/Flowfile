@@ -3,7 +3,6 @@
 import json
 import logging
 import time
-from datetime import datetime, timezone
 
 import pytest
 
@@ -27,9 +26,7 @@ def test_a_run_token_for_this_node_is_accepted_with_its_claims(hub_signer):
     claims = verify(token)
 
     assert isinstance(claims, HubClaims)
-    assert (claims.subject, claims.user_id, claims.scope, claims.node) == ("ana", 7, "run", NODE_NAME)
-    assert claims.jti and claims.expires_at.tzinfo is timezone.utc
-    assert abs((claims.expires_at - datetime.now(timezone.utc)).total_seconds() - 300) < 5
+    assert (claims.subject, claims.user_id, claims.scope) == ("ana", 7, "run")
 
 
 def test_a_dispatch_token_from_the_hub_itself_is_accepted_without_a_user(hub_signer):
@@ -101,10 +98,16 @@ def test_a_missing_audience_is_refused(hub_signer):
     assert refusal(hub_signer.token(drop=("aud",))) in ("missing claim aud", "wrong audience")
 
 
-def test_a_string_that_is_not_a_jwt_is_not_a_hub_token(hub_signer):
+def test_a_string_that_is_not_a_jwt_is_not_a_hub_token_and_reads_no_settings(hub_signer, monkeypatch):
+    def no_settings():
+        raise AssertionError("the node's settings were read for a token that is not a JWT")
+
+    monkeypatch.setattr(hub_node, "resolved", no_settings)
+
     assert verify("flowfile-test-internal-token") is None
     assert verify("") is None
     assert verify("one.dot") is None
+    assert verify(None) is None
 
 
 def test_hub_tokens_are_off_without_a_hub_url(hub_signer, monkeypatch):
@@ -159,7 +162,7 @@ def test_a_joined_node_takes_tokens_for_its_name(hub_signer, monkeypatch, tmp_pa
     )
     monkeypatch.setattr(hub_node, "path", lambda: joined)
 
-    assert verify(hub_signer.token(aud="joined-node")).node == "joined-node"
+    assert verify(hub_signer.token(aud="joined-node")).scope == "run"
     assert refusal(hub_signer.token(aud=NODE_NAME)) == "wrong audience"
 
 
@@ -172,8 +175,7 @@ def sign_in_token(hub_signer, **claims) -> str:
 def test_a_sign_in_token_is_accepted_where_its_scope_is_named_with_the_persons_name(hub_signer):
     claims = verify(sign_in_token(hub_signer, node_admin=True), scopes=("signin",))
 
-    assert (claims.subject, claims.user_id, claims.scope, claims.node) == ("ana", 7, "signin", NODE_NAME)
-    assert (claims.name, claims.node_admin) == ("Ana Lima", True)
+    assert (claims.subject, claims.user_id, claims.scope) == ("ana", 7, "signin")
 
 
 def test_a_sign_in_token_is_refused_by_every_caller_that_names_no_scope(hub_signer):
@@ -191,16 +193,3 @@ def test_an_unknown_scope_is_refused_whatever_scopes_the_caller_names(hub_signer
     with pytest.raises(HubTokenRefused) as refused:
         verify(hub_signer.token(scope="admin"), scopes=("admin",))
     assert refused.value.reason == "unknown scope"
-
-
-def test_a_token_without_a_name_or_node_admin_has_none_and_false(hub_signer):
-    claims = verify(hub_signer.token(scope="run"))
-
-    assert (claims.name, claims.node_admin) == (None, False)
-
-
-@pytest.mark.parametrize("value", ["true", 1, "yes", None, {"admin": True}])
-def test_node_admin_is_true_only_for_true_and_a_name_only_for_text(hub_signer, value):
-    claims = verify(sign_in_token(hub_signer, node_admin=value, name=42), scopes=("signin",))
-
-    assert (claims.name, claims.node_admin) == (None, False)
