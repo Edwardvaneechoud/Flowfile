@@ -217,9 +217,6 @@ SERVER_PORT = args.port if args.port is not None else int(os.getenv("CORE_PORT",
 WORKER_PORT = (
     args.worker_port if args.worker_port is not None else int(os.getenv("FLOWFILE_WORKER_PORT", DEFAULT_WORKER_PORT))
 )
-# A port the operator chose (a flag or its variable), which a core that joins a hub never moves.
-PORT_GIVEN = args.port is not None or bool(os.getenv("CORE_PORT"))
-WORKER_PORT_GIVEN = args.worker_port is not None or bool(os.getenv("FLOWFILE_WORKER_PORT"))
 # What ``--join`` and its flags name: the hub to join before serving, and how this node and its worker are reached.
 JOIN_TOKEN = args.join
 JOIN_HUB_URL = args.hub
@@ -238,40 +235,11 @@ def is_loopback_host(host: str) -> bool:
         return False
 
 
-def join_worker_port(hub_url: str, token: str, *, mounted: bool = False) -> int | None:
-    """The port a core that joins a hub gives for the worker beside it, which its join keeps for that worker.
-
-    ``None`` when no worker runs beside it: ``--worker-url`` names one elsewhere, or the worker is ``mounted`` in
-    core's app. A port the operator chose (``--worker-port``, ``FLOWFILE_WORKER_PORT``) or a worker address configured
-    (``FLOWFILE_WORKER_URL``, ``WORKER_HOST``): ``WORKER_PORT`` as it is. A core that joined with this token already,
-    so no request follows: the port the hub has for the worker, else ``WORKER_PORT``. A core about to join: the port
-    ``hub_node.beside_port`` finds, the one the node joined with before first. Core then reaches its worker on that
-    port, and so does every run it starts (``FLOWFILE_WORKER_PORT``).
-    """
-    global WORKER_PORT, WORKER_URL
-    if JOIN_WORKER_URL or mounted:
-        return None
-    if WORKER_PORT_GIVEN or WORKER_ADDRESS_CONFIGURED:
-        return WORKER_PORT
-    joined = hub_node.already_joined(hub_url, token)
-    if joined is not None:
-        port = joined.worker_port or WORKER_PORT
-    else:
-        last = hub_node.read()
-        port = hub_node.beside_port(WORKER_PORT, kept=last.worker_port if last else None)
-    if port != WORKER_PORT:
-        WORKER_PORT = port
-        WORKER_URL = get_default_worker_url(port)
-        os.environ["FLOWFILE_WORKER_PORT"] = str(port)
-    return port
-
-
 def join_addresses(
     core_port: int | None = None,
     core_host: str | None = None,
     *,
     hub_url: str,
-    worker_port: int | None = None,
     worker_path: str | None = None,
     editor_path: str | None = None,
 ) -> tuple[str, str, str | None]:
@@ -283,9 +251,8 @@ def join_addresses(
     one address, that address; on a loopback one, which only this machine reaches, that address with one warning
     saying how to be reached from others. The worker's is ``--worker-url`` when given, else core's address and
     ``worker_path`` for a worker mounted in core's app, else the address of a worker beside core on every address, on
-    ``worker_port`` (else ``WORKER_PORT``). The editor's is core's address and ``editor_path``, and ``None`` when core
-    serves no editor. Plain ``http``; composed when called, never at import, since the machine's full name can wait on
-    a reverse lookup.
+    ``WORKER_PORT``. The editor's is core's address and ``editor_path``, and ``None`` when core serves no editor. Plain
+    ``http``; composed when called, never at import, since the machine's full name can wait on a reverse lookup.
     """
     port = core_port or SERVER_PORT
     host = core_host or SERVER_HOST
@@ -305,7 +272,7 @@ def join_addresses(
     elif worker_path:
         worker_url = core_url.rstrip("/") + worker_path
     else:
-        worker_url = hub_node.node_url(hub_url, "0.0.0.0", worker_port or WORKER_PORT, tls=False)
+        worker_url = hub_node.node_url(hub_url, "0.0.0.0", WORKER_PORT, tls=False)
     ui_url = core_url.rstrip("/") + editor_path if editor_path else None
     return core_url, worker_url, ui_url
 

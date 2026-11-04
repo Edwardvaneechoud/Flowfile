@@ -40,11 +40,9 @@ from flowfile_core.configs.settings import (
     JOIN_HUB_URL,
     JOIN_NODE_NAME,
     JOIN_TOKEN,
-    PORT_GIVEN,
     SERVER_HOST,
     SERVER_PORT,
     join_addresses,
-    join_worker_port,
 )
 from flowfile_core.events import publish
 from flowfile_core.flowfile.execution import registry as compute_registry
@@ -345,26 +343,21 @@ def _join_hub(port: int | None = None, host: str | None = None) -> None:
     With no token, nothing. One join registers the pair as one node: the name is ``--name``, else the machine's, and
     the addresses are the settings' ``join_addresses``: ``--url`` and ``--worker-url``, else the address the hub
     reaches core at on core's port (the loopback address it binds, with a warning, the one address it binds, or this
-    machine's address towards the hub) and the worker's on the port the settings give the worker beside it
-    (``join_worker_port``), plain ``http``. An app that serves the browser editor, or mounts its worker, says on which
-    path (``app.state``'s ``editor_path`` and ``worker_path``, set by the pip server), and the join gives the hub the
-    editor's address and that worker's beside core's. The join keeps core's port and the worker's for the next start,
-    and the worker beside it, started with the node's name, finds the folder and its port. A core that joined already
-    makes no request (``shared.hub_node``). The token leaves this process's environment first, so no run or worker
-    that core starts later reads ``FLOWFILE_HUB_JOIN_TOKEN`` without the hub given as ``--hub``, or joins with it again.
+    machine's address towards the hub) and the worker's on the worker port the settings hold, plain ``http``. An app
+    that serves the browser editor, or mounts its worker, says on which path (``app.state``'s ``editor_path`` and
+    ``worker_path``, set by the pip server), and the join gives the hub the editor's address and that worker's beside
+    core's. A core that joined already makes no request (``shared.hub_node``). The token leaves this process's
+    environment first, so no run or worker that core starts later reads ``FLOWFILE_HUB_JOIN_TOKEN`` without the hub
+    given as ``--hub``, or joins with it again.
     """
     if not JOIN_TOKEN:
         return
     os.environ.pop("FLOWFILE_HUB_JOIN_TOKEN", None)
-    port = port or settings.SERVER_PORT
-    worker_path = getattr(app.state, "worker_path", None)
-    worker_port = join_worker_port(JOIN_HUB_URL, JOIN_TOKEN, mounted=worker_path is not None)
     core_url, worker_url, ui_url = join_addresses(
-        port,
+        port or settings.SERVER_PORT,
         host,
         hub_url=JOIN_HUB_URL,
-        worker_port=worker_port,
-        worker_path=worker_path,
+        worker_path=getattr(app.state, "worker_path", None),
         editor_path=getattr(app.state, "editor_path", None),
     )
     hub_node.join_at_start(
@@ -374,27 +367,24 @@ def _join_hub(port: int | None = None, host: str | None = None) -> None:
         worker_url=worker_url,
         core_url=core_url,
         ui_url=ui_url,
-        core_port=port,
-        worker_port=worker_port,
     )
 
 
-def listen(host: str, port: int, *, given: bool) -> socket.socket | None:
+def listen(host: str, port: int) -> socket.socket | None:
     """The socket a core that joins a hub serves on, bound before the join; ``None`` without a join token.
 
     Without a join token uvicorn binds the port, as it always has. With one, a core that cannot serve never spends
-    it: a port ``given`` (``--port``, ``CORE_PORT``, or one a caller of ``run`` names) is that port or exit code 1; a
-    restart with the same token is the port the hub has, else exit code 1 saying so; a core about to join takes
-    ``port``, else the port it last joined with, else a free one (``hub_node.serving_socket``). Says first where the
-    node keeps its files when it has a folder of its own. Those lines, and the join's, are logged as the server logs
-    once it serves (the lifespan's ``basicConfig``), from here on: ``flowfile run ui`` and ``run core`` configure no
-    logging before then, and a record at INFO with no handler is dropped.
+    it: it serves on ``port``, the one it was started with (``--port``, ``CORE_PORT``, or one a caller of ``run``
+    names, else the default), or exits with code 1 saying that port is in use (``hub_node.serving_socket``). Says
+    first where the node keeps its files when it has a folder of its own. Those lines, and the join's, are logged as
+    the server logs once it serves (the lifespan's ``basicConfig``), from here on: ``flowfile run ui`` and ``run
+    core`` configure no logging before then, and a record at INFO with no handler is dropped.
     """
     if not JOIN_TOKEN:
         return None
     logging.basicConfig(level=logging.INFO, format=_LOG_FORMAT)
     hub_node.log_storage(NODE_STORAGE_DIR)
-    return hub_node.serving_socket("core", host, port, given=given, hub_url=JOIN_HUB_URL, token=JOIN_TOKEN)
+    return hub_node.serving_socket(host, port)
 
 
 def run(host: str = None, port: int = None, sock: socket.socket | None = None):
@@ -418,14 +408,10 @@ def run(host: str = None, port: int = None, sock: socket.socket | None = None):
 
     if host is None:
         host = SERVER_HOST
-    if sock is None:
-        sock = listen(host, SERVER_PORT if port is None else port, given=port is not None or PORT_GIVEN)
-    if sock is not None:
-        port = sock.getsockname()[1]
-        settings.SERVER_PORT = port
-        os.environ["CORE_PORT"] = str(port)
-    elif port is None:
+    if port is None:
         port = SERVER_PORT
+    if sock is None:
+        sock = listen(host, port)
     try:
         _join_hub(port, host)
     except BaseException:

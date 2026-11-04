@@ -8,6 +8,7 @@ stubbed and a bare app in place of core's, so no port is bound and no browser op
 restored after the test.
 """
 
+import errno
 import logging
 import os
 import socket
@@ -210,28 +211,36 @@ def joining(monkeypatch, tmp_path):
     monkeypatch.setattr(hub_node, "path", lambda: tmp_path / "storage" / hub_node.FILE_NAME)
 
 
-def test_a_server_that_joins_binds_first_and_moves_off_the_default_port_in_use(
-    served, joining, held, monkeypatch, caplog
-):
-    monkeypatch.setattr(settings, "DEFAULT_SERVER_PORT", held)
+def free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 
-    with caplog.at_level(logging.INFO, logger="flowfile.hub_node"):
-        web.start_server(open_browser=False)
+
+def test_a_server_that_joins_binds_its_port_first_and_serves_there(served, joining, monkeypatch):
+    port = free_port()
+    monkeypatch.setattr(settings, "DEFAULT_SERVER_PORT", port)
+
+    web.start_server(open_browser=False)
 
     with served["sock"] as sock:
-        moved = sock.getsockname()[1]
-    assert moved != held
-    assert (served["host"], served["port"]) == ("127.0.0.1", moved)
-    assert settings.WORKER_URL == f"http://127.0.0.1:{moved}/worker"
-    assert f"Port {held} is in use; serving on {moved}" in caplog.text
+        assert sock.getsockname() == ("127.0.0.1", port)
+    assert (served["host"], served["port"]) == ("127.0.0.1", port)
+    assert settings.WORKER_URL == f"http://127.0.0.1:{port}/worker"
 
 
-def test_a_server_that_joins_on_a_port_it_is_given_and_in_use_exits_1_before_serving(served, joining, held):
+@pytest.mark.parametrize("given_by", ["--port", "the default"])
+def test_a_server_that_joins_on_a_port_in_use_exits_1_before_serving(
+    served, joining, held, monkeypatch, caplog, given_by
+):
     worker_url = settings.WORKER_URL
+    if given_by == "the default":
+        monkeypatch.setattr(settings, "DEFAULT_SERVER_PORT", held)
 
-    with pytest.raises(SystemExit) as exited:
-        web.start_server(port=held, open_browser=False)
+    with caplog.at_level(logging.ERROR, logger="flowfile.hub_node"), pytest.raises(SystemExit) as exited:
+        web.start_server(port=held if given_by == "--port" else None, open_browser=False)
 
     assert exited.value.code == 1
+    assert f"Cannot serve on 127.0.0.1:{held}: {os.strerror(errno.EADDRINUSE)}" in caplog.text
     assert "host" not in served
     assert settings.WORKER_URL == worker_url

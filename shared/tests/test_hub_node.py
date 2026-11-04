@@ -1,6 +1,7 @@
 """A node's identity on a hub: how the variables and the joined file combine, the join itself, joining at start, the
 folder, port and address a node that joins takes, and the heartbeat that tells the hub the node is up."""
 
+import errno
 import json
 import logging
 import os
@@ -456,42 +457,6 @@ def test_a_reverse_lookup_name_is_not_an_address_a_desktop_reaches(monkeypatch):
     assert hub_node.default_url(63579, tls=False) == "http://build-7.local:63579"
 
 
-def test_a_join_keeps_the_port_the_worker_serves_on_and_a_cores_join_keeps_none(join_hub, node_file):
-    hub_node.join(join_hub.url, join_hub.mint(), name="worker-1", worker_url="http://w:64001", worker_port=64001)
-
-    assert json.loads(node_file.read_text(encoding="utf-8"))["worker_port"] == 64001
-    assert hub_node.read().worker_port == 64001
-
-    hub_node.join(join_hub.url, join_hub.mint(), name="team", worker_url="http://w:1", core_url="http://c:2")
-
-    assert "worker_port" not in json.loads(node_file.read_text(encoding="utf-8"))
-    assert hub_node.read().worker_port is None
-
-
-def test_a_cores_join_keeps_the_port_it_serves_on_and_the_one_it_gives_its_worker(join_hub, node_file):
-    hub_node.join(
-        join_hub.url,
-        join_hub.mint(),
-        name="team",
-        worker_url="http://w:64002",
-        core_url="http://c:64001",
-        core_port=64001,
-        worker_port=64002,
-    )
-
-    kept = json.loads(node_file.read_text(encoding="utf-8"))
-    assert (kept["core_port"], kept["worker_port"]) == (64001, 64002)
-    assert (hub_node.read().core_port, hub_node.read().worker_port) == (64001, 64002)
-
-
-@pytest.mark.parametrize("field", ["core_port", "worker_port"])
-@pytest.mark.parametrize("port", [0, 70000, "63579", True], ids=["zero", "too high", "text", "bool"])
-def test_a_kept_port_that_is_no_port_reads_as_none(node_file, port, field):
-    write_node(node_file, **{field: port})
-
-    assert getattr(hub_node.read(), field) is None
-
-
 def test_a_start_with_the_token_the_node_joined_with_is_already_joined(join_hub, node_file):
     token = join_hub.mint()
     join_with(join_hub, token)
@@ -570,7 +535,7 @@ def test_the_storage_dir_is_left_alone_without_a_token_or_with_one_set(home, mon
 def joined_on_this_machine(home, name: str = "card-node") -> "os.PathLike":
     """The folder a core that joined as ``name`` left under the home directory, with its ``hub_node.json``."""
     folder = home / ".flowfile-node" / name
-    write_node(folder / hub_node.FILE_NAME, name=name, has_core=True, worker_port=64002)
+    write_node(folder / hub_node.FILE_NAME, name=name, has_core=True)
     return folder
 
 
@@ -622,12 +587,12 @@ def test_a_name_a_hub_would_refuse_is_no_folder_and_exits_2(home, caplog, name):
 
 @pytest.fixture
 def held():
-    """Listening sockets that hold ports the way another server would; ``held(host)`` gives one and its port."""
+    """Listening sockets that hold ports on loopback the way another server would; ``held()`` gives one's port."""
     sockets = []
 
-    def hold(host: str = "127.0.0.1", port: int = 0) -> int:
-        sock = socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET)
-        sock.bind((host, port))
+    def hold() -> int:
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
         sock.listen()
         sockets.append(sock)
         return sock.getsockname()[1]
@@ -643,7 +608,7 @@ def free_port() -> int:
         return sock.getsockname()[1]
 
 
-def test_a_node_listens_on_the_port_it_is_given(held):
+def test_a_node_listens_on_the_port_it_is_given():
     port = free_port()
 
     with hub_node.listen("127.0.0.1", port) as sock:
@@ -651,192 +616,41 @@ def test_a_node_listens_on_the_port_it_is_given(held):
         socket.create_connection(("127.0.0.1", port), timeout=2).close()
 
 
-def test_a_given_port_in_use_is_refused_naming_the_host_the_port_and_what_holds_it(held):
+def test_a_port_in_use_is_refused_in_one_sentence_naming_the_address_and_the_reason(held):
     port = held()
 
     with pytest.raises(hub_node.CannotServe) as refused:
         hub_node.listen("127.0.0.1", port)
 
-    assert refused.value.in_use
-    assert refused.value.reason.startswith(f"Cannot serve on 127.0.0.1:{port}: in use by ")
-    assert f"(pid {os.getpid()})" in refused.value.reason
+    assert refused.value.reason == f"Cannot serve on 127.0.0.1:{port}: {os.strerror(errno.EADDRINUSE)}"
 
 
-def test_an_address_this_machine_does_not_have_is_refused_with_the_os_reason_even_when_moving():
+def test_an_address_this_machine_does_not_have_is_refused_with_the_os_reason():
     port = free_port()
 
     with pytest.raises(hub_node.CannotServe) as refused:
-        hub_node.listen("192.0.2.1", port, move=True)
+        hub_node.listen("192.0.2.1", port)
 
-    assert not refused.value.in_use
     assert refused.value.reason.startswith(f"Cannot serve on 192.0.2.1:{port}: ")
     assert "in use" not in refused.value.reason
 
 
-def test_a_port_in_use_gives_way_to_the_next_free_one_and_says_so(held, caplog):
+def test_a_node_that_joins_serves_on_the_port_it_is_given():
+    port = free_port()
+
+    with hub_node.serving_socket("127.0.0.1", port) as sock:
+        assert sock.getsockname()[1] == port
+
+
+def test_a_node_whose_port_is_in_use_exits_1_with_the_sentence_before_any_request(join_hub, held, caplog):
     port = held()
 
-    with caplog.at_level(logging.INFO, logger="flowfile.hub_node"):
-        with hub_node.listen("127.0.0.1", port, move=True) as sock:
-            moved = sock.getsockname()[1]
-
-    assert moved != port
-    assert f"Port {port} is in use; serving on {moved}" in caplog.text
-
-
-def test_a_port_in_use_gives_way_to_the_kept_port_first(held):
-    port, kept = held(), free_port()
-
-    with hub_node.listen("127.0.0.1", port, move=True, kept=kept) as sock:
-        assert sock.getsockname()[1] == kept
-
-
-def test_a_kept_port_in_use_too_gives_way_to_another(held):
-    port, kept = held(), held()
-
-    with hub_node.listen("127.0.0.1", port, move=True, kept=kept) as sock:
-        assert sock.getsockname()[1] not in (port, kept)
-
-
-def test_the_ports_a_node_moves_to_skip_a_hubs_and_end_with_one_the_os_picks():
-    ports = hub_node._other_ports(63579, None)
-
-    assert ports[:3] == [63581, 63582, 63583]
-    assert hub_node.HUB_PORT not in ports
-    assert ports[-2:] == [63629, 0]
-    assert hub_node._other_ports(63579, 64000)[:2] == [64000, 63581]
-    assert hub_node._other_ports(63579, 63582).count(63582) == 1
-    assert hub_node._other_ports(65533, None) == [65534, 65535, 0]
-
-
-def test_a_port_another_server_holds_on_loopback_counts_as_in_use_for_every_address(held):
-    port = held("127.0.0.1")
-
-    with hub_node.listen("0.0.0.0", port, move=True) as sock:
-        assert sock.getsockname()[1] != port
-
-
-def test_a_port_no_other_server_holds_is_not_shadowed():
-    with hub_node._bind("0.0.0.0", 0) as sock:
-        assert not hub_node._shadowed(sock)
-
-
-@pytest.mark.parametrize("holder", ["0.0.0.0", "127.0.0.1"], ids=["every address", "loopback"])
-def test_a_port_a_server_answers_on_counts_as_in_use_for_a_node_on_loopback(held, holder):
-    port = held(holder)
-
-    with hub_node.listen("127.0.0.1", port, move=True) as sock:
-        assert sock.getsockname()[1] != port
-        socket.create_connection(("127.0.0.1", sock.getsockname()[1]), timeout=2).close()
-
-
-def test_a_kept_port_a_server_answers_on_gives_way_on_loopback_too(held):
-    port, kept = held("0.0.0.0"), held("0.0.0.0")
-
-    with hub_node.listen("127.0.0.1", port, move=True, kept=kept) as sock:
-        assert sock.getsockname()[1] not in (port, kept)
-
-
-def serving_on(process, port, **kwargs) -> int:
-    with hub_node.serving_socket(process, "127.0.0.1", port, **kwargs) as sock:
-        return sock.getsockname()[1]
-
-
-def test_a_core_about_to_join_moves_off_its_port_in_use_and_a_given_one_stays(join_hub, held, caplog):
-    port, token = held(), join_hub.mint()
-
-    assert serving_on("core", port, given=False, hub_url=join_hub.url, token=token) != port
     with caplog.at_level(logging.ERROR, logger="flowfile.hub_node"), pytest.raises(SystemExit) as exited:
-        serving_on("core", port, given=True, hub_url=join_hub.url, token=token)
+        hub_node.serving_socket("127.0.0.1", port)
 
     assert exited.value.code == 1
-    assert f"Cannot serve on 127.0.0.1:{port}: in use by " in caplog.text
+    assert f"Cannot serve on 127.0.0.1:{port}: {os.strerror(errno.EADDRINUSE)}" in caplog.text
     assert join_hub.calls == []
-
-
-def test_a_core_about_to_join_prefers_the_port_it_joined_with_to_another(join_hub, node_file, held):
-    kept = free_port()
-    hub_node.join(
-        join_hub.url,
-        join_hub.mint(),
-        name="team",
-        worker_url="http://w:1",
-        core_url="http://c:2",
-        core_port=kept,
-        worker_port=held(),
-    )
-
-    assert serving_on("core", held(), given=False, hub_url=join_hub.url, token=join_hub.mint()) == kept
-
-
-def test_a_core_that_joined_with_this_token_serves_on_its_kept_port_or_says_the_hub_has_it(
-    join_hub, node_file, held, caplog
-):
-    token, kept = join_hub.mint(), free_port()
-    hub_node.join(join_hub.url, token, name="team", worker_url="http://w:1", core_url="http://c:2", core_port=kept)
-
-    assert serving_on("core", free_port(), given=False, hub_url=join_hub.url, token=token) == kept
-
-    token, kept = join_hub.mint(), held()
-    hub_node.join(join_hub.url, token, name="team", worker_url="http://w:1", core_url="http://c:2", core_port=kept)
-    with caplog.at_level(logging.ERROR, logger="flowfile.hub_node"), pytest.raises(SystemExit) as exited:
-        serving_on("core", free_port(), given=False, hub_url=join_hub.url, token=token)
-
-    assert exited.value.code == 1
-    assert "the hub has this node at that port, so free it or join again with a new join token" in caplog.text
-
-
-def test_the_worker_found_by_name_serves_on_the_port_its_cores_join_gave_it(node_file, held, caplog):
-    kept = free_port()
-    write_node(node_file, has_core=True, core_port=free_port(), worker_port=kept)
-
-    assert serving_on("worker", free_port(), given=False, found=True) == kept
-    given = free_port()
-    assert serving_on("worker", given, given=True, found=True) == given
-
-    write_node(node_file, has_core=True, worker_port=held())
-    with caplog.at_level(logging.ERROR, logger="flowfile.hub_node"), pytest.raises(SystemExit) as exited:
-        serving_on("worker", free_port(), given=False, found=True)
-
-    assert exited.value.code == 1
-    assert "the hub has this node at that port" in caplog.text
-
-
-def test_the_worker_found_by_name_in_a_file_without_its_port_serves_on_the_one_it_is_given(node_file):
-    write_node(node_file, has_core=True)
-    port = free_port()
-
-    assert serving_on("worker", port, given=False, found=True) == port
-
-
-def test_the_worker_beside_a_core_keeps_the_port_the_node_joined_with_even_while_a_server_answers_there(held):
-    kept = held()
-
-    assert hub_node.beside_port(held(), kept=kept) == kept
-
-
-def test_the_worker_beside_a_core_gets_the_default_port_when_no_server_holds_it(caplog):
-    port = free_port()
-
-    with caplog.at_level(logging.INFO, logger="flowfile.hub_node"):
-        assert hub_node.beside_port(port) == port
-
-    assert "is in use" not in caplog.text
-
-
-@pytest.mark.parametrize("holder", ["0.0.0.0", "127.0.0.1"], ids=["every address", "loopback"])
-def test_the_worker_beside_a_core_gets_a_free_port_when_a_server_holds_the_default_and_one_line_says_so(
-    held, caplog, holder
-):
-    port = held(holder)
-
-    with caplog.at_level(logging.INFO, logger="flowfile.hub_node"):
-        moved = hub_node.beside_port(port)
-
-    assert moved != port
-    with hub_node._bind("0.0.0.0", moved):
-        pass
-    assert f"Port {port} is in use; the worker beside this core is to serve on {moved}" in caplog.text
 
 
 @pytest.fixture
@@ -1238,30 +1052,6 @@ def test_a_hub_that_answers_500_warns_once_and_is_asked_every_minute(hub_answeri
     assert absent_lines(caplog) == []
 
 
-def test_a_shadow_check_with_descriptors_past_1024_still_answers():
-    """``select.select`` refuses a descriptor above 1023; a long-running process can hold one, so the check that a
-    port is shared on loopback waits through a selector instead."""
-    resource = pytest.importorskip("resource")
-    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    if hard != resource.RLIM_INFINITY and hard < 1200:
-        pytest.skip("the descriptor limit stays below 1200")
-    resource.setrlimit(resource.RLIMIT_NOFILE, (max(soft, 1200), hard))
-    held = []
-    try:
-        while not held or held[-1] < 1100:
-            held.append(os.dup(0))
-        sock = hub_node._bind("0.0.0.0", 0)
-        try:
-            assert sock.fileno() > 1024
-            assert hub_node._shadowed(sock) is False
-        finally:
-            sock.close()
-    finally:
-        for fd in held:
-            os.close(fd)
-        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
-
-
 def test_a_hub_that_removed_the_node_stops_the_process_and_beats_no_more(hub_answering, monkeypatch, caplog):
     hub = hub_answering(410)
     stopped: list[int] = []
@@ -1297,4 +1087,3 @@ def test_stopping_the_process_sends_it_sigterm(monkeypatch):
     hub_node._stop_this_process()
 
     assert sent == [(os.getpid(), signal.SIGTERM)]
-

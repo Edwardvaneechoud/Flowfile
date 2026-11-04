@@ -2,7 +2,6 @@ import asyncio
 import ipaddress
 import os
 import signal
-import socket
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -19,7 +18,6 @@ from flowfile_worker.configs import (
     JOIN_TOKEN,
     NODE_NAME,
     NODE_URL,
-    PORT_GIVEN,
     SERVICE_HOST,
     SERVICE_PORT,
     logger,
@@ -147,26 +145,6 @@ def signal_handler(signum, frame):
         server_instance.should_exit = True
 
 
-def _found_by_name() -> bool:
-    """Whether this worker took the folder of the node it is named after, with no join token: the one beside a core."""
-    return NODE_STORAGE_DIR is not None and not JOIN_TOKEN
-
-
-def listen(host: str, port: int, *, given: bool = True) -> socket.socket:
-    """The socket the worker serves on, bound before it joins a hub: a worker that cannot serve never spends a token.
-
-    A port the operator ``given`` (``--port``, or ``run``'s), and any port of a worker without a join token: that port,
-    else exit code 1. A worker that already joined with this token: the port it joined with, which the hub has, else
-    exit code 1 saying so (``port`` when its file is from before the port was kept). A worker about to join: ``port``,
-    else the port it last joined with, else a free one (``hub_node.listen``), which the join then reports. The worker
-    beside a core, found by its name: the port that core's join gave for it, else exit code 1 saying so
-    (``hub_node.serving_socket``).
-    """
-    return hub_node.serving_socket(
-        "worker", host, port, given=given, hub_url=HUB_URL, token=JOIN_TOKEN, found=_found_by_name()
-    )
-
-
 def _worker_url(host: str, port: int, *, tls: bool) -> str:
     url = hub_node.node_url(HUB_URL, host, port, tls=tls)
     if hub_node.is_loopback_host(host):
@@ -199,50 +177,37 @@ def join_hub(port: int | None = None, host: str | None = None) -> None:
         JOIN_TOKEN,
         name=NODE_NAME or hub_node.default_name(),
         worker_url=worker_url,
-        worker_port=port,
     )
-
-
-def _say_found(port: int) -> None:
-    joined = hub_node.read()
-    folder = hub_node.home_relative(NODE_STORAGE_DIR)
-    if joined is not None and joined.worker_port == port:
-        logger.info("Found node %s in %s; serving on %s, the port its join gave the hub", joined.name, folder, port)
-    else:
-        logger.info("Found node %s in %s; serving on %s", NODE_STORAGE_DIR.name, folder, port)
 
 
 def run(host: str = None, port: int = None):
     """Run the FastAPI app with graceful shutdown.
 
     Without a join token uvicorn binds the port, as it always has. A worker started with a join token binds its socket
-    first (``listen``), then joins its hub (``join_hub``) with the port it serves on, and serves on that same socket:
-    one that cannot bind exits with code 1 before any request to the hub, one the hub refuses with code 2 before it
-    serves. The worker beside a core, started with the node's name and no join token, binds the same way and serves
-    from the core's folder on the port the core's join gave for it.
+    first, on the port it was started with (``hub_node.serving_socket``), then joins its hub (``join_hub``) with that
+    port, and serves on that same socket: one whose port is in use exits with code 1 before any request to the hub,
+    one the hub refuses with code 2 before it serves. The worker beside a core, started with the node's name and no
+    join token, serves from the core's folder, found by that name, and says so in one line.
     Serves TLS when ``FLOWFILE_WORKER_TLS_CERT`` and ``FLOWFILE_WORKER_TLS_KEY`` name a certificate and its key.
     """
     global server_instance
 
-    given = port is not None or PORT_GIVEN
     if host is None:
         host = SERVICE_HOST
     if port is None:
         port = SERVICE_PORT
 
     sock = None
-    if JOIN_TOKEN or _found_by_name():
-        if not _found_by_name():
-            hub_node.log_storage(NODE_STORAGE_DIR)
-        sock = listen(host, port, given=given)
-        port = sock.getsockname()[1]
-        if _found_by_name():
-            _say_found(port)
+    if JOIN_TOKEN:
+        hub_node.log_storage(NODE_STORAGE_DIR)
+        sock = hub_node.serving_socket(host, port)
         try:
             join_hub(port, host)
         except BaseException:
             sock.close()
             raise
+    elif NODE_STORAGE_DIR is not None:
+        logger.info("Found node %s in %s", NODE_STORAGE_DIR.name, hub_node.home_relative(NODE_STORAGE_DIR))
 
     from connectorx import __version__ as connectorx_version
 

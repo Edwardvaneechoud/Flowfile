@@ -123,7 +123,6 @@ if _is_main_process():
 
     SERVICE_HOST = args.host
     SERVICE_PORT = DEFAULT_SERVICE_PORT if args.port is None else args.port
-    PORT_GIVEN = args.port is not None
     CORE_HOST = args.core_host
     CORE_PORT = args.core_port
     JOIN_TOKEN = args.join
@@ -134,7 +133,6 @@ else:
     # In spawned processes, use defaults from environment variables
     SERVICE_HOST = DEFAULT_SERVICE_HOST
     SERVICE_PORT = DEFAULT_SERVICE_PORT
-    PORT_GIVEN = False
     CORE_HOST = DEFAULT_CORE_HOST
     CORE_PORT = DEFAULT_CORE_PORT
     JOIN_TOKEN = None

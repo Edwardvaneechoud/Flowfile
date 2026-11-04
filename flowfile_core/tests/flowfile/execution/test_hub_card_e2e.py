@@ -1,14 +1,15 @@
 """The worker's command a hub's Compute page prints joins and serves as pasted, beside Flowfile desktop, end to end.
 
 The card's command is ``flowfile_worker --hub <hub> --join <code>``, the code a short one such as ``K7QX-M2PD``: no
-host, no port, no name, no address and no variable. Here it runs as ``python -m flowfile_worker`` in the environment of
-an operator's shell (no ``FLOWFILE_*`` variable, ``HOME`` a folder of the test's own holding a desktop's ``~/.flowfile``
-with its own ``hub_node.json``), against a fake hub on this machine, with the worker's default port held on loopback as
-a desktop's worker holds it. With a join token and no ``--host`` the worker listens on every interface; it serves on
-another port, tells the hub this machine's address and that port in one join, answers ``GET /health`` there, keeps
-its files in ``~/.flowfile-node/<machine name>`` and leaves the desktop's file as it was; a restart with the same
-command does not join again and serves on the same port. A port the operator gives that is taken stops the worker
-before it spends its token.
+host, no name, no address and no variable; the hub's install script adds ``--port`` with a port of this machine's that
+is free, since the desktop's worker holds the default one. Here it runs as ``python -m flowfile_worker`` in the
+environment of an operator's shell (no ``FLOWFILE_*`` variable, ``HOME`` a folder of the test's own holding a desktop's
+``~/.flowfile`` with its own ``hub_node.json``), against a fake hub on this machine, with the worker's default port held
+on loopback as a desktop's worker holds it. With a join token and no ``--host`` the worker listens on every interface;
+it serves on the port it is given, tells the hub this machine's address and that port in one join, answers ``GET
+/health`` there, keeps its files in ``~/.flowfile-node/<machine name>`` and leaves the desktop's file as it was; a
+restart with the same command does not join again and serves on the same port. A port the operator gives that is taken
+stops the worker before it spends its token.
 """
 
 import errno
@@ -30,6 +31,7 @@ import requests
 from flowfile_worker.configs import DEFAULT_SERVICE_PORT
 from shared import hub_node
 from shared.tests.hub_join import HEARTBEAT_PATH, JOIN_PATH, FakeJoinHub
+from tests.conftest import _free_port
 from tests.flowfile.execution import test_hub_join_e2e
 from tests.flowfile.execution.test_hub_join_e2e import joins
 from tests.flowfile.execution.test_hub_node_tokens_e2e import STARTUP_TIMEOUT, _stop
@@ -42,9 +44,10 @@ DESKTOP_NODE = b'{"name": "the desktop\'s node"}\n'
 SESSION_VARIABLES = ("TESTING", "CORE_PORT", "CORE_HOST", "WORKER_HOST", "SECURE_STORAGE_PATH", "SKIP_WORKER_TESTS")
 
 
-def card(hub_url: str, token: str) -> tuple[str, ...]:
-    """The worker's command as the hub's card prints it, after ``flowfile_worker``."""
-    return ("--hub", hub_url, "--join", token)
+def card(hub_url: str, token: str, port: int) -> tuple[str, ...]:
+    """The worker's command as the hub's card prints it, after ``flowfile_worker``, with the port its install script
+    picks."""
+    return ("--hub", hub_url, "--join", token, "--port", str(port))
 
 
 def shell_environment(home: Path) -> dict[str, str]:
@@ -129,9 +132,9 @@ def desktop_port() -> Iterator[None]:
 
 
 def test_the_cards_command_beside_a_desktop_joins_once_and_serves_on_a_port_of_its_own(fake_hub, home, desktop_port):
-    token, name = fake_hub.mint(code=True), hub_node.default_name()
+    token, name, port = fake_hub.mint(code=True), hub_node.default_name(), _free_port()
     folder = home / hub_node.NODE_FILES_DIR / name
-    first = start(home, home.parent / "first.log", *card(fake_hub.url, token))
+    first = start(home, home.parent / "first.log", *card(fake_hub.url, token, port))
     try:
         url = served_at(first, fake_hub, home.parent / "first.log")
     finally:
@@ -140,18 +143,15 @@ def test_the_cards_command_beside_a_desktop_joins_once_and_serves_on_a_port_of_i
     address = urlsplit(url)
     assert joins(fake_hub) == [{"token": token, "name": name, "worker_url": url, "core_url": None, "keys": ANY}]
     assert not ipaddress.ip_address(address.hostname).is_loopback, url
-    assert f"Starting worker service on 0.0.0.0:{address.port}" in (home.parent / "first.log").read_text()
-    assert address.port != DEFAULT_SERVICE_PORT
-    assert (
-        f"Port {DEFAULT_SERVICE_PORT} is in use; serving on {address.port}" in (home.parent / "first.log").read_text()
-    )
+    assert f"Starting worker service on 0.0.0.0:{port}" in (home.parent / "first.log").read_text()
+    assert address.port == port
     kept = json.loads((folder / hub_node.FILE_NAME).read_text())
-    assert (kept["hub_url"], kept["name"], kept["worker_port"]) == (fake_hub.url, name, address.port)
+    assert (kept["hub_url"], kept["name"]) == (fake_hub.url, name)
     assert (home / ".flowfile" / hub_node.FILE_NAME).read_bytes() == DESKTOP_NODE
     assert [path.name for path in (home / ".flowfile").iterdir()] == [hub_node.FILE_NAME]
 
     before = len(fake_hub.calls)
-    second = start(home, home.parent / "second.log", *card(fake_hub.url, token))
+    second = start(home, home.parent / "second.log", *card(fake_hub.url, token, port))
     try:
         assert served_at(second, fake_hub, home.parent / "second.log") == url
     finally:
@@ -162,7 +162,7 @@ def test_the_cards_command_beside_a_desktop_joins_once_and_serves_on_a_port_of_i
         f"Already joined {fake_hub.url} as {name}; the join token is not used"
         in (home.parent / "second.log").read_text()
     )
-    assert json.loads((folder / hub_node.FILE_NAME).read_text())["worker_port"] == address.port
+    assert json.loads((folder / hub_node.FILE_NAME).read_text())["name"] == name
     assert (home / ".flowfile" / hub_node.FILE_NAME).read_bytes() == DESKTOP_NODE
 
 
@@ -172,7 +172,7 @@ def test_a_port_the_operator_gives_that_is_taken_stops_the_worker_before_it_spen
         taken.bind(("0.0.0.0", 0))
         taken.listen()
         port = taken.getsockname()[1]
-        proc = start(home, log, *card(fake_hub.url, token), "--port", str(port))
+        proc = start(home, log, *card(fake_hub.url, token, port))
         try:
             exit_code = proc.wait(timeout=STARTUP_TIMEOUT)
         except subprocess.TimeoutExpired:
