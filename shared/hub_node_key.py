@@ -82,6 +82,11 @@ class NodeKeys:
             "enc": {"kty": "OKP", "crv": "X25519", "x": _b64url(raw), "kid": self.enc_kid, "use": "enc"},
         }
 
+    def agree(self, peer: bytes) -> bytes:
+        """The X25519 shared secret of ``enc`` with the 32 raw bytes of a ``peer`` public key, for what is sealed to
+        this node; the private half stays here."""
+        return self._enc.exchange(x25519.X25519PublicKey.from_public_bytes(peer))
+
     def assertion(self, name: str, audience: str) -> str:
         """A node assertion: a JWT signed with ``sig`` saying that ``name``, this node on its hub, calls ``audience``.
 

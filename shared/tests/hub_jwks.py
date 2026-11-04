@@ -98,6 +98,46 @@ class HubSigner:
         key = key or self.key
         return jwt.encode(claims, key.private, algorithm=algorithm, headers={"kid": key.kid})
 
+    def sealed(
+        self,
+        enc_jwk: dict,
+        *,
+        node: str = NODE_NAME,
+        base_uri: str = "s3://bucket/root",
+        storage_options: dict | None = None,
+        run_id: str = "run-1",
+        vend_id: int = 1,
+        ttl: int = 900,
+        iss: str | None = None,
+        key: SigningKey | None = None,
+        drop: tuple[str, ...] = (),
+        **extra,
+    ) -> str:
+        """A credential as the hub's vend seals it to the node ``node`` whose X25519 public JWK is ``enc_jwk``.
+
+        The JWS is signed with ``key`` (the served key by default, header ``alg`` and ``kid`` only) and sealed with
+        ``shared.hub_sealed.seal``; ``drop`` leaves claims out, ``extra`` adds or overrides them.
+        """
+        from shared.hub_sealed import seal
+
+        now = int(time.time())
+        claims = {
+            "iss": iss if iss is not None else self.url,
+            "aud": f"node:{node}",
+            "run_id": run_id,
+            "vend_id": vend_id,
+            "iat": now,
+            "exp": now + ttl,
+            "base_uri": base_uri,
+            "storage_options": storage_options or {},
+        }
+        claims.update(extra)
+        for name in drop:
+            claims.pop(name, None)
+        key = key or self.key
+        signed = jwt.encode(claims, key.private, algorithm="ES256", headers={"kid": key.kid, "typ": None})
+        return seal(signed, enc_jwk)
+
     def close(self):
         self._server.shutdown()
         self._server.server_close()
