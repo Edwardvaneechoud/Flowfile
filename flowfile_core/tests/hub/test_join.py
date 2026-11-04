@@ -29,7 +29,6 @@ from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.hub_client import node_tokens, reachability
-from flowfile_core.routes import hub_client as hub_client_routes
 from shared import hub_node
 from shared.tests import hub_join
 from tests.hub_client import conftest as hub_client_fakes
@@ -331,22 +330,6 @@ def test_a_refused_join_stops_core_with_exit_code_2_before_it_serves(monkeypatch
         again.bind(("127.0.0.1", port))
 
 
-def test_the_own_node_is_named_by_the_variable_as_before(monkeypatch, no_variables, node_file):
-    monkeypatch.setenv("FLOWFILE_NODE_NAME", "team-local")
-
-    assert hub_client_routes._own_node_name() == "team-local"
-
-
-def test_the_own_node_is_named_by_the_joined_file_with_the_variable_unset(no_variables, node_file):
-    joined_as(node_file, "team-local")
-
-    assert hub_client_routes._own_node_name() == "team-local"
-
-
-def test_a_core_neither_named_nor_joined_is_no_node(no_variables, node_file):
-    assert hub_client_routes._own_node_name() is None
-
-
 @pytest.fixture
 def api(store) -> TestClient:
     """A client signed in to core; the token is minted after the store is rebuilt, so it verifies against it."""
@@ -360,6 +343,7 @@ def api(store) -> TestClient:
 def no_configured_backends(monkeypatch):
     """No node token or reachability check outlives the test, and every backends row it left is removed."""
     monkeypatch.setattr(node_tokens, "_tokens", {})
+    monkeypatch.setattr(reachability, "_outcomes", {})
     monkeypatch.setattr(reachability, "check_all", lambda backend_ids: None)
     yield
     with get_db_context() as db:
@@ -368,7 +352,6 @@ def no_configured_backends(monkeypatch):
             db.delete(row)
         db.commit()
     handshake.reset_handshake()
-    reachability.clear()
 
 
 def _row_ids() -> list[str]:

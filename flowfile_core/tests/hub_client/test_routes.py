@@ -35,6 +35,7 @@ def no_configured_backends(monkeypatch):
     ``test_reachability.py`` checks real workers.
     """
     monkeypatch.setattr(node_tokens, "_tokens", {})
+    monkeypatch.setattr(reachability, "_outcomes", {})
     monkeypatch.setattr(reachability, "check_all", lambda backend_ids: None)
     yield
     with get_db_context() as db:
@@ -43,7 +44,6 @@ def no_configured_backends(monkeypatch):
             db.delete(row)
         db.commit()
     handshake.reset_handshake()
-    reachability.clear()
 
 
 def _rows() -> dict[str, ConfiguredBackend]:

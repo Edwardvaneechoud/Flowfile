@@ -47,7 +47,7 @@ def no_configured_backends(monkeypatch):
     """Every backends row a test left is removed when it ends; the registry, the verdicts, the node tokens and the
     reachability outcomes are emptied."""
     monkeypatch.setattr(node_tokens, "_tokens", {})
-    reachability.clear()
+    monkeypatch.setattr(reachability, "_outcomes", {})
     yield
     with get_db_context() as db:
         for row in db.query(ConfiguredBackend).all():
@@ -55,7 +55,6 @@ def no_configured_backends(monkeypatch):
             db.delete(row)
         db.commit()
     handshake.reset_handshake()
-    reachability.clear()
 
 
 @pytest.fixture

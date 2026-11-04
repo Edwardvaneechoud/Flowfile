@@ -75,9 +75,3 @@ def forget(backend_id: str) -> None:
     """Drop the outcome kept for ``backend_id``, as its row goes."""
     with _lock:
         _outcomes.pop(backend_id, None)
-
-
-def clear() -> None:
-    """Drop every outcome, for tests."""
-    with _lock:
-        _outcomes.clear()
