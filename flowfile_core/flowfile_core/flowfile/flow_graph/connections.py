@@ -97,6 +97,7 @@ def validate_connection(
     input_handle: str | None = None,
     *,
     replacing: bool = False,
+    validate_ports: bool = True,
 ) -> ConnectionValidationError | None:
     """Non-mutating topology check for from_node -> to_node; None when valid.
 
@@ -124,7 +125,7 @@ def validate_connection(
         (from_node, output_handle, from_node.get_node_input().outputs if output_handle is not None else []),
         (to_node, input_handle, inputs),
     ):
-        if handle is not None and not any(port.id == handle for port in ports):
+        if validate_ports and handle is not None and not any(port.id == handle for port in ports):
             return ConnectionValidationError(
                 "handle_not_available",
                 f"Handle {handle} is not available on node {node.node_id}",
@@ -152,7 +153,9 @@ def validate_connection(
     return None
 
 
-def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection) -> None:
+def add_connection(
+    flow: FlowGraph, node_connection: input_schema.NodeConnection, *, validate_ports: bool = False
+) -> None:
     """Adds a connection between two nodes in the flow graph.
 
     Args:
@@ -174,18 +177,23 @@ def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection
             if not n
         ]
         raise HTTPException(404, f"Node(s) not found: {', '.join(missing)}")
+    # Internal graph assembly retains replacement, positional fan-in and legacy
+    # handles. Editor connections and explicit dynamic slots enforce port contracts.
+    check_ports = validate_ports or to_node.accepts_dynamic_inputs
     error = validate_connection(
         from_node,
         to_node,
         node_connection.output_connection.connection_class,
-        node_connection.input_connection.connection_class,
+        node_connection.input_connection.connection_class if check_ports else None,
+        validate_ports=check_ports,
     )
     if error is not None:
         raise HTTPException(422, error.detail)
-    # Public edge replay is idempotent, including multi-input ports. Internal
-    # add_node_connection callers retain their deliberate positional duplicates.
-    if to_node.input_edge_handle(from_node.node_id, node_connection.input_connection.connection_class) == (
-        node_connection.output_connection.connection_class
+    # Public replay is idempotent; internal callers retain positional duplicates.
+    if (
+        check_ports
+        and to_node.input_edge_handle(from_node.node_id, node_connection.input_connection.connection_class)
+        == node_connection.output_connection.connection_class
     ):
         return
     if to_node.accepts_dynamic_inputs:

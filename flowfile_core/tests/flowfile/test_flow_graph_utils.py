@@ -873,13 +873,13 @@ def test_public_connection_occupancy_preserves_internal_replacement(node_type):
     add_node_promise_on_type(graph, node_type, 3)
     first = input_schema.NodeConnection.create_from_simple_input(1, 3)
     second = input_schema.NodeConnection.create_from_simple_input(2, 3)
-    add_connection(graph, first)
-    add_connection(graph, first)
+    add_connection(graph, first, validate_ports=True)
+    add_connection(graph, first, validate_ports=True)
     if node_type == "filter":
         with pytest.raises(HTTPException, match="already has a connection"):
-            add_connection(graph, second)
+            add_connection(graph, second, validate_ports=True)
         assert [node.node_id for node in graph.get_node(3).all_inputs] == [1]
-        graph.get_node(3).add_node_connection(graph.get_node(2), "main")
+        add_connection(graph, second)
         assert [node.node_id for node in graph.get_node(3).all_inputs] == [2]
     else:
         add_connection(graph, second)

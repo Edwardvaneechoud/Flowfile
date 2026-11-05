@@ -365,7 +365,7 @@ def _handle_connect(
             already_present = False
     if not already_present:
         try:
-            add_connection(flow, connection)
+            add_connection(flow, connection, validate_ports=True)
         except Exception as exc:
             return _reject_and_audit(
                 tool_name=tool_name,
