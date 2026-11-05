@@ -99,7 +99,7 @@ if "FLOWFILE_MODE" not in os.environ:
 should_exit = False
 server_instance = None
 serving_port: int | None = None
-"""The port ``run`` serves on, which each heartbeat names this machine's addresses on; ``None`` until it serves."""
+"""The port ``run`` serves on, which each heartbeat names this machine's addresses on; ``None`` outside ``run``."""
 _LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
 
@@ -455,6 +455,7 @@ def run(host: str = None, port: int = None, sock: socket.socket | None = None):
         print("Received interrupt signal, shutting down...")
     finally:
         server_instance = None
+        serving_port = None
         print("Server has shut down.")
 
 

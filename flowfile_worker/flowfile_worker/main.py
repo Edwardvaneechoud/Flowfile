@@ -34,7 +34,7 @@ from shared.storage_config import storage
 should_exit = False
 server_instance = None
 serving_port: int | None = None
-"""The port ``run`` serves on, which each heartbeat names this machine's addresses on; ``None`` until it serves."""
+"""The port ``run`` serves on, which each heartbeat names this machine's addresses on; ``None`` outside ``run``."""
 
 
 @asynccontextmanager
@@ -246,6 +246,7 @@ def run(host: str = None, port: int = None):
         logger.info("Received interrupt signal, shutting down...")
     finally:
         server_instance = None
+        serving_port = None
         logger.info("Server shutdown complete")
 
 
