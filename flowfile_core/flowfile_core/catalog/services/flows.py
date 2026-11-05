@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+from pathlib import Path
 
 from flowfile_core.catalog.constants import (
     LOCAL_FLOWS,
@@ -239,8 +240,13 @@ class FlowRegistrationService:
         """Delete a flow and its related favourites/follows.
 
         When ``delete_file`` is set, also remove the flow file from disk — but
-        only once no other registration still points at the same path.
+        only once no other registration still points at the same path, and on a
+        multi-user server only when it lies inside the server's flow folders: a
+        registration stores whatever path it was given, so a file outside them
+        is left where it is and the registration alone goes.
         """
+        from flowfile_core.flowfile.manage.io_flowfile import may_touch_flow_file
+
         flow = self.repo.get_flow(registration_id)
         if flow is None:
             raise FlowNotFoundError(registration_id=registration_id)
@@ -254,12 +260,21 @@ class FlowRegistrationService:
         self.repo.delete_flow(registration_id)
 
         if delete_file and flow_path and self.repo.count_flows_by_path(flow_path) == 0:
-            try:
-                os.remove(flow_path)
-            except FileNotFoundError:
-                pass
-            except OSError:
-                logger.warning("Failed to delete flow file %s", flow_path, exc_info=True)
+            if not may_touch_flow_file(Path(flow_path)):
+                logger.warning(
+                    "Registered flow %s (id=%d) removed from the catalog; its file %s is outside the server's "
+                    "flow folders and was left in place",
+                    flow.name,
+                    registration_id,
+                    flow_path,
+                )
+            else:
+                try:
+                    os.remove(flow_path)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    logger.warning("Failed to delete flow file %s", flow_path, exc_info=True)
 
         _project_sync_flow_deleted(flow_uuid, owner_id)
 

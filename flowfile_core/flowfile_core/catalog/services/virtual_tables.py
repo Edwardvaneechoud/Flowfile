@@ -441,7 +441,7 @@ class VirtualTableService:
             run_location = current_context().backend_id
         if node_logger is None:
             node_logger = FlowLogger(-1).get_node_logger(-1)
-        from flowfile_core.flowfile.manage.io_flowfile import open_flow
+        from flowfile_core.flowfile.manage.io_flowfile import open_flow, require_flow_in_storage
 
         table = self.repo.get_table(table_id)
         if table is None or table.table_type != "virtual":
@@ -467,7 +467,7 @@ class VirtualTableService:
         if producer is None:
             raise FlowNotFoundError(registration_id=table.producer_registration_id)
 
-        flow = open_flow(Path(producer.flow_path), user_id=user_id)
+        flow = open_flow(require_flow_in_storage(Path(producer.flow_path)), user_id=user_id)
         selected_node = None
         for node in flow.nodes:
             if node.name == "catalog_writer" and node.setting_input.catalog_write_settings.table_name == table.name:

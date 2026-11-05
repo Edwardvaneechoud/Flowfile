@@ -6,6 +6,7 @@ import logging
 import os
 import signal
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from flowfile_core.catalog.exceptions import (
@@ -312,8 +313,13 @@ class FlowRunService:
         ``suppress_telemetry`` is forwarded to the child only (the demo seeder's
         runs are ours, not the user's). ``backend`` names the compute backend the
         child runs the flow on; without it the child runs in its own process
-        unless the flow saved a backend id.
+        unless the flow saved a backend id. On a multi-user server a flow whose
+        file lies outside the server's flow folders is refused before any run
+        record exists.
         """
+        from flowfile_core.flowfile.manage.io_flowfile import require_flow_in_storage
+
+        require_flow_in_storage(Path(flow.flow_path))
         now = datetime.now(timezone.utc)
         run = FlowRun(
             registration_id=flow.id,

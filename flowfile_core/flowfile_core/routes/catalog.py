@@ -459,13 +459,16 @@ def get_flow_interface(
     """The flow's callable surface (flow_input/flow_output ports + typed parameters).
 
     Degrades to empty lists with ``file_exists=False`` when the flow file is
-    missing or unparseable, so the run_flow picker can still render.
+    missing or unparseable, so the run_flow picker can still render. On a
+    multi-user server a file outside the flow folders is refused (422), not read.
     """
     from flowfile_core.flowfile import subflow
+    from flowfile_core.flowfile.manage.io_flowfile import require_flow_in_storage
 
     registration = service.get_flow(registration_id=flow_id, user_id=current_user.id)
+    path = require_flow_in_storage(Path(registration.flow_path))
     try:
-        interface = subflow.get_subflow_interface(Path(registration.flow_path))
+        interface = subflow.get_subflow_interface(path)
     except Exception:  # noqa: BLE001 - degrade like the flow-API parameter lookup
         return FlowInterfaceOut(registration_id=flow_id, file_exists=False)
     return FlowInterfaceOut(

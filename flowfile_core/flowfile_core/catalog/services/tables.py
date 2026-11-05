@@ -470,9 +470,10 @@ class TableService:
             return None
 
         from flowfile_core.flowfile.handler import open_flow
+        from flowfile_core.flowfile.manage.io_flowfile import require_flow_in_storage
 
         flow_graph = resolve_or_log(
-            lambda: open_flow(Path(producer_file_path)),
+            lambda: open_flow(require_flow_in_storage(Path(producer_file_path))),
             kind="producer flow for laziness inspection",
             identifier=producer_file_path,
         )

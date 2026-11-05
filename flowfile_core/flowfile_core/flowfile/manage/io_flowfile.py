@@ -3,7 +3,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, node_dict, register_missing_node_template, registry
-from flowfile_core.configs.settings import is_docker_mode
+from flowfile_core.configs.settings import is_docker_mode, is_server_mode
 from flowfile_core.flowfile.flow_graph import FlowGraph, restore_dynamic_input_connections
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_compatibility, load_flowfile_pickle
@@ -21,18 +21,29 @@ def _flow_storage_directories() -> list[Path]:
     return [storage.flows_directory, storage.uploads_directory, storage.temp_directory_for_flows]
 
 
-def require_flow_in_storage(flow_path: Path) -> Path:
-    """``flow_path`` resolved; in docker mode it must lie under the flows, uploads or temp flows folder.
+def may_touch_flow_file(flow_path: Path) -> bool:
+    """Whether the catalog may read or delete the file a flow registration points at.
 
-    Stricter than ``_validate_flow_path``, which lets any absolute path through: a catalog registration
-    stores whatever path it was given, so reading a registered file must not reach past these folders.
+    A registration stores whatever path it was given. On a multi-user server (docker or hub mode) the
+    catalog therefore acts only on files inside the flows, uploads and temp flows folders, compared on
+    resolved paths so a symlink cannot lead out; a desktop's own flows live anywhere on the person's
+    machine and are all theirs to touch.
     """
+    if not is_server_mode():
+        return True
     resolved = flow_path.resolve()
-    if is_docker_mode() and not any(
-        resolved.is_relative_to(directory.resolve()) for directory in _flow_storage_directories()
-    ):
+    return any(resolved.is_relative_to(directory.resolve()) for directory in _flow_storage_directories())
+
+
+def require_flow_in_storage(flow_path: Path) -> Path:
+    """``flow_path`` resolved; on a multi-user server it must lie under the flows, uploads or temp flows folder.
+
+    Stricter than ``_validate_flow_path``, which lets any absolute path through: every catalog read of a
+    registered flow's file goes through here, so none reaches past these folders.
+    """
+    if not may_touch_flow_file(flow_path):
         raise ValueError("the flow's file is outside the server's flow folders")
-    return resolved
+    return flow_path.resolve()
 
 
 def _validate_flow_path(flow_path: Path) -> Path:
