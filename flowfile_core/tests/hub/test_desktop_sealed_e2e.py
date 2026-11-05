@@ -27,11 +27,13 @@ from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.execution import registry
+from flowfile_core.flowfile.execution.placement import PYTHON_FUNCTIONS
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.hub_client import client as hub_client
 from flowfile_core.hub_client import node_tokens, session
 from flowfile_core.schemas import input_schema
 from shared import hub_node, hub_tokens
+from shared.tests import plan_stamps
 from shared.tests.hub_jwks import HubSigner
 from tests.flowfile.conftest import catalog_cleanup
 from tests.flowfile.execution.graph_helpers import add_promise
@@ -195,6 +197,41 @@ def test_a_desktops_hub_table_read_on_a_server_joined_with_keys_opens_the_creden
     assert vend["targets"] == [SERVER] and not vend.get("exchange")
     assert sent and not [route for route, body in sent if SECRET in body or b"$ffsec$" in body]
     assert any(route.endswith("/ws/submit") and b'"sealed"' in body for route, body in sent)
+
+
+def test_a_desktops_hub_table_read_runs_on_a_server_on_another_python_patch_version(
+    hub,
+    server_row,
+    sent,
+    desktop,
+    open_flow,
+    monkeypatch,
+):
+    """Every plan core serialises is stamped as a desktop on another Python patch version would stamp it, which is the
+    one thing the server's Polars compares: the handshake's Python probe, a cloudpickled function, is refused there,
+    while the read's plan holds only an object pickled by reference, and runs."""
+    other = plan_stamps.other_micro()
+    serialize = pl.LazyFrame.serialize
+
+    def as_another_python(self, *args, **kwargs):
+        plan = serialize(self, *args, **kwargs)
+        return plan_stamps.restamped(plan, other) if isinstance(plan, bytes) else plan
+
+    monkeypatch.setattr(pl.LazyFrame, "serialize", as_another_python)
+    flow = copy_flow(open_flow, hub, server_row, "orders_other_python")
+
+    ran = client.post("/flow/run/", params={"flow_id": flow.flow_id}, headers=bearer(desktop))
+
+    assert ran.status_code == 200, ran.text
+    run_info = flow.get_run_info()
+    assert run_info.success is True, errors_of(flow)
+    assert {result.node_id: result.backend_id for result in run_info.node_step_result} == {1: server_row, 2: server_row}
+    assert written(hub, "orders_other_python").equals(pl.DataFrame(ORDERS).sort("id"))
+    table = hub.orders["file_path"].encode()
+    reads = [body for route, body in sent if route.endswith("/ws/submit") and table in body]
+    assert reads and all(plan_stamps.python_objects(read, other) == [plan_stamps.PICKLE] for read in reads)
+    probe = handshake.last_verdict(server_row).absent[PYTHON_FUNCTIONS]
+    assert "does not match the Python version used to serialize" in probe
 
 
 def older_hub(hub) -> None:
