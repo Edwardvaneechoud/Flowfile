@@ -8,6 +8,7 @@ A worker with a private TLS certificate is trusted through ``trust_ca``; every o
 public CAs.
 """
 
+import contextvars
 import io
 import json
 import os
@@ -1076,7 +1077,10 @@ class BaseFetcher:
     def _start_thread(self):
         """Internal method to start thread (must be called under lock)."""
         if not self._started:
-            self._thread = threading.Thread(target=self._fetch_cached_df, daemon=True)
+            # Under the starter's context, so each poll is signed for the person the task runs for.
+            self._thread = threading.Thread(
+                target=contextvars.copy_context().run, args=(self._fetch_cached_df,), daemon=True
+            )
             self._thread.start()
             self._started = True
 
@@ -1338,8 +1342,8 @@ class BaseFetcher:
                 self._running = True
                 self._started = True
                 self._thread = threading.Thread(
-                    target=self._ws_receive_thread,
-                    args=(ws,),
+                    target=contextvars.copy_context().run,
+                    args=(self._ws_receive_thread, ws),
                     daemon=True,
                 )
                 self._thread.start()

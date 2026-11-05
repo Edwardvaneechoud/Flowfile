@@ -14,7 +14,11 @@ its bearer token as secret-manager ciphertext, and an optional CA certificate. I
 a ``WorkerBackend`` from it. No row is a ``LookupError``. ``forget`` drops the cached instance, so the next lookup
 reads the row again. A row filled from a hub (``hub_node_id`` set) stores no token: its backend signs with the
 short-lived token the hub mints for that node through the row's user's hub session (``hub_client.node_tokens``),
-asked for on the first lookup and again when it nears expiry, when the backend is made anew with the new token.
+asked for on the first lookup and again when it nears expiry, when the backend is made anew with the new token. On a
+server joined to its hub with keys of its own the row's user is only whoever last synced the hub's servers, so there
+each call is signed for the person it is made for (``node_tokens.acting``): a run's calls carry that person's token,
+minted through their own sign-in through the hub, and a run with no such person is refused. Only a call outside any
+run with no person behind it, such as the check of the Compute page, signs with the row's user's.
 
 A process that serves (the desktop sidecar, the Docker image, the pip server) is marked by ``mark_serving``. Its
 compute is the worker beside it, so its default backend is never ``local`` and a run placed on ``local`` is refused.
@@ -35,6 +39,7 @@ import sys
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from functools import partial
 from typing import TYPE_CHECKING, cast
 
 from flowfile_core.configs import settings
@@ -95,7 +100,8 @@ def _configured_worker_backend(backend_id: str, hub_token: str | None = None) ->
 
     It signs with the row's token, or for a hub-filled row with the token the hub mints for its node (``hub_token``
     when the caller holds it already), trusts the row's CA certificate, and offers ``file`` when the row is marked
-    ``shares_core_disk``.
+    ``shares_core_disk``. On a server joined with keys of its own a hub-filled row's backend asks ``_hub_token`` for
+    each call's token (``token_source``), so every call carries the token of the person it is made for.
 
     Raises:
         LookupError: No row configures ``backend_id``; its token no longer decrypts (the master key changed), so it
@@ -104,6 +110,7 @@ def _configured_worker_backend(backend_id: str, hub_token: str | None = None) ->
     """
     from cryptography.fernet import InvalidToken
 
+    from flowfile_core.auth import issuer_accounts
     from flowfile_core.database.connection import get_db_context
     from flowfile_core.database.models import ConfiguredBackend
     from flowfile_core.flowfile.execution.backends.worker import WorkerBackend
@@ -115,9 +122,14 @@ def _configured_worker_backend(backend_id: str, hub_token: str | None = None) ->
             raise LookupError(f"Unknown compute backend {backend_id!r}; no compute_backends row has that id")
         url, ciphertext, ca_cert, shares_core_disk = row.url, row.token, row.ca_cert, bool(row.shares_core_disk)
         hub_row = (row.hub_user_id, row.hub_node_id) if row.hub_node_id is not None else None
+    token_source = None
     if hub_row is not None:
-        token = hub_token or _hub_token(backend_id, *hub_row)
+        through_hub = issuer_accounts.joined_with_keys() is not None
+        token = hub_token or _hub_token(backend_id, *hub_row, through_hub=through_hub)
         _hub_rows[backend_id] = hub_row
+        if through_hub:
+            _through_hub.add(backend_id)
+            token_source = partial(_hub_token, backend_id, *hub_row, through_hub=True)
     else:
         try:
             token = decrypt_secret(ciphertext).get_secret_value()
@@ -127,16 +139,34 @@ def _configured_worker_backend(backend_id: str, hub_token: str | None = None) ->
                 "master key. Remove it and add it again on the Backends page"
             ) from e
     return WorkerBackend(
-        url=url, backend_id=backend_id, token=token, ca_cert=ca_cert, shares_core_disk=shares_core_disk
+        url=url,
+        backend_id=backend_id,
+        token=token,
+        ca_cert=ca_cert,
+        shares_core_disk=shares_core_disk,
+        token_source=token_source,
     )
 
 
-def _hub_token(backend_id: str, hub_user_id: int, hub_node_id: int) -> str:
-    """The token the hub mints for the node ``backend_id`` is filled from, through the row's user's hub session."""
+def _hub_token(backend_id: str, hub_user_id: int, hub_node_id: int, *, through_hub: bool = False) -> str:
+    """The token the hub mints for the node ``backend_id`` is filled from, through the row's user's hub session.
+
+    With ``through_hub`` (a server joined with keys of its own) it is the token of the person the call is made for
+    (``node_tokens.acting``), minted through their sign-in through the hub. With no such person, a call inside a run
+    or a fetch (``context.entered``) is refused with ``node_tokens.signed_out``'s sentence, and any other call takes
+    the row's user's token.
+    """
+    from flowfile_core.flowfile.execution import context
     from flowfile_core.hub_client import node_tokens
 
+    name = backend_id.removeprefix(CONFIGURED_WORKER_PREFIX)
+    person = node_tokens.acting() if through_hub else None
     try:
-        return node_tokens.token_for(hub_user_id, hub_node_id, backend_id.removeprefix(CONFIGURED_WORKER_PREFIX))
+        if person is not None:
+            return node_tokens.token_for(person, hub_node_id, name, through_hub=True)
+        if through_hub and context.entered():
+            raise LookupError(node_tokens.signed_out(name))
+        return node_tokens.token_for(hub_user_id, hub_node_id, name)
     except LookupError as e:
         raise LookupError(f"Compute backend {backend_id!r} cannot be used: {e}") from e
 
@@ -146,9 +176,14 @@ def _replacement_token(backend_id: str, instance: ComputeBackend) -> str | None:
 
     A hub token lasts an hour; ``node_tokens.token_for`` answers the cached one until a minute before it expires
     and mints a new one then. A backend signs with the token it was made with, so a new token means a new backend.
+    A backend that signs each call for the person it is made for (``_through_hub``) is never made anew: the token is
+    only asked for here, so a lookup for a person who can mint none raises.
     """
     hub_row = _hub_rows.get(backend_id)
     if hub_row is None:
+        return None
+    if backend_id in _through_hub:
+        _hub_token(backend_id, *hub_row, through_hub=True)
         return None
     token = _hub_token(backend_id, *hub_row)
     return None if getattr(instance, "token", None) == token else token
@@ -165,6 +200,8 @@ _factories: dict[str, BackendFactory] = {}
 _instances: dict[str, ComputeBackend] = {}
 _hub_rows: dict[str, tuple[int, int]] = {}
 """Backend id -> ``(hub_user_id, hub_node_id)`` of each hub-filled row an instance was made from."""
+_through_hub: set[str] = set()
+"""Ids of the hub-filled backends made on a server joined with keys of its own, which sign each call for its person."""
 _entry_points_scanned = False
 _default_override: str | None = None
 _serving = False
@@ -219,6 +256,7 @@ def forget(backend_id: str) -> None:
     with _lock:
         _instances.pop(backend_id, None)
         _hub_rows.pop(backend_id, None)
+        _through_hub.discard(backend_id)
 
 
 def hub_server(backend_id: str | None) -> str | None:
@@ -395,6 +433,7 @@ def reset() -> None:
         _factories.clear()
         _instances.clear()
         _hub_rows.clear()
+        _through_hub.clear()
         _entry_points_scanned = False
 
 

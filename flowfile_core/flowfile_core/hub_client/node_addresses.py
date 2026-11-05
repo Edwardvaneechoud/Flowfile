@@ -2,10 +2,10 @@
 
 A hub-filled row keeps the worker URL of the last sync, and a sync runs when someone opens the Compute page, so a
 server the hub has moved since (a laptop on another network) would be called at its old address. ``refresh`` reads
-the hub's servers once before such a run, with the access token of the person the rows belong to (``hub_user_id``),
-the one whose hub session also mints the run's node tokens; on a joined server that is a sign-in through the hub, so
-the token is a delegated one. The node's own assertion cannot read the list: the hub's ``GET /hub/compute-nodes``
-answers a person, the servers that person may run on.
+the hub's servers once before such a run, with the access token of the person the run is for
+(``node_tokens.acting``), the one whose sign-in through the hub also mints the run's node tokens, so the token is a
+delegated one; a refresh made for nobody reads with the rows' own person (``hub_user_id``). The node's own assertion
+cannot read the list: the hub's ``GET /hub/compute-nodes`` answers a person, the servers that person may run on.
 
 One list request per person, whatever the number of servers. A row the hub gives another worker URL moves to it and
 is checked again on its next use; a hub that cannot be read, a person without a session, or a node the hub no longer
@@ -20,7 +20,7 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
-from flowfile_core.hub_client import client, session
+from flowfile_core.hub_client import client, node_tokens, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 
 
@@ -53,11 +53,13 @@ def refresh(backend_ids: Iterable[str]) -> None:
     if not ids:
         return
     moved: list[tuple[str, str]] = []
+    person = node_tokens.acting()
     with get_db_context() as db:
         by_user: dict[int, list[ConfiguredBackend]] = {}
         for row in db.query(ConfiguredBackend).filter(ConfiguredBackend.id.in_(ids)).all():
-            if row.hub_node_id is not None and row.hub_user_id is not None:
-                by_user.setdefault(row.hub_user_id, []).append(row)
+            reader = person if person is not None else row.hub_user_id
+            if row.hub_node_id is not None and reader is not None:
+                by_user.setdefault(reader, []).append(row)
         for user_id, rows in by_user.items():
             workers = _workers(user_id)
             for row in rows if workers is not None else []:

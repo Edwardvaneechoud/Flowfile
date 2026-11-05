@@ -78,7 +78,7 @@ from flowfile_core.flowfile.util.skip_rules import (
     parameter_gate_is_open,
     uses_any_rule,
 )
-from flowfile_core.hub_client import node_addresses, vend
+from flowfile_core.hub_client import node_addresses, node_tokens, vend
 from flowfile_core.kernel.execution import (
     KernelHold,
 )
@@ -1608,7 +1608,9 @@ class ExecutionMixin(GraphMixinBase):
                     closed_gate_handles=closed_gate_handles,
                 )
 
-                hub_refusal = self._vend_hub_tables(run_nodes, exchange_run)
+                hub_refusal = self._signed_out_refusal(run_nodes, exchange_run) or self._vend_hub_tables(
+                    run_nodes, exchange_run
+                )
                 placement, edges = (None, []) if hub_refusal else self._place_run(execution_plan, exchange_run)
                 if hub_refusal:
                     self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")
@@ -1814,13 +1816,41 @@ class ExecutionMixin(GraphMixinBase):
         self.last_hub_vend = (exchange_run.run_id, self.hub_vend.vend_id)
         return None
 
+    def _signed_out_refusal(
+        self, nodes: list[FlowNode], exchange_run: ExchangeRun
+    ) -> tuple[list[FlowNode], str] | None:
+        """On a server joined with keys of its own, the run's nodes on the hub's servers and the sentence of
+        ``node_tokens.signed_out`` when the person the run is for (``node_tokens.acting``) has no sign-in through the
+        hub here, else ``None``.
+
+        The hub mints a run's token for those servers with that person's own sign-in, never another's, so a run for
+        nobody (a scheduled run) or for a person whose sign-in ended is refused before a node starts. A sign-in the hub
+        no longer takes is found when the token is minted, and refused there.
+        """
+        if not nodes or issuer_accounts.joined_with_keys() is None:
+            return None
+        person = node_tokens.acting()
+        if person is not None and node_tokens.signed_in_through_hub(person):
+            return None
+        policy = self._run_policy(exchange_run)
+        on_hub: dict[str, list[FlowNode]] = {}
+        for node in nodes:
+            backend_id = policy.backend_for(node)
+            if backend_id.startswith(registry.CONFIGURED_WORKER_PREFIX):
+                on_hub.setdefault(backend_id, []).append(node)
+        for backend_id, on in on_hub.items():
+            name = vend.node_name(backend_id)
+            if name is not None:
+                sentence = node_tokens.signed_out(name)
+                return on, f"{sentence[0].upper()}{sentence[1:]}."
+        return None
+
     def _record_hub_refusal(self, nodes: list[FlowNode], sentence: str) -> None:
-        """Record each node the hub vends to as a failed result, ``sentence`` its error, in a run that starts none."""
+        """Record each node the hub vends to or mints no token for as a failed result, ``sentence`` its error, in a run
+        that starts none."""
         for node in nodes:
             self._record_refused(node, sentence)
-        self.flow_logger.error(
-            f"{len(nodes)} node(s) the hub vends to cannot run: {sentence.rstrip('.')}; no node was started"
-        )
+        self.flow_logger.error(f"{len(nodes)} node(s) cannot run: {sentence.rstrip('.')}; no node was started")
 
     def _end_hub_vend(self, exchange_run: ExchangeRun) -> None:
         """Forget what the hub vended to the run: ``hub_vend``, and every node result that embeds its credential.

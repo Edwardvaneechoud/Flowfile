@@ -29,7 +29,7 @@ from shared import hub_node
 from shared.tests import hub_join
 from tests.conftest import closed_url
 from tests.flowfile.execution.graph_helpers import add_promise, make_graph
-from tests.hub_client.conftest import FakeHub, compute_node, serve_fake, store  # noqa: F401
+from tests.hub_client.conftest import FakeHub, compute_node, serve_fake, sign_in_through_hub, store  # noqa: F401
 
 pytestmark = pytest.mark.usefixtures("protocol_on")
 join_hub = hub_join.join_hub
@@ -217,8 +217,10 @@ def test_a_step_on_a_hub_server_whose_connection_holds_this_servers_secret_is_re
     else:
         add_cloud_reader(graph, 1, user_id, connections["s3"])
         name = connections["s3"]
+    sign_in_through_hub(hub, HUB_USER_ID)
     try:
-        run_info = graph.run_graph()
+        with node_tokens.acting_for(HUB_USER_ID):
+            run_info = graph.run_graph()
 
         assert run_info.success is False
         (row,) = run_info.node_step_result

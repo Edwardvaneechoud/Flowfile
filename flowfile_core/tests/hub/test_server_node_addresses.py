@@ -18,7 +18,7 @@ from shared import hub_node
 from shared.tests import hub_join
 from tests.conftest import closed_url
 from tests.flowfile.execution.graph_helpers import add_manual_input, make_graph, ranks
-from tests.hub_client.conftest import FakeHub, compute_node, serve_fake, store  # noqa: F401
+from tests.hub_client.conftest import FakeHub, compute_node, serve_fake, sign_in_through_hub, store  # noqa: F401
 
 pytestmark = pytest.mark.usefixtures("protocol_on")
 join_hub = hub_join.join_hub
@@ -115,18 +115,30 @@ def row_url() -> str:
         return db.get(ConfiguredBackend, BACKEND_ID).url
 
 
+@pytest.fixture
+def signed_in(hub):
+    """The rows' person signed in through the hub, as a person on a joined server is."""
+    sign_in_through_hub(hub, USER_ID)
+    hub.calls.clear()
+    return hub
+
+
 def run(flow_id: int):
+    """A run of ``USER_ID``'s, the person the rows belong to."""
     graph = make_graph(flow_id, execution_location=BACKEND_ID)
     add_manual_input(graph, 1, ranks(3))
     try:
-        run_info = graph.run_graph()
+        with node_tokens.acting_for(USER_ID):
+            run_info = graph.run_graph()
     finally:
         graph.close_flow()
     assert run_info.success is False
     return run_info
 
 
-def test_a_server_the_hub_moved_is_reached_at_its_new_address_with_nobody_opening_compute(joined, hub, recorder):
+def test_a_server_the_hub_moved_is_reached_at_its_new_address_with_nobody_opening_compute(
+    joined, hub, signed_in, recorder
+):
     moved(hub, recorder.url)
 
     run(9911)
@@ -138,7 +150,7 @@ def test_a_server_the_hub_moved_is_reached_at_its_new_address_with_nobody_openin
     assert recorder.requests[0][0] == "/v1/capabilities"
 
 
-def test_an_unreachable_hub_server_is_named_in_the_runs_error_with_the_hubs_compute_page(joined, hub):
+def test_an_unreachable_hub_server_is_named_in_the_runs_error_with_the_hubs_compute_page(joined, hub, signed_in):
     new = closed_url()
     moved(hub, new)
 
@@ -151,7 +163,7 @@ def test_an_unreachable_hub_server_is_named_in_the_runs_error_with_the_hubs_comp
     assert "Backends page" not in row.error
 
 
-def test_a_hub_that_cannot_be_read_leaves_the_row_and_the_run_uses_it(joined, hub, caplog):
+def test_a_hub_that_cannot_be_read_leaves_the_row_and_the_run_uses_it(joined, hub, signed_in, caplog):
     old = row_url()
     node_tokens.token_for(USER_ID, NODE_ID, "team")
     moved(hub, closed_url())

@@ -265,6 +265,10 @@ class WorkerBackend(_WorkerReferences):
       it (``handshake.owner``). ``None`` signs with the process's internal token.
       A token that is no header value (``is_header_value``) fails each call as a ``TaskFailed`` naming
       ``TOKEN_RULE`` before any client is handed it, so no message or log line carries it.
+    - ``token_source``: asked for the token of each call in place of ``token``, which is then only the token the
+      backend was made with. A server joined to its hub with keys of its own gives one to a backend the hub filled, so
+      each call carries the token of the person it is made for. A ``LookupError`` it raises fails the call as a
+      ``TaskFailed`` with its message, before anything is sent.
     - ``ca_cert``: the PEM of the CA to verify an ``https://`` worker against (``trust_ca``). ``None`` uses the public
       CAs and drops a CA an earlier backend on ``url`` was given.
     - ``shares_core_disk``: the worker sees core's files, so ``capabilities`` adds ``file`` to its schemes.
@@ -291,14 +295,16 @@ class WorkerBackend(_WorkerReferences):
         token: str | None = None,
         ca_cert: str | None = None,
         shares_core_disk: bool = False,
+        token_source: Callable[[], str] | None = None,
     ) -> None:
         self.url = url
         self.id = backend_id
         self.token = token
         self.shares_core_disk = shares_core_disk
+        self._token_source = token_source
         trust_ca(url, ca_cert)
         owns(self)
-        self._auth = _TokenAuth(token, backend_id) if token is not None else None
+        self._auth = _TokenAuth(self._call_token, backend_id) if token is not None else None
         self._lock = threading.Lock()
         self._socket_refused_under: Verdict | None = None
         self._deferred: dict[str, _DeferredPlan] = {}
@@ -930,12 +936,26 @@ class WorkerBackend(_WorkerReferences):
         return self._auth
 
     def signing_token(self) -> str:
-        """The token this backend signs the worker's calls with: its own, else the process's internal token.
+        """The token this backend signs the worker's calls with: its own (its ``token_source``'s answer when it has
+        one), else the process's internal token.
 
         Raises:
-            TaskFailed: Its own token is no header value (``_sendable_token``).
+            TaskFailed: Its own token is no header value (``_sendable_token``), or its ``token_source`` gave none.
         """
-        return _sendable_token(self.token, self.id) if self.token is not None else get_internal_token()
+        return _sendable_token(self._call_token(), self.id) if self.token is not None else get_internal_token()
+
+    def _call_token(self) -> str:
+        """The token of the call being made: ``token_source``'s answer when the backend has one, else ``token``.
+
+        Raises:
+            TaskFailed: ``token_source`` raised ``LookupError``; its message says why.
+        """
+        if self._token_source is None:
+            return self.token
+        try:
+            return self._token_source()
+        except LookupError as e:
+            raise TaskFailed(str(e)) from e
 
     def _is_v1(self, ref: ResultRef) -> bool:
         """Whether ``/v1`` minted ``ref``: its location is a ``WorkerLocation`` JSON, which is not decoded here.
@@ -1487,16 +1507,17 @@ def _sendable_token(token: str, backend_id: str) -> str:
 class _TokenAuth(requests.auth.AuthBase):
     """Signs a worker request with one configured backend's own token in place of the process's internal token.
 
-    The check of the token (``_sendable_token``) runs as the request is prepared, before ``http.client`` sees it, and
-    its ``TaskFailed`` leaves ``requests`` as it is raised.
+    The token is ``token()``'s answer as the request is prepared, so a backend whose token is the person's of each
+    call signs each with theirs. The check of the token (``_sendable_token``) runs then too, before ``http.client``
+    sees it, and its ``TaskFailed`` leaves ``requests`` as it is raised.
     """
 
-    def __init__(self, token: str, backend_id: str) -> None:
+    def __init__(self, token: Callable[[], str], backend_id: str) -> None:
         self._token = token
         self._backend_id = backend_id
 
     def __call__(self, request: requests.PreparedRequest) -> requests.PreparedRequest:
-        request.headers["X-Flowfile-Internal"] = _sendable_token(self._token, self._backend_id)
+        request.headers["X-Flowfile-Internal"] = _sendable_token(self._token(), self._backend_id)
         return request
 
 

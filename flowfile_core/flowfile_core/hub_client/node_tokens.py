@@ -5,30 +5,76 @@ for one the first time it uses a node and keeps it in this process's memory unti
 ``exp``, then asks again. The cache is one dict keyed by local user and hub node, cleared with the user's hub
 session (``session.clear``); no token is ever stored. A token's expiry is its own ``exp`` claim, read unverified as
 ``session`` reads its own: the node verifies the signature, this side only needs to know when to ask again.
+
+On a server that joined its hub with keys of its own, each person signs in through the hub and a run's token is minted
+with the delegated session of the person the run is for (``acting_for``), never with another's: the hub's ledger then
+names who ran, and one person's sign-out ends only their own tokens. ``token_for(..., through_hub=True)`` mints only
+through such a sign-in, and says to sign in through the hub again when there is none.
 """
 
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from flowfile_core.hub_client import client, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 
 RECONNECT = "connect to the hub again"
+SIGN_IN_AGAIN = "sign in through the hub again"
 _MARGIN_SECONDS = 60
 
 _tokens: dict[tuple[int, int], tuple[str, float | None]] = {}
 _lock = threading.RLock()  # a refresh inside token_for that ends the session clears these tokens
+_acting: ContextVar[int | None] = ContextVar("hub_acting_user", default=None)
 
 
-def token_for(user_id: int, node_id: int, node_name: str) -> str:
+@contextmanager
+def acting_for(user_id: int | None) -> Iterator[None]:
+    """Make ``user_id`` the person the calls inside the block are made for, as a run route does around its run.
+
+    A run's stage threads run under a copy of the context, so they see it too.
+    """
+    token = _acting.set(user_id)
+    try:
+        yield
+    finally:
+        _acting.reset(token)
+
+
+def acting() -> int | None:
+    """The person ``acting_for`` set for the calls made now; ``None`` outside such a block."""
+    return _acting.get()
+
+
+def signed_in_through_hub(user_id: int) -> bool:
+    """Whether the hub session of ``user_id`` here is a sign-in through the hub (``kind: "delegation"``), read
+    without asking the hub."""
+    stored = session.load(user_id)
+    return stored is not None and stored.get("kind") == "delegation"
+
+
+def signed_out(node_name: str) -> str:
+    """Why a run on the hub's server ``node_name`` is refused to a person with no sign-in through the hub, and what to
+    do about it."""
+    return (
+        f"you are not signed in through the hub, so its server {node_name!r} cannot run this flow for you; "
+        f"{SIGN_IN_AGAIN}"
+    )
+
+
+def token_for(user_id: int, node_id: int, node_name: str, *, through_hub: bool = False) -> str:
     """A ``run`` token for the hub node ``node_id``, named ``node_name``, minted through ``user_id``'s hub session.
 
     The token cached for that user and node is answered while it is more than a minute from its ``exp``; otherwise
-    a new one is minted and cached in its place. Nothing is minted for a node that is not used.
+    a new one is minted and cached in its place. Nothing is minted for a node that is not used. With ``through_hub``
+    only a sign-in through the hub (``kind: "delegation"``) mints one.
 
     Raises:
         LookupError: ``user_id`` has no hub session, or the hub no longer accepts it (the message says to connect to
-            the hub again); the hub did not answer; or the hub refused the node, with its reason.
+            the hub again; with ``through_hub``, it is ``signed_out``'s sentence); the hub did not answer; or the hub
+            refused the node, with its reason.
     """
     with _lock:
         cached = _tokens.get((user_id, node_id))
@@ -36,7 +82,8 @@ def token_for(user_id: int, node_id: int, node_name: str) -> str:
             token, exp = cached
             if exp is not None and exp - time.time() > _MARGIN_SECONDS:
                 return token
-        token = _mint(user_id, node_id, node_name)
+        mint = _mint_through_hub if through_hub else _mint
+        token = mint(user_id, node_id, node_name)
         _tokens[(user_id, node_id)] = (token, session._expiry(token))
         return token
 
@@ -62,6 +109,28 @@ def _mint(user_id: int, node_id: int, node_name: str) -> str:
             raise LookupError(
                 f"the hub session that mints tokens for node {node_name!r} has expired; {RECONNECT}"
             ) from e
+        raise LookupError(f"the hub refused a token for node {node_name!r}: {e.detail}") from e
+    except HubVersionRefused as e:
+        raise LookupError(f"the hub refused a token for node {node_name!r}: {e.detail}") from e
+    except HubUnreachable as e:
+        raise LookupError(f"no token for node {node_name!r}: {e}") from e
+    return minted["token"]
+
+
+def _mint_through_hub(user_id: int, node_id: int, node_name: str) -> str:
+    """``_mint`` for a person who must have signed in through the hub; every way that sign-in is missing or over is
+    ``signed_out``'s sentence."""
+    stored = session.load(user_id)
+    if stored is None or stored.get("kind") != "delegation":
+        raise LookupError(signed_out(node_name))
+    try:
+        access_token = session.access_token(user_id)
+        if access_token is None:
+            raise LookupError(signed_out(node_name))
+        minted = client.mint_node_token(stored["hub_url"], access_token, node_id)
+    except HubRefused as e:
+        if e.status == 401 or session._ended(e) or session.load(user_id) is None:
+            raise LookupError(signed_out(node_name)) from e
         raise LookupError(f"the hub refused a token for node {node_name!r}: {e.detail}") from e
     except HubVersionRefused as e:
         raise LookupError(f"the hub refused a token for node {node_name!r}: {e.detail}") from e

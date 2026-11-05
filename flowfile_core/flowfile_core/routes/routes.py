@@ -120,6 +120,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     list_db_tables,
 )
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
+from flowfile_core.hub_client import node_tokens
 from flowfile_core.hub_client.exchange_store import joined_server_store
 from flowfile_core.hub_client.report import build_run_report, hub_target, post_run_report
 from flowfile_core.notebook.gate import require_kernel_sessions
@@ -346,7 +347,9 @@ async def trigger_fetch_node_data(
         if not await asyncio.to_thread(flow.try_claim_run):
             raise HTTPException(422, "Flow is already running")
         background_tasks.add_task(
-            flow.trigger_fetch_node,
+            _fetch_for,
+            current_user.id,
+            flow,
             node_id,
             performance_mode=performance_mode,
             reset_cache=not performance_mode,
@@ -355,6 +358,13 @@ async def trigger_fetch_node_data(
     return RunStartedResponse(
         content={"message": "Data started", "flow_id": flow_id, "node_id": node_id}, status_code=status.HTTP_200_OK
     )
+
+
+def _fetch_for(user_id: int, flow, node_id: int, **kwargs) -> None:
+    """``flow.trigger_fetch_node`` for ``user_id``: on a server joined with keys of its own, a server of the hub takes
+    that person's run token (``node_tokens.acting_for``)."""
+    with node_tokens.acting_for(user_id):
+        flow.trigger_fetch_node(node_id, **kwargs)
 
 
 def _with_display_name(settings: schemas.FlowSettingsResponse) -> schemas.FlowSettingsResponse:
@@ -510,7 +520,9 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
 
     On a server joined with keys of its own the run takes the exchange store its hub sets, asked once before the run
     with the user's hub session and only for a flow with a node set to another backend than the run's, the one case a
-    store changes (``_joined_server_store``), and holds it until the run ends.
+    store changes (``_joined_server_store``), and holds it until the run ends. The run is the user's
+    (``node_tokens.acting_for``), so each call to a server of the hub carries the run token minted with that user's
+    own sign-in through the hub.
     """
     try:
         reg_id, flow_name, flow_path, flow_uuid, run_id, snapshot_yaml = _open_run_record(flow, user_id, node_ids)
@@ -523,7 +535,8 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
         raise
 
     try:
-        run_info = flow.run_graph(node_ids=node_ids, commit_sources=commit_sources, claimed=True)
+        with node_tokens.acting_for(user_id):
+            run_info = flow.run_graph(node_ids=node_ids, commit_sources=commit_sources, claimed=True)
     finally:
         flow.hub_exchange_store = None
     if run_info is None:

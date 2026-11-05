@@ -533,6 +533,23 @@ def hub(monkeypatch) -> FakeHub:
     return fake
 
 
+def sign_in_through_hub(fake: FakeHub, user_id: int, username: str = "ana", password: str = "s3cret") -> None:
+    """Keep a sign-in through ``fake`` as the session of ``user_id``, as a server joined with keys of its own keeps one:
+    ``kind: "delegation"``, its access token one the fake issued, cached until it expires, so no refresh is asked."""
+    from flowfile_core.hub_client.delegation import Delegation
+
+    url = getattr(fake, "url", HUB_URL)
+    tokens = client.sign_in(url, username, password)
+    granted = Delegation(
+        access_token=tokens["access_token"],
+        expires_in=fake.access_ttl,
+        refresh_token=tokens["refresh_token"],
+        refresh_expires_in=7 * 24 * 3600,
+        user={"uid": 1, "username": username, "full_name": None, "node_admin": False},
+    )
+    session.save_delegation(user_id, url, granted)
+
+
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     """A secure store in the test's tmp dir, and no access token cached from an earlier test."""

@@ -5,7 +5,7 @@ import jwt
 import pytest
 
 from flowfile_core.hub_client import client, node_tokens, session
-from tests.hub_client.conftest import HUB_URL, compute_node
+from tests.hub_client.conftest import HUB_URL, compute_node, sign_in_through_hub
 
 USER_ID = 41
 TEAM = compute_node(3, "team")
@@ -131,3 +131,27 @@ def test_clear_forgets_one_users_tokens_only(connected):
     node_tokens.clear(USER_ID)
 
     assert list(node_tokens._tokens) == [(USER_ID + 1, TEAM["id"])]
+
+
+def test_through_the_hub_a_desktop_shaped_session_mints_nothing_and_says_to_sign_in_through_the_hub_again(connected):
+    with pytest.raises(LookupError, match="sign in through the hub again$"):
+        node_tokens.token_for(USER_ID, TEAM["id"], TEAM["name"], through_hub=True)
+
+    assert connected.minted == []
+
+
+def test_through_the_hub_each_person_mints_with_their_own_sign_in_and_one_clear_leaves_the_other(store, hub):
+    hub.nodes = [TEAM]
+    hub.accounts["dee"] = "s3cret"
+    sign_in_through_hub(hub, USER_ID, "ana")
+    sign_in_through_hub(hub, USER_ID + 1, "dee")
+
+    ana = node_tokens.token_for(USER_ID, TEAM["id"], TEAM["name"], through_hub=True)
+    dee = node_tokens.token_for(USER_ID + 1, TEAM["id"], TEAM["name"], through_hub=True)
+    session.clear(USER_ID)
+
+    assert (_claims(ana)["sub"], _claims(dee)["sub"]) == ("ana", "dee")
+    assert node_tokens.token_for(USER_ID + 1, TEAM["id"], TEAM["name"], through_hub=True) == dee
+    with pytest.raises(LookupError, match="sign in through the hub again$"):
+        node_tokens.token_for(USER_ID, TEAM["id"], TEAM["name"], through_hub=True)
+    assert [minted["user"] for minted in hub.minted] == ["ana", "dee"]
