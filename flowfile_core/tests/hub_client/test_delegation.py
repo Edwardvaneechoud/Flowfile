@@ -250,7 +250,7 @@ def test_an_answer_that_is_not_a_delegation_is_refused(hub, monkeypatch, answer)
 def test_the_log_names_the_route_and_status_and_never_a_token(hub, caplog):
     core_logger.addHandler(caplog.handler)  # core's logger does not propagate, so caplog sees it only through this
     try:
-        with caplog.at_level(logging.DEBUG):
+        with caplog.at_level(logging.DEBUG), caplog.at_level(logging.DEBUG, logger="PipelineHandler"):
             answer = sign_in(hub)
             delegation.refresh(hub.url, hub.issuer, answer.refresh_token)
     finally:

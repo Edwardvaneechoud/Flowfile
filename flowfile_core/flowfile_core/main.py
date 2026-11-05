@@ -414,7 +414,6 @@ def run(host: str = None, port: int = None, sock: socket.socket | None = None):
         host = SERVER_HOST
     if port is None:
         port = SERVER_PORT
-    serving_port = port
     if sock is None:
         sock = listen(host, port)
     try:
@@ -442,6 +441,7 @@ def run(host: str = None, port: int = None, sock: socket.socket | None = None):
     install_access_log_redaction()
     server = _Server(config)
     server_instance = server
+    serving_port = port
 
     # In desktop-sidecar mode, exit if the Tauri shell dies without reaping us.
     start_parent_death_watcher(lambda: _stop_server(server))

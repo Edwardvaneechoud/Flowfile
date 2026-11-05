@@ -205,7 +205,6 @@ def run(host: str = None, port: int = None):
         host = SERVICE_HOST
     if port is None:
         port = SERVICE_PORT
-    serving_port = port
 
     sock = None
     if JOIN_TOKEN:
@@ -233,6 +232,7 @@ def run(host: str = None, port: int = None):
     config = uvicorn.Config(app, host=host, port=port, loop="asyncio", ssl_certfile=tls_cert, ssl_keyfile=tls_key)
     server = uvicorn.Server(config)
     server_instance = server
+    serving_port = port
 
     # In desktop-sidecar mode, exit if the Tauri shell dies without reaping us.
     start_parent_death_watcher(lambda: setattr(server, "should_exit", True))
