@@ -199,4 +199,5 @@ def test_a_server_joins_with_its_keys_beats_and_signs_a_person_in_for_as_long_as
     assert all(token in hub.issued for token in hub.bearers)
     with_credentials = Counter(path for path, _ in hub.calls if path not in (JOIN_PATH, JWKS_PATH))
     checked = Counter(path for path, _ in hub.assertions) + Counter(FLOWS_PATH for _ in hub.bearers)
-    assert with_credentials == checked
+    # each sign-in reads the hub's servers once, with the person's delegated token
+    assert with_credentials == checked + Counter({"/hub/compute-nodes": 2})

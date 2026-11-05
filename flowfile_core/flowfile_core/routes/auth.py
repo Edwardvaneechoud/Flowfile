@@ -21,7 +21,7 @@ from flowfile_core.auth.password import PASSWORD_REQUIREMENTS, get_password_hash
 from flowfile_core.configs import logger
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
-from flowfile_core.hub_client import delegation
+from flowfile_core.hub_client import delegation, node_addresses
 from flowfile_core.hub_client import session as hub_session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable
 from shared import hub_node, hub_tokens
@@ -204,6 +204,10 @@ def sign_in_through_hub(token: str = Body(..., embed=True), db: Session = Depend
     own token pair, as ``/auth/token`` answers, its access token living as long as the hub's (the delegation's
     ``expires_in``, answered as ``expires_at``) and its refresh token naming this sign-in (``sid``). A token or an
     exchange the hub refuses is a 401 with one sentence.
+
+    The hub's servers this person may run on then become backend rows with their new session
+    (``node_addresses.sync_for``), so they are there to pick with nobody opening Compute; a hub whose list cannot be
+    read leaves one warning and the sign-in stands.
     """
     if issuer_accounts.joined_with_keys() is None:
         raise _refused("This server does not sign people in through a hub.")
@@ -234,6 +238,7 @@ def sign_in_through_hub(token: str = Body(..., embed=True), db: Session = Depend
     db.commit()
     invalidate_user_cache(user.username)
     sid = hub_session.save_delegation(user.id, settings.hub_url, granted)
+    node_addresses.sync_for(user.id)
     expires_at = _expires_at(granted.expires_in)
     access_token = create_access_token(data={"sub": user.username}, expires_delta=timedelta(seconds=granted.expires_in))
     refresh_token = create_refresh_token(data={"sub": user.username, "sid": sid})

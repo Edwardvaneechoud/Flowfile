@@ -15,9 +15,10 @@ from and the hub can tell a stale copy apart. Refusals of these routes carry a `
 The hub's compute nodes fill core's ``compute_backends`` table (``/compute_nodes/sync``, also run by a connect): one
 ``worker:<name>`` row per enabled node, holding no token, so placement and the per-node picker see them as any other
 worker while the registry asks the hub for a short-lived token when one is used. A row an administrator added by
-hand under the same id is never touched. Disconnecting removes the caller's hub-filled rows. A core that is itself a
-node on the hub, named by ``FLOWFILE_NODE_NAME`` or by the hub it joined (``hub_node.json``), never writes a row for
-its own node: its worker is its built-in one.
+hand under the same id is never touched. Disconnecting removes the caller's hub-filled rows. A server joined with
+keys of its own also syncs by itself, with each person's sign-in through the hub (``node_addresses``); this route
+stays there as an explicit refresh. A core that is itself a node on the hub, named by ``FLOWFILE_NODE_NAME`` or by the
+hub it joined (``hub_node.json``), never writes a row for its own node: its worker is its built-in one.
 
 Each row a sync wrote is checked once as the Handshake button checks any worker (``handshake.verdict_for``): a node
 this machine cannot reach, or one that refuses it, gets the verdict the backends listing already carries for every
@@ -58,12 +59,11 @@ from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.errors import ComputeError
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
 from flowfile_core.flowfile.utils import create_unique_id
-from flowfile_core.hub_client import client, session
+from flowfile_core.hub_client import client, node_addresses, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 from flowfile_core.routes.compute_backends import ComputeBackendOut, listed_backends
 from flowfile_core.routes.routes import get_flow_or_404
 from flowfile_core.schemas import schemas
-from shared import hub_node
 from shared._version import get_version
 from shared.storage_config import storage
 
@@ -208,7 +208,7 @@ def connect(
     stored = session.load(current_user.id)
     connection = _connection(stored, info, account=_account(stored, current_user))
     try:
-        synced, _ = _sync_nodes(db, current_user.id, request.hub_url, tokens["access_token"])
+        synced, _ = node_addresses.sync_nodes(db, current_user.id, request.hub_url, tokens["access_token"])
     except (HubUnreachable, HubRefused, HubVersionRefused) as e:
         logger.warning("Connected to the hub at %s, but its compute nodes could not be read: %s", request.hub_url, e)
         return connection
@@ -224,7 +224,7 @@ def disconnect(current_user=Depends(get_current_admin_user), db: Session = Depen
     """
     rows = db.query(ConfiguredBackend).filter(ConfiguredBackend.hub_user_id == current_user.id).all()
     for row in rows:
-        _drop_row(db, row)
+        node_addresses.drop_row(db, row)
     db.commit()
     session.clear(current_user.id)
     return {"connected": False}
@@ -238,13 +238,6 @@ class ComputeNodesSync(BaseModel):
     skipped: list[str]
 
 
-def _drop_row(db: Session, row: ConfiguredBackend) -> None:
-    """Remove *row* as ``DELETE /compute_backends/{id}`` does: the registry's instance and its URL's verdicts go too."""
-    db.delete(row)
-    registry.forget(row.id)
-    handshake.reset_handshake(row.url)
-
-
 def _check_nodes(backend_ids: list[str]) -> None:
     """Check each of *backend_ids* as the Handshake button does, so the listing carries a verdict for the rows a sync
     wrote: the one kept when it passed, else a fresh check (``handshake.verdict_for``). A refused check keeps its
@@ -256,59 +249,17 @@ def _check_nodes(backend_ids: list[str]) -> None:
             continue
 
 
-def _sync_nodes(db: Session, user_id: int, hub_url: str, access_token: str) -> tuple[list[str], list[str]]:
-    """Fill the backends table from the hub's enabled compute nodes for ``user_id``; ``(synced ids, skipped ids)``.
-
-    One ``worker:<name>`` row per enabled node, at the node's worker URL, with no token and no CA, ``hub_node_id`` the
-    node's id on the hub and ``hub_user_id`` the caller, whose hub session mints the tokens the backend signs with.
-    A hub-filled row whose node is gone, disabled or renamed is removed; a row added by hand is never touched and its
-    node is reported as skipped. A row written or changed is forgotten in the registry, so its next use reads it; one
-    the hub lists as before keeps its backend and the verdict it has. The node this core is itself
-    (``FLOWFILE_NODE_NAME``, or the name it joined with: ``hub_node.resolved``) is neither written nor counted nor
-    skipped, and a row an earlier sync wrote for it goes. The hub's errors propagate; nothing is committed then.
-    """
-    nodes = client.list_compute_nodes(hub_url, access_token)
-    own = hub_node.resolved().name
-    wanted = {
-        registry.CONFIGURED_WORKER_PREFIX + node["name"]: node
-        for node in nodes
-        if node["enabled"] and node["name"] != own
-    }
-    rows = {row.id: row for row in db.query(ConfiguredBackend).all()}
-    for backend_id, row in rows.items():
-        if row.hub_node_id is not None and backend_id not in wanted:
-            _drop_row(db, row)
-    skipped: list[str] = []
-    synced: list[str] = []
-    for backend_id, node in wanted.items():
-        url = node["worker_url"].rstrip("/")
-        row = rows.get(backend_id)
-        if row is None:
-            db.add(ConfiguredBackend(id=backend_id, url=url, hub_node_id=node["id"], hub_user_id=user_id))
-        elif row.hub_node_id is None:
-            skipped.append(backend_id)
-            continue
-        elif (row.url, row.hub_node_id, row.hub_user_id) != (url, node["id"], user_id):
-            if row.url != url:
-                handshake.reset_handshake(row.url)
-            row.url, row.hub_node_id, row.hub_user_id, row.token, row.ca_cert = url, node["id"], user_id, None, None
-            registry.forget(backend_id)
-        synced.append(backend_id)
-    db.commit()
-    return synced, skipped
-
-
 @router.post("/compute_nodes/sync", summary="Fill the backends table from the hub's compute nodes")
 def sync_compute_nodes(current_user=Depends(get_current_admin_user), db: Session = Depends(get_db)) -> ComputeNodesSync:
-    """Read the hub's compute nodes now and make the backends table match them (``_sync_nodes``), then check the
-    rows written (``_check_nodes``) so the answer carries their verdicts.
+    """Read the hub's compute nodes now and make the backends table match them (``node_addresses.sync_nodes``), then
+    check the rows written (``_check_nodes``) so the answer carries their verdicts.
 
     Explicit, never on a timer: a desktop that wants the hub's newest list asks. 400 without a hub connection,
     502 when the hub does not answer.
     """
     hub_url, token = _hub(current_user)
     try:
-        synced, skipped = _sync_nodes(db, current_user.id, hub_url, token)
+        synced, skipped = node_addresses.sync_nodes(db, current_user.id, hub_url, token)
     except (HubUnreachable, HubRefused, HubVersionRefused) as e:
         raise _hub_error(e) from e
     _check_nodes(synced)

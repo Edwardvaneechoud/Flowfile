@@ -1,7 +1,8 @@
 """A server joined to its hub reads its hub's servers before a run that names one, so a run reaches the address the hub
-has now with nobody opening the Compute page; a hub that cannot be read leaves the rows as they are, and a hub server
-that cannot be reached is named in the run's error, with why in a few words and where to check its address, while the
-transport's own text goes to the log."""
+has now with nobody opening the Compute page, a server the hub no longer lists is gone and one it lists gets its row;
+a hub that cannot be read leaves the rows as they are, and a hub server that cannot be reached is named in the run's
+error, with why in a few words and where to check its address, while the transport's own text goes to the log.
+Another person's row stays theirs on a joined server, and a desktop's sync is its one user's list, as before."""
 
 import logging
 import threading
@@ -25,8 +26,11 @@ pytestmark = pytest.mark.usefixtures("protocol_on")
 join_hub = hub_join.join_hub
 
 USER_ID = 47
+OTHER_ID = 48
 NODE_ID = 3
 BACKEND_ID = "worker:team"
+SALES_ID = 4
+SALES = "worker:sales"
 HUB_ADVICE = "Start it, or check its address on the hub's Compute page."
 
 
@@ -128,9 +132,21 @@ def signed_in(hub):
     return hub
 
 
-def run(flow_id: int):
+def rows() -> dict[str, tuple[str, int | None, int | None]]:
+    with get_db_context() as db:
+        return {row.id: (row.url, row.hub_node_id, row.hub_user_id) for row in db.query(ConfiguredBackend).all()}
+
+
+def sales_row_of(user_id: int) -> None:
+    """A ``worker:sales`` row an earlier sync wrote for ``user_id``."""
+    with get_db_context() as db:
+        db.add(ConfiguredBackend(id=SALES, url=closed_url(), hub_node_id=SALES_ID, hub_user_id=user_id))
+        db.commit()
+
+
+def run(flow_id: int, backend_id: str = BACKEND_ID):
     """A run of ``USER_ID``'s, the person the rows belong to."""
-    graph = make_graph(flow_id, execution_location=BACKEND_ID)
+    graph = make_graph(flow_id, execution_location=backend_id)
     add_manual_input(graph, 1, ranks(3))
     try:
         with node_tokens.acting_for(USER_ID):
@@ -197,3 +213,55 @@ def test_a_desktop_does_not_read_its_hub_before_a_run(hub, recorder):
     assert row_url() == old
     assert ("GET", "/hub/compute-nodes") not in hub.calls
     assert recorder.requests == []
+
+
+def test_a_server_the_hub_no_longer_lists_is_gone_at_the_next_run(joined, hub, signed_in):
+    hub.nodes = []
+
+    (row,) = run(9915).node_step_result
+
+    assert rows() == {}
+    assert hub.calls.count(("GET", "/hub/compute-nodes")) == 1
+    assert "Unknown compute backend 'worker:team'" in row.error
+
+
+def test_a_server_the_hub_lists_gets_its_row_before_a_run_that_names_it(joined, hub, signed_in, recorder):
+    hub.nodes = [*hub.nodes, compute_node(SALES_ID, "sales", worker_url=recorder.url)]
+
+    run(9916, SALES)
+
+    assert rows()[SALES] == (recorder.url, SALES_ID, USER_ID)
+    token = node_tokens.token_for(USER_ID, SALES_ID, "sales")
+    assert recorder.requests and all(sent == token for _, sent in recorder.requests)
+
+
+def test_another_persons_row_stays_theirs_while_they_are_signed_in_through_the_hub(joined, hub, signed_in):
+    sales_row_of(OTHER_ID)
+    sign_in_through_hub(hub, OTHER_ID)
+
+    run(9917)
+
+    assert rows()[SALES][2] == OTHER_ID
+    assert rows()[BACKEND_ID][2] == USER_ID
+
+
+def test_a_row_of_a_person_no_longer_signed_in_follows_the_next_persons_list(joined, hub, signed_in):
+    sales_row_of(OTHER_ID)
+    with get_db_context() as db:
+        db.get(ConfiguredBackend, BACKEND_ID).hub_user_id = OTHER_ID
+        db.commit()
+
+    run(9918)
+
+    assert SALES not in rows()
+    assert rows()[BACKEND_ID][2] == USER_ID
+
+
+def test_a_desktops_sync_is_its_one_users_list(hub):
+    from flowfile_core.hub_client import node_addresses
+
+    sales_row_of(OTHER_ID)
+    with get_db_context() as db:
+        node_addresses.sync_nodes(db, USER_ID, hub.url, session.access_token(USER_ID))
+
+    assert set(rows()) == {BACKEND_ID}
