@@ -42,6 +42,19 @@ export function byPlace<T extends PlacedRow>(rows: T[]): PlaceGroup<T>[] {
 export const showsPlaces = (groups: PlaceGroup<unknown>[]): boolean =>
   groups.length > 1 && groups.every((group) => group.place !== null);
 
+/**
+ * How the catalog tree shows a hub: not at all, only the hub's catalogs (a server that joined its hub, whose own are
+ * not offered), or the hub's beside this machine's (a connected desktop). The tree marks hub catalogs with a badge
+ * only beside this machine's, and with any hub rows shows counts only on collapsed catalogs and schemas.
+ */
+export type HubPresence = "none" | "only" | "beside";
+
+export function hubPresence(rows: { source?: string | null; offered?: boolean }[]): HubPresence {
+  const shown = rows.filter(isOffered);
+  if (!shown.some(isHubRow)) return "none";
+  return shown.every(isHubRow) ? "only" : "beside";
+}
+
 /** The rows that live in this Flowfile; a hub catalog drops out with everything under it. */
 export function withoutHubRows<T extends { source?: string | null }>(rows: T[]): T[] {
   return rows.filter((row) => !isHubRow(row));

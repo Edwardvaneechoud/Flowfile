@@ -20,14 +20,14 @@
         class="ns-icon"
       ></i>
       <span class="ns-name">{{ node.name }}</span>
-      <HubBadge v-if="isHub" kind="namespace" />
+      <HubBadge v-if="isHub && node.level === 0 && hubPresence === 'beside'" kind="namespace" />
       <SharedBadge :access="node.access" />
       <CatalogStorageBadge
-        v-if="node.level === 0"
+        v-if="node.level === 0 && !isHub"
         :storage-uri="node.storage_uri"
         :connection-name="node.storage_connection_name"
       />
-      <span v-if="totalFlows > 0" class="ns-count">{{ totalFlows }}</span>
+      <span v-if="totalFlows > 0 && (!quiet || !expanded)" class="ns-count">{{ totalFlows }}</span>
       <div v-if="!isHub" class="tree-actions" @click.stop>
         <button
           v-if="isMultiUser && isOwned(node)"
@@ -93,6 +93,7 @@
           :selected-table-id="selectedTableId"
           :search-query="searchQuery"
           :show-unavailable="showUnavailable"
+          :hub-presence="hubPresence"
           :filter-bypass="bypass"
           @select-flow="$emit('selectFlow', $event)"
           @select-artifact="$emit('selectArtifact', $event)"
@@ -119,7 +120,7 @@
       <TreeSection
         v-if="showFlowsSection"
         title="Flows"
-        :count="visibleFlows.length"
+        :count="sectionCount(visibleFlows.length)"
         :storage-key="sectionKey('flows')"
         :default-expanded="sectionsDefaultExpanded"
         :search-active="searching"
@@ -173,7 +174,7 @@
       <TreeSection
         v-if="showModelsSection"
         title="Models"
-        :count="visibleArtifacts.length"
+        :count="sectionCount(visibleArtifacts.length)"
         :storage-key="sectionKey('models')"
         :default-expanded="sectionsDefaultExpanded"
         :search-active="searching"
@@ -215,7 +216,7 @@
       <TreeSection
         v-if="showTablesSection"
         title="Tables"
-        :count="visibleTables.length"
+        :count="sectionCount(visibleTables.length)"
         :storage-key="sectionKey('tables')"
         :default-expanded="sectionsDefaultExpanded"
         :search-active="searching"
@@ -238,7 +239,6 @@
           ></i>
           <i v-else class="fa-solid fa-table table-icon"></i>
           <span class="table-name">{{ table.name }}</span>
-          <HubBadge v-if="isHubRow(table)" kind="table" />
           <span
             v-if="table.table_type === 'virtual'"
             class="table-virtual-badge"
@@ -283,7 +283,7 @@
       <TreeSection
         v-if="showVisualizationsSection"
         title="Visualizations"
-        :count="visibleVisualizations.length"
+        :count="sectionCount(visibleVisualizations.length)"
         :storage-key="sectionKey('visualizations')"
         :default-expanded="sectionsDefaultExpanded"
         :search-active="searching"
@@ -312,7 +312,7 @@
       <TreeSection
         v-if="showNotebooksSection"
         title="Notebooks"
-        :count="visibleNotebooks.length"
+        :count="sectionCount(visibleNotebooks.length)"
         :storage-key="sectionKey('notebooks')"
         :default-expanded="sectionsDefaultExpanded"
         :search-active="searching"
@@ -367,7 +367,7 @@ import {
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import CatalogStorageBadge from "./CatalogStorageBadge.vue";
 import HubBadge from "./HubBadge.vue";
-import { isHubRow, unavailableReason } from "./hubRows";
+import { isHubRow, unavailableReason, type HubPresence } from "./hubRows";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 
 const { isMultiUser, isOwned, canManage } = useResourceSharing();
@@ -381,6 +381,8 @@ const props = withDefaults(
     selectedNamespaceId?: number | null;
     searchQuery?: string;
     showUnavailable?: boolean;
+    // How the tree shows a hub: a badge on its catalogs only beside this machine's, quieter counts with any.
+    hubPresence?: HubPresence;
     // Set when an ancestor namespace matched the search by its own name: this
     // subtree is then shown in full rather than filtered down to matches.
     filterBypass?: boolean;
@@ -389,6 +391,7 @@ const props = withDefaults(
     selectedNamespaceId: null,
     searchQuery: "",
     showUnavailable: false,
+    hubPresence: "none",
     filterBypass: false,
   },
 );
@@ -432,6 +435,9 @@ function containsTable(node: NamespaceTree, tableId: number): boolean {
 }
 
 const isHub = computed(() => isHubRow(props.node));
+// With hub rows in the tree, a count shows only on a collapsed catalog or schema, never on a section header.
+const quiet = computed(() => props.hubPresence !== "none");
+const sectionCount = (count: number) => (quiet.value ? undefined : count);
 // Why this Flowfile cannot use a hub catalog's tables; the row shows only under "Show unavailable".
 const reason = computed(() => unavailableReason(props.node));
 

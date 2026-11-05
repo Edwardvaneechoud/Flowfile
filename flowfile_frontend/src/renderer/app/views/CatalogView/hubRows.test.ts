@@ -7,6 +7,7 @@ import {
   HUB_PREVIEW_NOTE,
   HUB_TABLE_TITLE,
   byPlace,
+  hubPresence,
   isHubRow,
   isOffered,
   showsPlaces,
@@ -37,6 +38,25 @@ describe("withoutHubRows", () => {
   it("leaves a local list as it is", () => {
     const rows = [{ id: 1, source: "local" as const }, { id: 2 }];
     expect(withoutHubRows(rows)).toEqual(rows);
+  });
+});
+
+describe("hubPresence", () => {
+  const local = { source: "local" };
+  const hub = { source: "hub" };
+
+  it("is none without hub rows, as a desktop with no hub lists them", () => {
+    expect(hubPresence([local, {}])).toBe("none");
+    expect(hubPresence([])).toBe("none");
+  });
+
+  it("is only where every offered row is the hub's, this machine's not offered", () => {
+    expect(hubPresence([{ ...local, offered: false }, hub])).toBe("only");
+    expect(hubPresence([hub])).toBe("only");
+  });
+
+  it("is beside where the hub's rows show next to this machine's", () => {
+    expect(hubPresence([local, hub])).toBe("beside");
   });
 });
 

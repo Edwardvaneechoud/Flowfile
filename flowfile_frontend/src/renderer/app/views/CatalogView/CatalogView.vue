@@ -152,6 +152,7 @@
                 :selected-namespace-id="catalogStore.selectedNamespaceId"
                 :search-query="searchQuery"
                 :show-unavailable="showUnavailable"
+                :hub-presence="hubPresence"
                 @select-flow="selectFlow($event)"
                 @select-artifact="selectArtifact($event)"
                 @select-table="selectTable($event)"
@@ -633,7 +634,13 @@ import VisualizationEditor from "./VisualizationEditor.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
-import { byPlace, isHubRow, isOffered, showsPlaces, withoutHubRows } from "./hubRows";
+import {
+  byPlace,
+  hubPresence as hubPresenceOf,
+  isOffered,
+  showsPlaces,
+  withoutHubRows,
+} from "./hubRows";
 import { useFlowOpener } from "../../composables/useFlowOpener";
 import { useRecentFlows } from "../../composables/useRecentFlows";
 import { countMatches, normalizeQuery, shownNamespaces } from "./catalogTreeFilter";
@@ -744,7 +751,8 @@ const searchMatchCount = computed(() =>
 const treeGroups = computed(() =>
   byPlace(shownNamespaces(catalogStore.tree, treeSearchFilter.value)),
 );
-const hasHubRows = computed(() => catalogStore.tree.some(isHubRow));
+const hubPresence = computed(() => hubPresenceOf(catalogStore.tree));
+const hasHubRows = computed(() => hubPresence.value !== "none");
 // Why the tree is empty though catalogs were listed: none offered here, or all out of this Flowfile's reach.
 const treeEmptyNote = computed(() => {
   if (treeGroups.value.length > 0 || catalogStore.tree.length === 0) return null;
