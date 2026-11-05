@@ -33,8 +33,10 @@ protocol = protocol_states()
 client = TestClient(main.app)
 
 BACKEND = "worker:team"
-SCHEDULED = "Scheduled runs can't use the hub's servers yet, so place those steps on this server"
-REFUSED = f"{SCHEDULED}: manual_input 1, Sort the ranks."
+REFUSED = (
+    'Scheduled runs can\'t use the hub\'s servers yet, so run the steps "Manual input 1" and "Sort the ranks" on this '
+    "server (set their Compute backend under General Settings)."
+)
 
 
 def _frozen_runner(flow_path: str, run_id: int) -> int:
@@ -216,8 +218,9 @@ def test_a_scheduled_run_that_reaches_the_hubs_server_stops_before_any_node_star
     run = ran(run_id)
     assert exit_code == 1
     assert run.success is False and run.nodes_completed == 0
-    assert f"2 node(s) cannot run: {SCHEDULED}; no node was started" in log
-    assert f"{SCHEDULED}." in log
+    assert f"2 node(s) cannot run: {REFUSED.rstrip('.')}; no node was started" in log
+    assert REFUSED in log
+    assert "node 1" not in REFUSED and "manual_input" not in REFUSED
     assert "signed in" not in log
     assert registry.hub_server(BACKEND) is None
 

@@ -40,30 +40,25 @@ def _refuse_hub_steps(flow: FlowRegistration, user_id: int) -> None:
     flow file that cannot be opened is left to the run, which fails on it.
 
     Raises:
-        ValueError: ``node_tokens.SCHEDULED``, then the steps.
+        ValueError: ``placement.scheduled_refusal``'s sentence, which names the steps.
     """
     from flowfile_core.auth import issuer_accounts
 
     if issuer_accounts.joined_with_keys() is None:
         return
+    from flowfile_core.flowfile.execution.placement import scheduled_refusal
     from flowfile_core.flowfile.manage.ephemeral_graph import ephemeral_flow_graph
-    from flowfile_core.hub_client import node_tokens
     from shared.storage_config import require_flow_in_storage
 
     try:
         with ephemeral_flow_graph(require_flow_in_storage(Path(flow.flow_path)), user_id) as graph:
-            labels = [_step_label(node) for node in graph.scheduled_hub_steps()]
+            steps = graph.scheduled_hub_steps()
+            refusal = scheduled_refusal(steps) if steps else None
     except Exception as e:
         logger.debug("Could not open flow %s to check its schedule's steps: %s", flow.id, e)
         return
-    if labels:
-        raise ValueError(f"{node_tokens.SCHEDULED}: {', '.join(labels)}.")
-
-
-def _step_label(node) -> str:
-    """A step as its canvas shows it: its description, else its type and number."""
-    description = getattr(node.setting_input, "description", None)
-    return description or f"{node.node_type} {node.node_id}"
+    if refusal:
+        raise ValueError(refusal)
 
 
 class ScheduleService:

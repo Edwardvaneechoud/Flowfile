@@ -260,10 +260,12 @@ def test_a_desktops_step_the_hub_seals_nothing_for_is_refused_before_the_run_wit
     assert ran.status_code == 200, ran.text
     errors = errors_of(flow)
     assert errors == {
-        1: 'Node 1 runs on the hub\'s server "worker" and reads a table on the hub, but the hub sealed no credential '
-        "to that server for it, so run the step on this computer",
-        2: 'Node 2 runs on the hub\'s server "worker" and writes a table on the hub, but the hub sealed no credential '
-        "to that server for it, so run the step on this computer",
+        1: 'The step "Read from Catalog 1" runs on the hub\'s server "worker" and reads a table on the hub, but the '
+        "hub sealed no credential to that server for it, so run it on this computer (set its Compute backend under "
+        "General Settings)",
+        2: 'The step "Write to Catalog 2" runs on the hub\'s server "worker" and writes a table on the hub, but the '
+        "hub sealed no credential to that server for it, so run it on this computer (set its Compute backend under "
+        "General Settings)",
     }
     assert not [error for error in errors.values() if "InvalidToken" in error]
     assert sent == [] and hub.catalog.registered == []
@@ -286,9 +288,9 @@ def test_a_desktops_hub_table_step_beside_one_on_this_computer_is_refused_before
     client.post("/flow/run/", params={"flow_id": flow.flow_id}, headers=bearer(desktop))
 
     assert errors_of(flow) == {
-        1: "Node 1 runs on the hub's server \"worker\" and reads a table on the hub, but the hub cannot seal the run's "
-        "credential to that server while the run's other steps on the hub's tables run on this computer, so run the "
-        "step on this computer"
+        1: 'The step "Read from Catalog 1" runs on the hub\'s server "worker" and reads a table on the hub, but the '
+        "hub cannot seal the run's credential to that server while the run's other steps on the hub's tables run on "
+        "this computer, so run it on this computer (set its Compute backend under General Settings)"
     }
     assert hub.catalog.vend_calls == [] and sent == []
 

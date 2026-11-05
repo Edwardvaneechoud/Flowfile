@@ -24,7 +24,7 @@ from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersi
 
 RECONNECT = "connect to the hub again"
 SIGN_IN_AGAIN = "sign in through the hub again"
-SCHEDULED = "Scheduled runs can't use the hub's servers yet, so place those steps on this server"
+SCHEDULED = "Scheduled runs can't use the hub's servers yet"
 _MARGIN_SECONDS = 60
 
 _tokens: dict[tuple[int, int], tuple[str, float | None]] = {}

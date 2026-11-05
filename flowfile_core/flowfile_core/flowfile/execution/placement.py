@@ -167,6 +167,49 @@ _FLOW_SETTING = "the flow's Execution location under Flow Settings"
 _NODE_SETTING = "its Compute backend under General Settings"
 
 
+def step_label(node: FlowNode) -> str:
+    """A step as the canvas names it: the first line of the description typed for it, else its type's name and its
+    number (``Sort data 2``)."""
+    lines = (getattr(node.setting_input, "description", None) or "").strip().splitlines()
+    if lines:
+        return lines[0].strip()
+    name = getattr(getattr(node, "node_template", None), "name", None) or node.node_type.replace("_", " ").capitalize()
+    return f"{name} {node.node_id}"
+
+
+def steps_in_words(nodes: list[FlowNode]) -> str:
+    """``nodes`` named by ``step_label`` inside a sentence: ``the step "A"``, ``the steps "A", "B" and "C"``."""
+    labels = [f'"{step_label(node)}"' for node in nodes]
+    if len(labels) == 1:
+        return f"the step {labels[0]}"
+    return f"the steps {', '.join(labels[:-1])} and {labels[-1]}"
+
+
+def run_here(steps: str, count: int = 1, where: str = "this server") -> str:
+    """What a person can do now about ``count`` steps refused on another server: run ``steps`` on ``where``."""
+    setting = _NODE_SETTING if count == 1 else "their Compute backend under General Settings"
+    return f"run {steps} on {where} (set {setting})"
+
+
+def scheduled_refusal(nodes: list[FlowNode]) -> str:
+    """Why a schedule may not run ``nodes`` on the hub's other servers, naming them, and what to do instead."""
+    from flowfile_core.hub_client import node_tokens
+
+    return f"{node_tokens.SCHEDULED}, so {run_here(steps_in_words(nodes), len(nodes))}."
+
+
+def signed_out_refusal(server: str, nodes: list[FlowNode]) -> str:
+    """Why the hub's server ``server`` cannot run ``nodes`` for a person with no sign-in through the hub, naming
+    them, and the two things they can do."""
+    from flowfile_core.hub_client import node_tokens
+
+    pronoun = "it" if len(nodes) == 1 else "them"
+    return (
+        f"You are not signed in through the hub, so its server {server!r} cannot run {steps_in_words(nodes)} for "
+        f"you; {node_tokens.SIGN_IN_AGAIN}, or {run_here(pronoun, len(nodes))}."
+    )
+
+
 def unmoved_without_store(nodes: list[FlowNode], policy: SingleBackendPolicy) -> list[Refusal]:
     """The nodes whose own Compute backend names one other than the run's, as refusals: no store carries their data.
 
@@ -182,8 +225,9 @@ def unmoved_without_store(nodes: list[FlowNode], policy: SingleBackendPolicy) ->
         if node.node_type in _PINNED_BACKENDS or location in ("auto", policy.backend_id):
             continue
         reason = (
-            "no exchange store can carry its data between backends on this server, so set "
-            f'{_FLOW_SETTING} to "{location}" to run the whole flow there, or {_NODE_SETTING} to Auto'
+            f"{steps_in_words([node])} is set to it, but no exchange store can carry its data between backends on "
+            f'this server, so set {_FLOW_SETTING} to "{location}" to run the whole flow there, or {_NODE_SETTING} '
+            "to Auto"
         )
         refusals.append(Refusal(node.node_id, location, reason))
     return refusals
@@ -225,8 +269,8 @@ def held_on_this_server(nodes: list[FlowNode], assignment: Mapping[int, str]) ->
             continue
         kind, name = held
         reason = (
-            f'node {node.node_id} uses the {kind} connection "{name}", whose secret this server keeps and the hub\'s '
-            f'server "{server}" cannot open, so the step can run on this server, or the connection must be on the hub'
+            f'{steps_in_words([node])} uses the {kind} connection "{name}", whose secret this server keeps and the '
+            f'hub\'s server "{server}" cannot open, so {run_here("it")}'
         )
         refusals.append(Refusal(node.node_id, backend_id, reason))
     return refusals

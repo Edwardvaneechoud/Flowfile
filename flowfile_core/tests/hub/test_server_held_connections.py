@@ -43,11 +43,20 @@ NODE_ID = 3
 TEAM = "worker:team"
 
 
-def sentence(node_id: int, kind: str, name: str, backend_id: str = TEAM) -> str:
+STEP = {
+    "cloud storage": "Read from cloud provider 1",
+    "Kafka": "Kafka Source 1",
+    "Google Analytics": "Google Analytics 1",
+    "database": "Read from Database 1",
+}
+"""Each kind's step in these tests as the canvas names it: no description typed, so its type's name and number."""
+
+
+def sentence(step: str, kind: str, name: str, backend_id: str = TEAM) -> str:
     return (
-        f'cannot run on backend "{backend_id}": node {node_id} uses the {kind} connection "{name}", whose secret this '
-        'server keeps and the hub\'s server "team" cannot open, so the step can run on this server, or the connection '
-        "must be on the hub"
+        f'cannot run on backend "{backend_id}": the step "{step}" uses the {kind} connection "{name}", whose secret '
+        'this server keeps and the hub\'s server "team" cannot open, so run it on this server (set its Compute backend '
+        "under General Settings)"
     )
 
 
@@ -228,13 +237,13 @@ def test_a_step_on_a_hub_server_whose_connection_holds_this_servers_secret_is_re
 
         assert run_info.success is False
         (row,) = run_info.node_step_result
-        assert (row.node_id, row.compute_error, row.error) == (1, "Refusal", sentence(1, kind, name))
+        assert (row.node_id, row.compute_error, row.error) == (1, "Refusal", sentence(STEP[kind], kind, name))
         assert "InvalidToken" not in row.error
         assert graph.get_node(1).results.result_ref is None, "no node started"
         assert ("POST", "/hub/vend") not in hub.calls, "nothing was asked of the hub's vend"
         preview = graph.preview_placement()
         assert [(r.node_id, r.backend_id, r.reason) for r in preview.refusals] == [
-            (1, TEAM, sentence(1, kind, name).split(": ", 1)[1])
+            (1, TEAM, sentence(STEP[kind], kind, name).split(": ", 1)[1])
         ]
     finally:
         graph.close_flow()
@@ -248,7 +257,7 @@ def test_a_google_analytics_step_on_a_hub_server_is_refused_and_the_run_keeps_it
     try:
         node = graph.get_node(1)
         (refusal,) = held_on_this_server([node], {1: TEAM})
-        assert f'cannot run on backend "{TEAM}": {refusal.reason}' == sentence(1, "Google Analytics", connections["ga"])
+        assert f'cannot run on backend "{TEAM}": {refusal.reason}' == sentence(STEP["Google Analytics"], "Google Analytics", connections["ga"])
 
         preview = graph.preview_placement()
         assert preview.assignment[1] == registry.WORKER_BACKEND_ID
@@ -381,7 +390,7 @@ def test_a_database_step_on_a_hub_server_whose_password_this_server_keeps_is_ref
 
         assert run_info.success is False
         (row,) = run_info.node_step_result
-        expected = sentence(1, "database", databases["postgres"])
+        expected = sentence(STEP["database"], "database", databases["postgres"])
         assert (row.node_id, row.compute_error, row.error) == (1, "Refusal", expected)
         assert "InvalidToken" not in row.error
         assert graph.get_node(1).results.result_ref is None, "no node started"
@@ -398,10 +407,15 @@ def test_a_database_writer_on_a_hub_server_whose_password_this_server_keeps_is_r
 ):
     class Step:
         node_id = 2
+        node_type = "database_writer"
         setting_input = database_writer(user_id, databases["postgres"])
 
+    Step.setting_input.description = "Write the movies\nto the shop"
     (refusal,) = held_on_this_server([Step()], {2: TEAM})
-    assert f'cannot run on backend "{TEAM}": {refusal.reason}' == sentence(2, "database", databases["postgres"])
+    assert f'cannot run on backend "{TEAM}": {refusal.reason}' == sentence(
+        "Write the movies", "database", databases["postgres"]
+    )
+    assert "node 2" not in refusal.reason
 
 
 def test_an_inline_database_connection_on_a_hub_server_is_not_refused(joined, hub, no_store, user_id):

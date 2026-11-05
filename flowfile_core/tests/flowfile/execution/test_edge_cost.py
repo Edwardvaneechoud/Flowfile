@@ -40,9 +40,16 @@ OUT = DEFAULT_OUTPUT_HANDLE
 BOTH_EDGES = [(1, OUT, 2), (2, OUT, 3)]
 
 
-def above(source_id: int, backend_id: str, rows: int, columns: int, limit: int) -> str:
+STEPS = {1: "Manual input 1", 2: "Filter data 2"}
+"""The sources of ``chain``'s edges as the canvas names them."""
+SPLIT = "Random Split 2"
+
+
+def above(source: int | str, backend_id: str, rows: int, columns: int, limit: int) -> str:
+    """The refusal of an input from ``source`` (a node of ``chain`` or a step's name) above ``limit`` rows."""
+    step = STEPS[source] if isinstance(source, int) else source
     return (
-        f'the input from node {source_id} would cross from backend "{backend_id}" with {rows} rows of {columns} '
+        f'the input from the step "{step}" would cross from backend "{backend_id}" with {rows} rows of {columns} '
         f"columns, above FLOWFILE_EXCHANGE_MAX_ROWS={limit}"
     )
 
@@ -219,7 +226,7 @@ def test_a_split_whose_input_changed_after_it_ran_is_not_priced_by_that_run(
     add_manual_input(graph, 1, [{"id": i} for i in range(10)])
     changed, edges = placed(graph)
 
-    assert ran.refusals == [Refusal(3, LOCAL, above(2, BACKEND_ID, 80, 1, 50), OWN_REMEDY)]
+    assert ran.refusals == [Refusal(3, LOCAL, above(SPLIT, BACKEND_ID, 80, 1, 50), OWN_REMEDY)]
     assert changed.refusals == []
     assert crossings(edges) == [(2, OUT, 3)]
 
@@ -250,7 +257,7 @@ def test_a_node_reading_two_outputs_of_one_source_above_the_limit_is_refused_onc
 
     placement, edges = placed(graph)
 
-    assert placement.refusals == [Refusal(9, LOCAL, above(2, BACKEND_ID, 80, 1, 10), OWN_REMEDY)]
+    assert placement.refusals == [Refusal(9, LOCAL, above(SPLIT, BACKEND_ID, 80, 1, 10), OWN_REMEDY)]
     assert edges == []
 
 

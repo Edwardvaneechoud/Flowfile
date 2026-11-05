@@ -58,6 +58,19 @@ REFUSED = (
 )
 
 
+def run_refused(*steps: str) -> str:
+    """The sentence a run or fetch for a person with no sign-in through the hub is refused with, naming ``steps``."""
+    named = " and ".join(f'"{step}"' for step in steps)
+    return (
+        f"You are not signed in through the hub, so its server {SERVER!r} cannot run the steps {named} for you; "
+        "sign in through the hub again, or run them on this server (set their Compute backend under General "
+        "Settings)."
+    )
+
+
+RUN_REFUSED = run_refused("Manual input 1", "Sort data 2")
+
+
 class MintingHub(OrganisationHub):
     """``OrganisationHub`` that answers ``POST /hub/node-tokens`` for the server ``team`` as the hub does: a ``run``
     token for the person whose access token asked, signed with the key the worker verifies against.
@@ -322,7 +335,7 @@ def test_one_persons_sign_out_leaves_the_others_runs_and_refuses_their_own_with_
     assert dee_run.success is True, errors(dee_run)
     assert dee_saw and set(dee_saw) == {dee_name}
     assert refused.success is False
-    assert errors(refused) == [(1, REFUSED), (2, REFUSED)]
+    assert errors(refused) == [(1, RUN_REFUSED), (2, RUN_REFUSED)]
     assert subjects == []
     assert hub.minted.count(hub.people[ADA]["username"]) == 1
 
@@ -335,5 +348,5 @@ def test_a_run_for_nobody_is_refused_and_never_takes_the_rows_person(protocol, h
     refused = flow.run_graph(claimed=True)
 
     assert refused.success is False
-    assert errors(refused) == [(1, REFUSED), (2, REFUSED)]
+    assert errors(refused) == [(1, RUN_REFUSED), (2, RUN_REFUSED)]
     assert subjects == [] and hub.minted == []

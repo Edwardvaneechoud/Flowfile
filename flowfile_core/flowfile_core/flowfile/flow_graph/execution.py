@@ -41,6 +41,10 @@ from flowfile_core.flowfile.execution.placement import (
     hub_table_namespace,
     place,
     remedy_for,
+    run_here,
+    scheduled_refusal,
+    signed_out_refusal,
+    steps_in_words,
     unmoved_without_store,
     unsealed_for,
 )
@@ -281,9 +285,10 @@ def _desktop_unsealed(node: FlowNode, server: str, *, mixed: bool = False) -> st
         if mixed
         else "the hub sealed no credential to that server for it"
     )
+    subject = steps_in_words([node])
     return (
-        f'Node {node.node_id} runs on the hub\'s server "{server}" and {verb} a table on the hub, but {why}, so run '
-        "the step on this computer"
+        f'{subject[0].upper()}{subject[1:]} runs on the hub\'s server "{server}" and {verb} a table on the hub, but '
+        f"{why}, so {run_here('it', where='this computer')}"
     )
 
 
@@ -1247,7 +1252,8 @@ class ExecutionMixin(GraphMixinBase):
             prefix, credential = crossing
             unsealed = _unsealed_crossing(credential, placement.assignment, (source_id, target_id), declared)
             if unsealed is not None:
-                reason = f"its input from node {source_id} crosses through the hub's exchange store, but {unsealed}"
+                source_step = steps_in_words([source])
+                reason = f"its input from {source_step} crosses through the hub's exchange store, but {unsealed}"
                 crossing_refusals.setdefault(target_id, Refusal(target_id, placement.assignment[target_id], reason))
                 continue
             handles = dict.fromkeys(handle for node, handle in target._slot_input_pairs() if node is source)
@@ -1266,8 +1272,9 @@ class ExecutionMixin(GraphMixinBase):
                 if cost is not None and cost[0] > max_rows:
                     rows, columns = cost
                     reason = (
-                        f'the input from node {source_id} would cross from backend "{edge.source_backend_id}" with '
-                        f"{rows} rows of {columns} columns, above FLOWFILE_EXCHANGE_MAX_ROWS={max_rows}"
+                        f"the input from {steps_in_words([source])} would cross from backend "
+                        f'"{edge.source_backend_id}" with {rows} rows of {columns} columns, above '
+                        f"FLOWFILE_EXCHANGE_MAX_ROWS={max_rows}"
                     )
                     crossing_refusals.setdefault(target_id, Refusal(target_id, edge.target_backend_id, reason))
                 else:
@@ -1937,13 +1944,13 @@ class ExecutionMixin(GraphMixinBase):
         self, nodes: list[FlowNode], exchange_run: ExchangeRun
     ) -> list[tuple[FlowNode, str]] | None:
         """On a server joined with keys of its own, the run's nodes on the hub's servers, each with the sentence of
-        ``node_tokens.signed_out``, when the person the run is for (``node_tokens.acting``) has no sign-in through the
-        hub here, else ``None``.
+        ``placement.signed_out_refusal`` naming them, when the person the run is for (``node_tokens.acting``) has no
+        sign-in through the hub here, else ``None``.
 
         The hub mints a run's token for those servers with that person's own sign-in, never another's, so a run for
         nobody or for a person whose sign-in ended is refused before a node starts. A schedule's run
-        (``node_tokens.scheduled``) has nobody behind it and is refused with ``node_tokens.SCHEDULED``, every such node
-        of it. A sign-in the hub no longer takes is found when the token is minted, and refused there.
+        (``node_tokens.scheduled``) has nobody behind it and is refused with ``placement.scheduled_refusal``, every
+        such node of it. A sign-in the hub no longer takes is found when the token is minted, and refused there.
         """
         if not nodes or issuer_accounts.joined_with_keys() is None:
             return None
@@ -1954,9 +1961,12 @@ class ExecutionMixin(GraphMixinBase):
         if not on_hub:
             return None
         if person is None and node_tokens.scheduled():
-            return [(node, f"{node_tokens.SCHEDULED}.") for on in on_hub.values() for node in on]
+            steps = [node for on in on_hub.values() for node in on]
+            sentence = scheduled_refusal(steps)
+            return [(node, sentence) for node in steps]
         name, on = next(iter(on_hub.items()))
-        return [(node, node_tokens.refused(name)) for node in on]
+        sentence = signed_out_refusal(name, on)
+        return [(node, sentence) for node in on]
 
     @staticmethod
     def _on_hub_servers(

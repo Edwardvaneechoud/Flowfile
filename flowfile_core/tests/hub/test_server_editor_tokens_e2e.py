@@ -17,7 +17,7 @@ from flowfile_core.schemas import input_schema, transform_schema
 from tests.conftest import _set_protocol, protocol_states
 from tests.flowfile.execution.graph_helpers import add_manual_input, add_promise, connect
 from tests.hub import test_server_run_tokens_e2e as e2e
-from tests.hub.test_server_run_tokens_e2e import BACKEND, DEE, REFUSED, client, errors, run, sign_in
+from tests.hub.test_server_run_tokens_e2e import BACKEND, DEE, REFUSED, client, errors, run, run_refused, sign_in
 from tests.test_hub_sign_in import bearer
 
 protocol = protocol_states()
@@ -126,7 +126,8 @@ def test_a_fetch_for_a_person_signed_out_of_the_hub_is_refused_with_the_sentence
     )
 
     assert fetched.status_code == 200, fetched.text
-    assert errors(flow.get_run_info()) == [(1, REFUSED), (2, REFUSED)]
+    fetch_refused = run_refused("Manual input 1", "Pivot data 2")
+    assert errors(flow.get_run_info()) == [(1, fetch_refused), (2, fetch_refused)]
     assert subjects == [] and hub.minted == []
 
 

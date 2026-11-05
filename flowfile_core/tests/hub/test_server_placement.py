@@ -21,9 +21,9 @@ join_hub = hub_join.join_hub
 
 ELSEWHERE = "worker:elsewhere"
 SENTENCE = (
-    f'cannot run on backend "{ELSEWHERE}": no exchange store can carry its data between backends on this server, so '
-    f'set the flow\'s Execution location under Flow Settings to "{ELSEWHERE}" to run the whole flow there, or its '
-    "Compute backend under General Settings to Auto"
+    f'cannot run on backend "{ELSEWHERE}": the step "Sort data 2" is set to it, but no exchange store can carry its '
+    f'data between backends on this server, so set the flow\'s Execution location under Flow Settings to "{ELSEWHERE}" '
+    "to run the whole flow there, or its Compute backend under General Settings to Auto"
 )
 
 
@@ -245,3 +245,54 @@ def test_the_preview_refuses_a_crossing_to_a_backend_that_is_no_server_of_the_hu
     reasons = {refusal["node_id"]: refusal["reason"] for refusal in preview["refusals"]}
     assert set(reasons) == {1, 2}
     assert all(f'backend "{ELSEWHERE}" is not one of the hub\'s servers' in reason for reason in reasons.values())
+
+
+@pytest.fixture
+def unsealing():
+    """``local`` opens what the hub seals to its server; ``ELSEWHERE`` declares that it cannot open a sealed one."""
+    from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
+    from tests.flowfile.execution.test_placement import DeclaringBackend, everything
+
+    registry.reset()
+    handshake.reset_handshake()
+    for backend_id, resolution in ((registry.LOCAL_BACKEND_ID, "vended"), (ELSEWHERE, "master_key")):
+        declared = everything().model_copy(update={"credential_resolution": resolution})
+        backend = DeclaringBackend(backend_id, declared)
+        registry.register_backend(backend_id, lambda backend=backend: backend)
+    yield
+    registry.reset()
+    handshake.reset_handshake()
+
+
+def test_the_preview_names_the_step_whose_input_cannot_cross_through_the_hubs_store_by_its_canvas_name(
+    joined_with_keys, hub_server, no_store, unsealing, hubs_store, client, open_flow
+):
+    open_flow.get_node(1).setting_input.description = "The ranks"
+
+    preview = client.get("/flow/placement", params={"flow_id": open_flow.flow_id}).json()
+
+    (refusal,) = preview["refusals"]
+    assert (refusal["node_id"], refusal["backend_id"]) == (2, ELSEWHERE)
+    assert refusal["reason"].startswith(
+        f'its input from the step "The ranks" crosses through the hub\'s exchange store, but on backend "{ELSEWHERE}" '
+    )
+    assert "node 1" not in refusal["reason"]
+
+
+def test_a_step_is_named_by_the_first_line_of_its_description_else_by_its_types_name_and_number():
+    from flowfile_core.flowfile.execution.placement import run_here, step_label, steps_in_words
+
+    graph = input_then_sort(make_graph(9852, execution_location="local"), ranks(3), "rank")
+    try:
+        manual, sort = graph.get_node(1), graph.get_node(2)
+        sort.setting_input.description = "  Sort the ranks\nhighest last"
+
+        assert (step_label(manual), step_label(sort)) == ("Manual input 1", "Sort the ranks")
+        assert steps_in_words([manual]) == 'the step "Manual input 1"'
+        assert steps_in_words([manual, sort, manual]) == 'the steps "Manual input 1", "Sort the ranks" and "Manual input 1"'
+        assert run_here("it") == "run it on this server (set its Compute backend under General Settings)"
+        assert run_here("them", 2, "this computer") == (
+            "run them on this computer (set their Compute backend under General Settings)"
+        )
+    finally:
+        graph.close_flow()
