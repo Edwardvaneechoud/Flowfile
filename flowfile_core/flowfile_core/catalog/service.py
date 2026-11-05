@@ -796,10 +796,10 @@ class CatalogService:
                 ROOT_CATALOG.name,
             )
             return None
-        flow_path = registered_flow_path(flow_path)
-        existing = self.repo.get_flow_by_path(flow_path)
-        if existing:
+        # The lookup takes the path as given, so a row from before the rule is found under its own spelling.
+        if self.repo.get_flow_by_path(flow_path):
             return None
+        flow_path = registered_flow_path(flow_path)
         reg = FlowRegistration(
             name=name or Path(flow_path).stem,
             flow_path=flow_path,

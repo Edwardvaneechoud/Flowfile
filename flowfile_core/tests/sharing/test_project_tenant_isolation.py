@@ -764,6 +764,47 @@ class TestMA3_NamespaceResolutionOwnFirst:
             _cleanup_namespaces(ns_name)
             project_sync.close_project(alice_id)
 
+    def test_import_reconciles_a_row_stored_under_a_links_spelling_before_the_rule(self, tmp_path, users):
+        """A flow registered before the rule under a link's spelling of the flows folder is the row the import
+        updates: its name follows the project, no second row appears, and the file is written where the link
+        leads."""
+        from flowfile_core.project.importer import import_project
+
+        alice_id = users["alice"].id
+        flow_uuid = str(uuid4())
+        storage.flows_directory.mkdir(parents=True, exist_ok=True)
+        link = tmp_path / "store_link"
+        link.symlink_to(storage.flows_directory, target_is_directory=True)
+        real_file = storage.flows_directory / f"alice_{flow_uuid[:8]}.flow.yaml"
+        with get_db_context() as db:
+            reg = db_models.FlowRegistration(
+                name="old_name",
+                flow_path=str(link / real_file.name),
+                flow_uuid=flow_uuid,
+                namespace_id=None,
+                owner_id=alice_id,
+            )
+            db.add(reg)
+            db.commit()
+            row_id = reg.id
+
+        root = _minimal_project_dir(tmp_path, "linked_import")
+        _write_flow_manifest_with_namespace(flows_dir(root), flow_uuid, "General", "default", "renamed_flow")
+        project_sync.close_project(alice_id)
+        try:
+            result = import_project(root, alice_id)
+            assert result is not None and result.imported_flows == 1
+            assert real_file.exists()
+            with get_db_context() as db:
+                rows = db.query(db_models.FlowRegistration).filter_by(flow_uuid=flow_uuid).all()
+                assert [(r.id, r.name) for r in rows] == [(row_id, "renamed_flow")]
+        finally:
+            project_sync.close_project(alice_id)
+            real_file.unlink(missing_ok=True)
+            with get_db_context() as db:
+                db.query(db_models.FlowRegistration).filter_by(flow_uuid=flow_uuid).delete()
+                db.commit()
+
     def test_public_namespace_import_succeeds_and_places_flow_without_mutating_seed(self, tmp_path, users):
         # M-A3 (Phase-4 re-open): a non-seed docker user imports a project whose flows reference the
         # public General/default namespace (owned by local_user, is_public=True).

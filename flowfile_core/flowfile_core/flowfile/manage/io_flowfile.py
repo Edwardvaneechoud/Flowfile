@@ -3,13 +3,12 @@ from collections.abc import Callable
 from pathlib import Path
 
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, node_dict, register_missing_node_template, registry
-from flowfile_core.configs.settings import is_docker_mode
 from flowfile_core.flowfile.flow_graph import FlowGraph, restore_dynamic_input_connections
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_compatibility, load_flowfile_pickle
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.schemas import get_settings_class_for_node_type
-from shared.storage_config import flow_storage_directories, storage
+from shared.storage_config import flow_storage_directories, is_server_mode, storage
 
 try:
     import yaml
@@ -28,7 +27,7 @@ def _validate_flow_path(flow_path: Path) -> Path:
     if not resolved.is_file():
         raise FileNotFoundError(f"Flow file not found: {resolved}")
 
-    if is_docker_mode():
+    if is_server_mode():
         is_safe = any(resolved.is_relative_to(safe_dir) for safe_dir in flow_storage_directories())
     else:
         is_safe = True

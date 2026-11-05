@@ -767,6 +767,7 @@ def _import_flow(data: dict, owner_id: int) -> str | None:
                 logger.warning("Project import: flow_uuid %s already registered; minting a fresh uuid", flow_uuid)
                 flow_uuid = str(uuid.uuid4())
                 data = {**data, "flow_uuid": flow_uuid}
+            existing_id = None if existing is None else existing.id
             if existing is None:
                 runtime_path = (
                     storage.flows_directory / "project" / f"{safe_stem(flowfile_name)}_{flow_uuid[:8]}.flow.yaml"
@@ -787,8 +788,11 @@ def _import_flow(data: dict, owner_id: int) -> str | None:
         # Reconcile identity + display name + namespace placement to the file (keeps flow_uuid stable for
         # determinism, the catalog name round-tripping, and the flow landing in its real schema on import).
         with get_db_context() as db:
+            # The existing row by its id, whatever spelling it stored; a new one by the file it was registered at.
             reg = (
-                db.query(FlowRegistration)
+                db.get(FlowRegistration, existing_id)
+                if existing_id is not None
+                else db.query(FlowRegistration)
                 .filter(FlowRegistration.flow_path.in_(flow_path_spellings(str(runtime_path))))
                 .order_by(FlowRegistration.id)
                 .first()

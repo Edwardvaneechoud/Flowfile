@@ -587,6 +587,37 @@ def test_open_on_a_shared_core_refuses_to_name_or_replace_another_users_local_co
     owners_copy.unlink(missing_ok=True)
 
 
+def test_open_on_a_shared_core_checks_the_owner_of_a_copy_stored_under_a_links_spelling(shared_core, hub, tmp_path):
+    """A copy registered before the rule under a link's spelling of the flows folder: a stranger's replace is
+    refused on that registration, the owner's writes the file where the link leads."""
+    owner_id, owner = shared_core["owner"]
+    _, stranger = shared_core["stranger"]
+    flow_uuid = "99999999-8888-4777-8666-333333333333"
+    hub.seed(flow_uuid, "Invoices", _new_flow(owner_id, None).get_flowfile_data().model_dump(mode="json"))
+    storage.flows_directory.mkdir(parents=True, exist_ok=True)
+    link = tmp_path / "store_link"
+    link.symlink_to(storage.flows_directory, target_is_directory=True)
+    real_copy = storage.flows_directory / f"linked_copy_{flow_uuid[:8]}.yaml"
+    real_copy.write_text("flowfile_id: 1\n", encoding="utf-8")
+    with get_db_context() as db:
+        db.add(
+            db_models.FlowRegistration(
+                flow_uuid=flow_uuid, name="Invoices", flow_path=str(link / real_copy.name), owner_id=owner_id
+            )
+        )
+        db.commit()
+    try:
+        refused = stranger.post("/hub_client/open", json={"flow_uuid": flow_uuid, "replace": True})
+        assert refused.status_code == 403, refused.text
+        assert real_copy.read_text(encoding="utf-8") == "flowfile_id: 1\n"
+        replaced = owner.post("/hub_client/open", json={"flow_uuid": flow_uuid, "replace": True})
+        assert replaced.status_code == 200, replaced.text
+        assert replaced.json()["flow_path"] == str(real_copy.resolve())
+        assert _saved_origin(real_copy)["flow_uuid"] == flow_uuid
+    finally:
+        real_copy.unlink(missing_ok=True)
+
+
 def test_open_on_a_shared_core_never_writes_over_a_local_copy_outside_the_flow_folders(shared_core, hub, tmp_path):
     """A registration from before the rule may still point elsewhere; the hub's open leaves that file alone."""
     owner_id, owner = shared_core["owner"]

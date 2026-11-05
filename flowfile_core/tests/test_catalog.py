@@ -486,6 +486,33 @@ class TestFlowRegistration:
         finally:
             real_file.unlink(missing_ok=True)
 
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    def test_server_finds_a_row_from_before_the_rule_under_the_links_spelling(self, tmp_path, monkeypatch, mode):
+        """A row stored before the rule under a link's spelling is found by that spelling before anything resolves,
+        so auto-registration adds no second row at the same file."""
+        from flowfile_core.flowfile.catalog_helpers import find_registration_by_path
+
+        ns_id = self._make_namespace()
+        storage.flows_directory.mkdir(parents=True, exist_ok=True)
+        link = tmp_path / "store_link"
+        link.symlink_to(storage.flows_directory, target_is_directory=True)
+        name = f"pre_rule_{os.getpid()}.yaml"
+        (storage.flows_directory / name).write_text("flow: {}")
+        with get_db_context() as db:
+            row = FlowRegistration(name="pre_rule", flow_path=str(link / name), namespace_id=ns_id, owner_id=1)
+            db.add(row)
+            db.commit()
+            row_id = row.id
+        as_server(monkeypatch, mode)
+        try:
+            with get_db_context() as db:
+                service = CatalogService(SQLAlchemyCatalogRepository(db))
+                assert service.auto_register_flow(str(link / name), "pre_rule", 1) is None
+                assert db.query(FlowRegistration).filter_by(name="pre_rule").count() == 1
+            assert find_registration_by_path(str(link / name)).id == row_id
+        finally:
+            (storage.flows_directory / name).unlink(missing_ok=True)
+
     def test_desktop_stores_a_registered_path_as_given(self):
         ns_id = self._make_namespace()
         resp = client.post(
@@ -2321,6 +2348,71 @@ class TestOverwriteFlowInCatalogOnAServer:
             assert target.read_text() == "flow: {}"
         finally:
             flow_file_handler.delete_flow(flow_id)
+
+
+class TestEditorOpensRegisteredFilesInsideTheFlowFolders:
+    """``GET /import_flow/`` and ``/save_flow`` neither open nor write over a registered flow's file outside the
+    server's flow folders, so a registration from before the rule is left alone through the editor too."""
+
+    @staticmethod
+    def _register(flow_path: Path, name: str) -> int:
+        cat = client.post("/catalog/namespaces", json={"name": f"EdCat_{name}"}).json()
+        ns_id = client.post("/catalog/namespaces", json={"name": "EdSchema", "parent_id": cat["id"]}).json()["id"]
+        created = client.post("/catalog/flows", json={"name": name, "flow_path": str(flow_path), "namespace_id": ns_id})
+        assert created.status_code == 201, created.text
+        return created.json()["id"]
+
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    def test_server_refuses_to_open_or_save_a_registered_file_outside_the_flow_folders(
+        self, tmp_path, monkeypatch, mode
+    ):
+        outside = tmp_path / "outside.yaml"
+        TestFlowCode._save_flow(outside)
+        before = outside.read_text(encoding="utf-8")
+        self._register(outside, "outside")
+        opened = client.get("/import_flow/", params={"flow_path": str(outside)})
+        assert opened.status_code == 200, opened.text
+        flow_id = opened.json()
+        try:
+            as_server(monkeypatch, mode)
+            refused = client.get("/import_flow/", params={"flow_path": str(outside)})
+            assert refused.status_code == 422, refused.text
+            assert refused.json()["detail"] == "the flow's file is outside the server's flow folders"
+            saved = client.post("/save_flow", params={"flow_id": flow_id})
+            assert saved.status_code == 422, saved.text
+            assert saved.json()["detail"] == "the flow's file is outside the server's flow folders"
+            assert outside.read_text(encoding="utf-8") == before
+        finally:
+            flow_file_handler.delete_flow(flow_id)
+
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    def test_server_opens_and_saves_a_registered_file_inside_the_flow_folders(self, monkeypatch, mode):
+        storage.flows_directory.mkdir(parents=True, exist_ok=True)
+        inside = storage.flows_directory / f"editor_inside_{os.getpid()}.yaml"
+        TestFlowCode._save_flow(inside)
+        try:
+            self._register(inside, "inside")
+            as_server(monkeypatch, mode)
+            opened = client.get("/import_flow/", params={"flow_path": str(inside)})
+            assert opened.status_code == 200, opened.text
+            flow_id = opened.json()
+            try:
+                assert client.post("/save_flow", params={"flow_id": flow_id}).status_code == 200
+            finally:
+                flow_file_handler.delete_flow(flow_id)
+        finally:
+            inside.unlink(missing_ok=True)
+
+    def test_desktop_opens_and_saves_its_own_flow_anywhere(self, tmp_path):
+        anywhere = tmp_path / "anywhere.yaml"
+        TestFlowCode._save_flow(anywhere)
+        self._register(anywhere, "anywhere")
+        opened = client.get("/import_flow/", params={"flow_path": str(anywhere)})
+        assert opened.status_code == 200, opened.text
+        try:
+            assert client.post("/save_flow", params={"flow_id": opened.json()}).status_code == 200
+        finally:
+            flow_file_handler.delete_flow(opened.json())
 
 
 class TestTriggerArmingAndRunVisibility:

@@ -1486,6 +1486,17 @@ def _require_flow_save_permitted(flow_path: str | None, namespace_id: int | None
         raise HTTPException(status_code=403, detail=str(err)) from None
 
 
+def _require_registered_file_in_storage(flow_path: str) -> None:
+    """422 on a server when ``flow_path`` is a registered flow's file outside the flow folders: a registration
+    from before the rule is not opened or written over through the editor either."""
+    if find_registration_by_path(flow_path) is None:
+        return
+    try:
+        require_flow_in_storage(Path(flow_path))
+    except ValueError as err:
+        raise HTTPException(status_code=422, detail=str(err)) from None
+
+
 def _require_registrable_flow_path(flow_path: str | None) -> None:
     """422 before any write when the catalog would refuse to register a flow at ``flow_path``: on a
     multi-user server a registered flow lives inside the server's flow folders."""
@@ -2410,6 +2421,7 @@ def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_us
     row is created. Use the Save dialog (or ``POST /catalog/flows``) to file a flow.
     """
     validated_path = validate_path_under_cwd(flow_path)
+    _require_registered_file_in_storage(validated_path)
     if not os.path.exists(validated_path):
         raise HTTPException(404, "File not found")
     user_id = current_user.id if current_user else None
@@ -2464,6 +2476,7 @@ def _save_flow_impl(
 
     # Before any YAML write: a refused save leaves no orphan and overwrites no other user's flow.
     _require_flow_save_permitted(flow_path, namespace_id, current_user)
+    _require_registered_file_in_storage(flow_path)
     if (is_new_path and register_in_catalog) or namespace_id is not None:
         _require_registrable_flow_path(flow_path)
 

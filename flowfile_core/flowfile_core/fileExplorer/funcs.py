@@ -419,6 +419,8 @@ def validate_path_under_cwd(user_path: str) -> str:
     - Current working directory (for development/testing)
     - Flowfile storage directory (~/.flowfile)
     - User data directory (home directory in local mode, /data/user in Docker)
+    A hub server gets docker's limits: its user data directory is the service account's home, which is
+    not a root there.
 
     Args:
         user_path: The user-provided path string
@@ -443,7 +445,10 @@ def validate_path_under_cwd(user_path: str) -> str:
         raise HTTPException(403, "Access denied")
 
     # In Docker/package mode, enforce strict sandboxing to trusted roots.
-    for base in (os.getcwd(), str(storage.base_directory), str(storage.user_data_directory)):
+    roots = [os.getcwd(), str(storage.base_directory)]
+    if settings.is_docker_mode() or not settings.is_server_mode():
+        roots.append(str(storage.user_data_directory))
+    for base in roots:
         base_real = os.path.realpath(base)
         candidate = expanded if os.path.isabs(expanded) else os.path.join(base_real, expanded)
         contained = contained_path(base_real, candidate)

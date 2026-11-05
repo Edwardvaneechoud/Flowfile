@@ -444,3 +444,51 @@ class TestProjectReadsRegisteredFlowsInsideTheFlowFolders:
             assert _load_flow_data(str(inside)) == {"flowfile_name": "projected"}
         finally:
             inside.unlink(missing_ok=True)
+
+
+class TestEditorLimitsOnAHubServer:
+    """A hub server gets docker's path limits: the working folder and the storage folder, never the home folder
+    its user data directory points at."""
+
+    @staticmethod
+    def _hub(monkeypatch) -> None:
+        from flowfile_core.configs import settings
+
+        monkeypatch.setattr(settings, "FLOWFILE_MODE", "hub")
+        monkeypatch.setenv("FLOWFILE_MODE", "hub")
+
+    def test_hub_server_refuses_the_home_folder(self, monkeypatch):
+        from fastapi import HTTPException
+
+        from shared.storage_config import storage
+
+        self._hub(monkeypatch)
+        monkeypatch.setattr(storage, "_user_data_dir", Path.home())
+        with pytest.raises(HTTPException) as exc_info:
+            validate_path_under_cwd(str(Path.home() / "Documents" / "flow.yaml"))
+        assert exc_info.value.status_code == 403
+
+    def test_hub_server_allows_the_storage_folder(self, monkeypatch):
+        from shared.storage_config import storage
+
+        self._hub(monkeypatch)
+        assert validate_path_under_cwd(str(storage.flows_directory / "flow.yaml")) is not None
+
+    def test_docker_still_allows_its_user_data_folder(self, monkeypatch):
+        from flowfile_core.configs import settings
+        from shared.storage_config import storage
+
+        monkeypatch.setattr(settings, "FLOWFILE_MODE", "docker")
+        monkeypatch.setenv("FLOWFILE_MODE", "docker")
+        assert validate_path_under_cwd(str(storage.user_data_directory / "flow.yaml")) is not None
+
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    def test_server_refuses_a_relative_flow_file_outside_the_flow_folders(self, tmp_path, monkeypatch, mode):
+        from flowfile_core.flowfile.manage.io_flowfile import _validate_flow_path
+
+        (tmp_path / "rel.yaml").write_text("flow: {}", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        assert _validate_flow_path(Path("rel.yaml")) == (tmp_path / "rel.yaml").resolve()
+        monkeypatch.setenv("FLOWFILE_MODE", mode)
+        with pytest.raises(ValueError, match="Relative paths must be within"):
+            _validate_flow_path(Path("rel.yaml"))
