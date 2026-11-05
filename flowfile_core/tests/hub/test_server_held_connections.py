@@ -374,8 +374,10 @@ def test_a_database_step_on_a_hub_server_whose_password_this_server_keeps_is_ref
 ):
     graph = make_graph(9877, execution_location=TEAM)
     add_database_reader(graph, 1, user_id, databases["postgres"])
+    sign_in_through_hub(hub, HUB_USER_ID)
     try:
-        run_info = graph.run_graph()
+        with node_tokens.acting_for(HUB_USER_ID):
+            run_info = graph.run_graph()
 
         assert run_info.success is False
         (row,) = run_info.node_step_result
