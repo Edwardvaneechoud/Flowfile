@@ -136,7 +136,7 @@ from flowfile_core.schemas.catalog_schema import (
     VizSourceDescriptor,
 )
 from flowfile_core.schemas.sharing_schema import AccessInfo
-from shared.storage_config import storage
+from shared.storage_config import registered_flow_path, storage
 
 logger = logging.getLogger(__name__)
 viz_logger = logger.getChild("viz")
@@ -796,6 +796,7 @@ class CatalogService:
                 ROOT_CATALOG.name,
             )
             return None
+        flow_path = registered_flow_path(flow_path)
         existing = self.repo.get_flow_by_path(flow_path)
         if existing:
             return None

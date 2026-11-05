@@ -28,6 +28,15 @@ def _is_docker_mode() -> bool:
     return os.environ.get("FLOWFILE_MODE") == "docker"
 
 
+def is_server_mode() -> bool:
+    """A multi-user server: the docker image or a node behind a hub (``FLOWFILE_MODE`` docker or hub).
+
+    The same reading as flowfile_core's ``is_server_mode``, kept here so the scheduler, which runs without
+    flowfile_core, applies the same flow-folder rule as core.
+    """
+    return os.environ.get("FLOWFILE_MODE") in ("docker", "hub")
+
+
 class FlowfileStorage:
     """Centralized storage manager for Flowfile applications."""
 
@@ -385,6 +394,60 @@ class FlowfileStorage:
 
 
 storage = FlowfileStorage()
+
+
+def flow_storage_directories() -> list[Path]:
+    """Where a server's flow files live: the flows, uploads and temp flows folders."""
+    return [storage.flows_directory, storage.uploads_directory, storage.temp_directory_for_flows]
+
+
+def _inside_flow_folders(path: Path) -> bool:
+    return any(path.is_relative_to(directory.resolve()) for directory in flow_storage_directories())
+
+
+def may_touch_flow_file(flow_path: Path) -> bool:
+    """Whether the catalog may read, run or delete the file a flow registration points at.
+
+    A registration stores whatever path it was given. On a multi-user server the catalog therefore acts
+    only on files inside the flows, uploads and temp flows folders, compared on resolved paths so a
+    symlink cannot lead out; a desktop's own flows live anywhere on the person's machine and are all
+    theirs to touch.
+    """
+    return not is_server_mode() or _inside_flow_folders(flow_path.resolve())
+
+
+def require_flow_in_storage(flow_path: Path) -> Path:
+    """``flow_path`` resolved, the one path to act on; on a multi-user server it must lie inside the flow folders.
+
+    Every read, run and write of a registered flow's file goes through here, so none reaches past the folders.
+    """
+    resolved = flow_path.resolve()
+    if is_server_mode() and not _inside_flow_folders(resolved):
+        raise ValueError("the flow's file is outside the server's flow folders")
+    return resolved
+
+
+def registered_flow_path(flow_path: str) -> str:
+    """The path a flow registration stores for ``flow_path``.
+
+    On a multi-user server the resolved path, refused outside the flow folders, so no registration points
+    anywhere else; a desktop stores the path as given.
+    """
+    if not is_server_mode():
+        return flow_path
+    return str(require_flow_in_storage(Path(flow_path)))
+
+
+def removable_flow_file(flow_path: Path) -> Path | None:
+    """The path to remove for a registration at ``flow_path``, or None when a server may not remove it.
+
+    Both the path's own place (a link's location, not only its target) and the file it leads to must lie
+    inside the flow folders; the removal then takes this path and no other.
+    """
+    location = flow_path.parent.resolve() / flow_path.name
+    if is_server_mode() and not (_inside_flow_folders(location) and _inside_flow_folders(location.resolve())):
+        return None
+    return location
 
 
 # Convenience functions for backward compatibility

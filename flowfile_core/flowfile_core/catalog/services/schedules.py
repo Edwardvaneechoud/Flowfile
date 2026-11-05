@@ -354,9 +354,14 @@ class ScheduleService:
             schedule.last_trigger_table_updated_at = table_updated_at
             self.repo.update_schedule(schedule)
 
-            run = self._runs.spawn_flow_run(
-                flow, user_id=schedule.owner_id, run_type="scheduled", schedule_id=schedule.id
-            )
+            try:
+                run = self._runs.spawn_flow_run(
+                    flow, user_id=schedule.owner_id, run_type="scheduled", schedule_id=schedule.id
+                )
+            except ValueError as exc:
+                # A flow the server may not run (its file lies outside the flow folders) loses only its own push.
+                logger.warning("Skipping push trigger for flow %s (schedule %s): %s", flow.id, schedule.id, exc)
+                continue
             if run.pid is not None:
                 launched += 1
 

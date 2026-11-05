@@ -65,7 +65,7 @@ from flowfile_core.routes.compute_backends import ComputeBackendOut, listed_back
 from flowfile_core.routes.routes import get_flow_or_404
 from flowfile_core.schemas import schemas
 from shared._version import get_version
-from shared.storage_config import storage
+from shared.storage_config import registered_flow_path, storage
 
 router = APIRouter()
 
@@ -523,6 +523,10 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
         raise _hub_error(e) from e
 
     flow_path, registered = _local_copy_path(checked_out["flow_uuid"], checked_out["name"])
+    try:
+        flow_path = registered_flow_path(flow_path)
+    except ValueError as err:
+        raise HTTPException(status_code=422, detail=str(err)) from None
     namespace_id = None if registered else _local_flows_namespace_id()
     try:
         require_flow_save_permitted(flow_path, namespace_id, current_user)

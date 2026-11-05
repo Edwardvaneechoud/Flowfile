@@ -68,7 +68,7 @@ from flowfile_core.secret_manager.secret_manager import (
     get_encrypted_secret,
     store_secret,
 )
-from shared.storage_config import storage
+from shared.storage_config import registered_flow_path, storage
 
 logger = logging.getLogger(__name__)
 
@@ -767,11 +767,17 @@ def _import_flow(data: dict, owner_id: int) -> str | None:
                 logger.warning("Project import: flow_uuid %s already registered; minting a fresh uuid", flow_uuid)
                 flow_uuid = str(uuid.uuid4())
                 data = {**data, "flow_uuid": flow_uuid}
-            runtime_path = (
-                Path(existing.flow_path)
-                if existing
-                else storage.flows_directory / "project" / f"{safe_stem(flowfile_name)}_{flow_uuid[:8]}.flow.yaml"
-            )
+            if existing is None:
+                runtime_path = (
+                    storage.flows_directory / "project" / f"{safe_stem(flowfile_name)}_{flow_uuid[:8]}.flow.yaml"
+                )
+            else:
+                try:
+                    runtime_path = Path(registered_flow_path(existing.flow_path))
+                except ValueError as exc:
+                    # On a multi-user server the import never writes outside the flow folders; the flow is skipped.
+                    logger.warning("Project import: flow %s not written — %s", flow_uuid, exc)
+                    return None
         write_yaml(runtime_path, data)  # flow_uuid / catalog_name / namespace ignored by the FlowfileData loader
         # Load (with owner_id so cloud connections resolve) but don't open an editor session: project
         # import must not auto-open flows on the canvas. The user opens a flow explicitly via /import_flow/.

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from sqlalchemy import case, func, or_, select
@@ -499,7 +500,11 @@ class SQLAlchemyCatalogRepository:
         return self._db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
 
     def count_flows_by_path(self, flow_path: str) -> int:
-        return self._db.query(FlowRegistration).filter_by(flow_path=flow_path).count()
+        """Registrations whose file is ``flow_path``, compared on resolved paths: another spelling of the
+        same file (``flows/./a.yaml``, a link) is the same file."""
+        target = Path(flow_path).resolve()
+        rows = self._db.query(FlowRegistration.flow_path).filter(FlowRegistration.flow_path.isnot(None)).all()
+        return sum(1 for (stored,) in rows if Path(stored).resolve() == target)
 
     def list_flows(
         self,

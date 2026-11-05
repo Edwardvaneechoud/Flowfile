@@ -34,6 +34,7 @@ from flowfile_core.database.models import (
 from flowfile_core.project import manifest
 from flowfile_core.project.normalize import atomic_write, normalize_flow_data, safe_stem, unique_stem, write_yaml
 from flowfile_core.project.secrets_resolver import make_placeholder
+from shared.storage_config import may_touch_flow_file
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +80,10 @@ def _secret_name(db: Session, secret_id: int | None) -> str | None:
 
 
 def _load_flow_data(flow_path: str) -> dict | None:
+    """The registered flow's document, or None when it is missing, not yaml/json, or (on a multi-user server)
+    outside the server's flow folders, which the project never reads from."""
     p = Path(flow_path)
-    if not p.exists() or p.suffix.lower() not in (".yaml", ".yml", ".json"):
+    if not may_touch_flow_file(p) or not p.exists() or p.suffix.lower() not in (".yaml", ".yml", ".json"):
         return None
     text = p.read_text(encoding="utf-8")
     return json.loads(text) if p.suffix.lower() == ".json" else yaml.safe_load(text)

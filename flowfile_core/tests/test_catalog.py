@@ -34,6 +34,7 @@ from flowfile_core.flowfile.catalog_helpers import auto_register_flow
 from flowfile_core.routes.routes import flow_file_handler
 from shared.run_logs import run_log_path
 from shared.storage_config import storage
+from tests.flowfile_core_test_utils import as_server
 
 # Helpers
 
@@ -96,24 +97,6 @@ def run_log_file():
 
     for path in written:
         path.unlink(missing_ok=True)
-
-
-def _as_server(monkeypatch, mode: str) -> None:
-    """Make the catalog's flow-file checks see a multi-user server in ``mode`` (``docker`` or ``hub``).
-
-    The test client signs in as the desktop (electron) and its token would not verify under another
-    ``FLOWFILE_MODE``, so only the check itself runs under that mode, through the real ``is_server_mode``.
-    """
-    from unittest import mock
-
-    from flowfile_core.configs import settings
-    from flowfile_core.flowfile.manage import io_flowfile
-
-    def in_mode() -> bool:
-        with mock.patch.dict(os.environ, {"FLOWFILE_MODE": mode}):
-            return settings.is_server_mode()
-
-    monkeypatch.setattr(io_flowfile, "is_server_mode", in_mode)
 
 
 # Namespace tests
@@ -388,7 +371,7 @@ class TestFlowRegistration:
         created = client.post(
             "/catalog/flows", json={"name": "outside", "flow_path": str(outside), "namespace_id": ns_id}
         ).json()
-        _as_server(monkeypatch, mode)
+        as_server(monkeypatch, mode)
         with caplog.at_level(logging.WARNING, logger="flowfile_core.catalog.services.flows"):
             resp = client.delete(f"/catalog/flows/{created['id']}", params={"delete_file": True})
         assert resp.status_code == 204
@@ -407,12 +390,88 @@ class TestFlowRegistration:
             created = client.post(
                 "/catalog/flows", json={"name": "inside", "flow_path": str(inside), "namespace_id": ns_id}
             ).json()
-            _as_server(monkeypatch, mode)
+            as_server(monkeypatch, mode)
             resp = client.delete(f"/catalog/flows/{created['id']}", params={"delete_file": True})
             assert resp.status_code == 204
             assert not inside.exists()
         finally:
             inside.unlink(missing_ok=True)
+
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    def test_server_delete_leaves_a_link_whose_place_or_target_is_outside(self, tmp_path, monkeypatch, mode):
+        """The path checked is the path removed: a link outside pointing in and a link inside pointing out both stay."""
+        ns_id = self._make_namespace()
+        storage.flows_directory.mkdir(parents=True, exist_ok=True)
+        inside = storage.flows_directory / f"link_target_{os.getpid()}.yaml"
+        inside.write_text("flow: {}")
+        outside = tmp_path / "server_config.yaml"
+        outside.write_text("token: canary-7f3a\n")
+        link_out = tmp_path / "points_in.yaml"
+        link_out.symlink_to(inside)
+        link_in = storage.flows_directory / f"points_out_{os.getpid()}.yaml"
+        link_in.symlink_to(outside)
+        try:
+            regs = [
+                client.post("/catalog/flows", json={"name": n, "flow_path": str(p), "namespace_id": ns_id}).json()
+                for n, p in (("points_in", link_out), ("points_out", link_in))
+            ]
+            as_server(monkeypatch, mode)
+            for reg in regs:
+                assert client.delete(f"/catalog/flows/{reg['id']}", params={"delete_file": True}).status_code == 204
+            assert link_out.is_symlink() and inside.exists()
+            assert link_in.is_symlink() and outside.exists()
+        finally:
+            link_in.unlink(missing_ok=True)
+            inside.unlink(missing_ok=True)
+
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    def test_server_refuses_to_register_a_flow_outside_the_flow_folders(self, tmp_path, monkeypatch, mode):
+        """Registration is where an outside path would get in, so a server refuses it there first."""
+        ns_id = self._make_namespace()
+        outside = tmp_path / "elsewhere.yaml"
+        outside.write_text("flow: {}")
+        as_server(monkeypatch, mode)
+        resp = client.post(
+            "/catalog/flows", json={"name": "outside", "flow_path": str(outside), "namespace_id": ns_id}
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["detail"] == "the flow's file is outside the server's flow folders"
+        assert client.get("/catalog/flows").json() == []
+
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    def test_server_stores_a_registered_path_resolved(self, monkeypatch, mode):
+        """One spelling per file, so a second registration cannot hide behind ``flows/sub/../a.yaml``."""
+        ns_id = self._make_namespace()
+        storage.flows_directory.mkdir(parents=True, exist_ok=True)
+        spelled = storage.flows_directory / "sub" / ".." / f"resolved_{os.getpid()}.yaml"
+        as_server(monkeypatch, mode)
+        resp = client.post(
+            "/catalog/flows", json={"name": "spelled", "flow_path": str(spelled), "namespace_id": ns_id}
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["flow_path"] == str(storage.flows_directory.resolve() / spelled.name)
+
+    def test_desktop_stores_a_registered_path_as_given(self):
+        ns_id = self._make_namespace()
+        resp = client.post(
+            "/catalog/flows", json={"name": "given", "flow_path": "/tmp/sub/../given.yaml", "namespace_id": ns_id}
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["flow_path"] == "/tmp/sub/../given.yaml"
+
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    def test_server_does_not_say_whether_a_file_outside_the_flow_folders_exists(self, tmp_path, monkeypatch, mode):
+        """A registration from before the rule may point anywhere; its ``file_exists`` tells nobody what is there."""
+        ns_id = self._make_namespace()
+        outside = tmp_path / "exists.yaml"
+        outside.write_text("flow: {}")
+        created = client.post(
+            "/catalog/flows", json={"name": "exists", "flow_path": str(outside), "namespace_id": ns_id}
+        ).json()
+        assert created["file_exists"] is True
+        as_server(monkeypatch, mode)
+        assert client.get(f"/catalog/flows/{created['id']}").json()["file_exists"] is False
+        assert [f["file_exists"] for f in client.get("/catalog/flows").json()] == [False]
 
     def test_delete_flow_detaches_runs_preserves_uuid(self):
         """Deleting a flow nulls FlowRun.registration_id but preserves flow_uuid.
@@ -767,7 +826,7 @@ class TestRuns:
         outside = tmp_path / "outside.yaml"
         outside.write_text("flow: {}")
         reg_id = self._register(outside)
-        _as_server(monkeypatch, mode)
+        as_server(monkeypatch, mode)
         resp = client.post(f"/catalog/flows/{reg_id}/run")
         assert resp.status_code == 422, resp.text
         assert resp.json()["detail"] == "the flow's file is outside the server's flow folders"
@@ -775,7 +834,8 @@ class TestRuns:
         with get_db_context() as db:
             assert db.query(FlowRun).filter_by(registration_id=reg_id).count() == 0
 
-    def test_server_runs_a_flow_inside_the_flow_folders(self, monkeypatch):
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    def test_server_runs_a_flow_inside_the_flow_folders(self, monkeypatch, mode):
         spawned: list[str] = []
         monkeypatch.setattr(
             "flowfile_core.catalog.services.runs.spawn_flow_subprocess",
@@ -786,10 +846,10 @@ class TestRuns:
         inside.write_text("flow: {}")
         try:
             reg_id = self._register(inside)
-            _as_server(monkeypatch, "docker")
+            as_server(monkeypatch, mode)
             resp = client.post(f"/catalog/flows/{reg_id}/run")
             assert resp.status_code == 200, resp.text
-            assert spawned == [str(inside)]
+            assert spawned == [str(inside.resolve())]
         finally:
             inside.unlink(missing_ok=True)
 
@@ -2043,6 +2103,45 @@ class TestPushTableTrigger:
             runs = db.query(FlowRun).filter_by(registration_id=flow_id, run_type="scheduled").all()
             assert len(runs) == 1
 
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    def test_push_trigger_skips_a_refused_flow_and_goes_on(self, monkeypatch, mode):
+        """On a server a schedule whose flow lies outside the flow folders is skipped; the next one still fires."""
+        schema_id, outside_flow_id, table_id, _schedule_id, parquet_path = self._setup_table_and_schedule()
+        storage.flows_directory.mkdir(parents=True, exist_ok=True)
+        inside = storage.flows_directory / f"push_inside_{os.getpid()}.yaml"
+        inside.write_text("flow: {}")
+        with get_db_context() as db:
+            flow = FlowRegistration(name="inside_flow", flow_path=str(inside), namespace_id=schema_id, owner_id=1)
+            db.add(flow)
+            db.commit()
+            db.refresh(flow)
+            inside_flow_id = flow.id
+            db.add(
+                FlowSchedule(
+                    registration_id=flow.id,
+                    owner_id=1,
+                    enabled=True,
+                    schedule_type="table_trigger",
+                    trigger_table_id=table_id,
+                )
+            )
+            db.commit()
+        spawned: list[str] = []
+        monkeypatch.setattr(
+            "flowfile_core.catalog.services.runs.spawn_flow_subprocess",
+            lambda path, run_id, **kw: spawned.append(path) or 4242,
+        )
+        as_server(monkeypatch, mode)
+        try:
+            with get_db_context() as db:
+                svc = CatalogService(SQLAlchemyCatalogRepository(db))
+                assert svc._fire_table_trigger_schedules(table_id, datetime.now(timezone.utc)) == 1
+                assert db.query(FlowRun).filter_by(registration_id=outside_flow_id).count() == 0
+                assert db.query(FlowRun).filter_by(registration_id=inside_flow_id).count() == 1
+            assert spawned == [str(inside.resolve())]
+        finally:
+            inside.unlink(missing_ok=True)
+
     def test_push_trigger_skips_active_run(self, monkeypatch):
         """If the flow already has an active run, no new FlowRun should be created."""
         from datetime import datetime, timezone
@@ -2118,6 +2217,38 @@ class TestPushTableTrigger:
 
 
 # Trigger arming, metadata-edit suppression, scheduler-run visibility
+
+
+class TestSqlSaveAsFlowOnAServer:
+    """``POST /catalog/sql/save-as-flow`` writes into the flows folder in every mode, so a server can run it."""
+
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    def test_saved_query_lands_in_the_flows_folder_and_runs(self, monkeypatch, mode):
+        cat = client.post("/catalog/namespaces", json={"name": "SqlCat"}).json()
+        ns_id = client.post("/catalog/namespaces", json={"name": "SqlSchema", "parent_id": cat["id"]}).json()["id"]
+        spawned: list[str] = []
+        monkeypatch.setattr(
+            "flowfile_core.catalog.services.runs.spawn_flow_subprocess",
+            lambda path, run_id, **kw: spawned.append(path) or 4242,
+        )
+        as_server(monkeypatch, mode)
+        saved = client.post(
+            "/catalog/sql/save-as-flow", json={"query": "SELECT 1 AS one", "name": "one", "namespace_id": ns_id}
+        )
+        assert saved.status_code == 200, saved.text
+        reg_id = saved.json()["flow_id"]
+        registration = client.get(f"/catalog/flows/{reg_id}").json()
+        flow_path = Path(registration["flow_path"])
+        try:
+            assert flow_path.is_relative_to(storage.flows_directory.resolve())
+            assert registration["file_exists"] is True
+            code = client.get(f"/catalog/flows/{reg_id}/code", params={"format": "yaml"}).json()
+            assert code["error"] is None and "sql_query" in code["content"]
+            run = client.post(f"/catalog/flows/{reg_id}/run")
+            assert run.status_code == 200, run.text
+            assert spawned == [str(flow_path)]
+        finally:
+            flow_path.unlink(missing_ok=True)
 
 
 class TestTriggerArmingAndRunVisibility:
@@ -3460,20 +3591,21 @@ class TestFlowInterfaceEndpoint:
         secret = tmp_path / "server_config.yaml"
         secret.write_text("token: canary-7f3a\n", encoding="utf-8")
         reg_id = self._register(secret, "outside_flow")
-        _as_server(monkeypatch, mode)
+        as_server(monkeypatch, mode)
         response = client.get(f"/catalog/flows/{reg_id}/interface")
         assert response.status_code == 422, response.text
         assert response.json()["detail"] == "the flow's file is outside the server's flow folders"
         assert "canary-7f3a" not in response.text
 
-    def test_server_reads_a_flow_inside_the_flow_folders(self, monkeypatch):
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    def test_server_reads_a_flow_inside_the_flow_folders(self, monkeypatch, mode):
         _cleanup_catalog()
         storage.flows_directory.mkdir(parents=True, exist_ok=True)
         flow_path = storage.flows_directory / f"iface_inside_{os.getpid()}.yaml"
         self._build_subflow_file(flow_path)
         try:
             reg_id = self._register(flow_path, "iface_inside")
-            _as_server(monkeypatch, "docker")
+            as_server(monkeypatch, mode)
             body = client.get(f"/catalog/flows/{reg_id}/interface").json()
             assert body["file_exists"] is True
             assert [p["name"] for p in body["inputs"]] == ["customers"]
@@ -3611,7 +3743,7 @@ class TestFlowCode:
         secret = tmp_path / "server_config.json"
         secret.write_text('{"token": "canary-7f3a"}', encoding="utf-8")
         reg_id = self._register(secret)
-        _as_server(monkeypatch, mode)
+        as_server(monkeypatch, mode)
         resp = client.get(f"/catalog/flows/{reg_id}/code", params={"format": fmt})
         assert resp.status_code == 200, resp.text
         body = resp.json()
@@ -3627,19 +3759,20 @@ class TestFlowCode:
         link.symlink_to(secret)
         try:
             reg_id = self._register(link)
-            _as_server(monkeypatch, mode)
+            as_server(monkeypatch, mode)
             resp = client.get(f"/catalog/flows/{reg_id}/code", params={"format": "yaml"})
             assert resp.json()["content"] is None
             assert "canary-7f3a" not in resp.text
         finally:
             link.unlink()
 
-    def test_server_reads_a_flow_in_the_flows_folder(self, monkeypatch):
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    def test_server_reads_a_flow_in_the_flows_folder(self, monkeypatch, mode):
         flow_path = storage.flows_directory / f"code_src_{os.getpid()}.yaml"
         self._save_flow(flow_path)
         try:
             reg_id = self._register(flow_path)
-            _as_server(monkeypatch, "docker")
+            as_server(monkeypatch, mode)
             for fmt in ("yaml", "flowframe"):
                 body = client.get(f"/catalog/flows/{reg_id}/code", params={"format": fmt}).json()
                 assert body["error"] is None and body["content"], (fmt, body)

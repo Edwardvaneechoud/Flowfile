@@ -145,7 +145,7 @@ from flowfile_core.schemas.catalog_schema import (
     VisualizationUpdate,
 )
 from flowfile_scheduler.engine import STALE_THRESHOLD
-from shared.storage_config import storage
+from shared.storage_config import require_flow_in_storage, storage
 
 router = APIRouter(
     prefix="/catalog",
@@ -463,7 +463,6 @@ def get_flow_interface(
     multi-user server a file outside the flow folders is refused (422), not read.
     """
     from flowfile_core.flowfile import subflow
-    from flowfile_core.flowfile.manage.io_flowfile import require_flow_in_storage
 
     registration = service.get_flow(registration_id=flow_id, user_id=current_user.id)
     path = require_flow_in_storage(Path(registration.flow_path))
@@ -496,14 +495,16 @@ def get_flow_code(
     """
     from flowfile_core.flowfile.code_generator import export_flow_to_flowframe, export_flow_to_polars
     from flowfile_core.flowfile.manage.ephemeral_graph import ephemeral_flow_graph
-    from flowfile_core.flowfile.manage.io_flowfile import require_flow_in_storage
     from flowfile_core.notebook.render import render
 
     registration = service.get_flow(registration_id=flow_id, user_id=current_user.id)
+    try:
+        path = require_flow_in_storage(Path(registration.flow_path))
+    except ValueError as exc:
+        return FlowCodeOut(registration_id=flow_id, format=format, error=str(exc))
     if not registration.file_exists:
         return FlowCodeOut(registration_id=flow_id, format=format, file_exists=False)
     try:
-        path = require_flow_in_storage(Path(registration.flow_path))
         if format == "yaml":
             if path.suffix.lower() not in (".yaml", ".yml", ".json"):
                 raise ValueError("the flow is stored in the legacy binary format; save it from the designer first")

@@ -561,7 +561,9 @@ def test_open_on_a_shared_core_refuses_to_name_or_replace_another_users_local_co
     _, stranger = shared_core["stranger"]
     flow_uuid = "99999999-8888-4777-8666-555555555555"
     hub.seed(flow_uuid, "Payroll", _new_flow(owner_id, None).get_flowfile_data().model_dump(mode="json"))
-    owners_copy = tmp_path / "owners_copy.yaml"
+    # A shared core registers a flow only inside its flow folders, so the owner's copy lives there.
+    storage.flows_directory.mkdir(parents=True, exist_ok=True)
+    owners_copy = storage.flows_directory / f"owners_copy_{flow_uuid[:8]}.yaml"
     owners_copy.write_text("flowfile_id: 1\n", encoding="utf-8")
     with get_db_context() as db:
         namespace_id = CatalogService(SQLAlchemyCatalogRepository(db)).ensure_local_flows_namespace().id
@@ -582,6 +584,26 @@ def test_open_on_a_shared_core_refuses_to_name_or_replace_another_users_local_co
     assert replaced.status_code == 200, replaced.text
     assert _saved_origin(owners_copy) == {"hub_url": HUB_URL, "flow_uuid": flow_uuid, "version": 1}
     assert _registration(uuid=flow_uuid) == registration
+    owners_copy.unlink(missing_ok=True)
+
+
+def test_open_on_a_shared_core_never_writes_over_a_local_copy_outside_the_flow_folders(shared_core, hub, tmp_path):
+    """A registration from before the rule may still point elsewhere; the hub's open leaves that file alone."""
+    owner_id, owner = shared_core["owner"]
+    flow_uuid = "99999999-8888-4777-8666-444444444444"
+    hub.seed(flow_uuid, "Ledger", _new_flow(owner_id, None).get_flowfile_data().model_dump(mode="json"))
+    elsewhere = tmp_path / "elsewhere.yaml"
+    elsewhere.write_text("token: canary-7f3a\n", encoding="utf-8")
+    with get_db_context() as db:
+        db.add(
+            db_models.FlowRegistration(flow_uuid=flow_uuid, name="Ledger", flow_path=str(elsewhere), owner_id=owner_id)
+        )
+        db.commit()
+    for body in ({"flow_uuid": flow_uuid}, {"flow_uuid": flow_uuid, "replace": True}):
+        refused = owner.post("/hub_client/open", json=body)
+        assert refused.status_code == 422, refused.text
+        assert refused.json()["detail"] == "the flow's file is outside the server's flow folders"
+    assert elsewhere.read_text(encoding="utf-8") == "token: canary-7f3a\n"
 
 
 def test_open_of_an_unknown_flow_or_a_malformed_uuid_is_refused(connected, hub):

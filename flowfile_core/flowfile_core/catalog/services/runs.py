@@ -25,6 +25,7 @@ from flowfile_core.schemas.catalog_schema import (
     PaginatedFlowRuns,
 )
 from shared.run_logs import SUBPROCESS_RUN_TYPES, run_log_path
+from shared.storage_config import require_flow_in_storage
 from shared.subprocess_utils import spawn_flow_subprocess
 
 if TYPE_CHECKING:
@@ -317,9 +318,7 @@ class FlowRunService:
         file lies outside the server's flow folders is refused before any run
         record exists.
         """
-        from flowfile_core.flowfile.manage.io_flowfile import require_flow_in_storage
-
-        require_flow_in_storage(Path(flow.flow_path))
+        flow_path = str(require_flow_in_storage(Path(flow.flow_path)))
         now = datetime.now(timezone.utc)
         run = FlowRun(
             registration_id=flow.id,
@@ -334,9 +333,7 @@ class FlowRunService:
         )
         run = self.repo.create_run(run)
 
-        pid = self._spawn_flow_subprocess(
-            flow.flow_path, run.id, suppress_telemetry=suppress_telemetry, backend=backend
-        )
+        pid = self._spawn_flow_subprocess(flow_path, run.id, suppress_telemetry=suppress_telemetry, backend=backend)
         if pid is not None:
             run.pid = pid
         else:

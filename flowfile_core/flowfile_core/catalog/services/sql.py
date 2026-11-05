@@ -242,7 +242,7 @@ class SqlService:
             "nodes": nodes,
         }
 
-        flows_dir = storage.user_data_directory / "flows"
+        flows_dir = storage.flows_directory
         flows_dir.mkdir(parents=True, exist_ok=True)
         flow_path = flows_dir / f"{name.replace(' ', '_')}_{flow_id}.json"
         flow_path.write_text(json.dumps(flow_data, indent=2), encoding="utf-8")

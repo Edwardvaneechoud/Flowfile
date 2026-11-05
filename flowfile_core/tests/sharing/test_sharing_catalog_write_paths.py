@@ -64,12 +64,13 @@ def flow_session_cleanup():
 
 @pytest.fixture
 def tmp_flow_path():
-    """Unique flow path under the cwd sandbox; unlinked on teardown."""
-    _TMP_FLOW_DIR.mkdir(parents=True, exist_ok=True)
+    """Unique flow path inside the server's flows folder (a registered flow lives nowhere else on a server);
+    unlinked on teardown."""
+    storage.flows_directory.mkdir(parents=True, exist_ok=True)
     created: list[Path] = []
 
     def _make(stem: str) -> str:
-        path = _TMP_FLOW_DIR / f"{stem}.yaml"
+        path = storage.flows_directory / f"{stem}.yaml"
         path.unlink(missing_ok=True)
         created.append(path)
         return str(path)
@@ -908,8 +909,8 @@ def test_flow_manager_can_resave_in_place_without_namespace_write(
 ):
     """A user who manages a flow may re-save it in place even with only read access
     to its namespace — an in-place update needs flow-manage, not namespace-create."""
-    _TMP_FLOW_DIR.mkdir(parents=True, exist_ok=True)
-    flow_path = str(_TMP_FLOW_DIR / "alice_shared_flow.yaml")
+    storage.flows_directory.mkdir(parents=True, exist_ok=True)
+    flow_path = str(storage.flows_directory / "alice_shared_flow.yaml")
     Path(flow_path).unlink(missing_ok=True)
     try:
         alice = client_for("alice")

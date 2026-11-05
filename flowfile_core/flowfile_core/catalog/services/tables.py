@@ -74,7 +74,7 @@ from flowfile_core.schemas.catalog_schema import (
     scd2_system_columns_missing,
 )
 from shared.path_utils import contained_path
-from shared.storage_config import storage
+from shared.storage_config import require_flow_in_storage, storage
 
 if TYPE_CHECKING:
     from flowfile_core.catalog.access import AccessResolver
@@ -470,7 +470,6 @@ class TableService:
             return None
 
         from flowfile_core.flowfile.handler import open_flow
-        from flowfile_core.flowfile.manage.io_flowfile import require_flow_in_storage
 
         flow_graph = resolve_or_log(
             lambda: open_flow(require_flow_in_storage(Path(producer_file_path))),

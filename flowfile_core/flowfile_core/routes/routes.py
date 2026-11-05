@@ -142,7 +142,7 @@ from flowfile_core.utils import excel_file_manager
 from flowfile_core.utils.fileManager import create_dir
 from flowfile_core.utils.utils import camel_case_to_snake_case
 from shared.db_dialects import KNOWN_DIALECT_NAMES, DialectInfo, dialect_catalog
-from shared.storage_config import storage
+from shared.storage_config import registered_flow_path, storage
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
@@ -1466,6 +1466,17 @@ def _require_flow_save_permitted(flow_path: str | None, namespace_id: int | None
         raise HTTPException(status_code=403, detail=str(err)) from None
 
 
+def _require_registrable_flow_path(flow_path: str | None) -> None:
+    """422 before any write when the catalog would refuse to register a flow at ``flow_path``: on a
+    multi-user server a registered flow lives inside the server's flow folders."""
+    if flow_path is None:
+        return
+    try:
+        registered_flow_path(flow_path)
+    except ValueError as err:
+        raise HTTPException(status_code=422, detail=str(err)) from None
+
+
 @router.post("/editor/create_flow/", tags=["editor"])
 def create_flow(
     flow_path: str = None,
@@ -1509,6 +1520,8 @@ def create_flow(
     if namespace_id is not None and not namespace_exists(namespace_id):
         raise HTTPException(404, "Namespace not found")
     _require_flow_save_permitted(flow_path, namespace_id, current_user)
+    if register_in_catalog:
+        _require_registrable_flow_path(flow_path)
     if namespace_id is not None and flow_path is not None:
         # Before add_flow writes YAML, so a rejected create leaves no file or session behind.
         reg_name = name or Path(flow_path).stem
@@ -2423,6 +2436,8 @@ def _save_flow_impl(
 
     # Before any YAML write: a refused save leaves no orphan and overwrites no other user's flow.
     _require_flow_save_permitted(flow_path, namespace_id, current_user)
+    if (is_new_path and register_in_catalog) or namespace_id is not None:
+        _require_registrable_flow_path(flow_path)
 
     if is_new_path:
         user_id = current_user.id if current_user else None
@@ -2567,6 +2582,7 @@ def save_flow_to_catalog(
     flow_path = _resolve_catalog_save_path(flow_id, safe_stem, own_registration)
     if own_registration is not None:
         _require_flow_save_permitted(flow_path, namespace_id, current_user)
+    _require_registrable_flow_path(flow_path)
 
     current_path = flow.flow_settings.path or flow.flow_settings.save_location
     normalized_current = validate_path_under_cwd(current_path) if current_path else None

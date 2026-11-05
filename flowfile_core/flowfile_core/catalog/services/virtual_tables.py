@@ -49,7 +49,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
 from flowfile_core.flowfile.parameter_resolver import node_parameters_resolved
 from flowfile_core.schemas.catalog_schema import CatalogTableMaterializeResult, CatalogTableOut
 from shared.delta_utils import validate_catalog_path
-from shared.storage_config import storage
+from shared.storage_config import require_flow_in_storage, storage
 
 if TYPE_CHECKING:
     from flowfile_core.catalog.services.sql import SqlService
@@ -441,7 +441,7 @@ class VirtualTableService:
             run_location = current_context().backend_id
         if node_logger is None:
             node_logger = FlowLogger(-1).get_node_logger(-1)
-        from flowfile_core.flowfile.manage.io_flowfile import open_flow, require_flow_in_storage
+        from flowfile_core.flowfile.manage.io_flowfile import open_flow
 
         table = self.repo.get_table(table_id)
         if table is None or table.table_type != "virtual":
