@@ -1,5 +1,5 @@
 """A server joined to its hub with keys of its own refuses, before the run, a step on another server of the hub whose
-stored cloud storage, Kafka or Google Analytics connection holds this server's secret.
+stored database, cloud storage, Kafka or Google Analytics connection holds this server's secret.
 
 Such a connection keeps its secret in this server's database under this server's master key, which no other server of
 the hub has. The step is refused with one sentence that names it and the connection, nothing starts and nothing is
@@ -7,6 +7,7 @@ asked of the hub's vend; the placement preview shows the same refusal. The same 
 connection with no secret, and a desktop are placed as before.
 """
 
+import sqlite3
 import uuid
 
 import pytest
@@ -16,7 +17,10 @@ from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.database_connection_manager import ga_connections
-from flowfile_core.flowfile.database_connection_manager.db_connections import store_cloud_connection
+from flowfile_core.flowfile.database_connection_manager.db_connections import (
+    store_cloud_connection,
+    store_database_connection,
+)
 from flowfile_core.flowfile.execution import registry
 from flowfile_core.flowfile.execution.placement import held_on_this_server
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
@@ -289,5 +293,163 @@ def test_a_desktop_places_such_a_step_as_before(hub, no_store, user_id, connecti
         preview = graph.preview_placement()
         assert not any("whose secret this server keeps" in r.reason for r in preview.refusals)
         assert preview.assignment[1] == preview.assignment[2] == TEAM
+    finally:
+        graph.close_flow()
+
+
+@pytest.fixture
+def databases(user_id, tmp_path):
+    """A Postgres connection and a SQLite one over a two-row ``movies`` table, each stored with its password as a
+    secret of this server's (``password_id``), both ``local_user``'s; removed afterwards."""
+    suffix = uuid.uuid4().hex[:8]
+    path = tmp_path / "shop.db"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE movies (id INTEGER, title TEXT)")
+        db.executemany("INSERT INTO movies VALUES (?, ?)", [(1, "a"), (2, "b")])
+    names = {"postgres": f"pg_{suffix}", "sqlite": f"lite_{suffix}"}
+    with get_db_context() as db:
+        store_database_connection(
+            db,
+            input_schema.FullDatabaseConnection(
+                connection_name=names["postgres"],
+                host="127.0.0.1",
+                port=1,
+                database="shop",
+                username="svc",
+                password=SecretStr("kept-here"),
+            ),
+            user_id,
+        )
+        store_database_connection(
+            db,
+            input_schema.FullDatabaseConnection(
+                connection_name=names["sqlite"],
+                database_type="sqlite",
+                database=f"sqlite:///{path}",
+                username="",
+                password=SecretStr("kept-here"),
+            ),
+            user_id,
+        )
+    yield names
+    with get_db_context() as db:
+        rows = db.query(db_models.DatabaseConnection).filter(
+            db_models.DatabaseConnection.connection_name.in_(list(names.values()))
+        )
+        secret_ids = [row.password_id for row in rows if row.password_id is not None]
+        for row in rows:
+            db.delete(row)
+        db.flush()
+        db.query(db_models.Secret).filter(db_models.Secret.id.in_(secret_ids)).delete()
+        db.commit()
+
+
+def add_database_reader(graph, node_id: int, user_id: int, connection: str) -> None:
+    add_promise(graph, node_id, "database_reader")
+    graph.add_database_reader(
+        input_schema.NodeDatabaseReader(
+            flow_id=graph.flow_id,
+            node_id=node_id,
+            user_id=user_id,
+            database_settings=input_schema.DatabaseSettings(
+                connection_mode="reference", database_connection_name=connection, table_name="movies"
+            ),
+        )
+    )
+
+
+def database_writer(user_id: int, connection: str) -> input_schema.NodeDatabaseWriter:
+    return input_schema.NodeDatabaseWriter(
+        flow_id=1,
+        node_id=2,
+        user_id=user_id,
+        database_write_settings=input_schema.DatabaseWriteSettings(
+            connection_mode="reference", database_connection_name=connection, table_name="out"
+        ),
+    )
+
+
+def test_a_database_step_on_a_hub_server_whose_password_this_server_keeps_is_refused_before_the_run(
+    joined, hub, no_store, user_id, databases
+):
+    graph = make_graph(9877, execution_location=TEAM)
+    add_database_reader(graph, 1, user_id, databases["postgres"])
+    try:
+        run_info = graph.run_graph()
+
+        assert run_info.success is False
+        (row,) = run_info.node_step_result
+        expected = sentence(1, "database", databases["postgres"])
+        assert (row.node_id, row.compute_error, row.error) == (1, "Refusal", expected)
+        assert "InvalidToken" not in row.error
+        assert graph.get_node(1).results.result_ref is None, "no node started"
+        assert ("POST", "/hub/vend") not in hub.calls, "no vend asked for the connection's password"
+        preview = graph.preview_placement()
+        reasons = [(r.node_id, r.backend_id, r.reason) for r in preview.refusals]
+        assert reasons == [(1, TEAM, expected.split(": ", 1)[1])]
+    finally:
+        graph.close_flow()
+
+
+def test_a_database_writer_on_a_hub_server_whose_password_this_server_keeps_is_refused(
+    joined, hub, no_store, user_id, databases
+):
+    class Step:
+        node_id = 2
+        setting_input = database_writer(user_id, databases["postgres"])
+
+    (refusal,) = held_on_this_server([Step()], {2: TEAM})
+    assert f'cannot run on backend "{TEAM}": {refusal.reason}' == sentence(2, "database", databases["postgres"])
+
+
+def test_an_inline_database_connection_on_a_hub_server_is_not_refused(joined, hub, no_store, user_id):
+    graph = make_graph(9878, execution_location=TEAM)
+    add_promise(graph, 1, "database_reader")
+    graph.add_database_reader(
+        input_schema.NodeDatabaseReader(
+            flow_id=graph.flow_id,
+            node_id=1,
+            user_id=user_id,
+            database_settings=input_schema.DatabaseSettings(
+                database_connection=input_schema.DatabaseConnection(
+                    host="127.0.0.1", port=1, database="shop", username="svc", password_ref="on_the_hub"
+                ),
+                table_name="movies",
+            ),
+        )
+    )
+    try:
+        assert held_on_this_server(graph.nodes, {1: TEAM}) == []
+    finally:
+        graph.close_flow()
+
+
+def test_a_database_step_on_this_servers_own_worker_runs(joined, hub, no_store, user_id, databases, monkeypatch):
+    from flowfile_worker import secrets as worker_secrets
+
+    # The hub fixture's store moved core's secure store; the worker beside core reads the same one.
+    monkeypatch.setattr(worker_secrets, "_storage", worker_secrets.SecureStorage())
+    graph = make_graph(9879, execution_location="local")
+    add_database_reader(graph, 1, user_id, databases["sqlite"])
+    try:
+        assert len(held_on_this_server(graph.nodes, {1: TEAM})) == 1, "the same step is refused on a hub server"
+        assert held_on_this_server(graph.nodes, {1: "local"}) == held_on_this_server(graph.nodes, {1: "worker"}) == []
+
+        run_info = graph.run_graph()
+
+        assert run_info.success is True, [row.error for row in run_info.node_step_result]
+        assert graph.get_node(1).get_resulting_data().to_dict() == {"id": [1, 2], "title": ["a", "b"]}
+        assert ("POST", "/hub/vend") not in hub.calls
+    finally:
+        graph.close_flow()
+
+
+def test_a_desktop_places_a_database_step_as_before(hub, no_store, user_id, databases):
+    graph = make_graph(9880, execution_location=TEAM)
+    add_database_reader(graph, 1, user_id, databases["postgres"])
+    try:
+        preview = graph.preview_placement()
+        assert not any("whose secret this server keeps" in r.reason for r in preview.refusals)
+        assert preview.assignment[1] == TEAM
     finally:
         graph.close_flow()

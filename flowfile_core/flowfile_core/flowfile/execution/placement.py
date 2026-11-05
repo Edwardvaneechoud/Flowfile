@@ -10,8 +10,8 @@ Stored connections are compared only on a backend whose ``credential_resolution`
 storage with its own identity and holds no catalog. A Run Flow node is placed with the flow it runs, and each node of
 that flow refused there refuses it. Needs are read from a resolved copy of the settings
 (``parameter_resolver.resolved_settings``), so a path on ``${dir}`` is placed by where ``dir`` points. On a server
-joined to its hub with keys of its own, a step on another server of the hub whose stored connection holds this
-server's secret is refused (``held_on_this_server``).
+joined to its hub with keys of its own, a step on another server of the hub whose stored connection (a database's
+password included) holds this server's secret is refused (``held_on_this_server``).
 
 ``SingleBackendPolicy`` puts a whole run on one backend, except the node types pinned to a backend of their own.
 ``MixedPlacementPolicy`` puts each node on the backend its own ``execution_location`` names. Edges between two backends
@@ -203,12 +203,14 @@ _SECRET_COLUMNS = (
 def held_on_this_server(nodes: list[FlowNode], assignment: Mapping[int, str]) -> list[Refusal]:
     """The steps ``assignment`` puts on a server of the hub that use a stored connection holding this server's secret.
 
-    On a server joined to its hub with keys of its own, a stored cloud storage, Kafka or Google Analytics connection
-    keeps its secret in this server's database under this server's master key, and a step carries it as that
-    ciphertext or as a reference to the connection, which no other server of the hub opens. The caller refuses such a
-    step before the run with one sentence (``remedy`` ``None``), rather than let it fail there with a bare
-    ``InvalidToken``. A step on this server's own worker, a connection that holds no secret (``env_vars``, an
-    ``aws-cli`` profile) and a step whose settings cannot be resolved are never refused here. Nothing is decrypted.
+    On a server joined to its hub with keys of its own, a stored database, cloud storage, Kafka or Google Analytics
+    connection keeps its secret in this server's database under this server's master key, and a step carries it as
+    that ciphertext or as a reference to the connection, which no other server of the hub opens. The caller refuses
+    such a step before the run with one sentence (``remedy`` ``None``), rather than let it fail there with a bare
+    ``InvalidToken`` or, for a database connection's password, read the hub's secret of the same name. A step on this
+    server's own worker, a connection that holds no secret (``env_vars``, an ``aws-cli`` profile), an inline database
+    connection (its ``password_ref`` names a secret on the hub) and a step whose settings cannot be resolved are never
+    refused here. Nothing is decrypted.
     """
     from flowfile_core.hub_client import vend
 
@@ -243,7 +245,14 @@ def _connection_holding_a_secret(node: FlowNode) -> tuple[str, str] | None:
     if user_id is None:
         return None
     with get_db_context() as db:
-        if isinstance(settings, input_schema.NodeCloudStorageReader | input_schema.NodeCloudStorageWriter):
+        if isinstance(settings, input_schema.NodeDatabaseReader | input_schema.NodeDatabaseWriter):
+            reader = isinstance(settings, input_schema.NodeDatabaseReader)
+            database = settings.database_settings if reader else settings.database_write_settings
+            name = database.database_connection_name if database.connection_mode == "reference" else None
+            row = db_connections.get_database_connection(db, name, user_id) if name else None
+            if row is not None and row.password_id is not None:
+                return "database", row.connection_name
+        elif isinstance(settings, input_schema.NodeCloudStorageReader | input_schema.NodeCloudStorageWriter):
             name = settings.cloud_storage_settings.connection_name
             row = db_connections.get_cloud_connection(db, name, user_id) if name else None
             if row is not None and any(getattr(row, column) is not None for column in _SECRET_COLUMNS):
