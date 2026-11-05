@@ -1,18 +1,18 @@
-"""The worker's command a hub's Compute page prints joins and serves as pasted, beside Flowfile desktop, end to end.
+"""The worker's command a hub's install line runs joins and serves as the line starts it, beside Flowfile desktop, end
+to end.
 
-The card's command is ``flowfile_worker --hub <hub> --join <code>``, the code a short one such as ``K7QX-M2PD``: no
-host, no name, no address and no variable; the hub's install script adds ``--port`` with a free port of this machine's,
-since beside Flowfile desktop the default one is the desktop's. Here it runs as ``python -m flowfile_worker`` in the
-environment of an operator's shell (no ``FLOWFILE_*`` variable, ``HOME`` a folder of the test's own holding a desktop's
+The hub's worker line is ``flowfile_worker --host 0.0.0.0 --hub <hub> --join <code>``, the code a short one such as
+``K7QX-M2PD``; its install line adds ``--port`` with a free port of this machine's, since beside Flowfile desktop the
+default one is the desktop's, and ``--url`` with this machine's address on that port, and writes ``node.env`` with
+``FLOWFILE_STORAGE_DIR``, a folder of the node's own. Here it runs as ``python -m flowfile_worker`` in the environment
+of an operator's shell (no other ``FLOWFILE_*`` variable, ``HOME`` a folder of the test's own holding a desktop's
 ``~/.flowfile`` with its own ``hub_node.json``), against a fake hub on this machine; the desktop's own ports are never
-bound or called. With a join token and no ``--host`` the worker listens on every interface;
-it serves on the port it is given, tells the hub this machine's address and that port in one join, answers ``GET
-/health`` there, keeps its files in ``~/.flowfile-node/<machine name>`` and leaves the desktop's file as it was; a
-restart with the same command does not join again and serves on the same port. A port the operator gives that is taken
-stops the worker before it spends its token.
+bound or called. The worker listens on every interface, serves on the port it is given, tells the hub the address it
+was given in one join, answers ``GET /health`` there, keeps its files in its storage dir and leaves the desktop's file
+as it was; a restart with the same command does not join again and serves on the same port. A port the operator gives
+that is taken stops the worker before it spends its token.
 """
 
-import ipaddress
 import json
 import os
 import socket
@@ -21,7 +21,6 @@ import sys
 import time
 from pathlib import Path
 from unittest.mock import ANY
-from urllib.parse import urlsplit
 
 import pytest
 import requests
@@ -42,13 +41,23 @@ SESSION_VARIABLES = ("TESTING", "CORE_PORT", "CORE_HOST", "WORKER_HOST", "SECURE
 
 
 def card(hub_url: str, token: str, port: int) -> tuple[str, ...]:
-    """The worker's command as the hub's card prints it, after ``flowfile_worker``, with the port its install script
-    picks."""
-    return ("--hub", hub_url, "--join", token, "--port", str(port))
+    """The worker's command as the hub's install line runs it, after ``flowfile_worker``: its worker line, with the
+    port the line picks and this machine's address on it."""
+    return ("--host", "0.0.0.0", "--hub", hub_url, "--join", token, "--port", str(port), "--url", url_of(port))
+
+
+def url_of(port: int) -> str:
+    return f"http://127.0.0.1:{port}"
+
+
+def storage_of(home: Path) -> Path:
+    """The storage dir the install line's ``node.env`` gives the node, beside the home."""
+    return home.parent / "node" / "storage"
 
 
 def shell_environment(home: Path) -> dict[str, str]:
-    """This process's environment as an operator's shell has it, with ``home`` as ``HOME``.
+    """This process's environment as an operator's shell has it, with ``home`` as ``HOME`` and the install line's
+    ``FLOWFILE_STORAGE_DIR``.
 
     The test session's own variables are left out: every ``FLOWFILE_*`` one and those it sets for its own servers.
     """
@@ -57,7 +66,7 @@ def shell_environment(home: Path) -> dict[str, str]:
         for name, value in os.environ.items()
         if not name.startswith("FLOWFILE_") and name not in SESSION_VARIABLES
     }
-    environment["HOME"] = str(home)
+    environment.update(HOME=str(home), FLOWFILE_STORAGE_DIR=str(storage_of(home)))
     return environment
 
 
@@ -105,20 +114,18 @@ def home(tmp_path) -> Path:
     return home
 
 
-def test_the_cards_command_beside_a_desktop_joins_once_and_serves_on_a_port_of_its_own(fake_hub, home):
+def test_the_install_lines_command_beside_a_desktop_joins_once_and_serves_on_a_port_of_its_own(fake_hub, home):
     token, name, port = fake_hub.mint(code=True), hub_node.default_name(), _free_port()
-    folder = home / hub_node.NODE_FILES_DIR / name
+    folder = storage_of(home)
     first = start(home, home.parent / "first.log", *card(fake_hub.url, token, port))
     try:
         url = served_at(first, fake_hub, home.parent / "first.log")
     finally:
         _stop(first)
 
-    address = urlsplit(url)
+    assert url == url_of(port)
     assert joins(fake_hub) == [{"token": token, "name": name, "worker_url": url, "core_url": None, "keys": ANY}]
-    assert not ipaddress.ip_address(address.hostname).is_loopback, url
     assert f"Starting worker service on 0.0.0.0:{port}" in (home.parent / "first.log").read_text()
-    assert address.port == port
     kept = json.loads((folder / hub_node.FILE_NAME).read_text())
     assert (kept["hub_url"], kept["name"]) == (fake_hub.url, name)
     assert (home / ".flowfile" / hub_node.FILE_NAME).read_bytes() == DESKTOP_NODE
@@ -158,6 +165,6 @@ def test_a_port_the_operator_gives_that_is_taken_stops_the_worker_before_it_spen
     assert exit_code == 1, printed
     assert f"Cannot serve on 0.0.0.0:{port}: " in printed
     assert fake_hub.calls == []
-    assert not (home / hub_node.NODE_FILES_DIR / hub_node.default_name() / hub_node.FILE_NAME).exists()
+    assert not (storage_of(home) / hub_node.FILE_NAME).exists()
     after = {"token": token, "name": "after", "worker_url": "http://127.0.0.1:1", "core_url": None}
     assert requests.post(f"{fake_hub.url}{JOIN_PATH}", json=after, timeout=10).status_code == 200

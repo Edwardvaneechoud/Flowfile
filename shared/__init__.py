@@ -5,7 +5,8 @@ flowfile_core, flowfile_worker, and other components without creating
 circular dependencies.
 
 Every name is re-exported lazily, ``storage`` included: importing ``shared`` reads no storage dir and makes none, so a
-process can still choose its storage dir with ``shared.hub_node.node_storage`` before ``shared.storage_config`` loads.
+process can still refuse a join without a storage dir of its own (``shared.hub_node.require_own_storage_dir``) before
+``shared.storage_config`` loads.
 """
 
 __all__ = [

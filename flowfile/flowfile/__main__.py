@@ -487,8 +487,7 @@ def main():
     parser.add_argument(
         "--url",
         metavar="URL",
-        help="This server's address as a browser and the hub reach it; else this machine's name, or the loopback "
-        "address for a loopback --host",
+        help="This server's address as a browser and the hub reach it; else this machine's full name and port",
     )
     parser.add_argument(
         "--worker-url",

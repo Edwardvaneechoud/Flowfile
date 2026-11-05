@@ -1,6 +1,6 @@
 """A core joins a hub with ``--join`` and ``--hub`` for itself and its worker, once, and then knows its own node; it
-binds its port before it joins, keeps its files apart from Flowfile desktop's, and the worker beside it finds them by
-the node's name.
+binds its port before it joins, is refused without a storage dir of its own, and gives the hub ``--url``, else its full
+name and port.
 
 The join runs against ``FakeJoinHub`` over real HTTP; the sync through ``/hub_client`` against the fake hub of
 ``tests/hub_client``. ``hub_node.json`` lives under the test's ``tmp_path``, never in the storage dir.
@@ -15,6 +15,7 @@ import socket
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import httpx
 import pytest
@@ -178,22 +179,16 @@ def test_a_core_given_no_addresses_gives_this_machines_on_its_two_ports(
 
 
 def on_this_machine(monkeypatch, host: str = "0.0.0.0") -> None:
-    """Core bound to ``host`` on 64100 beside a worker given 64101, on a machine named ``team-7.example.com`` with no
-    route the OS names, so that name stands for its address on every address."""
-    monkeypatch.setattr(hub_node.socket, "gethostname", lambda: "team-7.example.com")
-    monkeypatch.setattr(hub_node.socket, "getfqdn", lambda: "team-7.example.com")
-    monkeypatch.setattr(hub_node, "_route_address", lambda host, port, family: None)
+    """Core bound to ``host`` on 64100 beside a worker given 64101, on a machine named ``team-7.example.com``."""
+    named(monkeypatch)
     monkeypatch.setattr(settings, "SERVER_HOST", host)
     monkeypatch.setattr(settings, "SERVER_PORT", 64100)
     monkeypatch.setattr(settings, "WORKER_PORT", 64101)
 
 
-@pytest.mark.parametrize(
-    "host,core_url",
-    [("127.0.0.1", "http://127.0.0.1:64100"), ("localhost", "http://localhost:64100"), ("::1", "http://[::1]:64100")],
-)
-def test_a_core_bound_to_a_loopback_address_gives_that_address_and_says_how_to_be_reached(
-    monkeypatch, join_hub, node_file, caplog, host, core_url
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1"])
+def test_a_core_bound_to_a_loopback_address_warns_that_only_this_machine_reaches_it(
+    monkeypatch, join_hub, node_file, caplog, host
 ):
     on_this_machine(monkeypatch, host)
     started_with(monkeypatch, join_hub.url, join_hub.mint(), core_url=None, worker_url=None)
@@ -202,21 +197,25 @@ def test_a_core_bound_to_a_loopback_address_gives_that_address_and_says_how_to_b
         main._join_hub()
 
     body = join_hub.calls[0][1]
-    assert (body["core_url"], body["worker_url"]) == (core_url, "http://team-7.example.com:64101")
+    assert (body["core_url"], body["worker_url"]) == (
+        "http://team-7.example.com:64100",
+        "http://team-7.example.com:64101",
+    )
     warnings = [r.getMessage() for r in caplog.records if r.name == settings.__name__]
     assert len(warnings) == 1
-    assert core_url in warnings[0] and "--host 0.0.0.0" in warnings[0] and "--url" in warnings[0]
+    assert f"Core serves on {host}, which only this machine reaches" in warnings[0]
+    assert "--host 0.0.0.0" in warnings[0] and "--url" in warnings[0]
 
 
-def test_the_host_run_is_given_decides_over_the_settings_and_url_wins_over_both(
+def test_the_port_run_is_given_decides_over_the_settings_and_url_wins_over_both(
     monkeypatch, join_hub, node_file, caplog
 ):
     on_this_machine(monkeypatch, "0.0.0.0")
     started_with(monkeypatch, join_hub.url, join_hub.mint(), core_url=None, worker_url=None)
 
-    main._join_hub(64200, "127.0.0.1")
+    main._join_hub(64200, "10.1.2.3")
 
-    assert join_hub.calls[0][1]["core_url"] == "http://127.0.0.1:64200"
+    assert join_hub.calls[0][1]["core_url"] == "http://team-7.example.com:64200"
 
     on_this_machine(monkeypatch, "127.0.0.1")
     started_with(monkeypatch, join_hub.url, join_hub.mint(), core_url="http://flowfile.example:8080", worker_url=None)
@@ -238,19 +237,16 @@ def editor_app(monkeypatch) -> FastAPI:
     return app
 
 
-@pytest.mark.parametrize(
-    "host,core_url",
-    [("0.0.0.0", "http://team-7.example.com:64100"), ("127.0.0.1", "http://127.0.0.1:64100")],
-)
 def test_a_core_that_serves_the_editor_gives_its_address_and_its_mounted_worker_s(
-    monkeypatch, join_hub, node_file, editor_app, host, core_url
+    monkeypatch, join_hub, node_file, editor_app
 ):
-    on_this_machine(monkeypatch, host)
+    on_this_machine(monkeypatch)
     started_with(monkeypatch, join_hub.url, join_hub.mint(), core_url=None, worker_url=None)
 
     main._join_hub()
 
     body = join_hub.calls[0][1]
+    core_url = "http://team-7.example.com:64100"
     assert (body["core_url"], body["worker_url"], body["ui_url"]) == (core_url, f"{core_url}/worker", f"{core_url}/ui")
 
 
@@ -401,14 +397,14 @@ def held():
         sock.close()
 
 
-@pytest.fixture
-def routed(monkeypatch):
-    """A core on every address is at ``10.0.0.7`` towards any hub, so no route is asked of the OS."""
-    monkeypatch.setattr(hub_node, "_route_address", lambda host, port, family: "10.0.0.7")
+def named(monkeypatch) -> None:
+    """This machine's name is ``team-7.example.com``, so no lookup is asked of the network."""
+    monkeypatch.setattr(hub_node.socket, "gethostname", lambda: "team-7.example.com")
+    monkeypatch.setattr(hub_node.socket, "getfqdn", lambda: "team-7.example.com")
 
 
 @pytest.fixture
-def serving(monkeypatch, routed):
+def serving(monkeypatch):
     """``main.run`` up to the point it serves: the server records the sockets it is handed, and neither the serving
     mark nor a worker backend made for the start-up lines outlives the test."""
     served = []
@@ -426,7 +422,7 @@ def serving(monkeypatch, routed):
     monkeypatch.setattr(main, "start_parent_death_watcher", lambda stop: None)
     monkeypatch.setattr(main.compute_registry, "mark_serving", lambda: None)
     monkeypatch.setattr(main.compute_registry, "worker_url", lambda: settings.WORKER_URL)
-    monkeypatch.setattr(main, "NODE_STORAGE_DIR", None)
+    named(monkeypatch)
     yield served
     for sockets in served:
         for sock in sockets or []:
@@ -470,21 +466,23 @@ def test_a_core_joins_with_the_ports_it_was_started_with_and_serves_on_its_own(
 
     assert served_port(serving) == core_port
     body = join_hub.calls[0][1]
-    assert (body["core_url"], body["worker_url"]) == (f"http://127.0.0.1:{core_port}", f"http://10.0.0.7:{worker_port}")
+    assert (body["core_url"], body["worker_url"]) == (
+        f"http://team-7.example.com:{core_port}",
+        f"http://team-7.example.com:{worker_port}",
+    )
     assert hub_node.read().has_core is True
     assert "is in use" not in caplog.text
 
 
-def test_a_core_on_every_address_or_one_gives_the_address_the_hub_reaches_it_at(
-    monkeypatch, join_hub, node_file, routed
-):
+def test_without_a_url_core_gives_its_full_name_and_port_whatever_it_binds(monkeypatch, join_hub, node_file):
+    named(monkeypatch)
     started_with(monkeypatch, join_hub.url, join_hub.mint(), core_url=None, worker_url=None)
     main._join_hub(64100, "0.0.0.0")
     started_with(monkeypatch, join_hub.url, join_hub.mint(), core_url=None, worker_url=None)
     main._join_hub(64100, "10.1.2.3")
 
-    assert [body["core_url"] for _, body in join_hub.calls] == ["http://10.0.0.7:64100", "http://10.1.2.3:64100"]
-    assert {body["worker_url"] for _, body in join_hub.calls} == {f"http://10.0.0.7:{settings.WORKER_PORT}"}
+    assert {body["core_url"] for _, body in join_hub.calls} == {"http://team-7.example.com:64100"}
+    assert {body["worker_url"] for _, body in join_hub.calls} == {f"http://team-7.example.com:{settings.WORKER_PORT}"}
 
 
 def test_a_restart_with_the_same_token_serves_on_its_port_and_makes_no_request(
@@ -502,15 +500,16 @@ def test_a_restart_with_the_same_token_serves_on_its_port_and_makes_no_request(
 
 
 def test_the_worker_port_core_is_started_with_is_the_one_it_gives_the_hub_even_while_a_worker_serves_there(
-    monkeypatch, join_hub, node_file, held, routed
+    monkeypatch, join_hub, node_file, held
 ):
+    named(monkeypatch)
     beside = held()
     monkeypatch.setattr(settings, "WORKER_PORT", beside)
     started_with(monkeypatch, join_hub.url, join_hub.mint(), core_url=None, worker_url=None)
 
     main._join_hub(free_port(), "127.0.0.1")
 
-    assert join_hub.calls[0][1]["worker_url"] == f"http://10.0.0.7:{beside}"
+    assert join_hub.calls[0][1]["worker_url"] == f"http://team-7.example.com:{beside}"
 
 
 @pytest.mark.parametrize(
@@ -552,14 +551,14 @@ def test_the_worker_port_core_is_started_with_is_the_one_it_gives_the_hub_even_w
         "pytest",
     ],
 )
-def test_only_a_command_that_serves_core_chooses_a_storage_dir(monkeypatch, argv, command, starts):
+def test_only_a_command_that_serves_core_reads_the_join_flags(monkeypatch, argv, command, starts):
     monkeypatch.setattr(sys, "argv", argv)
     monkeypatch.setattr(sys, "orig_argv", command, raising=False)
 
     assert flowfile_core._starts_core() is starts
 
 
-def test_a_spawned_child_of_core_never_chooses_a_storage_dir(monkeypatch):
+def test_a_spawned_child_of_core_never_reads_the_join_flags(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["/venv/bin/flowfile", "run", "ui", "--join", "t"])
     monkeypatch.setattr(multiprocessing.current_process(), "name", "SpawnProcess-1")
 
@@ -600,20 +599,81 @@ def _stop(proc: subprocess.Popen) -> None:
         proc.wait(timeout=10)
 
 
-@pytest.mark.skipif(os.name == "nt", reason="the home directory comes from HOME on POSIX only")
-def test_the_pair_a_hub_prints_keeps_one_folder_apart_from_the_desktops_and_the_worker_finds_it_by_name(
-    tmp_path, join_hub
-):
+DESKTOP_NODE = '{"name": "the desktop\'s node"}\n'
+
+
+def desktop_home(tmp_path) -> Path:
+    """A home directory holding Flowfile desktop's ``~/.flowfile`` with a ``hub_node.json`` of its own."""
     home = tmp_path / "home"
-    desktop = home / ".flowfile"
-    desktop.mkdir(parents=True)
-    (desktop / hub_node.FILE_NAME).write_text('{"name": "the desktop\'s node"}\n', encoding="utf-8")
-    core_port, worker_port = free_port(), free_port()
+    (home / ".flowfile").mkdir(parents=True)
+    (home / ".flowfile" / hub_node.FILE_NAME).write_text(DESKTOP_NODE, encoding="utf-8")
+    return home
+
+
+def shell_environment(home: Path, **variables: str) -> dict[str, str]:
+    """This process's environment as an operator's shell has it: ``home`` as ``HOME``, none of the storage or hub
+    variables, no scheduler or pool, and ``variables`` on top."""
     environment = {name: value for name, value in os.environ.items() if name not in (*STORAGE_VARIABLES, *VARIABLES)}
-    environment.update(HOME=str(home), FLOWFILE_WORKER_POOL_SIZE="0", FLOWFILE_SCHEDULER_ENABLED="0")
+    environment.update(HOME=str(home), FLOWFILE_WORKER_POOL_SIZE="0", FLOWFILE_SCHEDULER_ENABLED="0", **variables)
+    return environment
+
+
+def node_env(folder: Path) -> dict[str, str]:
+    """The storage variables the hub's install line writes for a node kept in ``folder``."""
+    return {
+        "FLOWFILE_STORAGE_DIR": str(folder / "storage"),
+        "FLOWFILE_SECURE_STORAGE_PATH": str(folder / "secure"),
+        "SECURE_STORAGE_PATH": str(folder / "secure"),
+    }
+
+
+def assert_desktop_untouched(home: Path) -> None:
+    assert sorted(path.name for path in home.iterdir()) == [".flowfile"]
+    assert [path.name for path in (home / ".flowfile").iterdir()] == [hub_node.FILE_NAME]
+    assert (home / ".flowfile" / hub_node.FILE_NAME).read_text(encoding="utf-8") == DESKTOP_NODE
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the home directory comes from HOME on POSIX only")
+@pytest.mark.parametrize(
+    "command",
+    [["-m", "flowfile_core.main"], ["-m", "flowfile", "run", "ui", "--no-browser"], ["-m", "flowfile", "run", "core"]],
+    ids=["flowfile_core", "run ui", "run core"],
+)
+def test_a_join_without_a_storage_dir_of_its_own_is_refused_before_any_request_and_leaves_the_desktops_files(
+    tmp_path, join_hub, command
+):
+    home = desktop_home(tmp_path)
+    flags = ["--host", "127.0.0.1", "--port", str(free_port()), "--hub", join_hub.url, "--join", join_hub.mint()]
+    log = tmp_path / "core.log"
+    with log.open("wb") as out:
+        core = subprocess.Popen(
+            [sys.executable, *command, *flags, "--name", "card-node"],
+            env=shell_environment(home),
+            cwd=tmp_path,
+            stdout=out,
+            stderr=out,
+        )
+    try:
+        exit_code = core.wait(timeout=120)
+    finally:
+        _stop(core)
+
+    output = log.read_text(encoding="utf-8")
+    assert exit_code == 2, output
+    assert "Cannot join a hub without a storage dir of this node's own: set FLOWFILE_STORAGE_DIR" in output
+    assert join_hub.calls == []
+    assert_desktop_untouched(home)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the home directory comes from HOME on POSIX only")
+def test_given_a_storage_dir_core_joins_for_itself_and_the_worker_beside_it_from_that_dir(tmp_path, join_hub):
+    home, storage = desktop_home(tmp_path), tmp_path / "card-node" / "storage"
+    core_port, worker_port = free_port(), free_port()
+    environment = shell_environment(home, **node_env(storage.parent))
     core_log, worker_log = tmp_path / "core.log", tmp_path / "worker.log"
     core_flags = ["--host", "127.0.0.1", "--port", str(core_port), "--worker-port", str(worker_port)]
     join_flags = ["--hub", join_hub.url, "--join", join_hub.mint(), "--name", "card-node"]
+    join_flags += ["--url", f"http://127.0.0.1:{core_port}", "--worker-url", f"http://127.0.0.1:{worker_port}"]
     with core_log.open("wb") as out:
         core = subprocess.Popen(
             [sys.executable, "-m", "flowfile_core.main", *core_flags, *join_flags],
@@ -627,8 +687,7 @@ def test_the_pair_a_hub_prints_keeps_one_folder_apart_from_the_desktops_and_the_
         _wait_for(core, f"http://127.0.0.1:{core_port}/health/status", core_log)
         with worker_log.open("wb") as out:
             worker = subprocess.Popen(
-                [sys.executable, "-m", "flowfile_worker", "--host", "127.0.0.1", "--port", str(worker_port)]
-                + ["--name", "card-node"],
+                [sys.executable, "-m", "flowfile_worker", "--host", "127.0.0.1", "--port", str(worker_port)],
                 env=environment,
                 cwd=tmp_path,
                 stdout=out,
@@ -640,41 +699,28 @@ def test_the_pair_a_hub_prints_keeps_one_folder_apart_from_the_desktops_and_the_
             _stop(worker)
         _stop(core)
 
-    folder = home / ".flowfile-node" / "card-node"
     joins = [body for path, body in join_hub.calls if path == hub_join.JOIN_PATH]
     assert len(joins) == 1
-    assert joins[0]["core_url"] == f"http://127.0.0.1:{core_port}"
-    assert joins[0]["worker_url"].endswith(f":{worker_port}")
-    kept = json.loads((folder / hub_node.FILE_NAME).read_text(encoding="utf-8"))
-    assert (kept["name"], kept["has_core"]) == ("card-node", True)
-    assert "Keeping this node's files in ~/.flowfile-node/card-node, apart from Flowfile desktop's" in (
-        core_log.read_text(encoding="utf-8")
+    assert (joins[0]["core_url"], joins[0]["worker_url"]) == (
+        f"http://127.0.0.1:{core_port}",
+        f"http://127.0.0.1:{worker_port}",
     )
-    assert "Found node card-node in ~/.flowfile-node/card-node" in worker_log.read_text(encoding="utf-8")
-    assert sorted(path.name for path in home.iterdir()) == [".flowfile", ".flowfile-node"]
-    assert sorted(path.name for path in desktop.iterdir()) == [hub_node.FILE_NAME]
-    assert (desktop / hub_node.FILE_NAME).read_text(encoding="utf-8") == '{"name": "the desktop\'s node"}\n'
+    kept = json.loads((storage / hub_node.FILE_NAME).read_text(encoding="utf-8"))
+    assert (kept["name"], kept["has_core"]) == ("card-node", True)
+    assert f"Joined {join_hub.url} as card-node" in core_log.read_text(encoding="utf-8")
+    assert_desktop_untouched(home)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="the home directory comes from HOME on POSIX only")
 @pytest.mark.parametrize("component", ["ui", "core"])
-def test_the_flowfile_command_given_the_join_flags_first_keeps_a_folder_of_its_own_and_says_so(
+def test_the_flowfile_command_given_the_join_flags_first_joins_from_the_storage_dir_it_is_given(
     tmp_path, join_hub, component
 ):
-    home = tmp_path / "home"
-    desktop = home / ".flowfile"
-    desktop.mkdir(parents=True)
-    (desktop / hub_node.FILE_NAME).write_text('{"name": "the desktop\'s node"}\n', encoding="utf-8")
-    port = free_port()
-    environment = {name: value for name, value in os.environ.items() if name not in (*STORAGE_VARIABLES, *VARIABLES)}
-    environment.update(
-        HOME=str(home),
-        FLOWFILE_WORKER_PORT=str(free_port()),
-        FLOWFILE_WORKER_POOL_SIZE="0",
-        FLOWFILE_SCHEDULER_ENABLED="0",
-        FLOWFILE_KERNEL_GC="0",
+    home, storage, port = desktop_home(tmp_path), tmp_path / "flags-first" / "storage", free_port()
+    environment = shell_environment(
+        home, **node_env(storage.parent), FLOWFILE_WORKER_PORT=str(free_port()), FLOWFILE_KERNEL_GC="0"
     )
-    flags = ["--no-browser", "--host", "127.0.0.1", "--port", str(port)]
+    flags = ["--no-browser", "--host", "127.0.0.1", "--port", str(port), "--url", f"http://127.0.0.1:{port}"]
     flags += ["--hub", join_hub.url, "--join", join_hub.mint(), "--name", "flags-first"]
     log = tmp_path / "flowfile.log"
     with log.open("wb") as out:
@@ -691,11 +737,9 @@ def test_the_flowfile_command_given_the_join_flags_first_keeps_a_folder_of_its_o
         _stop(server)
 
     output = log.read_text(encoding="utf-8")
-    assert "Keeping this node's files in ~/.flowfile-node/flags-first, apart from Flowfile desktop's" in output
     assert f"Joined {join_hub.url} as flags-first" in output
-    assert len([body for path, body in join_hub.calls if path == hub_join.JOIN_PATH]) == 1
-    kept = json.loads((home / ".flowfile-node" / "flags-first" / hub_node.FILE_NAME).read_text(encoding="utf-8"))
+    joins = [body for path, body in join_hub.calls if path == hub_join.JOIN_PATH]
+    assert [body["core_url"] for body in joins] == [f"http://127.0.0.1:{port}"]
+    kept = json.loads((storage / hub_node.FILE_NAME).read_text(encoding="utf-8"))
     assert kept["name"] == "flags-first"
-    assert sorted(path.name for path in home.iterdir()) == [".flowfile", ".flowfile-node"]
-    assert sorted(path.name for path in desktop.iterdir()) == [hub_node.FILE_NAME]
-    assert (desktop / hub_node.FILE_NAME).read_text(encoding="utf-8") == '{"name": "the desktop\'s node"}\n'
+    assert_desktop_untouched(home)

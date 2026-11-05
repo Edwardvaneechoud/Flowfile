@@ -38,14 +38,12 @@ def _starts_core() -> bool:
     return program == "flowfile" and any(pair in (["run", "ui"], ["run", "core"]) for pair in pairs)
 
 
-# The storage dir is chosen before `shared.storage_config` reads it, for this process and the ones it starts.
-NODE_STORAGE_DIR = None
+# A join without a storage dir of its own is refused before `shared.storage_config` reads one.
 if _starts_core():
     from flowfile_core.configs.command_line import parse_args as _parse_args
     from shared import hub_node as _hub_node
 
-    _args = _parse_args()
-    NODE_STORAGE_DIR = _hub_node.node_storage(_args.join, _args.name)
+    _hub_node.require_own_storage_dir(_parse_args().join)
 
 from flowfile_core.utils.validate_setup import validate_setup
 from shared._version import get_version

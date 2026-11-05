@@ -4,12 +4,12 @@ An operator makes a worker a node on a hub with one command, ``flowfile_worker -
 serves, the worker posts the token with its name and address to the hub, keeps the hub's answer in ``hub_node.json``
 in its storage dir, and from then on takes the hub's tokens for that name, with no name or issuer set by hand. The
 join and the verifier each have their own tests in one process; here the worker is a second process started with the
-flags an operator types, on a free port and a storage dir of its own, against a fake hub that answers the join and
-serves its keys from one address. A node a desktop places on the joined worker runs there with a ``run`` token for
-the joined name, held as a connected desktop holds it; a restart, with the same command or with none, does not join
-again; a used or an expired join token stops the worker with the hub's sentence before it serves and leaves no file;
-a worker named by hand through ``FLOWFILE_HUB_URL`` and ``FLOWFILE_NODE_NAME`` behaves as before. Each test skips
-when no second worker can be started.
+flags the hub's install line passes, on a free port and a storage dir of its own (``FLOWFILE_STORAGE_DIR``, as the
+install line sets it), against a fake hub that answers the join and serves its keys from one address. A node a desktop
+places on the joined worker runs there with a ``run`` token for the joined name, held as a connected desktop holds it; a
+restart, with the same command or with none, does not join again; a used or an expired join token stops the worker with
+the hub's sentence before it serves and leaves no file; a worker named by hand through ``FLOWFILE_HUB_URL`` and
+``FLOWFILE_NODE_NAME`` behaves as before. Each test skips when no second worker can be started.
 """
 
 import json
@@ -105,8 +105,9 @@ def start_worker(storage_dir: Path, *args: str, port: int, env: dict[str, str] |
 
 
 def join_command(token: str, hub_url: str, port: int) -> tuple[str, ...]:
-    """The flags that join the hub at ``hub_url`` as ``joined``, reached at the worker's own address."""
-    return ("--join", token, "--hub", hub_url, "--name", JOINED, "--url", url_of(port))
+    """The flags that join the hub at ``hub_url`` as ``joined``, on every interface and reached at the worker's own
+    address, as the hub's install line starts a worker."""
+    return ("--host", "0.0.0.0", "--join", token, "--hub", hub_url, "--name", JOINED, "--url", url_of(port))
 
 
 def joins(hub: FakeJoinHub) -> list[dict | None]:

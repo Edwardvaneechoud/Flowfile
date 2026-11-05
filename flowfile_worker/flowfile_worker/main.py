@@ -10,7 +10,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from flowfile_worker import NODE_STORAGE_DIR, mp_context
+from flowfile_worker import mp_context
 from flowfile_worker.auth import carries_internal_token
 from flowfile_worker.configs import (
     FLOWFILE_CORE_URI,
@@ -146,11 +146,11 @@ def signal_handler(signum, frame):
 
 
 def _worker_url(host: str, port: int, *, tls: bool) -> str:
-    url = hub_node.node_url(HUB_URL, host, port, tls=tls)
+    url = hub_node.default_url(port, tls=tls)
     if hub_node.is_loopback_host(host):
         logger.warning(
-            "This worker serves on %s, which only this machine reaches, so the address it gives the hub is %s; to be "
-            "reached from other machines, start it with --host 0.0.0.0",
+            "This worker serves on %s, which only this machine reaches, and gives the hub %s; to be reached from other "
+            "machines, start it with --host 0.0.0.0",
             host,
             url,
         )
@@ -160,10 +160,9 @@ def _worker_url(host: str, port: int, *, tls: bool) -> str:
 def join_hub(port: int | None = None, host: str | None = None) -> None:
     """Join the hub ``--join`` names, before the worker serves on ``host`` and ``port``; without a join token, nothing.
 
-    The worker asks for ``--name``, else the machine's name, and gives ``--url``, else the address the hub reaches it
-    at (``hub_node.node_url``: on every address, this machine's address towards the hub; on one address, that one,
-    loopback with a warning), ``https`` when it serves TLS, and the port it serves on. A worker that joined already
-    makes no request (``shared.hub_node``).
+    The worker asks for ``--name``, else the machine's name, and gives ``--url``, else this machine's full name and the
+    port it serves on (``hub_node.default_url``), ``https`` when it serves TLS; bound to a loopback address, which only
+    this machine reaches, it warns. A worker that joined already makes no request (``shared.hub_node``).
     """
     if not JOIN_TOKEN:
         return
@@ -186,8 +185,7 @@ def run(host: str = None, port: int = None):
     Without a join token uvicorn binds the port, as it always has. A worker started with a join token binds its socket
     first, on the port it was started with (``hub_node.serving_socket``), then joins its hub (``join_hub``) with that
     port, and serves on that same socket: one whose port is in use exits with code 1 before any request to the hub,
-    one the hub refuses with code 2 before it serves. The worker beside a core, started with the node's name and no
-    join token, serves from the core's folder, found by that name, and says so in one line.
+    one the hub refuses with code 2 before it serves.
     Serves TLS when ``FLOWFILE_WORKER_TLS_CERT`` and ``FLOWFILE_WORKER_TLS_KEY`` name a certificate and its key.
     """
     global server_instance
@@ -199,15 +197,12 @@ def run(host: str = None, port: int = None):
 
     sock = None
     if JOIN_TOKEN:
-        hub_node.log_storage(NODE_STORAGE_DIR)
         sock = hub_node.serving_socket(host, port)
         try:
             join_hub(port, host)
         except BaseException:
             sock.close()
             raise
-    elif NODE_STORAGE_DIR is not None:
-        logger.info("Found node %s in %s", NODE_STORAGE_DIR.name, hub_node.home_relative(NODE_STORAGE_DIR))
 
     from connectorx import __version__ as connectorx_version
 

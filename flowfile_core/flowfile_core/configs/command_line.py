@@ -1,7 +1,7 @@
 """Core's command line, read with the standard library alone.
 
-``flowfile_core`` reads it at import, before anything opens the storage dir, to give a core that joins a hub a folder of
-its own (``shared.hub_node.node_storage``); ``settings`` reads it for everything else.
+``flowfile_core`` reads it at import, before anything opens the storage dir, to refuse a core that joins a hub without a
+storage dir of its own (``shared.hub_node.require_own_storage_dir``); ``settings`` reads it for everything else.
 """
 
 import argparse

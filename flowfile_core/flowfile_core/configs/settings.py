@@ -228,31 +228,29 @@ def join_addresses(
     core_port: int | None = None,
     core_host: str | None = None,
     *,
-    hub_url: str,
     worker_path: str | None = None,
     editor_path: str | None = None,
 ) -> tuple[str, str, str | None]:
-    """The addresses a join gives the hub at ``hub_url`` for this node: core's, its worker's, and its editor's.
+    """The addresses a join gives the hub for this node: core's, its worker's, and its editor's.
 
-    Core's is ``--url`` when given. Else it is core's port (``core_port``, the one core serves on, else
-    ``SERVER_PORT``) at the address of the host core binds (``core_host``, else ``SERVER_HOST``) as
-    ``hub_node.node_url`` gives it: on every address, this machine's address on the interface that reaches the hub; on
-    one address, that address; on a loopback one, which only this machine reaches, that address with one warning
-    saying how to be reached from others. The worker's is ``--worker-url`` when given, else core's address and
-    ``worker_path`` for a worker mounted in core's app, else the address of a worker beside core on every address, on
-    ``WORKER_PORT``. The editor's is core's address and ``editor_path``, and ``None`` when core serves no editor. Plain
-    ``http``; composed when called, never at import, since the machine's full name can wait on a reverse lookup.
+    Core's is ``--url`` when given. Else it is this machine's full name (``hub_node.default_url``) on core's port
+    (``core_port``, the one core serves on, else ``SERVER_PORT``); when core binds a loopback address (``core_host``,
+    else ``SERVER_HOST``), which only this machine reaches, one warning says how to be reached from others. The
+    worker's is ``--worker-url`` when given, else core's address and ``worker_path`` for a worker mounted in core's
+    app, else this machine's full name on ``WORKER_PORT``. The editor's is core's address and ``editor_path``, and
+    ``None`` when core serves no editor. Plain ``http``; composed when called, never at import, since the machine's
+    full name can wait on a reverse lookup.
     """
     port = core_port or SERVER_PORT
     host = core_host or SERVER_HOST
     if JOIN_CORE_URL:
         core_url = JOIN_CORE_URL
     else:
-        core_url = hub_node.node_url(hub_url, host, port, tls=False)
+        core_url = hub_node.default_url(port, tls=False)
         if hub_node.is_loopback_host(host):
             logging.getLogger(__name__).warning(
-                "Core serves on %s, which only this machine reaches, so the address it gives the hub is %s; to be "
-                "reached from other machines, start it with --host 0.0.0.0 and --url <its address as they reach it>",
+                "Core serves on %s, which only this machine reaches, and gives the hub %s; to be reached from other "
+                "machines, start it with --host 0.0.0.0 and --url <its address as they reach it>",
                 host,
                 core_url,
             )
@@ -261,7 +259,7 @@ def join_addresses(
     elif worker_path:
         worker_url = core_url.rstrip("/") + worker_path
     else:
-        worker_url = hub_node.node_url(hub_url, "0.0.0.0", WORKER_PORT, tls=False)
+        worker_url = hub_node.default_url(WORKER_PORT, tls=False)
     ui_url = core_url.rstrip("/") + editor_path if editor_path else None
     return core_url, worker_url, ui_url
 

@@ -21,13 +21,13 @@ short hash of the join token it was written with: a start with that same token m
 unchanged command is quiet, and a start with any other join token joins again and replaces the file. One storage dir
 holds one node: every process reading it takes the name the latest join wrote.
 
-A node that joins beside Flowfile desktop keeps out of the desktop's way. Started with a join token and no
-``FLOWFILE_STORAGE_DIR``, it keeps its files in ``~/.flowfile-node/<name>`` (``node_storage``), never in the desktop's
-``~/.flowfile``. It serves on the port it is given, ``--port`` or the default, and binds that socket before it joins
-(``serving_socket``): a node whose port is in use exits with code 1 saying so, before it spends its token. Without an
-address of its own (``--url``) it gives the hub this machine's address on the interface that reaches the hub
-(``node_url``), not a name the hub may not resolve. A core joins for itself and the worker beside it the same way; the
-worker, started with the node's name and no join token, finds the core's folder by that name.
+A node that joins keeps its files in a storage dir of its own, never in Flowfile desktop's ``~/.flowfile``: the hub's
+install line sets ``FLOWFILE_STORAGE_DIR`` (in docker mode the storage dir is the container's), and a start with a join
+token outside docker mode and without one is refused before anything reads the storage dir
+(``require_own_storage_dir``). It serves on the port it is given, ``--port`` or the default, and binds that socket
+before it joins (``serving_socket``): a node whose port is in use exits with code 1 saying so, before it spends its
+token. The address it gives the hub is ``--url``, which the install line computes, else this machine's full name and
+that port (``default_url``). A core joins for itself and the worker beside it the same way.
 """
 
 import hashlib
@@ -35,14 +35,12 @@ import ipaddress
 import json
 import logging
 import os
-import re
 import signal
 import socket
 import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
-from urllib.parse import urlsplit
 
 if TYPE_CHECKING:
     import httpx
@@ -58,11 +56,6 @@ HEARTBEAT_SECONDS = 60
 """How often a joined node tells its hub it is up, in seconds; not a setting. The hub shows a node Online while its last
 beat is under three minutes old."""
 
-NODE_FILES_DIR = ".flowfile-node"
-"""The folder under the home directory where a node that joins keeps its files when no storage dir is set."""
-NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
-"""The names a hub takes for a node, which are also the folder names ``node_storage`` makes."""
-_ROUTE_PROBES = {socket.AF_INET: "192.0.2.1", socket.AF_INET6: "2001:db8::1"}
 _BACKLOG = 2048
 
 _FIELDS = {"hub_url": str, "issuer": str, "name": str, "node_id": int, "join_token_hash": str}
@@ -452,61 +445,21 @@ def default_url(port: int, *, tls: bool) -> str:
     return f"{'https' if tls else 'http'}://{host}:{port}"
 
 
-def node_storage(token: str | None, name: str | None, *, by_name: bool = False) -> Path | None:
-    """Give a node that joins a hub a folder of its own, before anything in this process reads the storage dir.
+def require_own_storage_dir(token: str | None) -> None:
+    """Refuse a start with a join token that has no storage dir of its own, before anything reads the storage dir.
 
-    With a join token, no ``FLOWFILE_STORAGE_DIR`` and outside Docker (whose storage dir is the container's own), the
-    node's files go to ``~/.flowfile-node/<name>``, made with mode ``0o700``, and its secure storage to the ``secure``
-    folder in it: ``FLOWFILE_STORAGE_DIR`` is set to the folder and ``SECURE_STORAGE_PATH`` and
-    ``FLOWFILE_SECURE_STORAGE_PATH``, each when unset, to ``secure``, in this process's environment, so every process it
-    starts uses them too. Returns the folder, or ``None`` when nothing changed. On a machine that runs Flowfile desktop
-    this keeps the node out of the desktop's ``~/.flowfile``. ``name`` is the node's name on the hub, the machine's when
-    ``None``; one a hub would refuse, which could also name a folder elsewhere, exits with code 2.
-
-    With ``by_name`` and no join token, a process given the ``name`` of a node that joined on this machine
-    (``~/.flowfile-node/<name>/hub_node.json`` exists) takes that node's folder the same way, so the worker beside a
-    core lands in the core's folder; without that file, or without a name, nothing changes.
+    Outside docker mode, whose storage dir is the container's, a node that joins needs ``FLOWFILE_STORAGE_DIR``, which
+    the hub's install line sets: without it the node's files would land in Flowfile desktop's ``~/.flowfile``, and the
+    desktop would then act as the joined node. Exits with code 2 and one sentence, writing nothing. Without a join
+    token, nothing.
     """
-    if os.environ.get("FLOWFILE_STORAGE_DIR") or os.environ.get("FLOWFILE_MODE") == "docker":
-        return None
-    if not token:
-        if not (by_name and name and NAME_PATTERN.match(name)):
-            return None
-        folder = Path.home() / NODE_FILES_DIR / name
-        if not (folder / FILE_NAME).is_file():
-            return None
-    else:
-        name = name or default_name()
-        if not NAME_PATTERN.match(name):
-            logger.error(
-                "Cannot keep this node's files under ~/%s: %r is not a name a hub takes (letters, digits, '.', '_' "
-                "and '-', starting with a letter or digit); give one with --name",
-                NODE_FILES_DIR,
-                name,
-            )
-            raise SystemExit(2)
-        folder = Path.home() / NODE_FILES_DIR / name
-        folder.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        folder.mkdir(mode=0o700, exist_ok=True)
-    os.environ["FLOWFILE_STORAGE_DIR"] = str(folder)
-    for variable in ("SECURE_STORAGE_PATH", "FLOWFILE_SECURE_STORAGE_PATH"):
-        if not os.environ.get(variable):
-            os.environ[variable] = str(folder / "secure")
-    return folder
-
-
-def home_relative(folder: Path) -> str:
-    """``folder`` written from ``~`` when it is under the home directory, as the start-up lines name it."""
-    try:
-        return f"~/{folder.relative_to(Path.home()).as_posix()}"
-    except ValueError:
-        return str(folder)
-
-
-def log_storage(folder: Path | None) -> None:
-    """Say at start where a node that joins keeps its files, when ``node_storage`` gave it ``folder``."""
-    if folder is not None:
-        logger.info("Keeping this node's files in %s, apart from Flowfile desktop's", home_relative(folder))
+    if not token or os.environ.get("FLOWFILE_STORAGE_DIR") or os.environ.get("FLOWFILE_MODE") == "docker":
+        return
+    logger.error(
+        "Cannot join a hub without a storage dir of this node's own: set FLOWFILE_STORAGE_DIR to a folder for it, as "
+        "the hub's install line does, so it stays out of Flowfile desktop's ~/.flowfile"
+    )
+    raise SystemExit(2)
 
 
 def _host_port(host: str, port: int) -> str:
@@ -533,16 +486,6 @@ def _bind(host: str, port: int) -> socket.socket:
     return sock
 
 
-def _is_any_address(host: str) -> bool:
-    host = host.strip("[]")
-    if not host:
-        return True
-    try:
-        return ipaddress.ip_address(host).is_unspecified
-    except ValueError:
-        return False
-
-
 def serving_socket(host: str, port: int) -> socket.socket:
     """The socket a node that joins a hub serves on, bound and listening on ``host`` and ``port`` before it joins, so
     one that cannot serve never spends a token.
@@ -566,62 +509,3 @@ def is_loopback_host(host: str) -> bool:
         return ipaddress.ip_address(host.strip("[]")).is_loopback
     except ValueError:
         return False
-
-
-def _route_address(host: str, port: int, family: int) -> str | None:
-    """This machine's ``family`` address on the interface that reaches ``host``, asked of the OS with a UDP socket
-    "connected" there, which sends nothing; ``None`` when there is no route or only a loopback or link-local one."""
-    try:
-        targets = socket.getaddrinfo(host, port, family=family, type=socket.SOCK_DGRAM)
-    except (OSError, UnicodeError):
-        return None
-    for found, _, _, _, target in targets:
-        try:
-            with socket.socket(found, socket.SOCK_DGRAM) as probe:
-                probe.connect(target)
-                address = probe.getsockname()[0]
-        except OSError:
-            continue
-        try:
-            ip = ipaddress.ip_address(address)
-        except ValueError:
-            continue
-        if not (ip.is_loopback or ip.is_unspecified or ip.is_link_local):
-            return address
-    return None
-
-
-def address_for(hub_url: str, host: str) -> str | None:
-    """The address a node bound to ``host`` gives the hub at ``hub_url``; ``None`` when there is none but its name.
-
-    A node bound to one address gives that address, loopback included. One bound to every address (``0.0.0.0``,
-    ``::``) gives this machine's address of that family on the interface that reaches the hub, or, for a hub on this
-    machine, the one that reaches other machines (the route to a documentation address, which sends nothing).
-    """
-    if not _is_any_address(host):
-        return host.strip("[]")
-    parts = urlsplit(hub_url)
-    try:
-        hub_port = parts.port
-    except ValueError:
-        hub_port = None
-    family = socket.AF_INET6 if ":" in host else socket.AF_INET
-    targets = [(_ROUTE_PROBES[family], 80)]
-    if parts.hostname and not is_loopback_host(parts.hostname):
-        targets.insert(0, (parts.hostname, hub_port or (443 if parts.scheme == "https" else 80)))
-    for target in targets:
-        address = _route_address(*target, family)
-        if address is not None:
-            return address
-    return None
-
-
-def node_url(hub_url: str, host: str, port: int, *, tls: bool) -> str:
-    """The address a node bound to ``host`` and ``port`` gives the hub at ``hub_url``, when the operator gives none.
-
-    ``address_for``'s address, else this machine's name as ``default_url`` gives it.
-    """
-    address = address_for(hub_url, host)
-    if address is None:
-        return default_url(port, tls=tls)
-    return f"{'https' if tls else 'http'}://{_host_port(address, port)}"

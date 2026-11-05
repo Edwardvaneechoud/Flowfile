@@ -207,7 +207,6 @@ def joining(monkeypatch, tmp_path):
     """Core's command line carried a join token, and this node never joined: its file is under ``tmp_path``."""
     monkeypatch.setattr(core_main, "JOIN_TOKEN", "join-t")
     monkeypatch.setattr(core_main, "JOIN_HUB_URL", "http://hub.example")
-    monkeypatch.setattr(core_main, "NODE_STORAGE_DIR", None)
     monkeypatch.setattr(hub_node, "path", lambda: tmp_path / "storage" / hub_node.FILE_NAME)
 
 

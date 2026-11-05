@@ -24,13 +24,12 @@ def _launched_as_worker() -> bool:
     return sys.argv[0] == "-m" and "-m" in command and command[command.index("-m") + 1 :][:1] == ["flowfile_worker"]
 
 
-# The storage dir is chosen before `shared.storage_config` reads it, for this process and the ones it starts.
-NODE_STORAGE_DIR = None
+# A join without a storage dir of its own is refused before `shared.storage_config` reads one.
 if _launched_as_worker():
     from flowfile_worker import configs as _configs
     from shared import hub_node as _hub_node
 
-    NODE_STORAGE_DIR = _hub_node.node_storage(_configs.JOIN_TOKEN, _configs.NODE_NAME, by_name=True)
+    _hub_node.require_own_storage_dir(_configs.JOIN_TOKEN)
 
 from shared._version import get_version
 from shared.storage_config import storage

@@ -1,5 +1,6 @@
 """A node's identity on a hub: how the variables and the joined file combine, the join itself, joining at start, the
-folder, port and address a node that joins takes, and the heartbeat that tells the hub the node is up."""
+storage dir a node that joins must have, the port it binds, the address it gives, and the heartbeat that tells the hub
+the node is up."""
 
 import errno
 import json
@@ -452,115 +453,53 @@ def test_a_start_with_the_token_the_node_joined_with_is_already_joined(join_hub,
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
-    """A home directory of the test's own, and none of the storage variables set."""
+    """A home directory of the test's own holding Flowfile desktop's empty ``~/.flowfile``, with neither
+    ``FLOWFILE_STORAGE_DIR`` nor ``FLOWFILE_MODE`` set."""
     target = tmp_path / "home"
-    target.mkdir()
+    (target / ".flowfile").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(target))
-    for name in ("FLOWFILE_STORAGE_DIR", "SECURE_STORAGE_PATH", "FLOWFILE_SECURE_STORAGE_PATH", "FLOWFILE_MODE"):
+    for name in ("FLOWFILE_STORAGE_DIR", "FLOWFILE_MODE"):
         monkeypatch.delenv(name, raising=False)
     return target
 
 
-@pytest.mark.skipif(os.name == "nt", reason="the home directory comes from HOME on POSIX only")
-def test_a_node_that_joins_keeps_its_files_in_a_folder_of_its_own(home):
-    folder = hub_node.node_storage("join-token", "card-node")
-
-    assert folder == home / ".flowfile-node" / "card-node"
-    assert stat.S_IMODE(folder.stat().st_mode) == 0o700
-    assert stat.S_IMODE(folder.parent.stat().st_mode) == 0o700
-    assert os.environ["FLOWFILE_STORAGE_DIR"] == str(folder)
-    assert os.environ["SECURE_STORAGE_PATH"] == os.environ["FLOWFILE_SECURE_STORAGE_PATH"] == str(folder / "secure")
-    assert sorted(path.name for path in home.iterdir()) == [".flowfile-node"]
+REFUSAL = (
+    "Cannot join a hub without a storage dir of this node's own: set FLOWFILE_STORAGE_DIR to a folder for it, as the "
+    "hub's install line does, so it stays out of Flowfile desktop's ~/.flowfile"
+)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="the home directory comes from HOME on POSIX only")
-def test_a_node_given_no_name_keeps_its_files_under_the_machines_name(home, monkeypatch):
-    monkeypatch.setattr(hub_node.socket, "gethostname", lambda: "build-7.example.com")
+def test_a_join_without_a_storage_dir_of_its_own_exits_2_with_one_sentence_before_any_request(home, join_hub, caplog):
+    with caplog.at_level(logging.ERROR, logger="flowfile.hub_node"), pytest.raises(SystemExit) as exited:
+        hub_node.require_own_storage_dir(join_hub.mint())
 
-    assert hub_node.node_storage("join-token", None) == home / ".flowfile-node" / "build-7"
-
-
-@pytest.mark.skipif(os.name == "nt", reason="the home directory comes from HOME on POSIX only")
-def test_a_secure_storage_path_already_set_is_kept(home, monkeypatch):
-    monkeypatch.setenv("FLOWFILE_SECURE_STORAGE_PATH", "/vault/flowfile")
-
-    folder = hub_node.node_storage("join-token", "card-node")
-
-    assert os.environ["FLOWFILE_SECURE_STORAGE_PATH"] == "/vault/flowfile"
-    assert os.environ["SECURE_STORAGE_PATH"] == str(folder / "secure")
+    assert exited.value.code == 2
+    assert [record.getMessage() for record in caplog.records] == [REFUSAL]
+    assert join_hub.calls == []
+    assert [path.name for path in home.iterdir()] == [".flowfile"]
+    assert list((home / ".flowfile").iterdir()) == []
+    assert "FLOWFILE_STORAGE_DIR" not in os.environ
 
 
 @pytest.mark.parametrize(
     "token,variables",
     [
         ("join-token", {"FLOWFILE_STORAGE_DIR": "/srv/flowfile"}),
+        ("join-token", {"FLOWFILE_MODE": "docker"}),
         (None, {}),
         ("", {}),
-        ("join-token", {"FLOWFILE_MODE": "docker"}),
     ],
-    ids=["storage dir set", "no token", "empty token", "docker"],
+    ids=["storage dir set", "docker", "no token", "empty token"],
 )
-def test_the_storage_dir_is_left_alone_without_a_token_or_with_one_set(home, monkeypatch, token, variables):
+def test_a_storage_dir_of_its_own_docker_mode_or_no_join_token_is_let_through(home, monkeypatch, token, variables):
     for name, value in variables.items():
         monkeypatch.setenv(name, value)
 
-    assert hub_node.node_storage(token, "card-node") is None
+    hub_node.require_own_storage_dir(token)
+
     assert os.environ.get("FLOWFILE_STORAGE_DIR") == variables.get("FLOWFILE_STORAGE_DIR")
-    assert "FLOWFILE_SECURE_STORAGE_PATH" not in os.environ
-    assert list(home.iterdir()) == []
-
-
-def joined_on_this_machine(home, name: str = "card-node") -> "os.PathLike":
-    """The folder a core that joined as ``name`` left under the home directory, with its ``hub_node.json``."""
-    folder = home / ".flowfile-node" / name
-    write_node(folder / hub_node.FILE_NAME, name=name, has_core=True)
-    return folder
-
-
-@pytest.mark.skipif(os.name == "nt", reason="the home directory comes from HOME on POSIX only")
-def test_a_process_named_after_a_node_that_joined_here_takes_its_folder(home):
-    folder = joined_on_this_machine(home)
-
-    assert hub_node.node_storage(None, "card-node", by_name=True) == folder
-    assert os.environ["FLOWFILE_STORAGE_DIR"] == str(folder)
-    assert os.environ["SECURE_STORAGE_PATH"] == os.environ["FLOWFILE_SECURE_STORAGE_PATH"] == str(folder / "secure")
-    assert sorted(path.name for path in folder.iterdir()) == [hub_node.FILE_NAME]
-
-
-@pytest.mark.skipif(os.name == "nt", reason="the home directory comes from HOME on POSIX only")
-@pytest.mark.parametrize(
-    "name,by_name,variables",
-    [
-        ("other-node", True, {}),
-        (None, True, {}),
-        ("../card-node", True, {}),
-        ("card-node", False, {}),
-        ("card-node", True, {"FLOWFILE_STORAGE_DIR": "/srv/flowfile"}),
-        ("card-node", True, {"FLOWFILE_MODE": "docker"}),
-    ],
-    ids=["no such node", "no name", "a name no hub takes", "not looked up", "storage dir set", "docker"],
-)
-def test_without_a_node_of_that_name_or_with_a_storage_dir_a_process_with_no_token_is_unchanged(
-    home, monkeypatch, name, by_name, variables
-):
-    joined_on_this_machine(home)
-    for variable, value in variables.items():
-        monkeypatch.setenv(variable, value)
-
-    assert hub_node.node_storage(None, name, by_name=by_name) is None
-    assert os.environ.get("FLOWFILE_STORAGE_DIR") == variables.get("FLOWFILE_STORAGE_DIR")
-    assert "FLOWFILE_SECURE_STORAGE_PATH" not in os.environ
-
-
-@pytest.mark.parametrize("name", ["../desktop", "a/b", ".hidden", "with space"])
-def test_a_name_a_hub_would_refuse_is_no_folder_and_exits_2(home, caplog, name):
-    with caplog.at_level(logging.ERROR, logger="flowfile.hub_node"), pytest.raises(SystemExit) as exited:
-        hub_node.node_storage("join-token", name)
-
-    assert exited.value.code == 2
-    assert "give one with --name" in caplog.text
-    assert "FLOWFILE_STORAGE_DIR" not in os.environ
-    assert list(home.iterdir()) == []
+    assert [path.name for path in home.iterdir()] == [".flowfile"]
 
 
 @pytest.fixture
@@ -617,70 +556,6 @@ def test_a_node_whose_port_is_in_use_exits_1_with_the_sentence_before_any_reques
         f"Cannot serve on 127.0.0.1:{port}: {os.strerror(errno.EADDRINUSE)}"
     ]
     assert join_hub.calls == []
-
-
-@pytest.fixture
-def routes(monkeypatch):
-    """The routes asked of the OS, each answered from ``answers`` (``None`` when absent): no network needed."""
-    asked, answers = [], {}
-
-    def route(host, port, family):
-        asked.append((host, port, family))
-        return answers.get(host)
-
-    monkeypatch.setattr(hub_node, "_route_address", route)
-    return asked, answers
-
-
-@pytest.mark.parametrize("host", ["10.1.2.3", "127.0.0.1", "localhost", "::1", "[::1]"])
-def test_a_node_bound_to_one_address_gives_that_address(routes, host):
-    asked, _ = routes
-
-    assert hub_node.address_for(HUB, host) == host.strip("[]")
-    assert asked == []
-
-
-def test_a_node_on_every_address_gives_its_address_towards_the_hub(routes):
-    asked, answers = routes
-    answers["hub.example"] = "10.0.0.7"
-
-    assert hub_node.node_url(HUB, "0.0.0.0", 63581, tls=False) == "http://10.0.0.7:63581"
-    assert asked == [("hub.example", 63580, socket.AF_INET)]
-
-
-@pytest.mark.parametrize("hub_url", ["http://localhost:63580", "http://127.0.0.1:63580", "http://[::1]:63580"])
-def test_a_node_beside_its_hub_gives_its_address_towards_other_machines(routes, hub_url):
-    asked, answers = routes
-    answers["192.0.2.1"] = "192.168.1.20"
-
-    assert hub_node.node_url(hub_url, "0.0.0.0", 63579, tls=True) == "https://192.168.1.20:63579"
-    assert asked == [("192.0.2.1", 80, socket.AF_INET)]
-
-
-def test_a_hub_with_no_route_falls_back_to_the_route_towards_other_machines(routes):
-    asked, answers = routes
-    answers["192.0.2.1"] = "192.168.1.20"
-
-    assert hub_node.address_for("https://hub.example", "0.0.0.0") == "192.168.1.20"
-    assert asked == [("hub.example", 443, socket.AF_INET), ("192.0.2.1", 80, socket.AF_INET)]
-
-
-def test_with_no_route_at_all_a_node_gives_the_machines_name(routes, monkeypatch):
-    monkeypatch.setattr(hub_node.socket, "getfqdn", lambda: "build-7.example.com")
-
-    assert hub_node.node_url(HUB, "0.0.0.0", 63579, tls=False) == "http://build-7.example.com:63579"
-
-
-def test_a_node_on_every_ipv6_address_gives_an_ipv6_address_in_brackets(routes):
-    asked, answers = routes
-    answers["2001:db8::1"] = "2001:db8::5"
-
-    assert hub_node.node_url("http://localhost:63580", "::", 63579, tls=False) == "http://[2001:db8::5]:63579"
-    assert asked == [("2001:db8::1", 80, socket.AF_INET6)]
-
-
-def test_the_os_route_to_loopback_is_no_address_for_a_hub():
-    assert hub_node._route_address("127.0.0.1", 9, socket.AF_INET) is None
 
 
 def joined_with_keys(hub: FakeJoinHub, *, enabled: bool = True, core_url: str | None = None) -> HubNode:

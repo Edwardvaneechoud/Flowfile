@@ -29,7 +29,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from flowfile_core import NODE_STORAGE_DIR, change_feed
+from flowfile_core import change_feed
 from flowfile_core import telemetry as core_telemetry
 from flowfile_core.ai import router as ai_router
 from flowfile_core.ai.admin_routes import router as ai_admin_router
@@ -344,9 +344,9 @@ def _join_hub(port: int | None = None, host: str | None = None) -> None:
     """Join the hub ``--join`` names for this core and its worker before serving on ``host`` and ``port``.
 
     With no token, nothing. One join registers the pair as one node: the name is ``--name``, else the machine's, and
-    the addresses are the settings' ``join_addresses``: ``--url`` and ``--worker-url``, else the address the hub
-    reaches core at on core's port (the loopback address it binds, with a warning, the one address it binds, or this
-    machine's address towards the hub) and the worker's on the worker port the settings hold, plain ``http``. An app
+    the addresses are the settings' ``join_addresses``: ``--url`` and ``--worker-url``, else this machine's full name
+    on core's port (with a warning when core binds a loopback address, which only this machine reaches) and on the
+    worker port the settings hold, plain ``http``. An app
     that serves the browser editor, or mounts its worker, says on which path (``app.state``'s ``editor_path`` and
     ``worker_path``, set by the pip server), and the join gives the hub the editor's address and that worker's beside
     core's. A core that joined already makes no request (``shared.hub_node``). The token leaves this process's
@@ -359,7 +359,6 @@ def _join_hub(port: int | None = None, host: str | None = None) -> None:
     core_url, worker_url, ui_url = join_addresses(
         port or settings.SERVER_PORT,
         host,
-        hub_url=JOIN_HUB_URL,
         worker_path=getattr(app.state, "worker_path", None),
         editor_path=getattr(app.state, "editor_path", None),
     )
@@ -378,15 +377,14 @@ def listen(host: str, port: int) -> socket.socket | None:
 
     Without a join token uvicorn binds the port, as it always has. With one, a core that cannot serve never spends
     it: it serves on ``port``, the one it was started with (``--port``, ``CORE_PORT``, or one a caller of ``run``
-    names, else the default), or exits with code 1 saying that port is in use (``hub_node.serving_socket``). Says
-    first where the node keeps its files when it has a folder of its own. Those lines, and the join's, are logged as
-    the server logs once it serves (the lifespan's ``basicConfig``), from here on: ``flowfile run ui`` and ``run
-    core`` configure no logging before then, and a record at INFO with no handler is dropped.
+    names, else the default), or exits with code 1 saying that port is in use (``hub_node.serving_socket``). That
+    line, and the join's, are logged as the server logs once it serves (the lifespan's ``basicConfig``), from here on:
+    ``flowfile run ui`` and ``run core`` configure no logging before then, and a record at INFO with no handler is
+    dropped.
     """
     if not JOIN_TOKEN:
         return None
     logging.basicConfig(level=logging.INFO, format=_LOG_FORMAT)
-    hub_node.log_storage(NODE_STORAGE_DIR)
     return hub_node.serving_socket(host, port)
 
 
