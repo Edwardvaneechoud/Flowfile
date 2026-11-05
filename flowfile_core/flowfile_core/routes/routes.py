@@ -418,7 +418,7 @@ def _resolve_run_identity(flow) -> tuple[int | None, str, str | None, str | None
     ``flow.flow_settings.name``, which after a save is the file stem
     (``9_house_price`` for ``9_house_price.yaml``) — that prefix is a filename
     collision-avoidance trick that should never reach the run-history UI.
-    ``flow_uuid`` is read from the same registration, so the run row can carry it.
+    ``flow_uuid`` is read from the same registration, for the report to the hub.
     """
     fallback_name = getattr(flow.flow_settings, "name", None) or getattr(flow, "__name__", "unknown")
     flow_path = flow.flow_settings.path or flow.flow_settings.save_location
@@ -572,7 +572,6 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
                     run_type="in_designer_run",
                     node_results_json=node_results,
                     flow_snapshot=snapshot_yaml,
-                    flow_uuid=flow_uuid,
                 )
                 core_run_id = completed.id
     except Exception as exc:

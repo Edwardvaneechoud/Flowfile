@@ -751,13 +751,8 @@ class CatalogService:
         run_type: RunType,
         node_results_json: str | None = None,
         flow_snapshot: str | None = None,
-        flow_uuid: str | None = None,
     ) -> FlowRun:
-        """Record a fully completed run in one step (fallback when start_run was skipped).
-
-        ``flow_uuid`` ties the run to its flow across re-registrations; when omitted it is
-        resolved from ``registration_id``.
-        """
+        """Record a fully completed run in one step (fallback when start_run was skipped)."""
         return self._runs.create_completed_run(
             registration_id,
             flow_name,
@@ -771,7 +766,6 @@ class CatalogService:
             run_type,
             node_results_json,
             flow_snapshot,
-            flow_uuid,
         )
 
     def auto_register_flow(self, flow_path: str, name: str, user_id: int) -> FlowRegistration | None:

@@ -843,19 +843,7 @@ class TestRuns:
             **kwargs,
         )
 
-    def test_create_completed_run_keeps_the_given_flow_uuid(self):
-        """The facade forwards flow_uuid: a run with no registration still names its flow."""
-        with get_db_context() as db:
-            run = self._completed_run(
-                CatalogService(SQLAlchemyCatalogRepository(db)),
-                None,
-                flow_uuid="0b1c2d3e-0000-4000-8000-000000000001",
-            )
-            stored = db.get(FlowRun, run.id)
-            assert stored.flow_uuid == "0b1c2d3e-0000-4000-8000-000000000001"
-            assert stored.registration_id is None
-
-    def test_create_completed_run_without_flow_uuid_takes_the_registrations(self):
+    def test_create_completed_run_takes_the_registrations_flow_uuid(self):
         cat = client.post("/catalog/namespaces", json={"name": "DoneCat"}).json()
         schema = client.post("/catalog/namespaces", json={"name": "DoneSch", "parent_id": cat["id"]}).json()
         flow = client.post(
