@@ -10,11 +10,12 @@ the master key it shares with core. Nothing here is cached, stored or logged bey
 A server that joined its hub with keys of its own has its own master key, so what it sends a server of the hub's
 must be opened there instead: a run that places such a step on a server of the hub asks with ``targets``, the hub
 names of the servers its steps run on (``node_name``), and the hub answers each credential with no options and a map
-of node name to a token sealed to that node (``shared.hub_sealed``). Core hands the map on unopened: a read's plan
-scans through a Python source that opens it where the plan runs, a write's connection carries it, and the exchange
-store's crossings send it (``SealedCredential``). Such a vend also names the secrets the run's steps on those servers
-use (``secrets``), and the hub answers each sealed the same way: a step carries ``sealed_secrets``' strings in place
-of its ``$ffsec$`` ciphertext, and the server that runs it opens them.
+of node name to a token sealed to that node (``shared.hub_sealed``). A desktop connected to the hub shares its master
+key with no server of the hub either, so a run that places a hub-table step on one asks the same way. Core hands the
+map on unopened: a read's plan scans through a Python source that opens it where the plan runs, a write's connection
+carries it, and the exchange store's crossings send it (``SealedCredential``). Such a vend also names the secrets the
+run's steps on those servers use (``secrets``), and the hub answers each sealed the same way: a step carries
+``sealed_secrets``' strings in place of its ``$ffsec$`` ciphertext, and the server that runs it opens them.
 """
 
 from collections.abc import Iterable, Mapping
