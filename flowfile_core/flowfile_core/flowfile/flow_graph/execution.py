@@ -1285,21 +1285,24 @@ class ExecutionMixin(GraphMixinBase):
         The node's error is ``cannot run on backend "<id>": <reason>``, then its remedy as a sentence when it has one.
         """
         for refusal in refusals:
-            node = self.get_node(refusal.node_id)
             error = f'cannot run on backend "{refusal.backend_id}": {refusal.reason}'
             if refusal.remedy:
                 error += f"{'' if error.endswith('.') else '.'} {refusal.remedy}"
-            self.flow_logger.get_node_logger(node.node_id).error(error)
-            node_result = NodeResult(
-                node_id=node.node_id,
-                node_name=node.name,
-                description=node.get_node_information().description,
-                compute_error="Refusal",
-            )
-            node_result.finish(success=False, error=error)
-            self.latest_run_info.node_step_result.append(node_result)
+            self._record_refused(self.get_node(refusal.node_id), error)
         backend_ids = ", ".join(sorted({refusal.backend_id for refusal in refusals}))
         self.flow_logger.error(f"{len(refusals)} node(s) cannot run on backend {backend_ids}; no node was started")
+
+    def _record_refused(self, node: FlowNode, error: str) -> None:
+        """Log ``error`` for ``node`` and append it to the run as a failed result with ``compute_error="Refusal"``."""
+        self.flow_logger.get_node_logger(node.node_id).error(error)
+        node_result = NodeResult(
+            node_id=node.node_id,
+            node_name=node.name,
+            description=node.get_node_information().description,
+            compute_error="Refusal",
+        )
+        node_result.finish(success=False, error=error)
+        self.latest_run_info.node_step_result.append(node_result)
 
     def _run_post_execution_callbacks(
         self,
@@ -1814,15 +1817,7 @@ class ExecutionMixin(GraphMixinBase):
     def _record_hub_refusal(self, nodes: list[FlowNode], sentence: str) -> None:
         """Record each node the hub vends to as a failed result, ``sentence`` its error, in a run that starts none."""
         for node in nodes:
-            self.flow_logger.get_node_logger(node.node_id).error(sentence)
-            node_result = NodeResult(
-                node_id=node.node_id,
-                node_name=node.name,
-                description=node.get_node_information().description,
-                compute_error="Refusal",
-            )
-            node_result.finish(success=False, error=sentence)
-            self.latest_run_info.node_step_result.append(node_result)
+            self._record_refused(node, sentence)
         self.flow_logger.error(
             f"{len(nodes)} node(s) the hub vends to cannot run: {sentence.rstrip('.')}; no node was started"
         )
