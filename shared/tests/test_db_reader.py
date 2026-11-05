@@ -199,3 +199,20 @@ def test_plain_postgres_uri_gets_psycopg2_when_psycopg_missing(monkeypatch):
     monkeypatch.setattr(sql_utils, "_has_module", lambda name: name == "psycopg2")
     assert sql_utils.get_sqlalchemy_uri("postgresql://u:p@h/db") == "postgresql+psycopg2://u:p@h/db"
     assert sql_utils.get_sqlalchemy_uri("postgres://u:p@h/db") == "postgresql+psycopg2://u:p@h/db"
+
+
+def test_a_sqlalchemy_read_works_with_the_asyncio_module_polars_imports(tmp_path):
+    """Polars' read_database imports ``sqlalchemy.ext.asyncio`` for any engine, which SQLAlchemy 2.1 refuses without
+    greenlet; greenlet is a dependency of its own for that."""
+    import sqlalchemy.ext.asyncio  # noqa: F401
+
+    uri = f"sqlite:///{tmp_path / 'reads.db'}"
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(uri)
+    with engine.begin() as conn:
+        conn.execute(text("create table t (a integer)"))
+        conn.execute(text("insert into t values (1), (2)"))
+    engine.dispose()
+
+    assert db_reader._read_sqlalchemy("select a from t order by a", uri)["a"].to_list() == [1, 2]
