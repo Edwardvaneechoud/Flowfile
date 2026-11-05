@@ -44,6 +44,7 @@ import { DEFAULT_OUTPUT_HANDLE, outputHandle } from "../utils/outputHandle";
 import { deriveHandles } from "../utils/nodeHandles";
 import {
   findAutoConnectMatch,
+  freeInputHandles,
   preferUnusedOutputs,
   type AutoConnectDrop,
   type AutoConnectMatch,
@@ -239,6 +240,10 @@ function missingNodeTemplate(node: NodeInput): NodeTemplate {
     custom_node: true,
     output_names: node.output_names,
     dynamic_inputs: node.dynamic_inputs,
+    inputs: node.inputs,
+    outputs: node.outputs,
+    input_labels: node.input_labels,
+    control_input_indices: node.control_input_indices,
   };
 }
 
@@ -517,9 +522,7 @@ export default function useDragAndDrop() {
         {
           id: node.id,
           ...rect,
-          freeInputs: (data.inputs ?? [])
-            .filter((h) => h.position === Position.Left && (multi || !occupied.has(h.id)))
-            .map((h) => h.id),
+          freeInputs: freeInputHandles(data.inputs ?? [], occupied, multi),
           outputs: preferUnusedOutputs(
             (data.outputs ?? []).map((h) => h.id),
             used,
@@ -688,11 +691,9 @@ export default function useDragAndDrop() {
   ): Promise<Node> {
     const component = await getComponentRaw(node.type);
     const derived = deriveHandles({
+      ...node.nodeTemplate,
       input: node.numberOfInputs,
       output: node.numberOfOutputs,
-      dynamic_inputs: node.nodeTemplate?.dynamic_inputs,
-      output_names: node.nodeTemplate?.output_names,
-      input_labels: node.nodeTemplate?.input_labels,
     });
     return {
       id: String(newNodeId),

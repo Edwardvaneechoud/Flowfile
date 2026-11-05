@@ -404,6 +404,41 @@ def test_connect_accepts_flat_shape(call_kwargs: dict[str, Any]) -> None:
     assert [n.node_id for n in target_inputs] == [1]
 
 
+@pytest.mark.parametrize(
+    "input_class, output_class, from_id, reason",
+    [
+        ("input-1", "output-0", 1, "handle_not_available"),
+        ("input-0", "output-1", 1, "handle_not_available"),
+        ("input-0", "output-0", 3, "input_occupied"),
+    ],
+)
+def test_connect_rejects_invalid_live_ports_at_stage_time(
+    call_kwargs: dict[str, Any], input_class: str, output_class: str, from_id: int, reason: str
+) -> None:
+    flow = _flow_with_orders_and_filter()
+    _add_orders_input(flow, node_id=3)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.connect",
+        tool_args={
+            "flow_id": flow.flow_id,
+            "from_node_id": from_id,
+            "to_node_id": 2,
+            "input_class": input_class,
+            "output_class": output_class,
+        },
+        insertion_context=InsertionContext(),
+        flow=flow,
+        mode="stage",
+        **call_kwargs,
+    )
+    assert result.status == "rejected"
+    assert result.refusal_reason == reason
+    assert result.staged_node_payload is None
+    assert [node.node_id for node in flow.get_node(2).all_inputs] == [1]
+
+
 def test_connect_rejects_wiring_into_live_source_node(call_kwargs: dict[str, Any]) -> None:
     """Wiring INTO a live source node (node 1 = manual_input) must be refused at
     stage time with ``target_is_source`` so the planner can self-correct, instead
@@ -511,7 +546,8 @@ def test_connect_flat_shape_with_explicit_classes(call_kwargs: dict[str, Any]) -
     """``input_class`` / ``output_class`` from the flat shape must round-trip
     into the staged ``NodeConnection`` payload — i.e. they actually reach the
     constructed connection model and are not silently defaulted."""
-    flow = _flow_with_orders_and_filter()
+    flow = _flow_with_orders()
+    flow.add_node_promise(input_schema.NodePromise(flow_id=flow.flow_id, node_id=2, node_type="join"))
     result = execute_tool_call(
         flow_id=flow.flow_id,
         tool_name="flowfile.graph.connect",

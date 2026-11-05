@@ -152,7 +152,21 @@ export interface LocalFileInfo {
 
 // Node Template Types (for flow designer)
 
+export interface OutputPort {
+  id: string;
+  name: string | null;
+}
+
+export interface InputPort extends OutputPort {
+  hidden?: boolean;
+  kind: "data" | "parameter";
+  multiple: boolean;
+  required: boolean;
+}
+
 export interface NodeTemplate {
+  inputs?: InputPort[];
+  outputs?: OutputPort[];
   name: string;
   color: string;
   item: string;
@@ -199,6 +213,8 @@ export interface NodeInput extends NodeTemplate {
 // Handle Types
 
 export interface NodeHandle {
+  multiple?: boolean;
+  required?: boolean;
   id: string;
   position: Position;
   label?: string;

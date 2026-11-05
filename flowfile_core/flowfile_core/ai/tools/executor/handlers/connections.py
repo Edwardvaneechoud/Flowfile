@@ -313,7 +313,12 @@ def _handle_connect(
 
     from_node = flow.get_node(from_id)
     if from_node is not None and to_node is not None:
-        connection_error = validate_connection(from_node, to_node)
+        connection_error = validate_connection(
+            from_node,
+            to_node,
+            connection.output_connection.connection_class,
+            connection.input_connection.connection_class,
+        )
         if connection_error is not None:
             return _reject_and_audit(
                 tool_name=tool_name,
