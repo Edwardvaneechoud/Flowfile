@@ -9,7 +9,8 @@ session (``session.clear``); no token is ever stored. A token's expiry is its ow
 On a server that joined its hub with keys of its own, each person signs in through the hub and a run's token is minted
 with the delegated session of the person the run is for (``acting_for``), never with another's: the hub's ledger then
 names who ran, and one person's sign-out ends only their own tokens. ``token_for(..., through_hub=True)`` mints only
-through such a sign-in, and says to sign in through the hub again when there is none.
+through such a sign-in, and says to sign in through the hub again when there is none (``SignedOut``). The editor's
+calls (a schema prediction, a preview, a node fetch) are made for the person signed in to the editor in the same way.
 """
 
 import threading
@@ -68,6 +69,15 @@ def scheduled() -> bool:
     return _scheduled.get()
 
 
+class SignedOut(LookupError):
+    """No token for the hub's server ``node_name``: the person the call is made for has no sign-in through the hub here,
+    or there is no person behind a run. Its message is ``signed_out``'s sentence."""
+
+    def __init__(self, node_name: str) -> None:
+        super().__init__(signed_out(node_name))
+        self.node_name = node_name
+
+
 def signed_in_through_hub(user_id: int) -> bool:
     """Whether the hub session of ``user_id`` here is a sign-in through the hub (``kind: "delegation"``), read
     without asking the hub."""
@@ -84,6 +94,25 @@ def signed_out(node_name: str) -> str:
     )
 
 
+def refused(node_name: str) -> str:
+    """``signed_out``'s sentence as a refused node or editor call shows it: a capital first letter, a full stop."""
+    sentence = signed_out(node_name)
+    return f"{sentence[0].upper()}{sentence[1:]}."
+
+
+def refusal(error: BaseException) -> str | None:
+    """``refused``'s sentence when ``error`` is a ``SignedOut`` or was raised from one, however it was wrapped on the
+    way (a backend's ``TaskFailed``, a route's ``HTTPException``); else ``None``."""
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        if isinstance(current, SignedOut):
+            return refused(current.node_name)
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return None
+
+
 def token_for(user_id: int, node_id: int, node_name: str, *, through_hub: bool = False) -> str:
     """A ``run`` token for the hub node ``node_id``, named ``node_name``, minted through ``user_id``'s hub session.
 
@@ -93,7 +122,7 @@ def token_for(user_id: int, node_id: int, node_name: str, *, through_hub: bool =
 
     Raises:
         LookupError: ``user_id`` has no hub session, or the hub no longer accepts it (the message says to connect to
-            the hub again; with ``through_hub``, it is ``signed_out``'s sentence); the hub did not answer; or the hub
+            the hub again; with ``through_hub``, it is a ``SignedOut``); the hub did not answer; or the hub
             refused the node, with its reason.
     """
     with _lock:
@@ -142,15 +171,15 @@ def _mint_through_hub(user_id: int, node_id: int, node_name: str) -> str:
     ``signed_out``'s sentence."""
     stored = session.load(user_id)
     if stored is None or stored.get("kind") != "delegation":
-        raise LookupError(signed_out(node_name))
+        raise SignedOut(node_name)
     try:
         access_token = session.access_token(user_id)
         if access_token is None:
-            raise LookupError(signed_out(node_name))
+            raise SignedOut(node_name)
         minted = client.mint_node_token(stored["hub_url"], access_token, node_id)
     except HubRefused as e:
         if e.status == 401 or session._ended(e) or session.load(user_id) is None:
-            raise LookupError(signed_out(node_name)) from e
+            raise SignedOut(node_name) from e
         raise LookupError(f"the hub refused a token for node {node_name!r}: {e.detail}") from e
     except HubVersionRefused as e:
         raise LookupError(f"the hub refused a token for node {node_name!r}: {e.detail}") from e

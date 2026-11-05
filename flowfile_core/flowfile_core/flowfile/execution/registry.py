@@ -153,8 +153,8 @@ def _hub_token(backend_id: str, hub_user_id: int, hub_node_id: int, *, through_h
 
     With ``through_hub`` (a server joined with keys of its own) it is the token of the person the call is made for
     (``node_tokens.acting``), minted through their sign-in through the hub. With no such person, a call inside a run
-    or a fetch (``context.entered``) is refused with ``node_tokens.signed_out``'s sentence, and any other call takes
-    the row's user's token.
+    or a fetch (``context.entered``) is refused with a ``node_tokens.SignedOut``, the cause of the ``LookupError``
+    raised here, and any other call takes the row's user's token.
     """
     from flowfile_core.flowfile.execution import context
     from flowfile_core.hub_client import node_tokens
@@ -165,7 +165,7 @@ def _hub_token(backend_id: str, hub_user_id: int, hub_node_id: int, *, through_h
         if person is not None:
             return node_tokens.token_for(person, hub_node_id, name, through_hub=True)
         if through_hub and context.entered():
-            raise LookupError(node_tokens.signed_out(name))
+            raise node_tokens.SignedOut(name)
         return node_tokens.token_for(hub_user_id, hub_node_id, name)
     except LookupError as e:
         raise LookupError(f"Compute backend {backend_id!r} cannot be used: {e}") from e

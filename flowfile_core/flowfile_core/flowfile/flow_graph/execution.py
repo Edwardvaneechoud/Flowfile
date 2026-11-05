@@ -505,10 +505,11 @@ class ExecutionMixin(GraphMixinBase):
         as the fetch route does before it answers; the slot is released here either way.
 
         The node and its inputs are placed as a run's nodes are (``_place_run``), under an ``exchange_run`` of the
-        fetch's own. A refusal runs nothing, each refused node a failed row. A placement that raises fails the node's
-        row and is raised again. Otherwise the node runs on its assigned backend: an input that ran with its current
-        setup on another backend crosses through the exchange store, and one that has not run is composed into the
-        node's plan. The fetch's nodes are the node and its inputs, so its hints count no consumer.
+        fetch's own, after the same refusal a run of a person with no sign-in through the hub gets
+        (``_signed_out_refusal``). A refusal runs nothing, each refused node a failed row. A placement that raises
+        fails the node's row and is raised again. Otherwise the node runs on its assigned backend: an input that ran
+        with its current setup on another backend crosses through the exchange store, and one that has not run is
+        composed into the node's plan. The fetch's nodes are the node and its inputs, so its hints count no consumer.
         """
         if not claimed and not self.try_claim_run():
             raise Exception("Flow is already running")
@@ -527,9 +528,11 @@ class ExecutionMixin(GraphMixinBase):
             inputs = dict.fromkeys(source for source, _ in flow_node._slot_input_pairs() if source is not None)
             stage = ExecutionStage(nodes=[*inputs, flow_node])
             try:
-                hub_refusal = self._vend_for_fetch(flow_node, exchange_run)
+                hub_refusal = self._signed_out_refusal(stage.nodes, exchange_run) or self._vend_for_fetch(
+                    flow_node, exchange_run
+                )
                 if hub_refusal:
-                    self._record_hub_refusal(*hub_refusal)
+                    self._record_hub_refusal(hub_refusal)
                     self.latest_run_info.end_time = datetime.datetime.now()
                     self.release_run()
                     self._end_exchange_run(exchange_run)
@@ -604,7 +607,7 @@ class ExecutionMixin(GraphMixinBase):
             self.release_run()
             self._end_exchange_run(exchange_run)
 
-    def _vend_for_fetch(self, flow_node: FlowNode, exchange_run: ExchangeRun) -> tuple[list[FlowNode], str] | None:
+    def _vend_for_fetch(self, flow_node: FlowNode, exchange_run: ExchangeRun) -> list[tuple[FlowNode, str]] | None:
         """Ask the hub for the credentials of the hub tables a fetch of ``flow_node`` reads, as a run does.
 
         A run keeps no hub reader's plan once it ends (``_end_hub_vend``), so a fetch after a Performance run builds
@@ -1953,8 +1956,7 @@ class ExecutionMixin(GraphMixinBase):
         if person is None and node_tokens.scheduled():
             return [(node, f"{node_tokens.SCHEDULED}.") for on in on_hub.values() for node in on]
         name, on = next(iter(on_hub.items()))
-        sentence = node_tokens.signed_out(name)
-        return [(node, f"{sentence[0].upper()}{sentence[1:]}.") for node in on]
+        return [(node, node_tokens.refused(name)) for node in on]
 
     @staticmethod
     def _on_hub_servers(

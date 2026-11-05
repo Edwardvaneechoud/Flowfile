@@ -360,6 +360,26 @@ async def trigger_fetch_node_data(
     )
 
 
+@contextmanager
+def _editor_call_for(user_id: int) -> Iterator[None]:
+    """The block of an editor call made for ``user_id``: a schema prediction, a preview, its statistics or export.
+
+    On a server joined with keys of its own, each call to a server of the hub inside it carries the token minted with
+    that person's own sign-in through the hub (``node_tokens.acting_for``), as their runs do. A call refused because
+    they have no such sign-in answers 403 with the sentence that says to sign in through the hub again, never a 500;
+    a prediction the server refused shows that sentence as the node's ``prediction_warning``. Elsewhere nothing reads
+    the person, and the block changes nothing.
+    """
+    with node_tokens.acting_for(user_id):
+        try:
+            yield
+        except Exception as e:
+            sentence = node_tokens.refusal(e)
+            if sentence is None:
+                raise
+            raise HTTPException(403, sentence) from None
+
+
 def _fetch_for(user_id: int, flow, node_id: int, **kwargs) -> None:
     """``flow.trigger_fetch_node`` for ``user_id``: on a server joined with keys of its own, a server of the hub takes
     that person's run token (``node_tokens.acting_for``)."""
@@ -2111,13 +2131,13 @@ def get_node(
     node = flow.get_node(node_id)
     if node is None:
         raise HTTPException(422, "Not found")
-    v = node.get_node_data(
-        flow_id=flow.flow_id,
-        include_example=get_data,
-        include_output=include_output,
-        include_inputs=include_inputs,
-    )
-    return v
+    with _editor_call_for(current_user.id):
+        return node.get_node_data(
+            flow_id=flow.flow_id,
+            include_example=get_data,
+            include_output=include_output,
+            include_inputs=include_inputs,
+        )
 
 
 @router.get("/node/input_names", tags=["editor"])
@@ -2263,7 +2283,8 @@ def get_table_example(
     """
     flow = get_flow_or_404(flow_id, current_user)
     node = flow.get_node(node_id)
-    return node.get_table_example(True, output_handle=output_handle)
+    with _editor_call_for(current_user.id):
+        return node.get_table_example(True, output_handle=output_handle)
 
 
 @router.get("/node/column_stats", response_model=output_model.FileColumn, tags=["editor"])
@@ -2290,15 +2311,16 @@ def get_node_column_stats(
         raise HTTPException(404, "Could not find the node")
     if flow.flow_settings.execution_mode == "Performance":
         raise HTTPException(409, "Column statistics are not computed in Performance mode.")
-    try:
-        return node.get_column_stats(column_name, output_handle=output_handle)
-    except ColumnStatsUnavailable as e:
-        raise HTTPException(409, str(e)) from None
-    except ColumnNotFoundError:
-        raise HTTPException(404, f"Column '{column_name}' not found in the node result") from None
-    except Exception as e:
-        logger.error(f"Failed to compute column stats for node {node_id}, column '{column_name}': {e}")
-        raise HTTPException(422, "Could not compute column statistics") from e
+    with _editor_call_for(current_user.id):
+        try:
+            return node.get_column_stats(column_name, output_handle=output_handle)
+        except ColumnStatsUnavailable as e:
+            raise HTTPException(409, str(e)) from None
+        except ColumnNotFoundError:
+            raise HTTPException(404, f"Column '{column_name}' not found in the node result") from None
+        except Exception as e:
+            logger.error(f"Failed to compute column stats for node {node_id}, column '{column_name}': {e}")
+            raise HTTPException(422, "Could not compute column statistics") from e
 
 
 @router.get("/node/data/export", tags=["editor"])
@@ -2317,6 +2339,12 @@ def export_node_data(
     ``bounded.head_rows`` on the backend that holds the node's result, so core opens no file a backend stored.
     """
     flow, node = _get_analysis_node(flow_id, node_id, current_user)
+    with _editor_call_for(current_user.id):
+        return _export_node_rows(flow, node, flow_id, node_id, output_handle, file_format, limit)
+
+
+def _export_node_rows(flow, node, flow_id: int, node_id: int, output_handle: str, file_format: str, limit: int):
+    """``export_node_data``'s file of the node's cached rows."""
     try:
         engine = node.get_cached_result(output_handle)
     except ColumnStatsUnavailable as e:
@@ -2804,7 +2832,8 @@ def get_flow_artifacts(flow_id: int, current_user=Depends(get_current_active_use
 def get_flow_settings_validation(flow_id: int, current_user=Depends(get_current_active_user)) -> FlowSettingsValidation:
     """Conservative static check: node settings that reference missing input columns."""
     flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
-    return validate_flow_settings(flow)
+    with _editor_call_for(current_user.id):
+        return validate_flow_settings(flow)
 
 
 @router.get("/flow/placement", tags=["editor"], response_model=output_model.PlacementPreview)
@@ -2931,14 +2960,15 @@ def compute_node_visualization(
     successive calls skip the load.
     """
     flow, node = _get_analysis_node(body.flow_id, body.node_id, current_user)
-    try:
-        return node_viz.compute_node_rows(flow, node, body.payload, body.max_rows)
-    except node_viz.NodeNotRunError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    except node_viz.CloudPlanNotVisualizableError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(502, str(exc)) from exc
+    with _editor_call_for(current_user.id):
+        try:
+            return node_viz.compute_node_rows(flow, node, body.payload, body.max_rows)
+        except node_viz.NodeNotRunError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except node_viz.CloudPlanNotVisualizableError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(502, str(exc)) from exc
 
 
 @router.post("/analysis_data/fields", tags=["analysis"], response_model=VisualizationFieldsResponse)
@@ -2948,14 +2978,15 @@ def get_node_visualization_fields(
 ):
     """Return the Graphic Walker field schema for an Explore Data node's result."""
     flow, node = _get_analysis_node(body.flow_id, body.node_id, current_user)
-    try:
-        return node_viz.get_node_fields(flow, node)
-    except node_viz.NodeNotRunError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    except node_viz.CloudPlanNotVisualizableError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(502, str(exc)) from exc
+    with _editor_call_for(current_user.id):
+        try:
+            return node_viz.get_node_fields(flow, node)
+        except node_viz.NodeNotRunError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except node_viz.CloudPlanNotVisualizableError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(502, str(exc)) from exc
 
 
 @router.get("/custom_functions/instant_result", tags=[])
@@ -2964,12 +2995,12 @@ async def get_instant_function_result(
 ):
     """Executes a simple, instant function on a node's data and returns the result."""
     flow = get_flow_or_404(flow_id, current_user)
-    try:
-        node = flow_file_handler.get_node(flow.flow_id, node_id)
-        result = await asyncio.to_thread(get_instant_func_results, node, func_string)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+    with _editor_call_for(current_user.id):
+        try:
+            node = flow_file_handler.get_node(flow.flow_id, node_id)
+            return await asyncio.to_thread(get_instant_func_results, node, func_string)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/custom_functions/formula_chain_check", tags=[])
@@ -2979,11 +3010,12 @@ async def check_formula_chain(
 ) -> output_model.FormulaChainCheckResponse:
     """Validates a formula node's entries, each against the schema its predecessors leave behind."""
     flow = get_flow_or_404(request.flow_id, current_user)
-    try:
-        node = flow_file_handler.get_node(flow.flow_id, request.node_id)
-        return await asyncio.to_thread(get_formula_chain_check, node, request.entries)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+    with _editor_call_for(current_user.id):
+        try:
+            node = flow_file_handler.get_node(flow.flow_id, request.node_id)
+            return await asyncio.to_thread(get_formula_chain_check, node, request.entries)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/custom_functions/formula_chain_instant_result", tags=[])
@@ -2993,11 +3025,12 @@ async def get_formula_chain_instant_function_result(
 ) -> output_model.InstantFuncResult:
     """Evaluates one formula entry on a preview row, with the entries above it applied first."""
     flow = get_flow_or_404(request.flow_id, current_user)
-    try:
-        node = flow_file_handler.get_node(flow.flow_id, request.node_id)
-        return await asyncio.to_thread(get_formula_chain_instant_result, node, request.entries, request.index)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+    with _editor_call_for(current_user.id):
+        try:
+            node = flow_file_handler.get_node(flow.flow_id, request.node_id)
+            return await asyncio.to_thread(get_formula_chain_instant_result, node, request.entries, request.index)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/api/get_xlsx_sheet_names", tags=["excel_reader"], response_model=list[str])
