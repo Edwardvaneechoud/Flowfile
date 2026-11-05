@@ -240,12 +240,12 @@ def test_a_joined_servers_run_asks_for_the_store_only_for_a_flow_with_a_node_set
     assert routes._joined_server_store(graph, 1).vended_for == 1
 
 
-def test_the_exchange_card_shows_a_joined_servers_hub_store_as_vended(signed_in, joined_with_keys):
+def test_the_exchange_card_shows_a_joined_servers_hub_store_as_the_hubs(signed_in, joined_with_keys):
     from types import SimpleNamespace
 
     from flowfile_core.routes import system_exchange
 
     state = system_exchange._state(system_exchange._hub_store(SimpleNamespace(id=1)))
 
-    assert (state.source, state.vended, state.uri) == ("hub", True, HUB_STORE["uri"])
-    assert system_exchange._state(None).vended is False
+    assert (state.source, state.uri) == ("hub", HUB_STORE["uri"])
+    assert "vended" not in state.model_dump()

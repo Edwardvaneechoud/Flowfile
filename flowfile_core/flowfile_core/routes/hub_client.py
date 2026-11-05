@@ -44,6 +44,7 @@ from flowfile_core.auth.jwt import get_current_active_user, get_current_admin_us
 from flowfile_core.catalog import CatalogService
 from flowfile_core.catalog.exceptions import FlowExistsError, NamespaceNotFoundError, NotAuthorizedError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db, get_db_context
 from flowfile_core.database.models import ConfiguredBackend
 from flowfile_core.flowfile.catalog_helpers import (
@@ -81,10 +82,6 @@ class HubConnection(BaseModel):
     hub_version: str | None = None
     reachable: bool = False
     error: str | None = None
-    nodes_synced: int | None = None
-    """After a connect, how many of the hub's compute nodes now fill the backends table; ``None`` otherwise."""
-    sync_error: str | None = None
-    """After a connect whose node sync failed, why; the connection itself stands."""
     account: str | None = None
     """Who is signed in at the hub through this connection: on a server that signs people in through its hub, the
     person's full name, else their username (their account here mirrors the hub's); on a desktop, the hub username it
@@ -188,9 +185,9 @@ def connect(
 
     Nothing is stored unless every step succeeded. Connecting again replaces the earlier connection; the same
     device name under the same hub account is the same device on the hub. Once connected, the hub's compute nodes
-    are synced into the backends table as ``/compute_nodes/sync`` does, best effort: the answer carries
-    ``nodes_synced``, or ``sync_error`` when the hub's list could not be read, and the connection stands either way.
-    The rows the sync wrote are checked after the answer is sent (``_check_nodes``), so it is not held up.
+    are synced into the backends table as ``/compute_nodes/sync`` does, best effort: a hub whose list could not be
+    read leaves one warning in the log, and the connection stands either way. The rows the sync wrote are checked
+    after the answer is sent (``_check_nodes``), so it is not held up.
     """
     device_name = (request.device_name or "").strip() or socket.gethostname()
     try:
@@ -205,6 +202,7 @@ def connect(
             "hub_url": request.hub_url,
             "refresh_token": tokens["refresh_token"],
             "device_name": device["name"],
+            "org_name": info["org_name"],
         },
     )
     stored = session.load(current_user.id)
@@ -212,9 +210,8 @@ def connect(
     try:
         synced, _ = _sync_nodes(db, current_user.id, request.hub_url, tokens["access_token"])
     except (HubUnreachable, HubRefused, HubVersionRefused) as e:
-        connection.sync_error = str(e)
+        logger.warning("Connected to the hub at %s, but its compute nodes could not be read: %s", request.hub_url, e)
         return connection
-    connection.nodes_synced = len(synced)
     background.add_task(_check_nodes, synced)
     return connection
 
@@ -322,8 +319,6 @@ def sync_compute_nodes(current_user=Depends(get_current_admin_user), db: Session
 class LocalPathUse(BaseModel):
     """A node whose settings name a path on this machine, which the hub's other users will not have."""
 
-    node_id: int
-    node_type: str
     label: str
     path: str
 
@@ -336,10 +331,8 @@ class HubPublishRequest(BaseModel):
 
 
 class HubPublishOut(BaseModel):
-    flow_uuid: str
     version: int
     name: str
-    namespace_id: int | None = None
 
 
 class HubOpenRequest(BaseModel):
@@ -358,8 +351,6 @@ class HubOpenRequest(BaseModel):
 
 class HubOpenOut(BaseModel):
     flow_path: str
-    flow_uuid: str
-    version: int
 
 
 def _hub(current_user) -> tuple[str, str]:
@@ -450,7 +441,7 @@ def publish_check(flow_id: int, current_user=Depends(get_current_active_user)) -
             continue
         path = _local_path(node)
         if path:
-            uses.append(LocalPathUse(node_id=node.node_id, node_type=node.node_type, label=_label(node), path=path))
+            uses.append(LocalPathUse(label=_label(node), path=path))
     return uses
 
 
@@ -539,12 +530,7 @@ def publish(request: HubPublishRequest, current_user=Depends(get_current_active_
         hub_url=hub_url, flow_uuid=published["flow_uuid"], version=published["version"]
     )
     flow.save_flow(flow_path=flow_path)
-    return HubPublishOut(
-        flow_uuid=published["flow_uuid"],
-        version=published["version"],
-        name=published["name"],
-        namespace_id=published.get("namespace_id"),
-    )
+    return HubPublishOut(version=published["version"], name=published["name"])
 
 
 def _local_copy_path(flow_uuid: str, name: str) -> tuple[str, bool]:
@@ -629,4 +615,4 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
     Path(flow_path).parent.mkdir(parents=True, exist_ok=True)
     with open(flow_path, "w", encoding="utf-8") as f:
         yaml.dump(document.model_dump(mode="json"), f, default_flow_style=False, sort_keys=False, allow_unicode=True)
-    return HubOpenOut(flow_path=flow_path, flow_uuid=checked_out["flow_uuid"], version=checked_out["version"])
+    return HubOpenOut(flow_path=flow_path)

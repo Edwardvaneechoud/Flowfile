@@ -131,7 +131,8 @@ def test_connecting_stores_the_refresh_token_and_device_and_never_the_password(a
     assert "s3cret" not in raw
     stored = json.loads(raw)
     assert stored["refresh_token"] in hub.live_refresh
-    assert set(stored) == {"hub_url", "refresh_token", "refresh_expires_at", "device_name"}
+    assert set(stored) == {"hub_url", "refresh_token", "refresh_expires_at", "device_name", "org_name"}
+    assert stored["org_name"] == INFO["org_name"]
 
 
 def test_status_after_connecting_reports_the_hub_live(api, hub):
@@ -249,8 +250,6 @@ def test_connecting_fills_the_backends_table_with_the_hubs_enabled_nodes(api, hu
     response = api.post("/hub_client/connection", json=CONNECT)
 
     assert response.status_code == 200, response.text
-    assert response.json()["nodes_synced"] == 2
-    assert response.json()["sync_error"] is None
     assert hub.calls[-1] == ("GET", "/hub/compute-nodes")
     rows = _rows()
     assert sorted(rows) == ["worker:gpu", "worker:team"]
@@ -276,8 +275,7 @@ def test_a_failed_node_sync_does_not_fail_the_connect(api, hub):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["connected"] is True
-    assert body["nodes_synced"] is None
-    assert body["sync_error"] == "compute nodes unavailable"
+    assert "sync_error" not in body
     assert _rows() == {}
     assert api.get("/hub_client/connection").json()["connected"] is True
 
@@ -336,8 +334,7 @@ def test_a_core_that_is_a_node_itself_never_lists_its_own_node_and_drops_a_row_w
     assert [row["id"] for row in response.json()["backends"]] == ["worker:gpu"]
     assert sorted(_rows()) == ["worker:gpu"]
     reconnected = api.post("/hub_client/connection", json=CONNECT)
-    assert reconnected.json()["nodes_synced"] == 1
-    assert reconnected.json()["sync_error"] is None
+    assert reconnected.status_code == 200, reconnected.text
     assert sorted(_rows()) == ["worker:gpu"]
 
 
@@ -351,7 +348,7 @@ def test_a_hand_added_row_with_a_hub_nodes_name_is_skipped_and_untouched(api, hu
     connected = api.post("/hub_client/connection", json=CONNECT)
     synced = api.post("/hub_client/compute_nodes/sync")
 
-    assert connected.json()["nodes_synced"] == 1
+    assert connected.status_code == 200, connected.text
     assert synced.status_code == 200, synced.text
     assert synced.json()["skipped"] == ["worker:team"]
     team = _rows()["worker:team"]

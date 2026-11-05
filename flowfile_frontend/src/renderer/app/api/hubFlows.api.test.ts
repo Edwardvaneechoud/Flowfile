@@ -72,7 +72,7 @@ describe("listing", () => {
 describe("publishCheck", () => {
   it("asks for the flow's local paths and maps the nodes", async () => {
     mocks.get.mockResolvedValue({
-      data: [{ node_id: 2, node_type: "read", label: "sales.csv (csv)", path: "/data/sales.csv" }],
+      data: [{ label: "sales.csv (csv)", path: "/data/sales.csv" }],
     });
 
     const result = await publishCheck(42);

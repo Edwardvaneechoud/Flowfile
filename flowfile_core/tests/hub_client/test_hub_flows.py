@@ -358,12 +358,7 @@ def test_a_first_publish_sends_no_base_the_registrations_uuid_the_stripped_docum
     )
 
     assert response.status_code == 201, response.text
-    assert response.json() == {
-        "flow_uuid": registration["flow_uuid"],
-        "version": 1,
-        "name": "Sales report",
-        "namespace_id": 2,
-    }
+    assert response.json() == {"version": 1, "name": "Sales report"}
     flow_uuid, body = hub.publishes[0]
     assert flow_uuid == registration["flow_uuid"]
     assert body["base_version"] is None
@@ -402,15 +397,16 @@ def test_a_stale_base_answers_stale_base_with_both_versions_and_publish_over_suc
 ):
     path = tmp_path / "stale.yaml"
     flow = _new_flow(user_id, path)
-    first = connected.post("/hub_client/publish", json={"flow_id": flow.flow_id, "message": "mine"}).json()
-    hub.add_version(first["flow_uuid"], {"flowfile_name": "theirs"}, author_id=7, message="theirs")
+    assert connected.post("/hub_client/publish", json={"flow_id": flow.flow_id, "message": "mine"}).status_code == 201
+    flow_uuid = flow.flow_settings.hub_origin.flow_uuid
+    hub.add_version(flow_uuid, {"flowfile_name": "theirs"}, author_id=7, message="theirs")
 
     response = connected.post("/hub_client/publish", json={"flow_id": flow.flow_id, "message": "mine again"})
 
     assert response.status_code == 409, response.text
     detail = response.json()["detail"]
     assert detail["kind"] == "stale_base"
-    assert detail["flow_uuid"] == first["flow_uuid"]
+    assert detail["flow_uuid"] == flow_uuid
     assert detail["base"]["version"] == 1 and detail["base"]["message"] == "mine"
     assert detail["current"]["version"] == 2 and detail["current"]["author_id"] == 7
     assert detail["current"]["message"] == "theirs"
@@ -424,7 +420,7 @@ def test_a_stale_base_answers_stale_base_with_both_versions_and_publish_over_suc
     assert over.status_code == 201, over.text
     assert over.json()["version"] == 3
     assert hub.publishes[-1][1]["base_version"] == 2
-    assert [v["version"] for v in hub.versions[first["flow_uuid"]]] == [3, 2, 1]
+    assert [v["version"] for v in hub.versions[flow_uuid]] == [3, 2, 1]
     assert flow.flow_settings.hub_origin.version == 3
 
 
@@ -507,7 +503,7 @@ def test_open_writes_a_registered_copy_refuses_a_repeat_and_overwrites_with_repl
     assert response.status_code == 200, response.text
     body = response.json()
     hub_copies.append(body["flow_path"])
-    assert body["flow_uuid"] == flow_uuid and body["version"] == 1
+    assert set(body) == {"flow_path"}
     copy = Path(body["flow_path"])
     assert copy.parent == storage.flows_directory / "hub"
     assert copy.name == f"Quarterly_sales_{flow_uuid[:8]}.yaml"
@@ -533,7 +529,7 @@ def test_open_writes_a_registered_copy_refuses_a_repeat_and_overwrites_with_repl
     hub.add_version(flow_uuid, {**source.get_flowfile_data().model_dump(mode="json"), "flowfile_name": "v2"})
     replaced = connected.post("/hub_client/open", json={"flow_uuid": flow_uuid, "replace": True})
     assert replaced.status_code == 200, replaced.text
-    assert replaced.json() == {"flow_path": str(copy), "flow_uuid": flow_uuid, "version": 2}
+    assert replaced.json() == {"flow_path": str(copy)}
     assert _saved_origin(copy)["version"] == 2
     assert yaml.safe_load(copy.read_text(encoding="utf-8"))["flowfile_id"] == first_id
     assert _registration(uuid=flow_uuid)["id"] == registration["id"]
@@ -545,14 +541,15 @@ def test_open_of_a_flow_published_from_here_points_at_its_own_file(connected, hu
     path = tmp_path / "mine.yaml"
     flow = _new_flow(user_id, path)
     auto_register_flow(str(path), "mine", user_id)
-    published = connected.post("/hub_client/publish", json={"flow_id": flow.flow_id}).json()
-    hub.add_version(published["flow_uuid"], {**hub.versions[published["flow_uuid"]][0]["definition"]}, author_id=7)
+    assert connected.post("/hub_client/publish", json={"flow_id": flow.flow_id}).status_code == 201
+    flow_uuid = flow.flow_settings.hub_origin.flow_uuid
+    hub.add_version(flow_uuid, {**hub.versions[flow_uuid][0]["definition"]}, author_id=7)
 
-    refused = connected.post("/hub_client/open", json={"flow_uuid": published["flow_uuid"]})
+    refused = connected.post("/hub_client/open", json={"flow_uuid": flow_uuid})
     assert refused.status_code == 409
     assert refused.json()["detail"] == {"kind": "local_copy_exists", "flow_path": str(path)}
 
-    replaced = connected.post("/hub_client/open", json={"flow_uuid": published["flow_uuid"], "replace": True})
+    replaced = connected.post("/hub_client/open", json={"flow_uuid": flow_uuid, "replace": True})
     assert replaced.status_code == 200, replaced.text
     assert replaced.json()["flow_path"] == str(path)
     assert _saved_origin(path)["version"] == 2
@@ -603,8 +600,7 @@ def test_publish_check_names_a_read_node_with_a_csv_path_and_nothing_for_a_flow_
     _add_csv_read(flow, tmp_path / "sales.csv")
 
     uses = connected.get("/hub_client/publish_check", params={"flow_id": flow.flow_id}).json()
-    assert len(uses) == 1
-    assert uses[0]["node_id"] == 2 and uses[0]["node_type"] == "read"
+    assert len(uses) == 1 and set(uses[0]) == {"label", "path"}
     assert uses[0]["path"] == str(tmp_path / "sales.csv")
     assert "sales.csv" in uses[0]["label"]
 

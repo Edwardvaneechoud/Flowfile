@@ -4,7 +4,7 @@ Mounted under ``/system`` in :mod:`flowfile_core.main`, admin-only. ``GET`` answ
 (the environment, the saved file, this server's hub, or none) and the S3 connections it may use; ``POST`` saves or
 clears it and answers the same. A set ``FLOWFILE_EXCHANGE_URI`` keeps winning over the saved values, and
 ``env_override`` says so. A server joined with keys of its own asks its hub for its store with the admin's hub session:
-it applies while nothing is saved here, and it is read-only here (``vended``). The settings are read per call
+it applies while nothing is saved here, and it is read-only here. The settings are read per call
 (``configs/exchange_config.py``), so a save takes effect on the next run.
 """
 
@@ -56,11 +56,6 @@ class ExchangeStoreState(BaseModel):
         description="The store this server's hub sets, when it joined a hub that sets one with keys of its own; it "
         "applies while nothing is saved here.",
     )
-    vended: bool = Field(
-        default=False,
-        description="The hub's store is opened by what the hub vends each run, sealed to the servers it runs on: on a "
-        "server joined to its hub with keys of its own, whose database holds none of the hub's connections.",
-    )
     connections: list[str] = Field(description="Names of the S3 connections the store may be opened with.")
 
 
@@ -108,7 +103,6 @@ def _state(hub: ExchangeConfig | None = None) -> ExchangeStoreState:
         env_override=exchange_config.env_pins_store(),
         saved=ExchangeStoreSaved(uri=stored.uri, connection=stored.connection, max_rows=stored.max_rows),
         hub=None if hub is None else ExchangeStoreSaved(uri=hub.uri, connection=hub.connection, max_rows=hub.max_rows),
-        vended=source == "hub" and hub.vended_for is not None,
         connections=_eligible_connections(),
     )
 

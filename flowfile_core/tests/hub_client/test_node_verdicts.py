@@ -113,7 +113,6 @@ def test_a_connect_checks_each_node_once_and_the_listing_carries_the_verdict(api
     response = api.post("/hub_client/connection", json=CONNECT)
 
     assert response.status_code == 200, response.text
-    assert response.json()["nodes_synced"] == 2
     assert worker.hits == 1
     assert [m["node_id"] for m in hub.minted] == [1, 2]
     listed = _listed(api)

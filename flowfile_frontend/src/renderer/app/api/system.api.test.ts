@@ -42,7 +42,6 @@ describe("the exchange store API", () => {
       envOverride: false,
       saved: { uri: "s3://bucket/flowfile", connection: "exchange", maxRows: 1000 },
       hub: null,
-      vended: false,
       connections: ["exchange", "other"],
     });
   });
@@ -67,12 +66,6 @@ describe("the exchange store API", () => {
       connection: "org-exchange",
       maxRows: 5000,
     });
-  });
-
-  it("reads whether the hub's store is vended to a joined server's runs", async () => {
-    mocks.get.mockResolvedValue({ data: { ...answer, source: "hub", vended: true } });
-
-    expect((await getExchangeStore()).vended).toBe(true);
   });
 
   it("reads a null hub as no hub", async () => {
