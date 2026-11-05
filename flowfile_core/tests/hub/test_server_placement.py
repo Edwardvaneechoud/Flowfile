@@ -154,6 +154,15 @@ def hubs_store(monkeypatch):
 
 
 @pytest.fixture
+def hub_lists_it(hubs_store):
+    """The fake hub lists ``ELSEWHERE`` as ``hub_server``'s row has it, so the refresh before placing keeps that row."""
+    from tests.hub_client.conftest import compute_node
+
+    hubs_store.nodes = [compute_node(7, "elsewhere", worker_url="http://elsewhere.example:63579")]
+    return hubs_store
+
+
+@pytest.fixture
 def vending(monkeypatch):
     """``local`` and ``ELSEWHERE`` declare that they open what the hub seals to their server."""
     from flowfile_core.flowfile.flow_data_engine.subprocess_operations import handshake
@@ -205,7 +214,7 @@ def open_flow():
 
 
 def test_the_preview_on_a_joined_server_with_the_hubs_store_refuses_nothing_for_a_node_on_a_hub_server(
-    joined_with_keys, hub_server, no_store, vending, hubs_store, client, open_flow
+    joined_with_keys, hub_server, no_store, vending, hubs_store, hub_lists_it, client, open_flow
 ):
     response = client.get("/flow/placement", params={"flow_id": open_flow.flow_id})
 
@@ -218,7 +227,7 @@ def test_the_preview_on_a_joined_server_with_the_hubs_store_refuses_nothing_for_
 
 
 def test_the_preview_on_a_joined_server_whose_hub_sets_no_store_keeps_the_refusal(
-    joined_with_keys, hub_server, no_store, vending, hubs_store, client, open_flow
+    joined_with_keys, hub_server, no_store, vending, hubs_store, hub_lists_it, client, open_flow
 ):
     hubs_store.exchange_store = None
 
