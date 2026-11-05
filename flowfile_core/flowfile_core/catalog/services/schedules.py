@@ -21,7 +21,6 @@ from flowfile_core.catalog.validators import (
 )
 from flowfile_core.database.models import FlowRegistration, FlowSchedule
 from flowfile_core.schemas.catalog_schema import FlowRunOut, FlowScheduleOut
-from shared.storage_config import require_flow_in_storage
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +47,7 @@ def _refuse_hub_steps(flow: FlowRegistration, user_id: int) -> None:
     if issuer_accounts.joined_with_keys() is None:
         return
     from flowfile_core.flowfile.manage.ephemeral_graph import ephemeral_flow_graph
+    from flowfile_core.flowfile.manage.io_flowfile import require_flow_in_storage
     from flowfile_core.hub_client import node_tokens
 
     try:
