@@ -8,6 +8,7 @@ both ways with nothing replaced.
 import base64
 import json
 import pickle
+import time
 
 import polars as pl
 import pytest
@@ -48,14 +49,10 @@ def sealed_for(signer: HubSigner, keys, **claims) -> str:
     return signer.sealed(keys.public_jwks()["enc"], storage_options=dict(OPTIONS), **claims)
 
 
-def test_a_token_sealed_to_this_node_opens_to_its_claims(hub_signer, node):
+def test_a_token_sealed_to_this_node_opens_to_its_storage_options(hub_signer, node):
     token = sealed_for(hub_signer, node, base_uri="s3://bucket/sales/", run_id="r-9", vend_id=12)
 
-    opened = hub_sealed.open_token(token)
-
-    assert (opened.base_uri, opened.run_id, opened.vend_id) == ("s3://bucket/sales", "r-9", 12)
-    assert opened.storage_options == OPTIONS
-    assert "vended-secret" not in repr(opened)
+    assert hub_sealed.sealed_storage_options({NODE_NAME: token}) == OPTIONS
 
 
 def test_the_jwe_is_compact_ecdh_es_a256gcm_to_the_nodes_enc_key(hub_signer, node):
@@ -86,7 +83,7 @@ def test_the_content_key_is_concat_kdf_with_the_rfc_other_info(hub_signer, node)
 
 def test_a_token_sealed_to_another_nodes_key_is_refused(hub_signer, node):
     with pytest.raises(SealedCredentialRefused, match="sealed to another key"):
-        hub_sealed.open_token(hub_signer.sealed(_jwk(), storage_options=dict(OPTIONS)))
+        hub_sealed.sealed_storage_options({NODE_NAME: hub_signer.sealed(_jwk(), storage_options=dict(OPTIONS))})
 
 
 def test_a_token_whose_ciphertext_changed_does_not_decrypt(hub_signer, node):
@@ -96,7 +93,7 @@ def test_a_token_whose_ciphertext_changed_does_not_decrypt(hub_signer, node):
     tampered = ".".join((protected, key, iv, base64.urlsafe_b64encode(bytes(flipped)).rstrip(b"=").decode(), tag))
 
     with pytest.raises(SealedCredentialRefused, match="does not decrypt"):
-        hub_sealed.open_token(tampered)
+        hub_sealed.sealed_storage_options({NODE_NAME: tampered})
 
 
 @pytest.mark.parametrize(
@@ -105,25 +102,25 @@ def test_a_token_whose_ciphertext_changed_does_not_decrypt(hub_signer, node):
         ({"node": "other"}, "wrong audience"),
         ({"iss": "https://elsewhere.example"}, "wrong issuer"),
         ({"ttl": -120}, "expired"),
-        ({"drop": ("vend_id",)}, "missing claim vend_id"),
+        ({"drop": ("exp",)}, "missing claim exp"),
         ({"drop": ("storage_options",)}, "missing claim storage_options"),
         ({"storage_options": {"aws_access_key_id": 7}}, "malformed"),
         ({"key": SigningKey(kid="unknown")}, "unknown key"),
     ],
-    ids=["audience", "issuer", "expired", "vend_id", "options", "malformed", "unknown key"],
+    ids=["audience", "issuer", "expired", "exp", "options", "malformed", "unknown key"],
 )
 def test_a_token_whose_signed_claims_do_not_hold_is_refused(hub_signer, node, claims, reason):
     token = hub_signer.sealed(node.public_jwks()["enc"], **{"storage_options": dict(OPTIONS), **claims})
 
     with pytest.raises(SealedCredentialRefused, match=reason):
-        hub_sealed.open_token(token)
+        hub_sealed.sealed_storage_options({NODE_NAME: token})
 
 
 def test_a_signature_by_a_key_of_the_same_kid_that_is_not_the_hubs_is_refused(hub_signer, node):
     forged = SigningKey(kid=hub_signer.key.kid)
 
     with pytest.raises(SealedCredentialRefused, match="bad signature"):
-        hub_sealed.open_token(sealed_for(hub_signer, node, key=forged))
+        hub_sealed.sealed_storage_options({NODE_NAME: sealed_for(hub_signer, node, key=forged)})
 
 
 def test_a_node_without_keys_opens_nothing(hub_signer):
@@ -131,7 +128,7 @@ def test_a_node_without_keys_opens_nothing(hub_signer):
 
     assert not hub_sealed.can_open()
     with pytest.raises(SealedCredentialRefused, match="has not joined a hub with keys"):
-        hub_sealed.open_token(token)
+        hub_sealed.sealed_storage_options({NODE_NAME: token})
 
 
 def _jwk() -> dict:
@@ -142,10 +139,10 @@ def _jwk() -> dict:
 def test_the_map_opens_this_nodes_own_entry_and_names_the_others_when_it_has_none(hub_signer, node):
     mine = sealed_for(hub_signer, node)
 
-    assert hub_sealed.open_sealed({"worker": "x.y.z.w.v", NODE_NAME: mine}).storage_options == OPTIONS
+    assert hub_sealed.sealed_storage_options({"worker": "x.y.z.w.v", NODE_NAME: mine}) == OPTIONS
     assert hub_sealed.can_open()
     with pytest.raises(SealedCredentialRefused, match=r"sealed it to core, worker, not to this server \(team\)"):
-        hub_sealed.open_sealed({"worker": mine, "core": mine})
+        hub_sealed.sealed_storage_options({"worker": mine, "core": mine})
 
 
 def test_the_provider_holds_only_the_map_and_answers_the_keys_and_expiry(hub_signer, node):
@@ -157,7 +154,7 @@ def test_the_provider_holds_only_the_map_and_answers_the_keys_and_expiry(hub_sig
     assert credentials == {
         key: OPTIONS[key] for key in ("aws_access_key_id", "aws_secret_access_key", "aws_session_token")
     }
-    assert expiry == hub_sealed.open_sealed(sealed).expires_at
+    assert time.time() + 600 - 5 <= expiry <= time.time() + 600, "the expiry is the token's own ``exp``"
     assert b"vended-secret" not in pickle.dumps(provider)
     assert "vended" not in repr(provider)
 
@@ -190,7 +187,7 @@ def test_a_sealed_delta_scan_names_the_table_and_the_map_and_no_secret(hub_signe
 def test_a_storage_token_without_a_kind_still_opens_as_storage(hub_signer, node):
     token = hub_signer.sealed(node.public_jwks()["enc"], storage_options=dict(OPTIONS), drop=("kind",))
 
-    assert hub_sealed.open_token(token).storage_options == OPTIONS
+    assert hub_sealed.sealed_storage_options({NODE_NAME: token}) == OPTIONS
 
 
 def secret_for(signer: HubSigner, keys, name: str = "warehouse_pw", value: str = "s3cr3t", **claims) -> str:
@@ -209,8 +206,8 @@ def test_a_sealed_secret_is_not_a_storage_credential_and_a_storage_token_is_not_
     secret = secret_for(hub_signer, node)
     storage = sealed_for(hub_signer, node)
 
-    with pytest.raises(SealedCredentialRefused, match="missing claim base_uri"):
-        hub_sealed.open_token(secret)
+    with pytest.raises(SealedCredentialRefused, match="missing claim storage_options"):
+        hub_sealed.sealed_storage_options({NODE_NAME: secret})
     with pytest.raises(SealedCredentialRefused, match="missing claim name"):
         hub_sealed.open_secret(hub_sealed.sealed_secret("warehouse_pw", {NODE_NAME: storage}))
     with pytest.raises(SealedCredentialRefused, match="holds a storage credential, not a secret"):

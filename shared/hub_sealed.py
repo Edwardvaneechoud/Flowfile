@@ -6,7 +6,8 @@ seals each credential to each node that runs a step with it: a JWE compact token
 ECDH-ES with an ephemeral X25519 ``epk``, Concat KDF with empty ``apu`` and ``apv``, ``enc`` A256GCM, the protected
 header as the AAD; RFC 7518 §4.6), whose plaintext is a JWS the hub signed with its node-token key, with the claims
 ``iss``, ``aud`` (``node:<name>``), ``run_id``, ``vend_id``, ``iat``, ``exp`` and ``kind``: ``"storage"`` (or no
-``kind``) with ``base_uri`` and ``storage_options``, ``"secret"`` with a secret's ``name`` and ``value``.
+``kind``) with ``base_uri`` and ``storage_options``, ``"secret"`` with a secret's ``name`` and ``value``. Of a storage
+credential this node reads the ``storage_options`` and the ``exp``; the vend and the root are the hub's own record.
 
 A run carries the vend's whole map of node name to token, ``sealed``; whichever process opens it takes this node's
 entry, decrypts it with ``hub_node_key``'s ``enc`` key and verifies the JWS as ``shared.hub_tokens.decode`` verifies
@@ -24,7 +25,6 @@ import json
 import os
 import struct
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from cryptography.exceptions import InvalidTag
@@ -41,8 +41,8 @@ if TYPE_CHECKING:
 ALG = "ECDH-ES"
 ENC = "A256GCM"
 KEY_BITS = 256
-SIGNED_CLAIMS = ["iss", "aud", "iat", "exp", "run_id", "vend_id"]
-REQUIRED_CLAIMS = [*SIGNED_CLAIMS, "base_uri", "storage_options"]
+SIGNED_CLAIMS = ["iss", "aud", "iat", "exp"]
+REQUIRED_CLAIMS = [*SIGNED_CLAIMS, "storage_options"]
 SECRET_CLAIMS = [*SIGNED_CLAIMS, "kind", "name", "value"]
 SEALED_SECRET_PREFIX = "$ffseal$1$"
 
@@ -53,23 +53,6 @@ class SealedCredentialRefused(CredentialResolutionError):
     def __init__(self, reason: str):
         super().__init__(f"Could not open the credential the hub sealed to this server: {reason}")
         self.reason = reason
-
-
-@dataclass(frozen=True, repr=False)
-class OpenedCredential:
-    """What a sealed token holds once opened and verified: the storage root, its options, the vend and its expiry.
-
-    ``storage_options`` are what Polars and deltalake take, secrets included; ``repr`` never shows them.
-    """
-
-    base_uri: str
-    storage_options: dict[str, str]
-    run_id: str
-    vend_id: int
-    expires_at: int
-
-    def __repr__(self) -> str:
-        return f"OpenedCredential(base_uri={self.base_uri!r}, vend_id={self.vend_id!r})"
 
 
 def _content_key(shared_secret: bytes) -> bytes:
@@ -129,37 +112,7 @@ def _claims(token: str, required: list[str]) -> dict[str, Any]:
         )
     except hub_tokens.HubTokenRefused as refused:
         raise SealedCredentialRefused(refused.reason) from None
-    if not isinstance(claims["vend_id"], int):
-        raise SealedCredentialRefused("its claims are malformed")
     return claims
-
-
-def open_token(token: str) -> OpenedCredential:
-    """The storage credential in ``token``, sealed to this node: decrypted with its key and verified against its hub's
-    keys. A token with no ``kind`` is a storage credential, as the hub sealed them before it sealed secrets.
-
-    Raises:
-        SealedCredentialRefused: This node is not on a hub with keys of its own, or the token does not decrypt, its
-            signature, audience (``node:<name>``), issuer or expiry does not hold, it holds a secret, or a claim is
-            missing or malformed.
-    """
-    claims = _claims(token, REQUIRED_CLAIMS)
-    if claims.get("kind", "storage") != "storage":
-        raise SealedCredentialRefused("it holds a secret, not a storage credential")
-    options = claims["storage_options"]
-    if not (
-        isinstance(options, dict)
-        and all(isinstance(name, str) and isinstance(value, str) for name, value in options.items())
-        and isinstance(claims["base_uri"], str)
-    ):
-        raise SealedCredentialRefused("its claims are malformed")
-    return OpenedCredential(
-        base_uri=claims["base_uri"].rstrip("/"),
-        storage_options=dict(options),
-        run_id=str(claims["run_id"]),
-        vend_id=claims["vend_id"],
-        expires_at=int(claims["exp"]),
-    )
 
 
 def _this_nodes_entry(sealed: Mapping[str, str]) -> str:
@@ -171,13 +124,23 @@ def _this_nodes_entry(sealed: Mapping[str, str]) -> str:
     return token
 
 
-def open_sealed(sealed: Mapping[str, str]) -> OpenedCredential:
-    """This node's entry of a vend's ``sealed`` map, opened (``open_token``).
+def _open(sealed: Mapping[str, str]) -> tuple[dict[str, str], int]:
+    """This node's entry of a vend's ``sealed`` map, decrypted with its key and verified against its hub's keys: the
+    storage options, secrets included, and the ``exp`` they hold until. A token with no ``kind`` is a storage
+    credential, as the hub sealed them before it sealed secrets.
 
     Raises:
-        SealedCredentialRefused: The map has no entry for this node's name, or ``open_token`` refuses it.
+        SealedCredentialRefused: The map has no entry for this node's name, this node is not on a hub with keys of its
+            own, or the token does not decrypt, its signature, audience (``node:<name>``), issuer or expiry does not
+            hold, it holds a secret, or a claim is missing or malformed.
     """
-    return open_token(_this_nodes_entry(sealed))
+    claims = _claims(_this_nodes_entry(sealed), REQUIRED_CLAIMS)
+    if claims.get("kind", "storage") != "storage":
+        raise SealedCredentialRefused("it holds a secret, not a storage credential")
+    options = claims["storage_options"]
+    if not (isinstance(options, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in options.items())):
+        raise SealedCredentialRefused("its claims are malformed")
+    return dict(options), int(claims["exp"])
 
 
 def sealed_secret(name: str, sealed: Mapping[str, str]) -> str:
@@ -197,7 +160,8 @@ def open_secret(value: str) -> str:
 
     Raises:
         SealedCredentialRefused: The string does not read, the map has no entry for this node, the token does not
-            open or verify (``open_token``'s reasons), or it holds another kind or another secret than it names.
+            open or verify (as a storage credential's does not), or it holds another kind or another secret than it
+            names.
     """
     try:
         body = json.loads(hub_node_key.unb64url(value.removeprefix(SEALED_SECRET_PREFIX)))
@@ -221,7 +185,7 @@ def can_open() -> bool:
 
 def sealed_storage_options(sealed: Mapping[str, str]) -> dict[str, str]:
     """The whole storage options of this node's entry of ``sealed``, secrets included, for work that runs here."""
-    return open_sealed(sealed).storage_options
+    return _open(sealed)[0]
 
 
 class SealedCredentialProvider:
@@ -233,8 +197,8 @@ class SealedCredentialProvider:
         self.nonce = os.urandom(8).hex()
 
     def __call__(self) -> tuple[dict[str, str], int | None]:
-        opened = open_sealed(self.sealed)
-        return split_credentials(opened.storage_options)[1], opened.expires_at
+        options, expires_at = _open(self.sealed)
+        return split_credentials(options)[1], expires_at
 
     def __repr__(self) -> str:
         return f"SealedCredentialProvider(nodes={sorted(self.sealed)!r})"

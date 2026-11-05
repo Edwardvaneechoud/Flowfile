@@ -62,13 +62,14 @@ def hub(signer, node_keys, monkeypatch, store) -> SealingHubCatalog:
     return fake
 
 
-def open_as(name: str, node_keys, signer, monkeypatch, sealed: dict[str, str]) -> hub_sealed.OpenedCredential:
+def open_as(name: str, node_keys, signer, monkeypatch, sealed: dict[str, str]) -> dict[str, str]:
+    """The storage options ``sealed`` holds for the node ``name``, opened as that node."""
     target, _ = node_keys[name]
     monkeypatch.setattr(hub_node, "path", lambda: target)
     monkeypatch.setenv("FLOWFILE_HUB_URL", signer.url)
     monkeypatch.setenv("FLOWFILE_NODE_NAME", name)
     monkeypatch.setattr(hub_tokens, "_client", None)
-    return hub_sealed.open_sealed(sealed)
+    return hub_sealed.sealed_storage_options(sealed)
 
 
 def test_the_vend_body_names_targets_and_the_exchange_only_when_asked(hub):
@@ -100,9 +101,7 @@ def test_a_sealed_vend_holds_no_option_and_each_target_opens_its_own_token(hub, 
     assert (table.base_uri, exchange.base_uri) == ("s3://acme/sales", "s3://acme/exchange")
     assert "vended-secret-key" not in repr(table) + repr(run_vend)
     for name in ("team", "worker"):
-        opened = open_as(name, node_keys, signer, monkeypatch, exchange.sealed)
-        assert (opened.base_uri, opened.storage_options, opened.run_id) == ("s3://acme/exchange", OPTIONS, "run-s")
-        assert opened.vend_id == run_vend.vend_id
+        assert open_as(name, node_keys, signer, monkeypatch, exchange.sealed) == OPTIONS
 
 
 def test_a_sealed_writes_connection_and_reads_plan_carry_the_map_and_no_secret(hub):
