@@ -8,8 +8,9 @@ URI-building logic across services. Per-dialect behavior lives in
 
 from __future__ import annotations
 
-import importlib.util
+import importlib
 import logging
+import re
 
 from shared.db_dialects import POSTGRES_FAMILY, get_dialect_or_generic, iter_dialects
 
@@ -73,7 +74,18 @@ SQLALCHEMY_DRIVER_MAP = {d.name: d.sqlalchemy_driver for d in iter_dialects() if
 
 
 def _has_module(name: str) -> bool:
-    return importlib.util.find_spec(name) is not None
+    try:
+        importlib.import_module(name)
+    except ImportError:
+        return False
+    return True
+
+
+_PSYCOPG_SCHEME = re.compile(r"^\s*(postgres(?:ql)?)\+psycopg://", re.IGNORECASE)
+
+
+def _psycopg_missing() -> bool:
+    return not _has_module("psycopg") and _has_module("psycopg2")
 
 
 def get_sqlalchemy_uri(uri: str) -> str:
@@ -91,8 +103,7 @@ def get_sqlalchemy_uri(uri: str) -> str:
     Returns:
         The URI with the appropriate SQLAlchemy driver suffix applied.
     """
-    if uri.startswith("postgresql+psycopg://") and not _has_module("psycopg") and _has_module("psycopg2"):
-        return uri.replace("postgresql+psycopg://", "postgresql+psycopg2://", 1)
+    uri = _PSYCOPG_SCHEME.sub(r"\1+psycopg2://", uri, count=1) if _psycopg_missing() else uri
     for base_scheme, sa_scheme in SQLALCHEMY_DRIVER_MAP.items():
         if uri.startswith(f"{base_scheme}://"):
             return uri.replace(f"{base_scheme}://", f"{sa_scheme}://", 1)

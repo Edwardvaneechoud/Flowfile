@@ -161,3 +161,25 @@ def test_cancel_check_aborts_quickly(calls, monkeypatch):
             cancel_check=lambda: time.monotonic() >= cancelled_at,
         )
     assert time.monotonic() - start < 5
+
+
+def test_worker_fallback_engine_uses_psycopg2_when_psycopg_unimportable(monkeypatch):
+    import builtins
+
+    import sqlalchemy
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "psycopg" or name.startswith("psycopg."):
+            raise ModuleNotFoundError("No module named 'psycopg'")
+        return real_import(name, *args, **kwargs)
+
+    seen = []
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    monkeypatch.setattr(
+        sqlalchemy, "create_engine", lambda url, **kw: seen.append(url) or (_ for _ in ()).throw(RuntimeError("stop"))
+    )
+    with pytest.raises(RuntimeError, match="stop"):
+        db_reader._read_sqlalchemy("SELECT 1", "postgresql+psycopg://u:p@h/d")
+    assert seen == ["postgresql+psycopg2://u:p@h/d"]
