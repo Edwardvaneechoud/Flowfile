@@ -1,15 +1,16 @@
 """A worker that joins a hub with one join token runs a desktop's node there, end to end.
 
 An operator makes a worker a node on a hub with one command, ``flowfile_worker --join <token> --hub <url>``: before it
-serves, the worker posts the token with its name and address to the hub, keeps the hub's answer in ``hub_node.json``
-in its storage dir, and from then on takes the hub's tokens for that name, with no name or issuer set by hand. The
-join and the verifier each have their own tests in one process; here the worker is a second process started with the
-flags the hub's install line passes, on a free port and a storage dir of its own (``FLOWFILE_STORAGE_DIR``, as the
-install line sets it), against a fake hub that answers the join and serves its keys from one address. A node a desktop
-places on the joined worker runs there with a ``run`` token for the joined name, held as a connected desktop holds it; a
-restart, with the same command or with none, does not join again; a used or an expired join token stops the worker with
-the hub's sentence before it serves and leaves no file; a worker named by hand through ``FLOWFILE_HUB_URL`` and
-``FLOWFILE_NODE_NAME`` behaves as before. Each test skips when no second worker can be started.
+serves, the worker posts the token with its name and address to the hub, keeps the hub's answer in ``hub_node.json`` in
+its storage dir, and from then on takes the hub's tokens for that name, with no name or issuer set by hand. The join and
+the verifier each have their own tests in one process; here the worker is a second process started with the flags the
+hub's install line passes, on a free port and a storage dir and secure store of its own (``FLOWFILE_STORAGE_DIR`` and
+``FLOWFILE_SECURE_STORAGE_PATH``, as the install line sets them), against a fake hub that answers the join and serves
+its keys from one address. A node a desktop places on the joined worker runs there with a ``run`` token for the joined
+name, held as a connected desktop holds it; a restart, with the same command or with none, does not join again; a used
+or an expired join token stops the worker with the hub's sentence before it serves and leaves no file; a worker named by
+hand through ``FLOWFILE_HUB_URL`` and ``FLOWFILE_NODE_NAME`` behaves as before. Each test skips when no second worker
+can be started.
 """
 
 import json
@@ -80,13 +81,14 @@ def answers(port: int) -> bool:
 def start_worker(storage_dir: Path, *args: str, port: int, env: dict[str, str] | None = None) -> subprocess.Popen:
     """``python -m flowfile_worker --port <port> *args`` on ``storage_dir``, as an operator starts one; the process.
 
-    The environment is the session worker's, with ``FLOWFILE_STORAGE_DIR`` set to ``storage_dir`` and none of the hub
-    variables unless ``env`` sets them. Returns once the worker serves ``/docs``, or once it exits, whichever comes
-    first within the startup timeout (a refused join exits); a worker that does neither is stopped and the test
-    skipped.
+    The environment is the session worker's, with ``FLOWFILE_STORAGE_DIR`` set to ``storage_dir``, its secure store
+    ``secure`` in it, and none of the hub variables unless ``env`` sets them. Returns once the worker serves ``/docs``,
+    or once it exits, whichever comes first within the startup timeout (a refused join exits); a worker that does
+    neither is stopped and the test skipped.
     """
     environment = {name: value for name, value in os.environ.items() if name not in HUB_VARIABLES}
-    environment.update({"FLOWFILE_WORKER_LOCAL_FILES": "1", "FLOWFILE_STORAGE_DIR": str(storage_dir), **(env or {})})
+    own = {"FLOWFILE_STORAGE_DIR": str(storage_dir), "FLOWFILE_SECURE_STORAGE_PATH": str(storage_dir / "secure")}
+    environment.update({"FLOWFILE_WORKER_LOCAL_FILES": "1", **own, **(env or {})})
     with log_of(storage_dir).open("w") as log:
         proc = subprocess.Popen(
             [sys.executable, "-m", "flowfile_worker", "--port", str(port), *args],

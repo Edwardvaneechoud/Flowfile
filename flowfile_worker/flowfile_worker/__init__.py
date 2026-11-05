@@ -24,7 +24,7 @@ def _launched_as_worker() -> bool:
     return sys.argv[0] == "-m" and "-m" in command and command[command.index("-m") + 1 :][:1] == ["flowfile_worker"]
 
 
-# A join without a storage dir of its own is refused before `shared.storage_config` reads one.
+# A join without a storage dir and secure store of its own is refused before `shared.storage_config` reads one.
 if _launched_as_worker():
     from flowfile_worker import configs as _configs
     from shared import hub_node as _hub_node

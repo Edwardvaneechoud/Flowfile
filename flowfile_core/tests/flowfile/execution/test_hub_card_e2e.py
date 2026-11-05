@@ -4,13 +4,13 @@ to end.
 The hub's worker line is ``flowfile_worker --host 0.0.0.0 --hub <hub> --join <code>``, the code a short one such as
 ``K7QX-M2PD``; its install line adds ``--port`` with a free port of this machine's, since beside Flowfile desktop the
 default one is the desktop's, and ``--url`` with this machine's address on that port, and writes ``node.env`` with
-``FLOWFILE_STORAGE_DIR``, a folder of the node's own. Here it runs as ``python -m flowfile_worker`` in the environment
-of an operator's shell (no other ``FLOWFILE_*`` variable, ``HOME`` a folder of the test's own holding a desktop's
-``~/.flowfile`` with its own ``hub_node.json``), against a fake hub on this machine; the desktop's own ports are never
-bound or called. The worker listens on every interface, serves on the port it is given, tells the hub the address it
-was given in one join, answers ``GET /health`` there, keeps its files in its storage dir and leaves the desktop's file
-as it was; a restart with the same command does not join again and serves on the same port. A port the operator gives
-that is taken stops the worker before it spends its token.
+``FLOWFILE_STORAGE_DIR`` and ``FLOWFILE_SECURE_STORAGE_PATH``, folders of the node's own. Here it runs as ``python -m
+flowfile_worker`` in the environment of an operator's shell (no other ``FLOWFILE_*`` variable, ``HOME`` a folder of the
+test's own holding a desktop's ``~/.flowfile`` with its own ``hub_node.json``), against a fake hub on this machine; the
+desktop's own ports are never bound or called. The worker listens on every interface, serves on the port it is given,
+tells the hub the address it was given in one join, answers ``GET /health`` there, keeps its files in its storage dir
+and leaves the desktop's file as it was; a restart with the same command does not join again and serves on the same
+port. A port the operator gives that is taken stops the worker before it spends its token.
 """
 
 import json
@@ -51,13 +51,14 @@ def url_of(port: int) -> str:
 
 
 def storage_of(home: Path) -> Path:
-    """The storage dir the install line's ``node.env`` gives the node, beside the home."""
+    """The storage dir the install line's ``node.env`` gives the node, beside the home; its secure store is ``secure``
+    beside it."""
     return home.parent / "node" / "storage"
 
 
 def shell_environment(home: Path) -> dict[str, str]:
     """This process's environment as an operator's shell has it, with ``home`` as ``HOME`` and the install line's
-    ``FLOWFILE_STORAGE_DIR``.
+    ``FLOWFILE_STORAGE_DIR`` and ``FLOWFILE_SECURE_STORAGE_PATH``.
 
     The test session's own variables are left out: every ``FLOWFILE_*`` one and those it sets for its own servers.
     """
@@ -66,7 +67,10 @@ def shell_environment(home: Path) -> dict[str, str]:
         for name, value in os.environ.items()
         if not name.startswith("FLOWFILE_") and name not in SESSION_VARIABLES
     }
-    environment.update(HOME=str(home), FLOWFILE_STORAGE_DIR=str(storage_of(home)))
+    secure = storage_of(home).with_name("secure")
+    environment.update(
+        HOME=str(home), FLOWFILE_STORAGE_DIR=str(storage_of(home)), FLOWFILE_SECURE_STORAGE_PATH=str(secure)
+    )
     return environment
 
 

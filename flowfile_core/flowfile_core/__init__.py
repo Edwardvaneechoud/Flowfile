@@ -38,7 +38,7 @@ def _starts_core() -> bool:
     return program == "flowfile" and any(pair in (["run", "ui"], ["run", "core"]) for pair in pairs)
 
 
-# A join without a storage dir of its own is refused before `shared.storage_config` reads one.
+# A join without a storage dir and secure store of its own is refused before `shared.storage_config` reads one.
 if _starts_core():
     from flowfile_core.configs.command_line import parse_args as _parse_args
     from shared import hub_node as _hub_node

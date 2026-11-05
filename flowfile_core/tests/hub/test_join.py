@@ -633,22 +633,32 @@ def assert_desktop_untouched(home: Path) -> None:
     assert (home / ".flowfile" / hub_node.FILE_NAME).read_text(encoding="utf-8") == DESKTOP_NODE
 
 
+BOTH = "FLOWFILE_STORAGE_DIR and FLOWFILE_SECURE_STORAGE_PATH"
+
+
 @pytest.mark.skipif(os.name == "nt", reason="the home directory comes from HOME on POSIX only")
 @pytest.mark.parametrize(
-    "command",
-    [["-m", "flowfile_core.main"], ["-m", "flowfile", "run", "ui", "--no-browser"], ["-m", "flowfile", "run", "core"]],
-    ids=["flowfile_core", "run ui", "run core"],
+    "command,given,missing",
+    [
+        (["-m", "flowfile_core.main"], {}, BOTH),
+        (["-m", "flowfile", "run", "ui", "--no-browser"], {}, BOTH),
+        (["-m", "flowfile", "run", "core"], {}, BOTH),
+        (["-m", "flowfile_core.main"], {"FLOWFILE_STORAGE_DIR": "{tmp}/storage"}, "FLOWFILE_SECURE_STORAGE_PATH"),
+        (["-m", "flowfile_core.main"], {"FLOWFILE_SECURE_STORAGE_PATH": "{tmp}/secure"}, "FLOWFILE_STORAGE_DIR"),
+    ],
+    ids=["flowfile_core", "run ui", "run core", "no secure store", "no storage dir"],
 )
-def test_a_join_without_a_storage_dir_of_its_own_is_refused_before_any_request_and_leaves_the_desktops_files(
-    tmp_path, join_hub, command
+def test_a_join_without_a_storage_dir_and_secure_store_of_its_own_is_refused_before_any_request(
+    tmp_path, join_hub, command, given, missing
 ):
     home = desktop_home(tmp_path)
     flags = ["--host", "127.0.0.1", "--port", str(free_port()), "--hub", join_hub.url, "--join", join_hub.mint()]
     log = tmp_path / "core.log"
+    environment = shell_environment(home, **{name: value.format(tmp=tmp_path) for name, value in given.items()})
     with log.open("wb") as out:
         core = subprocess.Popen(
             [sys.executable, *command, *flags, "--name", "card-node"],
-            env=shell_environment(home),
+            env=environment,
             cwd=tmp_path,
             stdout=out,
             stderr=out,
@@ -660,7 +670,8 @@ def test_a_join_without_a_storage_dir_of_its_own_is_refused_before_any_request_a
 
     output = log.read_text(encoding="utf-8")
     assert exit_code == 2, output
-    assert "Cannot join a hub without a storage dir of this node's own: set FLOWFILE_STORAGE_DIR" in output
+    assert f"Cannot join a hub without a storage dir and a secure store of this node's own: set {missing} to" in output
+    assert "~/.flowfile and ~/.config/flowfile" in output
     assert join_hub.calls == []
     assert_desktop_untouched(home)
 

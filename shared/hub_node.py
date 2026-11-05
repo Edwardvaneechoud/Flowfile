@@ -21,13 +21,14 @@ short hash of the join token it was written with: a start with that same token m
 unchanged command is quiet, and a start with any other join token joins again and replaces the file. One storage dir
 holds one node: every process reading it takes the name the latest join wrote.
 
-A node that joins keeps its files in a storage dir of its own, never in Flowfile desktop's ``~/.flowfile``: the hub's
-install line sets ``FLOWFILE_STORAGE_DIR`` (in docker mode the storage dir is the container's), and a start with a join
-token outside docker mode and without one is refused before anything reads the storage dir
-(``require_own_storage_dir``). It serves on the port it is given, ``--port`` or the default, and binds that socket
-before it joins (``serving_socket``): a node whose port is in use exits with code 1 saying so, before it spends its
-token. The address it gives the hub is ``--url``, which the install line computes, else this machine's full name and
-that port (``default_url``). A core joins for itself and the worker beside it the same way.
+A node that joins keeps its files and keys in a storage dir and a secure store of its own, never in Flowfile desktop's
+``~/.flowfile`` or ``~/.config/flowfile``: the hub's install line sets ``FLOWFILE_STORAGE_DIR`` and
+``FLOWFILE_SECURE_STORAGE_PATH`` (in docker mode the storage dir is the container's), and a start with a join token
+outside docker mode and without them is refused before anything reads the storage dir (``require_own_storage_dir``). It
+serves on the port it is given, ``--port`` or the default, and binds that socket before it joins (``serving_socket``): a
+node whose port is in use exits with code 1 saying so, before it spends its token. The address it gives the hub is
+``--url``, which the install line computes, else this machine's full name and that port (``default_url``). A core joins
+for itself and the worker beside it the same way.
 """
 
 import hashlib
@@ -446,18 +447,24 @@ def default_url(port: int, *, tls: bool) -> str:
 
 
 def require_own_storage_dir(token: str | None) -> None:
-    """Refuse a start with a join token that has no storage dir of its own, before anything reads the storage dir.
+    """Refuse a start with a join token that has no storage dir and secure store of its own, before anything reads
+    the storage dir.
 
-    Outside docker mode, whose storage dir is the container's, a node that joins needs ``FLOWFILE_STORAGE_DIR``, which
-    the hub's install line sets: without it the node's files would land in Flowfile desktop's ``~/.flowfile``, and the
-    desktop would then act as the joined node. Exits with code 2 and one sentence, writing nothing. Without a join
-    token, nothing.
+    Outside docker mode, whose storage dir is the container's, a node that joins needs ``FLOWFILE_STORAGE_DIR`` and
+    ``FLOWFILE_SECURE_STORAGE_PATH``, which the hub's install line sets: without them the node's files would land in
+    Flowfile desktop's ``~/.flowfile`` and its keys in the desktop's ``~/.config/flowfile``, and the desktop would then
+    act as the joined node. Exits with code 2 and one sentence naming the missing variables, writing nothing. Without a
+    join token, nothing.
     """
-    if not token or os.environ.get("FLOWFILE_STORAGE_DIR") or os.environ.get("FLOWFILE_MODE") == "docker":
+    if not token or os.environ.get("FLOWFILE_MODE") == "docker":
+        return
+    missing = [name for name in ("FLOWFILE_STORAGE_DIR", "FLOWFILE_SECURE_STORAGE_PATH") if not os.environ.get(name)]
+    if not missing:
         return
     logger.error(
-        "Cannot join a hub without a storage dir of this node's own: set FLOWFILE_STORAGE_DIR to a folder for it, as "
-        "the hub's install line does, so it stays out of Flowfile desktop's ~/.flowfile"
+        "Cannot join a hub without a storage dir and a secure store of this node's own: set %s to folders for it, as "
+        "the hub's install line does, so it stays out of Flowfile desktop's ~/.flowfile and ~/.config/flowfile",
+        " and ".join(missing),
     )
     raise SystemExit(2)
 

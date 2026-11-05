@@ -458,41 +458,58 @@ def home(tmp_path, monkeypatch):
     target = tmp_path / "home"
     (target / ".flowfile").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(target))
-    for name in ("FLOWFILE_STORAGE_DIR", "FLOWFILE_MODE"):
+    for name in ("FLOWFILE_STORAGE_DIR", "FLOWFILE_SECURE_STORAGE_PATH", "FLOWFILE_MODE"):
         monkeypatch.delenv(name, raising=False)
     return target
 
 
-REFUSAL = (
-    "Cannot join a hub without a storage dir of this node's own: set FLOWFILE_STORAGE_DIR to a folder for it, as the "
-    "hub's install line does, so it stays out of Flowfile desktop's ~/.flowfile"
-)
+def refusal(*missing: str) -> str:
+    return (
+        f"Cannot join a hub without a storage dir and a secure store of this node's own: set {' and '.join(missing)} "
+        "to folders for it, as the hub's install line does, so it stays out of Flowfile desktop's ~/.flowfile and "
+        "~/.config/flowfile"
+    )
 
 
 @pytest.mark.skipif(os.name == "nt", reason="the home directory comes from HOME on POSIX only")
-def test_a_join_without_a_storage_dir_of_its_own_exits_2_with_one_sentence_before_any_request(home, join_hub, caplog):
+@pytest.mark.parametrize(
+    "given,missing",
+    [
+        ({}, ("FLOWFILE_STORAGE_DIR", "FLOWFILE_SECURE_STORAGE_PATH")),
+        ({"FLOWFILE_STORAGE_DIR": "/srv/flowfile"}, ("FLOWFILE_SECURE_STORAGE_PATH",)),
+        ({"FLOWFILE_SECURE_STORAGE_PATH": "/srv/flowfile/secure"}, ("FLOWFILE_STORAGE_DIR",)),
+    ],
+    ids=["neither", "no secure store", "no storage dir"],
+)
+def test_a_join_without_a_storage_dir_and_secure_store_of_its_own_exits_2_naming_what_is_missing(
+    home, join_hub, caplog, monkeypatch, given, missing
+):
+    for name, value in given.items():
+        monkeypatch.setenv(name, value)
+
     with caplog.at_level(logging.ERROR, logger="flowfile.hub_node"), pytest.raises(SystemExit) as exited:
         hub_node.require_own_storage_dir(join_hub.mint())
 
     assert exited.value.code == 2
-    assert [record.getMessage() for record in caplog.records] == [REFUSAL]
+    assert [record.getMessage() for record in caplog.records] == [refusal(*missing)]
     assert join_hub.calls == []
     assert [path.name for path in home.iterdir()] == [".flowfile"]
     assert list((home / ".flowfile").iterdir()) == []
-    assert "FLOWFILE_STORAGE_DIR" not in os.environ
+    for name in missing:
+        assert name not in os.environ
+
+
+OWN = {"FLOWFILE_STORAGE_DIR": "/srv/flowfile", "FLOWFILE_SECURE_STORAGE_PATH": "/srv/flowfile/secure"}
 
 
 @pytest.mark.parametrize(
     "token,variables",
-    [
-        ("join-token", {"FLOWFILE_STORAGE_DIR": "/srv/flowfile"}),
-        ("join-token", {"FLOWFILE_MODE": "docker"}),
-        (None, {}),
-        ("", {}),
-    ],
-    ids=["storage dir set", "docker", "no token", "empty token"],
+    [("join-token", OWN), ("join-token", {"FLOWFILE_MODE": "docker"}), (None, {}), ("", {})],
+    ids=["both set", "docker", "no token", "empty token"],
 )
-def test_a_storage_dir_of_its_own_docker_mode_or_no_join_token_is_let_through(home, monkeypatch, token, variables):
+def test_a_storage_dir_and_secure_store_of_its_own_docker_mode_or_no_join_token_is_let_through(
+    home, monkeypatch, token, variables
+):
     for name, value in variables.items():
         monkeypatch.setenv(name, value)
 

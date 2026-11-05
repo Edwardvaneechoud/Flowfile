@@ -440,9 +440,18 @@ def assert_desktop_untouched(home: Path) -> None:
 
 
 @pytest.mark.skipif(os.name == "nt", reason="the home directory comes from HOME on POSIX only")
-@pytest.mark.parametrize("launch", ["python -m flowfile_worker", "console script"])
-def test_a_join_without_a_storage_dir_of_its_own_is_refused_before_any_request_and_leaves_the_desktops_files(
-    tmp_path, join_hub, launch
+@pytest.mark.parametrize(
+    "launch,given,missing",
+    [
+        ("python -m flowfile_worker", {}, "FLOWFILE_STORAGE_DIR and FLOWFILE_SECURE_STORAGE_PATH"),
+        ("console script", {}, "FLOWFILE_STORAGE_DIR and FLOWFILE_SECURE_STORAGE_PATH"),
+        ("python -m flowfile_worker", {"FLOWFILE_STORAGE_DIR": "{tmp}/storage"}, "FLOWFILE_SECURE_STORAGE_PATH"),
+        ("python -m flowfile_worker", {"FLOWFILE_SECURE_STORAGE_PATH": "{tmp}/secure"}, "FLOWFILE_STORAGE_DIR"),
+    ],
+    ids=["neither", "neither, console script", "no secure store", "no storage dir"],
+)
+def test_a_join_without_a_storage_dir_and_secure_store_of_its_own_is_refused_before_any_request(
+    tmp_path, join_hub, launch, given, missing
 ):
     command = (
         [shutil.which("flowfile_worker")] if launch == "console script" else [sys.executable, "-m", "flowfile_worker"]
@@ -452,7 +461,8 @@ def test_a_join_without_a_storage_dir_of_its_own_is_refused_before_any_request_a
     home = desktop_home(tmp_path)
     log = tmp_path / "worker.log"
     flags = ["--port", str(free_port()), "--hub", join_hub.url, "--join", join_hub.mint(code=True)]
-    worker = _start(command, [*flags, "--name", "card-node"], shell_environment(home), tmp_path, log)
+    environment = shell_environment(home, **{name: value.format(tmp=tmp_path) for name, value in given.items()})
+    worker = _start(command, [*flags, "--name", "card-node"], environment, tmp_path, log)
     try:
         exit_code = worker.wait(timeout=90)
     finally:
@@ -460,7 +470,8 @@ def test_a_join_without_a_storage_dir_of_its_own_is_refused_before_any_request_a
 
     output = log.read_text(encoding="utf-8")
     assert exit_code == 2, output
-    assert "Cannot join a hub without a storage dir of this node's own: set FLOWFILE_STORAGE_DIR" in output
+    assert f"Cannot join a hub without a storage dir and a secure store of this node's own: set {missing} to" in output
+    assert "~/.flowfile and ~/.config/flowfile" in output
     assert join_hub.calls == []
     assert_desktop_untouched(home)
 
