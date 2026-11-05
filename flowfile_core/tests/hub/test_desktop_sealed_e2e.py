@@ -13,6 +13,8 @@ the hub sealed to it, core never sending it a secret; when a hub that seals noth
 with a sentence saying to run the step on this computer; and when a step on the desktop's own worker keeps today's vend.
 """
 
+# ruff: noqa: F811
+
 import time
 import uuid
 from collections.abc import Iterator
@@ -125,7 +127,7 @@ def hub(desktop) -> Iterator[SealingHub]:
 
 @pytest.fixture
 def server_row(hub, compute_server, monkeypatch) -> Iterator[str]:
-    """The desktop's hub-filled ``worker:worker`` row at the compute-only server's URL, with the hub's run token for it."""
+    """The desktop's hub-filled ``worker:worker`` row at the compute-only server's URL, with its hub run token."""
     node_id = hub._node_ids[SERVER]
     token = hub.signer.token(uid=UID, aud=SERVER, iss=hub.issuer)
     monkeypatch.setattr(node_tokens, "_tokens", {(DESKTOP_USER, node_id): (token, time.time() + 3600)})
@@ -160,7 +162,7 @@ def add_reader(flow, node_id: int, hub) -> None:
     )
 
 
-def copy_flow(open_flow, hub, location: str, name: str):  # noqa: F811
+def copy_flow(open_flow, hub, location: str, name: str):
     """A flow on ``location`` reading ``orders`` and writing it back to ``sales`` as ``name``."""
     flow = open_flow(DESKTOP_USER, name)
     flow.flow_settings.execution_location = location
@@ -174,7 +176,11 @@ def errors_of(flow) -> dict[int, str]:
 
 
 def test_a_desktops_hub_table_read_on_a_server_joined_with_keys_opens_the_credential_the_hub_sealed_to_it(
-    hub, server_row, sent, desktop, open_flow  # noqa: F811
+    hub,
+    server_row,
+    sent,
+    desktop,
+    open_flow,
 ):
     flow = copy_flow(open_flow, hub, server_row, "orders_copy")
 
@@ -202,7 +208,12 @@ def refuses_the_server(hub) -> None:
 
 @pytest.mark.parametrize("hub_answer", [older_hub, refuses_the_server], ids=["older hub", "hub refuses the server"])
 def test_a_desktops_step_the_hub_seals_nothing_for_is_refused_before_the_run_with_a_sentence(
-    hub, server_row, sent, desktop, open_flow, hub_answer  # noqa: F811
+    hub,
+    server_row,
+    sent,
+    desktop,
+    open_flow,
+    hub_answer,
 ):
     hub_answer(hub)
     flow = copy_flow(open_flow, hub, server_row, "orders_nowhere")
@@ -222,7 +233,12 @@ def test_a_desktops_step_the_hub_seals_nothing_for_is_refused_before_the_run_wit
 
 
 def test_a_desktops_hub_table_step_beside_one_on_this_computer_is_refused_before_the_vend(
-    hub, server_row, sent, desktop, open_flow, monkeypatch  # noqa: F811
+    hub,
+    server_row,
+    sent,
+    desktop,
+    open_flow,
+    monkeypatch,
 ):
     monkeypatch.setenv("FLOWFILE_EXCHANGE_URI", f"s3://{_BUCKET}/exchange")
     flow = open_flow(DESKTOP_USER, "split_reads")
@@ -233,7 +249,7 @@ def test_a_desktops_hub_table_step_beside_one_on_this_computer_is_refused_before
     client.post("/flow/run/", params={"flow_id": flow.flow_id}, headers=bearer(desktop))
 
     assert errors_of(flow) == {
-        1: 'Node 1 runs on the hub\'s server "worker" and reads a table on the hub, but the hub cannot seal the run\'s '
+        1: "Node 1 runs on the hub's server \"worker\" and reads a table on the hub, but the hub cannot seal the run's "
         "credential to that server while the run's other steps on the hub's tables run on this computer, so run the "
         "step on this computer"
     }
@@ -241,7 +257,10 @@ def test_a_desktops_hub_table_step_beside_one_on_this_computer_is_refused_before
 
 
 def test_a_desktops_hub_table_steps_on_its_own_worker_keep_the_vend_without_targets(
-    hub, server_row, desktop, open_flow  # noqa: F811
+    hub,
+    server_row,
+    desktop,
+    open_flow,
 ):
     flow = copy_flow(open_flow, hub, "local", "orders_here")
 
