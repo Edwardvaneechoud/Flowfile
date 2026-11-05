@@ -130,8 +130,8 @@ def tree(user_id: int) -> list[NamespaceTree]:
     order is kept. A hub that cannot be reached, refuses (an expired session included) or refuses this client's
     version answers ``[]`` after one warning naming the hub and the reason.
 
-    Every namespace row carries the hub's name as its ``place`` (its organisation from ``/hub/info``, else its URL,
-    as the hub connection names it) and, when this Flowfile cannot use the catalog's tables, the reason as its
+    Every namespace row carries the hub's name as its ``place`` (its organisation as the stored connection names it,
+    else its URL) and, when this Flowfile cannot use the catalog's tables, the reason as its
     ``unavailable_reason``: with the catalog's name on the catalog's row and ``catalog.schema`` on each schema's.
     """
     stored = session.load(user_id)
@@ -148,17 +148,8 @@ def tree(user_id: int) -> list[NamespaceTree]:
         return []
     if not walked:
         return []
-    place = _hub_name(hub_url)
+    place = stored.get("org_name") or hub_url
     return [_marked(node, place=place) for node in walked]
-
-
-def _hub_name(hub_url: str) -> str:
-    """The hub's organisation as ``/hub/info`` names it, else its URL."""
-    try:
-        return client.get_info(hub_url)["org_name"]
-    except (HubUnreachable, HubRefused, HubVersionRefused) as e:
-        logger.debug("Naming the hub at %s by its URL: %s", hub_url, e)
-        return hub_url
 
 
 def signed_in(user_id: int) -> tuple[str, str]:

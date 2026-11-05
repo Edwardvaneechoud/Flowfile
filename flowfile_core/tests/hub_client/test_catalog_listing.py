@@ -213,14 +213,26 @@ def test_a_hub_catalog_this_flowfile_cannot_use_says_why_on_each_of_its_rows(con
     assert [t["name"] for t in lake_row["children"][0]["tables"]] == ["events"]
 
 
-def test_a_hub_that_does_not_say_its_name_is_named_by_its_url(connected, hub):
+def test_a_connection_stored_without_the_hubs_name_is_named_by_its_url(connected, hub, user_id):
+    """A connection made before the hub's name was kept with it."""
     hub.seed_schema(hub.seed_catalog("main", storage_uri="s3://acme/main"), "default")
-    hub.info = {**INFO, "org_name": ""}
+    stored = session.load(user_id)
+    session.save(user_id, {k: v for k, v in stored.items() if k != "org_name"})
 
     tree = connected.get("/catalog/namespaces/tree").json()
 
     assert {row["place"] for row in _namespace_rows(tree) if row["source"] == "hub"} == {HUB_URL}
     assert {row["place"] for row in _namespace_rows(tree) if row["source"] == "local"} == {"On this computer"}
+
+
+def test_a_tree_read_names_the_hub_from_the_stored_connection_and_never_asks_it(connected, hub):
+    hub.seed_schema(hub.seed_catalog("main", storage_uri="s3://acme/main"), "default")
+    hub.info = {**INFO, "org_name": "Acme Renamed"}
+
+    tree = connected.get("/catalog/namespaces/tree").json()
+
+    assert {row["place"] for row in _namespace_rows(tree) if row["source"] == "hub"} == {INFO["org_name"]}
+    assert ("GET", "/hub/info") not in hub.calls
 
 
 def test_a_server_says_its_own_catalogs_are_on_this_server(connected, hub, user_id, monkeypatch):
