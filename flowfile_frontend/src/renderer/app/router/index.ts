@@ -309,4 +309,13 @@ router.afterEach((to) => {
   if (to.name === "catalog") rememberCatalogLocation(to.query);
 });
 
+/**
+ * Send a tab nobody signed into to the sign-in page once the first navigation settles. A tab
+ * already there keeps its address, so `#/login?hub_signin=1` still starts the sign-in through the hub.
+ */
+export async function redirectToLogin(): Promise<void> {
+  await router.isReady().catch(() => undefined);
+  if (router.currentRoute.value.name !== "login") await router.push({ name: "login" });
+}
+
 export default router;
