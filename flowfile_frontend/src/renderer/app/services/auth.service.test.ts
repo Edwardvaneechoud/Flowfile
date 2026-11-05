@@ -243,6 +243,20 @@ describe("auth service: sign-in through the hub", () => {
     expect(second.searchParams.get("state")).not.toBe(first.searchParams.get("state"));
   });
 
+  it("goes to the hub's Open page by replacing the history entry", async () => {
+    const authService = await load();
+    const replace = vi.spyOn(window.location, "replace").mockImplementation(() => {});
+    const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
+
+    authService.startHubSignIn(OPEN);
+
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(new URL(replace.mock.calls[0][0] as string).origin + new URL(replace.mock.calls[0][0] as string).pathname).toBe(OPEN);
+    expect(assign).not.toHaveBeenCalled();
+    replace.mockRestore();
+    assign.mockRestore();
+  });
+
   it.each([
     ["without a state", (token: string) => `#signin=${token}`],
     ["with an empty state", (token: string) => `#signin=${token}&state=`],

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   getSignInMethod: vi.fn(),
   takeHubSignInError: vi.fn(),
   startHubSignIn: vi.fn(),
+  replace: vi.fn(),
   query: {} as Record<string, string>,
 }));
 
@@ -15,7 +16,7 @@ vi.mock("../../stores/auth-store", () => ({
   useAuthStore: () => ({ login: vi.fn(), authError: null }),
 }));
 vi.mock("vue-router", () => ({
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), replace: mocks.replace }),
   useRoute: () => ({ query: mocks.query }),
 }));
 
@@ -47,6 +48,7 @@ beforeEach(() => {
   mocks.getSignInMethod.mockReset();
   mocks.takeHubSignInError.mockReset().mockReturnValue(null);
   mocks.startHubSignIn.mockReset();
+  mocks.replace.mockReset().mockResolvedValue(undefined);
   mocks.query = {};
 });
 
@@ -89,6 +91,19 @@ describe("LoginView", () => {
 
     expect(mocks.startHubSignIn).toHaveBeenCalledTimes(1);
     expect(mocks.startHubSignIn).toHaveBeenCalledWith("https://hub.example.com:8443/open/12");
+    expect(mocks.replace).toHaveBeenCalledWith({ path: undefined, query: {} });
+    expect(mocks.replace.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.startHubSignIn.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("starts nothing at a plain `#/login`", async () => {
+    mocks.getSignInMethod.mockResolvedValue(throughHub);
+
+    await mount();
+
+    expect(mocks.startHubSignIn).not.toHaveBeenCalled();
+    expect(mocks.replace).not.toHaveBeenCalled();
   });
 
   it("asks for a password at the sign-in start on a server that joined no hub", async () => {

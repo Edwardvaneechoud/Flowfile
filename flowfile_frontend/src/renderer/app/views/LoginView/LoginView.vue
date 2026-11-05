@@ -110,7 +110,10 @@ const startHubSignIn = () => {
 // `#/login?hub_signin=1` is the sign-in start the hub's Continue page sends people to.
 onMounted(async () => {
   signInMethod.value = await authService.getSignInMethod();
-  if (route.query.hub_signin === "1") startHubSignIn();
+  if (route.query.hub_signin === "1") {
+    await router.replace({ path: route.path, query: {} });
+    startHubSignIn();
+  }
 });
 
 const handleLogin = async () => {

@@ -202,9 +202,9 @@ class AuthService {
     return url.toString();
   }
 
-  /** Start a sign-in through the hub: send this tab to the hub's Open page with a new state. */
+  /** Start a sign-in through the hub: send this tab to the hub's Open page, replacing the entry so Back skips it. */
   startHubSignIn(openUrl: string): void {
-    window.location.assign(this.hubSignInUrl(openUrl));
+    window.location.replace(this.hubSignInUrl(openUrl));
   }
 
   /**
