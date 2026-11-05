@@ -13,8 +13,6 @@ import time
 from flowfile_core.hub_client import client, session
 from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersionRefused
 
-SCOPE = "run"
-"""The one scope a desktop asks for; ``dispatch`` is the hub's own."""
 RECONNECT = "connect to the hub again"
 _MARGIN_SECONDS = 60
 
@@ -58,7 +56,7 @@ def _mint(user_id: int, node_id: int, node_name: str) -> str:
         access_token = session.access_token(user_id)
         if access_token is None:
             raise LookupError(f"no hub session mints a token for node {node_name!r}; {RECONNECT}")
-        minted = client.mint_node_token(stored["hub_url"], access_token, node_id, SCOPE)
+        minted = client.mint_node_token(stored["hub_url"], access_token, node_id)
     except HubRefused as e:
         if e.status == 401:
             raise LookupError(

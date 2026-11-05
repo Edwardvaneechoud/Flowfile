@@ -113,10 +113,6 @@ class HubConnectRequest(BaseModel):
         return url
 
 
-def _hostname() -> str:
-    return socket.gethostname()
-
-
 def _account(stored: dict | None, current_user) -> str | None:
     """Who ``stored`` signs in as at the hub; see ``HubConnection.account``."""
     if stored is None:
@@ -133,7 +129,7 @@ def _connection(
     return HubConnection(
         connected=stored is not None,
         hub_url=stored["hub_url"] if stored else None,
-        device_name=stored.get("device_name") if stored else _hostname(),
+        device_name=stored.get("device_name") if stored else socket.gethostname(),
         expires_at=datetime.fromtimestamp(expires, timezone.utc) if expires is not None else None,
         org_name=info["org_name"] if info else None,
         hub_version=info["hub_version"] if info else None,
@@ -196,7 +192,7 @@ def connect(
     ``nodes_synced``, or ``sync_error`` when the hub's list could not be read, and the connection stands either way.
     The rows the sync wrote are checked after the answer is sent (``_check_nodes``), so it is not held up.
     """
-    device_name = (request.device_name or "").strip() or _hostname()
+    device_name = (request.device_name or "").strip() or socket.gethostname()
     try:
         info = client.get_info(request.hub_url)
         tokens = client.sign_in(request.hub_url, request.username, request.password)

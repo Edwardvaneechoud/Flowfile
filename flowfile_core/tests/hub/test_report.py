@@ -33,13 +33,10 @@ from tests.hub_client.conftest import FakeHubWithCatalog
 
 HUB_URL = "http://hub.test"
 OTHER_HUB_URL = "http://other-hub.test"
-# The ``hub`` fixture replaces ``httpx.Client`` module-wide; everything that wants a real one takes it from here.
-_REAL_CLIENT = httpx.Client
 REPORT_KEYS = {
     "run_id",
     "flow_uuid",
     "flow_version",
-    "compute_node_id",
     "started_at",
     "ended_at",
     "success",
@@ -65,7 +62,7 @@ def clean_catalog():
 
 @pytest.fixture
 def hub(monkeypatch):
-    """A hub behind an ``httpx.MockTransport``; ``hub.answer`` sets what it does with each request."""
+    """A hub behind the hub client's own transport that records each request; ``hub.answer`` sets what it answers."""
 
     class Hub:
         requests: list[httpx.Request] = []
@@ -74,13 +71,12 @@ def hub(monkeypatch):
     hub = Hub()
     hub.requests = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx.Request) -> httpx.Response:
         hub.requests.append(request)
         return hub.answer(request)
 
-    monkeypatch.setattr(
-        report.httpx, "Client", lambda **kwargs: _REAL_CLIENT(transport=httpx.MockTransport(handler), **kwargs)
-    )
+    hub.handle = handle
+    monkeypatch.setattr(hub_client, "_module_http", httpx.Client(transport=httpx.MockTransport(handle)))
     return hub
 
 
@@ -97,11 +93,12 @@ def warnings(monkeypatch, caplog):
 
 
 @pytest.fixture
-def desktop(monkeypatch, tmp_path):
+def desktop(monkeypatch, tmp_path, hub):
     """A core with a secure store of its own and a fake hub behind the hub client's seam.
 
     ``desktop.connect(user_id)`` gives that user a hub session on ``HUB_URL``, as connecting from the Hub tab does;
-    the fake mints the access tokens the session path refreshes with and answers the hub's catalog routes.
+    the fake mints the access tokens the session path refreshes with and answers the hub's catalog routes. A run
+    report (``POST /hub/runs``) goes to ``hub``, which records it.
     """
     path = tmp_path / "secure_storage"
     monkeypatch.setenv("FLOWFILE_SECURE_STORAGE_PATH", str(path))
@@ -109,7 +106,13 @@ def desktop(monkeypatch, tmp_path):
     monkeypatch.setattr(core_secrets, "_storage", core_secrets.SecureStorage())
     monkeypatch.setattr(session, "_access_tokens", {})
     fake = FakeHubWithCatalog()
-    monkeypatch.setattr(hub_client, "_module_http", _REAL_CLIENT(transport=httpx.MockTransport(fake.handle)))
+    catalog_handle = fake.handle
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return hub.handle(request) if request.url.path == "/hub/runs" else catalog_handle(request)
+
+    fake.handle = handle
+    monkeypatch.setattr(hub_client, "_module_http", httpx.Client(transport=httpx.MockTransport(handle)))
 
     def connect(user_id: int, hub_url: str = HUB_URL) -> None:
         tokens = hub_client.sign_in(hub_url, "ana", "s3cret")
@@ -153,7 +156,7 @@ class TestBuildRunReport:
         _assert_contract_shape(built)
         uuid.UUID(built["run_id"])
         assert built["flow_uuid"] == FLOW_UUID
-        assert (built["flow_version"], built["compute_node_id"], built["vend_ids"]) == (None, None, [])
+        assert (built["flow_version"], built["vend_ids"]) == (None, [])
         assert built["success"] is True
         assert built["started_at"] <= built["ended_at"]
         nodes = {node["node_id"]: node for node in built["nodes"]}
@@ -196,7 +199,6 @@ class TestBuildRunReport:
 
         _assert_contract_shape(built)
         assert built["flow_version"] == 4
-        assert built["compute_node_id"] is None
 
     @pytest.mark.parametrize("mode", ["hub", "docker", None, "electron"], ids=["hub", "docker", "no-mode", "electron"])
     def test_a_report_names_no_table_of_its_own_catalog_in_any_mode(self, monkeypatch, mode):
@@ -367,7 +369,6 @@ class TestDesktopSession:
         body = json.loads(sent.content)
         _assert_contract_shape(body)
         assert (body["flow_uuid"], body["flow_version"]) == (flow_uuid, 3)
-        assert body["compute_node_id"] is None
         uuid.UUID(body["run_id"])
         assert body["vend_ids"] == []
         assert warnings() == []
@@ -562,7 +563,7 @@ class TestHubTables:
                 return httpx.Response(503, json={"detail": "catalog unavailable"})
             return desktop.handle(request)
 
-        monkeypatch.setattr(hub_client, "_module_http", _REAL_CLIENT(transport=httpx.MockTransport(handle)))
+        monkeypatch.setattr(hub_client, "_module_http", httpx.Client(transport=httpx.MockTransport(handle)))
 
         assert flow.try_claim_run()
         routes._run_and_track(flow, user_id=1)

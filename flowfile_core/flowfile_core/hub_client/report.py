@@ -20,8 +20,6 @@ catalog, whose ids are not the hub's: only the hub's tables, by the hub's ids. T
 import uuid
 from datetime import datetime, timezone
 
-import httpx
-
 from flowfile_core.auth import issuer_accounts
 from flowfile_core.configs import logger
 from flowfile_core.hub_client import catalog as hub_catalog
@@ -176,7 +174,6 @@ def build_run_report(flow, run_info: RunInformation, flow_uuid: str) -> dict:
         "run_id": vend[0] if vend is not None else str(uuid.uuid4()),
         "flow_uuid": flow_uuid,
         "flow_version": origin.version if origin is not None else None,
-        "compute_node_id": None,
         "started_at": started_at.astimezone(timezone.utc).isoformat(),
         "ended_at": ended_at.astimezone(timezone.utc).isoformat(),
         "success": bool(run_info.success),
@@ -193,10 +190,7 @@ def post_run_report(hub_url: str, token: str, report: dict) -> None:
     The run is already recorded locally, so a hub that is down, slow or refusing costs one warning and nothing
     else: no retry, and the run's outcome is unchanged.
     """
-    url = f"{hub_url.rstrip('/')}/hub/runs"
     try:
-        with httpx.Client(timeout=5.0) as client:
-            response = client.post(url, json=report, headers={"Authorization": f"Bearer {token}"})
-            response.raise_for_status()
-    except Exception as exc:
-        logger.warning(f"Could not report run {report.get('run_id')} to the hub at {url}: {exc}")
+        hub_client._send("POST", hub_url, "/hub/runs", None, json=report, headers=hub_client._bearer(token))
+    except (HubUnreachable, HubRefused, HubVersionRefused) as exc:
+        logger.warning(f"Could not report run {report.get('run_id')} to the hub at {hub_url}: {exc}")

@@ -30,7 +30,6 @@ from flowfile_core.hub_client.node_tokens import RECONNECT
 from flowfile_core.schemas.catalog_schema import CatalogTableOut, NamespaceTree
 
 HUB = "hub"
-LOCAL = "local"
 _NAMESPACE_FIELDS = (
     "name",
     "level",

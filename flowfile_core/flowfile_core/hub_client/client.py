@@ -329,21 +329,19 @@ def list_compute_nodes(url: str, access_token: str, *, http: httpx.Client | None
     return nodes
 
 
-def mint_node_token(
-    url: str, access_token: str, node_id: int, scope: str = "run", *, http: httpx.Client | None = None
-) -> dict:
-    """A short-lived token the hub signs for one of its nodes, for the signed-in account.
+def mint_node_token(url: str, access_token: str, node_id: int, *, http: httpx.Client | None = None) -> dict:
+    """A short-lived ``run`` token the hub signs for one of its nodes, for the signed-in account.
 
     Answers the hub's body: ``token``, ``node_id``, ``node_name`` (the token's audience), ``scope``, ``kid``,
     ``issued_at``, ``expires_at`` and ``issuer``. The hub shows the token once and keeps none; a node that does
-    not exist, is disabled, or a ``dispatch`` scope is the hub's refusal.
+    not exist or is disabled is the hub's refusal.
     """
     body = _request(
         "POST",
         url,
         "/hub/node-tokens",
         http,
-        json={"node_id": node_id, "scope": scope},
+        json={"node_id": node_id, "scope": "run"},
         headers=_bearer(access_token),
     )
     return _require(body, ("token", "node_name", "kid", "expires_at", "issuer"), url, "/hub/node-tokens")
