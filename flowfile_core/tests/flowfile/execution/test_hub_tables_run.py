@@ -19,7 +19,14 @@ from flowfile_core.hub_client.client import HubRefused
 from flowfile_core.schemas import input_schema
 from shared.cloud_credential_provider import PROVIDER_CREDENTIAL_KEYS, EncryptedCredentialProvider
 from tests.conftest import protocol_states
-from tests.flowfile.execution.graph_helpers import add_filter_on, add_manual_input, add_promise, connect, make_graph
+from tests.flowfile.execution.graph_helpers import (
+    add_filter_on,
+    add_manual_input,
+    add_promise,
+    add_sort_on,
+    connect,
+    make_graph,
+)
 from tests.hub_client import conftest as hub_conftest
 from tests.hub_client.conftest import HUB_URL, FakeHubWithCatalog
 
@@ -393,3 +400,72 @@ def test_after_a_run_over_a_hub_table_no_node_result_holds_its_credential(
         assert reader.results.result_ref == reader_ref and reader.node_stats.has_run_with_current_setup
     assert mode == "Development" or reader_ref.state == "deferred"
     assert graph.hub_vend is None
+
+
+def test_fetch_data_after_a_performance_run_reads_the_hub_table_under_a_vend_of_its_own(
+    connected, carrying_scans, flag
+):
+    graph = make_graph(8721 + 100 * flag, execution_location="local", execution_mode="Performance")
+    add_hub_reader(graph, 1, connected)
+    add_sort_on(graph, 2, 1, "id")
+
+    run_info = graph.run_graph()
+    assert run_info.success is True, [result.error for result in run_info.node_step_result]
+    [run_vend] = connected.vend_calls
+    reported = graph.last_hub_vend
+
+    fetch_info = graph.trigger_fetch_node(2)
+
+    assert [(row.node_id, row.success, row.error) for row in fetch_info.node_step_result] == [(2, True, "")]
+    run_call, fetch_call = connected.vend_calls
+    assert fetch_call["read_namespace_ids"] == [connected.ids["raw"]]
+    assert fetch_call["run_id"] != run_call["run_id"]
+    sort = graph.get_node(2)
+    example = sort.get_table_example(include_data=True)
+    assert example.data == [{"id": 1, "name": "ada"}, {"id": 2, "name": "bob"}]
+    assert graph.hub_vend is None
+    assert graph.last_hub_vend == reported, "the run's report keeps naming the run's vend"
+    ciphertext = carrying_scans[-1][1]["credential_provider"].encrypted_credentials.encode()
+    for node in graph.nodes:
+        plans = [node.results.resulting_data, *node._named_outputs.values()]
+        assert not any(ciphertext in data.data_frame.lazy().serialize() for data in plans if data is not None)
+        assert node.results.result_ref is None or node.results.result_ref.state == "materialised"
+    assert not sort.node_stats.has_run_with_current_setup, "the next fetch or run reads the table again"
+
+
+def test_fetch_data_after_a_development_run_asks_the_hub_nothing(connected, carrying_scans, flag):
+    graph = make_graph(8722 + 100 * flag, execution_location="local")
+    add_hub_reader(graph, 1, connected)
+    add_sort_on(graph, 2, 1, "id")
+    assert graph.run_graph().success is True
+
+    fetch_info = graph.trigger_fetch_node(2)
+
+    assert [(row.node_id, row.success) for row in fetch_info.node_step_result] == [(2, True)]
+    assert len(connected.vend_calls) == 1
+
+
+@pytest.mark.parametrize("mode", ["Performance", "Development"])
+def test_the_run_report_counts_the_rows_out_the_run_knew_after_its_vend_ends(
+    connected, carrying_scans, operations, flag, mode
+):
+    from flowfile_core.hub_client.report import build_run_report
+
+    graph = make_graph(
+        8723 + 100 * flag + 10 * (mode == "Development"), execution_location="local", execution_mode=mode
+    )
+    add_hub_reader(graph, 1, connected)
+    add_sort_on(graph, 2, 1, "id")
+    add_hub_writer(graph, 3, 2, connected.ids["curated"], "orders_out")
+
+    run_info = graph.run_graph()
+
+    assert run_info.success is True, [result.error for result in run_info.node_step_result]
+    report = build_run_report(graph, run_info, "flow-uuid")
+    rows_out = {node["node_id"]: node["rows_out"] for node in report["nodes"]}
+    # A Performance run computes only what its writer reads, so only the write knows a count, as off a hub.
+    assert rows_out == ({1: 2, 2: 2, 3: 2} if mode == "Development" else {1: None, 2: None, 3: 2})
+    assert graph.hub_vend is None
+
+    graph.run_graph(node_ids={1})
+    assert graph.hub_rows_out.get(3) is None, "a later run reports only its own counts"

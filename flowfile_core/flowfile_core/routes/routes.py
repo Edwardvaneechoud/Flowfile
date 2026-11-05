@@ -2790,9 +2790,12 @@ def get_flow_settings_validation(flow_id: int, current_user=Depends(get_current_
 @router.get("/flow/placement", tags=["editor"], response_model=output_model.PlacementPreview)
 def get_flow_placement(flow_id: int, current_user=Depends(get_current_active_user)) -> output_model.PlacementPreview:
     """Where a run would place each node now: the backend it would run on, the nodes moved to the default backend
-    because theirs cannot run them, and the nodes no backend can run. Runs nothing and changes nothing."""
+    because theirs cannot run them, and the nodes no backend can run. Runs nothing and changes nothing.
+
+    On a server joined with keys of its own the preview takes the exchange store the hub sets, asked as a run of the
+    caller asks it (``_joined_server_store``), so a node a run would carry through that store is not shown refused."""
     flow = get_flow_or_404(flow_id, current_user, detail="Could not find the flow")
-    placement = flow.preview_placement()
+    placement = flow.preview_placement(hub_store=_joined_server_store(flow, current_user.id))
     if placement is None:
         return output_model.PlacementPreview(available=False)
     return output_model.PlacementPreview(

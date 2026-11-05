@@ -13,6 +13,7 @@ from time import time
 from typing import Any, Literal
 
 import polars as pl
+import pyarrow as pa
 from polars.exceptions import PanicException
 from polars_expr_transformer import simple_function_to_expr as to_expr
 
@@ -286,6 +287,17 @@ def _desktop_unsealed(node: FlowNode, server: str, *, mixed: bool = False) -> st
     )
 
 
+def _read_preview(node: FlowNode) -> pa.Table | None:
+    """The preview rows ``node`` read for its grid in a run that succeeded; ``None`` when it read none."""
+    if node.results.errors is not None or node.results.example_data_generator is None:
+        return None
+    try:
+        return node.results.example_data_generator()
+    except Exception as e:
+        logger.debug(f"Node {node.node_id} kept no preview rows: {e}")
+        return None
+
+
 def _release_boundary_inputs(node: FlowNode, edges: Sequence[BoundaryEdge]) -> None:
     """Forget ``node``'s boundary inputs and release each import; a failed release is a warning on the node's log."""
     node._boundary_inputs = {}
@@ -309,6 +321,8 @@ class ExecutionMixin(GraphMixinBase):
     last_hub_vend: tuple[str, int] | None = None
     # Node id -> the secret names the running run's vend sealed for that step; None between runs.
     sealed_secret_steps: dict[int | str, tuple[str, ...]] | None = None
+    # Node id -> the rows out the last run knew for a step whose result the end of its vend released, for its report.
+    hub_rows_out: Mapping[int | str, int] = {}
 
     @property
     def last_closed_gate_handles(self) -> Mapping[str | int, frozenset[str]]:
@@ -513,6 +527,13 @@ class ExecutionMixin(GraphMixinBase):
             inputs = dict.fromkeys(source for source, _ in flow_node._slot_input_pairs() if source is not None)
             stage = ExecutionStage(nodes=[*inputs, flow_node])
             try:
+                hub_refusal = self._vend_for_fetch(flow_node, exchange_run)
+                if hub_refusal:
+                    self._record_hub_refusal(*hub_refusal)
+                    self.latest_run_info.end_time = datetime.datetime.now()
+                    self.release_run()
+                    self._end_exchange_run(exchange_run)
+                    return self.get_run_info()
                 placement, edges = self._place_run(ExecutionPlan(skip_nodes=[], stages=[stage]), exchange_run)
             except Exception as e:
                 node_logger.error(f"Error in node {flow_node.node_id}: {e}")
@@ -579,8 +600,28 @@ class ExecutionMixin(GraphMixinBase):
             node_logger.error(f"Error in node {flow_node.node_id}: {e}")
             node_result.finish(success=False, error=str(e))
         finally:
+            self._end_hub_vend(exchange_run, keep_preview=flow_node)
             self.release_run()
             self._end_exchange_run(exchange_run)
+
+    def _vend_for_fetch(self, flow_node: FlowNode, exchange_run: ExchangeRun) -> tuple[list[FlowNode], str] | None:
+        """Ask the hub for the credentials of the hub tables a fetch of ``flow_node`` reads, as a run does.
+
+        A run keeps no hub reader's plan once it ends (``_end_hub_vend``), so a fetch after a Performance run builds
+        its node's plan over the hub table again: the node and every upstream node that has not run with its current
+        setup are vended for (``_vend_hub_tables``) under the fetch's own run id. A fetch that reads no hub table asks
+        nothing, and the run's ``last_hub_vend``, which its report names, is kept. Answers the nodes and the sentence
+        when the hub cannot be asked or refuses, else ``None``.
+        """
+        upstream = [self.get_node(node_id) for node_id in self._get_upstream_node_ids(flow_node.node_id)]
+        building = [node for node in upstream if not node.node_stats.has_run_with_current_setup] + [flow_node]
+        if not any(hub_table_namespace(node.setting_input) for node in building):
+            return None
+        run_vend = self.last_hub_vend
+        try:
+            return self._vend_hub_tables(building, exchange_run)
+        finally:
+            self.last_hub_vend = run_vend
 
     @staticmethod
     def _resolve_input_names(node: FlowNode | None, table_count: int) -> list[str] | None:
@@ -1263,17 +1304,36 @@ class ExecutionMixin(GraphMixinBase):
             placement = replace(placement, refusals=[*placement.refusals, *added])
         return placement, edges
 
-    def preview_placement(self) -> Placement | None:
+    def preview_placement(self, hub_store: ExchangeConfig | None = None) -> Placement | None:
         """Where a run would place each of the flow's nodes now, without running, logging or changing anything.
 
         ``None`` with the protocol flag off. Every node is placed as if every gate were open, under an exchange run that
         is never collected, and the boundary edges are dropped. Placement reads a resolved copy of each node's settings,
         so a preview beside an edit or a run leaves both as they are.
+
+        ``hub_store`` is the store a joined server's hub sets, as a run takes it (``ExchangeRun.hub_store``). Nothing
+        is vended for a preview: its crossings are checked against the servers a run's vend would be sealed to
+        (``_seal_targets``), and a backend that is none of the hub's servers refuses the nodes the run would refuse,
+        with the run's sentence.
         """
-        stage = ExecutionStage(nodes=list(self.nodes))
-        placement, _ = self._place_run(
-            ExecutionPlan(skip_nodes=[], stages=[stage]), ExchangeRun(self.flow_id, "preview"), log=False
-        )
+        nodes = list(self.nodes)
+        exchange_run = ExchangeRun(self.flow_id, "preview", hub_store=hub_store)
+        unsealable = None
+        if settings.FLOWFILE_COMPUTE_PROTOCOL and exchange_run.vended():
+            try:
+                targets, exchange, _ = self._seal_targets(nodes, [], exchange_run)
+            except LookupError as e:
+                targets, exchange, unsealable = (), True, str(e)
+            if exchange:
+                exchange_run.sealed = SealedCredential(hub_store.uri, dict.fromkeys(targets, ""))
+        stage = ExecutionStage(nodes=nodes)
+        placement, _ = self._place_run(ExecutionPlan(skip_nodes=[], stages=[stage]), exchange_run, log=False)
+        if placement is not None and unsealable is not None:
+            refused = [node for node in nodes if hub_table_namespace(node.setting_input)] or nodes
+            placement = replace(
+                placement,
+                refusals=[Refusal(node.node_id, placement.assignment[node.node_id], unsealable) for node in refused],
+            )
         return placement
 
     def _record_fallbacks(self, fallbacks: list[Fallback]) -> None:
@@ -1627,6 +1687,7 @@ class ExecutionMixin(GraphMixinBase):
                     closed_gate_handles=closed_gate_handles,
                 )
 
+                self.hub_rows_out = {}
                 hub_refusal = self._signed_out_refusal(run_nodes, exchange_run) or self._vend_hub_tables(
                     run_nodes, exchange_run
                 )
@@ -1903,7 +1964,7 @@ class ExecutionMixin(GraphMixinBase):
         reason = f": {next(iter(sentences)).rstrip('.')}" if len(sentences) == 1 else ""
         self.flow_logger.error(f"{len(refused)} node(s) cannot run{reason}; no node was started")
 
-    def _end_hub_vend(self, exchange_run: ExchangeRun) -> None:
+    def _end_hub_vend(self, exchange_run: ExchangeRun, keep_preview: FlowNode | None = None) -> None:
         """Forget what the hub vended to the run: ``hub_vend``, and every node result that embeds its credential.
 
         A hub reader's scan carries the credential, so a hub reader's result, and each result downstream of one, that
@@ -1911,6 +1972,10 @@ class ExecutionMixin(GraphMixinBase):
         not run: a later preview or run reads the hub table again under a vend of its own. A result the backend stored
         is kept, since it reads the stored file. Called before the run releases its slot, and only the run's own vend
         is reset, so a run claimed afterwards keeps its own.
+
+        ``keep_preview``, the node a fetch was for, keeps the preview rows it already read, which hold no credential,
+        and still reads as completed, so its grid shows them; its plan is released like any other. At a run's end the
+        row count each released node knew is kept in ``hub_rows_out`` for the run's report.
         """
         run_vend = self.hub_vend
         if run_vend is None or run_vend.run_id != exchange_run.run_id:
@@ -1918,6 +1983,7 @@ class ExecutionMixin(GraphMixinBase):
         self.hub_vend = None
         self.sealed_secret_steps = None
         seen: set[int] = set()
+        rows_out: dict[int | str, int] = {}
         stack = [node for node in self.nodes if (hub := hub_table_namespace(node.setting_input)) and not hub[1]]
         while stack:
             node = stack.pop()
@@ -1928,14 +1994,23 @@ class ExecutionMixin(GraphMixinBase):
             ref = node.results.result_ref
             if ref is not None and ref.state == "materialised" and not node._named_outputs:
                 continue
+            rows = _read_preview(node) if node is keep_preview else None
+            engine = node.peek_output_engine()
+            count = ref.row_count if ref is not None else None
+            if count is None and engine is not None:
+                count = engine.known_record_count()
+            if count is not None:
+                rows_out[node.node_id] = count
             node.release_result()
             node.results.reset()
-            node.results.example_data_generator = None
+            node.results.example_data_generator = None if rows is None else (lambda rows=rows: rows)
             node._named_outputs = {}
             node.node_stats.has_run_with_current_setup = False
-            node.node_stats.has_completed_last_run = False
+            node.node_stats.has_completed_last_run = rows is not None
             node._execution_state.has_run_with_current_setup = False
-            node._execution_state.has_completed_last_run = False
+            node._execution_state.has_completed_last_run = rows is not None
+        if keep_preview is None:
+            self.hub_rows_out = rows_out
 
     def _end_exchange_run(self, exchange_run: ExchangeRun) -> None:
         """Remove what the run wrote to the exchange store; a failure is a warning on the flow log, never the run's.

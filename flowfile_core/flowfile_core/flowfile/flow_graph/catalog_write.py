@@ -728,7 +728,7 @@ def _handle_hub_table_write(
     under the namespace's storage root, and the compute writes it by identity with a connection whose secrets are
     encrypted for the worker. A new table is registered on the hub from the write's own report; an existing one's
     record on the hub is left as it is. Nothing is recorded in the local catalog, and the hub's grant check is the
-    vend's.
+    vend's. The node's output carries the row count the write reports, so its run report counts the rows written.
     """
     settings = node_catalog_writer.catalog_write_settings
     namespace_id = settings.hub_namespace_id
@@ -767,6 +767,8 @@ def _handle_hub_table_write(
     )
     report = writer_node.run_op(current_context(graph).backend, operation, op_payload(write), job_id=write.job_id)
     meta = _catalog_delta_written(report.metadata).meta
+    if meta is not None and meta.get("row_count") is not None:
+        df = FlowDataEngine(df.data_frame, schema=df.schema, number_of_records=meta["row_count"])
     if existing is not None or meta is None:
         return df
     table_path = report.metadata.get("table_path") or dest_path

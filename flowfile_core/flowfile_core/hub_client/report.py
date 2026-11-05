@@ -80,8 +80,15 @@ def _session_target(user_id: int, hub_url: str) -> tuple[str, str] | None:
     return hub_url, token
 
 
-def _rows_out(node) -> int | None:
-    """The row count the run already knows for ``node``'s output, else ``None``; nothing is counted."""
+def _rows_out(flow, node) -> int | None:
+    """The row count the run already knows for ``node``'s output, else ``None``; nothing is counted.
+
+    A step over a hub table whose result the end of the run's vend released keeps the count it knew in
+    ``flow.hub_rows_out``.
+    """
+    released = getattr(flow, "hub_rows_out", {}).get(node.node_id)
+    if released is not None:
+        return released
     ref = node.results.result_ref
     if ref is not None and ref.row_count is not None:
         return ref.row_count
@@ -130,7 +137,7 @@ def build_run_report(flow, run_info: RunInformation, flow_uuid: str) -> dict:
                 "success": bool(result.success),
                 "skipped": result.skipped,
                 "duration_seconds": result.run_time_ms / 1000 if result.run_time_ms >= 0 else None,
-                "rows_out": _rows_out(node),
+                "rows_out": _rows_out(flow, node),
                 "error": result.error or None,
             }
         )
