@@ -369,7 +369,7 @@ class WorkerBackend(_WorkerReferences):
                 f"The worker at {self.url} does not report its capabilities (GET {route} answered 404), {cause}"
             )
         if not response.ok:
-            raise _v1_failure(response.status_code, response.content, response.reason)
+            raise _v1_failure(response.status_code, response.content, response.reason, backend_id=self.id)
         declared = capabilities_from_answer(self.url, response, backend_id=self.id)
         if not self.shares_core_disk:
             return declared
@@ -864,7 +864,7 @@ class WorkerBackend(_WorkerReferences):
             ) from e
         if response.ok or (missing_ok and response.status_code == 404):
             return response
-        raise _v1_failure(response.status_code, response.content, response.reason)
+        raise _v1_failure(response.status_code, response.content, response.reason, backend_id=self.id)
 
     def _give_up(self, job_id: str) -> None:
         """Cancel the ``/v1`` job ``job_id`` core stopped waiting on, so it holds no child or output; best effort."""
@@ -1527,7 +1527,9 @@ class _TokenAuth(requests.auth.AuthBase):
         return request
 
 
-def _v1_error(status_code: int, detail: Any, *, answered_by: str = "The worker") -> ComputeError:
+def _v1_error(
+    status_code: int, detail: Any, *, answered_by: str = "The worker", backend_id: str | None = None
+) -> ComputeError:
     """The typed error for a ``/v1`` failure the worker answered with ``status_code`` and ``detail``.
 
     REST answers, refused socket upgrades, ``error`` frames and an ``HTTPException`` a ``/v1`` body raised in this
@@ -1537,8 +1539,14 @@ def _v1_error(status_code: int, detail: Any, *, answered_by: str = "The worker")
     - 404: ``ResultMissing``, a result or input it does not hold.
     - 422: ``PlanRejected``, what a body refuses before anything runs.
     - 500 carrying a child's ``status``: through ``worker_failure``, as a failed task.
+    - 401 "Invalid or missing internal token" from a server filled from a hub (``backend_id`` names it,
+      ``registry.hub_server``): a ``TaskFailed`` saying that server runs an older Flowfile, which knows only its
+      internal token and so cannot take the hub's run tokens, and that an admin joins it again. Any other worker's
+      refusal of a token keeps the worker's own answer.
     - Any other code: a ``TaskFailed`` naming the code and ``answered_by``.
     """
+    from flowfile_core.flowfile.execution import registry  # imported here: the registry imports this module
+
     if status_code == 426:
         return VersionMismatch(str(detail))
     if status_code == 404:
@@ -1547,11 +1555,18 @@ def _v1_error(status_code: int, detail: Any, *, answered_by: str = "The worker")
         return PlanRejected(str(detail))
     if status_code == 500 and isinstance(detail, dict) and "status" in detail:
         return worker_failure(detail.get("error_kind"), detail.get("error_message") or detail["status"])
+    if status_code == 401 and detail == "Invalid or missing internal token":
+        server = registry.hub_server(backend_id)
+        if server is not None:
+            return TaskFailed(
+                f"The hub's server {server} runs an older Flowfile, which can't take this hub's runs; an admin joins "
+                "it again with the line from the hub's Add a server."
+            )
     return TaskFailed(f"{answered_by} answered {status_code}: {detail}")
 
 
-def _v1_failure(status_code: int, body: bytes, reason: str) -> ComputeError:
-    """The typed error for an HTTP ``/v1`` answer that is no success, through ``_v1_error``.
+def _v1_failure(status_code: int, body: bytes, reason: str, *, backend_id: str | None = None) -> ComputeError:
+    """The typed error for an HTTP ``/v1`` answer that is no success, through ``_v1_error``, for ``backend_id``.
 
     The detail is the ``detail`` of the JSON ``body``, else the body as text, else the code and its ``reason``.
     """
@@ -1562,7 +1577,7 @@ def _v1_failure(status_code: int, body: bytes, reason: str) -> ComputeError:
     detail = answer.get("detail") if isinstance(answer, dict) else None
     if detail is None:
         detail = body.decode(errors="replace") or f"{status_code} {reason}"
-    return _v1_error(status_code, detail)
+    return _v1_error(status_code, detail, backend_id=backend_id)
 
 
 _CONNECTION_CREDENTIALS = (
