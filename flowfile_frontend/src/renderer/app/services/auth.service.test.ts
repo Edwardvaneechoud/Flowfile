@@ -177,11 +177,16 @@ describe("auth service: sign-in through the hub", () => {
   });
 
   it("posts the sign-in token once, stores the session and opens the editor without it", async () => {
-    const exp = inFifteenMinutes();
-    const access = jwt({ sub: "ana@hub.example.com", exp, type: "access" });
+    const expiresAt = Date.now() + 900_000;
+    const access = "opaque-access-token";
     const server = fakeServer(() => ({
       status: 200,
-      data: { access_token: access, refresh_token: "core-refresh", token_type: "bearer" },
+      data: {
+        access_token: access,
+        refresh_token: "core-refresh",
+        token_type: "bearer",
+        expires_at: expiresAt,
+      },
     }));
     axios.defaults.adapter = server.adapter;
     openAt(`#signin=one-time-token&state=${await startSignIn()}`);
@@ -198,9 +203,9 @@ describe("auth service: sign-in through the hub", () => {
 
     expect(app.authService.isAuthenticated()).toBe(true);
     expect(localStorage.getItem("auth_token")).toBe(access);
-    expect(localStorage.getItem("auth_token_expiration")).toBe(String(exp * 1000));
-    expect(localStorage.getItem("auth_username")).toBe("ana@hub.example.com");
+    expect(localStorage.getItem("auth_token_expiration")).toBe(String(expiresAt));
     expect(localStorage.getItem("auth_refresh_token")).toBe("core-refresh");
+    expect(localStorage.getItem("auth_hub_session")).toBe("1");
     const stored = (localStorage as unknown as { values: () => string[] }).values();
     expect(stored.some((value) => value.includes("one-time-token"))).toBe(false);
 
@@ -296,7 +301,12 @@ describe("auth service: sign-in through the hub", () => {
     const access = jwt({ sub: "ana@hub.example.com", exp: inFifteenMinutes(), type: "access" });
     const server = fakeServer(() => ({
       status: 200,
-      data: { access_token: access, refresh_token: "core-refresh", token_type: "bearer" },
+      data: {
+        access_token: access,
+        refresh_token: "core-refresh",
+        token_type: "bearer",
+        expires_at: Date.now() + 900_000,
+      },
     }));
     axios.defaults.adapter = server.adapter;
     const state = await startSignIn();
@@ -328,12 +338,117 @@ describe("auth service: sign-in through the hub", () => {
     expect(server.requests).toHaveLength(0);
   });
 
-  it("tells the server of a sign-out before it clears the session", async () => {
-    const access = jwt({ sub: "ana", exp: inFifteenMinutes() });
-    localStorage.setItem("auth_token", access);
-    localStorage.setItem("auth_token_expiration", String(Date.now() + 600_000));
-    localStorage.setItem("auth_username", "ana");
-    localStorage.setItem("auth_refresh_token", "core-refresh");
+  it("ends the session when the server answers no expiry for it", async () => {
+    const server = fakeServer(() => ({
+      status: 200,
+      data: {
+        access_token: "opaque-access-token",
+        refresh_token: "core-refresh",
+        token_type: "bearer",
+      },
+    }));
+    axios.defaults.adapter = server.adapter;
+    openAt(`#signin=one-time-token&state=${await startSignIn()}`);
+
+    const authService = await load();
+
+    expect(await authService.initialize()).toBe(false);
+    expect(localStorage.getItem("auth_token")).toBeNull();
+    expect(localStorage.getItem("auth_hub_session")).toBeNull();
+  });
+});
+
+const storeHubSession = (expiration: number) => {
+  const access = jwt({ sub: "ana", exp: inFifteenMinutes() });
+  localStorage.setItem("auth_token", access);
+  localStorage.setItem("auth_token_expiration", String(expiration));
+  localStorage.setItem("auth_username", "ana");
+  localStorage.setItem("auth_refresh_token", "core-refresh");
+  localStorage.setItem("auth_hub_session", "1");
+  return access;
+};
+
+describe("auth service: sign-out and expiry", () => {
+  const original = axios.defaults.adapter;
+
+  beforeEach(() => {
+    vi.stubGlobal("localStorage", fakeLocalStorage());
+    vi.stubGlobal("sessionStorage", fakeLocalStorage());
+    openAt("");
+  });
+
+  afterEach(() => {
+    axios.defaults.adapter = original;
+    vi.unstubAllGlobals();
+    openAt("");
+  });
+
+  it("clears a password session in this browser and asks the server nothing", async () => {
+    storeSession("alice");
+    const server = fakeServer(() => ({ status: 204 }));
+    axios.defaults.adapter = server.adapter;
+    const authService = await load();
+
+    await authService.signOut();
+
+    expect(server.requests).toHaveLength(0);
+    expect(authService.isAuthenticated()).toBe(false);
+    expect(localStorage.getItem("auth_token")).toBeNull();
+    expect(localStorage.getItem("auth_refresh_token")).toBeNull();
+    expect(localStorage.getItem("auth_username")).toBeNull();
+  });
+
+  it("asks the server nothing for a password session whose token expired", async () => {
+    localStorage.setItem("auth_refresh_token", "alice-refresh");
+    const server = fakeServer(() => ({ status: 200, data: {} }));
+    axios.defaults.adapter = server.adapter;
+    const authService = await load();
+
+    await authService.signOut();
+
+    expect(server.requests).toHaveLength(0);
+    expect(localStorage.getItem("auth_refresh_token")).toBeNull();
+  });
+
+  it("keeps the estimated hour for a refreshed password session", async () => {
+    localStorage.setItem("auth_refresh_token", "alice-refresh");
+    const renewed = jwt({ sub: "alice", exp: Math.floor(Date.now() / 1000) + 7200 });
+    axios.defaults.adapter = fakeServer(() => ({
+      status: 200,
+      data: { access_token: renewed, refresh_token: "alice-refresh-2", token_type: "bearer" },
+    })).adapter;
+    const authService = await load();
+    const before = Date.now();
+
+    expect(await authService.refreshAccessToken()).toBe(renewed);
+
+    const expiration = Number(localStorage.getItem("auth_token_expiration"));
+    expect(expiration).toBeGreaterThanOrEqual(before + 3_600_000);
+    expect(expiration).toBeLessThanOrEqual(Date.now() + 3_600_000);
+  });
+
+  it("keeps the expiry the server answers for a refreshed hub session", async () => {
+    storeHubSession(Date.now() + 60_000);
+    const expiresAt = Date.now() + 900_000;
+    axios.defaults.adapter = fakeServer(() => ({
+      status: 200,
+      data: {
+        access_token: "renewed",
+        refresh_token: "core-refresh-2",
+        token_type: "bearer",
+        expires_at: expiresAt,
+      },
+    })).adapter;
+    const authService = await load();
+
+    expect(await authService.refreshAccessToken()).toBe("renewed");
+
+    expect(localStorage.getItem("auth_token_expiration")).toBe(String(expiresAt));
+    expect(localStorage.getItem("auth_hub_session")).toBe("1");
+  });
+
+  it("tells the server of a hub sign-out before it clears the session", async () => {
+    const access = storeHubSession(Date.now() + 600_000);
     const server = fakeServer(() => ({ status: 204 }));
     axios.defaults.adapter = server.adapter;
     const authService = await load();
@@ -349,15 +464,34 @@ describe("auth service: sign-in through the hub", () => {
     expect(localStorage.getItem("auth_token")).toBeNull();
     expect(localStorage.getItem("auth_refresh_token")).toBeNull();
     expect(localStorage.getItem("auth_username")).toBeNull();
+    expect(localStorage.getItem("auth_hub_session")).toBeNull();
+  });
+
+  it("refreshes an expired hub session to sign it out", async () => {
+    storeHubSession(Date.now() - 1000);
+    const server = fakeServer((config) =>
+      config.url === "/auth/refresh"
+        ? { status: 200, data: { access_token: "renewed", token_type: "bearer" } }
+        : { status: 204 },
+    );
+    axios.defaults.adapter = server.adapter;
+    const authService = await load();
+
+    await authService.signOut();
+
+    expect(server.requests.map(({ config }) => config.url)).toEqual([
+      "/auth/refresh",
+      "/auth/logout",
+    ]);
+    expect(server.requests[1].config.headers.Authorization).toBe("Bearer renewed");
+    expect(localStorage.getItem("auth_hub_session")).toBeNull();
   });
 
   it.each([
     ["a refusal", { status: 401, data: { detail: "Not authenticated" } }],
     ["no answer", new Error("Network Error")],
-  ])("clears the session on a sign-out the server meets with %s", async (_label, answer) => {
-    localStorage.setItem("auth_token", jwt({ sub: "ana", exp: inFifteenMinutes() }));
-    localStorage.setItem("auth_token_expiration", String(Date.now() + 600_000));
-    localStorage.setItem("auth_refresh_token", "core-refresh");
+  ])("clears a hub session on a sign-out the server meets with %s", async (_label, answer) => {
+    storeHubSession(Date.now() + 600_000);
     axios.defaults.adapter = fakeServer(() => answer).adapter;
     const authService = await load();
 
@@ -366,5 +500,6 @@ describe("auth service: sign-in through the hub", () => {
     expect(authService.isAuthenticated()).toBe(false);
     expect(localStorage.getItem("auth_token")).toBeNull();
     expect(localStorage.getItem("auth_refresh_token")).toBeNull();
+    expect(localStorage.getItem("auth_hub_session")).toBeNull();
   });
 });

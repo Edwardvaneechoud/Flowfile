@@ -335,11 +335,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { computed, ref, onMounted } from "vue";
 import type { KeptSecret, Secret, SecretInput } from "./secretTypes";
 import { useSecretManager } from "./useSecretManager";
 import { SecretsApi } from "../../api/secrets.api";
-import authService from "../../services/auth.service";
+import { useHubConnectionStore } from "../../stores/hub-connection-store";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
@@ -401,7 +401,8 @@ const handleAddSecret = async () => {
   }
 };
 
-const onHub = ref(false);
+const hub = useHubConnectionStore();
+const onHub = computed(() => hub.joined);
 const kept = ref<KeptSecret[]>([]);
 const secretToChange = ref("");
 const changedValue = ref("");
@@ -433,7 +434,7 @@ const handleChangeSecret = async () => {
 };
 
 const loadKept = async () => {
-  onHub.value = (await authService.getSignInMethod()).method === "hub";
+  if (hub.connection === null) await hub.load();
   if (!onHub.value) return;
   try {
     kept.value = await SecretsApi.getKept();

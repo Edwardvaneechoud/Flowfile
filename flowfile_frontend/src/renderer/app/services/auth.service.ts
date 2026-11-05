@@ -32,6 +32,9 @@ const HUB_SIGN_IN_FAILED =
 // This tab's one-time state for the sign-in through the hub it started.
 const HUB_SIGN_IN_STATE = "hub_signin_state";
 
+// Set on a session that came through the hub, the only kind whose sign-out the server is told of.
+const HUB_SESSION = "auth_hub_session";
+
 /** 32 random bytes as base64url; `getRandomValues` works on a plain-http server too. */
 function newSignInState(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -45,27 +48,6 @@ function newSignInState(): string {
 function refusalSentence(error: unknown, fallback: string): string {
   const detail = axios.isAxiosError(error) ? error.response?.data?.detail : undefined;
   return typeof detail === "string" && detail ? detail : fallback;
-}
-
-/**
- * Read `exp` and `sub` from a JWT payload, or `null` when the token is
- * malformed, lacks either claim, or has already expired.
- */
-function decodeTokenClaims(token: string): { exp: number; sub: string } | null {
-  const parts = token.split(".");
-  if (parts.length !== 3) return null;
-  try {
-    const binary = atob(parts[1].replace(/-/g, "+").replace(/_/g, "/"));
-    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-    const payload: unknown = JSON.parse(new TextDecoder().decode(bytes));
-    if (typeof payload !== "object" || payload === null) return null;
-    const { exp, sub } = payload as { exp?: unknown; sub?: unknown };
-    if (typeof exp !== "number" || typeof sub !== "string" || !sub) return null;
-    if (exp * 1000 <= Date.now()) return null;
-    return { exp, sub };
-  } catch {
-    return null;
-  }
 }
 
 class AuthService {
@@ -209,10 +191,11 @@ class AuthService {
 
   /**
    * Trade the hub's sign-in token for this server's session, stored as a password
-   * sign-in stores it. The token is posted once, on a client without the
-   * interceptors that renew a session or retry a refused request, since the hub
-   * takes it only once. A refusal ends any earlier session in this browser and
-   * keeps the server's sentence for the sign-in page.
+   * sign-in stores it and marked as the hub's, expiring at the answer's `expires_at`.
+   * The token is posted once, on a client without the interceptors that renew a
+   * session or retry a refused request, since the hub takes it only once. Any
+   * earlier session in this browser ends; a refusal keeps the server's sentence
+   * for the sign-in page.
    */
   private async signInThroughHub(signInToken: string): Promise<boolean> {
     try {
@@ -220,14 +203,14 @@ class AuthService {
         .create()
         .post<AuthResponse>("/auth/hub/signin", { token: signInToken });
       const accessToken = response.data?.access_token;
-      const claims = accessToken ? decodeTokenClaims(accessToken) : null;
-      if (!accessToken || !claims) throw new Error("The server answered no session.");
-      this.setToken(accessToken, claims.exp * 1000, claims.sub);
+      const expiresAt = response.data?.expires_at;
+      if (!accessToken || !expiresAt) throw new Error("The server answered no session.");
+      this.logout();
+      this.setToken(accessToken, expiresAt);
       if (response.data.refresh_token) {
         localStorage.setItem("auth_refresh_token", response.data.refresh_token);
-      } else {
-        localStorage.removeItem("auth_refresh_token");
       }
+      localStorage.setItem(HUB_SESSION, "1");
       this.hubSignInError = null;
       return true;
     } catch (error) {
@@ -384,11 +367,7 @@ class AuthService {
       });
 
       if (response.data?.access_token) {
-        // A session through a hub lives 15 minutes, so the token's own expiry is the one kept.
-        const exp = decodeTokenClaims(response.data.access_token)?.exp;
-        const expirationTime = exp
-          ? exp * 1000
-          : response.data.expires_at || this.calculateExpiration();
+        const expirationTime = response.data.expires_at || this.calculateExpiration();
         this.setToken(response.data.access_token, expirationTime);
         if (response.data.refresh_token) {
           localStorage.setItem("auth_refresh_token", response.data.refresh_token);
@@ -444,12 +423,17 @@ class AuthService {
   }
 
   /**
-   * Sign out: tell the server first, so a sign-in through a hub ends there too,
-   * then clear this browser's session whatever the server answered. The requests
-   * go on a client without the interceptors, which would renew the session or
-   * send the browser to the sign-in page on a refusal.
+   * Sign out: a session that came through the hub tells the server first, so the
+   * sign-in ends at the hub too; then this browser's session is cleared whatever
+   * the server answered. Any other session is cleared here only. The requests go
+   * on a client without the interceptors, which would renew the session or send
+   * the browser to the sign-in page on a refusal.
    */
   async signOut(): Promise<void> {
+    if (localStorage.getItem(HUB_SESSION) === null) {
+      this.logout();
+      return;
+    }
     const client = axios.create();
     try {
       let token = this.hasValidToken() ? this.token.value : null;
@@ -478,6 +462,7 @@ class AuthService {
     localStorage.removeItem("auth_token_expiration");
     localStorage.removeItem("auth_refresh_token");
     localStorage.removeItem("auth_username");
+    localStorage.removeItem(HUB_SESSION);
   }
 }
 
@@ -522,6 +507,7 @@ axios.interceptors.response.use(
         localStorage.removeItem("auth_token_expiration");
         localStorage.removeItem("auth_refresh_token");
         localStorage.removeItem("auth_username");
+        localStorage.removeItem(HUB_SESSION);
 
         if (!window.location.hash.includes("login")) {
           window.location.href = "/#/login";
