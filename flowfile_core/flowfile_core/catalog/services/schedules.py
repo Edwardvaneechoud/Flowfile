@@ -47,8 +47,8 @@ def _refuse_hub_steps(flow: FlowRegistration, user_id: int) -> None:
     if issuer_accounts.joined_with_keys() is None:
         return
     from flowfile_core.flowfile.manage.ephemeral_graph import ephemeral_flow_graph
-    from shared.storage_config import require_flow_in_storage
     from flowfile_core.hub_client import node_tokens
+    from shared.storage_config import require_flow_in_storage
 
     try:
         with ephemeral_flow_graph(require_flow_in_storage(Path(flow.flow_path)), user_id) as graph:
