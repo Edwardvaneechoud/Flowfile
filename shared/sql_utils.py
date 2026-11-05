@@ -103,8 +103,8 @@ def get_sqlalchemy_uri(uri: str) -> str:
     Returns:
         The URI with the appropriate SQLAlchemy driver suffix applied.
     """
-    uri = _PSYCOPG_SCHEME.sub(r"\1+psycopg2://", uri, count=1) if _psycopg_missing() else uri
     for base_scheme, sa_scheme in SQLALCHEMY_DRIVER_MAP.items():
         if uri.startswith(f"{base_scheme}://"):
-            return uri.replace(f"{base_scheme}://", f"{sa_scheme}://", 1)
-    return uri
+            uri = uri.replace(f"{base_scheme}://", f"{sa_scheme}://", 1)
+            break
+    return _PSYCOPG_SCHEME.sub(r"\1+psycopg2://", uri, count=1) if _psycopg_missing() else uri

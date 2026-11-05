@@ -183,3 +183,11 @@ def test_worker_fallback_engine_uses_psycopg2_when_psycopg_unimportable(monkeypa
     with pytest.raises(RuntimeError, match="stop"):
         db_reader._read_sqlalchemy("SELECT 1", "postgresql+psycopg://u:p@h/d")
     assert seen == ["postgresql+psycopg2://u:p@h/d"]
+
+
+def test_mapped_postgres_uri_gets_psycopg2_when_psycopg_missing(monkeypatch):
+    from shared import sql_utils
+
+    monkeypatch.setattr(sql_utils, "_has_module", lambda name: name == "psycopg2")
+    monkeypatch.setitem(sql_utils.SQLALCHEMY_DRIVER_MAP, "postgresql", "postgresql+psycopg")
+    assert sql_utils.get_sqlalchemy_uri("postgresql://u:p@h/db") == "postgresql+psycopg2://u:p@h/db"
