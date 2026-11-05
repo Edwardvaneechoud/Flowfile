@@ -65,8 +65,11 @@ export const offersNew = (
   selected: { source?: string | null } | null,
 ): boolean => presence !== "only" && !(selected && isHubRow(selected));
 
-/** A hub row's "Shared" title: a person by name, never a team's or the organisation's raw account id. */
+/** An older hub's granter written as a team's or the organisation's account id, such as `team:sales`. */
+const RAW_PRINCIPAL = /^(team|org):\S+$/;
+
+/** A hub row's "Shared" title: the granter by the name the hub gives, never a team's or the organisation's raw account id. */
 export function hubSharedTitle(access: { shared_by?: string | null } | null | undefined): string {
   const by = access?.shared_by;
-  return by && !by.includes(":") ? `Shared by ${by}` : "Shared with you";
+  return by && !RAW_PRINCIPAL.test(by) ? `Shared by ${by}` : "Shared with you";
 }

@@ -139,6 +139,12 @@ describe("hubSharedTitle", () => {
     expect(hubSharedTitle({ shared_by: "org:organisation" })).toBe("Shared with you");
   });
 
+  it("names a team by the name the hub gives, colon and all", () => {
+    expect(hubSharedTitle({ shared_by: "Sales" })).toBe("Shared by Sales");
+    expect(hubSharedTitle({ shared_by: "Sales: EMEA" })).toBe("Shared by Sales: EMEA");
+    expect(hubSharedTitle({ shared_by: "Cal Jones" })).toBe("Shared by Cal Jones");
+  });
+
   it("says shared with you when the granter is not known", () => {
     expect(hubSharedTitle({ shared_by: null })).toBe("Shared with you");
     expect(hubSharedTitle(null)).toBe("Shared with you");

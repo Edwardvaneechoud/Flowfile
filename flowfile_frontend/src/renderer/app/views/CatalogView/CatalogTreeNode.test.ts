@@ -191,6 +191,13 @@ describe("CatalogTreeNode", () => {
     expect(host.querySelector(".resource-badge")?.getAttribute("title")).toBe("Shared by ada");
   });
 
+  it("names the team that shared a hub catalog when the hub sends its name", async () => {
+    const access = { is_owner: false, access_level: "use", shared_by: "Sales" };
+    await mount({ ...hub, access } as NamespaceTree, "only");
+
+    expect(host.querySelector(".resource-badge")?.getAttribute("title")).toBe("Shared by Sales");
+  });
+
   it("keeps a local catalog's shared title as before", async () => {
     const access = { is_owner: false, access_level: "use", shared_by: "team:sales" };
     await mount({ ...local, access } as NamespaceTree);
