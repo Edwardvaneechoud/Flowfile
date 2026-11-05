@@ -81,7 +81,7 @@ def _detail(resp: httpx.Response) -> str:
 def _send(method: str, url: str, path: str, http: httpx.Client | None, **kwargs):
     try:
         resp = _http(http).request(method, f"{url.rstrip('/')}{path}", **kwargs)
-    except httpx.TransportError as e:
+    except httpx.RequestError as e:
         raise HubUnreachable(f"Could not reach the hub at {url}.") from e
     logger.info("hub %s %s -> %s", method, path, resp.status_code)
     if resp.status_code == 426:

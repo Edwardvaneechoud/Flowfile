@@ -245,8 +245,9 @@ class TestPostRunReport:
             lambda request: httpx.Response(403, json={"detail": "not allowed"}),
             lambda request: (_ for _ in ()).throw(httpx.ReadTimeout("timed out", request=request)),
             lambda request: (_ for _ in ()).throw(httpx.ConnectError("connection refused", request=request)),
+            lambda request: httpx.Response(201, headers={"Content-Encoding": "gzip"}, content=b"not gzip"),
         ],
-        ids=["refuses", "times-out", "down"],
+        ids=["refuses", "times-out", "down", "garbled"],
     )
     def test_a_hub_that_fails_costs_one_warning_and_never_raises(self, hub, warnings, answer):
         hub.answer = answer
