@@ -191,3 +191,11 @@ def test_mapped_postgres_uri_gets_psycopg2_when_psycopg_missing(monkeypatch):
     monkeypatch.setattr(sql_utils, "_has_module", lambda name: name == "psycopg2")
     monkeypatch.setitem(sql_utils.SQLALCHEMY_DRIVER_MAP, "postgresql", "postgresql+psycopg")
     assert sql_utils.get_sqlalchemy_uri("postgresql://u:p@h/db") == "postgresql+psycopg2://u:p@h/db"
+
+
+def test_plain_postgres_uri_gets_psycopg2_when_psycopg_missing(monkeypatch):
+    from shared import sql_utils
+
+    monkeypatch.setattr(sql_utils, "_has_module", lambda name: name == "psycopg2")
+    assert sql_utils.get_sqlalchemy_uri("postgresql://u:p@h/db") == "postgresql+psycopg2://u:p@h/db"
+    assert sql_utils.get_sqlalchemy_uri("postgres://u:p@h/db") == "postgresql+psycopg2://u:p@h/db"

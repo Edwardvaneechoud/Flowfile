@@ -81,7 +81,7 @@ def _has_module(name: str) -> bool:
     return True
 
 
-_PSYCOPG_SCHEME = re.compile(r"^\s*(postgres(?:ql)?)\+psycopg://", re.IGNORECASE)
+_PSYCOPG_SCHEME = re.compile(r"^\s*postgres(?:ql)?(?:\+psycopg)?://", re.IGNORECASE)
 
 
 def _psycopg_missing() -> bool:
@@ -107,4 +107,4 @@ def get_sqlalchemy_uri(uri: str) -> str:
         if uri.startswith(f"{base_scheme}://"):
             uri = uri.replace(f"{base_scheme}://", f"{sa_scheme}://", 1)
             break
-    return _PSYCOPG_SCHEME.sub(r"\1+psycopg2://", uri, count=1) if _psycopg_missing() else uri
+    return _PSYCOPG_SCHEME.sub("postgresql+psycopg2://", uri, count=1) if _psycopg_missing() else uri
