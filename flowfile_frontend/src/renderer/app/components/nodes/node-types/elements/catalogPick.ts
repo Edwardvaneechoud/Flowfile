@@ -99,7 +99,7 @@ export function namespaceOptions(
         place: catalog.place ?? null,
         unavailableReason: unavailableReason(schema) ?? unavailableReason(catalog),
         writable: writableBy(schema.access ?? catalog.access, hub),
-        readOnly: readOnlyBy(schema.access ?? catalog.access),
+        readOnly: hub && readOnlyBy(schema.access ?? catalog.access),
       });
     }
   }

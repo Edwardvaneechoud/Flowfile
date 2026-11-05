@@ -410,6 +410,20 @@ describe("pickers by place and reach", () => {
       expect(writerDefault(options)?.full).toBe("main.team");
     });
 
+    it("never greys a schema of this machine's own, whatever grant it carries", () => {
+      const use = { is_owner: false, access_level: "use" as const, shared_by: "bob" };
+      const tree = [
+        ns({
+          id: 1,
+          name: "Sales",
+          access: use,
+          children: [ns({ id: 2, name: "shared", parent_id: 1, access: use })],
+        }),
+      ];
+      const [option] = namespaceOptions(tree);
+      expect([option.source, option.readOnly, writeBlock(option)]).toEqual(["local", false, null]);
+    });
+
     it("names this machine's reach before read-only when both hold", () => {
       const tree = [
         hubCatalog(20, "scratch", [{ id: -21, name: "notes", hub_id: 21, access: USE }], {

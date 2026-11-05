@@ -333,8 +333,8 @@ import {
 
 const isAdmin = computed(() => useAuthStore().isAdmin);
 const hub = useHubConnectionStore();
-// On a joined server the hub's rows come back with every load, so they carry no Remove.
-const fromHub = (backend: ComputeBackend) => hub.joined && backend.source === "hub";
+// The hub's rows are the hub's to add and drop (a Sync, or the connect itself), so they carry no Remove.
+const fromHub = (backend: ComputeBackend) => backend.source === "hub";
 
 const {
   backends,
@@ -424,8 +424,8 @@ watch(
   isAdmin,
   async (allowed) => {
     if (!allowed) return;
-    await hub.load();
-    await load(hub.joined);
+    await Promise.all([load(), hub.load()]);
+    if (hub.joined) await load(true);
     if (!backends.value.length && !loadError.value) addOpen.value = true;
   },
   { immediate: true },
