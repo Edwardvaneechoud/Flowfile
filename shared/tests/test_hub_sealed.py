@@ -6,6 +6,7 @@ both ways with nothing replaced.
 """
 
 import base64
+import io
 import json
 import pickle
 import time
@@ -19,7 +20,7 @@ from cryptography.hazmat.primitives.kdf.concatkdf import ConcatKDFHash
 
 from shared import hub_node_key, hub_sealed
 from shared.hub_sealed import SealedCredentialProvider, SealedCredentialRefused
-from shared.tests import hub_jwks
+from shared.tests import hub_jwks, plan_stamps
 from shared.tests.hub_jwks import NODE_NAME, HubSigner, SigningKey
 
 hub_signer = hub_jwks.hub_signer
@@ -182,6 +183,47 @@ def test_a_sealed_delta_scan_names_the_table_and_the_map_and_no_secret(hub_signe
     assert frame.collect_schema() == pl.Schema({"id": pl.Int64, "country": pl.String})
     plan = frame.filter(pl.col("id") > 1).serialize()
     assert b"vended-secret" not in plan and b"AKIAVENDED" not in plan
+
+
+def local_orders(tmp_path) -> str:
+    path = str(tmp_path / "orders")
+    pl.DataFrame({"id": [1, 2, 3], "country": ["nl", "be", "de"]}).write_delta(path)
+    return path
+
+
+def test_a_sealed_delta_scan_runs_where_the_plan_was_serialised_under_another_python_patch(hub_signer, node, tmp_path):
+    sealed = {NODE_NAME: hub_signer.sealed(node.public_jwks()["enc"])}
+    frame = hub_sealed.scan_delta_sealed(local_orders(tmp_path), sealed, {"id": pl.Int64, "country": pl.String})
+    plan = frame.filter(pl.col("id") > 1).select("country").head(5).serialize()
+
+    assert plan_stamps.python_objects(plan) == [plan_stamps.PICKLE]
+    foreign = plan_stamps.restamped(plan, plan_stamps.other_micro())
+    assert plan_stamps.python_objects(foreign) == []
+    assert pl.LazyFrame.deserialize(io.BytesIO(foreign)).collect()["country"].to_list() == ["be", "de"]
+
+
+def _closure_source(with_columns, predicate, n_rows, batch_size):
+    yield pl.DataFrame({"id": [1]})
+
+
+def test_an_io_source_wrapped_by_register_io_source_is_refused_under_another_python_patch():
+    """What a hub-table read's plan held before: Polars cloudpickles the wrapper and refuses another Python's."""
+    from polars.io.plugins import register_io_source
+
+    plan = register_io_source(_closure_source, schema={"id": pl.Int64}).serialize()
+
+    assert plan_stamps.python_objects(plan) == [plan_stamps.CLOUDPICKLE]
+    foreign = plan_stamps.restamped(plan, plan_stamps.other_micro())
+    with pytest.raises(pl.exceptions.ComputeError, match="does not match the Python version used to serialize"):
+        pl.LazyFrame.deserialize(io.BytesIO(foreign)).collect()
+
+
+def test_a_sealed_scans_provider_pickles_by_reference(hub_signer, node):
+    sealed = {NODE_NAME: sealed_for(hub_signer, node)}
+
+    plan = pl.scan_parquet("s3://bucket/root/x.parquet", **hub_sealed.sealed_scan_kwargs(sealed)).serialize()
+
+    assert plan_stamps.python_objects(plan) == [plan_stamps.PICKLE]
 
 
 def test_a_storage_token_without_a_kind_still_opens_as_storage(hub_signer, node):

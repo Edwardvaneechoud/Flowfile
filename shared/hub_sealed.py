@@ -15,7 +15,8 @@ any token the hub signs: against the hub's JWKS, its audience, issuer and expiry
 its own node's entry. ``SealedCredentialProvider`` is a Polars ``credential_provider`` holding only the map, so a plan
 carries no secret; ``sealed_scan_kwargs`` gives a scan built here its plain options beside it,
 ``sealed_storage_options`` the whole options for work that runs here, and ``scan_delta_sealed`` reads a Delta table as
-a Python IO source, for a plan built where the options are not known. A secret travels as ``sealed_secret``'s string in
+a Python scan, for a plan built where the options are not known; each pickles by reference, so a plan runs under
+another Python patch version than the one that built it. A secret travels as ``sealed_secret``'s string in
 place of a ``$ffsec$`` ciphertext, and ``open_secret`` gives its value where the step runs. Nothing runs at import.
 """
 
@@ -218,16 +219,35 @@ def sealed_scan_kwargs(sealed: Mapping[str, str]) -> dict[str, Any]:
 
 
 class SealedDeltaSource:
-    """A Polars IO source reading the Delta table at ``path`` with a vend's ``sealed`` map, opened where it runs."""
+    """A Polars Python scan reading the Delta table at ``path`` with a vend's ``sealed`` map, opened where it runs.
+
+    It is the scan function itself rather than a callable wrapped by ``register_io_source``: Polars serialises that
+    wrapper, a closure, with cloudpickle and refuses it under any other Python patch version, while an instance of a
+    module's class pickles by reference, which Polars reads under any Python that imports this module. A desktop on one
+    Python therefore runs a hub-table read on a server on another. Polars hands it the projected columns, the predicate
+    as serialised bytes, the row limit and a batch-size hint, and takes the frames and whether the predicate was
+    applied; one that does not deserialise is left to Polars.
+    """
 
     def __init__(self, path: str, sealed: Mapping[str, str]):
         self.path = path
         self.sealed = dict(sealed)
 
-    def __call__(self, with_columns, predicate, n_rows, batch_size) -> Iterator[pl.DataFrame]:
+    def __call__(
+        self, with_columns: list[str] | None, predicate: bytes | None, n_rows: int | None, batch_size: int | None
+    ) -> tuple[Iterator[pl.DataFrame], bool]:
         import polars as pl
 
         del batch_size
+        try:
+            expression = pl.Expr.deserialize(predicate) if predicate else None
+        except Exception:
+            return self._frames(with_columns, None, n_rows), False
+        return self._frames(with_columns, expression, n_rows), True
+
+    def _frames(self, with_columns, predicate, n_rows) -> Iterator[pl.DataFrame]:
+        import polars as pl
+
         frame = pl.scan_delta(self.path, storage_options=sealed_storage_options(self.sealed))
         if predicate is not None:
             frame = frame.filter(predicate)
@@ -245,9 +265,11 @@ def scan_delta_sealed(path: str, sealed: Mapping[str, str], schema: Mapping[str,
     """A lazy scan of the Delta table at ``path`` with columns ``schema``, opened with ``sealed`` where it runs.
 
     For a plan built in a process that does not hold the options (core, sending a read to another node): a Polars
-    scan takes only keys from a provider, never the endpoint or region, so the read is a Python IO source instead, and
-    its plan names the table and the map, nothing secret. Projection, predicate and row limit are pushed into it.
+    scan takes only keys from a provider, never the endpoint or region, so the read is a Python scan instead, and its
+    plan names the table and the map, nothing secret. Projection, predicate and row limit are pushed into it. It is
+    registered as ``register_io_source`` registers one, with ``SealedDeltaSource`` as the scan function, so the plan
+    carries no cloudpickled function (see the class).
     """
-    from polars.io.plugins import register_io_source
+    import polars as pl
 
-    return register_io_source(SealedDeltaSource(path, sealed), schema=dict(schema))
+    return pl.LazyFrame._scan_python_function(dict(schema), SealedDeltaSource(path, sealed))
