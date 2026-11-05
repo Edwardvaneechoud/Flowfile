@@ -171,10 +171,9 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
     joins a hub binds its socket first (core's ``listen``), so one whose port is in use exits with code 1 saying so
     before it joins.
 
-    A host other machines reach needs a server mode (``FLOWFILE_MODE`` ``hub`` or ``docker``), where everyone
-    signs in with a password: in the default mode the editor and its API sign in whoever reaches them as this
-    machine's administrator. Outside a server mode, any host but a loopback one exits with code 2 before anything is
-    served or joined.
+    A host other machines reach needs ``FLOWFILE_MODE=docker``, where everyone signs in with a password; in the
+    default mode, where the editor signs in whoever reaches it as this machine's administrator, any host but a
+    loopback one exits with code 2 before anything is served or joined.
     """
     if "FLOWFILE_MODE" not in os.environ:
         os.environ["FLOWFILE_MODE"] = "electron"
@@ -184,11 +183,9 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
 
     if not settings.is_server_mode() and not hub_node.is_loopback_host(host):
         print(
-            f"Not serving on {host}, which other machines reach: outside a server mode the editor serves this machine "
-            "only (--host 127.0.0.1), since by default whoever reaches it works as this machine's user without "
-            "signing in. To serve other machines, start it in a server mode, where everyone signs in: "
-            "FLOWFILE_MODE=hub (or docker) with JWT_SECRET_KEY, FLOWFILE_INTERNAL_TOKEN, FLOWFILE_MASTER_KEY, "
-            "FLOWFILE_ADMIN_USER and FLOWFILE_ADMIN_PASSWORD set",
+            f"Not serving on {host}, which other machines reach: outside FLOWFILE_MODE=docker the editor signs in "
+            "whoever reaches it as this machine's user; see "
+            "https://edwardvaneechoud.github.io/Flowfile/users/deployment/cli.html",
             file=sys.stderr,
         )
         raise SystemExit(2)

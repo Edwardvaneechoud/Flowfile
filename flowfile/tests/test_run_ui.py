@@ -142,7 +142,7 @@ def test_run_ui_on_a_host_other_machines_reach_is_refused_in_the_default_mode(se
     assert not hasattr(served["app"].state, "worker_path")
     err = capsys.readouterr().err
     assert "Not serving on 0.0.0.0" in err
-    assert "FLOWFILE_MODE=hub" in err
+    assert "FLOWFILE_MODE=docker" in err
 
 
 @pytest.mark.parametrize("mode", ["electron", "package"])

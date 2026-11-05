@@ -438,8 +438,8 @@ def main():
     parser.add_argument(
         "--host",
         default="127.0.0.1",
-        help="Host to bind the server to; for run ui, a host other machines reach needs a server mode "
-        "(FLOWFILE_MODE=hub or docker), where everyone signs in",
+        help="Host to bind the server to; for run ui, a host other machines reach needs FLOWFILE_MODE=docker, "
+        "where everyone signs in",
     )
     parser.add_argument(
         "--port",
@@ -571,7 +571,7 @@ def main():
         print("")
         print("  # Options")
         print("  flowfile run ui --port 8080  # Custom port")
-        print("  FLOWFILE_MODE=hub flowfile run ui --host 0.0.0.0  # Serve other machines; everyone signs in")
+        print("  FLOWFILE_MODE=docker flowfile run ui --host 0.0.0.0  # Serve other machines; everyone signs in")
         print("  flowfile run ui --no-browser  # Don't open browser")
         print("")
         print("  # Python API usage examples")
