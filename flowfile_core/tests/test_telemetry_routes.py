@@ -23,7 +23,7 @@ from flowfile_core.auth.models import User as PydanticUser
 from shared import telemetry
 from tools.telemetry_collector.funnel import compute_funnel
 
-STATUS_KEYS = {"available", "consent", "env_kill_switch", "endpoint_configured", "can_manage", "hub_decides"}
+STATUS_KEYS = {"available", "consent", "env_kill_switch", "endpoint_configured", "can_manage"}
 
 
 @pytest.fixture
@@ -82,7 +82,6 @@ def test_status_shape_and_no_install_id(admin_client: TestClient) -> None:
     assert set(body) == STATUS_KEYS
     assert "install_id" not in body
     assert body["consent"] is None
-    assert body["hub_decides"] is False
 
 
 def test_consent_grant_then_status_reflects_it(admin_client: TestClient, tmp_path) -> None:

@@ -1,10 +1,10 @@
-"""On a server that joined its hub with keys of its own, no one is asked about telemetry: the hub's admin decides.
+"""Telemetry on a server that joined its hub with keys of its own follows ``FLOWFILE_TELEMETRY`` and the stored consent
+alone, as on any other server: a joined server has no rule of its own.
 
-The server keeps telemetry off unless its environment turns it on (``FLOWFILE_TELEMETRY`` set to a true value),
-whatever a visitor chose before it joined, and its consent route answers every person, an admin of the server
-included, 403 with the sentence that the hub's admin decides. The server joins ``FakeJoinHub`` over real HTTP with
-keys of its own (``tests/test_hub_sign_in``); the telemetry client sends to a captured collector
-(``tests/test_telemetry_events.sent``). A desktop is unchanged (``tests/test_telemetry_routes``).
+The server joins ``FakeJoinHub`` over real HTTP with keys of its own (``tests/test_hub_sign_in``); the telemetry client
+sends to a captured collector (``tests/test_telemetry_events.sent``). Its status answers as a docker server's does, an
+admin manages consent there, a kill switch in the environment disables everything, and a true ``FLOWFILE_TELEMETRY``
+grants nothing by itself.
 """
 
 from collections.abc import Iterator
@@ -25,7 +25,7 @@ sent = test_telemetry_events.sent
 names = test_telemetry_events.names
 
 api = TestClient(main.app)
-HUB_DECIDES = "This server is joined to a hub; the hub's admin decides whether it sends anonymous usage data."
+STATUS_KEYS = {"available", "consent", "env_kill_switch", "endpoint_configured", "can_manage"}
 
 
 @pytest.fixture
@@ -44,60 +44,63 @@ def undecided(tmp_path, monkeypatch) -> Iterator[list[dict]]:
     client._reset_for_tests()
 
 
-def signed_in_admin(hub, name: str) -> str:
-    """The access token of a person the hub lets administer this server, signed in through the hub."""
-    token = hub.sign_in_token(NODE, uid=41, username=name, node_admin=True)
-    signed_in = api.post("/auth/hub/signin", json={"token": token})
-    assert signed_in.status_code == 200, signed_in.text
-    return signed_in.json()["access_token"]
+def signed_in(hub, name: str, *, admin: bool) -> str:
+    """The access token of a person signed in through the hub, an administrator of this server when ``admin``."""
+    token = hub.sign_in_token(NODE, uid=41 if admin else 42, username=name, node_admin=admin)
+    response = api.post("/auth/hub/signin", json={"token": token})
+    assert response.status_code == 200, response.text
+    return response.json()["access_token"]
 
 
-def test_nobody_on_a_joined_server_is_asked_and_telemetry_is_off(hub, username, undecided):
-    access_token = signed_in_admin(hub, username)
+def test_a_joined_servers_status_is_a_docker_servers_with_nothing_of_the_hubs(hub, username, undecided):
+    access_token = signed_in(hub, username, admin=True)
 
     status = api.get("/telemetry/status", headers=bearer(access_token))
 
     assert status.status_code == 200, status.text
     body = status.json()
-    assert (body["consent"], body["can_manage"], body["hub_decides"]) == (False, False, True)
-    assert glue.hub_decision() is False
+    assert set(body) == STATUS_KEYS
+    assert (body["consent"], body["can_manage"], body["env_kill_switch"]) == (None, True, False)
 
 
-@pytest.mark.parametrize("enabled", [True, False])
-def test_the_consent_route_answers_403_with_the_sentence_that_the_hubs_admin_decides(hub, username, undecided, enabled):
-    access_token = signed_in_admin(hub, username)
+def test_an_admin_of_a_joined_server_manages_consent_and_a_member_does_not(hub, username, undecided):
+    admin = signed_in(hub, username, admin=True)
+    member = signed_in(hub, f"{username}-member", admin=False)
 
-    refused = api.post("/telemetry/consent", json={"enabled": enabled}, headers=bearer(access_token))
+    refused = api.post("/telemetry/consent", json={"enabled": True}, headers=bearer(member))
+    granted = api.post("/telemetry/consent", json={"enabled": True}, headers=bearer(admin))
 
     assert refused.status_code == 403, refused.text
-    assert refused.json()["detail"] == {"error_code": "TELEMETRY_HUB_DECIDES", "message": HUB_DECIDES}
-    assert client.consent() is None
+    assert refused.json()["detail"]["error_code"] == "TELEMETRY_ADMIN_ONLY"
+    assert granted.status_code == 200, granted.text
+    assert (granted.json()["consent"], client.consent()) == (True, True)
+    assert api.get("/telemetry/status", headers=bearer(member)).json()["can_manage"] is False
 
 
-def test_an_earlier_visitors_yes_sends_nothing_once_the_server_joined(hub, sent):
+def test_a_stored_yes_still_sends_once_the_server_joined(hub, sent):
     assert client.consent() is True
 
     glue.emit("app_started")
     glue.emit_once("flow_created")
 
+    assert names(sent) == ["app_started", "flow_created"]
+
+
+def test_the_kill_switch_disables_telemetry_on_a_joined_server_as_anywhere(hub, username, sent, monkeypatch):
+    monkeypatch.setenv(client.ENV_KILL_SWITCH, "0")
+    access_token = signed_in(hub, username, admin=True)
+
+    glue.emit("app_started")
+
     assert names(sent) == []
-
-
-def test_the_servers_environment_turns_telemetry_on_without_asking_anyone(hub, username, undecided, monkeypatch):
-    monkeypatch.setenv(client.ENV_KILL_SWITCH, "1")
-    access_token = signed_in_admin(hub, username)
-
-    glue.emit("app_started")
-
-    assert names(undecided) == ["app_started"]
-    assert client.consent() is True and client.install_id()
     body = api.get("/telemetry/status", headers=bearer(access_token)).json()
-    assert (body["consent"], body["can_manage"], body["hub_decides"]) == (True, False, True)
+    assert (body["env_kill_switch"], body["available"]) == (True, False)
 
 
-def test_a_desktop_still_decides_for_itself(node_file, sent):
-    assert glue.hub_decision() is None
+def test_a_true_flowfile_telemetry_grants_nothing_without_consent(hub, undecided, monkeypatch):
+    monkeypatch.setenv(client.ENV_KILL_SWITCH, "1")
 
     glue.emit("app_started")
 
-    assert names(sent) == ["app_started"]
+    assert names(undecided) == []
+    assert client.consent() is None

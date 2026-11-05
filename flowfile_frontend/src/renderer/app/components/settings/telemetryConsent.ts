@@ -21,11 +21,6 @@ export const EXAMPLE_EVENT = {
   },
 } as const;
 
-/** The Privacy tab's line on a server joined to a hub, where nobody is asked. */
-export const HUB_DECIDES_LINE =
-  "This server is joined to a hub, so nobody here is asked: the hub's admin decides whether it " +
-  "sends anonymous usage data. It stays off unless the server is started with FLOWFILE_TELEMETRY=1.";
-
 export const CONSENT_COPY = {
   headline: "Help improve Flowfile?",
   body:

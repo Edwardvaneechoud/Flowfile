@@ -36,16 +36,6 @@
       </span>
     </p>
 
-    <div
-      v-else-if="status?.hubDecides"
-      class="telemetry-locked"
-      data-testid="telemetry-hub-decides"
-    >
-      <i class="fa-solid fa-building"></i>
-      <h4>Set by your hub</h4>
-      <p>{{ HUB_DECIDES_LINE }}</p>
-    </div>
-
     <div v-else-if="status && !status.canManage" class="telemetry-locked">
       <i class="fa-solid fa-lock"></i>
       <h4>Administrator setting</h4>
@@ -80,7 +70,7 @@ import { computed, onMounted, ref } from "vue";
 import { ElMessage, ElSwitch } from "element-plus";
 import { desktop } from "../../../lib/desktop";
 import { useTelemetryStore } from "../../stores/telemetry-store";
-import { HUB_DECIDES_LINE, TELEMETRY_DOCS_URL } from "./telemetryConsent";
+import { TELEMETRY_DOCS_URL } from "./telemetryConsent";
 
 const telemetryStore = useTelemetryStore();
 
