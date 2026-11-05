@@ -27,9 +27,6 @@ from shared import hub_node, hub_tokens
 
 router = APIRouter()
 
-HUB_ACCESS_TOKEN_EXPIRES = timedelta(minutes=15)
-"""How long this core's own access token lives for a person who signed in through the hub: as long as the hub's."""
-
 
 @router.post("/token", response_model=Token)
 def login_for_access_token(
@@ -113,12 +110,12 @@ def refresh_access_token(
     renewed = {"sub": user.username}
     mapping = db.query(db_models.IssuerAccount).filter(db_models.IssuerAccount.user_id == user.id).first()
     if mapping is not None:
-        person = _refresh_through_hub(user.id, mapping.issuer, sid).user
-        user.is_admin = person["node_admin"]
-        user.full_name = person["full_name"]
+        refreshed = _refresh_through_hub(user.id, mapping.issuer, sid)
+        user.is_admin = refreshed.user["node_admin"]
+        user.full_name = refreshed.user["full_name"]
         db.commit()
         invalidate_user_cache(user.username)
-        expires = HUB_ACCESS_TOKEN_EXPIRES
+        expires = timedelta(seconds=refreshed.expires_in)
         renewed["sid"] = sid
     else:
         _refuse_passwords_once_joined()
@@ -191,8 +188,9 @@ def sign_in_through_hub(token: str = Body(..., embed=True), db: Session = Depend
     delegation signed with this node's own key. The person's local account is the one mapped to the hub's issuer and
     their id there, made at their first sign-in; whether it administers this server follows ``node_admin`` at every
     sign-in. The delegation is kept as the person's hub session, never in the database, and the answer is this core's
-    own token pair, as ``/auth/token`` answers, its access token living 15 minutes as the hub's does and its refresh
-    token naming this sign-in (``sid``). A token or an exchange the hub refuses is a 401 with one sentence.
+    own token pair, as ``/auth/token`` answers, its access token living as long as the hub's (the delegation's
+    ``expires_in``) and its refresh token naming this sign-in (``sid``). A token or an exchange the hub refuses is a 401
+    with one sentence.
     """
     if issuer_accounts.joined_with_keys() is None:
         raise _refused("This server does not sign people in through a hub.")
@@ -223,7 +221,7 @@ def sign_in_through_hub(token: str = Body(..., embed=True), db: Session = Depend
     db.commit()
     invalidate_user_cache(user.username)
     sid = hub_session.save_delegation(user.id, settings.hub_url, granted)
-    access_token = create_access_token(data={"sub": user.username}, expires_delta=HUB_ACCESS_TOKEN_EXPIRES)
+    access_token = create_access_token(data={"sub": user.username}, expires_delta=timedelta(seconds=granted.expires_in))
     refresh_token = create_refresh_token(data={"sub": user.username, "sid": sid})
     return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 

@@ -24,6 +24,7 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.hub_client import client as hub_client
 from flowfile_core.hub_client import session
 from shared import hub_node, hub_node_key, hub_tokens
+from shared.tests import hub_join
 from shared.tests.hub_join import REVOKE_PATH, TOKEN_EXCHANGE, TOKEN_PATH, FakeJoinHub
 from shared.tests.hub_jwks import HubSigner
 
@@ -409,23 +410,28 @@ def revocations(hub: FakeJoinHub) -> list[dict]:
     return [form for path, form in hub.calls if path == REVOKE_PATH]
 
 
-def test_cores_access_token_for_a_person_from_the_hub_lives_fifteen_minutes(hub, username):
+def test_cores_access_token_for_a_person_from_the_hub_lives_as_long_as_the_hub_says(hub, username, monkeypatch):
+    monkeypatch.setattr(hub_join, "ACCESS_SECONDS", 7 * 60)
+
     answer = sign_in(hub.sign_in_token(NODE, uid=7, username=username)).json()
 
-    assert 15 * 60 - 5 <= lives(answer["access_token"]) <= 15 * 60
+    assert 7 * 60 - 5 <= lives(answer["access_token"]) <= 7 * 60
 
 
-def test_a_refresh_of_cores_session_refreshes_the_sign_in_at_the_hub_first(hub, username):
+def test_a_refresh_of_cores_session_refreshes_the_sign_in_at_the_hub_first(hub, username, monkeypatch):
     answer = sign_in(hub.sign_in_token(NODE, uid=7, username=username)).json()
     user_id = me(answer["access_token"])["id"]
     first = session.load(user_id)["refresh_token"]
+    monkeypatch.setattr(hub_join, "ACCESS_SECONDS", 7 * 60)
 
     response = refresh(answer["refresh_token"])
 
     assert response.status_code == 200, response.text
     renewed = response.json()
     assert me(renewed["access_token"])["id"] == user_id
-    assert 15 * 60 - 5 <= lives(renewed["access_token"]) <= 15 * 60
+    assert (
+        7 * 60 - 5 <= lives(renewed["access_token"]) <= 7 * 60
+    ), "the refreshed token lives as long as the hub's answer"
     [taken] = refreshes(hub)
     assert (taken["claims"]["sub"], taken["claims"]["aud"]) == (f"node:{NODE}", hub.issuer + TOKEN_PATH)
     rotated = session.load(user_id)["refresh_token"]
