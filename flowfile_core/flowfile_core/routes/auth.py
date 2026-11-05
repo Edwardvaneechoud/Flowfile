@@ -1,6 +1,7 @@
 # app_routes/auth.py
 
 import os
+import time
 from datetime import timedelta
 
 from fastapi import APIRouter, Body, Depends, Form, HTTPException, Request, status
@@ -107,6 +108,7 @@ def refresh_access_token(
         )
 
     expires = None
+    expires_at = None
     renewed = {"sub": user.username}
     mapping = db.query(db_models.IssuerAccount).filter(db_models.IssuerAccount.user_id == user.id).first()
     if mapping is not None:
@@ -116,12 +118,23 @@ def refresh_access_token(
         db.commit()
         invalidate_user_cache(user.username)
         expires = timedelta(seconds=refreshed.expires_in)
+        expires_at = _expires_at(refreshed.expires_in)
         renewed["sid"] = sid
     else:
         _refuse_passwords_once_joined()
     new_access_token = create_access_token(data={"sub": user.username}, expires_delta=expires)
     new_refresh_token = create_refresh_token(data=renewed)
-    return {"access_token": new_access_token, "refresh_token": new_refresh_token, "token_type": "bearer"}
+    return {
+        "access_token": new_access_token,
+        "refresh_token": new_refresh_token,
+        "token_type": "bearer",
+        "expires_at": expires_at,
+    }
+
+
+def _expires_at(seconds: int) -> int:
+    """An access token's expiry in milliseconds since the epoch, taken before it is signed so it is never late."""
+    return int(time.time() + seconds) * 1000
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -189,8 +202,8 @@ def sign_in_through_hub(token: str = Body(..., embed=True), db: Session = Depend
     their id there, made at their first sign-in; whether it administers this server follows ``node_admin`` at every
     sign-in. The delegation is kept as the person's hub session, never in the database, and the answer is this core's
     own token pair, as ``/auth/token`` answers, its access token living as long as the hub's (the delegation's
-    ``expires_in``) and its refresh token naming this sign-in (``sid``). A token or an exchange the hub refuses is a 401
-    with one sentence.
+    ``expires_in``, answered as ``expires_at``) and its refresh token naming this sign-in (``sid``). A token or an
+    exchange the hub refuses is a 401 with one sentence.
     """
     if issuer_accounts.joined_with_keys() is None:
         raise _refused("This server does not sign people in through a hub.")
@@ -221,9 +234,15 @@ def sign_in_through_hub(token: str = Body(..., embed=True), db: Session = Depend
     db.commit()
     invalidate_user_cache(user.username)
     sid = hub_session.save_delegation(user.id, settings.hub_url, granted)
+    expires_at = _expires_at(granted.expires_in)
     access_token = create_access_token(data={"sub": user.username}, expires_delta=timedelta(seconds=granted.expires_in))
     refresh_token = create_refresh_token(data={"sub": user.username, "sid": sid})
-    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "expires_at": expires_at,
+    }
 
 
 @router.get("/users/me", response_model=User)

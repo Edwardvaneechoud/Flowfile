@@ -7,6 +7,8 @@ class Token(BaseModel):
     access_token: str
     refresh_token: str | None = None
     token_type: str
+    expires_at: int | None = None
+    """When the access token expires, in milliseconds since the epoch; answered for a sign-in through the hub."""
 
 
 class TokenData(BaseModel):

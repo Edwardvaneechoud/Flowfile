@@ -157,7 +157,8 @@ def test_a_sign_in_token_for_this_node_signs_the_person_in_with_an_account_mappe
 
     assert response.status_code == 200, response.text
     answer = response.json()
-    assert set(answer) == {"access_token", "refresh_token", "token_type"} and answer["token_type"] == "bearer"
+    assert set(answer) == {"access_token", "refresh_token", "token_type", "expires_at"}
+    assert answer["token_type"] == "bearer"
     person = me(answer["access_token"])
     assert (person["username"], person["full_name"]) == (username, "Ana Lima")
     assert (person["is_admin"], person["must_change_password"], person["disabled"]) == (False, False, False)
@@ -402,6 +403,12 @@ def lives(access_token: str) -> float:
     return jwt.decode(access_token, options={"verify_signature": False})["exp"] - time.time()
 
 
+def answers_its_expiry(answer: dict) -> bool:
+    """The answer's ``expires_at`` (milliseconds) is the access token's ``exp``, at most a second early."""
+    exp = jwt.decode(answer["access_token"], options={"verify_signature": False})["exp"]
+    return exp * 1000 - 1000 <= answer["expires_at"] <= exp * 1000
+
+
 def refreshes(hub: FakeJoinHub) -> list[dict]:
     return [request for request in hub.token_requests if request["grant_type"] == "refresh_token"]
 
@@ -416,6 +423,7 @@ def test_cores_access_token_for_a_person_from_the_hub_lives_as_long_as_the_hub_s
     answer = sign_in(hub.sign_in_token(NODE, uid=7, username=username)).json()
 
     assert 7 * 60 - 5 <= lives(answer["access_token"]) <= 7 * 60
+    assert answers_its_expiry(answer)
 
 
 def test_a_refresh_of_cores_session_refreshes_the_sign_in_at_the_hub_first(hub, username, monkeypatch):
@@ -432,6 +440,7 @@ def test_a_refresh_of_cores_session_refreshes_the_sign_in_at_the_hub_first(hub, 
     assert (
         7 * 60 - 5 <= lives(renewed["access_token"]) <= 7 * 60
     ), "the refreshed token lives as long as the hub's answer"
+    assert answers_its_expiry(renewed)
     [taken] = refreshes(hub)
     assert (taken["claims"]["sub"], taken["claims"]["aud"]) == (f"node:{NODE}", hub.issuer + TOKEN_PATH)
     rotated = session.load(user_id)["refresh_token"]
@@ -527,6 +536,7 @@ def test_a_refresh_of_an_account_not_from_the_hub_is_unchanged_on_a_server_that_
     for response in (without_keys, not_joined):
         assert response.status_code == 200, response.text
         assert lives(response.json()["access_token"]) > 60 * 60
+        assert response.json()["expires_at"] is None
     assert hub.token_requests == []
 
 
