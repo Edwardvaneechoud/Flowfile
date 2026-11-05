@@ -107,6 +107,26 @@ def test_both_fail_raises(calls, monkeypatch):
         read_sql_with_fallback("SELECT 1", "postgresql://u@h/boom", logger, hedge_delay=1)
 
 
+def test_both_fail_message_leads_with_connectorx_error(calls, monkeypatch):
+    monkeypatch.setattr(
+        db_reader, "_read_connectorx", lambda q, u: (_ for _ in ()).throw(RuntimeError("password failed"))
+    )
+    monkeypatch.setattr(db_reader, "_read_sqlalchemy", lambda q, u: (_ for _ in ()).throw(RuntimeError("No module")))
+    with pytest.raises(RuntimeError) as exc:
+        read_sql_with_fallback("SELECT 1", "postgresql://u@h/boom", logger, hedge_delay=1)
+    assert str(exc.value).startswith("password failed")
+    assert "No module" in str(exc.value)
+
+
+def test_psycopg_uri_falls_back_to_psycopg2_when_psycopg_missing(monkeypatch):
+    from shared import sql_utils
+
+    monkeypatch.setattr(sql_utils, "_has_module", lambda name: name == "psycopg2")
+    assert sql_utils.get_sqlalchemy_uri("postgresql+psycopg://u@h/d") == "postgresql+psycopg2://u@h/d"
+    monkeypatch.setattr(sql_utils, "_has_module", lambda name: True)
+    assert sql_utils.get_sqlalchemy_uri("postgresql+psycopg://u@h/d") == "postgresql+psycopg://u@h/d"
+
+
 def test_sqlalchemy_error_waits_for_connectorx(calls, monkeypatch):
     def slow_cx(query, uri):
         calls["cx"] += 1
