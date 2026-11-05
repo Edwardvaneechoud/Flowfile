@@ -438,6 +438,24 @@ def registered_flow_path(flow_path: str) -> str:
     return str(require_flow_in_storage(Path(flow_path)))
 
 
+def flow_path_spellings(flow_path: str) -> list[str]:
+    """The spellings a registration at ``flow_path`` may be stored under, for a lookup by path.
+
+    A server stores the resolved path, but a row from before that rule holds the path as it was given, so a
+    lookup on a server tries both; a desktop compares as given, as it always did.
+    """
+    if not is_server_mode():
+        return [flow_path]
+    resolved = str(Path(flow_path).resolve())
+    return [flow_path] if resolved == flow_path else [flow_path, resolved]
+
+
+def flow_file_key(flow_path: str) -> str:
+    """One spelling per file, for telling whether two registrations name the same file: the resolved path on a
+    server, the path as given on a desktop."""
+    return str(Path(flow_path).resolve()) if is_server_mode() else flow_path
+
+
 def removable_flow_file(flow_path: Path) -> Path | None:
     """The path to remove for a registration at ``flow_path``, or None when a server may not remove it.
 

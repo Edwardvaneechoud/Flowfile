@@ -68,7 +68,7 @@ from flowfile_core.secret_manager.secret_manager import (
     get_encrypted_secret,
     store_secret,
 )
-from shared.storage_config import registered_flow_path, storage
+from shared.storage_config import flow_path_spellings, registered_flow_path, storage
 
 logger = logging.getLogger(__name__)
 
@@ -787,7 +787,12 @@ def _import_flow(data: dict, owner_id: int) -> str | None:
         # Reconcile identity + display name + namespace placement to the file (keeps flow_uuid stable for
         # determinism, the catalog name round-tripping, and the flow landing in its real schema on import).
         with get_db_context() as db:
-            reg = db.query(FlowRegistration).filter(FlowRegistration.flow_path == str(runtime_path)).first()
+            reg = (
+                db.query(FlowRegistration)
+                .filter(FlowRegistration.flow_path.in_(flow_path_spellings(str(runtime_path))))
+                .order_by(FlowRegistration.id)
+                .first()
+            )
             if reg:
                 changed = (
                     reg.flow_uuid != flow_uuid

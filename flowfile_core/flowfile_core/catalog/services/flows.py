@@ -68,7 +68,7 @@ def _warn_missing_file_once(flow: FlowRegistration) -> None:
     )
 
 
-def _file_exists(flow: FlowRegistration) -> bool:
+def flow_file_exists(flow: FlowRegistration) -> bool:
     """Whether the registration's file is there to use.
 
     On a multi-user server a path outside the flow folders answers False whatever is there, so the catalog
@@ -101,7 +101,7 @@ class FlowRegistrationService:
         artifact_count = self.repo.count_active_artifacts_for_flow(flow.id)
         produced_tables = self.repo.list_tables_for_flow(flow.id)
         read_tables = self.repo.list_read_tables_for_flow(flow.id)
-        file_exists = _file_exists(flow)
+        file_exists = flow_file_exists(flow)
         return FlowRegistrationOut(
             id=flow.id,
             name=flow.name,
@@ -147,7 +147,7 @@ class FlowRegistrationService:
             run_count, last_run = run_stats.get(flow.id, (0, None))
             produced = tables_by_flow.get(flow.id, [])
             read = read_tables_by_flow.get(flow.id, [])
-            file_exists = _file_exists(flow)
+            file_exists = flow_file_exists(flow)
             result.append(
                 FlowRegistrationOut(
                     id=flow.id,

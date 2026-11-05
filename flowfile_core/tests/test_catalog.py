@@ -451,6 +451,41 @@ class TestFlowRegistration:
         assert resp.status_code == 201, resp.text
         assert resp.json()["flow_path"] == str(storage.flows_directory.resolve() / spelled.name)
 
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    def test_server_finds_a_registration_under_every_spelling_of_its_path(self, tmp_path, monkeypatch, mode):
+        """A flows folder reached through a link: registered by the link's spelling, stored resolved, found by
+        both, and two registrations spelling the one file two ways count as one for the delete."""
+        from flowfile_core.flowfile.catalog_helpers import find_registration_by_path
+
+        ns_id = self._make_namespace()
+        storage.flows_directory.mkdir(parents=True, exist_ok=True)
+        link = tmp_path / "store_link"
+        link.symlink_to(storage.flows_directory, target_is_directory=True)
+        name = f"linked_{os.getpid()}.yaml"
+        real_file = storage.flows_directory / name
+        real_file.write_text("flow: {}")
+        real = str(storage.flows_directory.resolve() / name)
+        as_server(monkeypatch, mode)
+        try:
+            by_link = client.post(
+                "/catalog/flows", json={"name": "by_link", "flow_path": str(link / name), "namespace_id": ns_id}
+            ).json()
+            assert by_link["flow_path"] == real
+            for spelling in (str(link / name), real):
+                assert find_registration_by_path(spelling).id == by_link["id"]
+                with get_db_context() as db:
+                    service = CatalogService(SQLAlchemyCatalogRepository(db))
+                    assert service.resolve_registration_id(spelling) == by_link["id"]
+            by_real = client.post(
+                "/catalog/flows", json={"name": "by_real", "flow_path": real, "namespace_id": ns_id}
+            ).json()
+            assert client.delete(f"/catalog/flows/{by_link['id']}", params={"delete_file": True}).status_code == 204
+            assert real_file.exists()
+            assert client.delete(f"/catalog/flows/{by_real['id']}", params={"delete_file": True}).status_code == 204
+            assert not real_file.exists()
+        finally:
+            real_file.unlink(missing_ok=True)
+
     def test_desktop_stores_a_registered_path_as_given(self):
         ns_id = self._make_namespace()
         resp = client.post(
@@ -2220,7 +2255,19 @@ class TestPushTableTrigger:
 
 
 class TestSqlSaveAsFlowOnAServer:
-    """``POST /catalog/sql/save-as-flow`` writes into the flows folder in every mode, so a server can run it."""
+    """``POST /catalog/sql/save-as-flow`` writes into the server's flows folder, so a server can run it; a desktop
+    keeps writing to the folder it always used."""
+
+    def test_desktop_saves_a_query_in_its_own_flows_folder(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(storage, "_user_data_dir", tmp_path)
+        cat = client.post("/catalog/namespaces", json={"name": "SqlCat"}).json()
+        ns_id = client.post("/catalog/namespaces", json={"name": "SqlSchema", "parent_id": cat["id"]}).json()["id"]
+        saved = client.post(
+            "/catalog/sql/save-as-flow", json={"query": "SELECT 1 AS one", "name": "one", "namespace_id": ns_id}
+        )
+        assert saved.status_code == 200, saved.text
+        flow_path = Path(client.get(f"/catalog/flows/{saved.json()['flow_id']}").json()["flow_path"])
+        assert flow_path.parent == tmp_path / "flows" and flow_path.exists()
 
     @pytest.mark.parametrize("mode", ["docker", "hub"])
     def test_saved_query_lands_in_the_flows_folder_and_runs(self, monkeypatch, mode):
@@ -2249,6 +2296,31 @@ class TestSqlSaveAsFlowOnAServer:
             assert spawned == [str(flow_path)]
         finally:
             flow_path.unlink(missing_ok=True)
+
+
+class TestOverwriteFlowInCatalogOnAServer:
+    """``POST /overwrite_flow_in_catalog`` writes over a registration's file only inside the flow folders."""
+
+    @pytest.mark.parametrize("mode", ["docker", "hub"])
+    def test_server_leaves_a_registered_file_outside_the_flow_folders(self, tmp_path, monkeypatch, mode):
+        cat = client.post("/catalog/namespaces", json={"name": "OwCat"}).json()
+        ns_id = client.post("/catalog/namespaces", json={"name": "OwSchema", "parent_id": cat["id"]}).json()["id"]
+        target = tmp_path / "target.yaml"
+        target.write_text("flow: {}")
+        created = client.post(
+            "/catalog/flows", json={"name": "target", "flow_path": str(target), "namespace_id": ns_id}
+        ).json()
+        flow_id = flow_file_handler.add_flow(name="source", flow_path=str(tmp_path / "source.yaml"), user_id=1)
+        try:
+            as_server(monkeypatch, mode)
+            resp = client.post(
+                "/overwrite_flow_in_catalog", params={"flow_id": flow_id, "target_registration_id": created["id"]}
+            )
+            assert resp.status_code == 422, resp.text
+            assert resp.json()["detail"] == "the flow's file is outside the server's flow folders"
+            assert target.read_text() == "flow: {}"
+        finally:
+            flow_file_handler.delete_flow(flow_id)
 
 
 class TestTriggerArmingAndRunVisibility:

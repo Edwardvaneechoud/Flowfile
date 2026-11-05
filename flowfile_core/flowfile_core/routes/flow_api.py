@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from flowfile_core.auth.api_key import generate_api_key, verify_api_key
 from flowfile_core.auth.jwt import get_current_active_user
+from flowfile_core.catalog.services.flows import flow_file_exists
 from flowfile_core.configs import logger
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
@@ -303,7 +304,7 @@ def list_publishable_flows(
         PublishableFlow(
             registration_id=r.id,
             name=r.name,
-            file_exists=bool(r.flow_path) and Path(r.flow_path).exists(),
+            file_exists=flow_file_exists(r),
         )
         for r in regs
     ]

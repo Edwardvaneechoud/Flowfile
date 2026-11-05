@@ -27,6 +27,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     trigger_resolve_virtual_table,
 )
 from flowfile_core.schemas.catalog_schema import SqlQueryResult
+from shared import storage_config
 from shared._version import get_version
 from shared.storage_config import storage
 
@@ -242,7 +243,9 @@ class SqlService:
             "nodes": nodes,
         }
 
-        flows_dir = storage.flows_directory
+        # A server keeps the saved flow where it may run it; a desktop keeps the folder it always used.
+        on_server = storage_config.is_server_mode()
+        flows_dir = storage.flows_directory if on_server else storage.user_data_directory / "flows"
         flows_dir.mkdir(parents=True, exist_ok=True)
         flow_path = flows_dir / f"{name.replace(' ', '_')}_{flow_id}.json"
         flow_path.write_text(json.dumps(flow_data, indent=2), encoding="utf-8")

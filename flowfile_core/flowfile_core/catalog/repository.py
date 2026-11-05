@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from sqlalchemy import case, func, or_, select
@@ -38,6 +37,7 @@ from flowfile_core.database.models import (
     ScheduleTriggerTable,
     TableFavorite,
 )
+from shared.storage_config import flow_file_key, flow_path_spellings
 
 # ---------------------------------------------------------------------------
 # Repository Protocol
@@ -497,14 +497,20 @@ class SQLAlchemyCatalogRepository:
         return q.order_by(FlowRegistration.id).all()
 
     def get_flow_by_path(self, flow_path: str) -> FlowRegistration | None:
-        return self._db.query(FlowRegistration).filter_by(flow_path=flow_path).first()
+        """The lowest-id registration at ``flow_path``, under any spelling a server may have stored it."""
+        return (
+            self._db.query(FlowRegistration)
+            .filter(FlowRegistration.flow_path.in_(flow_path_spellings(flow_path)))
+            .order_by(FlowRegistration.id)
+            .first()
+        )
 
     def count_flows_by_path(self, flow_path: str) -> int:
-        """Registrations whose file is ``flow_path``, compared on resolved paths: another spelling of the
-        same file (``flows/./a.yaml``, a link) is the same file."""
-        target = Path(flow_path).resolve()
+        """Registrations whose file is ``flow_path``. On a server two spellings of one file (``flows/./a.yaml``,
+        a link) are one file; a desktop compares as given, as it always did."""
+        target = flow_file_key(flow_path)
         rows = self._db.query(FlowRegistration.flow_path).filter(FlowRegistration.flow_path.isnot(None)).all()
-        return sum(1 for (stored,) in rows if Path(stored).resolve() == target)
+        return sum(1 for (stored,) in rows if flow_file_key(stored) == target)
 
     def list_flows(
         self,

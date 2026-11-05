@@ -142,7 +142,7 @@ from flowfile_core.utils import excel_file_manager
 from flowfile_core.utils.fileManager import create_dir
 from flowfile_core.utils.utils import camel_case_to_snake_case
 from shared.db_dialects import KNOWN_DIALECT_NAMES, DialectInfo, dialect_catalog
-from shared.storage_config import registered_flow_path, storage
+from shared.storage_config import registered_flow_path, require_flow_in_storage, storage
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
@@ -2675,6 +2675,10 @@ def overwrite_flow_in_catalog(
         )
 
     target_path = validate_path_under_cwd(target.flow_path)
+    try:
+        target_path = str(require_flow_in_storage(Path(target_path)))
+    except ValueError as err:
+        raise HTTPException(status_code=422, detail=str(err)) from None
     managed_root = str(Path(storage.flows_directory).resolve()) + os.sep
 
     current_path = flow.flow_settings.path or flow.flow_settings.save_location

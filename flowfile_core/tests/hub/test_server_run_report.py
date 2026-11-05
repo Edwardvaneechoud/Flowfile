@@ -11,6 +11,7 @@ them on the suite's MinIO and skips without it.
 """
 
 import uuid
+from pathlib import Path
 
 import httpx
 import polars as pl
@@ -27,6 +28,7 @@ from flowfile_core.routes import routes
 from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_core.schemas.output_model import NodeResult, RunInformation
 from shared import hub_node_key
+from shared.storage_config import storage
 from shared.tests.hub_jwks import HubSigner
 from tests import test_hub_sign_in
 from tests.flowfile.conftest import (
@@ -156,14 +158,17 @@ def hub_url(request, hub, monkeypatch) -> str:
 
 
 @pytest.fixture
-def open_flow(tmp_path):
-    """Opens a new flow in a user's session, saved under ``tmp_path`` and run on the worker embedded here."""
-    opened = []
+def open_flow():
+    """Opens a new flow in a user's session, saved in the server's flows folder (a server registers a flow nowhere
+    else) and run on the worker embedded here."""
+    opened: list[int] = []
+    files: list[Path] = []
 
     def open_one(user_id: int, name: str):
-        flow_id = routes.flow_file_handler.add_flow(
-            name=name, flow_path=str(tmp_path / f"{name}.yaml"), user_id=user_id
-        )
+        storage.flows_directory.mkdir(parents=True, exist_ok=True)
+        path = storage.flows_directory / f"{name}_{uuid.uuid4().hex[:8]}.yaml"
+        files.append(path)
+        flow_id = routes.flow_file_handler.add_flow(name=name, flow_path=str(path), user_id=user_id)
         opened.append(flow_id)
         flow = routes.flow_file_handler.get_flow(flow_id)
         flow.flow_settings.execution_location = "local"
@@ -172,6 +177,8 @@ def open_flow(tmp_path):
     yield open_one
     for flow_id in opened:
         routes.flow_file_handler.delete_flow(flow_id)
+    for path in files:
+        path.unlink(missing_ok=True)
 
 
 def sign_in(hub: OrganisationHub, name: str) -> tuple[int, str]:

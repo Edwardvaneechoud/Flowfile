@@ -759,3 +759,16 @@ def test_server_publishes_and_reads_a_flow_inside_the_flow_folders(db_session, m
         assert [p.name for p in flow_api.get_flow_parameters(reg.id, current_user=user, db=db_session)] == ["region"]
     finally:
         flow_path.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize("mode", ["docker", "hub"])
+def test_server_picker_does_not_say_whether_a_file_outside_the_flow_folders_exists(
+    db_session, tmp_path, monkeypatch, mode
+):
+    user = SimpleNamespace(id=1)
+    real = tmp_path / "alpha.yaml"
+    _build_and_save_flow(real, "records")
+    _reg(db_session, name="alpha", flow_path=str(real))
+    assert [f.file_exists for f in flow_api.list_publishable_flows(current_user=user, db=db_session)] == [True]
+    as_server(monkeypatch, mode)
+    assert [f.file_exists for f in flow_api.list_publishable_flows(current_user=user, db=db_session)] == [False]

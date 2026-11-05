@@ -523,15 +523,15 @@ def open_from_hub(request: HubOpenRequest, current_user=Depends(get_current_acti
         raise _hub_error(e) from e
 
     flow_path, registered = _local_copy_path(checked_out["flow_uuid"], checked_out["name"])
-    try:
-        flow_path = registered_flow_path(flow_path)
-    except ValueError as err:
-        raise HTTPException(status_code=422, detail=str(err)) from None
     namespace_id = None if registered else _local_flows_namespace_id()
     try:
         require_flow_save_permitted(flow_path, namespace_id, current_user)
     except NotAuthorizedError as err:
         raise HTTPException(status_code=403, detail=str(err)) from None
+    try:
+        flow_path = registered_flow_path(flow_path)
+    except ValueError as err:
+        raise HTTPException(status_code=422, detail=str(err)) from None
     existing_id = None
     if os.path.exists(flow_path):
         if not request.replace:
