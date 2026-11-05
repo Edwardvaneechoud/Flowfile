@@ -15,7 +15,6 @@
             "
           ></i>
           <h2>{{ table.name }}</h2>
-          <HubBadge v-if="isHub" kind="table" />
           <span
             v-if="table.table_type === 'virtual' && table.sql_query"
             class="virtual-badge sql-virtual-badge"
@@ -281,7 +280,7 @@
         </ul>
       </div>
       <div
-        v-if="table.read_by_flows && table.read_by_flows.length > 0"
+        v-if="!isHub && table.read_by_flows && table.read_by_flows.length > 0"
         class="meta-card meta-card-clickable"
         @click="showReadByModal = true"
       >
@@ -534,7 +533,6 @@ import TableEditorDialog from "./TableEditorDialog.vue";
 import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
-import HubBadge from "./HubBadge.vue";
 import { HUB_PREVIEW_NOTE, hubSharedTitle, isHubRow } from "./hubRows";
 
 const showReadByModal = ref(false);
