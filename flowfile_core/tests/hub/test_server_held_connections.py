@@ -73,7 +73,7 @@ def no_store(monkeypatch):
 @pytest.fixture
 def joined(tmp_path, monkeypatch, join_hub):
     """This storage dir joined ``join_hub`` with keys of its own."""
-    for name in ("FLOWFILE_HUB_JOIN_TOKEN", "FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME", "FLOWFILE_HUB_ISSUER"):
+    for name in ("FLOWFILE_HUB_JOIN_TOKEN", "FLOWFILE_HUB_URL", "FLOWFILE_NODE_NAME"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(hub_node, "path", lambda: tmp_path / "storage" / hub_node.FILE_NAME)
     hub_node.join(join_hub.url, join_hub.mint(enable_on_join=True), name="core-1", worker_url="http://core-1:63579")

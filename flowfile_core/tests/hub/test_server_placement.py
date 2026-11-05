@@ -65,6 +65,21 @@ def hub_server():
             db.commit()
 
 
+@pytest.fixture
+def hand_added():
+    """``ELSEWHERE`` as someone added it on the Backends page: a row with its own token and no hub node, gone after."""
+    with get_db_context() as db:
+        db.add(ConfiguredBackend(id=ELSEWHERE, url="http://elsewhere.example:63579", token="added-here"))
+        db.commit()
+    yield
+    registry.forget(ELSEWHERE)
+    with get_db_context() as db:
+        row = db.get(ConfiguredBackend, ELSEWHERE)
+        if row is not None:
+            db.delete(row)
+            db.commit()
+
+
 def flow(flow_id: int, sort_location: str):
     """Manual input 1 → sort 2 on ``local``, the sort's own Compute backend ``sort_location``."""
     graph = input_then_sort(make_graph(flow_id, execution_location="local"), ranks(3), "rank")
@@ -104,7 +119,9 @@ def test_a_node_on_auto_or_on_the_runs_own_backend_runs(joined_with_keys, no_sto
 
 
 @pytest.mark.parametrize("where", ["joined_with_keys", "desktop"])
-def test_a_node_set_to_a_backend_that_is_no_server_of_the_hub_still_runs_on_the_runs_backend(request, no_store, where):
+def test_a_node_set_to_a_backend_that_is_no_server_of_the_hub_still_runs_on_the_runs_backend(
+    request, hand_added, no_store, where
+):
     if where == "joined_with_keys":
         request.getfixturevalue("joined_with_keys")
     graph = flow(9843, ELSEWHERE)
