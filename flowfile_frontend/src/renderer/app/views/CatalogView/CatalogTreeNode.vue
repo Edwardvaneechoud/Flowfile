@@ -21,7 +21,7 @@
         class="ns-icon"
       ></i>
       <span class="ns-name">{{ node.name }}</span>
-      <HubBadge v-if="isHub && node.level === 0 && hubPresence === 'beside'" kind="namespace" />
+      <HubBadge v-if="isHub && node.level === 0 && hubPresence === 'beside'" />
       <SharedBadge :access="node.access" :title="isHub ? hubSharedTitle(node.access) : undefined" />
       <CatalogStorageBadge
         v-if="node.level === 0 && !isHub"

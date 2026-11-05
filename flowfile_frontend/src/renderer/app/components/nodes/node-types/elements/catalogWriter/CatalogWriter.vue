@@ -36,7 +36,7 @@
                 :title="writeBlock(ns) ?? undefined"
               >
                 {{ ns.label }}
-                <HubBadge v-if="ns.source === 'hub'" kind="namespace" />
+                <HubBadge v-if="ns.source === 'hub' && hubBeside" />
                 <span v-if="ns.readOnly" class="option-note">{{ READ_ONLY }}</span>
               </el-option>
             </el-option-group>
@@ -302,7 +302,7 @@ import { useWritableNamespaces } from "../../../../../composables/useWritableNam
 import { validateCatalogName } from "../../../../../composables/catalogNameValidation";
 import { CatalogApi } from "../../../../../api/catalog.api";
 import HubBadge from "../../../../../views/CatalogView/HubBadge.vue";
-import { isHubRow, withoutHubRows } from "../../../../../views/CatalogView/hubRows";
+import { hubPresence, isHubRow, withoutHubRows } from "../../../../../views/CatalogView/hubRows";
 import {
   READ_ONLY,
   isHubTarget,
@@ -386,6 +386,8 @@ const shownNamespaceOptions = computed(() =>
   pickable(catalogNamespaces.value, selectedNamespaceId.value),
 );
 const namespaceGroups = computed(() => optionGroups(shownNamespaceOptions.value, (ns) => ns.place));
+// A hub schema is badged only beside this machine's own; a joined server lists the hub's alone.
+const hubBeside = computed(() => hubPresence(catalogNamespaces.value) === "beside");
 const selectedUnavailableReason = computed(() => {
   const selected = catalogNamespaces.value.find((ns) => ns.id === selectedNamespaceId.value);
   return selected ? writeBlock(selected) : null;

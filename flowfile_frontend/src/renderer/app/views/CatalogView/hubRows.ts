@@ -2,7 +2,6 @@
 
 export const HUB_NAMESPACE_TITLE =
   "This catalog lives on the hub. Create, rename and delete it there.";
-export const HUB_TABLE_TITLE = "This table lives on the hub.";
 export const HUB_MANAGED_NOTE = "This catalog is managed on the hub.";
 export const HUB_PREVIEW_NOTE =
   "Preview isn't available for tables on the hub. Read it with a catalog reader node.";

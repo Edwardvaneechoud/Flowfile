@@ -232,6 +232,7 @@
         <NamespaceDetailPanel
           v-else-if="catalogStore.selectedNamespace"
           :namespace="catalogStore.selectedNamespace"
+          :hub-presence="hubPresence"
           @close="handleCloseDetail"
         />
         <!-- Table detail view -->

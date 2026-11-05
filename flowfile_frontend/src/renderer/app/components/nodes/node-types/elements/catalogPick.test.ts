@@ -19,6 +19,7 @@ import {
   writeBlock,
   writerDefault,
 } from "./catalogPick";
+import { hubPresence } from "../../../../views/CatalogView/hubRows";
 
 const table = (fields: Partial<CatalogTable>): CatalogTable =>
   ({ name: "t", full_table_name: null, ...fields }) as CatalogTable;
@@ -359,6 +360,12 @@ describe("pickers by place and reach", () => {
     ];
     expect(namespaceOptions(tree)[0].unavailableReason).toBe("az");
     expect([...unusableNamespaceIds(tree)].sort((a, b) => a - b)).toEqual([-31, -30]);
+  });
+
+  it("says from the options whether the hub's schemas show alone or beside this machine's", () => {
+    expect(hubPresence(namespaceOptions(desktop))).toBe("beside");
+    expect(hubPresence(namespaceOptions(joined))).toBe("only");
+    expect(hubPresence(namespaceOptions(tree.filter((c) => c.source !== "hub")))).toBe("none");
   });
 
   it("names each table's place by its source", () => {

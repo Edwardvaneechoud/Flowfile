@@ -5,7 +5,6 @@ import {
   HUB_MANAGED_NOTE,
   HUB_NAMESPACE_TITLE,
   HUB_PREVIEW_NOTE,
-  HUB_TABLE_TITLE,
   byPlace,
   hubPresence,
   hubSharedTitle,
@@ -67,7 +66,6 @@ describe("strings", () => {
     expect(HUB_NAMESPACE_TITLE).toBe(
       "This catalog lives on the hub. Create, rename and delete it there.",
     );
-    expect(HUB_TABLE_TITLE).toBe("This table lives on the hub.");
     expect(HUB_MANAGED_NOTE).toBe("This catalog is managed on the hub.");
     expect(HUB_PREVIEW_NOTE).toBe(
       "Preview isn't available for tables on the hub. Read it with a catalog reader node.",

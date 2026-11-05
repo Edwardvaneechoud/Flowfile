@@ -41,7 +41,7 @@
                   :title="ns.unavailableReason ?? undefined"
                 >
                   {{ ns.label }}
-                  <HubBadge v-if="ns.source === 'hub'" kind="namespace" />
+                  <HubBadge v-if="ns.source === 'hub' && hubBeside" />
                 </el-option>
               </el-option-group>
             </el-select>
@@ -75,7 +75,6 @@
                     "
                   ></i>
                   {{ tableOptionLabel(table) }}
-                  <HubBadge v-if="isHubRow(table)" kind="table" />
                 </el-option>
               </el-option-group>
             </el-select>
@@ -240,7 +239,12 @@ import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { useResourceSharing } from "../../../../../composables/useResourceSharing";
 import { CatalogApi } from "../../../../../api/catalog.api";
 import HubBadge from "../../../../../views/CatalogView/HubBadge.vue";
-import { isHubRow, isOffered, withoutHubRows } from "../../../../../views/CatalogView/hubRows";
+import {
+  hubPresence,
+  isHubRow,
+  isOffered,
+  withoutHubRows,
+} from "../../../../../views/CatalogView/hubRows";
 import {
   isHubTarget,
   namespaceOptions,
@@ -349,6 +353,8 @@ const shownNamespaceOptions = computed(() =>
   pickable(catalogNamespaces.value, selectedNamespaceId.value),
 );
 const namespaceGroups = computed(() => optionGroups(shownNamespaceOptions.value, (ns) => ns.place));
+// A hub schema is badged only beside this machine's own; a joined server lists the hub's alone.
+const hubBeside = computed(() => hubPresence(catalogNamespaces.value) === "beside");
 const selectedUnavailableReason = computed(
   () =>
     catalogNamespaces.value.find((ns) => ns.id === selectedNamespaceId.value)?.unavailableReason ??
