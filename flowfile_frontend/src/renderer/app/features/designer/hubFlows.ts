@@ -10,8 +10,9 @@ export const warningLines = (uses: LocalPathUse[]): string[] =>
 
 export const OPENED_FROM_HUB = "Flow opened from hub";
 
-/** The hub lists an author by id only. */
-export const authorLabel = (version: HubFlowVersion): string => `user #${version.authorId}`;
+/** The author by the name the hub gives, else by id, as an older hub lists them. */
+export const authorLabel = (version: HubFlowVersion): string =>
+  version.authorName || `user #${version.authorId}`;
 
 /** Why a publish was refused as stale, from the versions the hub named. */
 export function conflictLabel(base: HubFlowVersion | null, current: HubFlowVersion | null): string {

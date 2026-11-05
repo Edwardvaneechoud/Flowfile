@@ -9,11 +9,15 @@ export interface HubFlow {
   name: string;
   /** The newest version published through the hub; null when the flow has none yet. */
   latestVersion: number | null;
+  /** Who published the newest version, by name; null when the hub does not say. */
+  authorName: string | null;
 }
 
 export interface HubFlowVersion {
   version: number;
   authorId: number;
+  /** The author's display name; null from a hub that sends the id only. */
+  authorName: string | null;
   publishedAt: string;
   message: string | null;
 }
@@ -66,11 +70,13 @@ interface PyFlow {
   flow_uuid: string;
   name: string;
   latest_version: number | null;
+  author_name?: string | null;
 }
 
 interface PyVersion {
   version: number;
   author_id: number;
+  author_name?: string | null;
   published_at: string;
   message: string | null;
 }
@@ -93,6 +99,7 @@ const flowFromPy = (raw: PyFlow): HubFlow => ({
   flowUuid: raw.flow_uuid,
   name: raw.name,
   latestVersion: raw.latest_version,
+  authorName: raw.author_name ?? null,
 });
 
 const versionFromPy = (raw: PyVersion | null | undefined): HubFlowVersion | null =>
@@ -100,6 +107,7 @@ const versionFromPy = (raw: PyVersion | null | undefined): HubFlowVersion | null
     ? {
         version: raw.version,
         authorId: raw.author_id,
+        authorName: raw.author_name ?? null,
         publishedAt: raw.published_at,
         message: raw.message,
       }

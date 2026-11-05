@@ -16,6 +16,7 @@ import {
 const base: HubFlowVersion = {
   version: 1,
   authorId: 1,
+  authorName: null,
   publishedAt: "2026-11-01T12:00:00Z",
   message: "mine",
 };
@@ -67,6 +68,18 @@ describe("conflict panel", () => {
     expect(facts[3].value).toBe("theirs");
     expect(versionFacts({ ...current, message: null })[3].value).toBe("—");
     expect(versionFacts(null)).toEqual([{ label: "Version", value: "none" }]);
+  });
+
+  it("names the author by the name the hub sends, and by id from a hub that sends none", () => {
+    const named = { ...current, authorName: "Cal Jones" };
+    expect(versionFacts(named)[1].value).toBe("Cal Jones");
+    expect(conflictLabel(base, named)).toBe(
+      "Version 1 is no longer the latest; Cal Jones published v2",
+    );
+    expect(conflictLabel(null, named)).toBe(
+      "This flow already has v2 on the hub; Cal Jones published it",
+    );
+    expect(versionFacts({ ...current, authorName: "" })[1].value).toBe("user #7");
   });
 });
 

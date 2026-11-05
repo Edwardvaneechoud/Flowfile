@@ -144,6 +144,7 @@
                   <span>{{ flow.name }}</span>
                 </div>
                 <div class="flow-meta">
+                  <span v-if="flow.authorName">{{ flow.authorName }}</span>
                   <span class="flow-last-run">{{ latestVersionLabel(flow.latestVersion) }}</span>
                 </div>
               </li>

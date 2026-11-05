@@ -25,6 +25,7 @@ const pyVersion = {
 const version = {
   version: 2,
   authorId: 7,
+  authorName: null,
   publishedAt: "2026-11-01T12:01:00Z",
   message: "theirs",
 };
@@ -56,7 +57,22 @@ describe("listing", () => {
       params: { namespace_id: 2 },
     });
     expect(mocks.get).toHaveBeenNthCalledWith(2, "/hub_client/flows", { params: undefined });
-    expect(result).toEqual([{ flowUuid: "u", name: "orders", latestVersion: null }]);
+    expect(result).toEqual([
+      { flowUuid: "u", name: "orders", latestVersion: null, authorName: null },
+    ]);
+  });
+
+  it("keeps the newest version's author the hub names on a flow, and null when it sends none", async () => {
+    mocks.get.mockResolvedValue({
+      data: [
+        { flow_uuid: "u", name: "orders", latest_version: 3, author_name: "Cal Jones" },
+        { flow_uuid: "v", name: "returns", latest_version: null, author_name: null },
+      ],
+    });
+
+    const result = await listHubFlows(2);
+
+    expect(result.map((f) => f.authorName)).toEqual(["Cal Jones", null]);
   });
 
   it("lists a flow's versions under its uuid", async () => {
@@ -66,6 +82,14 @@ describe("listing", () => {
 
     expect(mocks.get).toHaveBeenCalledWith(`/hub_client/flows/${pyVersion.flow_uuid}/versions`);
     expect(result).toEqual([version]);
+  });
+
+  it("keeps a version's author name when the hub sends one", async () => {
+    mocks.get.mockResolvedValue({ data: [{ ...pyVersion, author_name: "Cal Jones" }] });
+
+    const result = await listHubFlowVersions(pyVersion.flow_uuid);
+
+    expect(result).toEqual([{ ...version, authorName: "Cal Jones" }]);
   });
 });
 

@@ -96,10 +96,17 @@ const orders = {
   flowUuid: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
   name: "orders",
   latestVersion: 2,
+  authorName: null,
 };
 const versions = [
-  { version: 2, authorId: 7, publishedAt: "2026-11-01T12:01:00Z", message: "theirs" },
-  { version: 1, authorId: 1, publishedAt: "2026-11-01T12:00:00Z", message: null },
+  {
+    version: 2,
+    authorId: 7,
+    authorName: null,
+    publishedAt: "2026-11-01T12:01:00Z",
+    message: "theirs",
+  },
+  { version: 1, authorId: 1, authorName: null, publishedAt: "2026-11-01T12:00:00Z", message: null },
 ];
 
 // The dialog remembers its tab in localStorage, which this environment does not provide.
@@ -205,6 +212,26 @@ describe("OpenDialog's Hub tab", () => {
     expect(text(rows[0])).toContain("v2");
     expect(text(rows[0])).toContain("user #7");
     expect(text(rows[0])).toContain("theirs");
+  });
+
+  it("names the authors of the flow's newest version and of each version when the hub sends their names", async () => {
+    mocks.listHubFlows.mockResolvedValue([{ ...orders, authorName: "Cal Jones" }]);
+    mocks.listHubFlowVersions.mockResolvedValue([
+      { ...versions[0], authorName: "Cal Jones" },
+      { ...versions[1], authorName: "Ada Lovelace" },
+    ]);
+    await mount(connected);
+    await click(find("open-hub-tab"));
+    await click(find("pick-hub-namespace"));
+
+    const flow = host.querySelector('[data-testid="hub-open-flows"] .flow-row');
+    expect(text(flow)).toContain("Cal Jones");
+    await click(flow);
+
+    const rows = host.querySelectorAll('[data-testid="hub-open-versions"] .flow-row');
+    expect(text(rows[0])).toContain("Cal Jones");
+    expect(text(rows[1])).toContain("Ada Lovelace");
+    expect(text(rows[0])).not.toContain("user #");
   });
 
   it("opens the picked version through core and hands the flow's path on", async () => {
