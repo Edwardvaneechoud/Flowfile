@@ -23,11 +23,13 @@ from flowfile_core.hub_client.client import HubRefused, HubUnreachable, HubVersi
 
 RECONNECT = "connect to the hub again"
 SIGN_IN_AGAIN = "sign in through the hub again"
+SCHEDULED = "Scheduled runs can't use the hub's servers yet, so place those steps on this server"
 _MARGIN_SECONDS = 60
 
 _tokens: dict[tuple[int, int], tuple[str, float | None]] = {}
 _lock = threading.RLock()  # a refresh inside token_for that ends the session clears these tokens
 _acting: ContextVar[int | None] = ContextVar("hub_acting_user", default=None)
+_scheduled: ContextVar[bool] = ContextVar("hub_scheduled_run", default=False)
 
 
 @contextmanager
@@ -46,6 +48,24 @@ def acting_for(user_id: int | None) -> Iterator[None]:
 def acting() -> int | None:
     """The person ``acting_for`` set for the calls made now; ``None`` outside such a block."""
     return _acting.get()
+
+
+@contextmanager
+def for_run_record(run_id: int | None) -> Iterator[None]:
+    """The block a headless runner runs the run record ``run_id`` in: a schedule's run (its record names a schedule)
+    is marked so (``scheduled``), since no person is behind it to mint the hub's tokens with."""
+    from shared.run_completion import get_run_schedule_id
+
+    token = _scheduled.set(run_id is not None and get_run_schedule_id(run_id) is not None)
+    try:
+        yield
+    finally:
+        _scheduled.reset(token)
+
+
+def scheduled() -> bool:
+    """Whether the calls made now are a schedule's run (``for_run_record``)."""
+    return _scheduled.get()
 
 
 def signed_in_through_hub(user_id: int) -> bool:

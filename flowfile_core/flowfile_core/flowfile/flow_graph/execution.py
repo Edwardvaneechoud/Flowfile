@@ -1754,10 +1754,14 @@ class ExecutionMixin(GraphMixinBase):
                 self.release_run()
             self._end_exchange_run(exchange_run)
 
-    def _run_policy(self, exchange_run: ExchangeRun) -> MixedPlacementPolicy | SingleBackendPolicy:
+    def _run_policy(
+        self, exchange_run: ExchangeRun, run_backend_id: str | None = None
+    ) -> MixedPlacementPolicy | SingleBackendPolicy:
         """The run's placement policy: mixed, falling back to ``registry.fallback_backend_id``, while an exchange store
-        is in use (``FLOWFILE_EXCHANGE_URI``, the saved one or the hub's), else the run's backend for every node."""
-        run_backend_id = current_context(self).backend_id
+        is in use (``FLOWFILE_EXCHANGE_URI``, the saved one or the hub's), else the run's backend for every node.
+
+        The run's backend is ``run_backend_id`` when given, else the current context's."""
+        run_backend_id = run_backend_id or current_context(self).backend_id
         if exchange_config.effective_store(hub=exchange_run.hub_store).uri:
             return MixedPlacementPolicy(run_backend_id, fallback_id=registry.fallback_backend_id())
         return SingleBackendPolicy(run_backend_id)
@@ -1934,26 +1938,52 @@ class ExecutionMixin(GraphMixinBase):
         hub here, else ``None``.
 
         The hub mints a run's token for those servers with that person's own sign-in, never another's, so a run for
-        nobody (a scheduled run) or for a person whose sign-in ended is refused before a node starts. A sign-in the hub
-        no longer takes is found when the token is minted, and refused there.
+        nobody or for a person whose sign-in ended is refused before a node starts. A schedule's run
+        (``node_tokens.scheduled``) has nobody behind it and is refused with ``node_tokens.SCHEDULED``, every such node
+        of it. A sign-in the hub no longer takes is found when the token is minted, and refused there.
         """
         if not nodes or issuer_accounts.joined_with_keys() is None:
             return None
         person = node_tokens.acting()
         if person is not None and node_tokens.signed_in_through_hub(person):
             return None
-        policy = self._run_policy(exchange_run)
-        on_hub: dict[str, list[FlowNode]] = {}
+        on_hub = self._on_hub_servers(nodes, self._run_policy(exchange_run))
+        if not on_hub:
+            return None
+        if person is None and node_tokens.scheduled():
+            return [(node, f"{node_tokens.SCHEDULED}.") for on in on_hub.values() for node in on]
+        name, on = next(iter(on_hub.items()))
+        sentence = node_tokens.signed_out(name)
+        return [(node, f"{sentence[0].upper()}{sentence[1:]}.") for node in on]
+
+    @staticmethod
+    def _on_hub_servers(
+        nodes: list[FlowNode], policy: MixedPlacementPolicy | SingleBackendPolicy
+    ) -> dict[str, list[FlowNode]]:
+        """The nodes ``policy`` places on another of the hub's servers (a ``worker:<name>`` row filled from the hub),
+        by the hub's name of that server, in the order the servers are first named."""
+        on_backend: dict[str, list[FlowNode]] = {}
         for node in nodes:
             backend_id = policy.backend_for(node)
             if backend_id.startswith(registry.CONFIGURED_WORKER_PREFIX):
-                on_hub.setdefault(backend_id, []).append(node)
-        for backend_id, on in on_hub.items():
-            name = vend.node_name(backend_id)
-            if name is not None:
-                sentence = node_tokens.signed_out(name)
-                return [(node, f"{sentence[0].upper()}{sentence[1:]}.") for node in on]
-        return None
+                on_backend.setdefault(backend_id, []).append(node)
+        named = {backend_id: vend.node_name(backend_id) for backend_id in on_backend}
+        return {name: on_backend[backend_id] for backend_id, name in named.items() if name is not None}
+
+    def scheduled_hub_steps(self) -> list[FlowNode]:
+        """The steps a scheduled run of this flow would place on the hub's other servers, on a server joined with keys
+        of its own; empty elsewhere.
+
+        A scheduled run is headless: it runs on ``registry.headless_backend_id`` of the flow's saved location, with no
+        hub-set exchange store and no explore-data node, and it has nobody behind it to mint those servers' tokens
+        with, so ``_signed_out_refusal`` refuses every such step before a node starts.
+        """
+        if issuer_accounts.joined_with_keys() is None:
+            return []
+        run_backend_id = registry.headless_backend_id(self.flow_settings.execution_location)
+        policy = self._run_policy(ExchangeRun(self.flow_id, "schedule"), run_backend_id)
+        nodes = [node for node in self.nodes if node.node_type != "explore_data"]
+        return [node for on in self._on_hub_servers(nodes, policy).values() for node in on]
 
     def _record_hub_refusal(self, refused: list[tuple[FlowNode, str]]) -> None:
         """Record each node the hub vends to or mints no token for as a failed result, its sentence its error, in a run

@@ -92,7 +92,7 @@ def _run_flow(flow_path: str, param_overrides: list[str] | None, run_id: int | N
 
     # Run on the embedded worker unless --backend, the flow's saved backend id or FLOWFILE_COMPUTE_BACKEND names one
     if backend is None and flow.execution_location not in ("local", "remote", "auto"):
-        backend_id = flow.execution_location
+        backend_id = registry.headless_backend_id(flow.execution_location)
         registry.set_default_override(backend_id)
     flow.execution_location = "local" if backend_id == registry.LOCAL_BACKEND_ID else "remote"
 
@@ -122,7 +122,10 @@ def _run_flow(flow_path: str, param_overrides: list[str] | None, run_id: int | N
         pass
 
     try:
-        result = flow.run_graph()
+        from flowfile_core.hub_client import node_tokens
+
+        with node_tokens.for_run_record(run_id):
+            result = flow.run_graph()
     except Exception as e:
         print(f"Error running flow: {e}", file=sys.stderr)
         _complete_run_if_needed(run_id, success=False, nodes_completed=0)
