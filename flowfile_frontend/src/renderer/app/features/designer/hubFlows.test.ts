@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { HubFlowVersion } from "../../api/hubFlows.api";
 import {
@@ -7,6 +7,7 @@ import {
   openInsteadLabel,
   publishOverLabel,
   publishedLabel,
+  publishedTime,
   refusalMessage,
   versionFacts,
   warningLines,
@@ -88,5 +89,31 @@ describe("latestVersionLabel", () => {
   it("shows the newest hub version, or that there is none", () => {
     expect(latestVersionLabel(4)).toBe("v4");
     expect(latestVersionLabel(null)).toBe("not published yet");
+  });
+});
+
+describe("publishedTime", () => {
+  const zone = process.env.TZ;
+  beforeEach(() => {
+    process.env.TZ = "Europe/Amsterdam";
+  });
+  afterEach(() => {
+    process.env.TZ = zone;
+  });
+
+  it("reads a time without a zone as UTC and shows it in the viewer's zone, naming the zone", () => {
+    const shown = publishedTime("2026-11-05T08:37:08");
+    expect(shown).toBe(publishedTime("2026-11-05T08:37:08Z"));
+    expect(shown).toBe(publishedTime("2026-11-05T09:37:08+01:00"));
+    expect(shown).toContain("09:37");
+    const zoneName = new Intl.DateTimeFormat(undefined, { timeZoneName: "short" })
+      .formatToParts(new Date("2026-11-05T08:37:08Z"))
+      .find((part) => part.type === "timeZoneName")?.value;
+    expect(zoneName).toBeTruthy();
+    expect(shown).toContain(zoneName);
+  });
+
+  it("is what the version facts show as Published", () => {
+    expect(versionFacts(current)[2].value).toBe(publishedTime(current.publishedAt));
   });
 });

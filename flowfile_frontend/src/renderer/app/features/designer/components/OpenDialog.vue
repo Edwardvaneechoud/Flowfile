@@ -221,7 +221,13 @@ import {
 } from "../../../api/hubFlows.api";
 import { useHubConnectionStore } from "../../../stores/hub-connection-store";
 import { detailOf } from "../../../utils/apiDetail";
-import { authorLabel, latestVersionLabel, refusalMessage } from "../hubFlows";
+import {
+  OPENED_FROM_HUB,
+  authorLabel,
+  latestVersionLabel,
+  publishedTime,
+  refusalMessage,
+} from "../hubFlows";
 
 const props = defineProps({
   visible: {
@@ -388,7 +394,7 @@ const canOpenHubFlow = computed(
   () => !!selectedHubFlow.value && hubVersions.value.length > 0 && !hubBusy.value,
 );
 
-const publishedAt = (version: HubFlowVersion) => new Date(version.publishedAt).toLocaleString();
+const publishedAt = (version: HubFlowVersion) => publishedTime(version.publishedAt);
 
 function resetHub() {
   hubError.value = "";
@@ -444,7 +450,8 @@ async function openHubFlow(replace = false) {
   const version = selectedHubVersion.value;
   try {
     const opened = await openFromHub({ flowUuid, version, replace });
-    emit("open-flow", { message: "Flow opened from hub", flowPath: opened.flowPath });
+    emit("open-flow", { message: OPENED_FROM_HUB, flowPath: opened.flowPath });
+    ElMessage.success(OPENED_FROM_HUB);
     isVisible.value = false;
   } catch (err) {
     const refusal = refusalOf(err);

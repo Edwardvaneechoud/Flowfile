@@ -165,7 +165,7 @@
 
 <script setup lang="ts">
 import { ref, watch } from "vue";
-import { ElMessageBox } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import {
   openFromHub,
   publishCheck,
@@ -177,6 +177,7 @@ import {
 import type { HubOrigin } from "../../../types";
 import { detailOf } from "../../../utils/apiDetail";
 import {
+  OPENED_FROM_HUB,
   conflictLabel,
   openInsteadLabel,
   publishOverLabel,
@@ -290,7 +291,8 @@ async function openInstead() {
       version: current.version,
       replace: true,
     });
-    emit("open-flow", { message: "Flow opened from hub", flowPath: opened.flowPath });
+    emit("open-flow", { message: OPENED_FROM_HUB, flowPath: opened.flowPath });
+    ElMessage.success(OPENED_FROM_HUB);
     isVisible.value = false;
   } catch (err) {
     const refusal = refusalOf(err);

@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   listHubFlowVersions: vi.fn(),
   openFromHub: vi.fn(),
   confirm: vi.fn(),
+  success: vi.fn(),
 }));
 
 vi.mock("../../../api/hubConnection.api", () => ({ getHubConnection: mocks.getHubConnection }));
@@ -27,7 +28,7 @@ vi.mock("../../../api/hubFlows.api", async () => ({
   openFromHub: mocks.openFromHub,
 }));
 vi.mock("element-plus", () => ({
-  ElMessage: { error: vi.fn() },
+  ElMessage: { error: vi.fn(), success: mocks.success },
   ElMessageBox: { confirm: mocks.confirm },
 }));
 vi.mock("../../../components/common/FileBrowser/fileBrowser.vue", () => ({
@@ -154,6 +155,7 @@ beforeEach(() => {
   mocks.listHubFlowVersions.mockReset().mockResolvedValue(versions);
   mocks.openFromHub.mockReset().mockResolvedValue({ flowPath: "/flows/hub/orders.yaml" });
   mocks.confirm.mockReset().mockResolvedValue("confirm");
+  mocks.success.mockReset();
 });
 
 afterEach(() => {
@@ -222,6 +224,7 @@ describe("OpenDialog's Hub tab", () => {
     expect(opened).toEqual([
       { message: "Flow opened from hub", flowPath: "/flows/hub/orders.yaml" },
     ]);
+    expect(mocks.success).toHaveBeenCalledWith("Flow opened from hub");
   });
 
   it("asks before replacing a local copy and opens again with replace", async () => {
@@ -258,6 +261,7 @@ describe("OpenDialog's Hub tab", () => {
     await click(find("hub-open"));
 
     expect(text(find("hub-open-error"))).toBe("The hub refused the request (403): no read access");
+    expect(mocks.success).not.toHaveBeenCalled();
     expect(opened).toEqual([]);
   });
 });

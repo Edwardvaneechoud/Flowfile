@@ -8,6 +8,8 @@ export const publishedLabel = (version: number): string => `Published as version
 export const warningLines = (uses: LocalPathUse[]): string[] =>
   uses.map((use) => `Uses a local file path: ${use.label} (${use.path})`);
 
+export const OPENED_FROM_HUB = "Flow opened from hub";
+
 /** The hub lists an author by id only. */
 export const authorLabel = (version: HubFlowVersion): string => `user #${version.authorId}`;
 
@@ -26,6 +28,19 @@ export const publishOverLabel = (current: HubFlowVersion): string =>
 export const openInsteadLabel = (current: HubFlowVersion): string =>
   `Open v${current.version} instead`;
 
+/** When a version was published, in the viewer's own zone and naming it; a time without a zone is UTC. */
+export function publishedTime(iso: string): string {
+  const utc = iso.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(iso) ? iso : `${iso}Z`;
+  return new Date(utc).toLocaleString(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
+}
+
 export interface VersionFact {
   label: string;
   value: string;
@@ -37,7 +52,7 @@ export function versionFacts(version: HubFlowVersion | null): VersionFact[] {
   return [
     { label: "Version", value: `v${version.version}` },
     { label: "Author", value: authorLabel(version) },
-    { label: "Published", value: new Date(version.publishedAt).toLocaleString() },
+    { label: "Published", value: publishedTime(version.publishedAt) },
     { label: "Message", value: version.message?.trim() || "—" },
   ];
 }
