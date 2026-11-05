@@ -136,10 +136,18 @@ export function optionGroups<T>(rows: T[], placeOf: (row: T) => string | null): 
   }));
 }
 
-/** A table's place: that of the options of its source, since one machine and one hub each have one. */
+/** The heading a picker's hub rows sit under; this machine's rows keep the place core names for them. */
+export const HUB_GROUP = "Hub";
+
+/** The heading a picker's row sits under: "Hub" for the hub's rows, the place core names for this machine's. */
+export function pickerPlace(row: { source?: string | null; place?: string | null }): string | null {
+  return isHubRow(row) ? HUB_GROUP : (row.place ?? null);
+}
+
+/** A table's heading: "Hub" for a hub table, else the place of this machine's options, since one machine has one. */
 export function tablePlace(table: CatalogTable, options: NamespaceOption[]): string | null {
-  const source = isHubRow(table) ? "hub" : "local";
-  return options.find((o) => o.source === source)?.place ?? null;
+  if (isHubRow(table)) return HUB_GROUP;
+  return options.find((o) => o.source === "local")?.place ?? null;
 }
 
 /** The tree ids of the namespaces whose tables this machine cannot use, catalogs and schemas alike. */
