@@ -250,7 +250,10 @@ class FakeJoinHub:
         return None, {"node": name, "header": header, "claims": claims}
 
     def beat(self, authorization: str | None, body) -> tuple[int, dict | None]:
-        """The status and body the heartbeat route answers: 204 for a beat taken, else 401 or 422 with a sentence."""
+        """The status and body the heartbeat route answers: 204 for a beat taken, else 401 or 422 with a sentence.
+
+        A beat is ``{version, process}`` and may carry ``addresses``, a list of strings, as the hub's schema takes it.
+        """
         scheme, _, assertion = (authorization or "").partition(" ")
         if scheme != "Bearer" or not assertion:
             return 401, {"detail": "a heartbeat needs a node assertion"}
@@ -260,9 +263,10 @@ class FakeJoinHub:
         header, claims = verified["header"], verified["claims"]
         if not (
             isinstance(body, dict)
-            and set(body) == {"version", "process"}
+            and set(body) - {"addresses"} == {"version", "process"}
             and isinstance(body["version"], str)
             and body["process"] in ("core", "worker")
+            and all(isinstance(address, str) for address in body.get("addresses") or [])
         ):
             return 422, {"detail": [{"type": "value_error", "loc": ["body"], "msg": "not a heartbeat"}]}
         with self._lock:

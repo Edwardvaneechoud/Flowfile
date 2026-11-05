@@ -12,7 +12,9 @@ file: at its first join it makes two key pairs, keeps them in ``hub_node_key.jso
 A joined node tells its hub it is up, since the hub may not reach it (behind a NAT, say) while it can always reach the
 hub: ``heartbeat`` posts one beat signed with the node's own key, and ``start_heartbeat`` beats at once and then every
 ``HEARTBEAT_SECONDS`` from a daemon thread. One process speaks for the node: core when one joined for itself and its
-worker (the file's ``has_core``), else the worker.
+worker (the file's ``has_core``), else the worker. Each beat also names the addresses this machine can be reached at
+on the port the process serves (``reach_addresses``), worked out again before every beat since the network can change
+between them, so a hub whose stored address stopped answering has somewhere to look; which one it uses is the hub's.
 
 ``shared.hub_tokens`` reads the node's settings through ``resolved()``: the environment first (``FLOWFILE_HUB_URL``,
 ``FLOWFILE_NODE_NAME``), the file second, and the file only for the hub it names, so a node set up by hand behaves as
@@ -42,6 +44,7 @@ import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
+from urllib.parse import urlsplit
 
 if TYPE_CHECKING:
     import httpx
@@ -347,14 +350,17 @@ def _stop_this_process() -> None:
     os.kill(os.getpid(), signal.SIGTERM)
 
 
-def heartbeat(process: Literal["core", "worker"], http: "httpx.Client | None" = None) -> bool:
+def heartbeat(
+    process: Literal["core", "worker"], http: "httpx.Client | None" = None, *, addresses: list[str] | None = None
+) -> bool:
     """Tell the hub this storage dir's node joined that the node is up, as ``process``; whether the hub took the beat.
 
     Posts ``{version, process}`` to the joined hub's ``/hub/nodes/heartbeat`` with a node assertion signed with this
-    node's own key, its audience the joined issuer and that path. A beat the hub does not take, or one that cannot be
-    sent (no joined node, no keys, a hub that does not answer), logs one warning per distinct reason until a beat is
-    taken again, and never the assertion. Never makes keys. A 410 is a hub that removed this node: said once at ERROR
-    with the hub's sentence, and the beat loop stops the process (``_stop_this_process``).
+    node's own key, its audience the joined issuer and that path; with ``addresses``, the ``reach_addresses`` of this
+    machine, the body carries them as ``addresses`` too. A beat the hub does not take, or one that cannot be sent (no
+    joined node, no keys, a hub that does not answer), logs one warning per distinct reason until a beat is taken
+    again, and never the assertion. Never makes keys. A 410 is a hub that removed this node: said once at ERROR with
+    the hub's sentence, and the beat loop stops the process (``_stop_this_process``).
     """
     global _removed
     import httpx
@@ -373,11 +379,14 @@ def heartbeat(process: Literal["core", "worker"], http: "httpx.Client | None" = 
     if keys is None:
         return _not_taken(f"this node has no keys of its own at {hub_node_key.path()}")
     assertion = keys.assertion(node.name, node.issuer.rstrip("/") + HEARTBEAT_PATH)
+    body: dict = {"version": get_version(), "process": process}
+    if addresses is not None:
+        body["addresses"] = addresses
     client = http or httpx.Client(timeout=httpx.Timeout(10.0), follow_redirects=False)
     try:
         resp = client.post(
             f"{node.hub_url.rstrip('/')}{HEARTBEAT_PATH}",
-            json={"version": get_version(), "process": process},
+            json=body,
             headers={"Authorization": f"Bearer {assertion}"},
         )
     except (httpx.HTTPError, httpx.InvalidURL) as exc:
@@ -397,12 +406,17 @@ def _speaks_for(node: HubNode | None, process: str) -> bool:
     return node is not None and node.has_core == (process == "core")
 
 
-def _beat(process: Literal["core", "worker"], stop: threading.Event) -> None:
-    """Beat at once and every ``HEARTBEAT_SECONDS`` until ``stop`` is set, each time ``process`` speaks for the node."""
+def _beat(
+    process: Literal["core", "worker"], stop: threading.Event, *, port: int | None = None, tls: bool = False
+) -> None:
+    """Beat at once and every ``HEARTBEAT_SECONDS`` until ``stop`` is set, each time ``process`` speaks for the node,
+    with this machine's addresses on ``port`` worked out afresh for each beat; none without a port."""
     while True:
-        if _speaks_for(read(), process):
+        node = read()
+        if _speaks_for(node, process):
             try:
-                heartbeat(process)
+                addresses = reach_addresses(port, tls=tls, hub_url=node.hub_url) if port is not None else None
+                heartbeat(process, addresses=addresses)
             except Exception as exc:
                 _not_taken(f"the beat failed ({type(exc).__name__})")
             if _removed:
@@ -412,21 +426,97 @@ def _beat(process: Literal["core", "worker"], stop: threading.Event) -> None:
             return
 
 
-def start_heartbeat(process: Literal["core", "worker"]) -> threading.Event | None:
+def start_heartbeat(
+    process: Literal["core", "worker"], *, port: int | None = None, tls: bool = False
+) -> threading.Event | None:
     """Beat for this storage dir's node from a daemon thread, at start and every minute; set the event to stop it.
 
     ``None``, and no thread, when ``process`` does not speak for a node: no node joined a hub from this storage dir with
     keys of its own (``joined``), ``process`` is a worker beside a core that joined for both, or a core on the storage
     dir of a worker that joined alone. The thread checks the file before every beat, so a worker that beats alone goes
-    quiet once a core joins beside it.
+    quiet once a core joins beside it. ``port`` is the one ``process`` serves on, ``tls`` whether it serves TLS: each
+    beat then names this machine's addresses on it (``reach_addresses``); with no port a beat names none.
     """
     node = joined()
     if not _speaks_for(node, process):
         return None
     stop = threading.Event()
-    threading.Thread(target=_beat, args=(process, stop), name="hub-heartbeat", daemon=True).start()
+    threading.Thread(
+        target=_beat, args=(process, stop), kwargs={"port": port, "tls": tls}, name="hub-heartbeat", daemon=True
+    ).start()
     logger.info("Telling %s that %s is up, every %s seconds", node.hub_url, node.name, HEARTBEAT_SECONDS)
     return stop
+
+
+def reach_addresses(port: int, *, tls: bool, hub_url: str) -> list[str]:
+    """The addresses this machine can be reached at on ``port``, for the hub at ``hub_url`` to try when the one it
+    holds for this node stops answering; likeliest first, at most 8.
+
+    Each is ``http://<host>:<port>``, or ``https`` with ``tls``, in this order: ``localhost``, only when the hub itself
+    runs on this machine (its host is loopback); this machine's IPv4 address on the interface that reaches the hub's
+    host, asked of the OS with a UDP socket "connected" there, which sends nothing; the host ``default_url`` gives (this
+    machine's full name); and every other IPv4 address of an interface that is up. Loopback, unspecified and link-local
+    addresses are left out everywhere, and a host named twice is kept once. IPv4 only, since a joined node binds
+    ``0.0.0.0``. Only this machine knows these; which one the hub then uses is the hub's to decide.
+    """
+    hosts: list[str] = []
+    if is_loopback_host(urlsplit(hub_url).hostname or ""):
+        hosts.append("localhost")
+    toward_hub = _address_toward(hub_url)
+    if toward_hub is not None:
+        hosts.append(toward_hub)
+    hosts.append(_default_host())
+    hosts.extend(_interface_addresses())
+    scheme = "https" if tls else "http"
+    return [f"{scheme}://{host}:{port}" for host in list(dict.fromkeys(hosts))[:8]]
+
+
+def _reaches_others(address: str) -> bool:
+    """Whether ``address`` is an IPv4 address another machine can reach: not loopback, unspecified or link-local."""
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    return ip.version == 4 and not (ip.is_loopback or ip.is_unspecified or ip.is_link_local)
+
+
+def _address_toward(hub_url: str) -> str | None:
+    """This machine's IPv4 address on the interface that reaches ``hub_url``'s host, asked of the OS by "connecting" a
+    UDP socket there, which sends nothing; ``None`` when no route, or only a loopback or link-local one, leads there."""
+    parts = urlsplit(hub_url)
+    try:
+        hub_port = parts.port
+    except ValueError:
+        hub_port = None
+    hub_port = hub_port or (443 if parts.scheme == "https" else 80)
+    try:
+        targets = socket.getaddrinfo(parts.hostname or "", hub_port, family=socket.AF_INET, type=socket.SOCK_DGRAM)
+    except (OSError, UnicodeError):
+        return None
+    for family, _, _, _, target in targets:
+        try:
+            with socket.socket(family, socket.SOCK_DGRAM) as probe:
+                probe.connect(target)
+                address = probe.getsockname()[0]
+        except OSError:
+            continue
+        if _reaches_others(address):
+            return address
+    return None
+
+
+def _interface_addresses() -> list[str]:
+    """The IPv4 addresses other machines can reach of every interface that is up, in the OS's order."""
+    import psutil
+
+    up = {name for name, stats in psutil.net_if_stats().items() if stats.isup}
+    return [
+        entry.address
+        for name, entries in psutil.net_if_addrs().items()
+        if name in up
+        for entry in entries
+        if entry.family == socket.AF_INET and _reaches_others(entry.address)
+    ]
 
 
 def default_name() -> str:
@@ -434,16 +524,19 @@ def default_name() -> str:
     return socket.gethostname().split(".")[0]
 
 
-def default_url(port: int, *, tls: bool) -> str:
-    """The address a node gives for itself when the operator gives none: this machine's full name and ``port``.
-
-    Where the full name is only a reverse-lookup name (``*.arpa``, as macOS can answer for its own address), which no
-    desktop reaches, the host name stands in for it.
-    """
+def _default_host() -> str:
+    """This machine's full name; its host name where the full name is only a reverse-lookup name (``*.arpa``, as
+    macOS can answer for its own address), which no desktop reaches."""
     host = socket.getfqdn()
     if host.endswith(".arpa"):
         host = socket.gethostname()
-    return f"{'https' if tls else 'http'}://{host}:{port}"
+    return host
+
+
+def default_url(port: int, *, tls: bool) -> str:
+    """The address a node gives for itself when the operator gives none: this machine's full name and ``port``
+    (``_default_host``)."""
+    return f"{'https' if tls else 'http'}://{_default_host()}:{port}"
 
 
 def require_own_storage_dir(token: str | None) -> None:

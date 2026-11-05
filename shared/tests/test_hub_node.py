@@ -12,6 +12,7 @@ import stat
 import threading
 import uuid
 from http import HTTPStatus
+from types import SimpleNamespace
 
 import jwt
 import pytest
@@ -443,6 +444,122 @@ def test_a_reverse_lookup_name_is_not_an_address_a_desktop_reaches(monkeypatch):
     assert hub_node.default_url(63579, tls=False) == "http://build-7.local:63579"
 
 
+class Probe:
+    """A UDP socket as ``reach_addresses`` uses one: "connected" to the hub's address, it answers the local address the
+    OS would route from, and it sends nothing (``sent`` would hold anything written)."""
+
+    toward: dict[str, str] = {}
+    sent: list = []
+
+    def __init__(self, family, kind):
+        assert (family, kind) == (socket.AF_INET, socket.SOCK_DGRAM)
+        self.local = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def connect(self, target):
+        self.local = Probe.toward[target[0]]
+
+    def getsockname(self):
+        return (self.local, 50000)
+
+    def send(self, data):
+        Probe.sent.append(data)
+
+    sendto = send
+
+
+def interface(address: str, *, up: bool = True, family=socket.AF_INET) -> tuple:
+    return (SimpleNamespace(isup=up), [SimpleNamespace(family=family, address=address)])
+
+
+@pytest.fixture
+def machine(monkeypatch):
+    """A machine named ``build-7.example.com`` whose hub is reached from 10.0.0.5; its interfaces are set per test as
+    ``{name: interface(...)}``, and the hub's host resolves to the address its URL names."""
+    import psutil
+
+    monkeypatch.setattr(hub_node.socket, "gethostname", lambda: "build-7.example.com")
+    monkeypatch.setattr(hub_node.socket, "getfqdn", lambda: "build-7.example.com")
+    monkeypatch.setattr(hub_node.socket, "socket", Probe)
+    monkeypatch.setattr(Probe, "toward", {"192.0.2.10": "10.0.0.5", "127.0.0.1": "127.0.0.1"})
+    monkeypatch.setattr(Probe, "sent", [])
+    names = {"hub.example.test": "192.0.2.10"}
+    monkeypatch.setattr(
+        hub_node.socket,
+        "getaddrinfo",
+        lambda host, port, **kw: [(socket.AF_INET, socket.SOCK_DGRAM, 17, "", (names.get(host, host), port))],
+    )
+    interfaces: dict[str, tuple] = {}
+    monkeypatch.setattr(psutil, "net_if_stats", lambda: {name: stats for name, (stats, _) in interfaces.items()})
+    monkeypatch.setattr(psutil, "net_if_addrs", lambda: {name: addrs for name, (_, addrs) in interfaces.items()})
+    return interfaces
+
+
+def test_reach_addresses_lead_with_the_address_toward_the_hub_then_the_name_then_every_other_interface(machine):
+    machine["en0"] = interface("10.0.0.5")
+    machine["en1"] = interface("192.168.1.179")
+    machine["utun0"] = interface("172.16.0.9")
+
+    assert hub_node.reach_addresses(63610, tls=False, hub_url="http://192.0.2.10:8000") == [
+        "http://10.0.0.5:63610",
+        "http://build-7.example.com:63610",
+        "http://192.168.1.179:63610",
+        "http://172.16.0.9:63610",
+    ]
+    assert Probe.sent == []
+
+
+def test_reach_addresses_name_localhost_only_for_a_hub_on_this_machine(machine):
+    machine["en0"] = interface("10.0.0.5")
+
+    local = hub_node.reach_addresses(63610, tls=True, hub_url="https://127.0.0.1:8000")
+    remote = hub_node.reach_addresses(63610, tls=True, hub_url="https://192.0.2.10")
+
+    assert local == ["https://localhost:63610", "https://build-7.example.com:63610", "https://10.0.0.5:63610"]
+    assert remote == ["https://10.0.0.5:63610", "https://build-7.example.com:63610"]
+
+
+def test_reach_addresses_leave_out_loopback_link_local_down_and_ipv6_interfaces(machine):
+    machine["lo0"] = interface("127.0.0.1")
+    machine["en0"] = interface("169.254.7.7")
+    machine["en1"] = interface("192.168.1.179", up=False)
+    machine["en2"] = interface("fe80::1", family=socket.AF_INET6)
+    machine["en3"] = interface("10.0.0.5")
+
+    assert hub_node.reach_addresses(63610, tls=False, hub_url="http://hub.example.test") == [
+        "http://10.0.0.5:63610",
+        "http://build-7.example.com:63610",
+    ]
+
+
+def test_reach_addresses_are_at_most_eight(machine):
+    for n in range(12):
+        machine[f"en{n}"] = interface(f"10.0.{n}.5")
+
+    addresses = hub_node.reach_addresses(63610, tls=False, hub_url="http://192.0.2.10")
+
+    assert len(addresses) == 8
+    assert addresses[:2] == ["http://10.0.0.5:63610", "http://build-7.example.com:63610"]
+
+
+def test_reach_addresses_without_a_route_to_the_hub_start_with_the_name(machine, monkeypatch):
+    def unresolvable(host, port, **kw):
+        raise socket.gaierror(8, "nodename nor servname provided")
+
+    monkeypatch.setattr(hub_node.socket, "getaddrinfo", unresolvable)
+    machine["en0"] = interface("10.0.0.5")
+
+    assert hub_node.reach_addresses(63610, tls=False, hub_url="http://no-such-hub.invalid") == [
+        "http://build-7.example.com:63610",
+        "http://10.0.0.5:63610",
+    ]
+
+
 def test_a_start_with_the_token_the_node_joined_with_is_already_joined(join_hub, node_file):
     token = join_hub.mint()
     join_with(join_hub, token)
@@ -643,6 +760,48 @@ def test_a_beat_names_the_issuer_the_hub_answered_as_its_audience(node_file):
     assert hub.beats[0]["body"]["process"] == "core"
 
 
+def test_a_beat_carries_the_addresses_it_is_given_and_no_key_without_them(join_hub):
+    joined_with_keys(join_hub)
+
+    assert hub_node.heartbeat("worker", addresses=["http://10.0.0.5:63610", "http://build-7:63610"]) is True
+    assert hub_node.heartbeat("worker") is True
+
+    with_addresses, without = (beat["body"] for beat in join_hub.beats)
+    assert with_addresses == {
+        "version": get_version(),
+        "process": "worker",
+        "addresses": ["http://10.0.0.5:63610", "http://build-7:63610"],
+    }
+    assert without == {"version": get_version(), "process": "worker"}
+
+
+def test_the_beat_loop_works_out_the_addresses_on_its_port_again_before_every_beat(join_hub, monkeypatch):
+    joined_with_keys(join_hub)
+    asked: list[tuple] = []
+
+    def addresses_now(port, *, tls, hub_url):
+        asked.append((port, tls, hub_url))
+        return [f"http://10.0.{len(asked)}.5:{port}"]
+
+    monkeypatch.setattr(hub_node, "reach_addresses", addresses_now)
+
+    hub_node._beat("worker", Waits(join_hub, stop_at=2), port=63610, tls=True)
+
+    assert asked == [(63610, True, join_hub.url)] * 2
+    assert [beat["body"]["addresses"] for beat in join_hub.beats] == [
+        ["http://10.0.1.5:63610"],
+        ["http://10.0.2.5:63610"],
+    ]
+
+
+def test_the_beat_loop_names_no_addresses_without_a_port(join_hub):
+    joined_with_keys(join_hub)
+
+    hub_node._beat("worker", Waits(join_hub, stop_at=1))
+
+    assert "addresses" not in join_hub.beats[0]["body"]
+
+
 def test_every_beat_carries_a_fresh_assertion(join_hub):
     joined_with_keys(join_hub)
 
@@ -787,7 +946,7 @@ def test_a_beat_that_fails_unexpectedly_warns_once_and_the_beats_go_on(join_hub,
     joined_with_keys(join_hub)
     tries = []
 
-    def broken(process):
+    def broken(process, *, addresses=None):
         tries.append(process)
         raise RuntimeError("boom")
 

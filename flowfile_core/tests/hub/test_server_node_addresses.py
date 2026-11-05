@@ -1,6 +1,7 @@
 """A server joined to its hub reads its hub's servers before a run that names one, so a run reaches the address the hub
 has now with nobody opening the Compute page; a hub that cannot be read leaves the rows as they are, and a hub server
-that cannot be reached is named in the run's error with where to check its address."""
+that cannot be reached is named in the run's error, with why in a few words and where to check its address, while the
+transport's own text goes to the log."""
 
 import logging
 import threading
@@ -26,7 +27,11 @@ join_hub = hub_join.join_hub
 USER_ID = 47
 NODE_ID = 3
 BACKEND_ID = "worker:team"
-HUB_HINT = "Is the hub's server \"team\" running? Start it, or check its address on the hub's Compute page."
+HUB_ADVICE = "Start it, or check its address on the hub's Compute page."
+
+
+def did_not_answer(url: str) -> str:
+    return f'The hub\'s server "team" did not answer at {url} (connection refused). {HUB_ADVICE}'
 
 
 class Recorder:
@@ -150,17 +155,20 @@ def test_a_server_the_hub_moved_is_reached_at_its_new_address_with_nobody_openin
     assert recorder.requests[0][0] == "/v1/capabilities"
 
 
-def test_an_unreachable_hub_server_is_named_in_the_runs_error_with_the_hubs_compute_page(joined, hub, signed_in):
+def test_an_unreachable_hub_server_is_named_in_the_runs_error_with_the_hubs_compute_page(
+    joined, hub, signed_in, caplog
+):
     new = closed_url()
     moved(hub, new)
 
-    (row,) = run(9912).node_step_result
+    with caplog.at_level(logging.WARNING):
+        (row,) = run(9912).node_step_result
 
     assert row.compute_error == "ComputeUnavailable"
-    assert f"Could not reach the worker at {new}" in row.error
-    assert row.error.endswith(HUB_HINT)
-    assert row.error.count(HUB_HINT) == 1
-    assert "Backends page" not in row.error
+    assert row.error == did_not_answer(new)
+    assert "HTTPConnectionPool" not in row.error
+    logged = [r.getMessage() for r in caplog.records if r.name == "flowfile_core.flowfile.execution.errors"]
+    assert logged and all(m.startswith(f"Could not reach the worker at {new}: HTTPConnectionPool") for m in logged)
 
 
 def test_a_hub_that_cannot_be_read_leaves_the_row_and_the_run_uses_it(joined, hub, signed_in, caplog):
@@ -175,8 +183,7 @@ def test_a_hub_that_cannot_be_read_leaves_the_row_and_the_run_uses_it(joined, hu
         core_logger.removeHandler(caplog.handler)
 
     assert row_url() == old
-    assert f"Could not reach the worker at {old}" in row.error
-    assert row.error.endswith(HUB_HINT)
+    assert row.error == did_not_answer(old)
     warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert any(m.startswith(f"Could not read {hub.url}'s servers before the run") for m in warned), warned
 

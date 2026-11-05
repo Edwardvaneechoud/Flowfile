@@ -356,7 +356,9 @@ class WorkerBackend(_WorkerReferences):
                 timeout=_WORKER_TIMEOUT,
             )
         except requests.RequestException as e:
-            raise ComputeUnavailable(f"Could not reach the worker at {self.url}: {e}", backend_id=self.id) from e
+            raise ComputeUnavailable(
+                f"Could not reach the worker at {self.url}: {e}", backend_id=self.id, url=self.url
+            ) from e
         if response.status_code == 404:
             cause = "so it is an older release than core"
             if not settings.FLOWFILE_COMPUTE_PROTOCOL:
@@ -847,7 +849,9 @@ class WorkerBackend(_WorkerReferences):
             )
         except requests.ReadTimeout as e:
             if not waits:
-                raise ComputeUnavailable(f"Could not reach the worker at {self.url}: {e}", backend_id=self.id) from e
+                raise ComputeUnavailable(
+                    f"Could not reach the worker at {self.url}: {e}", backend_id=self.id, url=self.url
+                ) from e
             if job_id is not None:
                 self._give_up(job_id)
             raise TaskFailed(
@@ -855,7 +859,9 @@ class WorkerBackend(_WorkerReferences):
                 "poll deadline (FLOWFILE_WORKER_POLL_TIMEOUT); giving up"
             ) from e
         except requests.RequestException as e:
-            raise ComputeUnavailable(f"Could not reach the worker at {self.url}: {e}", backend_id=self.id) from e
+            raise ComputeUnavailable(
+                f"Could not reach the worker at {self.url}: {e}", backend_id=self.id, url=self.url
+            ) from e
         if response.ok or (missing_ok and response.status_code == 404):
             return response
         raise _v1_failure(response.status_code, response.content, response.reason)

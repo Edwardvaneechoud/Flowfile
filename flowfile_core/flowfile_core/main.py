@@ -98,6 +98,8 @@ if "FLOWFILE_MODE" not in os.environ:
 
 should_exit = False
 server_instance = None
+serving_port: int | None = None
+"""The port ``run`` serves on, which each heartbeat names this machine's addresses on; ``None`` until it serves."""
 _LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
 
@@ -108,8 +110,9 @@ async def shutdown_handler(app: FastAPI):
     This context manager ensures that resources, such as log files and kernel
     containers, are cleaned up properly when the application is terminated.
     A core that joined a hub for itself and its worker, with keys of its own,
-    tells the hub the node is up while it serves (``hub_node.start_heartbeat``), and
-    moves the secrets in its database to their owners on the hub (``hub_secrets.start_move``).
+    tells the hub the node is up while it serves, and at which addresses on its
+    port (``hub_node.start_heartbeat``), and moves the secrets in its database
+    to their owners on the hub (``hub_secrets.start_move``).
     """
     # Ensure scheduler and subprocess loggers are visible on stdout (Electron pipes this)
     logging.basicConfig(level=logging.INFO, format=_LOG_FORMAT)
@@ -140,7 +143,7 @@ async def shutdown_handler(app: FastAPI):
         logging.getLogger(__name__).exception("Startup log retention sweep failed")
 
     publish("app_started")
-    beating = hub_node.start_heartbeat("core")
+    beating = hub_node.start_heartbeat("core", port=serving_port)
     hub_secrets.start_move()
 
     # Only auto-start scheduler if explicitly opted in via env var
@@ -405,12 +408,13 @@ def run(host: str = None, port: int = None, sock: socket.socket | None = None):
         port: The port to bind the server to. Defaults to `SERVER_PORT` from settings.
         sock: A socket already bound for a join, which the server is handed.
     """
-    global server_instance
+    global server_instance, serving_port
 
     if host is None:
         host = SERVER_HOST
     if port is None:
         port = SERVER_PORT
+    serving_port = port
     if sock is None:
         sock = listen(host, port)
     try:

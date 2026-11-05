@@ -138,6 +138,19 @@ def test_without_flags_or_variables_there_is_nothing_to_join(monkeypatch, no_var
     assert parse(monkeypatch) == (None, None, None, None, None)
 
 
+def test_the_health_answer_names_the_node_once_this_storage_dir_joined_a_hub_and_nothing_before(
+    monkeypatch, no_variables, node_file
+):
+    monkeypatch.setattr(main, "JOIN_TOKEN", None)
+    with TestClient(main.app) as client:
+        before = client.get("/health/status").json()
+        joined_as(node_file, "team-1")
+        after = client.get("/health/status").json()
+
+    assert "node" not in before
+    assert after == {**before, "node": "team-1"}
+
+
 def test_a_core_joins_for_itself_and_its_worker_and_a_restart_makes_no_request(monkeypatch, join_hub, node_file):
     started_with(monkeypatch, join_hub.url, join_hub.mint())
 

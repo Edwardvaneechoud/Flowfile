@@ -33,17 +33,21 @@ from shared.storage_config import storage
 
 should_exit = False
 server_instance = None
+serving_port: int | None = None
+"""The port ``run`` serves on, which each heartbeat names this machine's addresses on; ``None`` until it serves."""
 
 
 @asynccontextmanager
 async def shutdown_handler(app: FastAPI):
     """Handle application startup and shutdown.
 
-    A worker that joined a hub alone, with keys of its own, tells the hub the node is up while it serves; beside a core
-    that joined for both, the core does (``hub_node.start_heartbeat``).
+    A worker that joined a hub alone, with keys of its own, tells the hub the node is up while it serves, and at which
+    addresses on its port; beside a core that joined for both, the core does (``hub_node.start_heartbeat``).
     """
     logger.info("Starting application...")
-    beating = hub_node.start_heartbeat("worker")
+    beating = hub_node.start_heartbeat(
+        "worker", port=serving_port, tls=bool(os.environ.get("FLOWFILE_WORKER_TLS_CERT"))
+    )
     task_pool.prewarm()
     try:
         yield
@@ -95,10 +99,17 @@ async def request_validation_without_input(request: Request, exc: RequestValidat
 async def health() -> dict[str, str]:
     """Say the worker is up and which Flowfile release it runs, to any caller, with or without a token.
 
-    Nothing more: the host, Python, Polars and the operations are in ``/v1/capabilities``, behind a token.
-    Core never calls this route, so it is not part of the worker contract.
+    A worker whose storage dir joined a hub also says the name it joined under, as ``node``: that name is what the hub
+    shows on its Compute page, and without it the hub could not tell this server from another machine at the same
+    private address on another network when it looks for a server that moved. Nothing more: the host, Python, Polars
+    and the operations are in ``/v1/capabilities``, behind a token. Core never calls this route, so it is not part of
+    the worker contract.
     """
-    return {"status": "ok", "version": get_version()}
+    answer = {"status": "ok", "version": get_version()}
+    node = hub_node.read()
+    if node is not None:
+        answer["node"] = node.name
+    return answer
 
 
 def _supervising_shell(request: Request) -> bool:
@@ -188,12 +199,13 @@ def run(host: str = None, port: int = None):
     one the hub refuses with code 2 before it serves.
     Serves TLS when ``FLOWFILE_WORKER_TLS_CERT`` and ``FLOWFILE_WORKER_TLS_KEY`` name a certificate and its key.
     """
-    global server_instance
+    global server_instance, serving_port
 
     if host is None:
         host = SERVICE_HOST
     if port is None:
         port = SERVICE_PORT
+    serving_port = port
 
     sock = None
     if JOIN_TOKEN:
