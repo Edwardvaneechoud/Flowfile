@@ -59,3 +59,15 @@ export function hubPresence(rows: { source?: string | null; offered?: boolean }[
 export function withoutHubRows<T extends { source?: string | null }>(rows: T[]): T[] {
   return rows.filter((row) => !isHubRow(row));
 }
+
+/** The New menu makes this machine's catalogs, so it hides where only the hub's show or a hub catalog is selected. */
+export const offersNew = (
+  presence: HubPresence,
+  selected: { source?: string | null } | null,
+): boolean => presence !== "only" && !(selected && isHubRow(selected));
+
+/** A hub row's "Shared" title: a person by name, never a team's or the organisation's raw account id. */
+export function hubSharedTitle(access: { shared_by?: string | null } | null | undefined): string {
+  const by = access?.shared_by;
+  return by && !by.includes(":") ? `Shared by ${by}` : "Shared with you";
+}

@@ -14,9 +14,10 @@ vi.mock("../../composables/useResourceSharing", () => ({
     isMultiUser: false,
     isOwned: () => false,
     canManage: () => false,
-    isShared: () => false,
-    sharedLabel: () => "",
-    sharedTitle: () => "",
+    isShared: (r: { access?: { is_owner: boolean } | null }) => r.access?.is_owner === false,
+    sharedLabel: () => "Shared · use",
+    sharedTitle: (r: { access?: { shared_by?: string | null } | null }) =>
+      r.access?.shared_by ? `Shared by ${r.access.shared_by}` : "Shared with you",
   }),
 }));
 
@@ -177,5 +178,35 @@ describe("CatalogTreeNode", () => {
     expect(sectionCounts()).toBe(0);
     await collapse();
     expect(rowCounts()).toEqual(["1"]);
+  });
+
+  it("names who shared a hub catalog only when a person did, never a team's raw account", async () => {
+    const sharedBy = (by: string) => ({ is_owner: false, access_level: "use", shared_by: by });
+    await mount({ ...hub, access: sharedBy("team:sales") } as NamespaceTree, "only");
+    expect(host.querySelector(".resource-badge")?.getAttribute("title")).toBe("Shared with you");
+    app?.unmount();
+    host.remove();
+
+    await mount({ ...hub, access: sharedBy("ada") } as NamespaceTree, "only");
+    expect(host.querySelector(".resource-badge")?.getAttribute("title")).toBe("Shared by ada");
+  });
+
+  it("keeps a local catalog's shared title as before", async () => {
+    const access = { is_owner: false, access_level: "use", shared_by: "team:sales" };
+    await mount({ ...local, access } as NamespaceTree);
+
+    expect(host.querySelector(".resource-badge")?.getAttribute("title")).toBe(
+      "Shared by team:sales",
+    );
+  });
+
+  it("lets a row's name keep its width only where the tree shows hub rows", async () => {
+    await mount(hub, "only");
+    expect(host.querySelector(".tree-row")?.classList.contains("keeps-name")).toBe(true);
+    app?.unmount();
+    host.remove();
+
+    await mount(local);
+    expect(host.querySelector(".tree-row")?.classList.contains("keeps-name")).toBe(false);
   });
 });

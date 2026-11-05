@@ -77,7 +77,13 @@
           >
             <i class="fa-solid fa-angles-left"></i>
           </button>
-          <el-dropdown trigger="click" placement="bottom-end" class="sidebar-new-dropdown">
+          <el-dropdown
+            v-if="showsNew"
+            trigger="click"
+            placement="bottom-end"
+            class="sidebar-new-dropdown"
+            data-testid="catalog-new"
+          >
             <button class="btn btn-primary btn-sm sidebar-new-btn">
               <i class="fa-solid fa-plus"></i>
               New
@@ -638,6 +644,7 @@ import {
   byPlace,
   hubPresence as hubPresenceOf,
   isOffered,
+  offersNew,
   showsPlaces,
   withoutHubRows,
 } from "./hubRows";
@@ -753,6 +760,7 @@ const treeGroups = computed(() =>
 );
 const hubPresence = computed(() => hubPresenceOf(catalogStore.tree));
 const hasHubRows = computed(() => hubPresence.value !== "none");
+const showsNew = computed(() => offersNew(hubPresence.value, catalogStore.selectedNamespace));
 // Why the tree is empty though catalogs were listed: none offered here, or all out of this Flowfile's reach.
 const treeEmptyNote = computed(() => {
   if (treeGroups.value.length > 0 || catalogStore.tree.length === 0) return null;

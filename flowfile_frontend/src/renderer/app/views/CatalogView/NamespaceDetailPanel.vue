@@ -10,7 +10,10 @@
           <i class="fa-solid fa-box-archive header-icon"></i>
           <h2>{{ namespace.name }}</h2>
           <HubBadge v-if="isHub" kind="namespace" />
-          <SharedBadge :access="namespace.access" />
+          <SharedBadge
+            :access="namespace.access"
+            :title="isHub ? hubSharedTitle(namespace.access) : undefined"
+          />
         </div>
         <p v-if="namespace.description" class="description">{{ namespace.description }}</p>
         <p v-if="isHub" class="description" data-testid="hub-managed-note">
@@ -123,7 +126,7 @@ import { useResourceSharing } from "../../composables/useResourceSharing";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import EditCatalogStorageModal from "./EditCatalogStorageModal.vue";
 import HubBadge from "./HubBadge.vue";
-import { HUB_MANAGED_NOTE, isHubRow } from "./hubRows";
+import { HUB_MANAGED_NOTE, hubSharedTitle, isHubRow } from "./hubRows";
 import { deleteBlockedReason, storageLockedReason } from "./catalogStorageEdit";
 import { fetchCloudStorageConnectionsInterfaces } from "../CloudConnectionView/api";
 import {

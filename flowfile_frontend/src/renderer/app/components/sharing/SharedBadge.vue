@@ -1,5 +1,5 @@
 <template>
-  <span v-if="isShared(resource)" class="resource-badge" :title="sharedTitle(resource)">
+  <span v-if="isShared(resource)" class="resource-badge" :title="title ?? sharedTitle(resource)">
     <i class="fa-solid fa-share-nodes"></i>
     {{ sharedLabel(resource) }}
   </span>
@@ -10,7 +10,7 @@ import { computed } from "vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import type { AccessInfo } from "../../types/sharing.types";
 
-const props = defineProps<{ access?: AccessInfo | null }>();
+const props = defineProps<{ access?: AccessInfo | null; title?: string }>();
 
 const { isShared, sharedLabel, sharedTitle } = useResourceSharing();
 const resource = computed(() => ({ access: props.access }));

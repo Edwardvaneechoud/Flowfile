@@ -6,6 +6,7 @@
         expanded,
         selected: node.level === 0 && node.id === selectedNamespaceId,
         unavailable: reason !== null,
+        'keeps-name': hubPresence !== 'none',
       }"
       :title="reason ?? undefined"
       @click="onRowClick"
@@ -21,7 +22,7 @@
       ></i>
       <span class="ns-name">{{ node.name }}</span>
       <HubBadge v-if="isHub && node.level === 0 && hubPresence === 'beside'" kind="namespace" />
-      <SharedBadge :access="node.access" />
+      <SharedBadge :access="node.access" :title="isHub ? hubSharedTitle(node.access) : undefined" />
       <CatalogStorageBadge
         v-if="node.level === 0 && !isHub"
         :storage-uri="node.storage_uri"
@@ -367,7 +368,7 @@ import {
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import CatalogStorageBadge from "./CatalogStorageBadge.vue";
 import HubBadge from "./HubBadge.vue";
-import { isHubRow, unavailableReason, type HubPresence } from "./hubRows";
+import { hubSharedTitle, isHubRow, unavailableReason, type HubPresence } from "./hubRows";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 
 const { isMultiUser, isOwned, canManage } = useResourceSharing();
@@ -634,6 +635,17 @@ const totalFlows = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   flex: 1;
+}
+
+/* Beside a hub the badges give way so the name stays readable. */
+.tree-row.keeps-name .ns-name {
+  flex: 1 1 auto;
+  min-width: 40%;
+}
+
+.tree-row.keeps-name :deep(.resource-badge) {
+  min-width: 0;
+  overflow: hidden;
 }
 
 .ns-count {

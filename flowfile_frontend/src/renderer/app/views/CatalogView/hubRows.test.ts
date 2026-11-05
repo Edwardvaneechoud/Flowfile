@@ -8,8 +8,10 @@ import {
   HUB_TABLE_TITLE,
   byPlace,
   hubPresence,
+  hubSharedTitle,
   isHubRow,
   isOffered,
+  offersNew,
   showsPlaces,
   unavailableReason,
   withoutHubRows,
@@ -111,5 +113,36 @@ describe("place", () => {
     expect(unavailableReason({ unavailable_reason: "on the hub's disk" })).toBe(
       "on the hub's disk",
     );
+  });
+});
+
+describe("offersNew", () => {
+  it("offers New where this machine's catalogs show and none of the hub's is selected", () => {
+    expect(offersNew("none", null)).toBe(true);
+    expect(offersNew("none", { source: "local" })).toBe(true);
+    expect(offersNew("beside", null)).toBe(true);
+    expect(offersNew("beside", { source: "local" })).toBe(true);
+  });
+
+  it("hides New on a server whose catalogs are all the hub's and on a selected hub catalog", () => {
+    expect(offersNew("only", null)).toBe(false);
+    expect(offersNew("only", { source: "hub" })).toBe(false);
+    expect(offersNew("beside", { source: "hub" })).toBe(false);
+  });
+});
+
+describe("hubSharedTitle", () => {
+  it("names a person who shared the row", () => {
+    expect(hubSharedTitle({ shared_by: "ada" })).toBe("Shared by ada");
+  });
+
+  it("never shows a team's or the organisation's raw account", () => {
+    expect(hubSharedTitle({ shared_by: "team:sales" })).toBe("Shared with you");
+    expect(hubSharedTitle({ shared_by: "org:organisation" })).toBe("Shared with you");
+  });
+
+  it("says shared with you when the granter is not known", () => {
+    expect(hubSharedTitle({ shared_by: null })).toBe("Shared with you");
+    expect(hubSharedTitle(null)).toBe("Shared with you");
   });
 });

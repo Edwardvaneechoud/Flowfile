@@ -25,7 +25,10 @@
           <span v-if="table.scd2" class="scd2-badge" title="Slowly changing dimension (type 2)"
             >SCD2</span
           >
-          <SharedBadge :access="table.access" />
+          <SharedBadge
+            :access="table.access"
+            :title="isHub ? hubSharedTitle(table.access) : undefined"
+          />
         </div>
         <p v-if="table.description" class="description">{{ table.description }}</p>
       </div>
@@ -532,7 +535,7 @@ import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import HubBadge from "./HubBadge.vue";
-import { HUB_PREVIEW_NOTE, isHubRow } from "./hubRows";
+import { HUB_PREVIEW_NOTE, hubSharedTitle, isHubRow } from "./hubRows";
 
 const showReadByModal = ref(false);
 const showShareDialog = ref(false);
