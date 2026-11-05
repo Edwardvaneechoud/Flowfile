@@ -68,8 +68,6 @@
         <dl v-if="!state.joined" class="hub-card__facts">
           <dt>Account</dt>
           <dd>{{ state.account ?? "—" }}</dd>
-          <dt>Organisation</dt>
-          <dd>{{ state.orgName ?? "—" }}</dd>
           <dt>Hub version</dt>
           <dd>{{ state.hubVersion ?? "—" }}</dd>
           <dt>Session expires</dt>

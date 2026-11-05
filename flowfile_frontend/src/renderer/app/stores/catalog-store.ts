@@ -372,7 +372,7 @@ export const useCatalogStore = defineStore("catalog", {
 
     async toggleTableFavorite(tableId: number) {
       const table = this.findTableInTree(tableId);
-      if (!table || isHubRow(table)) return;
+      if (!table) return;
       try {
         if (table.is_favorite) {
           await CatalogApi.removeTableFavorite(tableId);

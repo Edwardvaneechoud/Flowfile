@@ -9,22 +9,10 @@ import {
   executionLocationOptions,
   nodeExecutionLocationLabel,
   nodeExecutionLocationOptions,
-  unreachableNote,
   verdictSummary,
-  type BackendRow,
 } from "./executionLocation";
 
-const row = (id: string, overrides: Partial<BackendRow> = {}): BackendRow => ({
-  id,
-  verdict: null,
-  source: "local",
-  ...overrides,
-});
-
-const rows = (backendIds: string[]) => backendIds.map((id) => row(id));
-
-const hubRow = (overrides: Partial<BackendRow> = {}) =>
-  row("worker:team", { source: "hub", ...overrides });
+const rows = (backendIds: string[]) => backendIds.map((id) => ({ id, verdict: null }));
 
 const keys = (current: string, backendIds: string[]) =>
   executionLocationOptions(current, rows(backendIds)).map((option) => option.key);
@@ -94,7 +82,7 @@ describe("executionLocationOptions", () => {
 
 describe("the verdict beside a configured backend's id", () => {
   it.each(VERDICTS)("labels a %s backend in the dialog and the picker", (_, given, summary) => {
-    const listed = [row("worker:team", { verdict: given })];
+    const listed = [{ id: "worker:team", verdict: given }];
 
     expect(executionLocationOptions("auto", listed)).toEqual([
       { key: "auto", label: "Auto (default worker)" },
@@ -108,7 +96,7 @@ describe("the verdict beside a configured backend's id", () => {
   });
 
   it("labels a saved id that is no longer configured by its id alone", () => {
-    const listed = [row("worker:team", { verdict: verdict({}) })];
+    const listed = [{ id: "worker:team", verdict: verdict({}) }];
 
     for (const options of [
       executionLocationOptions("worker:gone", listed),
@@ -116,51 +104,6 @@ describe("the verdict beside a configured backend's id", () => {
     ]) {
       expect(options[options.length - 1]).toEqual({ key: "worker:gone", label: "worker:gone" });
     }
-  });
-});
-
-describe("a hub node this server cannot reach, in the picker", () => {
-  const unreachable = verdict({
-    ok: false,
-    backend: null,
-    offered: null,
-    error: "Could not reach the worker at https://team-worker.example.test:63579: no route",
-    error_kind: "ComputeUnavailable",
-  });
-  const refused = verdict({
-    ok: false,
-    offered: null,
-    error:
-      'Backend "worker:team" does not match core (polars_version: core 1.43.2, backend 1.39.3)',
-    error_kind: "VersionMismatch",
-  });
-  const label = (listed: BackendRow[]) =>
-    executionLocationOptions("auto", listed)[1].label.replace("worker:team · ", "");
-
-  it("notes why the node is unreachable from its verdict, and nothing for any other verdict", () => {
-    expect(unreachableNote(hubRow({ verdict: unreachable }))).toBe(unreachable.error);
-    expect(unreachableNote(hubRow({ verdict: refused }))).toBe("");
-    expect(unreachableNote(hubRow({ verdict: verdict({}) }))).toBe("");
-    expect(unreachableNote(hubRow())).toBe("");
-    expect(unreachableNote(undefined)).toBe("");
-  });
-
-  it("gives a non-administrator the verdict's word, which names no address", () => {
-    const hidden = { ...unreachable, error: "unreachable" };
-    expect(unreachableNote(hubRow({ verdict: hidden }))).toBe("unreachable");
-  });
-
-  it("notes nothing under a worker added here, whose verdict shows as a handshake", () => {
-    expect(unreachableNote(row("worker:own", { verdict: unreachable }))).toBe("");
-  });
-
-  it("labels the node by its verdict's word, as any worker", () => {
-    expect(label([hubRow()])).toBe("Not checked");
-    expect(label([hubRow({ verdict: unreachable })])).toBe("Handshake failed");
-    expect(label([hubRow({ verdict: verdict({}) })])).toBe("Compatible");
-    expect(nodeExecutionLocationOptions("auto", [hubRow({ verdict: refused })])[2].label).toBe(
-      "worker:team · Not accepted",
-    );
   });
 });
 

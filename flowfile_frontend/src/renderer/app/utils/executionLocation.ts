@@ -3,9 +3,7 @@
 import type { ComputeBackend, HandshakeVerdict } from "../api/computeBackends.api";
 import type { ExecutionLocation } from "../types";
 
-export type BackendRow = Pick<ComputeBackend, "id" | "verdict" | "source">;
-
-const UNREACHABLE = "ComputeUnavailable";
+export type BackendRow = Pick<ComputeBackend, "id" | "verdict">;
 
 export interface ExecutionLocationOption {
   key: ExecutionLocation;
@@ -37,25 +35,18 @@ export function verdictSummary(verdict: HandshakeVerdict | null): string {
   return verdict.differences.length ? "Accepted with differences" : "Compatible";
 }
 
-/**
- * Why a hub node could not be reached from this server, as its verdict says it, for the line under a picker; "" for
- * any other row or verdict. A non-administrator's verdict says "unreachable", the address kept from them.
- */
-export function unreachableNote(row: BackendRow | undefined): string {
-  if (row?.source !== "hub" || row.verdict?.error_kind !== UNREACHABLE) return "";
-  return row.verdict.error ?? "";
-}
-
 function withVerdicts(
   keys: ExecutionLocation[],
   rows: BackendRow[],
   label: (key: ExecutionLocation) => string,
 ): ExecutionLocationOption[] {
-  const byId = new Map(rows.map((row) => [row.id, row]));
-  return keys.map((key) => {
-    const row = byId.get(key);
-    return { key, label: row ? `${label(key)} · ${verdictSummary(row.verdict)}` : label(key) };
-  });
+  const verdicts = new Map(rows.map((row) => [row.id, row.verdict]));
+  return keys.map((key) => ({
+    key,
+    label: verdicts.has(key)
+      ? `${label(key)} · ${verdictSummary(verdicts.get(key) ?? null)}`
+      : label(key),
+  }));
 }
 
 /**

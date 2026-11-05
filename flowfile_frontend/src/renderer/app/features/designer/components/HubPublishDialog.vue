@@ -10,10 +10,13 @@
       <p v-if="loading" class="hub-dialog-status">Loading…</p>
 
       <template v-else-if="result">
-        <p class="hub-dialog-success" data-testid="hub-published">
-          <span class="material-icons">check_circle</span>
-          {{ publishedLabel(result.version) }}
-        </p>
+        <el-alert
+          type="success"
+          :closable="false"
+          show-icon
+          :title="publishedLabel(result.version)"
+          data-testid="hub-published"
+        />
         <p class="hub-dialog-hint">
           {{ result.name }} is on the hub as version {{ result.version }}. The flow was saved with
           that version, so your next publish builds on it.
@@ -21,10 +24,13 @@
       </template>
 
       <template v-else-if="conflict">
-        <p class="hub-dialog-conflict" data-testid="hub-conflict">
-          <span class="material-icons">warning</span>
-          {{ conflictLabel(conflict.base, conflict.current) }}
-        </p>
+        <el-alert
+          type="warning"
+          :closable="false"
+          show-icon
+          :title="conflictLabel(conflict.base, conflict.current)"
+          data-testid="hub-conflict"
+        />
         <div class="hub-version-compare">
           <div class="hub-version-card">
             <h4>Your base</h4>
@@ -91,15 +97,25 @@
             data-testid="hub-publish-message"
           />
         </div>
-        <ul v-if="warnings.length" class="hub-dialog-warnings" data-testid="hub-publish-warnings">
-          <li v-for="line in warnings" :key="line">
-            <span class="material-icons">warning</span>
-            <span>{{ line }}</span>
-          </li>
-        </ul>
+        <el-alert
+          v-if="warnings.length"
+          type="warning"
+          :closable="false"
+          show-icon
+          data-testid="hub-publish-warnings"
+        >
+          <p v-for="line in warnings" :key="line" class="hub-dialog-warning">{{ line }}</p>
+        </el-alert>
       </template>
 
-      <p v-if="error" class="hub-dialog-error" data-testid="hub-publish-error">{{ error }}</p>
+      <el-alert
+        v-if="error"
+        type="error"
+        :closable="false"
+        show-icon
+        :title="error"
+        data-testid="hub-publish-error"
+      />
     </div>
 
     <template #footer>
@@ -315,60 +331,8 @@ async function openInstead() {
   margin-top: var(--spacing-2);
 }
 
-.hub-dialog-success,
-.hub-dialog-conflict,
-.hub-dialog-error {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--spacing-2);
+.hub-dialog-warning {
   margin: 0;
-  padding: var(--spacing-3);
-  border-radius: var(--border-radius-md);
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-normal);
-}
-
-.hub-dialog-success {
-  background: var(--color-success-light);
-  color: var(--color-success-dark);
-}
-
-.hub-dialog-conflict {
-  background: var(--color-warning-light);
-  color: var(--color-warning-dark);
-}
-
-.hub-dialog-error {
-  margin-top: var(--spacing-3);
-  background: var(--color-danger-light);
-  color: var(--color-danger-dark);
-}
-
-.hub-dialog-success .material-icons,
-.hub-dialog-conflict .material-icons,
-.hub-dialog-warnings .material-icons {
-  font-size: 18px;
-  flex-shrink: 0;
-}
-
-.hub-dialog-warnings {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-1);
-}
-
-.hub-dialog-warnings li {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--spacing-2);
-  padding: var(--spacing-2) var(--spacing-3);
-  border-radius: var(--border-radius-md);
-  background: var(--color-warning-light);
-  color: var(--color-warning-dark);
-  font-size: var(--font-size-sm);
   overflow-wrap: anywhere;
 }
 

@@ -123,15 +123,8 @@ describe("HubPanel", () => {
     const facts = Array.from(host.querySelectorAll(".hub-card__facts dt, .hub-card__facts dd")).map(
       text,
     );
-    expect(facts.slice(0, 6)).toEqual([
-      "Account",
-      "Ana Lima",
-      "Organisation",
-      "Acme Data",
-      "Hub version",
-      "0.3.0",
-    ]);
-    expect(facts[6]).toBe("Session expires");
+    expect(facts.slice(0, 4)).toEqual(["Account", "Ana Lima", "Hub version", "0.3.0"]);
+    expect(facts[4]).toBe("Session expires");
     expect(find("hub-disconnect")).not.toBeNull();
     expect(find("hub-url")).toBeNull();
   });

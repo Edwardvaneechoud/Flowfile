@@ -175,7 +175,14 @@
                 <div v-if="version.message" class="flow-message">{{ version.message }}</div>
               </li>
             </ul>
-            <p v-if="hubError" class="hub-error" data-testid="hub-open-error">{{ hubError }}</p>
+            <el-alert
+              v-if="hubError"
+              type="error"
+              :closable="false"
+              show-icon
+              :title="hubError"
+              data-testid="hub-open-error"
+            />
             <div class="catalog-actions">
               <el-button :disabled="hubBusy" @click="isVisible = false">Cancel</el-button>
               <el-button
@@ -648,16 +655,6 @@ defineExpose({
   font-size: var(--font-size-xs, 11px);
   color: var(--color-text-secondary);
   overflow-wrap: anywhere;
-}
-
-.hub-error {
-  margin: 0;
-  padding: var(--spacing-3);
-  border-radius: var(--border-radius-md);
-  background: var(--color-danger-light);
-  color: var(--color-danger-dark);
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-normal);
 }
 
 .catalog-actions {

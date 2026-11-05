@@ -116,15 +116,8 @@
             >
               {{ placementNote.detail }}
             </p>
-            <p
-              v-if="unreachableNote(selectedBackend)"
-              class="placement-note placement-note--unreachable"
-              data-testid="node-backend-unreachable"
-            >
-              {{ unreachableNote(selectedBackend) }}
-            </p>
             <BackendHandshakeStatus
-              v-else-if="selectedBackend?.verdict"
+              v-if="selectedBackend?.verdict"
               :key="selectedBackend.id"
               :verdict="selectedBackend.verdict"
               compact
@@ -346,11 +339,7 @@ import { nodePlacementNote } from "../../../utils/placement";
 import { InfoFilled, DCaret, Delete } from "@element-plus/icons-vue";
 import AiInlineActions from "../../../features/ai/AiInlineActions.vue";
 import { listComputeBackends } from "../../../api/computeBackends.api";
-import {
-  nodeExecutionLocationOptions,
-  unreachableNote,
-  type BackendRow,
-} from "../../../utils/executionLocation";
+import { nodeExecutionLocationOptions, type BackendRow } from "../../../utils/executionLocation";
 import BackendHandshakeStatus from "../../settings/BackendHandshakeStatus.vue";
 
 const nodeStore = useNodeStore();
@@ -829,8 +818,7 @@ const loadFieldsFromSchema = async () => {
   color: var(--el-text-color-regular);
 }
 
-.placement-note--refused,
-.placement-note--unreachable {
+.placement-note--refused {
   border-left-color: var(--el-color-danger);
 }
 

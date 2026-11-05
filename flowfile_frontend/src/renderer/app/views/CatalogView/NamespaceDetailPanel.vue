@@ -150,7 +150,7 @@ const storageLocked = computed(() => storageLockedReason(props.namespace));
 const deleteBlocked = computed(() => deleteBlockedReason(props.namespace));
 
 async function deleteCatalog() {
-  if (isHub.value || deleteBlocked.value) return;
+  if (deleteBlocked.value) return;
   const catalog = props.namespace;
   const schemas = catalog.children.map((s) => `"${s.name}"`).join(", ");
   const withSchemas = schemas

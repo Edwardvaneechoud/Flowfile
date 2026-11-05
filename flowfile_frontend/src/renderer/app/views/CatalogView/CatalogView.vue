@@ -130,8 +130,12 @@
             <p v-if="treeSearchFilter.query && searchMatchCount === 0" class="search-empty">
               No matches for "{{ searchQuery.trim() }}".
               <template v-if="hiddenUnavailableMatches > 0">
-                Tick "Show unavailable" — the only matches are missing or out of this Flowfile's
-                reach.
+                Tick "Show unavailable" — the only matches are
+                {{
+                  hasHubRows
+                    ? "missing or out of this Flowfile's reach"
+                    : "items whose files are missing"
+                }}.
               </template>
             </p>
             <template v-for="group in treeGroups" :key="group.place ?? ''">
@@ -740,6 +744,7 @@ const searchMatchCount = computed(() =>
 const treeGroups = computed(() =>
   byPlace(shownNamespaces(catalogStore.tree, treeSearchFilter.value)),
 );
+const hasHubRows = computed(() => catalogStore.tree.some(isHubRow));
 // Why the tree is empty though catalogs were listed: none offered here, or all out of this Flowfile's reach.
 const treeEmptyNote = computed(() => {
   if (treeGroups.value.length > 0 || catalogStore.tree.length === 0) return null;
@@ -1057,7 +1062,6 @@ function closeVizViewer() {
 }
 
 function onTableContextMenu(payload: { table: CatalogTable; x: number; y: number }) {
-  if (isHubRow(payload.table)) return;
   tableMenu.value = payload;
 }
 
@@ -1389,8 +1393,6 @@ async function confirmDeleteWithFile(opts: {
 }
 
 async function handleDeleteTable(tableId: number) {
-  const table = catalogStore.findTableInTree(tableId);
-  if (table && isHubRow(table)) return;
   const result = await confirmDeleteWithFile({
     title: "Delete Table",
     question: "Delete this table from the catalog?",

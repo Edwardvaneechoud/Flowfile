@@ -188,3 +188,22 @@
 .toggle-button.is-active {
   background-color: var(--color-accent-hover);
 }
+
+/* The compact buttons of the designer's header: the right cluster's and the hub identity. */
+.header-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-light);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  box-shadow: var(--shadow-xs);
+  white-space: nowrap;
+}

@@ -2,7 +2,7 @@
   <button
     v-if="identity"
     type="button"
-    class="hub-identity"
+    class="header-btn hub-identity"
     data-testid="hub-identity"
     :title="title"
     :aria-label="title"
@@ -35,22 +35,8 @@ const openHub = () => {
 
 <style scoped>
 .hub-identity {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
   max-width: 320px;
-  height: 28px;
-  padding: 0 10px;
-  background-color: var(--color-background-primary);
-  border: 1px solid var(--color-border-light);
-  border-radius: 6px;
-  box-shadow: var(--shadow-xs);
-  color: var(--color-text-primary);
   font-family: var(--font-family-base);
-  font-size: 12px;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: all var(--transition-fast);
 }
 
 .hub-identity:hover {

@@ -1,5 +1,4 @@
-// Guards which catalog rows count as the hub's, the filter local actions use, and the
-// facts a hub table's panel shows without a preview.
+// Guards which catalog rows count as the hub's and the filter local actions use.
 
 import { describe, it, expect } from "vitest";
 import {
@@ -8,28 +7,12 @@ import {
   HUB_PREVIEW_NOTE,
   HUB_TABLE_TITLE,
   byPlace,
-  hubTableFacts,
   isHubRow,
   isOffered,
   showsPlaces,
   unavailableReason,
   withoutHubRows,
 } from "./hubRows";
-import type { CatalogTable } from "../../types";
-
-const table = (over: Partial<CatalogTable> = {}) =>
-  ({
-    id: -7,
-    name: "orders",
-    row_count: 1200,
-    column_count: 4,
-    size_bytes: 2048,
-    is_remote_storage: false,
-    source: "hub",
-    hub_id: 7,
-    hub_namespace_id: 3,
-    ...over,
-  }) as CatalogTable;
 
 describe("isHubRow", () => {
   it("is true only for rows the hub listed", () => {
@@ -54,24 +37,6 @@ describe("withoutHubRows", () => {
   it("leaves a local list as it is", () => {
     const rows = [{ id: 1, source: "local" as const }, { id: 2 }];
     expect(withoutHubRows(rows)).toEqual(rows);
-  });
-});
-
-describe("hubTableFacts", () => {
-  it("lists rows, columns, size and storage from the listing", () => {
-    expect(hubTableFacts(table())).toEqual([
-      { label: "Rows", value: (1200).toLocaleString() },
-      { label: "Columns", value: "4" },
-      { label: "Size", value: "2.0 KB" },
-      { label: "Storage", value: "Hub filesystem" },
-    ]);
-  });
-
-  it("says object storage and shows -- for what the hub does not know", () => {
-    const facts = hubTableFacts(
-      table({ row_count: null, column_count: null, size_bytes: null, is_remote_storage: true }),
-    );
-    expect(facts.map((f) => f.value)).toEqual(["--", "--", "--", "Object storage"]);
   });
 });
 

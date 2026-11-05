@@ -120,20 +120,7 @@
     </div>
 
     <!-- Metadata Grid -->
-    <div v-if="isHub" class="meta-grid" data-testid="hub-table-facts">
-      <div v-for="fact in hubFacts" :key="fact.label" class="meta-card">
-        <span class="meta-label">{{ fact.label }}</span>
-        <span class="meta-value">{{ fact.value }}</span>
-      </div>
-      <div v-if="hubProducer" class="meta-card">
-        <span class="meta-label">Produced by</span>
-        <span class="meta-value meta-static" :title="hubProducer">
-          <i class="fa-solid fa-diagram-project"></i>
-          <span class="meta-link-text">{{ hubProducer }}</span>
-        </span>
-      </div>
-    </div>
-    <div v-else class="meta-grid">
+    <div class="meta-grid">
       <div class="meta-card">
         <span class="meta-label">Rows</span>
         <span class="meta-value">{{ formatNumber(table.row_count) }}</span>
@@ -183,7 +170,7 @@
           </div>
         </el-popover>
       </div>
-      <div v-if="table.table_type !== 'virtual'" class="meta-card">
+      <div v-if="!isHub && table.table_type !== 'virtual'" class="meta-card">
         <span class="meta-label">Change tracking</span>
         <el-popover
           v-if="table.cdc_enabled"
@@ -224,8 +211,15 @@
         <span class="meta-label">Created</span>
         <span class="meta-value">{{ formatDate(table.created_at) }}</span>
       </div>
+      <div v-if="isHub && hubProducer" class="meta-card" data-testid="hub-table-producer">
+        <span class="meta-label">Produced by</span>
+        <span class="meta-value meta-static" :title="hubProducer">
+          <i class="fa-solid fa-diagram-project"></i>
+          <span class="meta-link-text">{{ hubProducer }}</span>
+        </span>
+      </div>
       <div
-        v-if="
+        v-else-if="
           table.table_type === 'virtual' &&
           table.producer_registration_id &&
           table.producer_registration_name
@@ -538,7 +532,7 @@ import ShareDialog from "../../components/sharing/ShareDialog.vue";
 import SharedBadge from "../../components/sharing/SharedBadge.vue";
 import { useResourceSharing } from "../../composables/useResourceSharing";
 import HubBadge from "./HubBadge.vue";
-import { HUB_PREVIEW_NOTE, hubTableFacts, isHubRow } from "./hubRows";
+import { HUB_PREVIEW_NOTE, isHubRow } from "./hubRows";
 
 const showReadByModal = ref(false);
 const showShareDialog = ref(false);
@@ -571,7 +565,6 @@ const emit = defineEmits([
 ]);
 
 const isHub = computed(() => isHubRow(props.table));
-const hubFacts = computed(() => hubTableFacts(props.table));
 // The flow ids are the hub's, so the producer is shown by name and links nowhere.
 const hubProducer = computed(
   () => props.table.producer_registration_name ?? props.table.source_registration_name ?? null,

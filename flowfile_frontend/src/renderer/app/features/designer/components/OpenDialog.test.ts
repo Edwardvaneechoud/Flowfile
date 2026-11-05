@@ -67,6 +67,7 @@ const element = (tag: string): FunctionalComponent => {
 const stubs: Record<string, FunctionalComponent> = {
   "el-dialog": (_, { slots }) => h("div", [slots.default?.(), slots.footer?.()]),
   "el-button": element("button"),
+  "el-alert": (_, { attrs }) => h("div", attrs, String(attrs.title ?? "")),
 };
 
 const none: HubConnection = {
