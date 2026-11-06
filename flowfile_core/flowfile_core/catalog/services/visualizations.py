@@ -44,6 +44,7 @@ from flowfile_core.catalog.validators import (
 )
 from flowfile_core.database.models import CatalogDashboard, CatalogTable, CatalogVisualization
 from flowfile_core.flowfile.execution import registry
+from flowfile_core.hub_client import tables as hub_tables
 from flowfile_core.schemas.catalog_schema import (
     ColumnStatsResponse,
     DashboardCreate,
@@ -515,7 +516,8 @@ class VisualizationService:
         return self._build_sql_worker_source(source.sql_query, user_id=user_id)
 
     def _build_sql_worker_source(self, sql_query: str, user_id: int | None) -> dict:
-        """Build a worker SQL source spec mirroring ``execute_sql_query``'s setup."""
+        """Build a worker SQL source spec mirroring ``execute_sql_query``'s setup; a query that names tables of the
+        person's hub becomes a plan over those instead (``hub_tables.visual_source``)."""
         from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
             UnsafeSQLError,
             validate_sql_query,
@@ -527,7 +529,11 @@ class VisualizationService:
             raise ValueError(str(exc)) from exc
 
         delta_map, virtual_map = self._virtual_tables.resolve_all_queryable_tables()
-        rewritten = rewrite_qualified_references(sql_query, {*delta_map, *virtual_map})
+        own = {*delta_map, *virtual_map}
+        on_hub = hub_tables.named(user_id, sql_query, own)
+        if on_hub:
+            return hub_tables.visual_source(user_id, sql_query, on_hub, own)
+        rewritten = rewrite_qualified_references(sql_query, own)
         referenced_virtuals = {n for n in virtual_map if is_table_reference(n, rewritten)}
 
         virtual_refs: dict[str, str] = {}

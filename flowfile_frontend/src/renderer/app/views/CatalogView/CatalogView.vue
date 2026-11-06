@@ -1218,8 +1218,11 @@ async function createReadInFlowFromArtifact(artifact: GlobalArtifact) {
   }
 }
 
+// A hub table is charted through a query over it: a saved visual keeps a query, never a hub table's id.
 function openCreateViz(table: CatalogTable) {
-  vizEditorSource.value = { source_type: "table", table_id: table.id };
+  vizEditorSource.value = isHubRow(table)
+    ? { source_type: "sql", sql_query: `SELECT * FROM ${buildTableRef(tableReference(table))}` }
+    : { source_type: "table", table_id: table.id };
   vizEditorOpen.value = true;
 }
 

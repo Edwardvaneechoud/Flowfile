@@ -1,13 +1,14 @@
-"""A table in the hub's catalog as this Flowfile reads it: the table itself, its first rows for the Catalog page, and
-a query of the SQL editor over it.
+"""A table in the hub's catalog as this Flowfile reads it: the table itself, its first rows for the Catalog page, a
+query of the SQL editor over it and a visual on such a query.
 
-A reader step, the Catalog page's preview and the SQL editor find the table the same way (``readable``). A preview or
-a query asks the hub for one read of the tables' namespaces under a run id of its own (``preview-…`` or ``sql-…``,
-which the hub's vend ledger keeps), scans each table with that credential as a run's reader does
-(``RunVend.scan_delta``) and reads the rows on this machine's default backend, the worker beside its core. The
-credential lives for the call and nothing is kept.
+A reader step, the Catalog page's preview, the SQL editor and a visual find the table the same way (``readable``).
+A preview, a query or a visual asks the hub for one read of the tables' namespaces under a run id of its own
+(``preview-…``, ``sql-…`` or ``visual-…``, which the hub's vend ledger keeps), scans each table with that credential
+as a run's reader does (``RunVend.scan_delta``) and reads the rows on this machine's own worker. The credential
+lives for the call; a visual's plan carries it, encrypted, for a few minutes (``visual_source``).
 """
 
+import base64
 import re
 import time
 import uuid
@@ -27,6 +28,9 @@ from shared.delta_utils import make_json_safe
 
 PREVIEW_RUN_PREFIX = "preview-"
 SQL_RUN_PREFIX = "sql-"
+VISUAL_RUN_PREFIX = "visual-"
+VISUAL_KEPT_SECONDS = 240
+"""How long one visual's source is reused: well inside the 15 minutes a hub's credential lives by default."""
 SAMPLE_ROWS = 10_000
 """The most rows a backend hands back in one bounded read (the worker's ``SAMPLE_ROWS_CAP``)."""
 MIXED = (
@@ -101,17 +105,8 @@ def sql(user_id: int, query: str, tables: dict[str, int], own: set[str], max_row
     the result's ``error``, as the local run's is.
     """
     started = time.perf_counter()
-    collapsed = rewrite_qualified_references(query, set(tables) | own)
-    if any(is_table_reference(name, collapsed) for name in own):
-        return SqlQueryResult(error=MIXED)
     try:
-        found = {hub_id: readable(user_id, hub_id) for hub_id in set(tables.values())}
-        run_id = f"{SQL_RUN_PREFIX}{uuid.uuid4().hex}"
-        vended = vend.request(user_id, run_id, {table["namespace_id"] for table in found.values()}, set())
-        context = pl.SQLContext()
-        for name, hub_id in tables.items():
-            context.register(name, vended.scan_delta(found[hub_id]["file_path"], user_id, _columns(found[hub_id])))
-        plan = context.execute(collapsed)
+        plan = _plan(user_id, query, tables, own, SQL_RUN_PREFIX)
         backend = current_context().backend
         limit = min(max_rows, SAMPLE_ROWS)
         frame = pl.from_arrow(head_rows(backend, plan, limit))
@@ -127,6 +122,62 @@ def sql(user_id: int, query: str, tables: dict[str, int], own: set[str], max_row
         execution_time_ms=(time.perf_counter() - started) * 1000,
         used_tables=sorted(tables),
     )
+
+
+_visual_sources: dict[tuple[int, str], tuple[float, dict]] = {}
+
+
+def visual_source(user_id: int, query: str, tables: dict[str, int], own: set[str]) -> dict:
+    """``query`` over the hub tables it names (``named``) as the worker's visualisation source: its plan, which the
+    worker holds lazily and reads for each request of a chart.
+
+    The plan carries the credential of one read the hub vends, encrypted for the person. A source is reused for
+    ``VISUAL_KEPT_SECONDS`` per person and query, so a chart's requests share one vend and one session on the worker,
+    and the tables are read as they were when it was built; after that the hub is asked again.
+
+    Raises:
+        ValueError: A sentence for the person: the query also names one of this machine's tables, names a table this
+            Flowfile cannot read, does not hold over the tables' columns, or the hub refuses the read.
+    """
+    now = time.monotonic()
+    for key in [key for key, (built, _) in _visual_sources.items() if now - built >= VISUAL_KEPT_SECONDS]:
+        del _visual_sources[key]
+    held = _visual_sources.get((user_id, query))
+    if held is not None:
+        return held[1]
+    try:
+        plan = _plan(user_id, query, tables, own, VISUAL_RUN_PREFIX)
+    except LookupError as e:
+        raise ValueError(str(e)) from e
+    except pl.exceptions.PolarsError as e:
+        raise ValueError(friendly_relation_error(str(e), query)) from e
+    source = {
+        "kind": "plan",
+        "session_key": f"hub:{uuid.uuid4().hex}",
+        "plan_bytes": base64.b64encode(plan.serialize()).decode("ascii"),
+    }
+    _visual_sources[(user_id, query)] = (now, source)
+    return source
+
+
+def _plan(user_id: int, query: str, tables: dict[str, int], own: set[str], run_prefix: str) -> pl.LazyFrame:
+    """``query`` as a lazy plan over the hub tables it names, each scanned with one read the hub vends now.
+
+    Raises:
+        LookupError, ValueError: A sentence for the person: the query also names one of this machine's own tables,
+            names a table this Flowfile cannot read, or the hub refuses the read.
+        pl.exceptions.PolarsError: The SQL does not hold over the tables' columns.
+    """
+    collapsed = rewrite_qualified_references(query, set(tables) | own)
+    if any(is_table_reference(name, collapsed) for name in own):
+        raise ValueError(MIXED)
+    found = {hub_id: readable(user_id, hub_id) for hub_id in set(tables.values())}
+    run_id = f"{run_prefix}{uuid.uuid4().hex}"
+    vended = vend.request(user_id, run_id, {table["namespace_id"] for table in found.values()}, set())
+    context = pl.SQLContext()
+    for name, hub_id in tables.items():
+        context.register(name, vended.scan_delta(found[hub_id]["file_path"], user_id, _columns(found[hub_id])))
+    return context.execute(collapsed)
 
 
 def _columns(table: dict) -> dict[str, pl.DataType]:
